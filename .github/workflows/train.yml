@@ -1,0 +1,228 @@
+name: Release train
+
+# Every 48 hours (scripts/release_train.py admits every other UTC day of the
+# daily schedule) and on manual dispatch:
+# - cut: run scripts/cut_release.py on the published nightly's commit, when it
+#   passed the merge queue and has been on main at least 24 h, and deliver the
+#   `Release-Cut:` commit as a `rollup=never` pull request queued with the
+#   release App token (a GITHUB_TOKEN PR would get no PR checks). The queue
+#   lands it on main; beta.yml then publishes v<VERSION>-beta.1.
+# - promote: republish the newest beta that soaked 48 h with no open
+#   `release-blocker` issue naming its version as the stable v<VERSION>
+#   release, byte for byte, behind the protected `stable` environment.
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: Which stages to run
+        type: choice
+        options: [both, cut, promote]
+        default: both
+      min_age_hours:
+        description: Owner bootstrap only - minimum hours the nightly commit has been on main (default 24). Queue evidence is always required.
+        required: false
+        default: ""
+        type: string
+      soak_hours:
+        description: Owner bootstrap only - minimum beta soak in hours (default 48); recorded in the release notes.
+        required: false
+        default: ""
+        type: string
+      title:
+        description: One-line release title for the CHANGELOG section (default "Release train <date>")
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+# One train at a time; a release in progress is never cancelled.
+concurrency:
+  group: gti-release-train
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Plan the train
+    if: github.repository == 'lang-gti-official/gti'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: read
+    outputs:
+      cut: ${{ steps.plan.outputs.cut }}
+      promote: ${{ steps.promotion.outputs.promote }}
+      tag: ${{ steps.promotion.outputs.tag }}
+      sha: ${{ steps.promotion.outputs.sha }}
+      version: ${{ steps.promotion.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify release orchestration
+        run: python3 tests/release_train_test.py
+      - name: Decide which stages run today
+        id: plan
+        env:
+          GTI_EVENT_NAME: ${{ github.event_name }}
+          GTI_REF: ${{ github.ref }}
+          GTI_STAGE: ${{ inputs.stage }}
+        run: >-
+          python3 scripts/release_train.py train-plan --event "${GTI_EVENT_NAME}"
+          --ref "${GTI_REF}" --stage "${GTI_STAGE}" --output "${GITHUB_OUTPUT}"
+      - name: Select a soaked, unblocked beta
+        id: promotion
+        if: steps.plan.outputs.promote == 'true'
+        env:
+          GTI_GITHUB_TOKEN: ${{ github.token }}
+          GTI_REPOSITORY: ${{ github.repository }}
+          GTI_EVENT_NAME: ${{ github.event_name }}
+          GTI_SOAK_HOURS: ${{ inputs.soak_hours }}
+        run: >-
+          python3 scripts/release_train.py select-promotion --repository "${GTI_REPOSITORY}"
+          --event "${GTI_EVENT_NAME}" --soak-hours "${GTI_SOAK_HOURS}" --output "${GITHUB_OUTPUT}"
+
+  cut:
+    name: Cut a release onto main
+    needs: plan
+    if: needs.plan.outputs.cut == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      # GITHUB_TOKEN only reads: the checkout and the merge-queue CI run list.
+      contents: read
+      actions: read
+    steps:
+      - name: Require the release App secrets
+        env:
+          GTI_ROLLUP_APP_ID: ${{ secrets.GTI_ROLLUP_APP_ID }}
+          GTI_ROLLUP_APP_PRIVATE_KEY: ${{ secrets.GTI_ROLLUP_APP_PRIVATE_KEY }}
+        run: |
+          missing=()
+          [[ -n "${GTI_ROLLUP_APP_ID}" ]] || missing+=(GTI_ROLLUP_APP_ID)
+          [[ -n "${GTI_ROLLUP_APP_PRIVATE_KEY}" ]] || missing+=(GTI_ROLLUP_APP_PRIVATE_KEY)
+          if (( ${#missing[@]} )); then
+            echo "::error::Missing repository secret(s): ${missing[*]}. The release cut opens its pull request with the gti-rollup GitHub App (GTI_ROLLUP_APP_ID and GTI_ROLLUP_APP_PRIVATE_KEY), never with GITHUB_TOKEN. See .github/README.md, section \"Rollup bot\"."
+            exit 1
+          fi
+      - name: Mint a short-lived installation token for this repository only
+        id: token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ secrets.GTI_ROLLUP_APP_ID }}
+          private-key: ${{ secrets.GTI_ROLLUP_APP_PRIVATE_KEY }}
+          owner: lang-gti-official
+          repositories: gti
+          permission-contents: write
+          permission-pull-requests: write
+          permission-merge-queues: write
+          permission-issues: write
+          permission-checks: read
+          permission-metadata: read
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Cut the published nightly and queue the release cut PR
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          GTI_GITHUB_TOKEN: ${{ github.token }}
+          GTI_REPOSITORY: ${{ github.repository }}
+          GTI_EVENT_NAME: ${{ github.event_name }}
+          GTI_REF: ${{ github.ref }}
+          GTI_MIN_AGE_HOURS: ${{ inputs.min_age_hours }}
+          GTI_TITLE: ${{ inputs.title }}
+        run: >-
+          python3 scripts/release_train.py cut --repository "${GTI_REPOSITORY}"
+          --event "${GTI_EVENT_NAME}" --ref "${GTI_REF}"
+          --min-age-hours "${GTI_MIN_AGE_HOURS}" --title "${GTI_TITLE}"
+          --worktree "${RUNNER_TEMP}/gti-release-cut"
+
+  promote:
+    name: Promote a beta to stable
+    needs: plan
+    if: needs.plan.outputs.promote == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    # Required reviewer: the owner. The job re-checks everything after approval.
+    environment: stable
+    concurrency:
+      group: gti-stable-promotion
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      issues: read
+      attestations: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GTI_GITHUB_TOKEN: ${{ github.token }}
+      GTI_BETA_TAG: ${{ needs.plan.outputs.tag }}
+      GTI_BETA_SHA: ${{ needs.plan.outputs.sha }}
+    steps:
+      - name: Check out main with every tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Re-admit the beta after approval
+        id: admission
+        env:
+          GTI_EVENT_NAME: ${{ github.event_name }}
+          GTI_SOAK_HOURS: ${{ inputs.soak_hours }}
+        run: >-
+          python3 scripts/release_train.py admit-promotion --repository "${GITHUB_REPOSITORY}"
+          --event "${GTI_EVENT_NAME}" --soak-hours "${GTI_SOAK_HOURS}"
+          --tag "${GTI_BETA_TAG}" --sha "${GTI_BETA_SHA}" --output "${GITHUB_OUTPUT}"
+      - name: Download and verify the beta's attested archives
+        if: steps.admission.outputs.publish == 'true'
+        env:
+          GTI_VERSION: ${{ steps.admission.outputs.version }}
+        run: |
+          gh release download "${GTI_BETA_TAG}" --repo "${GITHUB_REPOSITORY}" --dir "${RUNNER_TEMP}/beta"
+          python3 scripts/release_train.py verify-assets --directory "${RUNNER_TEMP}/beta" --version "${GTI_VERSION}"
+          for archive in "${RUNNER_TEMP}"/beta/gti-v*.tar.gz; do
+            gh attestation verify "${archive}" --repo "${GITHUB_REPOSITORY}" \
+              --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/beta.yml"
+          done
+      # A plain push creates the immutable tag at the beta's commit; it fails
+      # rather than moves an existing tag.
+      - name: Create the stable tag
+        if: steps.admission.outputs.publish == 'true' && steps.admission.outputs.push_tag == 'true'
+        env:
+          GTI_STABLE_TAG: ${{ steps.admission.outputs.stable_tag }}
+        run: git push --porcelain origin "${GTI_BETA_SHA}:refs/tags/${GTI_STABLE_TAG}"
+      - name: Republish the beta's bytes as the stable release
+        if: steps.admission.outputs.publish == 'true'
+        env:
+          GTI_VERSION: ${{ steps.admission.outputs.version }}
+          GTI_STABLE_TAG: ${{ steps.admission.outputs.stable_tag }}
+          GTI_SOAK: ${{ steps.admission.outputs.soak }}
+          GTI_SOAKED: ${{ steps.admission.outputs.soaked }}
+          GTI_OVERRIDE: ${{ steps.admission.outputs.override }}
+        run: |
+          python3 scripts/release_train.py stable-notes --sha "${GTI_BETA_SHA}" \
+            --version "${GTI_VERSION}" --tag "${GTI_BETA_TAG}" --soak "${GTI_SOAK}" \
+            --soaked "${GTI_SOAKED}" --override "${GTI_OVERRIDE}" \
+            --beta "${RUNNER_TEMP}/beta" --notes "${RUNNER_TEMP}/stable-notes.md"
+          python3 scripts/release_train.py delete-drafts --tag "${GTI_STABLE_TAG}"
+          gh release create "${GTI_STABLE_TAG}" --repo "${GITHUB_REPOSITORY}" --verify-tag --draft \
+            --title "GTI ${GTI_VERSION}" --notes-file "${RUNNER_TEMP}/stable-notes.md"
+          gh release upload "${GTI_STABLE_TAG}" --repo "${GITHUB_REPOSITORY}" "${RUNNER_TEMP}"/beta/*
+          # Read the draft back through the API and compare every file before
+          # it becomes immutable.
+          python3 scripts/release_train.py fetch-draft --tag "${GTI_STABLE_TAG}" \
+            --directory "${RUNNER_TEMP}/stable"
+          python3 scripts/release_train.py same-bytes --beta "${RUNNER_TEMP}/beta" \
+            --stable "${RUNNER_TEMP}/stable" --version "${GTI_VERSION}"
+          gh release edit "${GTI_STABLE_TAG}" --repo "${GITHUB_REPOSITORY}" --draft=false --latest
+      - name: Record the stable version in the release status
+        if: steps.admission.outputs.record == 'true'
+        env:
+          GTI_VERSION: ${{ steps.admission.outputs.version }}
+        run: python3 scripts/release_train.py record-stable --version "${GTI_VERSION}"

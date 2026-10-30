@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise exact release/channel admission, the GitHub nightly workflow, and the frozen Gitea workflow."""
+"""Exercise exact release/channel admission, the GitHub nightly and release-train workflows, and the frozen Gitea workflow."""
 
 from __future__ import annotations
 
@@ -128,12 +128,168 @@ def nightly_contract(root):
     assert "upload_url" not in nightly and "GITEA" not in nightly and "gitea." not in nightly
 
 
+def ordered(body, items, message):
+    positions = [body.index(item) for item in items]
+    assert positions == sorted(positions), (message, items)
+
+
+def common_train_contract(name, workflow, ci, rollup):
+    """Pinned actions, a read-only default token, no forced or deleted refs, no inline inputs."""
+    header = workflow.split("\njobs:\n", 1)[0]
+    assert "\npermissions:\n  contents: read\n" in header, name
+    assert "pull_request_target" not in workflow and "workflow_run" not in workflow, name
+    pins = dict(re.findall(r"^\s*(?:-\s+)?uses:\s*(actions/\S+)@([0-9a-f]{40})\s", ci + rollup, re.MULTILINE))
+    used = re.findall(r"^\s*(?:-\s+)?uses:\s*(\S+)@(\S+)", workflow, re.MULTILINE)
+    assert used, name
+    for action, revision in used:
+        assert action.startswith("actions/") and re.fullmatch(r"[0-9a-f]{40}", revision), (name, action)
+        if action in pins:
+            assert pins[action] == revision, (name, action, revision, pins[action])
+    for forbidden in ("--force", "git tag", "delete-asset", "gh release delete", "--clobber"):
+        assert forbidden not in workflow, (name, forbidden)
+    for line in workflow.splitlines():
+        if "git push" in line:
+            # A push only creates: no force, no leading +, no deletion refspec.
+            assert re.fullmatch(r'\s*(?:run: )?git push --porcelain origin "\$\{GTI_[A-Z_]+\}:refs/'
+                                r'(?:tags|heads)/\$\{GTI_[A-Z_]+\}"', line), (name, line)
+    for line in workflow.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(("run:", "python3", "git ", "gh ", "cmake", "ctest", "--")):
+            assert "${{" not in line, (name, line)
+        if "${{ inputs." in line or "github.event.pull_request" in line or "github.head_ref" in line:
+            assert re.fullmatch(r"\s+GTI_[A-Z_]+: \$\{\{ inputs\.[a-z_]+ \}\}", line) or \
+                "group: backport-${{ github.event.pull_request.number }}" in line, (name, line)
+    return jobs(workflow)
+
+
+def train_contract(root):
+    workflows = root / ".github/workflows"
+    ci, nightly, rollup = (workflows / "ci.yml").read_text(), (workflows / "nightly.yml").read_text(), \
+        (workflows / "rollup.yml").read_text()
+    beta_text = (workflows / "beta.yml").read_text()
+    train_text = (workflows / "train.yml").read_text()
+    backport_text = (workflows / "backport.yml").read_text()
+    rollback_text = (workflows / "rollback.yml").read_text()
+    for name, text in (("beta", beta_text), ("train", train_text), ("backport", backport_text),
+                       ("rollback", rollback_text)):
+        common_train_contract(name, text, ci, rollup)
+    nightly_jobs = jobs(nightly)
+
+    # Beta: the nightly's package, suite and gate, packaging the channel-neutral archive.
+    beta = jobs(beta_text)
+    assert list(beta) == ["select", "package", "suite", "release-gate", "publish"], list(beta)
+    header = beta_text.split("\njobs:\n", 1)[0]
+    assert "  push:\n    branches:\n      - main\n      - \"beta/**\"\n" in header
+    assert "schedule:" in header and "workflow_dispatch:" in header and "pull_request" not in header
+    assert "group: gti-beta-${{ github.ref }}\n  cancel-in-progress: false" in header
+    assert set(re.findall(r"secrets\.([A-Za-z0-9_]+)", beta_text)) == set()
+    for job, body in beta.items():
+        writes = re.findall(r"^      ([a-z-]+): write$", body, re.MULTILINE)
+        assert writes == (["contents", "id-token", "attestations"] if job == "publish" else []), (job, writes)
+    assert "if: github.repository == 'lang-gti-official/gti'" in beta["select"]
+    assert "python3 tests/release_train_test.py" in beta["select"] and "select-beta" in beta["select"]
+    package, suite = beta["package"], beta["suite"]
+    assert re.findall(r"\{os: [^}]*platform: ([a-z0-9-]+)", package) == ["linux-x64", "darwin-arm64"]
+    assert "ubuntu-24.04-arm" not in beta_text and "linux-arm64}" not in beta_text
+    for body in (package, suite):
+        assert body.count(CONFIGURE_RELEASE) == 1 and "bash scripts/configure_ci_toolchain.sh" in body
+        assert "ref: ${{ needs.select.outputs.sha }}" in body
+        assert "if: needs.select.outputs.build == 'true'" in body
+    shard_rows = lambda body: re.findall(r"\{os: [^}]*shards: \d+, index: \d+\}", body)
+    assert shard_rows(suite) == shard_rows(nightly_jobs["suite"]), "beta runs the nightly's release shards"
+    assert shard_rows(backport_text) == shard_rows(nightly_jobs["suite"]), "backports run the same shards"
+    for check in ("lsp_smoke_test.py", "cli_smoke_test.py", "project_cli_smoke_test.py",
+                  "process_resource_policy_test.py", "managed_thread_runtime_test.py",
+                  "atomic_runtime_test.py", "installed_library_smoke"):
+        assert check in package, check
+    assert "-DGTI_CHANNEL=stable" in package and '-DGTI_EXPECTED_TAG="v${GTI_BETA_VERSION}"' in package
+    assert "-DGTI_BUILD_ID" not in beta_text and "GTI_NIGHTLY" not in beta_text and "nightly" not in package
+    assert "release_train.py confirm" in package
+    ordered(package, ["name: Build\n", "name: Test installed toolchain", "-DGTI_CHANNEL=stable"],
+            "the archive comes from the validated stage")
+    assert 'merge-shards\n          --shard-reports "${RUNNER_TEMP}/shards" --platforms darwin,linux' in \
+        beta["release-gate"]
+    publish = beta["publish"]
+    assert "needs: [select, package, release-gate]" in publish
+    assert "group: gti-beta-publication\n      cancel-in-progress: false" in publish
+    ordered(publish, ["release_train.py verify-assets", "release_train.py admit-beta",
+                      "attest-build-provenance", "refs/tags/${GTI_BETA_TAG}", "release_train.py beta-notes",
+                      "release_train.py delete-drafts", "gh release create", "--draft --prerelease --latest=false",
+                      "gh release upload", "--draft=false", "refs/heads/${GTI_BETA_BRANCH}"],
+            "admit, attest, tag, draft, upload, publish, then create the line branch")
+    assert publish.count("if: steps.admission.outputs.publish == 'true'") == 3
+    assert "if: steps.admission.outputs.push_branch == 'true'" in publish
+    assert "subject-path: dist/gti-v*.tar.gz" in publish and "--verify-tag" in publish
+    assert "--clobber" not in beta_text, "a published beta's assets are never replaced"
+
+    # Train: plan, then the App-token cut and the environment-gated promotion.
+    train = jobs(train_text)
+    assert list(train) == ["plan", "cut", "promote"], list(train)
+    header = train_text.split("\njobs:\n", 1)[0]
+    assert '  schedule:\n    - cron: "0 4 * * *"\n  workflow_dispatch:' in header
+    assert "push:" not in header and "pull_request" not in train_text
+    assert "group: gti-release-train\n  cancel-in-progress: false" in header
+    assert set(re.findall(r"secrets\.([A-Za-z0-9_]+)", train_text)) == {"GTI_ROLLUP_APP_ID",
+                                                                        "GTI_ROLLUP_APP_PRIVATE_KEY"}
+    assert not re.search(r"secrets\.[A-Za-z]", train["plan"] + train["promote"]), \
+        "only the cut job holds the App secrets"
+    assert re.findall(r"GH_TOKEN: (.*)", train["cut"]) == ["${{ steps.token.outputs.token }}"]
+    assert "actions/create-github-app-token@" in train["cut"] and "repositories: gti" in train["cut"]
+    assert "permission-workflows" not in train["cut"]
+    for job, body in train.items():
+        writes = re.findall(r"^      ([a-z-]+): write$", body, re.MULTILINE)
+        assert writes == (["contents"] if job == "promote" else []), (job, writes)
+    assert "persist-credentials: false" in train["cut"] and "persist-credentials: false" in train["plan"]
+    assert "environment: stable" in train["promote"] and "environment:" not in train["plan"] + train["cut"]
+    assert "group: gti-stable-promotion\n      cancel-in-progress: false" in train["promote"]
+    assert "train-plan" in train["plan"] and "select-promotion" in train["plan"]
+    assert "python3 tests/release_train_test.py" in train["plan"]
+    assert "release_train.py cut" in train["cut"]
+    promote = train["promote"]
+    ordered(promote, ["release_train.py admit-promotion", "gh release download", "release_train.py verify-assets",
+                      "gh attestation verify", "--signer-workflow", "refs/tags/${GTI_STABLE_TAG}",
+                      "release_train.py stable-notes", "release_train.py delete-drafts",
+                      "gh release create", "--verify-tag --draft", "gh release upload",
+                      "release_train.py fetch-draft", "release_train.py same-bytes", "--draft=false --latest",
+                      "release_train.py record-stable"],
+            "promotion admits after approval, proves the same bytes, then publishes and records")
+    assert "cmake" not in promote and "PackageRelease" not in train_text, "promotion never rebuilds"
+
+    # Backport: a pull-request check on beta/* only, run with main's checker and no secrets.
+    backport = jobs(backport_text)
+    assert list(backport) == ["verify", "suite", "gate"], list(backport)
+    header = backport_text.split("\njobs:\n", 1)[0]
+    assert "  pull_request:\n" in header and 'branches:\n      - "beta/**"' in header
+    assert "push:" not in header and not re.search(r"secrets\.[A-Za-z]", backport_text)
+    assert ": write" not in backport_text
+    assert "name: Backport gate" in backport["gate"] and "if: always()" in backport["gate"]
+    assert 'git show "refs/remotes/origin/main:scripts/${file}"' in backport["verify"]
+    assert 'python3 "${checker}/release_train.py" backport-check' in backport["verify"]
+    assert backport["suite"].count(CONFIGURE_RELEASE.replace(
+        "-DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF\n",
+        "-DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF\n          -DGTI_TEST_TIMEOUT_SCALE=3\n")) == 1
+    assert "actions/cache/save@" not in backport_text, "a pull request never writes the release cache"
+    assert "release_train.py require-success" in backport["gate"] and "merge-shards" in backport["gate"]
+
+    # Rollback: dispatch only, behind the stable environment; it never deletes or moves anything.
+    rollback = jobs(rollback_text)
+    assert list(rollback) == ["rollback"]
+    header = rollback_text.split("\njobs:\n", 1)[0]
+    assert "  workflow_dispatch:\n" in header and "schedule" not in header and "push:" not in header
+    assert "options: [withdraw-beta, yank-stable]" in header
+    assert "environment: stable" in rollback["rollback"] and not re.search(r"secrets\.[A-Za-z]", rollback_text)
+    assert re.findall(r"^      ([a-z-]+): write$", rollback["rollback"], re.MULTILINE) == ["contents"]
+    assert "release_train.py rollback" in rollback["rollback"] and "gh release upload" not in rollback_text
+    assert "github.ref == 'refs/heads/main'" in rollback["rollback"]
+
+
 def workflow_contract(root):
     release = (root / ".gitea/workflows/release.yml").read_text()
     ci = (root / ".github/workflows/ci.yml").read_text()
     # CI, nightly packaging and the rollup bot run on GitHub; the frozen Gitea
     # release workflow stays as written.
-    assert sorted(p.name for p in (root / ".github/workflows").glob("*.yml")) == ["ci.yml", "nightly.yml", "rollup.yml"]
+    assert sorted(p.name for p in (root / ".github/workflows").glob("*.yml")) == [
+        "backport.yml", "beta.yml", "ci.yml", "nightly.yml", "rollback.yml", "rollup.yml", "train.yml"]
     assert not (root / ".gitea/workflows/ci.yml").exists()
     assert "branches:\n      - main" in release and "paths:" not in release
     assert release.count("-DGTI_RELEASE_BUILD=ON") == 1, "channels must share one configure"
@@ -265,11 +421,16 @@ def source_contract(root):
         query(advanced, mode="admit-nightly", success=False)
 
 
-def load_resolver(script):
-    specification = importlib.util.spec_from_file_location("resolve_release_source", script)
+def load_module(script, name):
+    sys.path.insert(0, str(pathlib.Path(script).parent))
+    specification = importlib.util.spec_from_file_location(name, script)
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module
+
+
+def load_resolver(script):
+    return load_module(script, "resolve_release_source")
 
 
 @contextlib.contextmanager
@@ -443,11 +604,29 @@ def archive_contract(root, cmake):
         assert stable_archive.read_bytes() == stable_bytes, "nightly rewrote the immutable archive"
         assert stable["lib/gti/llvm/libclang.so.20"] == ("symlink", "libclang.so.20.1")
         rejected = work / "rejected"
+        # The nightly stamp lives in the stage; a stable archive refuses it.
+        package("stable", f"v{version}", rejected, success=False)
+        assert not rejected.exists(), "a nightly-stamped stage produced a stable archive"
+        (stage / "share/gti/BUILD_ID").unlink()
         package("stable", f"v{version}", rejected, success=False, platform="darwin-arm64")
         assert not rejected.exists(), "macOS stage without runtime verification produced an archive"
         (stage / "share/gti/host-runtime.json").write_text('{"schema":1,"libraries":[]}\n')
         package("stable", f"v{version}", work / "darwin", platform="darwin-arm64")
         assert (work / "darwin" / f"gti-v{version}-darwin-arm64.tar.gz").is_file()
+        # The release train publishes these exact stable archives as the beta
+        # and republishes them unchanged: no channel or build stamp inside.
+        train = load_module(root / "scripts/release_train.py", "release_train")
+        neutral = work / "neutral"
+        package("stable", f"v{version}", neutral)
+        package("stable", f"v{version}", neutral, platform="darwin-arm64")
+        verified = train.verify_assets(neutral, version)
+        assert sorted(verified) == [f"gti-v{version}-darwin-arm64.tar.gz", f"gti-v{version}-linux-x64.tar.gz"]
+        try:
+            train.verify_assets(nightly_directory, version)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("a nightly archive passed as a channel-neutral release")
         package("stable", "v99.99.99", rejected, success=False)
         package("nightly", "nightly", rejected, "not-a-sha", success=False)
         (stage / "lib/libgti_runtime.a").unlink()
@@ -493,11 +672,12 @@ def main():
     root = args.root.resolve()
     workflow_contract(root)
     nightly_contract(root)
+    train_contract(root)
     source_contract(root)
     suite_contract(root)
     if args.cmake:
         archive_contract(root, args.cmake.resolve())
-    print("GitHub nightly and frozen Gitea workflows, exact source/version/tag checks, "
+    print("GitHub nightly, release-train and frozen Gitea workflows, exact source/version/tag checks, "
           "queue-evidence selection, newer-wins admission and release-suite gate passed")
 
 

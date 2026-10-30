@@ -1489,6 +1489,7 @@ paths = [
   "scripts/check_release_version.py",
   "scripts/sync_release_assets.py",
   "scripts/resolve_release_source.py",
+  "scripts/release_train.py",
   "scripts/bundle_macos_runtime.py",
   "cmake/PackageRelease.cmake",
 ]
@@ -1496,6 +1497,7 @@ owners = [
   "release_version_policy",
   "release_asset_sync",
   "ci_release",
+  "release_train",
   "macos_runtime_bundle",
 ]
 consumers = [

@@ -296,9 +296,11 @@ one-off implementation-note or redesign files when an existing category fits.
 
 Two channels publish this repository, and they answer different questions.
 Toolchain releases publish to GitHub Releases on `lang-gti-official/gti`.
-`.github/workflows/nightly.yml` packages `linux-x64` and `darwin-arm64` on
-GitHub-hosted runners; `linux-arm64` waits for a reviewed linux-aarch64 runtime
-compiler profile. The Neovim installer downloads from GitHub Releases. The
+`.github/workflows/nightly.yml` and the release train (`train.yml`, `beta.yml`,
+`backport.yml`, `rollback.yml`, logic in `scripts/release_train.py`) package
+`linux-x64` and `darwin-arm64` on GitHub-hosted runners; `linux-arm64` waits
+for a reviewed linux-aarch64 runtime compiler profile. The Neovim installer
+downloads from GitHub Releases. The
 frozen Gitea workflow (`.gitea/workflows/release.yml`) no longer runs. Do not
 publish toolchain releases to Gitea. The `gti add` package registry stays
 on Gitea and is unaffected. See "Published Toolchain Channels" in
@@ -308,11 +310,25 @@ on Gitea and is unaffected. See "Published Toolchain Channels" in
   newest `main` commit that passed the merge queue's `CI gate`. It replaces
   its own assets and needs no `VERSION` change. Every merged commit reaches
   users through this channel.
-- **Stable** is `v<VERSION>`, the channel someone pins to. Its GitHub
-  publication belongs to the later beta/stable release train and is not
-  automated yet: a `VERSION` advance does not publish a stable release today,
-  and the installer's stable channel reports the missing `v<VERSION>` and
-  points at nightly rather than installing another version.
+- **Beta** is `v<VERSION>-beta.<K>`, a GitHub prerelease. Every 48 hours the
+  train cuts the published nightly's commit, once it has been on `main` for 24
+  hours, into a `Release-Cut:` PR that the merge queue lands like any other
+  change; `beta.yml` then builds that cut commit, opens the
+  `beta/<major>.<minor>` line and publishes beta 1. Fixes reach a line only as
+  `git cherry-pick -x` backports of `main` commits through `backport.yml`; a
+  user-visible backport ends with a patch release cut.
+- **Stable** is `v<VERSION>`, the channel someone pins to and the tag Lazy's
+  `version = "*"` resolves (it ignores prerelease tags). The train promotes a
+  beta that soaked 48 hours with no open `release-blocker` issue naming its
+  version, behind the protected `stable` environment, by republishing the
+  beta's archives byte for byte. Stable tags and releases are immutable.
+  `rollback.yml` withdraws a beta or yanks a stable version through the
+  `release-status` branch, which the installer reads; it never installs a
+  yanked version or another version in its place.
+
+Never push a `v*` tag or the `release-status` branch by hand, change a
+`beta/*` line only through a backport PR, and never move or delete any of them.
+See "GitHub release train" in `docs/architecture/build-and-driver.md`.
 
 Pull requests never edit `VERSION` or `CHANGELOG.md`. A change a toolchain user
 would observe (language surface, CLI or driver behavior, diagnostics they would

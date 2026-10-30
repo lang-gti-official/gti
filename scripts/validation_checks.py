@@ -32,13 +32,14 @@ AUTOMATION = ("docs/", ".codex/", ".claude/", ".agents/")
 AUTOMATION_FILES = {"AGENTS.md", "CLAUDE.md", "README.md"}
 AUTOMATION_SCRIPTS = {"agent_workflow.py", "validation_batch.py", "validation_checks.py",
                       "preview_workflow.py", "preview_submit.py", "build_window.py", "bounded_log.py",
-                      "cut_release.py", "check_release_version.py", "rollup.py"}
+                      "cut_release.py", "check_release_version.py", "rollup.py", "release_train.py"}
 # Exactly the existing harnesses that CI's workflow-regression job runs. The
 # batch, validation and preview-submit scripts are covered by agent_workflow_test.
 AUTOMATION_TESTS = {"agent_workflow_test.py", "preview_workflow_test.py", "build_window_test.py",
                     "bounded_log_test.py", "release_version_test.py", "ci_resources_test.py",
                     "repository_hosting_test.py", "cut_release_test.py",
-                    "ownership_map_test.py", "plan_checks_test.py", "rollup_test.py"}
+                    "ownership_map_test.py", "plan_checks_test.py", "rollup_test.py",
+                    "release_train_test.py"}
 # A rollup's membership record lists queue-validated members; unlike a degraded-
 # mode batch manifest it adds no admission obligation, so it leaves the
 # classification of the members' own paths unchanged.

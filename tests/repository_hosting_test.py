@@ -27,6 +27,11 @@ ACTION_USE = re.compile(r"^\s*(?:-\s+)?uses:\s*(\S+)@([^\s#]+)", re.MULTILINE)
 CI = ".github/workflows/ci.yml"
 NIGHTLY = ".github/workflows/nightly.yml"
 ROLLUP = ".github/workflows/rollup.yml"
+TRAIN = ".github/workflows/train.yml"
+BETA = ".github/workflows/beta.yml"
+BACKPORT = ".github/workflows/backport.yml"
+ROLLBACK = ".github/workflows/rollback.yml"
+RELEASE_TRAIN = (TRAIN, BETA, BACKPORT, ROLLBACK)
 ROLLUP_SECRETS = ("GTI_ROLLUP_APP_ID", "GTI_ROLLUP_APP_PRIVATE_KEY")
 RELEASE = ".gitea/workflows/release.yml"
 
@@ -57,8 +62,9 @@ def main():
     workflows = sorted(p for p in tracked if p.startswith((".github/workflows/", ".gitea/workflows/")))
     # CI, nightly toolchain releases and the rollup bot run on GitHub. The frozen
     # Gitea release workflow stays as the record of the contract it replaces.
-    expect(set(workflows) == {CI, NIGHTLY, RELEASE, ROLLUP}, f"unexpected live workflows: {workflows}")
-    for relative in (CI, NIGHTLY, RELEASE, ROLLUP, ".github/README.md", ".gitea/README.md",
+    expect(set(workflows) == {CI, NIGHTLY, RELEASE, ROLLUP, *RELEASE_TRAIN},
+           f"unexpected live workflows: {workflows}")
+    for relative in (CI, NIGHTLY, RELEASE, ROLLUP, *RELEASE_TRAIN, ".github/README.md", ".gitea/README.md",
                      ".gitea/ISSUE_TEMPLATE/bug_report.md",
                      "docs/plans/archive/github-actions-20261024/README.md"):
         text(root, relative)
@@ -90,6 +96,9 @@ def main():
            "the installer downloads toolchain releases from GitHub Releases, never Gitea")
     expect('vim.g.gti_channel = \\"nightly\\"' in installer and "stable_unavailable" in installer,
            "an unpublished stable release must fail clearly and name the nightly channel")
+    expect('"https://raw.githubusercontent.com/%s/release-status/release-status.json"' in installer
+           and "check_not_yanked" in installer and PACKAGE_SERVER not in installer,
+           "the stable installer reads the yank list from GitHub's release-status branch")
     expect("*.gti linguist-language=C++" in text(root, ".gitattributes"),
            "GTI source language classification must remain intact")
     helper = text(root, "scripts/agent_workflow.py")
@@ -135,12 +144,17 @@ def main():
            "the nightly tag moves only with an explicit lease")
     policy = text(root, "docs/architecture/build-and-driver.md")
     expect("### GitHub nightly publication" in policy and "host-runtime.json" in policy
-           and "linux-aarch64" in policy and "beta/stable release train" in policy
+           and "linux-aarch64" in policy and "### GitHub release train" in policy
+           and "beta/stable release train" not in policy and "release-status" in policy
            and "Manual macOS release publication" not in policy,
-           "GitHub nightly publication, the linux-arm64 gap and the stable boundary must be explicit")
-    for workflow, contents in ((CI, ci), (NIGHTLY, nightly), (RELEASE, release)):
+           "GitHub nightly publication, the release train and the linux-arm64 gap must be explicit")
+    check_release_train(root, ci)
+    beta, backport = text(root, BETA), text(root, BACKPORT)
+    for workflow, contents in ((CI, ci), (NIGHTLY, nightly), (RELEASE, release), (BETA, beta),
+                               (BACKPORT, backport)):
+        parallel = '--jobs "${GTI_TEST_JOBS}"' if workflow == BACKPORT else '--parallel "${GTI_TEST_JOBS}"'
         expect("bash scripts/configure_ci_resources.sh" in contents and "vars.GTI_TEST_JOBS" in contents
-               and '--parallel "${GTI_TEST_JOBS}"' in contents and "_NPROCESSORS_ONLN" not in contents,
+               and parallel in contents and "_NPROCESSORS_ONLN" not in contents,
                f"resource budgets lost: {workflow}")
         expect("-DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF" in contents,
                f"sanitizer capability policy lost: {workflow}")
@@ -156,7 +170,8 @@ def main():
     expect("gti-lang" not in nightly and "howetotech" not in nightly and "gitea" not in nightly.lower(),
            "GitHub nightly publication must not reach Gitea")
     release_policy = text(root, "scripts/check_release_version.py")
-    expect(f'"{RELEASE}"' in release_policy and f'"{NIGHTLY}"' in release_policy,
+    expect(f'"{RELEASE}"' in release_policy and f'"{NIGHTLY}"' in release_policy
+           and f'"{BETA}"' in release_policy,
            "release policy must classify its package workflows")
     expect("gti-lang/gti-reference" in text(root, "docs/architecture/reference-documentation.md"),
            "the reference website stays on Gitea")
@@ -165,6 +180,40 @@ def main():
         contents = text(root, skill)
         expect("GitHub Releases" in contents and "package registry" in contents,
                f"delivery instructions must send toolchain releases to GitHub and keep the registry on Gitea: {skill}")
+
+
+def check_release_train(root, ci):
+    """The release train publishes to GitHub only, with the App token only where a PR opens."""
+    checkout = re.search(r"uses: (actions/checkout@[0-9a-f]{40})", ci).group(1)
+    for workflow in RELEASE_TRAIN:
+        contents = text(root, workflow)
+        actions = ACTION_USE.findall(contents)
+        expect(actions, f"workflow has no auditable actions: {workflow}")
+        for action, revision in actions:
+            expect(action.startswith("actions/") and re.fullmatch(r"[0-9a-f]{40}", revision),
+                   f"untrusted/unpinned action: {workflow}: {action}@{revision}")
+            if action == "actions/checkout":
+                expect(f"{action}@{revision}" == checkout, f"{workflow} must pin the checkout revision CI uses")
+        expect("pull_request_target" not in contents and "\npermissions:\n  contents: read\n" in contents,
+               f"{workflow} must default to a read-only token and never run pull_request_target")
+        expect("gti-lang" not in contents and "howetotech" not in contents and "gitea" not in contents.lower(),
+               f"the release train must not reach Gitea: {workflow}")
+        expect("--force" not in contents and "--clobber" not in contents and "delete-asset" not in contents,
+               f"the release train never forces a ref or replaces a published asset: {workflow}")
+        secrets = set(re.findall(r"secrets\.([A-Za-z0-9_]+)", contents))
+        expect(secrets == (set(ROLLUP_SECRETS) if workflow == TRAIN else set()),
+               f"unexpected secrets in {workflow}: {sorted(secrets)}")
+    cut = text(root, TRAIN).split("\n  cut:\n", 1)[1].split("\n  promote:\n", 1)[0]
+    expect("secrets.GTI_ROLLUP_APP_ID" in cut and re.findall(r"GH_TOKEN: (.*)", cut)
+           == ["${{ steps.token.outputs.token }}"] and "repositories: gti" in cut,
+           "the release cut opens its PR only with the repository-scoped App token")
+    expect("environment: stable" in text(root, TRAIN).split("\n  promote:\n", 1)[1]
+           and "environment: stable" in text(root, ROLLBACK),
+           "promotion and rollback run only behind the protected stable environment")
+    readme = text(root, ".github/README.md")
+    for needle in ("## Release train", "`stable` environment", "release immutability",
+                   "release-blocker", "release_train.py rulesets", "beta/*", "release-status"):
+        expect(needle in readme, f".github/README.md must document the release train owner setup: {needle}")
 
 
 def check_rollup(root, ci, rollup, workflows):
@@ -189,9 +238,9 @@ def check_rollup(root, ci, rollup, workflows):
                for name in (*ROLLUP_SECRETS, ".github/README.md")),
            "a missing App secret must fail clearly, naming both secrets and the setup section")
     for workflow in workflows:
-        if workflow != ROLLUP:
+        if workflow not in (ROLLUP, TRAIN):
             expect(not any(name in text(root, workflow) for name in ROLLUP_SECRETS),
-                   f"only the rollup workflow may reference its secrets: {workflow}")
+                   f"only the rollup bot and the release cut may reference the App secrets: {workflow}")
     triggers = rollup.split("\npermissions:", 1)[0]
     expect("pull_request" not in triggers and "pull_request_target" not in rollup
            and "workflow_run" not in triggers and "permissions: {}" in rollup

@@ -1,0 +1,376 @@
+name: Beta toolchain
+
+# Publishes a GitHub prerelease v<VERSION>-beta.<K> (scripts/release_train.py).
+# On main, when the merge queue lands a `Release-Cut:` commit, it builds that
+# cut commit itself, creates the beta/<major>.<minor> line and publishes
+# beta 1. On a beta/* branch, after a verified backport merges, it publishes
+# the next beta. Packaging, the release suite shards and the merge-shards
+# gate are the nightly's; the archives are the channel-neutral stable ones
+# (gti-v<VERSION>-<platform>.tar.gz, no BUILD_ID) that promotion later
+# republishes unchanged. A push made with GITHUB_TOKEN (this workflow's own
+# branch and tag pushes) triggers nothing; merge-queue merges into main and
+# pull-request merges into beta/* are ordinary pushes and do. The daily
+# schedule is a fallback for a missed push event.
+on:
+  push:
+    branches:
+      - main
+      - "beta/**"
+  schedule:
+    - cron: "30 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One selection per branch at a time; a newer push supersedes a pending one.
+concurrency:
+  group: gti-beta-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  select:
+    name: Select the beta source
+    if: github.repository == 'lang-gti-official/gti'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      build: ${{ steps.select.outputs.build }}
+      sha: ${{ steps.select.outputs.sha }}
+      version: ${{ steps.select.outputs.version }}
+      tag: ${{ steps.select.outputs.tag }}
+      number: ${{ steps.select.outputs.number }}
+      branch: ${{ steps.select.outputs.branch }}
+      create_branch: ${{ steps.select.outputs.create_branch }}
+      base: ${{ steps.select.outputs.base }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify release orchestration before compiling
+        run: python3 tests/release_train_test.py
+      - name: Select a queue-verified release cut or a verified backport
+        id: select
+        env:
+          GTI_GITHUB_TOKEN: ${{ github.token }}
+          GTI_REPOSITORY: ${{ github.repository }}
+          GTI_REF: ${{ github.ref }}
+        run: >-
+          python3 scripts/release_train.py select-beta
+          --repository "${GTI_REPOSITORY}" --ref "${GTI_REF}"
+          --output "${GITHUB_OUTPUT}"
+
+  package:
+    name: Package ${{ matrix.platform }}
+    needs: select
+    if: needs.select.outputs.build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        # linux-arm64 is not packaged: runtime/src/atomic_lane.h has no
+        # reviewed linux-aarch64 compiler profile. See build-and-driver.md.
+        include:
+          - {os: ubuntu-24.04, platform: linux-x64, host: Linux-X64}
+          - {os: macos-26, platform: darwin-arm64, host: macOS-ARM64}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.select.outputs.sha }}
+          persist-credentials: false
+      - name: Confirm the exact beta source and runner
+        env:
+          GTI_BETA_SHA: ${{ needs.select.outputs.sha }}
+          GTI_BETA_VERSION: ${{ needs.select.outputs.version }}
+          GTI_EXPECTED_HOST: ${{ matrix.host }}
+        run: |
+          if [[ "${RUNNER_OS}-${RUNNER_ARCH}" != "${GTI_EXPECTED_HOST}" ]]; then
+            echo "Runner ${RUNNER_OS}-${RUNNER_ARCH} is not ${GTI_EXPECTED_HOST}" >&2
+            exit 1
+          fi
+          python3 scripts/release_train.py confirm --sha "${GTI_BETA_SHA}" --version "${GTI_BETA_VERSION}"
+      - name: Configure runner resources
+        shell: bash
+        env:
+          GTI_CONFIGURED_JOBS: ${{ vars.GTI_JOBS }}
+          GTI_CONFIGURED_TEST_JOBS: ${{ vars.GTI_TEST_JOBS }}
+          GTI_MEMORY_PER_JOB_MIB: 3072
+          GTI_MEMORY_PER_TEST_MIB: 3072
+        run: bash scripts/configure_ci_resources.sh
+      - name: Install the reviewed compiler, Ninja and LLVM
+        run: bash scripts/configure_ci_toolchain.sh
+      - name: Configure compiler object cache
+        env:
+          GTI_CACHE_DIRECTORY: ${{ runner.temp }}/gti-ccache/release
+        run: bash scripts/configure_ci_cache.sh
+      - name: Restore compiler and LLVM/Clang object cache
+        id: cache
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-${{ needs.select.outputs.sha }}-${{ github.run_id }}
+          restore-keys: |
+            gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-
+            gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-release-
+      - name: Check runner sanitizer execution
+        run: python3 scripts/check_ci_sanitizers.py --cxx "${CXX}" --sanitizer address,undefined
+      - name: Configure release build
+        run: >-
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DGTI_RELEASE_BUILD=ON
+          -DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF
+      - name: Check native driver compilation before LLVM/Clang
+        run: >-
+          cmake --build build --config Release --parallel "${GTI_JOBS}"
+          --target CMakeFiles/gti_driver.dir/src/driver/build.cpp.o
+      - name: Build
+        run: cmake --build build --config Release --parallel "${GTI_JOBS}"
+      - name: Stage toolchain
+        run: |
+          stage="$(mktemp -d "${RUNNER_TEMP}/gti-stage.XXXXXXXX")"
+          printf 'GTI_STAGE_DIRECTORY=%s\n' "${stage}" >> "${GITHUB_ENV}"
+          cmake --install build --config Release --prefix "${stage}" --component gti_toolchain
+      - name: Test installed toolchain
+        run: |
+          export PATH="${GTI_STAGE_DIRECTORY}/bin:${PATH}"
+          source="${GITHUB_WORKSPACE}"
+          cd "${RUNNER_TEMP}"
+          python3 "${source}/tests/lsp_smoke_test.py" gti_lsp
+          python3 "${source}/tests/cli_smoke_test.py" gti
+          python3 "${source}/tests/project_cli_smoke_test.py" gti
+          python3 "${source}/tests/process_resource_policy_test.py" gti --installed
+          python3 "${source}/tests/managed_thread_runtime_test.py" gti
+          python3 "${source}/tests/atomic_runtime_test.py" gti \
+            "${source}/tests/fixtures/atomic_scalar.gti" \
+            "${source}/tests/fixtures/atomic_concurrent.gti" \
+            "${source}/tests/fixtures/atomic_orders.gti" \
+            "${source}/tests/fixtures/atomic_fetch.gti" \
+            "${source}/tests/fixtures/atomic_fetch_overflow.gti"
+          cmake -S "${source}/tests/installed_library_smoke" \
+            -B "${RUNNER_TEMP}/gti-installed-library-smoke" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="${GTI_STAGE_DIRECTORY}"
+          cmake --build "${RUNNER_TEMP}/gti-installed-library-smoke" \
+            --config Release --parallel "${GTI_JOBS}"
+          ctest --test-dir "${RUNNER_TEMP}/gti-installed-library-smoke" \
+            -C Release --parallel "${GTI_TEST_JOBS}" --output-on-failure
+      # The stable archive itself: named for the version, with no channel or
+      # BUILD_ID stamp, so promotion republishes these bytes unchanged.
+      - name: Create the channel-neutral release archive from the validated stage
+        env:
+          GTI_BETA_VERSION: ${{ needs.select.outputs.version }}
+          GTI_PLATFORM: ${{ matrix.platform }}
+        run: >-
+          cmake
+          -DGTI_SOURCE_DIR="${GITHUB_WORKSPACE}"
+          -DGTI_STAGE_DIR="${GTI_STAGE_DIRECTORY}"
+          -DGTI_OUTPUT_DIR="${GITHUB_WORKSPACE}/dist/release"
+          -DGTI_PLATFORM="${GTI_PLATFORM}"
+          -DGTI_CHANNEL=stable
+          -DGTI_EXPECTED_TAG="v${GTI_BETA_VERSION}"
+          -P cmake/PackageRelease.cmake
+      - name: Upload release archive
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gti-release-${{ matrix.platform }}
+          path: dist/release/*
+          if-no-files-found: error
+          retention-days: 7
+      - name: Report compiler cache statistics
+        if: always()
+        run: if command -v ccache >/dev/null 2>&1; then ccache --show-stats; fi
+      - name: Save compiler and LLVM/Clang cache, including partial builds
+        if: always() && steps.cache.outputs.cache-primary-key != '' && steps.cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
+  suite:
+    name: Release suite (${{ matrix.platform }} ${{ matrix.index }}/${{ matrix.shards }})
+    needs: [select, package]
+    if: needs.select.outputs.build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-24.04, platform: linux, shards: 6, index: 0}
+          - {os: ubuntu-24.04, platform: linux, shards: 6, index: 1}
+          - {os: ubuntu-24.04, platform: linux, shards: 6, index: 2}
+          - {os: ubuntu-24.04, platform: linux, shards: 6, index: 3}
+          - {os: ubuntu-24.04, platform: linux, shards: 6, index: 4}
+          - {os: ubuntu-24.04, platform: linux, shards: 6, index: 5}
+          - {os: macos-26, platform: darwin, shards: 5, index: 0}
+          - {os: macos-26, platform: darwin, shards: 5, index: 1}
+          - {os: macos-26, platform: darwin, shards: 5, index: 2}
+          - {os: macos-26, platform: darwin, shards: 5, index: 3}
+          - {os: macos-26, platform: darwin, shards: 5, index: 4}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.select.outputs.sha }}
+          persist-credentials: false
+      - name: Configure runner resources
+        shell: bash
+        env:
+          GTI_CONFIGURED_JOBS: ${{ vars.GTI_JOBS }}
+          GTI_CONFIGURED_TEST_JOBS: ${{ vars.GTI_TEST_JOBS }}
+          GTI_MEMORY_PER_JOB_MIB: 3072
+          GTI_MEMORY_PER_TEST_MIB: 3072
+        run: bash scripts/configure_ci_resources.sh
+      - name: Install the reviewed compiler, Ninja and LLVM
+        run: bash scripts/configure_ci_toolchain.sh
+      - name: Configure compiler object cache
+        env:
+          GTI_CACHE_DIRECTORY: ${{ runner.temp }}/gti-ccache/release
+        run: bash scripts/configure_ci_cache.sh
+      - name: Restore the packaging job's object cache
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-${{ needs.select.outputs.sha }}-${{ github.run_id }}
+          restore-keys: |
+            gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-
+      - name: Configure release build
+        run: >-
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DGTI_RELEASE_BUILD=ON
+          -DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF
+          -DGTI_TEST_TIMEOUT_SCALE=3
+      - name: Run this shard of the complete release suite
+        env:
+          GTI_SHARDS: ${{ matrix.shards }}
+          GTI_SHARD_INDEX: ${{ matrix.index }}
+          GTI_SHARD_PLATFORM: ${{ matrix.platform }}
+        run: >-
+          python3 scripts/validation_checks.py shard --build build
+          --shards "${GTI_SHARDS}" --index "${GTI_SHARD_INDEX}"
+          --jobs "${GTI_TEST_JOBS}"
+          --report "${RUNNER_TEMP}/shard/${GTI_SHARD_PLATFORM}-${GTI_SHARD_INDEX}.json"
+          --log "${RUNNER_TEMP}/shard/${GTI_SHARD_PLATFORM}-${GTI_SHARD_INDEX}.log"
+      - name: Show the shard log on failure
+        if: failure()
+        env:
+          GTI_SHARD_INDEX: ${{ matrix.index }}
+          GTI_SHARD_PLATFORM: ${{ matrix.platform }}
+        run: tail -n 400 "${RUNNER_TEMP}/shard/${GTI_SHARD_PLATFORM}-${GTI_SHARD_INDEX}.log" || true
+      - name: Upload shard evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-shard-${{ matrix.platform }}-${{ matrix.index }}
+          path: |
+            ${{ runner.temp }}/shard/*.json
+            ${{ runner.temp }}/shard/*.xml
+          retention-days: 30
+          if-no-files-found: ignore
+
+  release-gate:
+    name: Release suite gate
+    needs: [select, suite]
+    if: needs.select.outputs.build == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.select.outputs.sha }}
+          persist-credentials: false
+      - name: Collect shard evidence
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-shard-*
+          path: ${{ runner.temp }}/shards
+      - name: Require every release test to have run once per platform
+        env:
+          GTI_BETA_SHA: ${{ needs.select.outputs.sha }}
+        run: >-
+          python3 scripts/validation_checks.py merge-shards
+          --shard-reports "${RUNNER_TEMP}/shards" --platforms darwin,linux
+          --head "${GTI_BETA_SHA}"
+
+  publish:
+    name: Publish the beta prerelease
+    needs: [select, package, release-gate]
+    if: needs.select.outputs.build == 'true'
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: gti-beta-publication
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GTI_BETA_SHA: ${{ needs.select.outputs.sha }}
+      GTI_BETA_VERSION: ${{ needs.select.outputs.version }}
+      GTI_BETA_TAG: ${{ needs.select.outputs.tag }}
+      GTI_BETA_NUMBER: ${{ needs.select.outputs.number }}
+      GTI_BETA_BRANCH: ${{ needs.select.outputs.branch }}
+      GTI_BETA_CREATE_BRANCH: ${{ needs.select.outputs.create_branch }}
+      GTI_BETA_BASE: ${{ needs.select.outputs.base }}
+    steps:
+      - name: Check out the beta commit with its history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.select.outputs.sha }}
+          fetch-depth: 0
+      - name: Download release archives
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: gti-release-*
+          path: dist
+          merge-multiple: true
+      - name: Verify the complete channel-neutral asset set
+        run: python3 scripts/release_train.py verify-assets --directory dist --version "${GTI_BETA_VERSION}"
+      - name: Admit the beta, never moving a tag or branch
+        id: admission
+        run: >-
+          python3 scripts/release_train.py admit-beta --sha "${GTI_BETA_SHA}"
+          --tag "${GTI_BETA_TAG}" --branch "${GTI_BETA_BRANCH}"
+          --create-branch "${GTI_BETA_CREATE_BRANCH}" --output "${GITHUB_OUTPUT}"
+      - name: Attest build provenance
+        if: steps.admission.outputs.publish == 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/gti-v*.tar.gz
+      # A plain push creates the tag; it fails, never overwrites, if the tag exists.
+      - name: Create the beta tag
+        if: steps.admission.outputs.publish == 'true' && steps.admission.outputs.push_tag == 'true'
+        run: git push --porcelain origin "${GTI_BETA_SHA}:refs/tags/${GTI_BETA_TAG}"
+      - name: Publish the beta prerelease and its assets
+        if: steps.admission.outputs.publish == 'true'
+        run: |
+          python3 scripts/release_train.py beta-notes --sha "${GTI_BETA_SHA}" \
+            --version "${GTI_BETA_VERSION}" --number "${GTI_BETA_NUMBER}" \
+            --base "${GTI_BETA_BASE}" --notes "${RUNNER_TEMP}/beta-notes.md"
+          # A draft left by an interrupted run is replaced; a published
+          # release is never edited here (admission skips it).
+          python3 scripts/release_train.py delete-drafts --tag "${GTI_BETA_TAG}"
+          # Assets go onto a draft, which becomes the published (and, with
+          # release immutability, locked) prerelease only once complete.
+          gh release create "${GTI_BETA_TAG}" --repo "${GITHUB_REPOSITORY}" --verify-tag \
+            --draft --prerelease --latest=false \
+            --title "GTI ${GTI_BETA_VERSION} beta ${GTI_BETA_NUMBER}" \
+            --notes-file "${RUNNER_TEMP}/beta-notes.md"
+          gh release upload "${GTI_BETA_TAG}" --repo "${GITHUB_REPOSITORY}" dist/*
+          gh release edit "${GTI_BETA_TAG}" --repo "${GITHUB_REPOSITORY}" --draft=false \
+            --prerelease --latest=false
+      # Last, so a refused branch creation never blocks the published beta;
+      # the step still fails visibly. Backports target this branch.
+      - name: Create the beta line branch
+        if: steps.admission.outputs.push_branch == 'true'
+        run: git push --porcelain origin "${GTI_BETA_SHA}:refs/heads/${GTI_BETA_BRANCH}"

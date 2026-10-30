@@ -7,7 +7,8 @@ name: Nightly toolchain
 # Neovim installer reads (archives, .sha256 sidecars and BUILD_ID). Newer wins:
 # a commit that is no longer main head, or is not newer than the published
 # nightly, never publishes. Stable `v<VERSION>` releases are not published
-# here; they belong to the later beta/stable release train.
+# here: the release train (train.yml, beta.yml) cuts the commit this workflow
+# published into a beta and later promotes that beta's archives.
 on:
   schedule:
     - cron: "0 2 * * *"
