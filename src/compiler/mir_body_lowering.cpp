@@ -6981,7 +6981,8 @@ private:
   }
 
   [[nodiscard]] bool storesCarrierReference(const HirValue &value) const {
-    if (value.intrinsic != IntrinsicKind::None || !value.functionTarget ||
+    if (value.intrinsic != IntrinsicKind::None ||
+        (!value.functionTarget && !value.constructorTarget) ||
         value.info.category != ValueCategory::Value ||
         value.info.type.kind != SemanticType::Class ||
         !value.info.traits.containsBorrowedState ||
