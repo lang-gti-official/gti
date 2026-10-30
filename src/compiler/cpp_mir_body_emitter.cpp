@@ -53268,12 +53268,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           }
           arms.push_back({&block, load, &candidate});
         }
-      if (malformed || arms.size() != 2 ||
-          arms[0].block == arms[1].block ||
+      if (malformed || arms.size() != 2 || arms[0].block == arms[1].block ||
           arms[0].block->terminator.kind != MirTerminatorKind::Goto ||
           arms[1].block->terminator.kind != MirTerminatorKind::Goto ||
-          arms[0].block->terminator.target !=
-              arms[1].block->terminator.target)
+          arms[0].block->terminator.target != arms[1].block->terminator.target)
         continue;
       const MirValue *joined = selected.producer->result
                                    ? body.findValue(*selected.producer->result)
