@@ -2901,7 +2901,11 @@ participates.
 Ordinary static members of generic classes remain rejected by `GTI-S2039`,
 apart from exact registered collection-protocol hooks. Implemented qualified
 generic type-member paths do not establish a general static callable/storage
-contract. The concurrent-policy path suppresses a redundant `GTI-S2060` only
+contract. A source-qualified call to a hook through a concrete generic class
+is still an ordinary static member path: its `GTI-S2039` is reported at the
+member before the owner instance is analyzed, so an unrelated error inside a
+library instance cannot mask the path rule. Concept-protocol invocation uses
+its separately resolved operation target. The concurrent-policy path suppresses a redundant `GTI-S2060` only
 under that existing rejection. Lifting the generic-static restriction must remove the
 suppression and apply the same immutable/share-capable rule to each concrete
 generic static identity.
