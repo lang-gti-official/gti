@@ -197,6 +197,11 @@ the rollup App's token. No other workflow uses a secret.
 Set positive `GTI_JOBS` and `GTI_TEST_JOBS` repository variables to override
 the CPU/memory-based budgets. Compiler-object caches are separate for native
 and sanitizer profiles; cache errors never skip builds or validation.
+GitHub shares a cache across branches only when `main` saved it, so
+`workflows/cache.yml` rebuilds each CI compile configuration after every merge
+to `main` (and weekly) and saves its ccache there; pull requests and
+merge-queue runs restore it instead of compiling cold. Its configure commands
+must match `ci.yml` exactly, which `repository_hosting` checks.
 
 Before its build, the sanitizer job runs `scripts/check_ci_sanitizers.py`: a
 small, race-free ASan/UBSan probe with no GTI code, so a runner that cannot

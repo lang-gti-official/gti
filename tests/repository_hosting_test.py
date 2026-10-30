@@ -27,6 +27,7 @@ ACTION_USE = re.compile(r"^\s*(?:-\s+)?uses:\s*(\S+)@([^\s#]+)", re.MULTILINE)
 CI = ".github/workflows/ci.yml"
 NIGHTLY = ".github/workflows/nightly.yml"
 ROLLUP = ".github/workflows/rollup.yml"
+CACHE = ".github/workflows/cache.yml"
 TRAIN = ".github/workflows/train.yml"
 BETA = ".github/workflows/beta.yml"
 BACKPORT = ".github/workflows/backport.yml"
@@ -62,9 +63,9 @@ def main():
     workflows = sorted(p for p in tracked if p.startswith((".github/workflows/", ".gitea/workflows/")))
     # CI, nightly toolchain releases and the rollup bot run on GitHub. The frozen
     # Gitea release workflow stays as the record of the contract it replaces.
-    expect(set(workflows) == {CI, NIGHTLY, RELEASE, ROLLUP, *RELEASE_TRAIN},
+    expect(set(workflows) == {CI, NIGHTLY, RELEASE, ROLLUP, CACHE, *RELEASE_TRAIN},
            f"unexpected live workflows: {workflows}")
-    for relative in (CI, NIGHTLY, RELEASE, ROLLUP, *RELEASE_TRAIN, ".github/README.md", ".gitea/README.md",
+    for relative in (CI, NIGHTLY, RELEASE, ROLLUP, CACHE, *RELEASE_TRAIN, ".github/README.md", ".gitea/README.md",
                      ".gitea/ISSUE_TEMPLATE/bug_report.md",
                      "docs/plans/archive/github-actions-20261024/README.md"):
         text(root, relative)
@@ -149,10 +150,18 @@ def main():
            and "Manual macOS release publication" not in policy,
            "GitHub nightly publication, the release train and the linux-arm64 gap must be explicit")
     check_release_train(root, ci)
-    beta, backport = text(root, BETA), text(root, BACKPORT)
+    beta, backport, cache = text(root, BETA), text(root, BACKPORT), text(root, CACHE)
+    # The main-branch cache warm-up only helps if it compiles exactly what CI
+    # compiles: every configure command it runs must appear verbatim in ci.yml.
+    warmups = re.findall(r"\n        run: >-\n((?:          [^\n]*\n)+)", cache)
+    expect(len(warmups) == 2 and all(block in ci for block in warmups)
+           and "push:\n    branches: [main]" in cache and "secrets." not in cache
+           and "pull_request" not in cache,
+           "the compiler-cache warm-up must run on main with ci.yml's exact configure commands")
     for workflow, contents in ((CI, ci), (NIGHTLY, nightly), (RELEASE, release), (BETA, beta),
-                               (BACKPORT, backport)):
-        parallel = '--jobs "${GTI_TEST_JOBS}"' if workflow == BACKPORT else '--parallel "${GTI_TEST_JOBS}"'
+                               (BACKPORT, backport), (CACHE, cache)):
+        parallel = '--jobs "${GTI_TEST_JOBS}"' if workflow == BACKPORT else (
+            '--parallel "${GTI_JOBS}"' if workflow == CACHE else '--parallel "${GTI_TEST_JOBS}"')
         expect("bash scripts/configure_ci_resources.sh" in contents and "vars.GTI_TEST_JOBS" in contents
                and parallel in contents and "_NPROCESSORS_ONLN" not in contents,
                f"resource budgets lost: {workflow}")
