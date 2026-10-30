@@ -223,7 +223,7 @@ is a teaching helper, not a production server.
 | `module-only/main.gti` | relative module imports, explicit exports, and a private implementation helper |
 | `module-system/` | hierarchical package modules, registered implementation bodies, isolated private names, and inferred private return types |
 | `011-overloads.gti` | exact overloads and explicit numeric conversions |
-| `012-fixed-arrays.gti` | bounded arrays, signed literals, passive records/unions, checked raw record array fields and receiver element-field projections |
+| `012-fixed-arrays.gti` | bounded arrays, signed literals, passive records/unions, checked raw record array fields, receiver element-field projections, and indexing fresh call and move results |
 | `013-ownership.gti` | non-null borrows, unique allocation, moves, and cleanup |
 | `014-operators.gti` | restricted member operators; self-read dereference stores, named mutable-reference assignment, nested subscripts and once-formed compound targets |
 | `015-variadic-generics.gti` | confined type packs, explicit forwarding, and exact passive fixed-array arguments |

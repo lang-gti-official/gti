@@ -4782,6 +4782,28 @@ private:
                                 MirProjectionKind::RawIndex, index);
       } else if (value->operands.size() >= 2) {
         place = clonePlace(placeForValue(value->operands[0]), *value);
+        // A call, move, or joined expression can produce an array value
+        // without a source place. Its element is selected from the
+        // materialized value, after emitPlaceDependencies() has evaluated
+        // that producer and before the index is used.
+        if (place == 0) {
+          const HirValue *array = findValue(value->operands[0]);
+          if (array != nullptr &&
+              array->info.category == ValueCategory::Value &&
+              array->info.type.kind == SemanticType::Array) {
+            const auto copy = assignmentSnapshots.find(array->id);
+            const MirPlaceId arrayRoot =
+                appendPlace({.root = MirPlaceRootKind::Value,
+                             .value = copy == assignmentSnapshots.end()
+                                          ? mirValueFor(*array)
+                                          : copy->second,
+                             .type = array->info.type,
+                             .access = array->info.access,
+                             .traits = array->info.traits,
+                             .sourceValue = array->id});
+            place = clonePlace(arrayRoot, *value);
+          }
+        }
         if (place != 0) {
           output.places[place - 1].projections.push_back(
               {.kind = MirProjectionKind::Index,

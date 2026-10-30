@@ -2567,6 +2567,11 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/passive_fixed_array_runtime_test.py"
             "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
   set_tests_properties(passive_fixed_array_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME fresh_array_index_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/fresh_array_index_runtime_test.py"
+            "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
+  set_tests_properties(fresh_array_index_runtime PROPERTIES TIMEOUT 300)
   add_test(NAME coverage_native_fixture_policy
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/coverage/native_fixture_policy_test.py")
