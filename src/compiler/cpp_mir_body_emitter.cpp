@@ -53209,6 +53209,94 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if (scalarInputs)
         conditionalArguments.push_back(std::move(conditional));
     }
+    // A later read-borrow argument may join copies of class bindings into a
+    // distinct full-expression slot while an earlier argument borrows its own
+    // snapshot. Admit only the exact two-arm load/initialize diamond for the
+    // same call, with no operation that can touch the earlier borrowed slot.
+    std::unordered_set<MirInstructionId> conditionalBorrowedOperations;
+    for (std::size_t index = 0; index < consumer->operands.size(); ++index) {
+      const DirectTemporaryBorrow selected =
+          directTemporaryArgument(body, *consumer, index);
+      if (!selected || selected.slot == place || !selected.stage->loan ||
+          selected.slot->root != MirPlaceRootKind::Temporary ||
+          selected.producer->kind != MirInstructionKind::Move ||
+          sameMirPlaceRoot(*selected.slot, *place))
+        continue;
+      struct CopyArm {
+        const MirBlock *block;
+        const MirInstruction *load;
+        const MirInstruction *initialize;
+      };
+      std::vector<CopyArm> arms;
+      bool malformed = false;
+      for (const MirBlock &block : body.blocks)
+        for (const MirInstruction &candidate : block.instructions) {
+          if (candidate.kind != MirInstructionKind::Initialize ||
+              candidate.destination != selected.slot->id)
+            continue;
+          const MirInstruction *load =
+              candidate.operands.size() == 1
+                  ? definitionFor(body, candidate.operands.front())
+                  : nullptr;
+          const MirPlace *source =
+              load != nullptr && load->operands.size() == 1
+                  ? body.findPlace(load->operands.front().place)
+                  : nullptr;
+          if (load == nullptr || source == nullptr ||
+              load->kind != MirInstructionKind::Load ||
+              load->operands.front().kind != MirOperandKind::Copy ||
+              source->root != MirPlaceRootKind::Binding ||
+              !source->projections.empty() ||
+              sameMirPlaceRoot(*source, *place) ||
+              load->info.type != selected.slot->type ||
+              !load->definedFailure.empty() || !load->lifecycle.empty() ||
+              load->loan || load->rawMemoryAccess ||
+              load->unsafeOperation != UnsafeOperationKind::None ||
+              candidate.operands.front().kind != MirOperandKind::Value ||
+              candidate.hirValue != selected.slot->sourceValue ||
+              candidate.info.type != selected.slot->type ||
+              !candidate.definedFailure.empty() || candidate.loan ||
+              candidate.rawMemoryAccess ||
+              candidate.unsafeOperation != UnsafeOperationKind::None ||
+              candidate.lifecycle.size() != 1 ||
+              candidate.lifecycle.front().kind !=
+                  MirLifecycleEventKind::Initialize ||
+              candidate.lifecycle.front().target != selected.drop->id ||
+              candidate.lifecycle.front().source != 0) {
+            malformed = true;
+            break;
+          }
+          arms.push_back({&block, load, &candidate});
+        }
+      if (malformed || arms.size() != 2 ||
+          arms[0].block == arms[1].block ||
+          arms[0].block->terminator.kind != MirTerminatorKind::Goto ||
+          arms[1].block->terminator.kind != MirTerminatorKind::Goto ||
+          arms[0].block->terminator.target !=
+              arms[1].block->terminator.target)
+        continue;
+      const MirValue *joined = selected.producer->result
+                                   ? body.findValue(*selected.producer->result)
+                                   : nullptr;
+      if (joined == nullptr ||
+          arms[0].block->terminator.target != joined->definitionBlock ||
+          std::count_if(body.blocks.begin(), body.blocks.end(),
+                        [&](const MirBlock &candidate) {
+                          const MirTerminator &edge = candidate.terminator;
+                          return edge.kind == MirTerminatorKind::Branch &&
+                                 ((edge.target == arms[0].block->id &&
+                                   edge.elseTarget == arms[1].block->id) ||
+                                  (edge.target == arms[1].block->id &&
+                                   edge.elseTarget == arms[0].block->id));
+                        }) != 1)
+        continue;
+      conditionalBorrowedOperations.insert(selected.producer->id);
+      conditionalBorrowedOperations.insert(selected.stage->id);
+      for (const CopyArm &arm : arms) {
+        conditionalBorrowedOperations.insert(arm.load->id);
+        conditionalBorrowedOperations.insert(arm.initialize->id);
+      }
+    }
     // Scalars and text views are plain values: reading, staging, computing
     // or publishing one into an expression temporary cannot carry, replace
     // or end the borrowed storage.
@@ -53615,6 +53703,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           return true;
         }
         if (ownedExtractionInputs.contains(instruction.id))
+          continue;
+        if (conditionalBorrowedOperations.contains(instruction.id))
           continue;
         // Another argument may stage a stable borrow before the conditional
         // expression. It publishes no runtime operation and cannot invalidate

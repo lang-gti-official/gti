@@ -58,13 +58,16 @@ int main() {
   // assignment does not change the first temporary's snapshot.
   int snapshots = inspect_pair(destination = Report(2),
                                destination = Report(3));
+  // A later conditional copies its selected binding into a second slot.
+  int joined_after_snapshot =
+      inspect_pair(destination = Report(4), true ? replacement : destination);
 
   // The mutable override runs on the fresh receiver.
   int recorded = Doubling(1).record(3);
 
   return updated == 7 and observed == 5 and recorded == 7 and
                  assigned == 8 and selected == 8 and snapshots == 23 and
-                 destination.code() == 3
+                 joined_after_snapshot == 48 and destination.code() == 4
              ? 0
              : 1;
 }

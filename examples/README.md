@@ -581,7 +581,8 @@ virtual member or interface implementation whose override is still selected
 dynamically. An exact read-only reference parameter can observe a fresh
 self-contained constructor, call, built-in assignment or conditional result
 only for the duration of one call. Two assignment arguments retain distinct
-value snapshots at their written positions; none creates a storable reference.
+value snapshots at their written positions, including when a later argument
+selects a class value through a conditional; none creates a storable reference.
 
 `072-filesystem-paths.gti` performs pathname manipulation only. Assigning or
 observing a `std::filesystem::path` does not access the host filesystem, and

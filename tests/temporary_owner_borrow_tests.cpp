@@ -308,7 +308,8 @@ int main() {
   int32_t assigned = read(target = next);
   int32_t joined = read(true ? next : last);
   int32_t ordered = pair(target = next, target = last);
-  return assigned + joined + ordered + target.digits() - 3580;
+  int32_t paired_join = pair(target = next, true ? last : target);
+  return assigned + joined + ordered + paired_join + target.digits() - 7014;
 }
 )");
   if (!valid.canGenerateCode())

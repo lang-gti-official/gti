@@ -1451,7 +1451,9 @@ their own hidden full-expression slots as well. A later assignment argument
 may update the original binding while an earlier argument's read loan remains
 live: the earlier loan names its distinct snapshot slot. The C++ emitter
 replays the later store and snapshot at their MIR positions only after proving
-their destinations are disjoint from every staged borrowed slot. A
+their destinations are disjoint from every staged borrowed slot. A later
+read-borrowed conditional argument may join two passive binding copies into
+its own temporary slot; the exact two-arm join preserves the earlier slot. A
 payload-enum temporary in such a slot, cleanup-free or owning, is constructed
 there as well. Its `PayloadConstruct`, retargeted to the slot by the merge,
 constructs the alternative in place. An owning enum returned by a call
