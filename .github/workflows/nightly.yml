@@ -5,8 +5,8 @@ name: Nightly toolchain
 # CTest suite on that release configuration plus the installed-toolchain
 # smoke, and republishes the one rolling `nightly` GitHub prerelease that the
 # Neovim installer reads (archives, .sha256 sidecars and BUILD_ID). Newer wins:
-# a commit that is no longer main head, or is not newer than the published
-# nightly, never publishes. Stable `v<VERSION>` releases are not published
+# a commit that is no longer main head never publishes. Scheduled selection
+# skips unchanged main; a retry may repair publication at the same commit. Stable `v<VERSION>` releases are not published
 # here: the release train (train.yml, beta.yml) cuts the commit this workflow
 # published into a beta and later promotes that beta's archives.
 on:
@@ -354,7 +354,7 @@ jobs:
             printf 'Unexpected nightly asset set:\n%s\n' "${actual}" >&2
             exit 1
           fi
-      - name: Admit only current main, newer than the published nightly
+      - name: Admit current main, including a retry of interrupted publication
         id: admission
         run: >-
           python3 scripts/resolve_release_source.py admit-nightly

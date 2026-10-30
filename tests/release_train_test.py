@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import contextlib
 from datetime import datetime, timedelta, timezone
+from functools import partial
 import hashlib
 import io
 import json
@@ -198,32 +199,60 @@ def status_contract(base):
         assert train.read_status()[1] == tip, "a recorded change does not commit again"
 
 
+def nightly_record(sha):
+    names = ["BUILD_ID"]
+    for platform in train.PLATFORMS:
+        archive = f"gti-nightly-{platform}.tar.gz"
+        names += [archive, archive + ".sha256"]
+    assets = [{"name": name, "state": "uploaded", "digest": "sha256:" + "0" * 64} for name in names]
+    assets[0]["digest"] = "sha256:" + hashlib.sha256((sha + "\n").encode()).hexdigest()
+    return {"tag_name": "nightly", "draft": False, "prerelease": True, "assets": assets}
+
+
+def nightly_request(sha):
+    record = nightly_record(sha)
+    def request(path):
+        assert path.endswith("/releases/tags/nightly"), path
+        return record
+    return request
+
+
 def cut_contract(base):
     repo = Repository(base)
     nightly = base_history(repo)
     head = repo.git("rev-parse", "HEAD")
     verified = evidence_for({nightly})
+    publication = nightly_record(nightly)
+    select = partial(train.select_cut, request=lambda path: publication)
     with inside(repo.work):
-        selected = quiet(train.select_cut, train.REPOSITORY, "refs/heads/main", 24, NOW, verified)
+        selected = quiet(select, train.REPOSITORY, "refs/heads/main", 24, NOW, verified)
         assert selected == {"cut": "true", "sha": nightly, "version": "0.10.3"}
-        assert quiet(train.select_cut, train.REPOSITORY, "refs/heads/main", 48, NOW,
+        # A tag alone is not publication: uploads may have stopped before BUILD_ID.
+        publication["assets"][0]["digest"] = "sha256:" + "0" * 64
+        assert quiet(select, train.REPOSITORY, "refs/heads/main", 24, NOW, verified)["cut"] == "false"
+        publication = nightly_record(nightly)
+        missing = publication["assets"].pop()
+        assert quiet(select, train.REPOSITORY, "refs/heads/main", 24, NOW, verified)["cut"] == "false"
+        publication["assets"].append(missing)
+        assert quiet(select, train.REPOSITORY, "refs/heads/main", 24, NOW, verified)["cut"] == "true"
+        assert quiet(select, train.REPOSITORY, "refs/heads/main", 48, NOW,
                      verified)["cut"] == "false", "younger than the requested age"
-        refused(train.select_cut, train.REPOSITORY, "refs/heads/main", 24, NOW, evidence_for(set()),
+        refused(select, train.REPOSITORY, "refs/heads/main", 24, NOW, evidence_for(set()),
                 contains="merge-queue")
-        refused(train.select_cut, train.REPOSITORY, "refs/heads/other", 24, NOW, verified)
+        refused(select, train.REPOSITORY, "refs/heads/other", 24, NOW, verified)
         repo.push(f"{head}:refs/heads/main")
         # The nightly tag must name main history.
         repo.checkout(nightly)
         stray = repo.commit({"src/c.txt": "x\n"}, "Stray")
         repo.push(f"{stray}:refs/tags/nightly")
         repo.git("checkout", "--quiet", "main")
-        refused(train.select_cut, train.REPOSITORY, "refs/heads/main", 24, NOW,
+        refused(select, train.REPOSITORY, "refs/heads/main", 24, NOW,
                 evidence_for({nightly, stray}), contains="not a commit on main")
         repo.push(f"{nightly}:refs/tags/nightly")
         # A cut landing after the nightly ends this cycle.
         bumped = repo.commit({"VERSION": "0.11.0\n"}, "Release-Cut elsewhere", NOW - timedelta(hours=1))
         repo.push("main")
-        assert quiet(train.select_cut, train.REPOSITORY, "refs/heads/main", 24, NOW,
+        assert quiet(select, train.REPOSITORY, "refs/heads/main", 24, NOW,
                      verified)["cut"] == "false"
         repo.git("reset", "--quiet", "--hard", head)
         repo.push("main")
@@ -296,7 +325,7 @@ def delivery_contract(repo, nightly, base, verified):
     delivery = LocalDelivery(api, runs([]), "token", sleep=lambda _: None,
                              monotonic=lambda: next(clock), wait_seconds=600, poll_seconds=60)
     result = quiet(train.run_cut, train.REPOSITORY, "schedule", "refs/heads/main", "", "", base / "deliver",
-                   NOW, verified, delivery)
+                   NOW, verified, delivery, nightly_request(nightly))
     assert result["cut"] == "true" and result["pr"] == "41" and result["queue"] == "enqueued", result
     posted = [call for call in api.calls if call[:2] == ("POST", "/pulls")][0][2]
     assert posted["head"] == "release-cut/0.11.0" and posted["base"] == "main"
@@ -316,12 +345,12 @@ def delivery_contract(repo, nightly, base, verified):
     api = FakeAPI(open_prs=[pending], gate=green)
     delivery = LocalDelivery(api, runs([]), "token", sleep=lambda _: None, monotonic=lambda: 0)
     result = quiet(train.run_cut, train.REPOSITORY, "schedule", "refs/heads/main", "", "", base / "resume",
-                   NOW, verified, delivery)
+                   NOW, verified, delivery, nightly_request(nightly))
     assert result["cut"] == "false" and not (base / "resume").exists()
     assert ("GRAPHQL", "enqueuePullRequest", {"id": "PR_40", "head": "a" * 40}) in api.calls
     api = FakeAPI(open_prs=[pending, dict(pending, number=39)], gate=green)
     refused(train.run_cut, train.REPOSITORY, "schedule", "refs/heads/main", "", "", base / "two", NOW,
-            verified, LocalDelivery(api, runs([]), "token"), contains="more than one")
+            verified, LocalDelivery(api, runs([]), "token"), nightly_request(nightly), contains="more than one")
     failed = [{"head_branch": "gh-readonly-queue/main/pr-40-" + "b" * 40, "status": "completed",
                "conclusion": "failure"}]
     refused(LocalDelivery(FakeAPI(gate=green), runs(failed), "token").enqueue, pending,

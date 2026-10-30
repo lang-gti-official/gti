@@ -399,11 +399,11 @@ def source_contract(root):
         assert query(advanced, mode="admit-nightly") == {"publish": "false", "lease": ""}
         assert run(["git", "show-ref", "--tags"], work) == tags
 
-        # Newer wins: the published nightly blocks itself and anything older, and
-        # admission hands back the exact tag value as the lease for the move.
+        # A current-main retry may finish uploads after the tag already moved.
+        # Older sources still lose; admission preserves the exact tag lease.
         run(["git", "checkout", "--quiet", "main"], work)
         run(["git", "push", "--quiet", "origin", f"{latest}:refs/tags/nightly"], work)
-        assert query(latest, mode="admit-nightly") == {"publish": "false", "lease": ""}
+        assert query(latest, mode="admit-nightly") == {"publish": "true", "lease": latest}
         newest = commit("1.2.0", "newest")
         run(["git", "push", "--quiet", "origin", "main"], work)
         assert query(newest, mode="admit-nightly") == {"publish": "true", "lease": latest}

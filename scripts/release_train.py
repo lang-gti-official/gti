@@ -402,8 +402,8 @@ def train_plan(event: str, ref: str, stage: str, now: datetime) -> dict[str, str
 
 
 def select_cut(repository: str, ref: str, min_age: int, now: datetime,
-               evidence: Evidence) -> dict[str, str]:
-    """The published nightly's commit, when it is queue-verified and old enough to cut."""
+               evidence: Evidence, request: Request) -> dict[str, str]:
+    """The completely published nightly, queue-verified and old enough to cut."""
     if ref != "refs/heads/main":
         raise TrainError("a release cut runs only from main's own definition")
     head = source.remote_main()
@@ -416,6 +416,8 @@ def select_cut(repository: str, ref: str, min_age: int, now: datetime,
             not source.is_ancestor(nightly, head):
         raise TrainError(f"published nightly {nightly} is not a commit on main")
     run = evidence(repository, nightly)
+    if not nightly_publication_complete(repository, nightly, request):
+        return skip(f"nightly publication at {nightly} is incomplete; finish or retry its publish job")
     age = now - committed_at(nightly)
     if age < timedelta(hours=min_age):
         return skip(f"published nightly {nightly} has been on main for "
@@ -568,7 +570,8 @@ class Delivery:
 
 
 def run_cut(repository: str, event: str, ref: str, min_age: str, title: str, worktree: Path,
-            now: datetime, evidence: Evidence, delivery: Delivery | None) -> dict[str, str]:
+            now: datetime, evidence: Evidence, delivery: Delivery | None,
+            request: Request) -> dict[str, str]:
     hours, _ = hours_input(min_age, event, NIGHTLY_AGE_HOURS, "the nightly age")
     title = title_input(title, now)
     if delivery:
@@ -579,7 +582,7 @@ def run_cut(repository: str, event: str, ref: str, min_age: str, title: str, wor
             state = delivery.enqueue(pending[0])
             return skip(f"release cut PR #{pending[0]['number']} is open ({state}); "
                         "no new cut until it merges or is closed")
-    selected = select_cut(repository, ref, hours, now, evidence)
+    selected = select_cut(repository, ref, hours, now, evidence, request)
     if selected["cut"] != "true":
         return selected
     cut = prepare_cut(selected["sha"], title, worktree)
@@ -971,6 +974,33 @@ def release_record(repository: str, tag: str, request: Request) -> dict[str, Any
     return record
 
 
+def nightly_publication_complete(repository: str, sha: str, request: Request) -> bool:
+    """The final BUILD_ID asset, not the moving tag, proves upload completion."""
+    if SHA.fullmatch(sha) is None:
+        raise TrainError("nightly publication must name an exact commit SHA")
+    record = release_record(repository, "nightly", request)
+    if not record or record.get("draft") or not record.get("prerelease"):
+        return False
+    assets = record.get("assets")
+    if not isinstance(assets, list) or not all(isinstance(asset, dict) for asset in assets):
+        return False
+    names = [asset.get("name") for asset in assets]
+    expected = {"BUILD_ID"}
+    for platform in PLATFORMS:
+        archive = f"gti-nightly-{platform}.tar.gz"
+        expected.update((archive, archive + ".sha256"))
+    if len(names) != len(expected) or set(names) != expected:
+        return False
+    if any(asset.get("state") != "uploaded" or
+           re.fullmatch(r"sha256:[0-9a-f]{64}", str(asset.get("digest"))) is None
+           for asset in assets):
+        return False
+    marker = next(asset for asset in assets if asset["name"] == "BUILD_ID")
+    # GitHub computes each asset digest. Publication uploads BUILD_ID last,
+    # only after uploading both verified archives and their checksum sidecars.
+    return marker["digest"] == "sha256:" + hashlib.sha256((sha + "\n").encode()).hexdigest()
+
+
 def candidate(repository: str, version: str, tags: dict[str, str], status: dict[str, Any],
               soak: int, now: datetime, request: Request) -> tuple[dict[str, str] | None, str]:
     """The newest beta of version if it may be promoted, else (None, why not)."""
@@ -1344,7 +1374,7 @@ def main(argv: list[str] | None = None) -> int:
                 delivery = Delivery(agent_workflow.GitHub(token=token), reader(), token)
             values = run_cut(arguments.repository, arguments.event, arguments.ref,
                              arguments.min_age_hours, arguments.title, Path(arguments.worktree),
-                             now_utc(), evidence_reader(), delivery)
+                             now_utc(), evidence_reader(), delivery, reader())
         elif name == "select-beta":
             check_repository(arguments.repository)
             values = select_beta(arguments.repository, arguments.ref, evidence_reader())

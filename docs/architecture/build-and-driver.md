@@ -321,9 +321,11 @@ this workflow published.
    cancelled in progress) holds the workflow's only write token. It verifies
    every archive's checksum and stamped `BUILD_ID`, writes the `BUILD_ID`
    asset, and admits the build (`resolve_release_source.py admit-nightly`) only
-   if the commit is still main head and strictly newer than the commit the
-   `nightly` tag names; an equal or older commit is a skip, a published commit
-   outside main's history an error. It then attests build provenance, moves
+   if the commit is still main head and is newer than or equal to the commit
+   the `nightly` tag names. Equality permits a failed publish job or an explicit
+   dispatch to finish interrupted uploads after the tag moved; scheduled
+   selection still skips unchanged main. An older commit is skipped, and a
+   nightly tag outside main's history is an error. It then attests build provenance, moves
    the `nightly` tag with `git push --force-with-lease=refs/tags/nightly:<value
    admission read>` (an empty lease requires the tag not to exist), creates or
    edits the `nightly` prerelease, uploads archives and checksums before
@@ -363,7 +365,9 @@ overwrites; no tag or branch is ever forced, moved or deleted.
    without month-end drift; a dispatch always runs. The source is the commit
    the `nightly` tag names. It must be on main, carry the same merge-queue
    evidence nightly selection requires (`resolve_release_source.py
-   queue_evidence`), and have been on main at least 24 hours, measured from its
+   queue_evidence`), have the complete uploaded nightly asset set with GitHub's
+   digest of the final `BUILD_ID` matching that commit, and have been on main
+   at least 24 hours, measured from its
    committer time, which the queue sets when it lands the commit. A dispatch's
    `min_age_hours` may lower the age for the owner's bootstrap; nothing lowers
    the queue evidence. The train skips with a notice when a cut already landed

@@ -49,8 +49,9 @@ commit whose merge-queue `merge_group` run passed `CI gate`, builds a
 and `darwin-arm64` (`macos-26`), runs the installed-toolchain smoke and the
 complete suite on that release configuration in shards, and republishes the
 rolling `nightly` prerelease: one archive and `.sha256` per platform plus
-`BUILD_ID`. Newer wins: a commit that is no longer main head, or not newer than
-the published nightly, does not publish. The publish job alone holds
+`BUILD_ID`. A commit that is no longer main head does not publish. Scheduled
+runs skip unchanged main; rerunning a failed publish job or dispatching the
+same current-main commit can finish an interrupted upload. The publish job alone holds
 `contents: write` (plus provenance attestation scopes), is serialized, and moves
 the `nightly` tag with an explicit lease. `linux-arm64` is not packaged until a
 runtime-safety review admits a linux-aarch64 compiler profile in

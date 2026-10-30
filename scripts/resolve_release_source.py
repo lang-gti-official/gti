@@ -133,7 +133,10 @@ def admit_nightly(sha: str) -> dict[str, str]:
         return {"publish": "false", "lease": ""}
     lease, published = published_nightly()
     relation = nightly_relation(sha, published)
-    admitted = relation in ("first", "newer")
+    # The tag moves before uploads finish. A failed publication must be
+    # resumable at the same current-main commit; scheduled selection still
+    # skips unchanged main, while a failed-job retry or dispatch can repair it.
+    admitted = relation in ("first", "newer", "same")
     print(f"Nightly source {sha}: current main; published nightly "
           f"{published or 'none'} ({relation})")
     return {"publish": str(admitted).lower(), "lease": lease if admitted else ""}
