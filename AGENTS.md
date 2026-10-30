@@ -304,16 +304,16 @@ publication contract in `docs/architecture/build-and-driver.md`.
 - **Stable** publishes `v<VERSION>` when `VERSION` changes. It is the channel
   someone pins to.
 
-Advance `VERSION` only when a user of the toolchain would observe the change:
-language surface, CLI or driver behavior, diagnostics they would see, packaged
-contents, or a fix to any of those. Bump the patch component for a fix and the
-minor component for new or changed surface.
-
-Do **not** advance `VERSION` for work that is invisible from outside the
-toolchain, including internal refactors, moving authority between compiler
-phases, added tests, documentation, or plan updates. Nightly already delivers
-that work. A commit that changes no user-visible behavior should leave
-`VERSION` alone, and most commits during an internal campaign will.
+Pull requests never edit `VERSION` or `CHANGELOG.md`. A change a toolchain user
+would observe (language surface, CLI or driver behavior, diagnostics they would
+see, packaged contents, or a fix to any of those) adds one
+[changelog fragment](changes/README.md), `changes/<name>.<kind>.md`, with kind
+`breaking`, `feature` or `fix`. Invisible work (internal refactors, moving
+authority between compiler phases, tests, documentation, plans) needs no
+fragment, or an `internal` one, or the `Release-Impact: internal` trailers.
+A release cut (`scripts/cut_release.py`) assembles pending fragments into one
+CHANGELOG section and the next `VERSION`; only its `Release-Cut:` commit
+changes `VERSION`, so concurrent pull requests never collide on a version.
 
 ## Outcome Priority
 

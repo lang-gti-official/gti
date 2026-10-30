@@ -324,12 +324,19 @@ not become AppleDouble companion files after extraction. This preserves the
 installed runtime-header tree's content identity for relocated native cache
 entries; the cache still hashes every real file in that tree.
 
-Stable versions describe user-visible toolchain behavior. Internal compiler or
-runtime work, tests, and documentation alone retain `VERSION` and reach users
-through nightly. `scripts/check_release_version.py` conservatively identifies
-potentially shipped files, including deletions and moves. An unchanged version
-requires each affected commit delivered by the checked range to carry these
-Git trailers. A merge commit is judged only by what differs from the
+Stable versions describe user-visible toolchain behavior. Pull requests never
+edit `VERSION` or `CHANGELOG.md`; a shipped change adds a
+[changelog fragment](../../changes/README.md) `changes/<name>.<kind>.md`
+(`breaking`, `feature`, `fix` or `internal`), and a release cut
+(`scripts/cut_release.py`) assembles the pending fragments into one CHANGELOG
+section and the next version. Only a commit carrying `Release-Cut: <version>`,
+matching the `VERSION` it writes, may change `VERSION`; concurrent pull requests
+therefore never contend for a version number. Internal compiler or runtime
+work, tests, and documentation alone retain `VERSION` and reach users through
+nightly. `scripts/check_release_version.py` conservatively identifies
+potentially shipped files, including deletions and moves. A range with shipped
+changes passes when it adds a valid fragment or a release cut; otherwise each
+affected commit delivered by the checked range must carry these Git trailers. A merge commit is judged only by what differs from the
 automatic merge of its parents (`git merge-tree`), which is its conflict
 resolution: a hosted pull-request merge or an upstream reconciliation merge
 introduces nothing, even when both sides touched the same files, carries no
@@ -343,8 +350,9 @@ Release-Reason: Explain why no user-visible behavior or public API changes.
 ```
 
 This is an explicit author/reviewer impact assertion, not automated proof that
-a change is invisible. User-visible fixes still require a patch increment;
-new or changed surface requires a minor increment. Missing, duplicate,
+a change is invisible. User-visible fixes still need a `fix` fragment and new
+or changed surface a `feature` or `breaking` one; the cut turns them into a
+patch or minor increment. Missing, duplicate,
 malformed, or reason-free declarations fail the check, and a later internal
 commit cannot excuse earlier unclassified changes. Versions may not decrease;
 an internal declaration cannot authorize version churn. Documentation-only

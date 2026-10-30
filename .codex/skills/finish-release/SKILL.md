@@ -18,16 +18,19 @@ policy below without bypassing that lifecycle.
   to their task branch and draft PR under agent-workflow.
 - Commit completed in-scope repository changes after local validation.
 - Degraded-mode batch admission is a handoff, not a release. Component fixes
-  retain their original PRs and version decisions; the integrator reconciles
-  VERSION and release notes in the combined candidate. Do not tag, install or
-  publish a stable release from an admitted component.
-- Treat a change as release-bearing when repository version policy requires a
-  `VERSION` advance, when it changes shipped behavior or packaging, or when the
-  user explicitly requests a release.
-- When `VERSION` stays unchanged but a commit touches a file that
-  `scripts/check_release_version.py` classifies as shipped, end that commit's
-  message with a `Release-Impact: internal` trailer and one nonempty
-  `Release-Reason:` trailer explaining why no user-visible behavior changes.
+  retain their original PRs and fragments. Do not tag, install or publish a
+  stable release from an admitted component.
+- Never edit `VERSION` or `CHANGELOG.md` in a task. A change to shipped
+  behavior or packaging adds one [changelog fragment](../../../changes/README.md),
+  `changes/<task>.<breaking|feature|fix>.md`, holding its user-facing CHANGELOG
+  text. Only a release cut (`scripts/cut_release.py`, committed with its
+  `Release-Cut: <version>` trailer) changes `VERSION`; run one only when the
+  owner asks for a release.
+- When a commit touches a file that `scripts/check_release_version.py`
+  classifies as shipped but changes nothing a user would observe, either add an
+  `internal` fragment or end that commit's message with a
+  `Release-Impact: internal` trailer and one nonempty `Release-Reason:` trailer
+  explaining why no user-visible behavior changes.
   Documentation and agent-automation commits need neither, and neither does
   an automatic merge: the policy judges a merge commit only by what differs
   from the automatic merge of its parents, so a reconciliation merge
@@ -68,7 +71,7 @@ not push a competing tag.
 
 Respect required reviews and the merge queue; never force a merge or
 administratively bypass them. Once the PR is queued with recorded focused
-validation, report the PR, the intended version when applicable, exactly which
+validation, report the PR, its changelog fragment when applicable, exactly which
 checks ran, and that the complete suite is the queue's. After the queue merges
 it and local-main sync succeeds, report the merge and local commit. A queue
 removal or sync failure keeps the task open and visible; a later asynchronous

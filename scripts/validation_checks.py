@@ -31,12 +31,13 @@ AUTOMATION = ("docs/", ".codex/", ".claude/", ".agents/")
 # CI workflow edits select full coverage, so the queue validates the jobs it changes.
 AUTOMATION_FILES = {"AGENTS.md", "CLAUDE.md", "README.md"}
 AUTOMATION_SCRIPTS = {"agent_workflow.py", "validation_batch.py", "validation_checks.py",
-                      "preview_workflow.py", "preview_submit.py", "build_window.py", "bounded_log.py"}
+                      "preview_workflow.py", "preview_submit.py", "build_window.py", "bounded_log.py",
+                      "cut_release.py", "check_release_version.py"}
 # Exactly the existing harnesses that CI's workflow-regression job runs. The
 # batch, validation and preview-submit scripts are covered by agent_workflow_test.
 AUTOMATION_TESTS = {"agent_workflow_test.py", "preview_workflow_test.py", "build_window_test.py",
                     "bounded_log_test.py", "release_version_test.py", "ci_resources_test.py",
-                    "repository_hosting_test.py"}
+                    "repository_hosting_test.py", "cut_release_test.py"}
 
 
 def focused_scope(paths):
