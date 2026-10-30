@@ -913,9 +913,10 @@ result stays borrowed until the carrier's last use, exactly as for
 `std::string_view& view = box.get(); view.begin()`. The carrier also retains
 the external owner of the text the returned view holds, if any; literal text
 has none. Changing that owner, or the accessor's receiver, while the carrier
-lives is rejected (`GTI-S2017`). Constructing a carrier class directly from
-such a result, as in `Cursor(box.get())`, is not yet implemented and stops in
-MIR construction; calling a function that constructs it works.
+lives is rejected (`GTI-S2017`). A carrier class can also be constructed
+directly from the returned reference, as in `Cursor(box.get())`; the
+constructor retains the same referent and external owner dependencies as a
+factory call that returns the carrier.
 
 Nesting uses the same rule, rather than an exception for a particular library
 type. For example, `std::pair<Iterator<int>, bool>` may carry one iterator and
@@ -3187,7 +3188,8 @@ does not copy or allocate the input text. JSON's private scanning adapters use
 this checked-reference form.
 
 A view read through such a reference, as in `this.text`, is dynamic: it keeps
-the external text owner. It may be inspected, indexed, copied into a local,
+the external text owner. It may be inspected, indexed, copied into a local
+(including through a relaying call from a reference formal),
 passed to a parameter, or returned from a method under that method's receiver
 dependency. A fresh adapter built over a local view borrows that exact view
 object as a bound adapter does. The view cannot be passed to a constructor that
