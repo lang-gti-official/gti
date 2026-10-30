@@ -1076,6 +1076,19 @@ class ValidationChecks(unittest.TestCase):
             with self.subTest(label), self.assertRaises(ValueError):
                 validation.merge_shards(reports, ["darwin", "linux"])
 
+    def test_test_targets_reads_configured_commands_without_a_build(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory).resolve()
+            (build / "tests").mkdir()
+            (build / "tests" / "CTestTestfile.cmake").write_text(
+                f'add_test("unit_a" "{build}/gti_unit_a_tests" "--flag")\n'
+                f'add_test("script_b" "/usr/bin/python3" "/src/b.py" "frontend={build}/gti_frontend_tests" "{build}/libgti_runtime.a")\n'
+                f'add_test("other" "{build}/gti_other_tests")\n')
+            self.assertEqual(validation.test_targets(build, "unit_a|script_b"),
+                             ["gti", "gti_frontend_tests", "gti_runtime", "gti_unit_a_tests"])
+            with self.assertRaises(ValueError):
+                validation.test_targets(build, "^missing$")
+
     def test_committed_quarantine_is_valid(self):
         validation.load_quarantine(Path(__file__).resolve().parents[1])
 

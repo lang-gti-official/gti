@@ -288,6 +288,9 @@ jobs:
     needs: [plan, automation-tests, formatting, release-version, tree-sitter]
     runs-on: ubuntu-24.04
     timeout-minutes: 360
+    env:
+      # The curated subset; the build compiles only the targets it runs.
+      GTI_SANITIZER_TESTS: 'compiler_library_boundary|driver_library_boundary|driver_pipeline|project_model|compiler_pipeline|optimizer_foundation|raw_pointer_pipeline|mir_program_initialization|mir_hosted_startup|mir_backend_first_family$|mir_backend_scalar_cfg$|mir_backend_scalar_direct_call$|mir_backend_class_default_cleanup$|mir_backend_owned_lifecycle$|mir_backend_scalar_failure_callgraph$|cpp_mir_body_emitter_(preflight|text|lifecycle|census|corpus_protocol)$|cpp_mir_program_plan|cpp_mir_representation_snapshot'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Configure runner resources
@@ -327,8 +330,13 @@ jobs:
           -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
           -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g"
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
-      - name: Build
-        run: cmake --build build-sanitized --parallel "${GTI_JOBS}"
+      - name: Build the targets the sanitizer subset runs
+        # Instrumenting the whole tree took longer than the integration shards
+        # while only these tests run; CTestTestfile.cmake names their targets.
+        run: |
+          targets="$(python3 scripts/validation_checks.py test-targets --build build-sanitized --regex "${GTI_SANITIZER_TESTS}")"
+          read -r -a target_list <<< "${targets}"
+          cmake --build build-sanitized --parallel "${GTI_JOBS}" --target "${target_list[@]}"
       - name: Test compiler and driver libraries
         # Instrumented suites run several times slower than plain ones, so
         # the configure step scales every test's timeout six times (the
@@ -341,7 +349,7 @@ jobs:
         run: >-
           ctest --test-dir build-sanitized --output-on-failure
           --parallel "${GTI_TEST_JOBS}"
-          -R 'compiler_library_boundary|driver_library_boundary|driver_pipeline|project_model|compiler_pipeline|optimizer_foundation|raw_pointer_pipeline|mir_program_initialization|mir_hosted_startup|mir_backend_first_family$|mir_backend_scalar_cfg$|mir_backend_scalar_direct_call$|mir_backend_class_default_cleanup$|mir_backend_owned_lifecycle$|mir_backend_scalar_failure_callgraph$|cpp_mir_body_emitter_(preflight|text|lifecycle|census|corpus_protocol)$|cpp_mir_program_plan|cpp_mir_representation_snapshot'
+          -R "${GTI_SANITIZER_TESTS}"
       - name: Save compiler object cache
         if: always() && steps.cache.outputs.cache-hit != 'true'
         continue-on-error: true

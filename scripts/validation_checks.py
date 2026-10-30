@@ -463,6 +463,39 @@ def run_shard(root, build, shards, index, durations, jobs=4, log=None, junit=Non
             "quarantined": sorted(excluded), "skipped": skipped, "smoke": smoke_results}
 
 
+TEST_LINE = re.compile(r'^add_test\("((?:[^"\\]|\\.)*)" (.*)\)$', re.M)
+QUOTED = re.compile(r'"((?:[^"\\]|\\.)*)"')
+
+
+def test_targets(build, pattern):
+    """The build targets the tests matching `pattern` run, read from a configured tree.
+
+    CTest learns a test's command only once it is built, so this reads the
+    generated CTestTestfile.cmake files instead: every argument (or `key=path`
+    argument) naming a file in the build tree is a target's output. The
+    compiler and runtime are always included. A target this misses makes its
+    test fail as not found, never pass.
+    """
+    build = Path(build).resolve()
+    selected = re.compile(pattern)
+    targets, matched = {"gti", "gti_runtime"}, 0
+    for path in sorted(build.rglob("CTestTestfile.cmake")):
+        for match in TEST_LINE.finditer(path.read_text(encoding="utf-8")):
+            if not selected.search(match.group(1)):
+                continue
+            matched += 1
+            for argument in QUOTED.findall(match.group(2)):
+                for part in argument.split("="):
+                    if part.startswith(str(build) + "/"):
+                        name = Path(part).name
+                        name = name.removeprefix("lib").rsplit(".", 1)[0] if name.startswith("lib") else name
+                        if NAME.fullmatch(name):
+                            targets.add(name)
+    if not matched:
+        raise ValueError("No configured test matches " + pattern)
+    return sorted(targets)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -484,6 +517,9 @@ def main(argv=None):
     shard.add_argument("--jobs", type=int, default=4)
     shard.add_argument("--report", required=True)
     shard.add_argument("--log")
+    targets = sub.add_parser("test-targets", help="print the build targets the matching tests run")
+    targets.add_argument("--build", required=True)
+    targets.add_argument("--regex", required=True)
     for name in ("focused", "full"):
         run_parser = sub.add_parser(name)
         run_parser.add_argument("--build", required=True)
@@ -510,6 +546,9 @@ def main(argv=None):
             reports = [json.loads(path.read_text()) for path in sorted(Path(args.shard_reports).rglob("*.json"))]
             summary = merge_shards(reports, [p for p in args.platforms.split(",") if p])
             print("GTI_INTEGRATION_RESULT=" + json.dumps(summary, sort_keys=True))
+        return
+    if args.command == "test-targets":
+        print(" ".join(test_targets(args.build, args.regex)))
         return
     if args.command == "shard":
         for path in (args.report, args.log):
