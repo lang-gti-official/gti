@@ -270,6 +270,10 @@ operation. Binary operations evaluate the left operand, then the right
 operand, then the operation. This includes built-in and source-defined
 operators; lowering a selected operator to a method or helper does not change
 the source operand order. Numeric conversions evaluate their operand first.
+An array value freshly returned by a call or produced by a move can be indexed
+within its full-expression; the selected element is read from that fresh value,
+with the ordinary fixed-array bounds check. The same applies to an array field
+of a fresh class value.
 `unexpected(error)` evaluates `error` first. Lambda captures are initialized
 from left to right in capture-list order. A bare capture copies its named
 source. `[owned = std::move(source)]` evaluates and moves `source` at that exact

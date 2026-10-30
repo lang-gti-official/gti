@@ -5074,6 +5074,9 @@ public:
           rawClassPlace ? std::optional(Shape::NativeClassRawAccess)
           : scalarRawAccess(mir, place)
               ? std::optional(Shape::PrimitiveRawAccess)
+          : place.root == MirPlaceRootKind::Value &&
+                  scalarArrayProjection(mir, place)
+              ? std::optional(Shape::CheckedArrayProjection)
           : place.root == MirPlaceRootKind::Loan && passiveReference(place.type)
               ? std::optional(Shape::PassiveReference)
               : placeClassShape(place));

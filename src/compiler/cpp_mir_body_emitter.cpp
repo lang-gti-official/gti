@@ -975,7 +975,10 @@ arrayElementAccess(const MirBody &body, const MirPlace &place) {
       place.root == MirPlaceRootKind::Binding && place.binding != 0;
   const bool symbolRoot =
       place.root == MirPlaceRootKind::Symbol && place.symbol != 0;
-  if ((!bindingRoot && !symbolRoot) || place.projections.empty()) {
+  const bool valueRoot =
+      place.root == MirPlaceRootKind::Value && place.value != 0;
+  if ((!bindingRoot && !symbolRoot && !valueRoot) ||
+      place.projections.empty()) {
     return std::nullopt;
   }
   const bool dereferenceArray =
@@ -998,7 +1001,10 @@ arrayElementAccess(const MirBody &body, const MirPlace &place) {
     const bool sameSymbol =
         symbolRoot && candidate.root == MirPlaceRootKind::Symbol &&
         candidate.symbol == place.symbol && candidate.capture == place.capture;
-    if (candidate.id != place.id && (sameBinding || sameSymbol) &&
+    const bool sameValue = valueRoot &&
+                           candidate.root == MirPlaceRootKind::Value &&
+                           candidate.value == place.value;
+    if (candidate.id != place.id && (sameBinding || sameSymbol || sameValue) &&
         candidate.projections.empty()) {
       const SemanticType *arrayType = &candidate.type;
       if (dereferenceArray) {
@@ -1136,11 +1142,16 @@ arrayFieldElementAccess(const MirBody &body, const MirPlace &place) {
         candidate.symbol == place.symbol && candidate.capture == place.capture;
     const bool sameReceiver =
         receiverRoot && candidate.root == MirPlaceRootKind::This;
-    const bool sameRaw = rawRoot && candidate.root == MirPlaceRootKind::Value &&
-                         candidate.value == place.value &&
-                         rawMemoryPlaceAccess(body, candidate).has_value();
+    const bool sameValue =
+        rawRoot && candidate.root == MirPlaceRootKind::Value &&
+        candidate.value == place.value &&
+        (rawMemoryPlaceAccess(body, candidate).has_value() ||
+         std::all_of(candidate.projections.begin(), candidate.projections.end(),
+                     [](const auto &projection) {
+                       return projection.kind == MirProjectionKind::Field;
+                     }));
     if (candidate.id == place.id ||
-        (!sameBinding && !sameSymbol && !sameReceiver && !sameRaw) ||
+        (!sameBinding && !sameSymbol && !sameReceiver && !sameValue) ||
         candidate.projections != fields ||
         candidate.type.kind != SemanticType::Array) {
       continue;
@@ -29390,7 +29401,8 @@ classSsaLifetimeSlot(const MirProgram &program,
       value->info.traits.movable && classInstance->traits.movable;
 
   // A cleanup-free class result may be observed through one exact field
-  // chain, of any depth, before the full expression ends. The transformed
+  // chain, optionally ending in a checked array element, before the full
+  // expression ends. The transformed
   // callee still needs uninitialized representation storage; the projected
   // place is only an lvalue view over that slot and owns no independent
   // lifetime. A value moved out of a place, as in `std::move(a).x`, is staged
@@ -29404,17 +29416,21 @@ classSsaLifetimeSlot(const MirProgram &program,
                    [&](const MirDropObligation &drop) {
                      return drop.generatedValue == valueId;
                    })) {
+    const auto arrayElement = arrayFieldElementAccess(body, *projection);
+    const MirPlace *arrayField =
+        arrayElement ? body.findPlace(arrayElement->array) : nullptr;
+    const bool exactArrayElement =
+        arrayField != nullptr && arrayField->root == MirPlaceRootKind::Value &&
+        arrayField->value == valueId &&
+        exactFieldProjectionRows(program, representations, value->info.type,
+                                 arrayField->projections, 0, arrayField->type);
     const bool exactProjection =
         projection->root == MirPlaceRootKind::Value &&
         projection->value == valueId && !projection->projections.empty() &&
-        std::all_of(projection->projections.begin(),
-                    projection->projections.end(),
-                    [](const MirPlaceProjection &item) {
-                      return item.kind == MirProjectionKind::Field;
-                    }) &&
-        exactFieldProjectionRows(program, representations, value->info.type,
-                                 projection->projections, 0,
-                                 projection->type) &&
+        (exactArrayElement ||
+         exactFieldProjectionRows(program, representations, value->info.type,
+                                  projection->projections, 0,
+                                  projection->type)) &&
         ((!directConstructionProducer && !failureFreeTransferringConstruction &&
           movable) ||
          projection->type.kind == SemanticType::Class ||
@@ -29513,8 +29529,12 @@ classSsaLifetimeSlot(const MirProgram &program,
               !instruction.result || instruction.receiver ||
               instruction.destination ||
               instruction.info.type != projection->type ||
-              !instruction.localFailureSites.empty() ||
-              !instruction.definedFailure.empty() ||
+              ((!exactArrayElement && (!instruction.localFailureSites.empty() ||
+                                       !instruction.definedFailure.empty())) ||
+               (exactArrayElement &&
+                (instruction.kind != MirInstructionKind::Load ||
+                 instruction.localFailureSites.size() != 1 ||
+                 instruction.definedFailure.localOrigins.size() != 1))) ||
               !instruction.lifecycle.empty()) {
             return {};
           }
@@ -43793,7 +43813,11 @@ private:
     if (place.root == MirPlaceRootKind::Value) {
       const ClassSsaLifetimeSlot slot = classSsaLifetimeSlot(
           program, representations, facts.body, place.value);
-      if (slot.value != nullptr && fieldReadSlotView(slot, place)) {
+      if (slot.value != nullptr && fieldReadSlotView(slot, place) &&
+          std::all_of(place.projections.begin(), place.projections.end(),
+                      [](const auto &projection) {
+                        return projection.kind == MirProjectionKind::Field;
+                      })) {
         output << "__gti_mir_v_" << place.value << ".get()";
         emitFieldProjectionChain(slot.value->info.type, place.projections, 0);
         return;
@@ -43925,7 +43949,11 @@ private:
     if (access.dereferenceArray) {
       output << "(*";
     }
-    emitStoragePlaceValue(facts, *array);
+    if (array->root == MirPlaceRootKind::Value) {
+      output << "__gti_mir_v_" << array->value;
+    } else {
+      emitStoragePlaceValue(facts, *array);
+    }
     if (access.dereferenceArray) {
       output << ')';
     }
