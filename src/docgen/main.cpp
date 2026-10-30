@@ -1,11 +1,14 @@
 #include "gti/documentation.h"
 #include "gti/standard_library.h"
 
+#include "llvm/Support/JSON.h"
+
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -54,40 +57,47 @@ std::optional<Options> parseOptions(int argc, char **argv) {
   return options;
 }
 
-std::vector<std::string> standardLibraryUnits(const std::filesystem::path &root,
-                                              std::error_code &error) {
-  std::vector<std::string> units;
-  const std::filesystem::path directory = root / "std";
-  if (!std::filesystem::is_directory(directory, error)) {
-    if (!error) {
-      error = std::make_error_code(std::errc::not_a_directory);
-    }
-    return units;
+// The public standard-library API is exactly the module map the source loader
+// authorizes (stdlib/module-map.json); `detail/` units are reached through
+// those modules' imports, as a program would reach them. The default module
+// is the aggregate that only re-exports the others, so it is not imported.
+std::vector<std::string>
+standardLibraryModules(const std::filesystem::path &root,
+                       std::string &problem) {
+  const std::filesystem::path path = root / "module-map.json";
+  std::ifstream input(path, std::ios::binary);
+  if (!input) {
+    problem = "cannot read " + path.generic_string();
+    return {};
   }
-  std::filesystem::recursive_directory_iterator iterator(directory, error);
-  const std::filesystem::recursive_directory_iterator end;
-  while (!error && iterator != end) {
-    const std::filesystem::directory_entry &entry = *iterator;
-    if (entry.is_regular_file(error) && entry.path().extension() == ".gti") {
-      std::filesystem::path relative =
-          std::filesystem::relative(entry.path(), root, error);
-      if (error) {
-        return {};
-      }
-      relative.replace_extension();
-      units.push_back(relative.generic_string());
-    }
-    iterator.increment(error);
+  std::ostringstream buffer;
+  buffer << input.rdbuf();
+  auto parsed = llvm::json::parse(buffer.str());
+  if (!parsed) {
+    problem = path.generic_string() + ": " + llvm::toString(parsed.takeError());
+    return {};
   }
-  std::sort(units.begin(), units.end());
-  units.erase(std::unique(units.begin(), units.end()), units.end());
-  return units;
+  const auto *object = parsed->getAsObject();
+  const auto *modules = object ? object->getObject("modules") : nullptr;
+  const auto standard = object ? object->getString("default") : std::nullopt;
+  if (modules == nullptr || !standard) {
+    problem = path.generic_string() + " needs 'default' and 'modules'";
+    return {};
+  }
+  std::vector<std::string> names;
+  for (const auto &entry : *modules) {
+    const std::string name = entry.first.str();
+    if (name != *standard)
+      names.push_back(standard->str() + "." + name);
+  }
+  std::sort(names.begin(), names.end());
+  return names;
 }
 
-std::string entrySource(const std::vector<std::string> &units) {
+std::string entrySource(const std::vector<std::string> &modules) {
   std::string source;
-  for (const std::string &unit : units) {
-    source += "#include <" + unit + ">\n";
+  for (const std::string &module : modules) {
+    source += "import " + module + ";\n";
   }
   source += "\nint main() { return 0; }\n";
   return source;
@@ -149,18 +159,16 @@ int main(int argc, char **argv) {
       parsed->standardLibrary
           ? lang::standardLibraryLayout(*parsed->standardLibrary)
           : lang::discoverStandardLibrary(argv[0], GTI_BUILD_STDLIB_ROOT);
-  std::error_code error;
-  const std::vector<std::string> units =
-      standardLibraryUnits(layout.root, error);
-  if (error || units.empty()) {
-    std::cerr << "Could not enumerate standard-library units under '"
-              << (layout.root / "std").generic_string() << "'";
-    if (error) {
-      std::cerr << ": " << error.message();
-    }
-    std::cerr << ".\n";
+  std::string problem;
+  const std::vector<std::string> modules =
+      standardLibraryModules(layout.root, problem);
+  if (modules.empty()) {
+    std::cerr << "Could not enumerate the public standard-library modules: "
+              << (problem.empty() ? "the module map lists none" : problem)
+              << ".\n";
     return 1;
   }
+  std::error_code error;
   if (!std::filesystem::is_regular_file(layout.prelude, error) || error) {
     std::cerr << "Could not find the standard-library prelude at '"
               << layout.prelude.generic_string() << "'.\n";
@@ -173,7 +181,7 @@ int main(int argc, char **argv) {
   const lang::FrontendResult frontend =
       lang::Frontend(frontendOptions)
           .analyze(layout.root / "__gti_reference_index__.gti",
-                   entrySource(units), {layout.prelude}, {}, {layout.root});
+                   entrySource(modules), {layout.prelude}, {}, {layout.root});
   if (!frontend.sourceValid || !frontend.syntaxValid ||
       !frontend.semanticValid || !frontend.diagnostics.empty()) {
     printDiagnostics(frontend);
