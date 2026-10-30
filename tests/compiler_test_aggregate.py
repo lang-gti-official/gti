@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 
@@ -77,7 +78,12 @@ def main() -> int:
         return fail("runtime census lost or duplicated a compiler test")
 
     for suite, executable in executables.items():
+        started = time.monotonic()
+        print(f"compiler test aggregate: starting {suite} "
+              f"({len(expected_by_suite[suite])} tests)", flush=True)
         completed = subprocess.run([str(executable)], check=False)
+        print(f"compiler test aggregate: {suite} exited {completed.returncode} "
+              f"after {time.monotonic() - started:.1f}s", flush=True)
         if completed.returncode != 0:
             return fail(f"{suite} suite exited {completed.returncode}")
 

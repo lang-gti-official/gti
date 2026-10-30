@@ -26,6 +26,11 @@ python3 scripts/agent_workflow.py protection
   installed-toolchain smoke and deterministic docgen. The gate merges the shard
   reports and fails unless each platform ran its whole inventory exactly once.
 
+Sanitizer jobs stream verbose CTest output, including the compiler aggregate's
+current suite and per-suite elapsed time, and retain JUnit and CTest logs even
+when a test fails. `compiler_pipeline` contains several suites, so an unchanged
+CTest completion count alone does not show which suite is active.
+
 Every native job builds with the reviewed runtime compiler that
 `scripts/configure_ci_toolchain.sh` installs and exports: GCC 14 with LLVM 20 on
 `ubuntu-24.04`, and Apple clang 21 (Command Line Tools 27) with Homebrew LLVM 22
