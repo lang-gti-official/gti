@@ -975,7 +975,10 @@ arrayElementAccess(const MirBody &body, const MirPlace &place) {
       place.root == MirPlaceRootKind::Binding && place.binding != 0;
   const bool symbolRoot =
       place.root == MirPlaceRootKind::Symbol && place.symbol != 0;
-  if ((!bindingRoot && !symbolRoot) || place.projections.empty()) {
+  const bool valueRoot =
+      place.root == MirPlaceRootKind::Value && place.value != 0;
+  if ((!bindingRoot && !symbolRoot && !valueRoot) ||
+      place.projections.empty()) {
     return std::nullopt;
   }
   const bool dereferenceArray =
@@ -998,7 +1001,10 @@ arrayElementAccess(const MirBody &body, const MirPlace &place) {
     const bool sameSymbol =
         symbolRoot && candidate.root == MirPlaceRootKind::Symbol &&
         candidate.symbol == place.symbol && candidate.capture == place.capture;
-    if (candidate.id != place.id && (sameBinding || sameSymbol) &&
+    const bool sameValue = valueRoot &&
+                           candidate.root == MirPlaceRootKind::Value &&
+                           candidate.value == place.value;
+    if (candidate.id != place.id && (sameBinding || sameSymbol || sameValue) &&
         candidate.projections.empty()) {
       const SemanticType *arrayType = &candidate.type;
       if (dereferenceArray) {
@@ -1136,11 +1142,16 @@ arrayFieldElementAccess(const MirBody &body, const MirPlace &place) {
         candidate.symbol == place.symbol && candidate.capture == place.capture;
     const bool sameReceiver =
         receiverRoot && candidate.root == MirPlaceRootKind::This;
-    const bool sameRaw = rawRoot && candidate.root == MirPlaceRootKind::Value &&
-                         candidate.value == place.value &&
-                         rawMemoryPlaceAccess(body, candidate).has_value();
+    const bool sameValue =
+        rawRoot && candidate.root == MirPlaceRootKind::Value &&
+        candidate.value == place.value &&
+        (rawMemoryPlaceAccess(body, candidate).has_value() ||
+         std::all_of(candidate.projections.begin(), candidate.projections.end(),
+                     [](const auto &projection) {
+                       return projection.kind == MirProjectionKind::Field;
+                     }));
     if (candidate.id == place.id ||
-        (!sameBinding && !sameSymbol && !sameReceiver && !sameRaw) ||
+        (!sameBinding && !sameSymbol && !sameReceiver && !sameValue) ||
         candidate.projections != fields ||
         candidate.type.kind != SemanticType::Array) {
       continue;
@@ -29390,7 +29401,8 @@ classSsaLifetimeSlot(const MirProgram &program,
       value->info.traits.movable && classInstance->traits.movable;
 
   // A cleanup-free class result may be observed through one exact field
-  // chain, of any depth, before the full expression ends. The transformed
+  // chain, optionally ending in a checked array element, before the full
+  // expression ends. The transformed
   // callee still needs uninitialized representation storage; the projected
   // place is only an lvalue view over that slot and owns no independent
   // lifetime. A value moved out of a place, as in `std::move(a).x`, is staged
@@ -29404,17 +29416,21 @@ classSsaLifetimeSlot(const MirProgram &program,
                    [&](const MirDropObligation &drop) {
                      return drop.generatedValue == valueId;
                    })) {
+    const auto arrayElement = arrayFieldElementAccess(body, *projection);
+    const MirPlace *arrayField =
+        arrayElement ? body.findPlace(arrayElement->array) : nullptr;
+    const bool exactArrayElement =
+        arrayField != nullptr && arrayField->root == MirPlaceRootKind::Value &&
+        arrayField->value == valueId &&
+        exactFieldProjectionRows(program, representations, value->info.type,
+                                 arrayField->projections, 0, arrayField->type);
     const bool exactProjection =
         projection->root == MirPlaceRootKind::Value &&
         projection->value == valueId && !projection->projections.empty() &&
-        std::all_of(projection->projections.begin(),
-                    projection->projections.end(),
-                    [](const MirPlaceProjection &item) {
-                      return item.kind == MirProjectionKind::Field;
-                    }) &&
-        exactFieldProjectionRows(program, representations, value->info.type,
-                                 projection->projections, 0,
-                                 projection->type) &&
+        (exactArrayElement ||
+         exactFieldProjectionRows(program, representations, value->info.type,
+                                  projection->projections, 0,
+                                  projection->type)) &&
         ((!directConstructionProducer && !failureFreeTransferringConstruction &&
           movable) ||
          projection->type.kind == SemanticType::Class ||
@@ -29513,8 +29529,12 @@ classSsaLifetimeSlot(const MirProgram &program,
               !instruction.result || instruction.receiver ||
               instruction.destination ||
               instruction.info.type != projection->type ||
-              !instruction.localFailureSites.empty() ||
-              !instruction.definedFailure.empty() ||
+              ((!exactArrayElement && (!instruction.localFailureSites.empty() ||
+                                       !instruction.definedFailure.empty())) ||
+               (exactArrayElement &&
+                (instruction.kind != MirInstructionKind::Load ||
+                 instruction.localFailureSites.size() != 1 ||
+                 instruction.definedFailure.localOrigins.size() != 1))) ||
               !instruction.lifecycle.empty()) {
             return {};
           }
@@ -43793,7 +43813,11 @@ private:
     if (place.root == MirPlaceRootKind::Value) {
       const ClassSsaLifetimeSlot slot = classSsaLifetimeSlot(
           program, representations, facts.body, place.value);
-      if (slot.value != nullptr && fieldReadSlotView(slot, place)) {
+      if (slot.value != nullptr && fieldReadSlotView(slot, place) &&
+          std::all_of(place.projections.begin(), place.projections.end(),
+                      [](const auto &projection) {
+                        return projection.kind == MirProjectionKind::Field;
+                      })) {
         output << "__gti_mir_v_" << place.value << ".get()";
         emitFieldProjectionChain(slot.value->info.type, place.projections, 0);
         return;
@@ -43925,7 +43949,14 @@ private:
     if (access.dereferenceArray) {
       output << "(*";
     }
-    emitStoragePlaceValue(facts, *array);
+    // Only a bare value root names the materialized array SSA value. A
+    // projected value root can be an array field reached through raw memory;
+    // its full place expression retains that pointer and field path.
+    if (array->root == MirPlaceRootKind::Value && array->projections.empty()) {
+      output << "__gti_mir_v_" << array->value;
+    } else {
+      emitStoragePlaceValue(facts, *array);
+    }
     if (access.dereferenceArray) {
       output << ')';
     }
@@ -53209,6 +53240,92 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if (scalarInputs)
         conditionalArguments.push_back(std::move(conditional));
     }
+    // A later read-borrow argument may join copies of class bindings into a
+    // distinct full-expression slot while an earlier argument borrows its own
+    // snapshot. Admit only the exact two-arm load/initialize diamond for the
+    // same call, with no operation that can touch the earlier borrowed slot.
+    std::unordered_set<MirInstructionId> conditionalBorrowedOperations;
+    for (std::size_t index = 0; index < consumer->operands.size(); ++index) {
+      const DirectTemporaryBorrow selected =
+          directTemporaryArgument(body, *consumer, index);
+      if (!selected || selected.slot == place || !selected.stage->loan ||
+          selected.slot->root != MirPlaceRootKind::Temporary ||
+          selected.producer->kind != MirInstructionKind::Move ||
+          sameMirPlaceRoot(*selected.slot, *place))
+        continue;
+      struct CopyArm {
+        const MirBlock *block;
+        const MirInstruction *load;
+        const MirInstruction *initialize;
+      };
+      std::vector<CopyArm> arms;
+      bool malformed = false;
+      for (const MirBlock &block : body.blocks)
+        for (const MirInstruction &candidate : block.instructions) {
+          if (candidate.kind != MirInstructionKind::Initialize ||
+              candidate.destination != selected.slot->id)
+            continue;
+          const MirInstruction *load =
+              candidate.operands.size() == 1
+                  ? definitionFor(body, candidate.operands.front())
+                  : nullptr;
+          const MirPlace *source =
+              load != nullptr && load->operands.size() == 1
+                  ? body.findPlace(load->operands.front().place)
+                  : nullptr;
+          if (load == nullptr || source == nullptr ||
+              load->kind != MirInstructionKind::Load ||
+              load->operands.front().kind != MirOperandKind::Copy ||
+              source->root != MirPlaceRootKind::Binding ||
+              !source->projections.empty() ||
+              sameMirPlaceRoot(*source, *place) ||
+              load->info.type != selected.slot->type ||
+              !load->definedFailure.empty() || !load->lifecycle.empty() ||
+              load->loan || load->rawMemoryAccess ||
+              load->unsafeOperation != UnsafeOperationKind::None ||
+              candidate.operands.front().kind != MirOperandKind::Value ||
+              candidate.hirValue != selected.slot->sourceValue ||
+              candidate.info.type != selected.slot->type ||
+              !candidate.definedFailure.empty() || candidate.loan ||
+              candidate.rawMemoryAccess ||
+              candidate.unsafeOperation != UnsafeOperationKind::None ||
+              candidate.lifecycle.size() != 1 ||
+              candidate.lifecycle.front().kind !=
+                  MirLifecycleEventKind::Initialize ||
+              candidate.lifecycle.front().target != selected.drop->id ||
+              candidate.lifecycle.front().source != 0) {
+            malformed = true;
+            break;
+          }
+          arms.push_back({&block, load, &candidate});
+        }
+      if (malformed || arms.size() != 2 || arms[0].block == arms[1].block ||
+          arms[0].block->terminator.kind != MirTerminatorKind::Goto ||
+          arms[1].block->terminator.kind != MirTerminatorKind::Goto ||
+          arms[0].block->terminator.target != arms[1].block->terminator.target)
+        continue;
+      const MirValue *joined = selected.producer->result
+                                   ? body.findValue(*selected.producer->result)
+                                   : nullptr;
+      if (joined == nullptr ||
+          arms[0].block->terminator.target != joined->definitionBlock ||
+          std::count_if(body.blocks.begin(), body.blocks.end(),
+                        [&](const MirBlock &candidate) {
+                          const MirTerminator &edge = candidate.terminator;
+                          return edge.kind == MirTerminatorKind::Branch &&
+                                 ((edge.target == arms[0].block->id &&
+                                   edge.elseTarget == arms[1].block->id) ||
+                                  (edge.target == arms[1].block->id &&
+                                   edge.elseTarget == arms[0].block->id));
+                        }) != 1)
+        continue;
+      conditionalBorrowedOperations.insert(selected.producer->id);
+      conditionalBorrowedOperations.insert(selected.stage->id);
+      for (const CopyArm &arm : arms) {
+        conditionalBorrowedOperations.insert(arm.load->id);
+        conditionalBorrowedOperations.insert(arm.initialize->id);
+      }
+    }
     // Scalars and text views are plain values: reading, staging, computing
     // or publishing one into an expression temporary cannot carry, replace
     // or end the borrowed storage.
@@ -53615,6 +53732,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           return true;
         }
         if (ownedExtractionInputs.contains(instruction.id))
+          continue;
+        if (conditionalBorrowedOperations.contains(instruction.id))
           continue;
         // Another argument may stage a stable borrow before the conditional
         // expression. It publishes no runtime operation and cannot invalidate
@@ -54121,13 +54240,67 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             instruction.definedFailure.empty() &&
             instruction.lifecycle.empty() &&
             !referencesPendingStaged(instruction);
+        // A later argument may assign a class binding and immediately borrow
+        // the assignment's copied result. Earlier borrowed arguments name
+        // their own full-expression slots, not the assignment destination.
+        // Keep that store and the new snapshot at their MIR positions while
+        // proving neither touches any already staged referent.
+        const auto disjointFromPending = [&](const MirPlace &candidate) {
+          return std::all_of(
+              pendingStaged.begin(), pendingStaged.end(), [&](MirValueId id) {
+                const MirValue *staged = body.findValue(id);
+                const MirInstruction *stage =
+                    staged == nullptr
+                        ? nullptr
+                        : findInstruction(body, staged->definition);
+                const MirPlace *borrowed =
+                    stage != nullptr && stage->operands.size() == 1
+                        ? body.findPlace(stage->operands.front().place)
+                        : nullptr;
+                return borrowed != nullptr &&
+                       !sameMirPlaceRoot(candidate, *borrowed);
+              });
+        };
+        const MirPlace *assignedPlace =
+            instruction.kind == MirInstructionKind::Assign &&
+                    instruction.destination
+                ? body.findPlace(*instruction.destination)
+                : nullptr;
+        const bool independentClassAssignment =
+            assignedPlace != nullptr &&
+            assignedPlace->root == MirPlaceRootKind::Binding &&
+            assignedPlace->projections.empty() &&
+            instruction.info.type.kind == SemanticType::Class &&
+            instruction.info.traits.copyable &&
+            !instruction.info.traits.containsBorrowedState &&
+            instruction.definedFailure.empty() &&
+            instruction.localFailureSites.empty() &&
+            instruction.lifecycle.empty() && !instruction.loan &&
+            !instruction.rawMemoryAccess &&
+            instruction.unsafeOperation == UnsafeOperationKind::None &&
+            !referencesPendingStaged(instruction) &&
+            disjointFromPending(*assignedPlace);
+        const bool independentClassSnapshot =
+            initializedTemporary != nullptr &&
+            initializedTemporary->root == MirPlaceRootKind::Temporary &&
+            initializedTemporary->projections.empty() &&
+            initializedTemporary->type.kind == SemanticType::Class &&
+            instruction.hirValue == initializedTemporary->sourceValue &&
+            directTemporaryBorrowForSlot(body, *initializedTemporary) &&
+            instruction.definedFailure.empty() &&
+            instruction.localFailureSites.empty() && !instruction.loan &&
+            !instruction.rawMemoryAccess &&
+            instruction.unsafeOperation == UnsafeOperationKind::None &&
+            !referencesPendingStaged(instruction) &&
+            disjointFromPending(*initializedTemporary);
         // A Move between the staging and its consuming call is inert
         // argument staging: it neither raises nor observes, so the
         // staged callable's deferred spelling stays exact. Lifecycle and
         // EndBorrow spell as comments and touch no state, so they are
         // equally inert inside the window.
         if (!consumingCall && !independentNonRaisingConstruction &&
-            !independentScalarTemporary &&
+            !independentScalarTemporary && !independentClassAssignment &&
+            !independentClassSnapshot &&
             (instruction.kind != MirInstructionKind::CallInput &&
              instruction.kind != MirInstructionKind::Load &&
              instruction.kind != MirInstructionKind::Compute &&
@@ -54555,8 +54728,26 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           const auto &operand = instruction.operands.front();
           const auto *retained = body.findLoan(operand.loan);
           const auto *runtime = body.findPlace(operand.place);
+          // The sealed MIR verifier and program return summary prove the
+          // outer caller-owned source. Text emission only needs to recognize
+          // that this verified Return copies the inner loan's runtime pointer.
+          const auto nestedPayloadSource = [&] {
+            if (retained == nullptr || retained->kind != MirLoanKind::Local ||
+                retained->referenceSelection || retained->parent == 0)
+              return false;
+            std::unordered_set<MirLoanId> seen;
+            const MirLoan *ancestor = body.findLoan(retained->parent);
+            MirPlaceId source = retained->source;
+            while (ancestor != nullptr && seen.insert(ancestor->id).second &&
+                   ancestor->kind == MirLoanKind::Local && !ancestor->entry &&
+                   !ancestor->escapes) {
+              source = ancestor->source;
+              ancestor = body.findLoan(ancestor->parent);
+            }
+            return source == loan->source;
+          }();
           if (!retained || retained->id == loan->id ||
-              retained->source != loan->source ||
+              (retained->source != loan->source && !nestedPayloadSource) ||
               retained->storedDependency != loan->storedDependency ||
               (loan->access == AccessMode::Mutable &&
                retained->access != AccessMode::Mutable) ||

@@ -223,7 +223,7 @@ is a teaching helper, not a production server.
 | `module-only/main.gti` | relative module imports, explicit exports, and a private implementation helper |
 | `module-system/` | hierarchical package modules, registered implementation bodies, isolated private names, and inferred private return types |
 | `011-overloads.gti` | exact overloads and explicit numeric conversions |
-| `012-fixed-arrays.gti` | bounded arrays, signed literals, passive records/unions, checked raw record array fields and receiver element-field projections |
+| `012-fixed-arrays.gti` | bounded arrays, signed literals, passive records/unions, checked raw record array fields, receiver element-field projections, and indexing fresh call and move results |
 | `013-ownership.gti` | non-null borrows, unique allocation, moves, and cleanup |
 | `014-operators.gti` | restricted member operators; self-read dereference stores, named mutable-reference assignment, nested subscripts and once-formed compound targets |
 | `015-variadic-generics.gti` | confined type packs, explicit forwarding, and exact passive fixed-array arguments |
@@ -331,7 +331,7 @@ is a teaching helper, not a production server.
 | `118-cleanup-bound-guards.gti` | resource dependencies retained through guard destruction, simultaneous shared guards, by-value parameter/local movement and explicit nested child construction |
 | `119-runtime-object-layout.gti` | runtime size/alignment descriptors for owning, immovable, nested, payload-enum, result and text types without constructing an object |
 | `120-immovable-storage.gti` | fixed-address owning objects, moving their storage handle, checked access and destruction without element movement |
-| `121-programmable-allocators.gti` | an application-defined arena choosing aligned placement in one backing region, one unsafe resource binding, and safe allocator-aware `resource_vector` and fixed-slot containers sharing it |
+| `121-programmable-allocators.gti` | an application-defined arena choosing aligned placement in one backing region, one unsafe resource binding, and safe allocator-aware `resource_vector` and fixed-slot containers sharing it; a returned vector retains the binding from its by-value parameter |
 | `122-native-function-invocation.gti` | exact native function-pointer invocation from locals, fields and returned factories under lexical unsafe, with nullable transport |
 | `125-manual-object-lifetimes.gti` | source-defined inline ownership, immovable final-address construction, checked access and explicit owning relocation |
 | `126-conditional-thread-capabilities.gti` | audited source cleanup with payload-conditional transfer/share assertions, retaining thread-affine payload restrictions |
@@ -379,6 +379,7 @@ is a teaching helper, not a production server.
 | `179-weak-ownership.gti` | source-defined weak observation, checked promotion, expiry, and local owning callbacks with thread-affine payloads |
 | `180-compact-source-owners.gti` | general null-guarded pointer owners, compact shared/weak handles and exactly-once moved cleanup; LLVM only |
 | [181-general-object-layout.gti](181-general-object-layout.gti) | General `sizeof(T)` and `alignof(T)` constants, generic storage extents, and native runtime layout agreement (LLVM). |
+| [182-payload-borrow-chains.gti](182-payload-borrow-chains.gti) | Return nested payload references through a parameter and receiver, and copy a sibling before a mutable payload borrow. |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |
@@ -578,9 +579,11 @@ for an unrelated builtin or foreign type.
 `071-fresh-temporary-borrows.gti` keeps both temporary capabilities bounded to
 one full expression. A fresh receiver can call a mutable method, including a
 virtual member or interface implementation whose override is still selected
-dynamically, while an exact read-only reference parameter can observe a fresh
-self-contained result only for the duration of one call; neither rule creates
-a storable reference.
+dynamically. An exact read-only reference parameter can observe a fresh
+self-contained constructor, call, built-in assignment or conditional result
+only for the duration of one call. Two assignment arguments retain distinct
+value snapshots at their written positions, including when a later argument
+selects a class value through a conditional; none creates a storable reference.
 
 `072-filesystem-paths.gti` performs pathname manipulation only. Assigning or
 observing a `std::filesystem::path` does not access the host filesystem, and

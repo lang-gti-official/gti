@@ -9,6 +9,23 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.494.0 - Checked borrows and fresh values
+
+- Nested payload patterns can return references into a receiver or reference
+  parameter. A mutable payload binding can share an arm with by-value sibling
+  bindings; the values are read before the exclusive loan begins.
+- Fresh assignment and conditional class results can be passed as call-scoped
+  read-only reference arguments. Distinct assignment results retain their own
+  value snapshots throughout the call.
+- Carrier classes can be built directly from returned references, and a local
+  text view can copy a relayed `std::string_view&` while retaining its checked
+  owner. Borrowed resource owners can be returned through a general
+  caller-owned dependency rule.
+- Indexing a fresh fixed-array value, a moved array, or an array field of a
+  fresh class value now works through verified MIR and both executable
+  backends. Qualified static calls on generic class instances report the
+  intended `GTI-S2039` diagnostic instead of an unrelated library error.
+
 ## 0.493.2 - Thread-local owner assignment
 
 - Assigning a new value to a `thread_local` owner, such as a class with a
@@ -812,11 +829,6 @@ for what minor and patch releases mean.
 - Fixed: since 0.468.0, `std::string_view& view = maybe.value();
   view.begin()` on a `std::optional<std::string_view>` holding text owned by a
   `std::string` reported `error[GTI-B0001]`; it works again.
-- Not yet supported: constructing a carrier class directly from a returned
-  reference, as in `Cursor(box.get())`, still reports `GTI-B0001`. Call a
-  function that constructs it, as `open(box.get())` does.
-
-
 ## 0.468.2 — References to payload enums held inside another enum
 
 - `std::optional<Shape>::value()` for a payload enum without cleanup, such as

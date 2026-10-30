@@ -1,3 +1,5 @@
+import std.string;
+
 class Reading {
   mut int value;
 
@@ -61,7 +63,39 @@ WritableReadingView make_writable_view(mut Reading& owner) {
   return WritableReadingView(owner.current_mut());
 }
 
+class LabelBox {
+  std::string_view label;
+public:
+  LabelBox(std::string_view label) : label(label) {}
+  std::string_view& get() { return this.label; }
+};
+
+class LabelCursor {
+  std::string_view& label;
+public:
+  LabelCursor(std::string_view& label) : label(label) {}
+  std::size_t size() { return this.label.size(); }
+};
+
+std::string_view relay_label(std::string_view label) { return label; }
+
+std::size_t copied_label_size(std::string_view& label) {
+  std::string_view copy = relay_label(label);
+  return copy.size();
+}
+
 int main() {
+  std::string text = std::string("owned");
+  std::string_view view = text.view();
+  LabelBox box = LabelBox(view);
+  // The constructor borrows the exact view returned by get() and keeps
+  // its external text owner alive for the cursor's lifetime.
+  LabelCursor cursor = LabelCursor(box.get());
+  if (cursor.size() != std::size_t(5) ||
+      copied_label_size(view) != std::size_t(5)) {
+    return 1;
+  }
+
   mut Reading owner = Reading(21);
 
   {

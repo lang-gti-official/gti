@@ -898,6 +898,11 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME programmable_allocators_runtime
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/programmable_allocators_runtime_test.py" $<TARGET_FILE:gti>)
   set_tests_properties(programmable_allocators_runtime PROPERTIES TIMEOUT 900)
+  add_test(NAME borrowed_carrier_return_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/borrowed_carrier_return_runtime_test.py"
+            "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
+  set_tests_properties(borrowed_carrier_return_runtime PROPERTIES TIMEOUT 300)
   add_test(NAME allocator_raw_audit_independence
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/allocator_raw_audit_independence_test.py" $<TARGET_FILE:gti>)
   # 36 compilations, two thirds of them auditing every trusted body: about
@@ -1799,6 +1804,12 @@ add_test(NAME binary64_pipeline COMMAND gti_binary64_tests)
 add_executable("gti_sum_type_tests" "${PROJECT_SOURCE_DIR}/tests/sum_type_tests.cpp")
 target_link_libraries("gti_sum_type_tests" PRIVATE gti_cpp_backend)
 add_test(NAME sum_type_pipeline COMMAND gti_sum_type_tests)
+add_test(NAME payload_borrow_chains_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/payload_borrow_chains_runtime_test.py"
+                 "$<TARGET_FILE:gti>"
+                 "${PROJECT_SOURCE_DIR}/examples/182-payload-borrow-chains.gti")
+set_tests_properties(payload_borrow_chains_runtime PROPERTIES TIMEOUT 120)
 
 add_executable("gti_mir_backend_tests" "${PROJECT_SOURCE_DIR}/tests/mir_backend_tests.cpp")
 target_link_libraries("gti_mir_backend_tests" PRIVATE gti_cpp_backend)
@@ -2561,6 +2572,11 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/passive_fixed_array_runtime_test.py"
             "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
   set_tests_properties(passive_fixed_array_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME fresh_array_index_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/fresh_array_index_runtime_test.py"
+            "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
+  set_tests_properties(fresh_array_index_runtime PROPERTIES TIMEOUT 300)
   add_test(NAME coverage_native_fixture_policy
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/coverage/native_fixture_policy_test.py")

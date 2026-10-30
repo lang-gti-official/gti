@@ -4854,19 +4854,36 @@ auto SemanticVisitor::Impl::rejectEscapingLocalChildLoan(
         return false;
       if (ancestor->entry)
         return true;
+      const auto *pattern = ancestor->origin == nullptr
+                                ? nullptr
+                                : exprAs<Variable>(ancestor->origin);
+      const BindingInfo *payload =
+          pattern != nullptr && pattern->isReferencePattern()
+              ? semanticModel.findPayloadBinding(pattern->name())
+              : nullptr;
       // A local carrier's stored-value loan names the external referent its
       // stored reference designates, not the carrier's own storage. A
-      // reborrow through it relays that authority; the chain must still
-      // reach caller-owned entry authority above.
+      // reborrow through it relays that authority. A reference-pattern
+      // binding likewise names the switch subject's payload storage rather
+      // than a new local referent. An ordinary local reference alias is not
+      // a payload selection and cannot extend this bounded return rule.
       for (const auto &scope : scopes)
         for (const auto &[_, candidate] : scope)
           if (candidate.bindingKind == SemanticBindingKind::LocalVariable &&
               std::find(ancestor->carriers.begin(), ancestor->carriers.end(),
                         toolingSymbolFor(candidate)) !=
                   ancestor->carriers.end() &&
-              !(ancestor->kind == SemanticLoanKind::StoredValue &&
-                ancestor->place.root != toolingSymbolFor(candidate)))
+              !(ancestor->place.root != toolingSymbolFor(candidate) &&
+                (ancestor->kind == SemanticLoanKind::StoredValue ||
+                 (ancestor->kind == SemanticLoanKind::Reference &&
+                  payload != nullptr && payload->retainedLoan == ancestor->id &&
+                  payload->symbol == toolingSymbolFor(candidate)))))
             return false;
+      // A receiver payload's first checked selection is itself a local loan,
+      // but its place still names storage inside `this`. It has no separate
+      // entry loan to reach, unlike a reference parameter.
+      if (ancestor->parent == 0 && ancestor->place.receiver)
+        return true;
       current = ancestor->parent;
     }
     return false;

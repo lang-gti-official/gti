@@ -10,7 +10,7 @@
     "008-expected.gti": 47,
     "009-target-selection.gti": 9,
     "011-overloads.gti": 14,
-    "012-fixed-arrays.gti": 26,
+    "012-fixed-arrays.gti": 31,
     "013-ownership.gti": 85,
     "014-operators.gti": 28,
     "015-variadic-generics.gti": 26,
@@ -39,7 +39,7 @@
     "038-vector-emplace.gti": 235,
     "039-raw-pointers.gti": 9,
     "040-loan-flow-edges.gti": 165,
-    "041-owner-dependencies.gti": 28,
+    "041-owner-dependencies.gti": 182,
     "042-exclusive-reborrows.gti": 75,
     "043-program-arguments.gti": 201,
     "044-bounded-requires.gti": 152,
@@ -69,7 +69,7 @@
     "068-static-assertions.gti": 8,
     "069-mutable-field-groups.gti": 10,
     "070-qualified-specializations.gti": 67,
-    "071-fresh-temporary-borrows.gti": 19,
+    "071-fresh-temporary-borrows.gti": 20,
     "072-filesystem-paths.gti": 186,
     "073-constructor-local-generics.gti": 176,
     "074-read-only-range-loans.gti": 140,
@@ -117,7 +117,7 @@
     "118-cleanup-bound-guards.gti": 18,
     "119-runtime-object-layout.gti": 93,
     "120-immovable-storage.gti": 205,
-    "121-programmable-allocators.gti": 335,
+    "121-programmable-allocators.gti": 336,
     "122-native-function-invocation.gti": 11,
     "123-native-c-scalars.gti": 13,
     "124-nested-raw-pointers.gti": 12,
@@ -178,7 +178,8 @@
     "178-wrapping-atomic-counters.gti": 25,
     "179-weak-ownership.gti": 164,
     "180-compact-source-owners.gti": 193,
-    "181-general-object-layout.gti": 170
+    "181-general-object-layout.gti": 170,
+    "182-payload-borrow-chains.gti": 11
   },
-  "total": 27179
+  "total": 27351
 }

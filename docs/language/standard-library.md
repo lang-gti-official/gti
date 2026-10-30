@@ -1250,11 +1250,11 @@ own binding. There is no implicit rebinding, shared ownership or reference count
 
 Resource owners compose like other borrowed carriers: a class may hold a
 `resource_vector` field constructed from a `resource_ref` parameter, and
-functions may fill a container through a `mut` reference. A free function
-cannot yet return a new owner built from a `resource_ref` parameter
-(`GTI-S2085`); that is the general rule for returning any borrowed carrier
-constructed from a by-value carrier parameter, not a resource-specific
-restriction. Construct the owner in the caller, or pass it by `mut` reference.
+functions may fill a container through a `mut` reference or return a new owner
+built from a `resource_ref` parameter. The return transfers the provider
+dependency into the returned owner; it remains live through that owner's
+cleanup. A by-value carrier parameter cannot free the provider while that
+returned owner is live.
 
 `process_resource` is a source wrapper over a narrow aligned raw allocation
 runtime interface, with distinct invalid-alignment, size-overflow and
