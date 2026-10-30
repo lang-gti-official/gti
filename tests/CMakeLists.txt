@@ -5532,7 +5532,9 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/single_body_compile_scaling_test.py"
             "$<TARGET_FILE:gti>"
   )
-  set_tests_properties(single_body_compile_scaling PROPERTIES TIMEOUT 900)
+  # It compares compile CPU time across body sizes; concurrent tests on a
+  # small runner skew that ratio, so it runs alone.
+  set_tests_properties(single_body_compile_scaling PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE)
   add_test(
     NAME runtime_performance_workloads
     COMMAND "${Python3_EXECUTABLE}"
