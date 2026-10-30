@@ -30,6 +30,31 @@ schema = 1
 [configuration_dependent]
 reason = "registered only on some hosts or with optional tools or build options"
 tests = [
+  # GTI_BUILD_LSP=OFF omits these registrations.
+  "block_comment_lsp",
+  "comment_placement_lsp",
+  "concurrency_composition_lsp",
+  "diagnostic_explanations",
+  "diagnostic_recovery_lsp",
+  "executable_entry_cli_lsp",
+  "export_placement_lsp",
+  "extensible_formatting_lsp",
+  "frontend_cache_invalidation",
+  "include_removal_lsp",
+  "lsp_code_snippets",
+  "lsp_configuration",
+  "lsp_include_suggestions",
+  "lsp_project_facts",
+  "lsp_protocol",
+  "lsp_scalability_benchmark_smoke",
+  "missing_definition_cli_lsp",
+  "module_map_lsp",
+  "module_navigation_lsp",
+  "raw_pointer_audit_policy",
+  "resource_protocol_lsp",
+  "source_modules_lsp",
+  "source_text_lsp",
+
   "compact_owner_layout_instrumented",
   "cpp_debug_artifacts",
   "issues_30_33_lsp",

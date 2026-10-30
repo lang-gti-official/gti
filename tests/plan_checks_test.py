@@ -13,6 +13,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / ".codex/skills/verify-change/scripts"))
 import plan_checks  # noqa: E402
+import ownership_map_test  # noqa: E402
 
 PLANNER = ROOT / ".codex/skills/verify-change/scripts/plan_checks.py"
 
@@ -186,6 +187,24 @@ class Checks(unittest.TestCase):
         checks = self.names(["tests/fixtures/widget.gti"], {"widget_runtime": ["tests/fixtures/widget.gti"]})
         self.assertEqual(checks["T0"].command,
                          "ctest --test-dir build --output-on-failure -R '^(widget_runtime)$'")
+
+
+class Inventory(unittest.TestCase):
+    def test_conditional_families_require_real_registration(self):
+        ownership = plan_checks.parse_map(fixture_map(
+            configuration_dependent={"tests": ["lsp_protocol"], "reason": "GTI_BUILD_LSP"},
+            area=[{"area": "core", "paths": ["src/core.cpp"],
+                   "owners": ["core", "^lsp_"], "consumers": ["lsp_protocol"]}],
+        ))
+        registered = {"core", "lsp_protocol"}
+        self.assertEqual(ownership_map_test.inventory_errors(
+            ownership, ["core", "lsp_protocol"], registered), [])
+        self.assertEqual(ownership_map_test.inventory_errors(
+            ownership, ["core"], registered), [])
+        self.assertTrue(ownership_map_test.inventory_errors(
+            ownership, ["lsp_protocol"], registered))
+        self.assertTrue(ownership_map_test.registration_errors(ownership, {"core"}))
+        self.assertTrue(ownership_map_test.inventory_errors(ownership, ["core"], {"core"}))
 
 
 class RepositoryMap(unittest.TestCase):

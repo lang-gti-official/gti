@@ -92,7 +92,10 @@ def inventory_errors(ownership: plan_checks.OwnershipMap, inventory: list[str],
             for entry in getattr(area, key):
                 if any(plan_checks.test_matches(entry, name) for name in names):
                     continue
-                if entry in dependent and entry in registered:
+                # A family may consist entirely of optional tests, such as
+                # the LSP family in a GTI_BUILD_LSP=OFF sanitizer build. Keep
+                # exact-name registration proof for every allowed omission.
+                if any(plan_checks.test_matches(entry, name) for name in dependent & registered):
                     continue
                 errors.append(f"area {area.area!r}: {key[:-1]} {entry!r} matches no registered test")
     return errors
