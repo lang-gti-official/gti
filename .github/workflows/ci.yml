@@ -283,14 +283,16 @@ jobs:
           key: gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-native-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-${{ github.sha }}
 
   sanitizers:
-    name: Compiler sanitizers (${{ matrix.index }}/2)
+    name: Compiler sanitizers (${{ matrix.kind }} ${{ matrix.index }}/2)
     if: github.event_name == 'merge_group' && needs.plan.outputs.mode == 'full'
     needs: [plan, automation-tests, formatting, release-version, tree-sitter]
-    # The instrumented subset holds several half-hour suites; two runners
-    # each take every other test (CTest -I stride) and the gate needs both.
+    # The compiler aggregate exceeded three hours serially. Split its six
+    # suites across two runners, separately from the two library partitions.
+    # Every compiler partition verifies the complete manifest census first.
     strategy:
       fail-fast: false
       matrix:
+        kind: [compiler, libraries]
         index: [1, 2]
     runs-on: ubuntu-24.04
     timeout-minutes: 360
@@ -354,10 +356,16 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-        run: >-
-          ctest --test-dir build-sanitized --output-on-failure --no-tests=error
-          --parallel "${GTI_TEST_JOBS}"
-          -R "${GTI_SANITIZER_TESTS}" -I "${{ matrix.index }},,2"
+        run: |
+          if [[ "${{ matrix.kind }}" == "compiler" ]]; then
+            GTI_COMPILER_TEST_SHARD_INDEX="${{ matrix.index }}" GTI_COMPILER_TEST_SHARD_COUNT=2 \
+              ctest --test-dir build-sanitized --verbose --output-on-failure --no-tests=error \
+              -R '^compiler_pipeline$'
+          else
+            ctest --test-dir build-sanitized --verbose --output-on-failure --no-tests=error \
+              --parallel "${GTI_TEST_JOBS}" -R "${GTI_SANITIZER_TESTS}" \
+              -E '^compiler_pipeline$' -I "${{ matrix.index }},,2"
+          fi
       - name: Save compiler object cache
         if: always() && steps.cache.outputs.cache-hit != 'true'
         continue-on-error: true

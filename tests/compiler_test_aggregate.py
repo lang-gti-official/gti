@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 
@@ -76,14 +78,32 @@ def main() -> int:
     ):
         return fail("runtime census lost or duplicated a compiler test")
 
-    for suite, executable in executables.items():
+    index_text = os.environ.get("GTI_COMPILER_TEST_SHARD_INDEX")
+    count_text = os.environ.get("GTI_COMPILER_TEST_SHARD_COUNT")
+    if (index_text is None) != (count_text is None):
+        return fail("both compiler shard index and count are required")
+    try:
+        index, count = (1, 1) if index_text is None else (int(index_text), int(count_text))
+    except ValueError:
+        return fail("compiler shard index and count must be integers")
+    if not 1 <= index <= count <= len(expected_by_suite):
+        return fail("compiler shard index/count out of range")
+    selected = [suite for position, suite in enumerate(expected_by_suite)
+                if position % count == index - 1]
+    for suite in selected:
+        executable = executables[suite]
+        started = time.monotonic()
+        print(f"compiler test aggregate: starting {suite} "
+              f"({len(expected_by_suite[suite])} tests)", flush=True)
         completed = subprocess.run([str(executable)], check=False)
+        print(f"compiler test aggregate: {suite} exited {completed.returncode} "
+              f"after {time.monotonic() - started:.1f}s", flush=True)
         if completed.returncode != 0:
             return fail(f"{suite} suite exited {completed.returncode}")
 
     print(
-        f"compiler test aggregate passed: {len(discovered)} tests across "
-        f"{len(executables)} suites"
+        f"compiler test aggregate passed: {sum(len(expected_by_suite[s]) for s in selected)} tests across "
+        f"{len(selected)} suites (shard {index}/{count}; full census {len(discovered)})"
     )
     return 0
 

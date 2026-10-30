@@ -43,3 +43,10 @@ and sanitizer profiles; cache errors never skip builds or validation.
 
 The previous GitHub-era workflows are archived under
 `docs/plans/archive/github-actions-20261024/` and do not run.
+
+Compiler sanitizer coverage uses two compiler-suite partitions and two library
+partitions. Each compiler partition validates the complete manifest census before
+running its assigned suites; their union runs every compiler case once. Native
+CI continues to run the unpartitioned compiler aggregate. Suite start and elapsed
+time are emitted in verbose sanitizer logs. No sanitizer test is removed and
+the existing timeout and per-runner memory limits remain in force.
