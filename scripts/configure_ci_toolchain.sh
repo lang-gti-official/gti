@@ -12,6 +12,13 @@ repository="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 case "$(uname -s)" in
   Linux)
+    # A hosted runner starts with ~14 GiB free; a sanitizer link of the full
+    # tree needs more. Drop preinstalled toolchains GTI never uses.
+    if [[ "${RUNNER_ENVIRONMENT:-}" == github-hosted ]]; then
+      sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+        /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/share/swift
+      df -h / | tail -n 1
+    fi
     # GCC 14 is the reviewed Linux x86_64 profile; LLVM 20 matches the pinned
     # release LLVM and ships in noble-updates. Ubuntu packages the Clang CMake
     # package (and the clang the LLVM tests run) in clang-20, not libclang-20-dev.

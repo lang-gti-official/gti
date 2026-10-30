@@ -688,6 +688,21 @@ on source and inventory, ran every registered test exactly once and include the
 smoke, and both platforms validated the same source. Refresh the duration table
 from queue JUnit reports when shard wall times drift apart.
 
+Shards run with every test timeout scaled three times
+(`-DGTI_TEST_TIMEOUT_SCALE=3`): hosted runners have 3-4 cores, against the
+8-12 core hosts the bounds were measured on. A test that still times out is too
+slow for its bound, not flaky.
+
+`tests/ci_quarantine.json` lists tests that already fail on `main` and that the
+queue excludes on the named platforms until their linked issue is fixed. Every
+entry names exactly one registered test, its platforms, a
+`lang-gti-official/gti` issue, the reason and the date. The smoke cannot be
+quarantined, and every shard of a platform must apply the same exclusions. The
+gate prints the exclusions it applied. Adding an entry is a reviewed change
+that runs the complete suite, and it is only for a failure reproduced on a clean
+`main` build, never for a regression a pull request introduces. The fix for a
+quarantined test removes its entry in the same change.
+
 A queue failure belongs to the change that introduced it. The queue removes
 that PR and rebuilds the entries behind it, so other work keeps merging; the
 owner reproduces the failing tests locally, repairs the change without

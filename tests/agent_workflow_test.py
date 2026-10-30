@@ -1028,6 +1028,57 @@ class ValidationChecks(unittest.TestCase):
         with self.assertRaises(ValueError):
             validation.merge_shards(no_smoke, ["darwin", "linux"])
 
+    def test_quarantine_excludes_only_listed_platform_tests_and_the_gate_accounts_for_it(self):
+        issue = "https://github.com/lang-gti-official/gti/issues/12"
+        entry = {"name": "slow_case", "platforms": ["linux"], "issue": issue,
+                 "reason": "fails on main", "since": "2026-10-30"}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.assertEqual(validation.load_quarantine(root), {})
+            (root / "tests").mkdir()
+            path = root / validation.QUARANTINE
+            path.write_text(json.dumps({"schema": 1, "tests": [entry]}))
+            table = validation.load_quarantine(root)
+            self.assertEqual(validation.quarantined_on(table, "linux"), ["slow_case"])
+            self.assertEqual(validation.quarantined_on(table, "darwin"), [])
+            for label, bad in {
+                "smoke": dict(entry, name=validation.SMOKE),
+                "unknown platform": dict(entry, platforms=["win32"]),
+                "no platforms": dict(entry, platforms=[]),
+                "other repository issue": dict(entry, issue="https://github.com/other/gti/issues/1"),
+                "no reason": dict(entry, reason=" "),
+                "no date": dict(entry, since="soon"),
+                "extra field": dict(entry, expires="never"),
+            }.items():
+                path.write_text(json.dumps({"schema": 1, "tests": [bad]}))
+                with self.subTest(label), self.assertRaises(ValueError):
+                    validation.load_quarantine(root)
+            path.write_text(json.dumps({"schema": 1, "tests": [entry, entry]}))
+            with self.assertRaises(ValueError):
+                validation.load_quarantine(root)
+        names = ["a", "b", "slow_case"]
+        def report(platform, index, tests, quarantined):
+            return {"platform": platform, "index": index, "shards": 2, "scope": "shard", "head": "h",
+                    "tree": "t", "inventory": names, "tests": tests, "quarantined": quarantined,
+                    "skipped": [], "build_type": "Release", "smoke": ["scalar-O0"] if index == 0 else []}
+        good = [report("linux", 0, ["a"], ["slow_case"]), report("linux", 1, ["b"], ["slow_case"]),
+                report("darwin", 0, ["a", "slow_case"], []), report("darwin", 1, ["b"], [])]
+        summary = validation.merge_shards(good, ["darwin", "linux"])
+        self.assertEqual((summary["linux"]["tests"], summary["linux"]["quarantined"]), (2, ["slow_case"]))
+        self.assertEqual(summary["darwin"]["quarantined"], [])
+        for label, reports in {
+            "shards disagree": [good[0], report("linux", 1, ["b"], []), *good[2:]],
+            "smoke quarantined": [report("linux", 0, ["a"], [validation.SMOKE]),
+                                  report("linux", 1, ["b", "slow_case"], [validation.SMOKE]), *good[2:]],
+            "unregistered quarantine": [report("linux", 0, ["a"], ["ghost"]),
+                                        report("linux", 1, ["b", "slow_case"], ["ghost"]), *good[2:]],
+        }.items():
+            with self.subTest(label), self.assertRaises(ValueError):
+                validation.merge_shards(reports, ["darwin", "linux"])
+
+    def test_committed_quarantine_is_valid(self):
+        validation.load_quarantine(Path(__file__).resolve().parents[1])
+
     def test_ci_automation_paths_name_real_files_that_ci_runs(self):
         # A name for a missing harness would let a future file of that name
         # skip native CI without review, so the inventory names only real

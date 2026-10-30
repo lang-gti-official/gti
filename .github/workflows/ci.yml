@@ -186,18 +186,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {os: ubuntu-24.04, platform: linux, shards: 4, index: 0}
-          - {os: ubuntu-24.04, platform: linux, shards: 4, index: 1}
-          - {os: ubuntu-24.04, platform: linux, shards: 4, index: 2}
-          - {os: ubuntu-24.04, platform: linux, shards: 4, index: 3}
-          - {os: macos-26, platform: darwin, shards: 6, index: 0}
-          - {os: macos-26, platform: darwin, shards: 6, index: 1}
-          - {os: macos-26, platform: darwin, shards: 6, index: 2}
-          - {os: macos-26, platform: darwin, shards: 6, index: 3}
-          - {os: macos-26, platform: darwin, shards: 6, index: 4}
-          - {os: macos-26, platform: darwin, shards: 6, index: 5}
+          # Free accounts run at most five macOS jobs at once, so five macOS
+          # shards start together instead of one waiting for a runner.
+          - {os: ubuntu-24.04, platform: linux, shards: 6, index: 0}
+          - {os: ubuntu-24.04, platform: linux, shards: 6, index: 1}
+          - {os: ubuntu-24.04, platform: linux, shards: 6, index: 2}
+          - {os: ubuntu-24.04, platform: linux, shards: 6, index: 3}
+          - {os: ubuntu-24.04, platform: linux, shards: 6, index: 4}
+          - {os: ubuntu-24.04, platform: linux, shards: 6, index: 5}
+          - {os: macos-26, platform: darwin, shards: 5, index: 0}
+          - {os: macos-26, platform: darwin, shards: 5, index: 1}
+          - {os: macos-26, platform: darwin, shards: 5, index: 2}
+          - {os: macos-26, platform: darwin, shards: 5, index: 3}
+          - {os: macos-26, platform: darwin, shards: 5, index: 4}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 240
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -229,9 +232,11 @@ jobs:
             gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-native-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-
             gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-native-
       - name: Configure
+        # Hosted runners have 3-4 cores, against the 8-12 core hosts the test
+        # timeouts were measured on, so every bound is scaled three times.
         run: >-
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-          -DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF
+          -DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF -DGTI_TEST_TIMEOUT_SCALE=3
       - name: Run this shard of the complete suite
         run: >-
           python3 scripts/validation_checks.py shard --build build
@@ -282,7 +287,7 @@ jobs:
     if: github.event_name == 'merge_group' && needs.plan.outputs.mode == 'full'
     needs: [plan, automation-tests, formatting, release-version, tree-sitter]
     runs-on: ubuntu-24.04
-    timeout-minutes: 240
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Configure runner resources

@@ -254,6 +254,48 @@ def results(path, expected, required):
     return skipped
 
 
+QUARANTINE = "tests/ci_quarantine.json"
+QUARANTINE_ISSUE = re.compile(r"https://github\.com/lang-gti-official/gti/issues/[1-9][0-9]*\Z")
+QUARANTINE_PLATFORMS = {"darwin", "linux"}
+
+
+def load_quarantine(root):
+    """Known failures already on main that the queue's suite excludes until fixed.
+
+    Each entry names one registered test, the platforms it fails on, the issue
+    tracking its fix, and why. Adding or widening an entry edits this file in
+    review and runs the complete suite; the gate prints every exclusion it
+    applies, and the smoke can never be quarantined.
+    """
+    path = Path(root) / QUARANTINE
+    document = json.loads(path.read_text()) if path.exists() else {"schema": 1, "tests": []}
+    if (not isinstance(document, dict) or document.get("schema") != 1
+            or set(document) - {"schema", "description", "tests"} or not isinstance(document.get("tests"), list)):
+        raise ValueError(QUARANTINE + " must be a schema 1 object with a tests list")
+    table = {}
+    for row in document["tests"]:
+        if not isinstance(row, dict) or set(row) != {"name", "platforms", "issue", "reason", "since"}:
+            raise ValueError("Each quarantine entry needs exactly name, platforms, issue, reason and since")
+        name, platforms = row["name"], row["platforms"]
+        if not isinstance(name, str) or not NAME.fullmatch(name) or name == SMOKE or name in table:
+            raise ValueError(f"Invalid, duplicate or unquarantinable test: {name!r}")
+        if (not isinstance(platforms, list) or not platforms or len(set(platforms)) != len(platforms)
+                or set(platforms) - QUARANTINE_PLATFORMS):
+            raise ValueError(f"Quarantine of {name} must list darwin and/or linux once each")
+        if not isinstance(row["issue"], str) or not QUARANTINE_ISSUE.fullmatch(row["issue"]):
+            raise ValueError(f"Quarantine of {name} must link its tracking issue in lang-gti-official/gti")
+        if not isinstance(row["reason"], str) or not row["reason"].strip():
+            raise ValueError(f"Quarantine of {name} must say why it fails")
+        if not isinstance(row["since"], str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", row["since"]):
+            raise ValueError(f"Quarantine of {name} must record the date it began")
+        table[name] = set(platforms)
+    return table
+
+
+def quarantined_on(table, platform):
+    return sorted(name for name, platforms in table.items() if platform in platforms)
+
+
 def shard_assignment(names, durations, shards, default=30.0):
     """Deterministic cost-balanced partition: longest first onto the lightest shard."""
     if shards < 1:
@@ -281,14 +323,19 @@ def merge_shards(reports, platforms):
         for report in rows:
             if (report.get("scope") != "shard" or report.get("shards") != count or
                     report.get("head") != first.get("head") or report.get("tree") != first.get("tree") or
-                    report.get("inventory") != first.get("inventory") or report.get("build_type") not in OPTIMIZED):
-                raise ValueError("Shards for " + platform + " disagree on source, inventory or build")
+                    report.get("inventory") != first.get("inventory") or report.get("build_type") not in OPTIMIZED
+                    or report.get("quarantined", []) != first.get("quarantined", [])):
+                raise ValueError("Shards for " + platform + " disagree on source, inventory, quarantine or build")
+        excluded = set(first.get("quarantined", []))
+        if SMOKE in excluded or excluded - set(first["inventory"]):
+            raise ValueError("Shards for " + platform + " quarantined the smoke or an unregistered test")
         executed = [name for report in rows for name in report.get("tests", [])]
-        if len(executed) != len(set(executed)) or set(executed) != set(first["inventory"]):
+        if len(executed) != len(set(executed)) or set(executed) != set(first["inventory"]) - excluded:
             raise ValueError("Shards for " + platform + " did not run their inventory exactly once")
         if not any(report.get("smoke") for report in rows):
             raise ValueError("No compiler smoke result for " + platform)
         summary[platform] = {"head": first["head"], "tests": len(executed), "shards": count,
+                             "quarantined": sorted(excluded),
                              "skipped": sorted(name for report in rows for name in report.get("skipped", []))}
     heads = {row["head"] for row in summary.values()}
     if len(heads) != 1:
@@ -395,8 +442,11 @@ def run_shard(root, build, shards, index, durations, jobs=4, log=None, junit=Non
                    check=True, cwd=root, stdout=log, stderr=subprocess.STDOUT)
     document = json.loads(subprocess.check_output(["ctest", "--test-dir", str(build), "--show-only=json-v1"], text=True))
     expected = inventory(document, {SMOKE})
+    excluded = set(quarantined_on(load_quarantine(root), sys.platform))
+    if excluded - expected:
+        raise ValueError("Quarantined tests are not registered; remove them: " + ", ".join(sorted(excluded - expected)))
     table = json.loads(Path(durations).read_text())
-    selected = shard_assignment(expected, table["seconds"], shards, table.get("default_seconds", 30))[index]
+    selected = shard_assignment(expected - excluded, table["seconds"], shards, table.get("default_seconds", 30))[index]
     skipped = []
     if selected:
         with tempfile.TemporaryDirectory(prefix="gti-validation-shard-") as directory:
@@ -410,7 +460,7 @@ def run_shard(root, build, shards, index, durations, jobs=4, log=None, junit=Non
     return {"head": git(root, "rev-parse", "HEAD"), "tree": git(root, "rev-parse", "HEAD^{tree}"),
             "platform": sys.platform, "build_type": cache["CMAKE_BUILD_TYPE"], "scope": "shard",
             "shards": shards, "index": index, "inventory": sorted(expected), "tests": selected,
-            "skipped": skipped, "smoke": smoke_results}
+            "quarantined": sorted(excluded), "skipped": skipped, "smoke": smoke_results}
 
 
 def main(argv=None):
