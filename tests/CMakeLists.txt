@@ -5536,6 +5536,13 @@ if(Python3_Interpreter_FOUND)
   # small runner skew that ratio, so it runs alone.
   set_tests_properties(single_body_compile_scaling PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE)
   add_test(
+    NAME single_body_scaling_measurement
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/single_body_scaling_measurement_test.py"
+  )
+  set_tests_properties(single_body_scaling_measurement PROPERTIES TIMEOUT 30)
+
+  add_test(
     NAME runtime_performance_workloads
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/runtime_performance_workloads_test.py"

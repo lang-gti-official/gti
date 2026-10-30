@@ -50,3 +50,10 @@ running its assigned suites; their union runs every compiler case once. Native
 CI continues to run the unpartitioned compiler aggregate. Suite start and elapsed
 time are emitted in verbose sanitizer logs. No sanitizer test is removed and
 the existing timeout and per-runner memory limits remain in force.
+
+The serial single-body compile-scaling check warms all three workloads, then
+uses the median growth from three interleaved baseline/small/large measurements.
+This avoids subtracting independently selected fastest times from different
+runner conditions. Every sample is logged; the fourfold workload increase and
+8x growth limit are unchanged. `single_body_scaling_measurement` checks transient
+baseline noise, persistent excessive growth, and quadratic/cubic rejection.
