@@ -98,7 +98,19 @@ def main() -> int:
                                     env=env, capture_output=True, text=True)
             expect(result.returncode != 0, "invalid compiler shard must fail closed")
 
+        for key in ["GTI_COMPILER_TEST_SHARD_INDEX", "GTI_COMPILER_TEST_SHARD_COUNT"]:
+            env = {k: v for k, v in os.environ.items() if not k.startswith("GTI_COMPILER_TEST_SHARD_")}
+            env[key] = "1"
+            result = subprocess.run([sys.executable, str(aggregate), str(manifest), *bindings],
+                                    env=env, capture_output=True, text=True)
+            expect(result.returncode != 0, "partial shard configuration must fail closed")
+
         write_stub(second, [])
+        env = dict(os.environ, GTI_COMPILER_TEST_SHARD_INDEX="1", GTI_COMPILER_TEST_SHARD_COUNT="2")
+        unassigned_missing = subprocess.run([sys.executable, str(aggregate), str(manifest), *bindings],
+                                            env=env, capture_output=True, text=True)
+        expect(unassigned_missing.returncode != 0 and "census mismatch" in unassigned_missing.stderr,
+               "a shard must reject missing cases in an unassigned suite")
         missing = run(census, manifest, *bindings)
         expect(
             missing.returncode != 0 and "differs" in missing.stderr,
