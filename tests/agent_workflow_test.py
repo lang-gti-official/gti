@@ -638,6 +638,34 @@ class Lifecycle(unittest.TestCase):
         self.assertEqual(git(self.worktree, "rev-parse", "HEAD"), rewritten)
         self.assertEqual(git(self.worktree, "status", "--porcelain"), "")
 
+    def test_rehost_moves_a_pre_gitea_github_record_by_tree_identity(self):
+        original = self.legacy_gitea()
+        original.update(schema=2, host="github", pr=320,
+                        pr_url="https://github.com/lang-gti-official/gti/pull/320")
+        self.flow.save(original)
+        old = original["published_head"]
+        rewritten = git(self.worktree, "commit-tree", old + "^{tree}", "-p", old + "^",
+                        "-m", "implement (rewritten GitHub identity)")
+        git(self.primary, "push", "--force", "origin", rewritten + ":refs/heads/" + self.branch)
+        state = self.flow.rehost("task", 1)
+        self.assertEqual(state["schema"], 4)
+        self.assertEqual(state["pr"], 1)
+        self.assertEqual(state["published_head"], rewritten)
+        self.assertEqual(state["hosting_migration"]["from_host"], "github")
+        self.assertEqual(state["hosting_migration"]["from_pr"], original["pr_url"])
+        self.assertEqual(json.loads(Path(state["hosting_migration"]["recovery"]).read_text()), original)
+        self.assertEqual(git(self.worktree, "rev-parse", "HEAD"), rewritten)
+        self.assertEqual(git(self.worktree, "status", "--porcelain"), "")
+        self.assertNotIn("verified", state)
+
+    def test_pre_gitea_github_record_requires_explicit_rehost(self):
+        original = self.legacy_gitea()
+        original.update(schema=2, host="github", pr=320)
+        self.flow.save(original)
+        with self.assertRaisesRegex(Error, "Use rehost"):
+            self.flow.start("task", "Task outcome", self.worktree, self.branch, adopt=True)
+        self.assertEqual(self.flow.load("task", legacy=True), original)
+
     def test_rehost_rejects_live_verification_changed_tree_and_implicit_adoption(self):
         original = self.legacy_gitea()
         with self.assertRaisesRegex(Error, "Use rehost"):
@@ -657,7 +685,7 @@ class Lifecycle(unittest.TestCase):
         original = self.legacy_gitea()
         original.update(schema=1)
         self.flow.save(original)
-        with self.assertRaisesRegex(Error, "Only a published Gitea-era task"):
+        with self.assertRaisesRegex(Error, "Only a published schema-2 GitHub or schema-3 Gitea task"):
             self.flow.rehost("task", 1)
 
     def test_pr_lookup_filters_by_owner_branch_and_checks_repository_identity(self):

@@ -27,7 +27,9 @@ recovering interruptions or interpreting a refused operation.
 
 GitHub history carries rewritten commit identities: every tree is identical to
 Gitea's, but commit IDs differ. Gitea-era task records show as `legacy-gitea`
-in `status`. Publish the task's branch to GitHub with the same rewritten
+in `status`; pre-Gitea schema-2 GitHub records show as `legacy-github` and
+also need explicit rehosting because their historical PR numbers changed.
+Publish the task's branch to GitHub with the same rewritten
 identity, open its PR, then run `rehost <task> --pr <number>`; it requires the
 PR head to carry the task's published tree and moves a clean worktree onto the
 identical rewritten commit. Wait for any live validation to finish first. Do not

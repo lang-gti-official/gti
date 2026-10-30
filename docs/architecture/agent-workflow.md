@@ -148,7 +148,7 @@ local race with other tasks needs closing. Nothing locks ordinary editing.
 | `verify <task> --focused --checks-file <json>` | For a checked automation-only or source-only GTI stdlib diff, run owning checks directly and record scope `automation` or `source-stdlib`; refuse compiler/native/build changes and remote use. Actual broad workloads still use the window. |
 | `finish <task> --body-file <text> [--pr-only] [--no-rollup]` | Publish the final PR description, mark ready, verify identities and the `main` ruleset. A rollup-eligible PR is labelled `rollup=maybe` (`rollup=always` when automation-only) and waits for the rollup bot (phase `rollup`); a Risk-system or `--no-rollup` PR is labelled `rollup=never` and joins the merge queue alone pinned to the verified head (phase `queued`). Once merged, it synchronizes local main. PR-only stops ready for review. |
 | `sync <task>` | Confirm merged-head/merge-commit reachability, or the rollup bot's proof for a member it closed, and fast-forward primary main, preserving unrelated local edits. Never push to a backup. |
-| `rehost <task> --pr <number>` | Explicitly bind a Gitea-era task to its migrated GitHub PR when the PR head carries the task's published tree; move a clean worktree onto the identical rewritten commit and preserve the original record. Refuse live verification. |
+| `rehost <task> --pr <number>` | Explicitly bind a schema-2 GitHub or schema-3 Gitea task to its migrated GitHub PR when the PR head carries the task's published tree; move a clean worktree onto the identical rewritten commit and preserve the original record. Refuse live verification. |
 | `cleanup <task>` | After confirmed merge/sync, remove a plain clean worktree with no ignored files and delete only unchanged integrated branches. |
 | `abandon <task> --reason <text>` | Publish the final checkpoint and close its PR with a reason, preserving branch and worktree. A task with no PR whose branch holds no commits beyond `origin/main` has nothing to preserve. Its clean worktree and branches are removed and the reason is recorded. |
 | `status [task]` | Read task records and current remote PR state. |
@@ -178,7 +178,9 @@ retains the old-to-new map outside the repository.
 
 New helper records use schema 4 and `host: github`. Gitea-era schema-3 records
 show `legacy-gitea`, and older records `legacy-<host>`, without contacting an
-API using their old numbers. To move a Gitea-era task, publish its branch to
+API using their old numbers. Schema-2 GitHub records also refer to the earlier
+repository history and PR numbers, even when their URL names this repository.
+To move either a schema-2 GitHub or schema-3 Gitea task, publish its branch to
 GitHub with the same identity rewrite, open its PR, and run
 `rehost <task> --pr <number>` once its live validation has finished. The helper
 requires the PR head to carry exactly the task's published tree, saves the
@@ -186,7 +188,7 @@ unmodified original record under task evidence, moves a clean worktree whose
 head is the published head onto the identical rewritten commit, and records
 both identities. Focused evidence bound to old commit IDs is dropped and must be
 recorded again with `verify`. A running `verifying` record refuses rehosting,
-and `start --adopt` cannot silently replace a migrated Gitea PR.
+and `start --adopt` cannot silently replace either kind of migrated PR.
 
 ## Build window
 

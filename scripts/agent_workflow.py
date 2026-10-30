@@ -27,6 +27,7 @@ API = "https://api.github.com/repos/" + REPOSITORY
 GRAPHQL = "https://api.github.com/graphql"
 HOST = "github"
 SCHEMA = 4
+REHOST_SCHEMAS = {("github", 2), ("gitea", 3)}
 # The one required status check. CI reports it on pull_request (fast checks)
 # and on merge_group (the complete integration suite of the queued candidate).
 GATE_CHECK = "CI gate"
@@ -198,7 +199,7 @@ class Workflow:
         except FileNotFoundError as error:
             raise WorkflowError(f"Unknown task {task}; use start --adopt to register a preserved branch") from error
         if not legacy and self.is_legacy(state):
-            raise WorkflowError("Task record predates the GitHub repository; use rehost for a migrated Gitea "
+            raise WorkflowError("Task record predates the GitHub repository; use rehost for a migrated historical "
                                 "PR, or start --adopt for preserved work. Historical tracker numbers are not interchangeable")
         return state
 
@@ -207,11 +208,11 @@ class Workflow:
         return state.get("host") != HOST or state.get("schema") != SCHEMA
 
     def rehost(self, task, number):
-        """Rebind a Gitea-era task to its migrated GitHub PR without rewriting its evidence.
+        """Rebind a published historical task to its migrated PR without rewriting its evidence.
 
         GitHub history carries rewritten commit identities, so commit IDs
         differ while every tree is byte-identical. The migrated PR head must
-        have exactly the tree of the task's last published Gitea head, and a
+        have exactly the tree of the task's last published historical head, and a
         clean worktree at that head moves to the identical rewritten commit.
         """
         state = self.load(task, legacy=True)
@@ -222,8 +223,9 @@ class Workflow:
                 raise WorkflowError("Task is already bound to another GitHub PR")
             self.pull(state)
             return state
-        if state.get("host") != "gitea" or state.get("schema") != 3 or not state.get("published_head"):
-            raise WorkflowError("Only a published Gitea-era task can be rehosted; use start --adopt for other preserved work")
+        if (state.get("host"), state.get("schema")) not in REHOST_SCHEMAS or not state.get("published_head"):
+            raise WorkflowError("Only a published schema-2 GitHub or schema-3 Gitea task can be rehosted; "
+                                "use start --adopt for other preserved work")
         pr = self.api.request("GET", f"/pulls/{number}")
         if not self.matches(pr, state["branch"]) or pr.get("state") != "open":
             raise WorkflowError("Migrated PR repository, branch or state differs; preserve and investigate")
@@ -232,7 +234,8 @@ class Workflow:
         old_tree = git(self.primary, "rev-parse", "--verify", state["published_head"] + "^{tree}", check=False)
         if old_tree.returncode or old_tree.stdout.strip() != git(self.primary, "rev-parse", head + "^{tree}"):
             raise WorkflowError("Migrated PR head does not carry the task's published tree; preserve and investigate")
-        recovery = self.state_dir / "evidence" / task / "gitea-hosting-record.json"
+        recovery_name = "gitea-hosting-record.json" if state["host"] == "gitea" else "pre-cutover-hosting-record.json"
+        recovery = self.state_dir / "evidence" / task / recovery_name
         recovery.parent.mkdir(parents=True, exist_ok=True)
         if recovery.exists():
             if json.loads(recovery.read_text()) != state:
@@ -250,7 +253,7 @@ class Workflow:
         state.pop("verified", None)
         state.update(schema=SCHEMA, host=HOST, pr=number, pr_url=pr["html_url"], published_head=head,
                      base=git(self.primary, "merge-base", head, "origin/main"),
-                     hosting_migration={"from_host": "gitea", "from_pr": state.get("pr_url"),
+                     hosting_migration={"from_host": state["host"], "from_pr": state.get("pr_url"),
                                         "from_head": state["published_head"], "at": self.now(),
                                         "recovery": str(recovery)})
         self.save(state, "active")
@@ -332,7 +335,8 @@ class Workflow:
             if not adopt:
                 raise WorkflowError("Task record predates the GitHub repository; use rehost or start --adopt")
             old = self.load(task, legacy=True)
-            if old.get("host") == "gitea" and old.get("pr"):
+            if old.get("pr") and (old.get("host") == "gitea" or
+                                  (old.get("host"), old.get("schema")) in REHOST_SCHEMAS):
                 raise WorkflowError("Use rehost to preserve the migrated PR and its verification evidence")
             recovery = self.state_dir / "evidence" / task / "legacy-record.json"
             recovery.parent.mkdir(parents=True, exist_ok=True)
@@ -967,7 +971,7 @@ def main():
     start.add_argument("--worktree", required=True)
     start.add_argument("--branch")
     start.add_argument("--adopt", action="store_true")
-    rehost = sub.add_parser("rehost", help="bind a Gitea-era task to its migrated GitHub PR by tree identity")
+    rehost = sub.add_parser("rehost", help="bind a historical published task to its migrated GitHub PR by tree identity")
     rehost.add_argument("task")
     rehost.add_argument("--pr", type=int, required=True)
     checkpoint = sub.add_parser("checkpoint")
