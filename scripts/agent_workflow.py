@@ -633,6 +633,15 @@ class Workflow:
                 raise WorkflowError("Current head or PR differs from the recorded validation; checkpoint and verify again")
             if not body.strip():
                 raise WorkflowError("Provide the final reviewable PR description")
+            # PR CI re-runs the declared T0/T1 tests; claim only what verify ran.
+            from validation_checks import ci_mode, declared_tests, uncovered_declarations
+            if ci_mode({}, git(root, "diff", "--name-only", base, head).splitlines()) == "full":
+                try:
+                    unrun = uncovered_declarations(declared_tests(body), verified.get("checks", []), root)
+                except (ValueError, OSError) as error:
+                    raise WorkflowError(str(error)) from error
+                if unrun:
+                    raise WorkflowError("Declared tests were not part of the recorded validation: " + ", ".join(unrun))
             # Body edits are CI routing events. Retrying a merge while checks
             # run must not cancel and restart that same validation campaign.
             if pr.get("title") != state["title"] or pr.get("body") != body:

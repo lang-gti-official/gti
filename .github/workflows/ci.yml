@@ -45,6 +45,11 @@ jobs:
           fi
           python3 scripts/validation_checks.py ci-mode \
             --event "${GTI_EVENT_PATH}" --base "${base}" >> "${GITHUB_OUTPUT}"
+      - name: Check the declared T0/T1 tests
+        if: github.event_name == 'pull_request' && steps.plan.outputs.mode == 'full'
+        env:
+          GTI_EVENT_PATH: ${{ github.event_path }}
+        run: python3 scripts/validation_checks.py declared --event "${GTI_EVENT_PATH}"
 
   automation-tests:
     name: Workflow regression tests
@@ -171,6 +176,14 @@ jobs:
           ctest --test-dir build --output-on-failure --no-tests=error
           --parallel "${GTI_TEST_JOBS}" -L feedback-fast
           && ctest --test-dir build --output-on-failure --no-tests=error -R '^compiler_pipeline$'
+      - name: Re-run the tests this pull request declares
+        # The body is untrusted: the script validates every name and passes
+        # them to CTest as an escaped, anchored pattern, never through a shell.
+        env:
+          GTI_EVENT_PATH: ${{ github.event_path }}
+        run: >-
+          python3 scripts/validation_checks.py declared --event "${GTI_EVENT_PATH}"
+          --build build --jobs "${GTI_TEST_JOBS}"
       - name: Save compiler object cache
         if: always() && steps.cache.outputs.cache-hit != 'true'
         continue-on-error: true
