@@ -54121,13 +54121,67 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             instruction.definedFailure.empty() &&
             instruction.lifecycle.empty() &&
             !referencesPendingStaged(instruction);
+        // A later argument may assign a class binding and immediately borrow
+        // the assignment's copied result. Earlier borrowed arguments name
+        // their own full-expression slots, not the assignment destination.
+        // Keep that store and the new snapshot at their MIR positions while
+        // proving neither touches any already staged referent.
+        const auto disjointFromPending = [&](const MirPlace &candidate) {
+          return std::all_of(
+              pendingStaged.begin(), pendingStaged.end(), [&](MirValueId id) {
+                const MirValue *staged = body.findValue(id);
+                const MirInstruction *stage =
+                    staged == nullptr
+                        ? nullptr
+                        : findInstruction(body, staged->definition);
+                const MirPlace *borrowed =
+                    stage != nullptr && stage->operands.size() == 1
+                        ? body.findPlace(stage->operands.front().place)
+                        : nullptr;
+                return borrowed != nullptr &&
+                       !sameMirPlaceRoot(candidate, *borrowed);
+              });
+        };
+        const MirPlace *assignedPlace =
+            instruction.kind == MirInstructionKind::Assign &&
+                    instruction.destination
+                ? body.findPlace(*instruction.destination)
+                : nullptr;
+        const bool independentClassAssignment =
+            assignedPlace != nullptr &&
+            assignedPlace->root == MirPlaceRootKind::Binding &&
+            assignedPlace->projections.empty() &&
+            instruction.info.type.kind == SemanticType::Class &&
+            instruction.info.traits.copyable &&
+            !instruction.info.traits.containsBorrowedState &&
+            instruction.definedFailure.empty() &&
+            instruction.localFailureSites.empty() &&
+            instruction.lifecycle.empty() && !instruction.loan &&
+            !instruction.rawMemoryAccess &&
+            instruction.unsafeOperation == UnsafeOperationKind::None &&
+            !referencesPendingStaged(instruction) &&
+            disjointFromPending(*assignedPlace);
+        const bool independentClassSnapshot =
+            initializedTemporary != nullptr &&
+            initializedTemporary->root == MirPlaceRootKind::Temporary &&
+            initializedTemporary->projections.empty() &&
+            initializedTemporary->type.kind == SemanticType::Class &&
+            instruction.hirValue == initializedTemporary->sourceValue &&
+            directTemporaryBorrowForSlot(body, *initializedTemporary) &&
+            instruction.definedFailure.empty() &&
+            instruction.localFailureSites.empty() && !instruction.loan &&
+            !instruction.rawMemoryAccess &&
+            instruction.unsafeOperation == UnsafeOperationKind::None &&
+            !referencesPendingStaged(instruction) &&
+            disjointFromPending(*initializedTemporary);
         // A Move between the staging and its consuming call is inert
         // argument staging: it neither raises nor observes, so the
         // staged callable's deferred spelling stays exact. Lifecycle and
         // EndBorrow spell as comments and touch no state, so they are
         // equally inert inside the window.
         if (!consumingCall && !independentNonRaisingConstruction &&
-            !independentScalarTemporary &&
+            !independentScalarTemporary && !independentClassAssignment &&
+            !independentClassSnapshot &&
             (instruction.kind != MirInstructionKind::CallInput &&
              instruction.kind != MirInstructionKind::Load &&
              instruction.kind != MirInstructionKind::Compute &&

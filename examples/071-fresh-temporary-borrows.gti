@@ -35,6 +35,10 @@ public:
 
 int inspect(Report& report) { return report.code(); }
 
+int inspect_pair(Report& first, Report& second) {
+  return first.code() * 10 + second.code();
+}
+
 int main() {
   // A fresh value may use a mutable receiver for this full expression.
   int updated = Report(4).add(3);
@@ -43,8 +47,24 @@ int main() {
   // for one call. The temporary is destroyed at the statement boundary.
   int observed = inspect(make_report(5));
 
+  // Built-in assignment returns a fresh copy of the committed destination.
+  // A conditional joins its selected class value into one fresh temporary.
+  mut Report destination = Report(1);
+  Report replacement = Report(8);
+  int assigned = inspect(destination = replacement);
+  int selected = inspect(true ? destination : replacement);
+
+  // Each argument observes the copy at its written position. The second
+  // assignment does not change the first temporary's snapshot.
+  int snapshots = inspect_pair(destination = Report(2),
+                               destination = Report(3));
+
   // The mutable override runs on the fresh receiver.
   int recorded = Doubling(1).record(3);
 
-  return updated == 7 and observed == 5 and recorded == 7 ? 0 : 1;
+  return updated == 7 and observed == 5 and recorded == 7 and
+                 assigned == 8 and selected == 8 and snapshots == 23 and
+                 destination.code() == 3
+             ? 0
+             : 1;
 }

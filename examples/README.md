@@ -578,9 +578,10 @@ for an unrelated builtin or foreign type.
 `071-fresh-temporary-borrows.gti` keeps both temporary capabilities bounded to
 one full expression. A fresh receiver can call a mutable method, including a
 virtual member or interface implementation whose override is still selected
-dynamically, while an exact read-only reference parameter can observe a fresh
-self-contained result only for the duration of one call; neither rule creates
-a storable reference.
+dynamically. An exact read-only reference parameter can observe a fresh
+self-contained constructor, call, built-in assignment or conditional result
+only for the duration of one call. Two assignment arguments retain distinct
+value snapshots at their written positions; none creates a storable reference.
 
 `072-filesystem-paths.gti` performs pathname manipulation only. Assigning or
 observing a `std::filesystem::path` does not access the host filesystem, and

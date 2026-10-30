@@ -1446,6 +1446,12 @@ same exact materialization, the value-rooted lifetime slot or the CFG-promoted
 hidden slot of a call in a conditional arm or `&&`/`||` operand, and passes
 that slot to the selected reference parameter. The hidden slot's MIR drop
 after the merge is emitted as its conditional `destroy_if_engaged()`. A
+class assignment's copied result and a class conditional's joined result use
+their own hidden full-expression slots as well. A later assignment argument
+may update the original binding while an earlier argument's read loan remains
+live: the earlier loan names its distinct snapshot slot. The C++ emitter
+replays the later store and snapshot at their MIR positions only after proving
+their destinations are disjoint from every staged borrowed slot. A
 payload-enum temporary in such a slot, cleanup-free or owning, is constructed
 there as well. Its `PayloadConstruct`, retargeted to the slot by the merge,
 constructs the alternative in place. An owning enum returned by a call
