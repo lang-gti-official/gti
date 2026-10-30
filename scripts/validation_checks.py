@@ -37,7 +37,8 @@ AUTOMATION_SCRIPTS = {"agent_workflow.py", "validation_batch.py", "validation_ch
 # batch, validation and preview-submit scripts are covered by agent_workflow_test.
 AUTOMATION_TESTS = {"agent_workflow_test.py", "preview_workflow_test.py", "build_window_test.py",
                     "bounded_log_test.py", "release_version_test.py", "ci_resources_test.py",
-                    "repository_hosting_test.py", "cut_release_test.py"}
+                    "repository_hosting_test.py", "cut_release_test.py",
+                    "ownership_map_test.py", "plan_checks_test.py"}
 
 
 def focused_scope(paths):
@@ -576,6 +577,9 @@ def main(argv=None):
     declared.add_argument("--event", required=True)
     declared.add_argument("--build", help="re-run the declared tests in this build tree")
     declared.add_argument("--jobs", type=int, default=4)
+    smoke_parser = sub.add_parser("smoke", help="run only the native O0/O3 compiler smoke")
+    smoke_parser.add_argument("--build", required=True)
+    smoke_parser.add_argument("--log")
     for name in ("focused", "full"):
         run_parser = sub.add_parser(name)
         run_parser.add_argument("--build", required=True)
@@ -624,6 +628,15 @@ def main(argv=None):
                 log.close()
         Path(args.report).write_text(json.dumps(report, indent=2) + "\n")
         print("GTI_SHARD_RESULT=" + json.dumps({k: report[k] for k in ("platform", "index", "shards")}))
+        return
+    if args.command == "smoke":
+        log = Path(args.log).open("w") if args.log else None
+        try:
+            executed = smoke(root, Path(args.build).resolve(), log)
+        finally:
+            if log:
+                log.close()
+        print("GTI_SMOKE_RESULT=" + json.dumps(executed))
         return
     if args.jobs < 1:
         raise ValueError("jobs must be positive")

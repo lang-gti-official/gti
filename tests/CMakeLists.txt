@@ -2836,6 +2836,23 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/cmake_test_ownership_test.py"
             "${PROJECT_SOURCE_DIR}"
   )
+  # Every owner and consumer in tests/ownership.toml must name a test that
+  # this build registers. The Git-based coverage checks run in CI's workflow
+  # regression job instead.
+  add_test(
+    NAME test_ownership_map
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/ownership_map_test.py"
+            --inventory-only --ctest "${CMAKE_CTEST_COMMAND}"
+            --build "${PROJECT_BINARY_DIR}"
+  )
+  set_tests_properties(test_ownership_map PROPERTIES TIMEOUT 120)
+  add_test(
+    NAME plan_checks
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/plan_checks_test.py"
+  )
+  set_tests_properties(plan_checks PROPERTIES TIMEOUT 60)
   add_test(
     NAME optimized_test_compiler_policy
     COMMAND "${Python3_EXECUTABLE}"
