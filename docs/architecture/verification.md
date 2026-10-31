@@ -1,5 +1,71 @@
 # Compiler Verification
 
+## Owned inline consumption (0.500.0)
+
+The user-facing slice is allocation-free small once-invoked callbacks and
+`std::move(owner).invoke_once<R>(arguments...)` on an ordinary
+`inline_polymorphic` owner. This is a T3 ownership/storage change: semantics
+derives an exact owning projection, MIR re-proves it, and LLVM preserves the
+actual cleanup temporary through conditional invocation. No new parser,
+formatter, Tree-sitter syntax or C++ backend mechanism is introduced.
+
+`consuming_owned_pointee` checks inline accessor summaries, root consuming
+authority, malformed field/intrinsic/loan metadata, and the named-method
+borrowed-result diagnostic's source/declaration spans and hint. Existing
+unique-owner mutation checks remain. `consuming_receiver_types` now expects
+named methods to retain owned fields like call operators. The conditional
+receiver runtime oracle explicitly checks the revised reverse-field cleanup
+order; extraction into a separate local retains its own lifetime.
+
+`llvm_admission` checks exact branch-temporary publication and mutations of
+its origin, availability and root. `owned_inline_consumption_runtime` executes
+LLVM O0/O3 with an unrelated application interface and a named consuming
+ticket method. It checks zero allocations for eligible function, clone,
+move-only and transferable targets, one allocation for oversized/cleanup
+fallback, exactly-once cleanup on normal return, invocation failure and later
+sibling failure, empty invocation, and rejection of reuse, conflicting loans,
+borrowed receivers, escaped references and mismatched result signatures.
+`owning_function_policy_failure_runtime` retains boxed-clone allocation failure
+and adds successful small once-cloning while allocation is disabled. The
+broader owning-function/consuming receiver suites preserve C++20/23,
+no-elide and ASan/UBSan comparison evidence for supported behavior; those
+sanitizer runs do not instrument native LLVM code.
+
+Example 135 demonstrates inline consuming invocation and is executed with
+LLVM O3. The stdlib surface manifest registers the new operation and native
+O0/O3 case. Reviewed inventories cover all 183 examples: MIR has 28,103 macOS
+and 28,099 Linux bodies; LoweredProgram has 28,225 and 28,221 bodies. Only
+examples 086 and 135 gain bodies. Removing the four obsolete boxed-factory
+declarations also reduces declaration counts in importing examples. The normal
+macOS CLI census agrees exactly with a scratch cross-target emitter using the
+same frontend/lowering/backend libraries; its Linux inventory preserves the
+census's canonical inventory convention for LLVM-only examples.
+
+Release-compiler acceptance passed on macOS arm64 and Linux x86_64: 23 selected
+compiler/ownership/runtime checks, with affected local checks rerun after the
+named-method fallback correction. Linux ran all 23 together in 966 seconds
+(managed run `run-97d23d3ec1fa4874bab7697cad2eabf2`); its results were fetched
+without truncation and its remote checkout removed. Scalar/owner compiler smoke
+passes O0/O3, as do the new stdlib surface case and scoped C++ formatting.
+This is targeted subsystem/platform acceptance, not a full repository CTest run.
+The repository-wide formatting failures in unchanged `source_loader.cpp` and
+`process_allocation_elision.cpp` also reproduce from the parent source.
+Evidence, source/compiler hashes, census collector and performance inputs are
+retained in `build-release/owned-inline-evidence/`. This checkpoint remains local;
+it is not published, integrated into main or installed.
+
+An Apple Silicon LLVM O3 scalar-callback microbenchmark compared the same
+compiler against the parent and current stdlib: 200,000 construct/invoke
+operations, eleven alternating runs, identical checksum 20,001,300,000.
+Median runtime was 4.83 ms boxed and 0.34 ms inline, with 200,000 versus zero
+allocations. The wrapper grows from 8 to 56 bytes; executable file size was
+125,248 versus 125,424 bytes, with unchanged page-rounded text/data segments.
+One-shot compile observations were 1.02 versus 0.68 seconds and peak RSS
+194,461,696 versus 219,840,512 bytes. Compile timings are noisy observations,
+not a compiler-speed claim. This demonstrates the scalar registration/invocation
+cost model, not universal speedup or a cleanup-bearing inline-storage policy.
+
+
 ## Explicit default construction (0.485.0)
 
 `explicit_default_constructors` rejects undeclared defaults for empty records,

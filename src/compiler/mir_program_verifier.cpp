@@ -1727,7 +1727,6 @@ uniqueMirClassInstanceForType(const MirProgram &program,
   if (caller == nullptr || !caller->owner || anchor == nullptr ||
       referent == nullptr || loan == nullptr ||
       anchor->root != MirPlaceRootKind::This || !anchor->key ||
-      anchor->projections.empty() ||
       anchor->key->projections.size() != anchor->projections.size())
     return false;
   // The executable loan must be backed by an actually declared, mutable
@@ -1791,8 +1790,10 @@ uniqueMirClassInstanceForType(const MirProgram &program,
           ? program.findClassInstance(*accessor->owner)
           : nullptr;
   if (accessor == nullptr || !accessor->ownedPointeeProjection ||
-      accessor->ownedPointeeProjection->borrowIntrinsic !=
-          IntrinsicKind::UniqueOwnerBorrowMut ||
+      (accessor->ownedPointeeProjection->borrowIntrinsic !=
+           IntrinsicKind::UniqueOwnerBorrowMut &&
+       accessor->ownedPointeeProjection->borrowIntrinsic !=
+           IntrinsicKind::PolymorphicStorageReadMut) ||
       accessorOwner == nullptr || accessorOwner->type != anchor->type ||
       accessor->returnType !=
           SemanticType::referenceTo(input.info.type, AccessMode::Mutable) ||
@@ -1973,7 +1974,7 @@ uniqueMirClassInstanceForType(const MirProgram &program,
           (caller == nullptr || !caller->owner || caller->staticMember ||
            !exactRetainedOwnedPointee(program, body, caller, *receiverInput) ||
            caller->receiverMutability != ReceiverMutability::Consuming ||
-           (!isCallOperatorTarget(functionTarget) && lambdaTarget == nullptr) ||
+           (functionTarget == nullptr && lambdaTarget == nullptr) ||
            (functionTarget != nullptr &&
             (!functionTarget->owner || functionTarget->staticMember ||
              functionTarget->returnType.kind == SemanticType::Reference)) ||
@@ -2437,7 +2438,9 @@ uniqueMirClassInstanceForType(const MirProgram &program,
              (receiverInput != nullptr &&
               receiverInput->kind == MirInstructionKind::CallInput &&
               receiverInput->callInputRole == MirCallInputRole::Receiver &&
-              receiverInput->callInputKind == HirCallInputKind::MoveValue))));
+              (receiverInput->callInputKind == HirCallInputKind::MoveValue ||
+               receiverInput->callInputKind ==
+                   HirCallInputKind::RetainedReceiver)))));
       const bool exactLambdaCallable =
           lambdaTarget != nullptr && !instruction.functionTarget;
       const bool exactNativeCallable =
@@ -17292,16 +17295,21 @@ verifyOwnedPointeeProjection(const MirProgram &program,
     return verificationFailure(
         function.body, function.id,
         "owned-pointee projection summary does not prove one exact "
-        "unique-owner field borrow and return");
+        "owning-storage field borrow and return");
   };
   const OwnedPointeeProjection &summary = *function.ownedPointeeProjection;
+  const bool inlineStorage =
+      summary.borrowIntrinsic == IntrinsicKind::PolymorphicStorageRead ||
+      summary.borrowIntrinsic == IntrinsicKind::PolymorphicStorageReadMut;
   const bool mutableBorrow =
-      summary.borrowIntrinsic == IntrinsicKind::UniqueOwnerBorrowMut;
+      summary.borrowIntrinsic == IntrinsicKind::UniqueOwnerBorrowMut ||
+      summary.borrowIntrinsic == IntrinsicKind::PolymorphicStorageReadMut;
   const AccessMode access =
       mutableBorrow ? AccessMode::Mutable : AccessMode::ReadOnly;
   if (summary.fields.size() != 1 || summary.fields.front() == 0 ||
       (!mutableBorrow &&
-       summary.borrowIntrinsic != IntrinsicKind::UniqueOwnerBorrow) ||
+       summary.borrowIntrinsic != IntrinsicKind::UniqueOwnerBorrow &&
+       summary.borrowIntrinsic != IntrinsicKind::PolymorphicStorageRead) ||
       !function.owner || function.staticMember || function.virtualMethod ||
       function.pureVirtual || function.overrideMethod ||
       !function.virtualRoots.empty() ||
@@ -17315,7 +17323,8 @@ verifyOwnedPointeeProjection(const MirProgram &program,
       function.returnType.referenceAccess != access ||
       function.returnBorrowOrigin != BorrowOriginKind::Receiver ||
       function.returnBorrowParameter != 0 || function.returnBorrowPlace ||
-      function.returnBorrowAccess != access || !function.mayRaiseDefinedFailure)
+      function.returnBorrowAccess != access ||
+      (!inlineStorage && !function.mayRaiseDefinedFailure))
     return reject();
   const MirClassInstance *owner = program.findClassInstance(*function.owner);
   if (owner == nullptr)
@@ -17327,7 +17336,11 @@ verifyOwnedPointeeProjection(const MirProgram &program,
                    });
   if (field == owner->declaredFields.end() ||
       (mutableBorrow && field->access != AccessMode::Mutable) ||
-      field->type.kind != SemanticType::UniqueOwner ||
+      (inlineStorage
+           ? exactMirCapabilityClass(
+                 program, field->type,
+                 CompilerCapabilityTypeKind::PolymorphicStorage) == nullptr
+           : field->type.kind != SemanticType::UniqueOwner) ||
       field->type.arguments.size() != 1 ||
       field->type.arguments.front() != function.returnType.arguments.front())
     return reject();
@@ -17338,22 +17351,27 @@ verifyOwnedPointeeProjection(const MirProgram &program,
   // not interchangeable with this owning provenance.
   const MirBody &body = function.body;
   const MirBlock *entry = body.findBlock(body.entry);
-  if (body.blocks.size() != 3 || !body.dropObligations.empty() ||
-      body.loans.size() != 2 || body.fullExpressions.size() != 1 ||
-      entry == nullptr || entry->instructions.size() != 2 ||
-      entry->terminator.kind != MirTerminatorKind::Invoke)
+  if (body.blocks.size() != (inlineStorage ? 1u : 3u) ||
+      !body.dropObligations.empty() || body.loans.size() != 2 ||
+      body.fullExpressions.size() != 1 || entry == nullptr ||
+      entry->instructions.size() != (inlineStorage ? 5u : 2u) ||
+      entry->terminator.kind != (inlineStorage ? MirTerminatorKind::Return
+                                               : MirTerminatorKind::Invoke))
     return reject();
   const MirInstruction &load = entry->instructions.front();
-  const MirInstruction &call = entry->instructions.back();
+  const MirInstruction &call = entry->instructions[1];
   if (load.kind != MirInstructionKind::Load || !load.result ||
       load.operands.size() != 1 ||
       load.operands.front().kind != MirOperandKind::Copy ||
       !load.lifecycle.empty() || !load.definedFailure.empty() ||
       call.intrinsic != summary.borrowIntrinsic ||
-      !exactUniqueOwnerBorrowContract(body, call) ||
+      !(inlineStorage
+            ? exactPolymorphicStorageIntrinsicContract(program, body, call)
+            : exactUniqueOwnerBorrowContract(body, call)) ||
       call.operands.front().value != *load.result ||
-      entry->terminator.invokeInstruction != call.id ||
-      entry->terminator.target == entry->terminator.elseTarget ||
+      (!inlineStorage &&
+       (entry->terminator.invokeInstruction != call.id ||
+        entry->terminator.target == entry->terminator.elseTarget)) ||
       !entry->terminator.successLifecycle.empty())
     return reject();
   const MirPlace *place = body.findPlace(load.operands.front().place);
@@ -17366,15 +17384,19 @@ verifyOwnedPointeeProjection(const MirProgram &program,
       place->key->projections.front().kind != PlaceProjectionKind::Field ||
       place->key->projections.front().field != summary.fields.front())
     return reject();
-  const MirBlock *success = body.findBlock(entry->terminator.target);
+  const MirBlock *success =
+      inlineStorage ? entry : body.findBlock(entry->terminator.target);
   const MirBlock *failure = body.findBlock(entry->terminator.elseTarget);
-  if (success == nullptr || failure == nullptr || success == entry ||
-      failure == entry || success->instructions.size() != 3 ||
-      failure->instructions.size() != 1 ||
+  if (success == nullptr ||
+      (!inlineStorage &&
+       (failure == nullptr || success == entry || failure == entry ||
+        success->instructions.size() != 3 ||
+        failure->instructions.size() != 1)) ||
       success->terminator.kind != MirTerminatorKind::Return ||
       !success->terminator.returnLoan || !success->terminator.value ||
-      failure->terminator.kind != MirTerminatorKind::PropagateFailure ||
-      failure->terminator.failureRecord != entry->terminator.failureRecord)
+      (!inlineStorage &&
+       (failure->terminator.kind != MirTerminatorKind::PropagateFailure ||
+        failure->terminator.failureRecord != entry->terminator.failureRecord)))
     return reject();
   const MirLoan *returned = body.findLoan(*success->terminator.returnLoan);
   if (returned == nullptr || returned->kind != MirLoanKind::Return ||
@@ -17386,10 +17408,12 @@ verifyOwnedPointeeProjection(const MirProgram &program,
       success->terminator.value->loan != returned->id ||
       success->terminator.value->type != field->type.arguments.front())
     return reject();
-  const MirInstruction &borrow = success->instructions[0];
-  const MirInstruction &end = success->instructions[1];
-  const MirInstruction &boundary = success->instructions[2];
-  const MirInstruction &failedEnd = failure->instructions.front();
+  const std::size_t offset = inlineStorage ? 2 : 0;
+  const MirInstruction &borrow = success->instructions[offset];
+  const MirInstruction &end = success->instructions[offset + 1];
+  const MirInstruction &boundary = success->instructions[offset + 2];
+  const MirInstruction *failedEnd =
+      inlineStorage ? nullptr : &failure->instructions.front();
   if (borrow.kind != MirInstructionKind::Borrow ||
       borrow.loan != returned->id || borrow.operands.size() != 1 ||
       borrow.operands.front().kind != MirOperandKind::Loan ||
@@ -17398,9 +17422,10 @@ verifyOwnedPointeeProjection(const MirProgram &program,
       !borrow.definedFailure.empty() ||
       end.kind != MirInstructionKind::EndBorrow || end.loan != call.loan ||
       !end.lifecycle.empty() || !end.definedFailure.empty() ||
-      failedEnd.kind != MirInstructionKind::EndBorrow ||
-      failedEnd.loan != call.loan || !failedEnd.lifecycle.empty() ||
-      !failedEnd.definedFailure.empty() ||
+      (failedEnd != nullptr &&
+       (failedEnd->kind != MirInstructionKind::EndBorrow ||
+        failedEnd->loan != call.loan || !failedEnd->lifecycle.empty() ||
+        !failedEnd->definedFailure.empty())) ||
       boundary.kind != MirInstructionKind::Lifecycle ||
       !boundary.lifecycle.empty() || !boundary.definedFailure.empty() ||
       boundary.fullExpressionEnd != body.fullExpressions.front().id ||
