@@ -6,7 +6,10 @@
 #include <algorithm>
 #include <array>
 #include <limits>
+#include <llvm/Config/llvm-config.h>
+#include <llvm/IR/Attributes.h>
 #include <llvm/Support/Alignment.h>
+#include <llvm/Support/ModRef.h>
 #include <optional>
 
 namespace lang::native_llvm {
@@ -135,6 +138,24 @@ llvm::Value *Memory::providerCall(ProcessMemoryRuntimeOperation operation,
   }
   auto *call = ir.CreateCall(function, arguments);
   plan.applyTo(*call);
+  // These are the sealed process-memory ABI's existing freshness and escape
+  // guarantees, not properties inferred from a public allocator name. Keep
+  // them on this verified call edge: an ordinary foreign declaration does not
+  // inherit them merely because it has the same symbol or physical signature.
+  if (operation == ProcessMemoryRuntimeOperation::PosixAllocate ||
+      operation == ProcessMemoryRuntimeOperation::AlignedAllocate)
+    call->addRetAttr(llvm::Attribute::NoAlias);
+  // The POSIX status address is only written, never returned or retained. Do
+  // not mechanically translate every MIR non-escaping argument: for example,
+  // the alignment query returns information about its pointer's address bits.
+  if (operation == ProcessMemoryRuntimeOperation::PosixAllocate) {
+#if LLVM_VERSION_MAJOR >= 21
+    call->addParamAttr(2, llvm::Attribute::getWithCaptureInfo(
+                              session.context(), llvm::CaptureInfo::none()));
+#else
+    call->addParamAttr(2, llvm::Attribute::NoCapture);
+#endif
+  }
   return call;
 }
 

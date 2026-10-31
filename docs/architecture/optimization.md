@@ -1402,6 +1402,36 @@ inapplicable analysis. This avoids repeating the bounded interprocedural
 analysis for each safety family without turning cached pass claims into backend
 authority.
 
+### Process-allocation facts
+
+The native adapter preserves the existing sealed process-memory contract on
+each verified LLVM call edge. POSIX and Windows allocation results carry
+`noalias`: a successful result denotes fresh storage; null remains a possible
+failure result. The POSIX status pointer is noncapturing (`captures(none)` on
+LLVM 21+, `nocapture` on earlier supported versions). These facts come from
+the exact target-selected runtime operation, not a public allocator spelling,
+pointer type, or an arbitrary foreign function's symbol.
+
+The shared physical declaration remains unannotated, so an ordinary foreign
+call does not inherit those guarantees. Custom resource providers retain their
+existing alias contracts. No extent, nonnull, no-unwind, memory-effect, or
+speculation promise is added: in particular, the raw provider's fixed-width
+byte count is narrowed to native `size_t`, so it is not an unconditional LLVM
+`allocsize` contract. Address-alignment queries do not receive a noncapture
+promise merely because MIR says that their arguments do not escape; their
+results expose address-bit information.
+
+The owning `llvm_memory_contracts` test checks actual alias-analysis results,
+including prior storage, separate allocations, derived aliases and unclassified
+calls, while the existing target-family matrix rejects cross-family adapters.
+Native execution remains limited by the backend's macOS arm64/Linux x86_64
+admission; the Windows provider mapping is not Windows execution evidence.
+Fresh allocation does not imply that pointers copied from it are disjoint from
+one another. Nor does this
+annotation alone export fresh output fields through an outlined source helper;
+inlining and interprocedural representation remain separate optimization work.
+See LLVM's [return-value alias contract](https://llvm.org/docs/LangRef.html#parameter-attributes).
+
 ## Per-Instance Effects
 
 `mir_effects.h` supplies exhaustive conservative effects for every
