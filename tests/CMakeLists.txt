@@ -900,6 +900,11 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME programmable_allocators_runtime
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/programmable_allocators_runtime_test.py" $<TARGET_FILE:gti>)
   set_tests_properties(programmable_allocators_runtime PROPERTIES TIMEOUT 900)
+  add_test(NAME borrowed_carrier_return_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/borrowed_carrier_return_runtime_test.py"
+            "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
+  set_tests_properties(borrowed_carrier_return_runtime PROPERTIES TIMEOUT 300)
   add_test(NAME allocator_raw_audit_independence
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/allocator_raw_audit_independence_test.py" $<TARGET_FILE:gti>)
   # 36 compilations, two thirds of them auditing every trusted body: about
