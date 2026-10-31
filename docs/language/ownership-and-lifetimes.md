@@ -543,6 +543,31 @@ Explicit complete dependency contracts for reference-bearing payload enums,
 described below, extend this beyond the implicit single-origin form; they do
 not infer an unspecified lifetime relation from an ambiguous signature.
 
+**References through owning chains.** The single-origin rule also applies when
+safe accessors traverse several exclusive owners before returning an element.
+For example, a node may contain an owning link to another node, and a recursive
+function taking `Node&` may return an `int&` from a descendant. The mutable form
+uses `mut Node&` and `mut int&`. Each recursive call preserves the parameter's
+checked origin; the returned reference denotes the selected element, while its
+loan protects the original owner. This uses the existing reference and owner
+capabilities, not a new annotation or a raw-pointer ownership inference.
+
+While the result is live, the owner cannot be reset, moved, or used to unlink
+the chain or obtain conflicting mutable access. Retaining the root object alone
+would not suffice: the intervening owning links must remain protected too.
+The ordinary whole-origin call contract conservatively protects the root, even
+if another element would be disjoint. Last use permits subsequent owner
+operations under the existing loan-endpoint rules. Returning a reference into
+a local or by-value owner, or retaining one from a temporary owner, is rejected.
+
+This does not prove ownership of arbitrary raw pointers, add shared ownership,
+pin storage, or promise a reference-reseating cursor. A raw-pointer container
+still needs an audited `unsafe` implementation and, where appropriate,
+`std::assume_ref`/`std::assume_mut` to assert the relationship to its retained
+owner. The caller's resulting checked borrow does not discharge that unsafe
+implementation obligation. See the runnable
+[owner-chain example](../../examples/ownership/owner-chain-references.gti).
+
 `expected<T&, E>` applies this same inference to a checked read-only borrow.
 The success path publishes the referent together with the receiver, argument,
 or global owner dependency; an `unexpected(E)` path publishes no loan. A local

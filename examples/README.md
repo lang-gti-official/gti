@@ -755,6 +755,19 @@ bridge retains the owner relationship through an ordinary source helper; the
 resulting checked borrow prevents mutation, movement or escape past that owner.
 Address validity, extent and termination remain the caller's unsafe obligations.
 
+## Checked references through owning chains
+
+[`ownership/owner-chain-references.gti`](ownership/owner-chain-references.gti)
+uses ordinary reference-returning functions to borrow and modify a descendant
+through a chain of exclusive owners, without raw pointers or unsafe assertions.
+It shows shared observations after the mutable borrow's last use and exact
+destruction after all observations finish. Supplying an extra command-line
+argument demonstrates checked empty-owner failure and cleanup during traversal.
+The `owner_chain_runtime` gate runs
+this nested example on LLVM and the existing C++ backend; it is outside the
+numbered full-language census. This demonstrates existing general semantics,
+not automatic verification of raw-pointer container internals.
+
 ## General requirements and reflection
 
 [`173-general-requires.gti`](173-general-requires.gti) defines source concepts
