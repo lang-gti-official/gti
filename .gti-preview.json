@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "features": [
+    {
+      "task": "preview-default",
+      "pr": 97,
+      "head": "4fbd473042aa2d3bad1f9543803195c03706b8cc",
+      "tests": [
+        "preview_workflow",
+        "neovim_local_installer"
+      ],
+      "contributions": [
+        "a1de1f167320ca05fb373c9b72743ef5c716e207"
+      ],
+      "merge": "a1de1f167320ca05fb373c9b72743ef5c716e207"
+    }
+  ],
+  "removed": [],
+  "main": "cfb28948a26a14e58ffb720c3474cbbed8d3f2ff",
+  "previous": null,
+  "candidate": "2537a249e0694a959fdb4beb06e8d921"
+}
