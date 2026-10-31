@@ -288,6 +288,8 @@ if(Python3_Interpreter_FOUND)
   math(EXPR gti_scaled_timeout "300 * ${GTI_TEST_TIMEOUT_SCALE}")
   set_tests_properties(test_case_jobs test_throughput_registration
     PROPERTIES TIMEOUT "${gti_scaled_timeout}")
+  set_property(TEST test_case_jobs test_throughput_registration APPEND PROPERTY
+    ENVIRONMENT "GTI_TEST_TIMEOUT_SCALE=${GTI_TEST_TIMEOUT_SCALE}")
 endif()
 
 # Full is a census of every registered gate, never a hand-maintained subset.

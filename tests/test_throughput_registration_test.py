@@ -11,7 +11,7 @@ import subprocess
 import sys
 import tempfile
 
-from sanitizer_support import SANITIZED_BUILD_TIMEOUT
+from sanitizer_support import SANITIZED_BUILD_TIMEOUT, scaled_timeout
 
 
 def verify_algorithm_partitions(tests):
@@ -50,6 +50,7 @@ def verify_trusted_body_partitions(tests, repository):
             f"trusted_body_analysis_{index}" for index in range(4)}:
         raise AssertionError("trusted-body matrix must have four partitions")
     actual = []
+    expected_timeout = scaled_timeout(600)
     for test in partitions:
         command = test.get("command", [])
         # CMake is present at configure time, so CTest exposes this command
@@ -63,8 +64,13 @@ def verify_trusted_body_partitions(tests, repository):
             raise AssertionError("trusted-body partition changed its harness or root")
         actual.extend(pathlib.Path(arg).resolve() for arg in command[2:])
         properties = {item["name"]: item["value"] for item in test["properties"]}
-        if not properties.get("RUN_SERIAL") or properties.get("TIMEOUT") != 600:
-            raise AssertionError("trusted-body partition changed its execution budget")
+        if (not properties.get("RUN_SERIAL") or
+                properties.get("TIMEOUT") != expected_timeout):
+            raise AssertionError(
+                f"{test['name']}: trusted-body partition requires serial execution "
+                f"with TIMEOUT={expected_timeout}; found "
+                f"RUN_SERIAL={properties.get('RUN_SERIAL')}, "
+                f"TIMEOUT={properties.get('TIMEOUT')}")
     if not expected or sorted(actual) != expected:
         raise AssertionError("trusted-body corpus is incomplete or duplicated")
 
@@ -286,7 +292,8 @@ def main():
             pass
         else:
             raise AssertionError(f"accepted forged algorithm {mutation}")
-    for mutation in ("omitted-partition", "omitted-entry", "duplicate-entry", "parallel"):
+    for mutation in ("omitted-partition", "omitted-entry", "duplicate-entry", "parallel",
+                     "missing-timeout", "short-timeout", "long-timeout"):
         changed = copy.deepcopy(tests)
         target = next(test for test in changed
                       if test["name"] == "trusted_body_analysis_0")
@@ -296,10 +303,16 @@ def main():
             target["command"].pop()
         elif mutation == "duplicate-entry":
             target["command"].append(target["command"][-1])
+        elif mutation == "missing-timeout":
+            target["properties"] = [prop for prop in target["properties"]
+                                    if prop["name"] != "TIMEOUT"]
         else:
             for prop in target["properties"]:
-                if prop["name"] == "RUN_SERIAL":
+                if mutation == "parallel" and prop["name"] == "RUN_SERIAL":
                     prop["value"] = False
+                elif prop["name"] == "TIMEOUT" and mutation != "parallel":
+                    prop["value"] = scaled_timeout(600) + (
+                        -1 if mutation == "short-timeout" else 1)
         try:
             verify_trusted_body_partitions(changed, repository)
         except AssertionError:

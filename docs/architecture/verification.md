@@ -11231,7 +11231,12 @@ the next standard bound at or above 1.5 times their slowest contended
 full-suite duration. `GTI_TEST_TIMEOUT_SCALE` multiplies every bound for
 instrumented or slow hosts; `ctest --timeout` cannot do this, because it only
 reaches tests without a declared timeout. `test_throughput_registration`
-rejects an unbounded registration.
+rejects an unbounded registration. Its trusted-body partition check requires
+exactly `600 * GTI_TEST_TIMEOUT_SCALE` seconds, serial execution, and each
+corpus entry exactly once. Missing, shorter or longer deadlines are rejected;
+the native and sanitizer CI scales change the expected budget, not coverage.
+The late-registered scheduling checks receive the same timeout-scale environment
+as the tests they inspect.
 
 ```sh
 python3 scripts/build_window.py --kind suite -- \
