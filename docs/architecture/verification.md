@@ -7320,8 +7320,9 @@ preservation, unavailable-source failure and read-only source selection.
 Detached submission coverage checks copied worker tooling, duplicate submission,
 remembered focused tests, exact-head pinning, stale retry bounds, interrupted
 status, default remote-runner dispatch, successful checkout cleanup, and normal
-PR integration after a failed optional preview. Existing `neovim_local_installer` coverage retains default installation and
-activation behavior. These orchestration tests fake compiler builds; actual
+PR integration after failed preview admission. Installer coverage checks default
+preview selection without activation on dry run; `neovim_local_installer` retains
+explicit `--local` installation and activation behavior. These orchestration tests fake compiler builds; actual
 preview admission separately requires its optimized build and automated
 example gates on the combined source. Workflow changes do not themselves
 claim that a preview candidate or installed toolchain has been validated.
