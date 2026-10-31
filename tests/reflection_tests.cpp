@@ -785,6 +785,75 @@ int main() {
          "default_value on a field without an initializer is rejected once");
 }
 
+void checkMethodInvocation(const std::filesystem::path &root,
+                           const std::filesystem::path &directory) {
+  const std::string declarations = R"(import std.meta;
+class Probe {
+public:
+  Probe() = default;
+  int32_t choose(int32_t value) { return value + 1; }
+  int32_t choose(bool value) { return value ? 100 : 0; }
+  static int32_t static_method() { return 7; }
+  void mutate() mut {}
+  int32_t consume() && { return 8; }
+  unsafe int32_t dangerous() { return 9; }
+private:
+  int32_t hidden() { return 10; }
+};
+struct Other { Other() = default; };
+)";
+  const auto valid = analyzeSource(root, directory, "method-invoke-valid.gti",
+                                   declarations + R"(int main() {
+  Probe probe{};
+  auto integer = std::meta::method<Probe, 0>();
+  auto boolean = std::meta::method<Probe, 1>();
+  return integer.invoke(probe, int32_t(2)) == 3 &&
+                 boolean.invoke(probe, true) == 100 ? 0 : 1;
+}
+)");
+  expect(valid.diagnostics.empty() && valid.hirValid,
+         "reflected overloads bind their exact declaration");
+
+  const auto rejected = [&](const std::string &name,
+                            const std::string &statement, std::string_view code,
+                            std::string_view message) {
+    const auto result =
+        analyzeSource(root, directory, name + ".gti",
+                      declarations + "int main() { Probe probe{}; " +
+                          statement + " return 0; }\n");
+    const auto diagnostic =
+        std::find_if(result.diagnostics.begin(), result.diagnostics.end(),
+                     [&](const lang::Diagnostic &item) {
+                       return item.code == code &&
+                              item.message.find(message) != std::string::npos;
+                     });
+    expect(diagnostic != result.diagnostics.end(),
+           "reflected invocation rejects " + name + " with " +
+               std::string(code));
+    if (diagnostic == result.diagnostics.end())
+      for (const auto &item : result.diagnostics)
+        std::cerr << "  " << name << ": " << item.code << ": " << item.message
+                  << '\n';
+  };
+  rejected("exact-overload",
+           "std::meta::method<Probe, 1>().invoke(probe, int32_t(2));",
+           "GTI-S2003", "bool");
+  rejected("wrong-receiver",
+           "std::meta::method<Probe, 0>().invoke(Other(), int32_t(2));",
+           "GTI-S2000", "Unknown member");
+  rejected("private-method", "std::meta::method<Probe, 6>().invoke(probe);",
+           "GTI-S2007", "private");
+  rejected("static-method", "std::meta::method<Probe, 2>().invoke(probe);",
+           "GTI-S2125", "static method");
+  rejected("consuming-receiver", "std::meta::method<Probe, 4>().invoke(probe);",
+           "GTI-S2022", "consuming method");
+  rejected("unsafe-method", "std::meta::method<Probe, 5>().invoke(probe);",
+           "GTI-S2055", "unsafe");
+  rejected("out-of-range-method",
+           "std::meta::method<Probe, 99>().invoke(probe);", "GTI-S2111",
+           "out of range");
+}
+
 void checkClassAssertions(const std::filesystem::path &root,
                           const std::filesystem::path &directory) {
   // A dependent class assertion is evaluated for every concrete instance,
@@ -972,6 +1041,7 @@ int main() {
   checkAttributeFormatter();
   checkTypeFacts(root, directory);
   checkPhase3(root, directory);
+  checkMethodInvocation(root, directory);
   checkDefaults(root, directory);
   checkClassAssertions(root, directory);
   std::filesystem::remove_all(directory);

@@ -1,0 +1,40 @@
+import std.meta;
+
+mut int32_t storage = 0;
+mut int32_t cleanups = 0;
+
+mut int32_t& storage_slot() { return storage; }
+
+class Value {
+  int32_t value;
+public:
+  Value(int32_t value) : value(value) {}
+  Value(Value& other) = delete;
+  Value(Value&& other) = default;
+  ~Value() { cleanups = cleanups + 1; }
+  int32_t read() { return this.value; }
+};
+
+class Factory {
+  mut int32_t stored;
+public:
+  Factory() : stored(2) {}
+  Value make(int32_t value) { return Value(value); }
+  mut int32_t& relay() mut { return this.stored; }
+  int32_t inert() { return 5; }
+};
+
+int main() {
+  mut Factory factory{};
+  {
+    mut int32_t& retained = storage_slot();
+    Value result = std::meta::method<Factory, 0>().invoke(factory, int32_t(11));
+    int32_t inert = std::meta::method<Factory, 2>().invoke(factory);
+    retained = inert;
+    if (result.read() != 11 || retained != 5) return 1;
+  }
+  if (cleanups != 1) return 2;
+  mut int32_t& forwarded = std::meta::method<Factory, 1>().invoke(factory);
+  forwarded = 9;
+  return forwarded == 9 ? 0 : 3;
+}

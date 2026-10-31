@@ -62,8 +62,8 @@ choice enters a compilation request, manifest, executable or cache key.
   It depends on `gti_compiler`; the LSP never invokes it.
 - `gti_llvm_backend` is an independent `LoweredProgram` consumer. Its public
   interface is LLVM-free; its private implementation owns LLVM IR/native
-  code-generation libraries and host initialization. It currently reports a
-  classified unsupported-backend diagnostic before emitting any artifact.
+  code-generation libraries and host initialization. Its implemented native profile and fail-closed admission are documented in
+  [Backend](backend.md#llvm-coverage-and-admission).
 - `gti_driver` in `include/gti/driver/` and `src/driver/` owns immutable
   compilation/build requests, resources, manifests, project plans, artifacts,
   native command construction, and process execution.
@@ -2631,3 +2631,336 @@ The LSP consumes the driver-published project facts for host-target analysis and
 supports a named editor profile, with source-based target inference. Explicit
 editor selection of another workspace package, target, or cross target is not
 implemented.
+
+
+## Compiled library bundle foundation
+
+The development API in `gti/driver/library_bundle.h` implements a bounded,
+deterministic `.gtilib` byte container, an identity envelope, inspection by
+validated decoding, and exact compatibility comparison. The container remains
+independent of project builds and caches. Its object bytes are opaque: successful
+decoding proves neither native-object validity nor GTI semantic consumability.
+The separate scalar driver API below supplies the first executable importer and
+performs additional compiler/backend validation.
+There is no new CLI flag or manifest mode. Ordinary source stays `.gti`;
+`.gtimeta` is reserved but not emitted because no independently usable semantic
+metadata artifact exists yet. The existing engine embedding library mode is a
+different C ABI contract and retains its current behavior.
+
+### Provisional wire format version 2
+
+All integers are unsigned 32-bit little endian. A blob is its byte length followed
+by exactly those bytes; there is no padding, compression, timestamp, platform
+permission, host-width integer or native structure dump. The complete layout is:
+
+1. Eight bytes `GTILIB\r\n`, container version `2`, envelope schema `1`.
+2. Six blobs: toolchain SHA-256, canonical target triple, configuration SHA-256,
+   runtime SHA-256, logical library SHA-256, complete source-input SHA-256.
+3. One interface-metadata blob, limited to 1 MiB; empty for opaque container-only use.
+4. Dependency count, then pairs of logical library SHA-256 and complete dependency
+   bundle SHA-256, sorted strictly by logical library identity.
+5. Object count, then name/data blob pairs sorted strictly by name.
+6. Exactly 64 lowercase ASCII hexadecimal bytes: SHA-256 of all preceding bytes.
+
+Hash fields are exactly 64 lowercase hexadecimal bytes. The target is a
+caller-normalized ASCII triple (at most 255 bytes); the codec checks its bounded
+lexical form, not target support or normalization. Callers must derive identities
+from independently resolved inputs; an artifact cannot authenticate its own
+compatibility. `requireLibraryBundleCompatibility` compares all six identities
+and the complete dependency set, independent of the caller's dependency order.
+A checksum detects damage, not malicious replacement or an untrusted producer.
+Registry/package trust and native object admission remain separate obligations.
+
+Each dependency and object list is limited to 4096 entries. At least one nonempty
+object is required. Objects are limited to 64 MiB each and the entire serialized
+bundle to 256 MiB. Names are lowercase ASCII letters/digits/underscore/hyphen
+followed by `.o`, at most 255 bytes, with reserved Windows device basenames
+rejected. They are logical keys, never filesystem paths. The writer sorts without
+copying object payloads; the reader rejects noncanonical ordering, duplicates,
+self-dependencies, trailing data, truncated lengths, excessive counts/bytes,
+unsupported versions and checksum mismatches. Errors have typed categories;
+there are no newly allocated compiler diagnostic codes at this development API.
+
+The API accepts/returns owned bytes and performs no I/O, extraction, subprocess
+execution, or publication. This deliberately avoids symlink/overwrite races.
+A future file adapter must bound the read before allocation, use private staging,
+validate objects with the selected backend, and atomically publish through the
+existing artifact layer. It must not reinterpret member names as output paths.
+The bounded reader may hold the input and decoded copy simultaneously; lazy
+validated views/indexing are a future measured improvement, not a present claim.
+
+`library_bundle` tests the codec and compatibility contract. The design decision
+and downstream proof obligations are in [ADR 032](../decisions/032-compiled-library-bundles.md)
+and the [separate-compilation stage plan](../plans/build-system.md#compiled-library-and-separate-compilation-stages).
+
+
+### Executable typed separate-compilation profile
+
+`gti/driver/compiled_scalar_library.h` provides an LLVM producer and consumer
+for compiled GTI targets. Its development API names retain “scalar” for source
+compatibility; project commands expose the typed profile through `gti-library`,
+explicit artifact imports and same-manifest `compiled-dependencies` edges.
+C embedding retains its separate request and ABI. Runnable examples cover
+[primitive APIs](../../examples/compiled-primitive-library/README.md),
+[value types](../../examples/compiled-value-types/README.md),
+[borrowing](../../examples/compiled-borrowing/README.md),
+[namespaced APIs](../../examples/compiled-namespaces/README.md), and
+[dependency builds](../../examples/compiled-dependencies/README.md).
+
+The compiler-owned `CompiledScalarUnitBuilder::selectExports` projects selected
+root-module function names, including all exported overloads. Names may be
+namespace-qualified; explicit exports and exports inherited from enclosing
+namespace declarations are preserved. Reopening a namespace does not export its
+private siblings. Functions must be nongeneric, without default arguments. Parameters and
+results admit bool, char, fixed integers, float/double, concrete value records,
+integral enums and checked references to those values; void results remain valid.
+Constexpr functions, entry functions and unsafe/private capabilities reject.
+A target may contain multiple source modules, but this nominal profile requires
+its exposed type closure to belong to the root module. There are at most 256
+exported overloads and 64 nominal declarations per interface.
+
+Qualified declaration names retain their complete namespace path, with at most
+1,024 bytes and 64 identifier components. Same-leaf declarations in different
+namespaces remain distinct. The virtual interface reconstructs namespace blocks
+and emits collision-free, module-private type aliases at root scope. Record fields,
+enum defaults and callable signatures use these aliases so relative lookup in a
+shadowing namespace cannot change a producer-resolved type. Aliases carry no new
+type identity or native wrapper; imported declarations still undergo canonical
+metadata comparison. Nested class-owned types require owner metadata and reject.
+
+Nominal metadata preserves logical declaration identity, export visibility,
+class/struct kind, field order/type/access/mutability, supported scalar constant
+field defaults, enum underlying types and enumerators. Nested plain value fields
+use the referenced record's generated default. Explicit defaulted constructors
+retain their access. A sealed declaration-complete class summary retains these
+constructors and the presence of other source members before executable
+reachability pruning. Consumer-local designated construction is regenerated from
+fields and does not become an exported source member. IDs are remapped into each fresh
+compiler session. The producer and imported lowered declarations are independently
+projected and compared against the canonical metadata; source-session IDs are
+never an ABI. Records require generated structural value lifecycles. Bases, custom
+constructors/destructors, member functions, static members, stored references,
+payload enums and generic definitions require further contracts and reject.
+Field defaults are bounded resolved scalar constants or signed literals, not
+serialized expression bodies. This includes finite floating literals and source
+character literals; arbitrary runtime initializer expressions are not admitted.
+
+Checked reference parameters preserve read/mutable access. A reference result
+must identify exactly one whole reference parameter and its permitted access.
+The producer's semantic/MIR return summary must agree; projected/conditional,
+global and aggregate-carried origins reject. The virtual declaration publishes
+`[[borrowed_from(argN)]]`, and ordinary semantic/MIR loan rules check consumer
+escape, mutation and aliasing. This does not yet export custom ownership/drop
+recipes or a general lifetime dependency graph.
+
+Callable metadata profile `gti.callable-interface.3` contains key-sorted,
+length-framed records: persistent function key, result recipe, common nominal
+metadata, borrow origin, parameter ordinal and access. Duplicate overload keys
+reject even when results differ. `gti.nominal-interface.1` stores the bounded
+declaration closure. Development codec entry points expose the same canonical
+validation used by the importer. Unknown profiles, malformed/noncanonical records,
+unresolved recipes and incomplete borrow contracts reject. No AST pointers,
+numerical instance IDs or arbitrary source bodies enter the interface.
+
+The consumer validates envelope compatibility, dependency receipts and native
+objects, then projects metadata into a virtual source interface for the ordinary
+loader/parser/type checker. The loader's compiled-interface marker is part of
+semantic cache context and analysis seals and cannot be authored in source.
+Ordinary unresolved declarations still diagnose. Interface paths must be absent,
+absolute and normalized. No facade or producer implementation source is written
+or reopened by explicit artifact imports; unused imported declarations are valid.
+
+After lowering, `CompiledScalarUnitBuilder` binds concrete exported and imported
+instances together. The complete plan is sealed in `LoweredProgram` serialization
+v30, including source-unit identity, nominal metadata, result recipe and borrow
+contract. LLVM uses v3 SHA-256 symbols derived from the complete callable contract.
+An external wrapper preserves GTI's status/result/failure ABI; aggregate results
+forward the caller's destination, and fallible bodies forward the original failure
+record. Consumers do not infer purity, failure freedom or ownership from object
+code. These symbols do not promise cross-version ABI stability.
+
+Each bundle contains one `unit.o` and exact direct-dependency digest receipts.
+Object validation checks relocatable format, target/layout, exact exported
+symbols and unresolved symbols limited to declared imported GTI callables.
+Transitive imports contribute their objects without requiring a source facade.
+Program initialization, TLS and hosted producer entry remain unsupported;
+producer cleanup needing external runtime services still requires a broader
+runtime-closure contract. Consumer cleanup and checked failure propagation retain
+their normal behavior. The driver owns bounded reads, native staging and atomic
+publication. Unsupported producer shapes use existing backend-limit diagnostics;
+malformed artifacts use existing driver validation diagnostics.
+
+Compatibility binds compiler executable, runtime archive, LLVM/backend ABI,
+target/layout/CPU/features, optimization, execution profile and configuration.
+Logical package/target labels identify a library independently of interface edits.
+Checksums establish integrity, not producer authentication. Explicit artifacts
+need no producer sources; automatic source-target builds additionally compare a
+source-graph fingerprint and exact dependency digests before reuse. The following
+subsection describes that conservative freshness boundary.
+
+`compiled_scalar_library_cost` and `compiled_primitive_cost` compare imported
+calls with an equivalent external ABI baseline and record runtime, child peak
+RSS, build latency and object/bundle/executable size. The latter includes a
+by-value Point record. These allocation-free operations do not claim parity with
+whole-program inlining or complete F5 performance acceptance.
+
+
+### Compiled-library project requests
+
+A producer declares a reusable target and explicitly selects its public API:
+
+```toml
+[targets.numbers]
+kind = "gti-library"
+root = "library.gti"
+functions = ["choose"]
+```
+
+`gti build numbers --release` publishes `numbers.gtilib` beneath the ordinary
+profile/target output directory. `functions` contains 1–256 unique identifiers,
+optionally qualified by namespaces with `::`, such as `geometry::choose`.
+The root must declare a module interface. This profile automatically
+selects LLVM when no backend override is supplied, retains all application
+bodies for verified export binding, and rejects unsupported source signatures.
+The target is not runnable or installable as an executable. Self-contained
+producers cannot declare native inputs, build scripts or bindgen imports.
+
+An executable or another compiled library can explicitly select a distributed artifact:
+
+```toml
+[targets.app]
+kind = "executable"
+root = "main.gti"
+
+[targets.app.compiled-library]
+package = "compiled-numbers"
+target = "numbers"
+path = "dependencies/numbers.gtilib"
+interface = "api.gti"
+```
+
+The consumer source imports `"api.gti"`. The artifact path is relative to its
+manifest and must name a regular `.gtilib` file; explicitly selected artifacts
+may live outside the consumer package. The virtual interface must be an absent
+`.gti` path inside the package after canonical resolution. The artifact's
+package/target identity must match the manifest selection. Neither the virtual
+interface nor the producer source is written to disk by import.
+
+Several independent bundles use repeated tables instead:
+
+```toml
+[[targets.app.compiled-libraries]]
+package = "left-package"
+target = "left"
+path = "dependencies/left.gtilib"
+interface = "left.gti"
+
+[[targets.app.compiled-libraries]]
+package = "right-package"
+target = "right"
+path = "dependencies/right.gtilib"
+interface = "right.gti"
+```
+
+The singular and plural forms are mutually exclusive. A plural list contains
+1–64 libraries, with distinct package/target owners and canonical facade paths.
+The combined interface contains at most 256 declarations. Every bundle is
+validated even when its facade is unused; unused selections are allowed. Each
+virtual module has a distinct logical-library-derived identity. Ordinary source
+visibility and overload ambiguity still apply when several facades are imported.
+The immutable `compiledImports()` list is canonical; legacy singleton accessors
+reject multi-import requests instead of silently losing inputs. Metadata emits
+`compiledLibraries` and retains `compiledLibrary` for singleton compatibility.
+A producer records each direct dependency by logical library identity and SHA-256
+digest of the complete bundle. Consumers must select the complete artifact
+closure, with exact receipt matches and one bundle per logical owner. Missing
+dependencies, conflicting digests and dependency cycles reject before frontend
+entry. Runnable independent-library coverage is in
+[`compiled-libraries`](../../examples/compiled-libraries/README.md) and
+[`compiled-primitive-library`](../../examples/compiled-primitive-library/README.md).
+
+`ProjectBuildPlan` carries resolved identities, function selection and bounded
+artifact inputs into immutable `ExecutableBuildRequest` values. CLI code only
+constructs the request and presents the result. The driver reads at most the
+256 MiB aggregate bundle limit, rejects incomplete/growing reads, uses the
+scalar compiler path once for all imported facades, and links validated object bytes from the private output staging
+directory. Producer publication and consumer linking retain the managed-output
+and atomic-replacement rules: a failure preserves the prior good artifact,
+outputs cannot overwrite any selected bundle/interface, and staged imported
+objects are removed on success or failure.
+
+Source dependencies can instead name library targets in the same manifest:
+
+```toml
+[[targets.app.compiled-dependencies]]
+target = "numbers"
+interface = "api/numbers.gti"
+```
+
+Both executables and compiled library targets accept these tables alongside
+explicit artifact selections. The reusable project resolver constructs a bounded,
+immutable dependency DAG, rejects cycles, non-library targets and conflicting
+owners/facades, and returns each dependency once in topological order. Build and
+run commands execute those plans through the ordinary driver before the selected
+target. Shared transitive objects link once; only directly selected interfaces
+enter the source graph. Metadata exposes the declared source edges as
+`compiledDependencies`. Workspace/package-qualified source target edges remain
+future work; existing source package resolution is unchanged.
+
+Successful library outputs are reused when their compiler/runtime/configuration,
+complete loaded source graph, export selection and direct dependency digests still
+match. Reuse reads and hashes source inputs, validates the existing bundle and
+native object, and avoids semantic analysis and native emission. A dependency
+change rebuilds its parents; missing or corrupt generated artifacts rebuild from
+available source. A failed dependency stops the application build and preserves
+the failing target and application outputs; previously completed prerequisites
+remain published. Explicit artifacts still require no producer source.
+The [`compiled-dependencies`](../../examples/compiled-dependencies/README.md)
+example and `compiled_dependency_project` gate cover a diamond graph, freshness,
+receipt mismatches, failures and source-free distribution of the complete closure.
+
+Consumer requests retain whole-program cache bypass; compiled library output reuse
+is reported as a cache hit only after those complete checks. Build reports,
+`--emit-mir`, debug/instrumented builds and artifact-aware LSP
+analysis need follow-on query/provenance support; unsupported CLI requests
+reject explicitly. Ordinary source projects and direct compilation retain their
+existing paths. The `compiled_library_project` gate owns the runnable project
+example, deleted-producer execution, consumer-only edits, manifest identities,
+bounded inputs and failure/publication controls on both native platforms.
+
+
+### Read-only compiled-library checking
+
+`gti check numbers --release` validates a scalar producer's selected exports,
+source semantics and lowered binding contract without producing
+a bundle. `gti check app --release` validates a consumer against its explicitly
+selected artifact closure, including when the complete producer source tree is absent.
+For source target edges, check requires previously built artifacts and diagnoses a
+missing bundle with a request to build it. Checking never builds dependencies.
+Use the same profile and configuration as the distributed artifact: compatibility
+remains exact, including optimization. Ordinary check's CLI option rules remain
+unchanged; select profiles rather than adding optimization override flags.
+
+`checkCompiledScalarProject` consumes the immutable `ProjectBuildPlan` and
+resolved `ToolchainLayout`. It shares bounded file reads, metadata decoding,
+compiler/runtime/configuration checks, native object admission and virtual-source
+preparation with the build path. The imported graph marker reaches the same
+frontend, and both producer and consumer reuse the compiler-owned scalar binding
+projection. A validation-only backend verifies the bound lowered program and
+returns no public artifact. Checking neither constructs the LLVM emission backend
+nor invokes a native compiler/linker, writes a facade, publishes an object or
+bundle, creates a build/cache directory, or replaces an existing output.
+
+Checking returns `CheckResult` with owned diagnostic sources. Frontend failures
+retain their ordinary structured diagnostics; lowered profile failures retain
+the existing backend limitation diagnostic and use `ValidationFailure`.
+Artifact/configuration failures use `ArtifactFailure` with a driver message.
+The ordinary source-only checker still uses its existing frontend path.
+
+This is source and artifact-contract validation, not certification of successful
+native emission or linking. Producer native-object admission still runs when a
+bundle is built, and consumer native dependencies are linked only by build.
+Checking does not execute build scripts. Producer native inputs/scripts remain
+unsupported; compiled-library checks with bindgen imports reject before any
+binding generation. LSP snapshot ingestion, provenance reports, emitted MIR and
+automatic dependency/cache orchestration retain their separate prerequisites.

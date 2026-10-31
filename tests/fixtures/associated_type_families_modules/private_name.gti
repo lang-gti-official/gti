@@ -1,0 +1,4 @@
+import "policy.gti";
+
+using Hidden = family_policy::Cell<int>;
+int main() { return 0; }

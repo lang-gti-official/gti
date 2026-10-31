@@ -1,0 +1,44 @@
+// Bind a method from metadata during compilation, then pass ordinary runtime
+// data to it. The same generic binder works for two unrelated application
+// types; no runtime method name, registry or boxed argument is needed.
+import std.meta;
+
+class Player {
+  mut int32_t distance;
+public:
+  Player(int32_t start) : distance(start) {}
+  void update(int32_t steps) mut { this.distance = this.distance + steps; }
+  void update(bool reset) mut { if (reset) { this.distance = 0; } }
+  int32_t position() { return this.distance; }
+};
+
+struct Meter {
+  mut int32_t reading;
+  Meter(int32_t start) : reading(start) {}
+  void update(int32_t amount) mut { this.reading = this.reading + amount * 2; }
+  int32_t value() { return this.reading; }
+};
+
+void apply_integer_update<T>(mut T& target, int32_t amount) {
+  constexpr for (auto method : std::meta::lookup_methods_of<T>()) {
+    if constexpr (method.name() == "update" && !method.is_static() &&
+                  !method.is_operator() && method.parameter_count() == 1) {
+      constexpr for (auto parameter : method.parameters()) {
+        if constexpr (parameter.type().is_integral()) {
+          method.invoke(target, amount);
+        }
+      }
+    }
+  }
+}
+
+int main() {
+  mut Player player{10};
+  mut Meter meter{10};
+  int32_t runtime_amount = 4;
+  apply_integer_update(player, runtime_amount);
+  apply_integer_update(meter, runtime_amount);
+  std::println(player.position());
+  std::println(meter.value());
+  return player.position() == 14 && meter.value() == 18 ? 0 : 1;
+}

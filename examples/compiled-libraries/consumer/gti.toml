@@ -1,0 +1,19 @@
+manifest-version = 1
+[package]
+name = "compiled-libraries-consumer"
+version = "0.1.0"
+[targets.app]
+kind = "executable"
+root = "main.gti"
+
+[[targets.app.compiled-libraries]]
+package = "compiled-left"
+target = "left"
+path = "dependencies/left.gtilib"
+interface = "left.gti"
+
+[[targets.app.compiled-libraries]]
+package = "compiled-right"
+target = "right"
+path = "dependencies/right.gtilib"
+interface = "right.gti"

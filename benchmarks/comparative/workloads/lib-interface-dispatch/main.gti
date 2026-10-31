@@ -1,0 +1,43 @@
+
+extern "C" {
+uint64_t bench_rounds();
+uint64_t bench_seed();
+void bench_begin();
+void bench_end(uint64_t digest);
+}
+interface shape { int32_t area(); };
+class square : public shape {
+  int32_t side;
+
+public:
+  square(int32_t side) : side(side) {}
+  int32_t area() override { return this.side * this.side; }
+};
+class circle : public shape {
+  int32_t radius;
+
+public:
+  circle(int32_t radius) : radius(radius) {}
+  int32_t area() override { return 3 * this.radius * this.radius; }
+};
+uint64_t sum_areas(shape &item, int32_t count) {
+  mut uint64_t total = 0;
+  for (mut int32_t i = 0; i < count; i++) {
+    total += uint64_t(item.area() + i % 7);
+  }
+  return total;
+}
+int main() {
+  uint64_t rounds = bench_rounds();
+  uint64_t seed = bench_seed() % uint64_t(65536);
+  mut uint64_t digest = 0;
+  bench_begin();
+  for (mut uint64_t round = 0; round < rounds; round++) {
+    square s{int32_t((seed + round) % uint64_t(16)) + 1};
+    circle c{int32_t((seed + round) % uint64_t(7)) + 1};
+    digest += sum_areas(s, 500000);
+    digest += sum_areas(c, 500000);
+  }
+  bench_end(digest);
+  return 0;
+}

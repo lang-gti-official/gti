@@ -134,6 +134,11 @@ BackendArtifact CppBackend::generate(LoweredProgram program) {
         findMirBody(verified->program().mir(), row.identity.address);
     if (!body)
       continue;
+    for (const auto &constant : body->programConstantSubstitutions)
+      if (std::holds_alternative<ConstantAggregateValue>(constant.constant))
+        throw BackendUnsupportedError(
+            "aggregate constant publication requires the LLVM backend",
+            row.identity.source);
     for (const auto &block : body->blocks)
       for (const auto &instruction : block.instructions)
         if (!instruction.tombstone &&

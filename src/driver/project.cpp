@@ -12,6 +12,7 @@
 #include <fstream>
 #include <functional>
 #include <limits>
+#include <map>
 #include <optional>
 #include <set>
 #include <string>
@@ -657,11 +658,16 @@ ProjectBuildPlan makeBuildPlan(
   const bool keepCpp = overrides.keepCpp.value_or(selectedProfile.keepCpp);
   // An explicit backend wins; otherwise C++-only options keep the C++ backend
   // they configure and every other build uses the target's default.
+  const auto compiledImports = normalizeCompiledLibraryImports(
+      selectedTarget.compiledImport, selectedTarget.compiledImports);
   const BackendKind backend =
       overrides.backend                  ? *overrides.backend
       : selectedProfile.backend          ? *selectedProfile.backend
       : overrides.cppStandard || keepCpp ? BackendKind::Cpp
-                                         : defaultBackend(target);
+      : selectedTarget.kind == ProjectTargetKind::CompiledLibrary ||
+              !compiledImports.empty()
+          ? BackendKind::Llvm
+          : defaultBackend(target);
   const bool debugInfo =
       overrides.debugInfo.value_or(selectedProfile.debugInfo);
   const RawPointerAuditMode rawPointerAudit =
@@ -703,7 +709,9 @@ ProjectBuildPlan makeBuildPlan(
   outputDirectory /= selectedProfile.name;
   outputDirectory /= targetTriple(resolvedTarget);
   std::string executableName = selectedTarget.name;
-  if (selectedTarget.kind == ProjectTargetKind::Library) {
+  if (selectedTarget.kind == ProjectTargetKind::CompiledLibrary) {
+    executableName += ".gtilib";
+  } else if (selectedTarget.kind == ProjectTargetKind::Library) {
     if (resolvedTarget.os == "windows") {
       executableName += ".dll";
     } else if (resolvedTarget.os == "macos") {
@@ -713,7 +721,8 @@ ProjectBuildPlan makeBuildPlan(
     }
   }
 #if defined(_WIN32)
-  if (selectedTarget.kind != ProjectTargetKind::Library) {
+  if (selectedTarget.kind != ProjectTargetKind::Library &&
+      selectedTarget.kind != ProjectTargetKind::CompiledLibrary) {
     executableName += ".exe";
   }
 #endif
@@ -784,6 +793,19 @@ ProjectBuildPlan makeBuildPlan(
     for (const ProjectExport &selected : canonicalExports)
       modelIdentity += "\nexport:" + selected.symbol + '=' + selected.function;
   }
+  if (selectedTarget.kind == ProjectTargetKind::CompiledLibrary) {
+    modelIdentity += "\ngti-library";
+    for (const auto &name : selectedTarget.compiledFunctions)
+      modelIdentity += "\nfunction:" + name;
+  }
+  for (const auto &library : compiledImports) {
+    modelIdentity +=
+        "\ncompiled-import:" + library.package + ':' + library.target;
+    modelIdentity += "\nartifact:" + library.artifact.generic_string();
+    modelIdentity += "\ninterface:" + library.interfacePath.generic_string();
+    modelIdentity += library.interfaceRequired ? "\nfacade" : "\nobject-only";
+    modelIdentity += library.directDependency ? "\ndirect" : "\ntransitive";
+  }
   for (const BuildScriptPlan &script : buildScripts) {
     modelIdentity += "\nbuild-script:" + script.packageIdentity;
     if (script.source) {
@@ -851,7 +873,124 @@ ProjectBuildPlan makeBuildPlan(
       std::move(buildScripts), std::move(toolchain), debugInfo,
       std::move(packageWarningPolicy), rawPointerAudit, selectedTarget.linkage,
       selectedTarget.exports, configuration.declaredConfigurationFlags(),
-      rawPointerAuditLibraryFindings, backend);
+      rawPointerAuditLibraryFindings, backend, selectedTarget.compiledFunctions,
+      std::nullopt, compiledImports);
+}
+
+std::optional<ProjectBuildPlan> makeCompiledBuildPlan(
+    const ProjectWorkspace &workspace, const ProjectManifest &manifest,
+    const ProjectTarget &selected, const ProjectProfile &profile,
+    const TargetInfo &target, NativeInputs rootNative,
+    std::vector<BuildScriptPlan> scripts,
+    const ProjectBuildOverrides &overrides, RuntimeProfile runtimeProfile,
+    const ResolvedProjectToolchain &toolchain,
+    std::vector<Diagnostic> &diagnostics) {
+  std::map<std::string, ProjectBuildPlan> completed;
+  std::vector<ProjectBuildPlan> ordered;
+  std::vector<std::string> active;
+  const auto fail = [&](const SourceSpan &span, std::string message) {
+    diagnostics.push_back(
+        projectDiagnostic("GTI-B1005", span, std::move(message)));
+  };
+  std::function<std::optional<ProjectBuildPlan>(const ProjectTarget &)> visit;
+  visit = [&](const ProjectTarget &node) -> std::optional<ProjectBuildPlan> {
+    if (const auto found = completed.find(node.name); found != completed.end())
+      return found->second;
+    if (completed.size() + active.size() >= 65) {
+      fail(node.declaration,
+           "Compiled dependency graph exceeds 64 library targets.");
+      return std::nullopt;
+    }
+    active.push_back(node.name);
+    ProjectTarget expanded = node;
+    expanded.compiledImports = normalizeCompiledLibraryImports(
+        node.compiledImport, node.compiledImports);
+    expanded.compiledImport.reset();
+    const auto add = [&](CompiledLibraryImport input, const SourceSpan &span) {
+      for (auto &existing : expanded.compiledImports) {
+        if (existing.package == input.package &&
+            existing.target == input.target) {
+          if (existing.artifact != input.artifact ||
+              (existing.directDependency && input.directDependency)) {
+            fail(span, "Conflicting compiled dependency selections for '" +
+                           input.package + "/" + input.target + "'.");
+            return false;
+          }
+          if (input.directDependency)
+            existing = std::move(input);
+          return true;
+        }
+      }
+      expanded.compiledImports.push_back(std::move(input));
+      return true;
+    };
+    for (const auto &edge : node.compiledDependencies) {
+      const auto *dependency = manifest.findTarget(edge.target);
+      if (!dependency ||
+          dependency->kind != ProjectTargetKind::CompiledLibrary) {
+        fail(edge.declaration,
+             "Compiled dependency '" + edge.target +
+                 "' must name a gti-library target in this manifest.");
+        return std::nullopt;
+      }
+      if (std::find(active.begin(), active.end(), edge.target) !=
+          active.end()) {
+        std::string chain;
+        for (const auto &name : active)
+          chain += name + " -> ";
+        fail(edge.declaration,
+             "Compiled dependency cycle: " + chain + edge.target + ".");
+        return std::nullopt;
+      }
+      auto child = visit(*dependency);
+      if (!child)
+        return std::nullopt;
+      if (!add({manifest.package().name, edge.target, child->output(),
+                edge.interfacePath},
+               edge.declaration))
+        return std::nullopt;
+      for (auto input : child->compiledImports()) {
+        input.interfaceRequired = false;
+        input.directDependency = false;
+        input.interfacePath.clear();
+        if (!add(std::move(input), edge.declaration))
+          return std::nullopt;
+      }
+    }
+    if (expanded.compiledImports.size() > 64) {
+      fail(node.declaration,
+           "Compiled dependency closure exceeds 64 libraries.");
+      return std::nullopt;
+    }
+    std::set<std::filesystem::path> facades;
+    for (const auto &input : expanded.compiledImports)
+      if (input.interfaceRequired &&
+          !facades.insert(input.interfacePath).second) {
+        fail(node.declaration,
+             "Compiled dependency interface paths must be unique.");
+        return std::nullopt;
+      }
+    auto native =
+        node.name == selected.name
+            ? std::optional<NativeInputs>(rootNative)
+            : resolveNativeInputs(manifest, node, profile, target, diagnostics);
+    if (!native)
+      return std::nullopt;
+    if (node.name != selected.name)
+      native->dependencyGroups = rootNative.dependencyGroups;
+    auto plan = makeBuildPlan(workspace, manifest, expanded, profile, target,
+                              std::move(*native), scripts, overrides,
+                              runtimeProfile, toolchain);
+    active.pop_back();
+    completed.emplace(node.name, plan);
+    if (node.name != selected.name)
+      ordered.push_back(plan);
+    return plan;
+  };
+  auto root = visit(selected);
+  if (!root)
+    return std::nullopt;
+  return root->withCompiledBuildDependencies(std::move(ordered));
 }
 
 Diagnostic cleanDiagnostic(const std::filesystem::path &manifest,
@@ -1035,7 +1174,10 @@ ProjectBuildPlan::ProjectBuildPlan(
     PackageWarningPolicy packageWarnings, RawPointerAuditMode rawPointerAudit,
     ProjectTargetLinkage targetLinkage, std::vector<ProjectExport> exports,
     ConfigurationFlags declaredConfigurationFlags,
-    bool rawPointerAuditLibraryFindings, BackendKind backend)
+    bool rawPointerAuditLibraryFindings, BackendKind backend,
+    std::vector<std::string> compiledFunctions,
+    std::optional<CompiledLibraryImport> compiledImport,
+    std::vector<CompiledLibraryImport> compiledImports)
     : projectManifestPath(std::move(manifestPath)),
       projectRoot(std::move(packageRoot)),
       projectWorkspaceRoot(std::move(workspaceRoot)),
@@ -1059,9 +1201,25 @@ ProjectBuildPlan::ProjectBuildPlan(
       resolvedBindgenImports(std::move(bindgenImports)),
       resolvedBuildScripts(std::move(buildScripts)),
       resolvedToolchain(std::move(toolchain)),
-      resolvedExports(std::move(exports)), sourceDebugInfo(debugInfo),
-      rawPointerAuditMode(rawPointerAudit),
-      reportLibraryAuditFindings(rawPointerAuditLibraryFindings) {}
+      resolvedExports(std::move(exports)),
+      resolvedCompiledFunctions(std::move(compiledFunctions)),
+      resolvedCompiledImports(normalizeCompiledLibraryImports(
+          std::move(compiledImport), std::move(compiledImports))),
+      sourceDebugInfo(debugInfo), rawPointerAuditMode(rawPointerAudit),
+      reportLibraryAuditFindings(rawPointerAuditLibraryFindings) {
+  if (resolvedCompiledImports.size() == 1)
+    resolvedCompiledImport = resolvedCompiledImports.front();
+}
+
+ProjectBuildPlan ProjectBuildPlan::withCompiledBuildDependencies(
+    std::vector<ProjectBuildPlan> plans) const {
+  if (plans.size() > 64)
+    throw std::invalid_argument(
+        "compiled dependency graph exceeds 64 libraries");
+  auto result = *this;
+  result.compiledBuildPlans = std::move(plans);
+  return result;
+}
 
 const std::filesystem::path &ProjectBuildPlan::manifestPath() const {
   return projectManifestPath;
@@ -1097,6 +1255,20 @@ ProjectTargetLinkage ProjectBuildPlan::targetLinkage() const {
 
 const std::vector<ProjectExport> &ProjectBuildPlan::exports() const {
   return resolvedExports;
+}
+
+std::optional<CompiledLibraryTarget> ProjectBuildPlan::compiledLibrary() const {
+  if (projectTargetKind != ProjectTargetKind::CompiledLibrary)
+    return std::nullopt;
+  return CompiledLibraryTarget{projectPackageName, projectTargetName,
+                               resolvedCompiledFunctions};
+}
+const std::optional<CompiledLibraryImport> &
+ProjectBuildPlan::compiledImport() const {
+  if (resolvedCompiledImports.size() > 1)
+    throw std::logic_error(
+        "use compiledImports() for multiple compiled libraries");
+  return resolvedCompiledImport;
 }
 
 ProgramRequest ProjectBuildPlan::programRequest() const {
@@ -1382,10 +1554,12 @@ resolveProjectBuild(const ProjectBuildRequest &request) {
   }
 
   result.status = ProjectResolutionStatus::Success;
-  result.plan = makeBuildPlan(
+  result.plan = makeCompiledBuildPlan(
       workspace, manifest, *selectedTarget, *selectedProfile, request.target(),
       std::move(*nativeInputs), std::move(*buildScripts), request.overrides(),
-      request.runtimeProfile(), *toolchain);
+      request.runtimeProfile(), *toolchain, result.diagnostics);
+  if (!result.plan)
+    result.status = ProjectResolutionStatus::GraphFailure;
   return result;
 }
 
@@ -1518,10 +1692,17 @@ resolveProjectTests(const ProjectBuildRequest &request) {
       result.plans.clear();
       return result;
     }
-    result.plans.push_back(makeBuildPlan(
+    auto plan = makeCompiledBuildPlan(
         workspace, manifest, *selectedTarget, *selectedProfile,
         request.target(), std::move(*nativeInputs), *buildScripts,
-        request.overrides(), request.runtimeProfile(), *toolchain));
+        request.overrides(), request.runtimeProfile(), *toolchain,
+        result.diagnostics);
+    if (!plan) {
+      result.plans.clear();
+      result.status = ProjectResolutionStatus::GraphFailure;
+      return result;
+    }
+    result.plans.push_back(std::move(*plan));
   }
 
   result.status = ProjectResolutionStatus::Success;
@@ -1624,10 +1805,16 @@ resolveAllProjectTargets(const ProjectBuildRequest &request) {
       result.plans.clear();
       return result;
     }
-    result.plans.push_back(makeBuildPlan(
+    auto plan = makeCompiledBuildPlan(
         workspace, manifest, target, *selectedProfile, request.target(),
         std::move(*nativeInputs), *buildScripts, request.overrides(),
-        request.runtimeProfile(), *toolchain));
+        request.runtimeProfile(), *toolchain, result.diagnostics);
+    if (!plan) {
+      result.plans.clear();
+      result.status = ProjectResolutionStatus::GraphFailure;
+      return result;
+    }
+    result.plans.push_back(std::move(*plan));
   }
 
   result.status = ProjectResolutionStatus::Success;
@@ -1699,10 +1886,15 @@ ProjectMetadataResult resolveProjectMetadata(
         return result;
       }
       nativeInputs->dependencyGroups = *composed;
-      plans.push_back(makeBuildPlan(workspace, manifest, projectTarget, profile,
-                                    target, std::move(*nativeInputs),
-                                    std::move(*buildScripts), {},
-                                    runtimeProfile, metadataToolchain));
+      auto plan = makeCompiledBuildPlan(
+          workspace, manifest, projectTarget, profile, target,
+          std::move(*nativeInputs), std::move(*buildScripts), {},
+          runtimeProfile, metadataToolchain, result.diagnostics);
+      if (!plan) {
+        result.status = ProjectMetadataStatus::ManifestFailure;
+        return result;
+      }
+      plans.push_back(std::move(*plan));
     }
   }
 

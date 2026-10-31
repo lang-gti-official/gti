@@ -142,6 +142,24 @@ int main() {
   check(wrapper.canGenerateCode(),
         "user generic classes can alias public specialized iterator types");
 
+  const std::string genericStaticSource = R"(
+import std.vector;
+int main() {
+  auto values = std::vector<int32_t>::collection_init(uint64_t(2));
+  return int(values.size());
+}
+)";
+  const auto genericStatic = analyze(genericStaticSource);
+  const auto staticMember = genericStaticSource.find("collection_init");
+  check(!genericStatic.canGenerateCode() &&
+            genericStatic.diagnostics.size() == 1 &&
+            genericStatic.diagnostics.front().code == "GTI-S2039" &&
+            genericStatic.diagnostics.front().primary.start == staticMember &&
+            genericStatic.diagnostics.front().primary.end ==
+                staticMember + std::string_view("collection_init").size(),
+        "a qualified generic static call reports its source-path rule at "
+        "the member, before instantiating unrelated library bodies");
+
   const lang::Formatter formatter;
   const auto formatted = formatter.format(source);
   check(analyze(formatted).canGenerateCode() &&

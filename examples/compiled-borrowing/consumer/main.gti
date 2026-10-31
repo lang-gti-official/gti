@@ -1,0 +1,33 @@
+import "api.gti";
+
+int main() {
+    mut int owner = 5;
+    {
+        int& view = read(owner);
+        if (view != 5) { return 1; }
+    }
+    // The explicit scope ends the shared loan across conditional control flow.
+    store(owner, 7);
+    {
+        mut int& writable = edit(owner);
+        writable = 11;
+    }
+    if (load(owner) != 11) { return 2; }
+    mut int first = 3;
+    int second = 42;
+    int& selected = choose(first, second);
+    // Only the declared second argument remains borrowed after the call.
+    store(first, 9);
+    if (selected != 42) { return 3; }
+    mut Sample sample = {.value = 12};
+    {
+        Sample& sample_view = read_sample(sample);
+        if (sample_view.value != 12) { return 4; }
+    }
+    {
+        mut Sample& writable_sample = edit_sample(sample);
+        writable_sample.value = 17;
+    }
+    if (load_sample(sample) != 17) { return 5; }
+    return 0;
+}

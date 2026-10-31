@@ -1,0 +1,43 @@
+import std.thread;
+extern "C" {
+uint64_t bench_rounds();
+uint64_t bench_seed();
+void bench_begin();
+void bench_end(uint64_t digest);
+}
+uint64_t work(uint64_t input) {
+  mut uint64_t state = input % uint64_t(65521);
+  for (mut int32_t i = 0; i < 250000; i++) {
+    state = (state * uint64_t(17) + uint64_t(i)) % uint64_t(65521);
+  }
+  return state;
+}
+class job {
+  uint64_t input;
+  mut uint64_t &output;
+
+public:
+  job(uint64_t input, mut uint64_t &output) : input(input), output(output) {}
+  void operator()() mut { this.output = work(this.input); }
+};
+int main() {
+  uint64_t rounds = bench_rounds();
+  uint64_t seed = bench_seed() % uint64_t(65536);
+  mut uint64_t digest = 0;
+  bench_begin();
+  for (mut uint64_t round = 0; round < rounds; round++) {
+    mut uint64_t first = 0;
+    mut uint64_t second = 0;
+    mut uint64_t third = 0;
+    mut uint64_t fourth = 0;
+    auto joined = std::parallel_invoke(job(seed + round, first),
+                                       job(seed + round + uint64_t(1), second),
+                                       job(seed + round + uint64_t(2), third),
+                                       job(seed + round + uint64_t(3), fourth));
+    if (!joined)
+      return 2;
+    digest += first + second + third + fourth;
+  }
+  bench_end(digest);
+  return 0;
+}

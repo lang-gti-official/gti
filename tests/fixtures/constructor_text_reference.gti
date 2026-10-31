@@ -43,6 +43,11 @@ std::size_t copied_size(std::string_view& input) {
   std::string_view copy = input;
   return copy.size();
 }
+std::string_view relay_view(std::string_view input) { return input; }
+std::size_t relayed_size(std::string_view& input) {
+  std::string_view copy = relay_view(input);
+  return copy.size();
+}
 
 std::size_t inspect(std::string_view input, bool fail) {
   TextOwner reader{relay_text(input), Ticket(), fail};
@@ -84,7 +89,8 @@ int main(int argc, std::vector<std::string> argv) {
   std::string_view dynamic = owner.view();
   TextReader dynamic_reader{dynamic};
   std::string_view read = dynamic_reader.read();
-  if (read != "dynamic" || copied_size(dynamic) != std::size_t(7)) { return 4; }
+  if (read != "dynamic" || copied_size(dynamic) != std::size_t(7) ||
+      relayed_size(dynamic) != std::size_t(7)) { return 4; }
   // The adapter and its external dependency both retired, without consuming
   // the original owner. Its resource was destroyed exactly once.
   owner.clear();

@@ -1248,6 +1248,23 @@ int main() {
 )");
   expect(mixed.canGenerateCode() && lang::verifyMirProgram(mixed.mir).valid(),
          "copied and borrowed bindings compose within one arm");
+  const auto mutableMixed = analyze("mutable-mixed-pattern.gti", R"(
+enum class pairing { both(int32_t left, int32_t right) };
+int main() {
+  mut pairing value = pairing::both(1, 2);
+  switch (value) {
+    case pairing::both(mut auto& left, right):
+      left += right;
+      break;
+  }
+  switch (value) { case pairing::both(left, right): return left - 3; }
+}
+)");
+  if (!mutableMixed.canGenerateCode())
+    printDiagnostics(mutableMixed);
+  expect(mutableMixed.canGenerateCode() &&
+             lang::verifyMirProgram(mutableMixed.mir).valid(),
+         "by-value payload extraction precedes a mutable sibling loan");
   const auto immutable = analyze("immutable-pattern.gti", prefix + R"(
 int main() {
   data value = data::some(resource());
@@ -1462,6 +1479,84 @@ int32_t& reading(gauge& value) {
 int main() { gauge g = gauge(wrap::one(4)); return reading(g) - 4; }
 )",
            "a pattern over a parameter's field derives from that parameter");
+  const auto nestedParameter =
+      accepted("parameter-nested-payload.gti", R"(
+enum class paint { coat(wrap shade, int32_t layers) };
+int32_t& level(paint& value) {
+  switch (value) {
+  case paint::coat(auto& shade, layers):
+    switch (shade) {
+    case wrap::one(auto& item): return item;
+    case wrap::two(auto& item): return item;
+    }
+  }
+}
+int main() { paint p = paint::coat(wrap::one(3), 2); return level(p) - 3; }
+)",
+               "nested payload selections retain caller-owned ancestry");
+  if (nestedParameter.canGenerateCode()) {
+    lang::MirProgram forged = nestedParameter.mir;
+    bool changed = false;
+    for (const auto &function : forged.functionInstances()) {
+      auto &body = const_cast<lang::MirBody &>(function.body);
+      for (auto &block : body.blocks)
+        for (auto &instruction : block.instructions) {
+          if (changed || instruction.kind != lang::MirInstructionKind::Borrow ||
+              !instruction.loan || instruction.operands.size() != 1 ||
+              instruction.operands.front().kind != lang::MirOperandKind::Loan)
+            continue;
+          const auto *published = body.findLoan(*instruction.loan);
+          const auto *inner = body.findLoan(instruction.operands.front().loan);
+          const auto *outer =
+              inner == nullptr ? nullptr : body.findLoan(inner->parent);
+          if (published == nullptr || inner == nullptr || outer == nullptr ||
+              published->kind != lang::MirLoanKind::Return ||
+              outer->kind != lang::MirLoanKind::Local ||
+              published->source == inner->source)
+            continue;
+          body.loans[*instruction.loan - 1].source = inner->source;
+          changed = true;
+        }
+    }
+    expect(changed && !lang::verifyMirProgram(forged).valid(),
+           "nested return publication cannot substitute the inner alias "
+           "for its caller-owned source");
+  }
+  accepted("receiver-nested-payload.gti", R"(
+enum class paint { coat(wrap shade, int32_t layers) };
+class can {
+  paint value;
+public:
+  can(paint value) : value(value) {}
+  int32_t& level() {
+    switch (this.value) {
+    case paint::coat(auto& shade, layers):
+      switch (shade) {
+      case wrap::one(auto& item): return item;
+      case wrap::two(auto& item): return item;
+      }
+    }
+  }
+};
+int main() { can c = can(paint::coat(wrap::two(4), 2)); return c.level() - 4; }
+)",
+           "nested receiver payload selections retain caller-owned ancestry");
+  const auto nestedLocal = analyze("local-nested-payload.gti", prefix + R"(
+enum class paint { coat(wrap shade, int32_t layers) };
+int32_t& level(paint& value) {
+  paint copy = value;
+  switch (copy) {
+  case paint::coat(auto& shade, layers):
+    switch (shade) {
+    case wrap::one(auto& item): return item;
+    case wrap::two(auto& item): return item;
+    }
+  }
+}
+int main() { paint p = paint::coat(wrap::one(3), 2); return level(p) - 3; }
+)");
+  expect(!nestedLocal.canGenerateCode() && hasCode(nestedLocal, "GTI-S2017"),
+         "nested payload of a local copy cannot escape");
   accepted("parameter-payload-lambda.gti", R"(
 int main() {
   auto pick = [](wrap& value) -> int32_t& {

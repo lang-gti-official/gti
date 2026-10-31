@@ -62,6 +62,7 @@ def equivalent(cases: tuple[CaseContext, ...], root: Path) -> None:
             if native_only:
                 expected_observation["cpp_rejection"] = (
                     "GTI-B0003: general sizeof/alignof" if source.name == "181-general-object-layout.gti"
+                    else "GTI-B0003: aggregate constant publication" if source.name == "183-immediate-functions.gti"
                     else "GTI-B0003: wrapping atomic read-modify-write")
             assert declared["compile_observation"] == expected_observation
             assert declared["case"]["execution_profile"] == (
@@ -139,6 +140,7 @@ def main() -> None:
             assert output.read_bytes() == b"preserved unsupported output"
             rejection = ("GTI-B0003: general sizeof/alignof"
                          if source.name == "181-general-object-layout.gti"
+                         else "GTI-B0003: aggregate constant publication" if source.name == "183-immediate-functions.gti"
                          else "GTI-B0003: wrapping atomic read-modify-write")
             return subprocess.CompletedProcess(command, 65, "", rejection)
         output = Path(command[-1])

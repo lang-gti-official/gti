@@ -1,5 +1,6 @@
 # One suite occupies exactly its bounded case-worker allocation in CTest.
-# This is test orchestration only; no case, mode, assertion or timeout is removed.
+# This is test orchestration only; every case, mode and assertion is retained.
+# The harnesses continue to own their individual compile/execution deadlines.
 set(GTI_TEST_CASE_JOBS "2" CACHE STRING "Bounded workers per parallel test suite")
 if(NOT GTI_TEST_CASE_JOBS MATCHES "^[1-9][0-9]*$")
   message(FATAL_ERROR "GTI_TEST_CASE_JOBS must be a positive integer")
@@ -14,7 +15,9 @@ if(NOT GTI_TEST_HEAVY_CASE_JOBS MATCHES "^[1-9][0-9]*$")
 endif()
 set(gti_heavy_case_suites
   stdlib_surface returned_field_address_runtime
-  generic_algorithm_breadth complete_containers)
+  generic_algorithm_breadth_cpp20 generic_algorithm_breadth_cpp23
+  generic_algorithm_breadth_no_elide generic_algorithm_breadth_sanitized
+  complete_containers)
 
 # Every gate has a bound, so a hung test fails at a known point instead of at
 # CTest's implicit 1500 seconds. A test without its own TIMEOUT gets the
@@ -72,6 +75,7 @@ endforeach()
 
 if(Python3_Interpreter_FOUND)
   set(gti_parallel_case_suites
+    consteval_runtime
     callable_return_type_runtime
     borrowed_enum_field_cleanup_runtime
     borrowed_enum_scalar_sibling_runtime
@@ -155,7 +159,9 @@ if(Python3_Interpreter_FOUND)
     extensible_formatting_runtime fresh_callable_later_argument_failure_runtime
     failure_free_passive_constructors_runtime
     failure_free_passive_moves_runtime
-    generated_base_constructor_runtime generated_constructor_order_runtime generic_algorithm_breadth
+    generated_base_constructor_runtime generated_constructor_order_runtime
+    generic_algorithm_breadth_cpp20 generic_algorithm_breadth_cpp23
+    generic_algorithm_breadth_no_elide generic_algorithm_breadth_sanitized
     generic_callable_adapter_runtime generic_callable_transport_runtime generic_contract_runtime
     coverage_composition_runtime
     generic_enum_instances_runtime generic_payload_enum_runtime hosted_constructor_identity_runtime

@@ -17,10 +17,17 @@ def fail(message: str) -> int:
 
 
 def main() -> int:
-    if len(sys.argv) < 3:
-        return fail("usage: compiler_test_aggregate.py MANIFEST SUITE=EXECUTABLE...")
+    arguments = sys.argv[1:]
+    isolated = arguments[:1] == ["--isolate-tests"]
+    if isolated:
+        arguments = arguments[1:]
+    if len(arguments) < 2:
+        return fail(
+            "usage: compiler_test_aggregate.py [--isolate-tests] "
+            "MANIFEST SUITE=EXECUTABLE..."
+        )
 
-    manifest_path = Path(sys.argv[1])
+    manifest_path = Path(arguments[0])
     manifest = json.loads(manifest_path.read_text())
     if manifest.get("schema_version") != 1 or not isinstance(
         manifest.get("tests"), list
@@ -28,7 +35,7 @@ def main() -> int:
         return fail(f"invalid manifest: {manifest_path}")
 
     executables: dict[str, Path] = {}
-    for binding in sys.argv[2:]:
+    for binding in arguments[1:]:
         suite, separator, executable = binding.partition("=")
         if not separator or not suite or not executable or suite in executables:
             return fail(f"invalid or duplicate suite binding: {binding}")
@@ -95,11 +102,20 @@ def main() -> int:
         started = time.monotonic()
         print(f"compiler test aggregate: starting {suite} "
               f"({len(expected_by_suite[suite])} tests)", flush=True)
-        completed = subprocess.run([str(executable)], check=False)
-        print(f"compiler test aggregate: {suite} exited {completed.returncode} "
+        if isolated:
+            for name in expected_by_suite[suite]:
+                print(f"compiler test case: {suite}/{name}", flush=True)
+                completed = subprocess.run(
+                    [str(executable), "--test", name], check=False
+                )
+                if completed.returncode != 0:
+                    return fail(f"{suite}/{name} exited {completed.returncode}")
+        else:
+            completed = subprocess.run([str(executable)], check=False)
+            if completed.returncode != 0:
+                return fail(f"{suite} suite exited {completed.returncode}")
+        print(f"compiler test aggregate: {suite} exited 0 "
               f"after {time.monotonic() - started:.1f}s", flush=True)
-        if completed.returncode != 0:
-            return fail(f"{suite} suite exited {completed.returncode}")
 
     print(
         f"compiler test aggregate passed: {sum(len(expected_by_suite[s]) for s in selected)} tests across "

@@ -1,0 +1,28 @@
+import "api/geometry.gti";
+import "api/telemetry.gti";
+int main() {
+    mut domain::geometry::Point point = domain::geometry::make(19, 23);
+    domain::geometry::Point copy = domain::geometry::echo(point);
+    if (domain::geometry::operations::sum(copy) != 42) { return 1; }
+    {
+        domain::geometry::Point& borrowed = domain::geometry::view(point);
+        if (borrowed.y != 23) { return 2; }
+    }
+    {
+        mut domain::geometry::Point& borrowed = domain::geometry::edit(point);
+        borrowed.x = 20;
+    }
+    if (domain::geometry::operations::sum(point) != 43) { return 3; }
+    domain::telemetry::Point sample{};
+    domain::telemetry::Point retained = domain::telemetry::echo(sample);
+    if (retained.reading != 7000000000) { return 4; }
+    if (domain::telemetry::count(5) != 7 ||
+        domain::telemetry::count(retained.reading) != 7000000003) { return 5; }
+    if (domain::geometry::status(domain::geometry::Status::ready) != domain::geometry::Status::ready) { return 6; }
+    shadow::Packet packet{};
+    shadow::Packet retainedPacket = shadow::echo(packet);
+    if (retainedPacket.point.x != 0 || !retainedPacket.local.flag ||
+        retainedPacket.status != domain::geometry::Status::ready) { return 7; }
+    if (gtilib_type_0_::count(8) != 8) { return 8; }
+    return 0;
+}

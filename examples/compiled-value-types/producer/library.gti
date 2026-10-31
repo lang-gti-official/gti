@@ -1,0 +1,24 @@
+export module geometry;
+export struct Point { mut int x = 0; mut int y = 0; Point() = default; };
+export struct Box { mut Point point; mut uint64_t weight = 0; Box() = default; };
+export enum class Status : uint8_t { idle = 0, ready = 7 };
+export struct Defaults {
+    int8_t smallest = -128;
+    uint64_t largest = 18446744073709551615;
+    double fraction = 0.125d;
+    float ratio = 1.5;
+    bool enabled = true;
+    char marker = 'Q';
+    Status state = Status::ready;
+    Defaults() = default;
+};
+struct Hidden { int token = 11; Hidden() = default; };
+export class Secret { private: Hidden hidden; int code = 9; public: int visible = 0; Secret() = default; };
+export Point make_point(int x, int y) { Point result = {.x = x, .y = y}; return result; }
+export Point echo_point(Point value) { return value; }
+export Point shifted(mut Point value) { value.x += 1; return value; }
+export Box echo_box(Box value) { return value; }
+export Status echo_status(Status value) { return value; }
+export Secret echo_secret(Secret value) { return value; }
+export Defaults echo_defaults(Defaults value) { return value; }
+export int sum(Point value) { return value.x + value.y; }

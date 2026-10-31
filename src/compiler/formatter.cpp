@@ -953,12 +953,14 @@ private:
         }
       }
       std::size_t position = start;
-      // Constructor modifiers: the contextual `implicit`, then `constexpr`.
+      // Constructor modifiers: contextual `implicit`, then a constant
+      // specifier.
       if (lexemes[significant[position]].text == "implicit" &&
           kindAt(position + 1, Kind::Word)) {
         ++position;
       }
-      if (lexemes[significant[position]].text == "constexpr") {
+      if (lexemes[significant[position]].text == "constexpr" ||
+          lexemes[significant[position]].text == "consteval") {
         ++position;
       }
       if (!kindAt(position, Kind::Word)) {
@@ -1505,9 +1507,9 @@ private:
     return lexeme.kind == Kind::Word &&
            (lexeme.text == "export" || lexeme.text == "virtual" ||
             lexeme.text == "static" || lexeme.text == "thread_local" ||
-            lexeme.text == "constexpr" || lexeme.text == "mut" ||
-            lexeme.text == "unsafe" || lexeme.text == "implicit" ||
-            lexeme.text == "#macro");
+            lexeme.text == "constexpr" || lexeme.text == "consteval" ||
+            lexeme.text == "mut" || lexeme.text == "unsafe" ||
+            lexeme.text == "implicit" || lexeme.text == "#macro");
   }
 
   static bool isDeclarationBoundary(const Lexeme *lexeme) {
@@ -2308,6 +2310,13 @@ private:
       return false;
     }
     const Lexeme *next = nextSyntaxLexeme(lexemes, *close);
+    const Lexeme *beforeName = previousSyntaxLexeme(
+        lexemes, static_cast<std::size_t>(previous - lexemes.data()));
+    if (next != nullptr && next->kind == Kind::Operator && next->text == "=" &&
+        beforeName != nullptr && beforeName->kind == Kind::Word &&
+        beforeName->text == "using") {
+      return true;
+    }
     if (next == nullptr || next->kind == Kind::LeftParen ||
         next->kind == Kind::LeftBrace || next->kind == Kind::Comma ||
         next->kind == Kind::RightParen || next->kind == Kind::Greater ||

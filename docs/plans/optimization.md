@@ -12,6 +12,41 @@ within their stated scopes. Earlier timings and C++-only architectural
 observations below are historical evidence. LLVM production coverage and
 platform/performance signoff remain separate O-LLVM obligations.
 
+Local implementation update (2026-10-31): LLVM O2/O3 now has a bounded guarded
+reduction pass before vectorization. Independent equality-traversal bounds
+allow constant-positive conditional counters and reductions to avoid repeated
+overflow checks on the admitted path, retaining the checked fallback. This is
+general compiler infrastructure, not a `count_if` exception. See
+[the implemented profile](../architecture/optimization.md#guarded-checked-reductions).
+Focused IR/native differential tests and 29 selected platform groups plus smoke
+checks pass on macOS arm64 and Linux x86_64; one Linux provider-policy timeout
+passed an isolated rerun with the original limit. The unchanged 34-program Mac
+mini campaign measures 58.1% less time for captured predicates and 19.0% less
+for weighted state-machine updates. The other 32 programs retain identical
+generated GTI instructions; longer interface/result rechecks fit the 5% band.
+See [the evidence and remaining gaps](../../benchmarks/comparative/README.md#guarded-reductions-m4-pro-evidence-2026-10-31).
+General relational bounds for sorting scans, alias-aware pivot invariance,
+decreasing/dynamic reductions and broader loop versioning remain separate work.
+This local slice does not complete O-MIR-08 or establish general bounds-check
+elimination; no installation or publication occurred.
+
+Local scan follow-on (2026-10-31): the bounded forward/reverse scan profiles and
+subsequent alias-proven load reuse are implemented locally. See
+[guarded checked scans](../architecture/optimization.md#guarded-checked-scans).
+This addresses some of the relational-check and invariant-load work identified
+above; arbitrary relational bounds, variable strides, loop-carried stores and
+broader memory optimization are still open. The full 34-program Mac mini paired
+campaign measures 6.7% less random-sort time and no material regression within
+the 5% acceptance band; 30 other programs retain identical generated native
+instructions. The comparison still measures 2.37× C++ and 3.92× Rust time for
+sorting. macOS platform gates pass. Linux passes 28/30 selected groups; compiler
+pipeline and string sanitizer compilation timeouts remain under isolated
+recheck, without increased limits. Final combined validation belongs to the
+designated local integrator. See
+[the measured profile](../../benchmarks/comparative/README.md#guarded-scans-and-load-reuse-m4-pro-evidence-2026-10-31).
+No benchmark has been added to CI, and this is not a claim that the sorting gap
+is closed or that O-MIR-08 is complete.
+
 ## Runtime Performance Policy Revision (2026-10-09)
 
 [ADR 012](../decisions/012-outcome-first-systems-readiness.md#runtime-performance-requirement-2026-10-09)

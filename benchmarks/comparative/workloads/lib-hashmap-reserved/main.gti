@@ -1,0 +1,30 @@
+import std.unordered_map;
+extern "C" {
+uint64_t bench_rounds();
+uint64_t bench_seed();
+void bench_begin();
+void bench_end(uint64_t digest);
+}
+
+int main() {
+  uint64_t rounds = bench_rounds();
+  uint64_t seed = bench_seed() % uint64_t(65536);
+  mut uint64_t digest = 0;
+  bench_begin();
+  for (mut uint64_t round = 0; round < rounds; round++) {
+    mut std::unordered_map<int32_t, int32_t> table{};
+    table.reserve(std::size_t(16384));
+    for (mut int32_t i = 0; i < 16384; i++) {
+      int32_t key = int32_t((uint64_t(i) * uint64_t(7919) + seed + round) %
+                            uint64_t(32771));
+      [[discard]] table.insert(key, i);
+    }
+    for (mut int32_t key = 0; key < 32768; key++) {
+      if (table.contains(key)) {
+        digest += uint64_t(table.at(key));
+      }
+    }
+  }
+  bench_end(digest);
+  return 0;
+}
