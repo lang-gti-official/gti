@@ -829,7 +829,7 @@ bypass a server rejection.
 
 ## Early combined preview
 
-`origin/preview` is an opt-in source branch for trying completed features while
+`origin/preview` is the default early source branch for completed agent work while
 their original PRs continue full validation and review. Preview admission is
 separate from `verify`/`finish`: it never writes task validation records, marks
 original PRs ready, or grants permission to merge them. Every original PR still
@@ -843,8 +843,10 @@ The candidate combines the currently published preview, exact selected PR
 head, and current main in a new external worktree. Its committed
 `.gti-preview.json` records all included task/PR/head identities, their merge
 commits, exact focused CTest names, main and previous-preview identities. Admission
-requires explicit task selection; it does not sweep open PRs. The caller must
-select completed work and appropriate focused checks. Draft PRs are allowed
+requires explicit task selection; it does not sweep open PRs. Each agent must submit its own completed task after focused validation passes
+and its PR is published, unless the user requests no preview or no publication.
+This includes fixes and automation tasks, not only new language features.
+No per-task permission is needed. The caller must select appropriate focused checks. Draft PRs are allowed
 because their full acceptance may still be running.
 
 ```sh

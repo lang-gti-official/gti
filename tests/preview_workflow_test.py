@@ -618,6 +618,15 @@ class PreviewTests(unittest.TestCase):
         self.assertEqual(head, candidate["head"])
         self.assertFalse((self.root / "gti-preview-installs").exists())
 
+    def test_installer_defaults_to_preview_without_installing_on_dry_run(self):
+        with patch.object(sys, "argv", ["installer", "--dry-run"]), patch.object(
+                installer.platform, "system", return_value="Darwin"), patch.object(
+                installer, "preview_source", return_value=(None, "a" * 40)) as source, patch.object(
+                installer, "run") as run:
+            installer.main()
+            source.assert_called_once_with(installer.ROOT, True)
+            run.assert_not_called()
+
     def test_preview_activate_only_rejected_before_source_or_install(self):
         with patch.object(sys, "argv", ["installer", "--preview", "--activate-only"]), patch.object(
                 installer.platform, "system", return_value="Darwin"), patch.object(
