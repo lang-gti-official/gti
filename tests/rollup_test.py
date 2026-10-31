@@ -594,6 +594,20 @@ class Trigger(unittest.TestCase):
                            ".github/README.md", "Rollup bot"):
                 self.assertIn(needle, error.getvalue())
 
+    def test_checkout_origin_is_normalized_before_rollup(self):
+        text = (ROOT / ".github/workflows/rollup.yml").read_text()
+        command = "git remote set-url origin " + workflow.CANONICAL
+        self.assertIn(command, text)
+        self.assertLess(text.index(command), text.index("python3 scripts/rollup.py reconcile"))
+        with tempfile.TemporaryDirectory() as directory:
+            subprocess.run(["git", "init", "-q", directory], check=True)
+            subprocess.run(["git", "-C", directory, "remote", "add", "origin",
+                            workflow.CANONICAL.removesuffix(".git")], check=True)
+            with self.assertRaisesRegex(rollup.RollupError, "origin must be canonical"):
+                rollup.Rollup(GitHub(None), directory)
+            subprocess.run(command.split(), cwd=directory, check=True)
+            rollup.Rollup(GitHub(None), directory)
+
     def test_workflow_fails_naming_both_missing_secrets(self):
         text = (ROOT / ".github/workflows/rollup.yml").read_text()
         step = text.split("- name: Require the rollup GitHub App secrets\n", 1)[1].split("\n      - name:", 1)[0]

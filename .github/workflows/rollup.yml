@@ -94,6 +94,8 @@ jobs:
           ref: main
           fetch-depth: 0
           persist-credentials: false
+      - name: Normalize canonical origin
+        run: git remote set-url origin https://github.com/lang-gti-official/gti.git
       - name: Reconcile, queue and compose rollups
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
