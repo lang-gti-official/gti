@@ -1403,6 +1403,24 @@ std::optional<MirPlaceId> borrowSourceForPlace(const MirBody &body,
       return carrier->source;
     }
   }
+  // A by-reference capture has an environment slot rather than a binding
+  // carrier. Only its exact whole referent resolves to the slot's entry loan;
+  // fields and elements must retain their selected-place identity.
+  if (place->root == MirPlaceRootKind::Symbol && place->capture != 0 &&
+      place->projections.size() == 1 &&
+      place->projections.front().kind == MirProjectionKind::Dereference) {
+    for (const auto &loan : body.loans) {
+      const auto *slot = body.findPlace(loan.source);
+      if (loan.entry && loan.kind == MirLoanKind::Parameter && !loan.parent &&
+          slot && slot->root == MirPlaceRootKind::Symbol &&
+          slot->symbol == place->symbol && slot->capture == place->capture &&
+          slot->projections.empty() &&
+          slot->type.kind == SemanticType::Reference &&
+          slot->type.arguments.size() == 1 &&
+          slot->type.arguments.front() == place->type)
+        return slot->id;
+    }
+  }
   return placeId;
 }
 

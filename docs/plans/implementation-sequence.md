@@ -2109,6 +2109,14 @@ bindings, `auto&&`, untyped braces, or explicit `auto` array declarators.
 Reference inference from an existing fixed-array place must follow explicit
 array-reference support and preserve extents rather than decay to a pointer.
 
+The general fixed-array borrow slice now supplies that prerequisite (unreleased):
+explicit/aliased and inferred references, exact type/value-generic calls,
+checked results, and ordinary stored/captured borrows share the reference
+place/loan contract. The runnable sensor-buffer example is
+`182-bounded-array-borrows.gti`. This does not claim that SIMD arithmetic has
+moved out of compiler intrinsics; that assessment still requires alignment,
+aliasing, instruction-quality and performance evidence for each operation.
+
 Prove the general rule with an unrelated application type as well as JSON:
 
 ```gti

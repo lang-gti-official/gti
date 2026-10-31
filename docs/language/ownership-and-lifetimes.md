@@ -19,8 +19,42 @@ written type is inferred; ownership is not. Fresh owned temporaries cannot
 initialize a retained reference, while a temporary `expected<T&, E>` may
 publish a borrow of its stable external owner through `?` or `.expect()`.
 Plain `auto` remains a value binding and can therefore reject a move-only
-copy that `auto&` would validly borrow. Whole-array and raw-pointer referents
-remain outside ordinary local reference support in either spelling.
+copy that `auto&` would validly borrow. Fixed arrays preserve their complete
+element type and extents in either spelling.
+
+### Fixed-array borrows
+
+`T[N]&` borrows an existing fixed array for reading; `mut T[N]&` requests
+exclusive mutable access. Aliases, inferred local `auto&` bindings, concrete
+generic parameters, and checked reference returns use the same rule. Nested
+arrays preserve every extent. This revises the former restriction that only
+generic range parameters could borrow a whole fixed array.
+
+```gti
+void clear<uint64_t N>(mut int[N]& values) {
+  for (mut uint64_t i = 0; i < values.size(); ++i) { values[i] = 0; }
+}
+```
+
+The initializer must be an addressable place of the exact array type. No
+element conversion, extent conversion, pointer decay, array copy, or allocation
+occurs. A borrow neither owns nor drops its elements. It tracks the original
+array place, access mode, parent reborrow, and ordinary last-use endpoint.
+Existing owner/element accesses must respect that loan; a mutable reborrow
+cannot upgrade a read-only parent. A result must satisfy the ordinary checked
+return-origin contract and cannot expose a local or temporary array.
+
+Indexing retains the existing fixed-array bounds rules, including defined
+runtime failure for an out-of-range dynamic index. The extent is part of the
+type, not an additional runtime length field. Borrowing establishes no stronger
+alignment than the array already has. This facility does not introduce dynamic
+slices, raw-pointer-to-array conversion, or a vectorization guarantee.
+
+LLVM implements this capability. The comparison C++ backend reports
+`GTI-B0003` for explicit fixed-array reference parameters in generic signatures;
+its existing `Range&` substitution support is unchanged.
+
+See [the sensor-buffer example](../../examples/182-bounded-array-borrows.gti).
 
 The implemented unique ownership surface is:
 

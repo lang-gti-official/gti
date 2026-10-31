@@ -1,0 +1,64 @@
+// Array references preserve extents and storage, including through generic calls.
+using Triple = int[3];
+using Observer = int(Triple&);
+
+int total(Triple& values) {
+  mut int sum = 0;
+  for (mut uint64_t i = 0; i < values.size(); ++i) { sum += values[i]; }
+  return sum;
+}
+mut Triple& relay(mut Triple& values) { return values; }
+int[3]& observe(int[3]& values) { return values; }
+void fill<T, uint64_t N>(mut T[N]& values, T value) {
+  for (mut uint64_t i = 0; i < values.size(); ++i) { values[i] = value; }
+}
+struct Sensor { mut int reading = 0; public: Sensor() = default; };
+void calibrate(mut Sensor[2]& sensors) {
+  sensors[0].reading = 7;
+  sensors[1].reading = 9;
+}
+struct Frame {
+  mut int samples[3] = {1, 2, 3};
+public:
+  Frame() = default;
+  int[3]& read() { return this.samples; }
+  mut int[3]& write() mut { return this.samples; }
+};
+struct Window {
+  mut int[3]& values;
+public:
+  Window(mut int[3]& owner) : values(owner) {}
+  void set(int value) mut { values[0] = value; }
+};
+int main() {
+  mut int data[3] = {1, 2, 3};
+  {
+    int[3]& first = data;
+    if (total(first) != 6 || first.size() != uint64_t(3)) { return 1; }
+    mut auto& writable = data;
+    relay(writable)[1] = 8;
+    fill(writable, 4);
+    if (total(observe(data)) != 12) { return 2; }
+  }
+  mut int grid[2][3] = {{1, 2, 3}, {4, 5, 6}};
+  mut int[2][3]& matrix = grid;
+  mut int[3]& row = matrix[1];
+  fill(row, 5);
+  if (grid[1][2] != 5 || grid[0][2] != 3) { return 3; }
+  mut Sensor sensors[2] = {Sensor(), Sensor()};
+  calibrate(sensors);
+  if (sensors[0].reading != 7 || sensors[1].reading != 9) { return 4; }
+  mut Frame frame{};
+  fill(frame.write(), 6);
+  auto& samples = frame.read();
+  if (total(samples) != 18) { return 5; }
+  {
+    mut Window window{data};
+    window.set(11);
+  }
+  auto inspect = [](int[3]& values) -> int { return total(values); };
+  if (inspect(data) != 19) { return 6; }
+  int other[3] = {1, 2, 3};
+  auto captured = [&data, &other]() -> int { return total(data) + total(other); };
+  return captured() - 25;
+}

@@ -16,11 +16,13 @@ LLVM_ONLY_EXAMPLES = frozenset({
     "178-wrapping-atomic-counters.gti", "179-weak-ownership.gti",
     "180-compact-source-owners.gti",
     "181-general-object-layout.gti",
+    "182-bounded-array-borrows.gti",
 })
 
 
 def require_cpp_limitation(gti, source, output, env, optimization="O1", standard="c++23"):
-    limitation = ("general sizeof/alignof" if source.name == "181-general-object-layout.gti"
+    limitation = ("generic fixed-array reference signatures" if source.name == "182-bounded-array-borrows.gti"
+                  else "general sizeof/alignof" if source.name == "181-general-object-layout.gti"
                   else "wrapping atomic read-modify-write")
     output.write_bytes(b"preserved unsupported output")
     result = subprocess.run(
@@ -69,7 +71,9 @@ def observation_context(case: CaseContext) -> dict:
                                "repository_default": "stdlib"},
         "compile_observation": ({"mode": "sealed-lowered-program-inventory", "returncode": 0,
                                  "output_required": True, "oracle": "reviewed MIR body census",
-                                 "cpp_rejection": ("GTI-B0003: general sizeof/alignof"
+                                 "cpp_rejection": ("GTI-B0003: generic fixed-array reference signatures"
+                                                   if Path(case.source).name == "182-bounded-array-borrows.gti"
+                                                   else "GTI-B0003: general sizeof/alignof"
                                                    if Path(case.source).name == "181-general-object-layout.gti"
                                                    else "GTI-B0003: wrapping atomic read-modify-write")}
                                 if native_only else
