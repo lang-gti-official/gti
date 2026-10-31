@@ -1494,6 +1494,7 @@ paths = [
   "scripts/configure_ci_*",
   "scripts/check_ci_sanitizers.py",
   "scripts/named_test_shards.py",
+  "tests/named_test_shards_test.py",
 ]
 owners = [
   "agent_workflow",
