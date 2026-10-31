@@ -486,6 +486,20 @@ or bypass a server rule. Release workflows run after integration and need not
 finish before local installation. VERSION follows normal repository policy;
 workflow-only automation does not change the packaged compiler version.
 
+The library sanitizer jobs partition `cpp_mir_body_emitter_lifecycle` through
+its existing `--list` / `--test NAME` protocol. Each job runs half of the sorted
+named-case inventory serially under the unchanged 5,400-second aggregate bound;
+native integration still runs the ordinary aggregate CTest. The sanitizer jobs
+retain per-case outcomes and durations. The final gate requires both reports
+for its exact candidate, identical inventories, and every named case passing
+exactly once. Missing, stale, failed or timed-out case evidence fails the gate.
+Compiler sanitizer jobs build only the targets of `compiler_pipeline`; library
+jobs retain the library subset targets. This avoids filling runner disks with
+unexecuted sanitizer library binaries in compiler jobs.
+This avoids assigning the entire lifecycle suite to one library shard without
+removing sanitizer coverage or increasing timeouts. Runner termination still
+fails integration; this scheduling change does not claim to repair host loss.
+
 ## Risk-based batch validation
 
 The risk tiers below select how broad a change's focused checks must be. The
