@@ -1,0 +1,17 @@
+import std.meta;
+
+class Cell {
+  mut int32_t value;
+public:
+  Cell() : value(0) {}
+  mut int32_t& slot() mut { return this.value; }
+  int32_t read() { return this.value; }
+};
+
+int main() {
+  mut Cell cell{};
+  mut int32_t& loan = std::meta::method<Cell, 0>().invoke(cell);
+  int32_t concurrent = cell.read();
+  loan = 1;
+  return concurrent;
+}

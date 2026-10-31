@@ -241,11 +241,8 @@ def main():
                         uri = (consumer / "src/main.gti").resolve().as_uri()
                         session.send({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": uri, "languageId": "gti", "version": 1, "text": source}}})
                         diagnostics = session.receive_until(lambda message: message.get("method") == "textDocument/publishDiagnostics" and message.get("params", {}).get("uri") == uri)["params"]["diagnostics"]
-                        # The cached graph is valid; its legacy include still
-                        # receives the editor's documented migration advisory.
-                        assert len(diagnostics) == 1, diagnostics
-                        assert diagnostics[0].get("code") == "GTI-I0013", diagnostics
-                        assert diagnostics[0].get("severity") == 2, diagnostics
+                        # The cached graph and ordinary module import are valid.
+                        assert diagnostics == [], diagnostics
                         session.send({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover", "params": {"textDocument": {"uri": uri}, "position": lsp_position(source, source.index("id()") + 1)}})
                         hover = session.receive_until(lambda message: message.get("id") == 2)["result"]
                         assert hover and "int64_t" in str(hover), hover

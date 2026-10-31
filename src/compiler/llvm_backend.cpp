@@ -8,7 +8,10 @@
 #include "llvm/placement.h"
 #include "llvm/session.h"
 #include <llvm/Config/llvm-config.h>
+#include <llvm/Object/ObjectFile.h>
 #include <llvm/Support/FileSystem.h>
+#include <llvm/Support/MemoryBufferRef.h>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -23,6 +26,60 @@ bool sameNativeTarget(const TargetInfo &left, const TargetInfo &right) {
 }
 
 } // namespace
+
+void verifyCompiledScalarObject(std::string_view bytes,
+                                const TargetInfo &target,
+                                const std::vector<std::string> &symbols,
+                                const std::vector<std::string> &imports) {
+  auto parsed = llvm::object::ObjectFile::createObjectFile(
+      llvm::MemoryBufferRef(llvm::StringRef(bytes.data(), bytes.size()),
+                            "compiled scalar object"));
+  if (!parsed)
+    throw std::invalid_argument("invalid compiled scalar object: " +
+                                llvm::toString(parsed.takeError()));
+  const auto machine = native_llvm::makeMachine(target, {});
+  const auto &triple = machine->getTargetTriple();
+  const auto &object = **parsed;
+  if (!object.isRelocatableObject() || object.getArch() != triple.getArch() ||
+      object.getBytesInAddress() != 8 ||
+      object.isMachO() != triple.isOSBinFormatMachO() ||
+      object.isELF() != triple.isOSBinFormatELF() ||
+      object.isCOFF() != triple.isOSBinFormatCOFF())
+    throw std::invalid_argument(
+        "compiled scalar object target or format mismatch");
+  std::set<std::string> expected;
+  for (const auto &symbol : symbols)
+    expected.insert(object.isMachO() ? "_" + symbol : symbol);
+  std::set<std::string> allowedImports;
+  for (const auto &symbol : imports)
+    allowedImports.insert(object.isMachO() ? "_" + symbol : symbol);
+  for (const auto &symbol : object.symbols()) {
+    auto flags = symbol.getFlags();
+    auto name = symbol.getName();
+    if (!flags || !name) {
+      if (!flags)
+        llvm::consumeError(flags.takeError());
+      if (!name)
+        llvm::consumeError(name.takeError());
+      throw std::invalid_argument(
+          "invalid compiled scalar object symbol table");
+    }
+    if (*flags & llvm::object::SymbolRef::SF_Undefined) {
+      if (!allowedImports.contains(name->str()))
+        throw std::invalid_argument(
+            "compiled scalar library has unresolved native dependency: " +
+            name->str());
+      continue;
+    }
+    if ((*flags & llvm::object::SymbolRef::SF_Global) &&
+        !expected.erase(name->str()))
+      throw std::invalid_argument(
+          "unexpected compiled scalar external definition: " + name->str());
+  }
+  if (!expected.empty())
+    throw std::invalid_argument(
+        "compiled scalar object is missing an exported symbol");
+}
 
 std::string_view llvmInstrumentationModeName(LlvmInstrumentationMode mode) {
   switch (mode) {

@@ -286,11 +286,13 @@ public:
   }
 };
 
-/// Describes method `I`, in declaration order, of `T`: metadata only.
-/// Invocation through a metaobject is a separate capability.
+/// Describes method `I`, in declaration order, of `T`.
 export @compiler_type("meta_method") struct method<T, uint64_t I> {
 public:
   constexpr method() {}
+  /// Invoke the selected instance method with an ordinary runtime receiver
+  /// and arguments. The declaration identity is fixed by T and I.
+  return_type<T, I> invoke<Args...>(Args... arguments);
   /// The declared name, or the operator spelling (`operator+`).
   constexpr std::string_view name() { return gti_internal::meta_method_name<T, I>(); }
   constexpr uint64_t index() { return I; }

@@ -1,0 +1,32 @@
+import std.algorithm;
+import std.vector;
+extern "C" {
+uint64_t bench_rounds();
+uint64_t bench_seed();
+void bench_begin();
+void bench_end(uint64_t digest);
+}
+
+int main() {
+  uint64_t rounds = bench_rounds();
+  uint64_t seed = bench_seed() % uint64_t(65536);
+  mut uint64_t digest = 0;
+  bench_begin();
+  for (mut uint64_t round = 0; round < rounds; round++) {
+    mut std::vector<int32_t> values{};
+    values.reserve(std::size_t(65536));
+    for (mut int32_t i = 0; i < 65536; i++) {
+      values.push_back(int32_t((uint64_t(i) * uint64_t(7919) + seed + round) %
+                               uint64_t(10007)));
+    }
+    for (mut int32_t pass = 0; pass < 16; pass++) {
+      int32_t threshold = pass * 600;
+      digest +=
+          uint64_t(std::count_if(values, [threshold](int32_t &value) -> bool {
+            return value > threshold;
+          }));
+    }
+  }
+  bench_end(digest);
+  return 0;
+}

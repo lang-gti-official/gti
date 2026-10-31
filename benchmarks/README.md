@@ -1,5 +1,10 @@
 # GTI benchmarks
 
+The opt-in [three-language comparison study](comparative/README.md) contains
+matched GTI LLVM, hand-written C++, and Rust programs. It is standalone and is
+not registered with CTest or CI. Its reports retain failures and uncertainty
+rather than making a language-wide performance claim.
+
 This directory contains deterministic whole-program workloads for comparing
 GTI with native C++ under one compiler and optimization policy. Benchmarks are
 correctness experiments first: the runner builds every declared variant,

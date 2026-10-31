@@ -7688,7 +7688,34 @@ int main() {
          "the verified accessor schedules produce the detached artifact");
 }
 
+void testFreshArrayFieldIndex() {
+  const auto frontend = analyze("fresh-array-field-index.gti", R"(
+struct Row { int32_t[2] cells; Row(int32_t first) : cells({first, 2}) {} };
+Row make_row(int32_t first) { return Row(first); }
+int main() { return make_row(1).cells[0] - 1; }
+)");
+  expect(frontend.canGenerateCode(),
+         "a fresh class array field index lowers to verified MIR");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  for (const auto &function : frontend.mir.functionInstances()) {
+    if (function.entryKind == lang::ProgramEntryKind::None)
+      continue;
+    const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
+                                       .owner = function.id};
+    const auto analysis = emitter.analyze(address);
+    if (!analysis.ready())
+      for (const auto &issue : analysis.issues)
+        std::cerr << "fresh array field index: " << issue.detail << '\n';
+    expect(analysis.ready(),
+           "a fresh class array field index has an exact C++ body plan");
+  }
+}
+
 constexpr NamedTest kTests[] = {
+    {"testFreshArrayFieldIndex", testFreshArrayFieldIndex},
     {"testPropagationOnlyFailureContext", testPropagationOnlyFailureContext},
     {"testBoundedSecondaryFailureRecordStorage",
      testBoundedSecondaryFailureRecordStorage},

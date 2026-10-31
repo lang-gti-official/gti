@@ -43,6 +43,12 @@ int exercise(int count, int shape, bool descending) {
     if (shape == 3) { value = i <= count / 2 ? i : count - i; }
     if (shape == 4) { value = i % 2 == 0 && i + 1 < count ? i + 1 : i - 1; }
     if (shape == 5) { value = (i * 137 + 43) % count; }
+    if (shape == 6) { value = i < count / 2 ? count / 2 : count - i - 1; }
+    if (shape == 7 && i == count - 1) { value = 0; }
+    if (shape == 8) { value = i / 4; }
+    if (shape == 9 && i == count - 2) { value = count - 1; }
+    if (shape == 9 && i == count - 1) { value = count - 2; }
+    if (shape == 10) { value = (count - i - 1) / 4; }
     values.push_back(value);
     frequencies[std::size_t(value)]++;
   }
@@ -74,17 +80,28 @@ int exercise(int count, int shape, bool descending) {
   mut std::size_t width = std::size_t(1);
   while (width < values.size()) { width *= std::size_t(2); levels++; }
   if (comparisons > uint64_t(2) * uint64_t(count) * (levels + uint64_t(1))) { return 7; }
+  // Whole ascending/reverse/equivalent runs take at most two comparisons
+  // per adjacent pair, including equivalent prefixes and plateaus.
+  if (count > 16 && (shape <= 2 || shape == 6 || shape == 8 || shape == 10) &&
+      comparisons > uint64_t(2) * uint64_t(count - 1)) { return 8; }
   if (shape == 0 && !descending) { std::println(comparisons); }
   return 0;
 }
 
 int main() {
   for (mut int count = 128; count <= 1024; count *= 2) {
-    for (mut int shape = 0; shape < 6; shape++) {
+    for (mut int shape = 0; shape < 11; shape++) {
       int result = exercise(count, shape, false);
       if (result != 0) { return result; }
       int reverse = exercise(count, shape, true);
       if (reverse != 0) { return reverse; }
+    }
+  }
+  int boundaries[8] = {2, 15, 16, 17, 39, 40, 41, 127};
+  for (int& count : boundaries) {
+    for (mut int shape = 1; shape < 11; shape++) {
+      if (exercise(count, shape, false) != 0 ||
+          exercise(count, shape, true) != 0) { return 9; }
     }
   }
   if (exercise(0, 1, false) != 0 || exercise(1, 1, false) != 0) { return 5; }

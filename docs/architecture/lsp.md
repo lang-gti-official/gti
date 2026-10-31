@@ -3,6 +3,17 @@
 Status: Current implementation, with future symbol/index work explicitly
 separated below.
 
+Associated type families use compiler-owned protocol member and input-binder
+symbols. Declaration, conformance definition and projected member uses share
+the exact contract identity; renamed family inputs retain their own independent
+declarations. Hover uses the application occurrence's semantic type, definition
+targets the protocol contract, and type completion after `C<P>::` offers its
+declared members with their parameter lists. Alias validation publishes these
+occurrences after conformance registration, avoiding stale early projections.
+Tree-sitter marks each family declaration/definition as its input scope; the
+formatter recognizes the parameter clause before a `using` definition's `=`.
+No protocol-side family lookup or substitution is introduced.
+
 Generic payload enum variant hover and completion use exact occurrence and
 candidate types with the retained semantic instance signatures. Defaults and
 transparent aliases print the same canonical owner and substituted payload

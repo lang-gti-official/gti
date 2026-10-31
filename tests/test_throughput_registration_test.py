@@ -11,6 +11,63 @@ import subprocess
 import sys
 import tempfile
 
+from sanitizer_support import SANITIZED_BUILD_TIMEOUT
+
+
+def verify_algorithm_partitions(tests):
+    expected = {f"c++{standard}-O{level}" for standard in (20, 23)
+                for level in (0, 1, 3)} | {"no-elide", "sanitized"}
+    partitions = [test for test in tests if any(
+        pathlib.Path(arg).name == "generic_algorithm_breadth_test.py"
+        for arg in test.get("command", []))]
+    modes = []
+    if len(partitions) != 4:
+        raise AssertionError("generic algorithm matrix must have four partitions")
+    for test in partitions:
+        command = test["command"]
+        if any(arg == "--fixture" or arg.startswith("--fixture=") for arg in command):
+            raise AssertionError("generic algorithm partition omitted fixtures")
+        selected = [command[index + 1] for index, arg in enumerate(command)
+                    if arg == "--mode"]
+        if not selected:
+            raise AssertionError("generic algorithm partition has no modes")
+        modes.extend(selected)
+        properties = {item["name"]: item["value"] for item in test["properties"]}
+        if not properties.get("RUN_SERIAL"):
+            raise AssertionError("generic algorithm partitions must run serially")
+        if "sanitized" in selected and properties["TIMEOUT"] <= SANITIZED_BUILD_TIMEOUT:
+            raise AssertionError("outer timeout truncates an admitted sanitized compile")
+    if len(modes) != len(expected) or set(modes) != expected:
+        raise AssertionError("generic algorithm mode census is incomplete or duplicated")
+
+
+def verify_trusted_body_partitions(tests, repository):
+    expected = sorted(path.resolve() for directory in ("examples", "stdlib/tests")
+                      for path in (repository / directory).glob("*.gti"))
+    partitions = [test for test in tests
+                  if test["name"].startswith("trusted_body_analysis")]
+    if {test["name"] for test in partitions} != {
+            f"trusted_body_analysis_{index}" for index in range(4)}:
+        raise AssertionError("trusted-body matrix must have four partitions")
+    actual = []
+    for test in partitions:
+        command = test.get("command", [])
+        # CMake is present at configure time, so CTest exposes this command
+        # even before the native target is built. No stub executable is used.
+        if (len(command) < 6 or pathlib.Path(command[0]).stem != "cmake" or
+                command[1:3] != ["-E", "env"]):
+            raise AssertionError("trusted-body partition changed its launcher")
+        command = command[3:]
+        if (pathlib.Path(command[0]).stem != "gti_trusted_body_analysis_tests" or
+                pathlib.Path(command[1]).resolve() != repository):
+            raise AssertionError("trusted-body partition changed its harness or root")
+        actual.extend(pathlib.Path(arg).resolve() for arg in command[2:])
+        properties = {item["name"]: item["value"] for item in test["properties"]}
+        if not properties.get("RUN_SERIAL") or properties.get("TIMEOUT") != 600:
+            raise AssertionError("trusted-body partition changed its execution budget")
+    if not expected or sorted(actual) != expected:
+        raise AssertionError("trusted-body corpus is incomplete or duplicated")
+
 
 def inventory(build):
     # `ctest --show-only` writes LastTest.log. Query a copy of only the generated
@@ -78,6 +135,8 @@ def verify(tests, repository):
         raise AssertionError(f"unregistered shared matrix clients: {wrappers - found}")
     if not feedback or feedback == names:
         raise AssertionError("fast feedback must be a nonempty partial selection")
+    verify_algorithm_partitions(tests)
+    verify_trusted_body_partitions(tests, repository)
     return found
 
 
@@ -205,6 +264,48 @@ def main():
             pass
         else:
             raise AssertionError(f"accepted forged {kind} standalone harness inventory")
+    for mutation in ("omitted-partition", "duplicate-mode", "fixture-filter", "short-timeout", "parallel"):
+        changed = copy.deepcopy(tests)
+        target = next(test for test in changed
+                      if test["name"] == "generic_algorithm_breadth_sanitized")
+        if mutation == "omitted-partition":
+            changed.remove(target)
+        elif mutation == "duplicate-mode":
+            target["command"].extend(["--mode", "c++20-O0"])
+        elif mutation == "fixture-filter":
+            target["command"].append("--fixture=algorithm_search")
+        else:
+            for prop in target["properties"]:
+                if mutation == "short-timeout" and prop["name"] == "TIMEOUT":
+                    prop["value"] = SANITIZED_BUILD_TIMEOUT
+                elif mutation == "parallel" and prop["name"] == "RUN_SERIAL":
+                    prop["value"] = False
+        try:
+            verify_algorithm_partitions(changed)
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError(f"accepted forged algorithm {mutation}")
+    for mutation in ("omitted-partition", "omitted-entry", "duplicate-entry", "parallel"):
+        changed = copy.deepcopy(tests)
+        target = next(test for test in changed
+                      if test["name"] == "trusted_body_analysis_0")
+        if mutation == "omitted-partition":
+            changed.remove(target)
+        elif mutation == "omitted-entry":
+            target["command"].pop()
+        elif mutation == "duplicate-entry":
+            target["command"].append(target["command"][-1])
+        else:
+            for prop in target["properties"]:
+                if prop["name"] == "RUN_SERIAL":
+                    prop["value"] = False
+        try:
+            verify_trusted_body_partitions(changed, repository)
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError(f"accepted forged trusted-body {mutation}")
     verify_cold_ordering()
     print(f"Full census: {len(tests)} gates; {len(clients)} parallel clients accounted; "
           f"{standalone} standalone harnesses inventoried; "

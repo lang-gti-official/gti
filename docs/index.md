@@ -184,6 +184,9 @@ while canonical language documents continue to describe actual support.
   records LLVM as the primary development backend, with production promotion
   pending conformance, and [C++ primary-backend deprecation](decisions/031-native-llvm-backend-foundation.md#backend-development-policy-2026-10-25).
 
+- [032: Bundled compiled GTI libraries](decisions/032-compiled-library-bundles.md)
+  — implemented container/envelope foundation and the separate-compilation design boundary.
+
 Decision records explain why a significant rule exists. They are not a second
 description of the implementation.
 
@@ -236,8 +239,9 @@ than mixed into the active queue.
 - [Compile-time semantic reflection](plans/reflection.md) — three-phase
   campaign: metaobjects, `constexpr for`, attributes and enum/base/generic
   queries, structural construction and callable/source metadata are delivered;
-  the reflected JSON client is promoted to `<std/json>`; further
-  invocation/runtime reflection and residual metadata profiles remain goals
+  the reflected JSON client is promoted to `<std/json>`; typed instance-method
+  invocation is delivered; static/operator/constructor
+  invocation, runtime reflection and residual metadata profiles remain goals
 - [Performance tooling](plans/performance-tooling.md)
 - [Archived plan records](plans/archive/README.md) — completed delivery plans,
   migrations, and historical checkpoints retained without presenting them as

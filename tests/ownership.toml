@@ -264,7 +264,7 @@ owners = [
   "protected_members",
   "qualified_type_members",
   "instance_reuse",
-  "trusted_body_analysis",
+  "^trusted_body_analysis_[0-3]$",
   "body_analysis_order",
   "thread_local_semantic",
   "executable_entry_semantics",
@@ -288,7 +288,7 @@ consumers = [
   "lsp_protocol",
   "diagnostic_recovery_lsp",
   "generic_algorithm_errors",
-  "generic_algorithm_breadth",
+  "^generic_algorithm_breadth_(cpp20|cpp23|no_elide|sanitized)$",
 ]
 
 [[area]]
@@ -989,7 +989,7 @@ consumers = [
   "mir_census_regression",
   "lowered_program_corpus_census",
   "mir_cutover_corpus_oracle",
-  "trusted_body_analysis",
+  "^trusted_body_analysis_[0-3]$",
   "body_analysis_order",
 ]
 
@@ -1056,7 +1056,7 @@ owners = [
   "vector_construction_only_runtime",
   "vector_prepared_constructor_runtime",
   "vector_scalar_constructor_runtime",
-  "generic_algorithm_breadth",
+  "^generic_algorithm_breadth_(cpp20|cpp23|no_elide|sanitized)$",
   "generic_algorithm_cluster",
   "generic_algorithm_errors",
 ]
@@ -1221,7 +1221,7 @@ paths = [
   "stdlib/tests/",
 ]
 owners = [
-  "trusted_body_analysis",
+  "^trusted_body_analysis_[0-3]$",
   "body_analysis_order",
 ]
 consumers = []
@@ -1229,6 +1229,42 @@ consumers = []
 # ---------------------------------------------------------------------------
 # Driver, CLI, projects, packages and caches
 # ---------------------------------------------------------------------------
+
+[[area]]
+area = "compiled-library-interfaces"
+paths = [
+  "include/gti/compiled_interface_names.h",
+  "include/gti/compiled_interface_types.h",
+  "include/gti/compiled_scalar_signature.h",
+  "include/gti/compiled_scalar_unit.h",
+  "include/gti/persistent_declaration.h",
+  "src/compiler/compiled_interface_types.cpp",
+  "src/compiler/compiled_scalar_unit.cpp",
+  "src/compiler/persistent_declaration.cpp",
+  "tests/compiled_*",
+  "tests/persistent_declaration_tests.cpp",
+  "tests/persistent_declaration_process_test.py",
+]
+owners = [
+  "persistent_declaration_identity",
+  "persistent_declaration_process",
+  "compiled_scalar_library",
+  "compiled_interface_types",
+  "compiled_borrow_contract",
+]
+consumers = [
+  "compiled_primitive_library",
+  "compiled_value_types",
+  "compiled_borrow_library",
+  "compiled_namespaces",
+  "compiled_library_project",
+  "compiled_libraries_project",
+  "compiled_dependency_project",
+  "compiled_primitive_cost",
+  "compiled_scalar_library_cost",
+  "library_bundle",
+]
+risk = "system"
 
 [[area]]
 area = "driver"
@@ -1745,7 +1781,7 @@ owners = [
 ]
 consumers = [
   "language_coverage_corpus",
-  "trusted_body_analysis",
+  "^trusted_body_analysis_[0-3]$",
   "body_analysis_order",
   "native_packages",
 ]

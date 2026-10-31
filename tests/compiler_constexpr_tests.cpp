@@ -6140,7 +6140,393 @@ int main() {
          "the formatter should preserve and normalize compile-time errors");
 }
 
+void testConsteval() {
+  const auto valid = lang::Frontend().analyze("consteval.gti", R"(
+consteval int square(int x) { return x * x; }
+constexpr int twice(int x) { return x * 2; }
+consteval int nested(int x) { return square(twice(x)); }
+consteval T identity<T>(T x) { return x; }
+struct Port {
+  int value;
+  implicit consteval Port(int x) : value(100 / (x > 0 ? 1 : 0) + x) {}
+};
+int consume(Port port, int runtime) { return port.value + runtime; }
+int run(int runtime) {
+  Port port = 80;
+  return consume(Port(81), runtime) + port.value + nested(3) + identity(4);
+}
+int main() { return run(2) - 403; }
+)");
+  for (const auto &diagnostic : valid.diagnostics)
+    if (diagnostic.severity == lang::DiagnosticSeverity::Error)
+      std::cerr << diagnostic.message << '\n';
+  expect(valid.canGenerateCode(), "ordinary immediate calculations and checked "
+                                  "records accept constant inputs");
+  const auto dependent = lang::Frontend().analyze("consteval-dependent.gti", R"(
+consteval uint64_t immediate_size(uint64_t value) { return value; }
+consteval bool immediate_flag(bool value) { return value; }
+constexpr uint64_t width<T>() { return immediate_size(sizeof(T)); }
+constexpr uint64_t count<uint64_t N>() { return immediate_size(N + 1); }
+uint64_t array_width<uint64_t N>() { return immediate_size(sizeof(int[N])); }
+bool readable<T>() {
+  return immediate_flag(requires(T& value) { { value.read() } -> int; });
+}
+struct Reader { int read() { return 1; } };
+struct Empty {};
+struct Counted<uint64_t N> {
+  uint64_t value;
+  consteval Counted() : value(N) {}
+};
+uint64_t constructed_count<uint64_t N>() {
+  Counted<N> value{};
+  return value.value;
+}
+static_assert(width<int>() == uint64_t(4));
+static_assert(width<int64_t>() == uint64_t(8));
+static_assert(count<4>() == uint64_t(5));
+static_assert(count<9>() == uint64_t(10));
+int main() {
+  return array_width<3>() == uint64_t(12) && readable<Reader>() &&
+         !readable<Empty>() && constructed_count<3>() == uint64_t(3) &&
+         constructed_count<8>() == uint64_t(8) ? 0 : 1;
+}
+)");
+  for (const auto &diagnostic : dependent.diagnostics)
+    if (diagnostic.severity == lang::DiagnosticSeverity::Error)
+      std::cerr << diagnostic.message << '\n';
+  expect(dependent.canGenerateCode(),
+         "immediate arguments with concrete parameter types defer unresolved "
+         "layout, value and requirement inputs to each concrete instance");
+  const std::string effectDeclarations = R"(
+mut int global = 7;
+constexpr int source(bool read) { return read ? global : 42; }
+constexpr int generic_source<T>(bool read) { return read ? global : 42; }
+consteval int immediate(bool read) { return source(read); }
+consteval int identity(int value) { return value; }
+struct Port {
+  int value;
+  implicit consteval Port(int value) : value(value < 0 ? global : value) {}
+};
+struct Convertible {
+  int value;
+  constexpr Convertible(int value) : value(value) {}
+  implicit consteval operator int() {
+    return this.value < 0 ? global : this.value;
+  }
+};
+struct Truth {
+  bool value;
+  constexpr Truth(bool value) : value(value) {}
+  consteval operator bool() { return this.value; }
+};
+bool runtime_read() { return global == 7; }
+int combine(mut int& value, int input) { return value + input; }
+)";
+  const auto effects =
+      lang::Frontend().analyze("consteval-effects.gti", effectDeclarations + R"(
+int main() {
+  mut int& held = global;
+  int direct = immediate(false);
+  int argument = identity(source(false));
+  int generic_argument = identity(generic_source<int>(false));
+  Port contextual = 42;
+  int converted = Convertible(42);
+  int ordered = combine(held, immediate(false));
+  return held + direct + argument + generic_argument + contextual.value +
+         converted + ordered - 266;
+}
+)");
+  for (const auto &diagnostic : effects.diagnostics)
+    if (diagnostic.severity == lang::DiagnosticSeverity::Error)
+      std::cerr << diagnostic.message << '\n';
+  expect(effects.canGenerateCode() &&
+             lang::verifyMirProgram(effects.mir).valid(),
+         "published immediate values erase operand and contextual runtime "
+         "storage effects while preserving an enclosing call's other inputs");
+  for (const auto &[body, code] :
+       std::vector<std::pair<std::string, std::string>>{
+           {"int main(){mut int& held=global; int v=source(false); "
+            "return held+v;}",
+            "GTI-S2045"},
+           {"int main(){return immediate(true);}", "GTI-S2057"},
+           {"int main(){return identity(global++);}", "GTI-S2057"},
+           {"int main(){mut int& held=global; int v=identity(42); "
+            "int runtime=source(false); return held+v+runtime;}",
+            "GTI-S2045"},
+           {"int main(){mut int& held=global; int v=source(false); "
+            "int compiled=identity(42); return held+v+compiled;}",
+            "GTI-S2045"},
+           {"int main(){mut int& held=global; bool result=Truth(true) && "
+            "runtime_read(); return result ? held : 0;}",
+            "GTI-S2045"},
+           {"int main(){mut int& held=global; bool result=Truth(false) || "
+            "runtime_read(); return result ? held : 0;}",
+            "GTI-S2045"},
+           {"int main(){mut int& held=global; "
+            "int compiled=identity(generic_source<int>(false)); "
+            "return compiled+combine(held,generic_source<int>(false));}",
+            "GTI-S2045"}}) {
+    const auto rejected = lang::Frontend().analyze(
+        "consteval-effects-invalid.gti", effectDeclarations + body);
+    expect(!rejected.canGenerateCode() &&
+               std::any_of(rejected.diagnostics.begin(),
+                           rejected.diagnostics.end(),
+                           [&](const auto &d) { return d.code == code; }),
+           "immediate effect erasure preserves runtime effects and rejects "
+           "nonconstant inputs: " +
+               body);
+  }
+  const auto nullConstruction =
+      lang::Frontend().analyze("consteval-null-construction.gti", R"(
+struct P { int value; consteval P(nullptr_t ignored) : value(42) {} };
+int main() { P p = nullptr; return p.value - 42; }
+)");
+  expect(nullConstruction.canGenerateCode() &&
+             lang::verifyMirProgram(nullConstruction.mir).valid(),
+         "exact nullptr construction publishes an immediate record value");
+  const auto invalidNullConstruction =
+      lang::Frontend().analyze("consteval-null-construction-invalid.gti", R"(
+constexpr int divide(int divisor) { return 1 / divisor; }
+struct P {
+  int value;
+  consteval P(nullptr_t ignored) : value(divide(0)) {}
+};
+int main() { P p = nullptr; return p.value; }
+)");
+  expect(!invalidNullConstruction.canGenerateCode() &&
+             std::any_of(invalidNullConstruction.diagnostics.begin(),
+                         invalidNullConstruction.diagnostics.end(),
+                         [](const auto &d) { return d.code == "GTI-S2057"; }) &&
+             std::none_of(
+                 invalidNullConstruction.diagnostics.begin(),
+                 invalidNullConstruction.diagnostics.end(),
+                 [](const auto &d) { return d.code.starts_with("GTI-B"); }),
+         "exact nullptr construction enforces immediate failure in semantics");
+  for (const std::string source :
+       {"consteval int f(int x) { return x; } int g(int x) { return f(x); }",
+        "consteval uint64_t f(uint64_t x) { return 10 / x; } uint64_t "
+        "g<uint64_t N>() { return f(N); } int main() { return int(g<0>()); }",
+        "consteval int f(int x) { return 1 / x; } int g() { return f(0); }",
+        "consteval int f(int x) { return x; } constexpr int g(int x) { return "
+        "f(x); }",
+        "struct P { int v; consteval P(int x) : v(x) {} }; int g(int x) { P "
+        "p{x}; return p.v; }",
+        "consteval int f(int x) { return x; } int g() { auto item = f; return "
+        "0; }",
+        "struct P { int v; implicit consteval P(int x):v(x){} }; int f(int x){ "
+        "P p=x; return p.v; }",
+        "struct P { int v; constexpr P(int x):v(x){} implicit consteval "
+        "operator int(){return this.v;} }; int f(int x){P p{x}; int v=p; "
+        "return v;}",
+        "struct P{int v; constexpr P(int x):v(x){} consteval operator "
+        "bool(){return this.v>0;}}; int f(int x){if(P(x)) return 0; return 1;}",
+        "consteval int& same(int& x){return x;} constexpr int v=3; int "
+        "main(){int& r=same(v);return r-3;}",
+        "struct P{int v;implicit consteval P():v(1/0){}}; P f(){return;}",
+        "consteval int value = 3;"}) {
+    const auto invalid =
+        lang::Frontend().analyze("consteval-invalid.gti", source);
+    expect((!invalid.syntaxValid || !invalid.semanticValid) &&
+               std::none_of(invalid.diagnostics.begin(),
+                            invalid.diagnostics.end(),
+                            [](const auto &diagnostic) {
+                              return diagnostic.code.starts_with("GTI-B");
+                            }),
+           "invalid immediate declaration, invocation or escape rejects: " +
+               source);
+  }
+  for (const std::string source :
+       {"consteval int f(int x) { return x; } int g<T>(int x) { return f(x); }",
+        "consteval uint64_t f(uint64_t x) { return x; } uint64_t "
+        "g<T>(uint64_t x) { return f(sizeof(T) + x); } int main() { return "
+        "int(g<int>(uint64_t(4))); }"}) {
+    const auto invalid =
+        lang::Frontend().analyze("consteval-generic-runtime.gti", source);
+    expect(!invalid.semanticValid &&
+               hasDiagnosticCode(invalid.diagnostics, "GTI-S2057") &&
+               !hasDiagnosticCode(invalid.diagnostics, "GTI-S2003"),
+           "generic runtime inputs fail immediate evaluation rather than "
+           "argument-type selection, before and after instantiation");
+  }
+  const auto nestedVoid =
+      lang::Frontend().analyze("consteval-nested-void.gti", R"(
+consteval void set(mut int& value) { value = 2; }
+consteval int result() { mut int value = 0; set(value); return value; }
+int main() { return result() - 2; }
+)");
+  expect(nestedVoid.canGenerateCode(),
+         "void immediate helpers execute within an immediate frame that "
+         "publishes a supported value");
+  const auto exhausted =
+      lang::Frontend().analyze("consteval-resource-limit.gti", R"(
+consteval int recurse(int value) { return recurse(value + 1); }
+int main() { return recurse(0); }
+)");
+  expect(!exhausted.semanticValid &&
+             hasDiagnosticCode(exhausted.diagnostics, "GTI-S2057") &&
+             hasDiagnosticHint(exhausted.diagnostics,
+                               "shared step or call-depth limit"),
+         "immediate recursion preserves the bounded evaluator and reports "
+         "its shared resource limit");
+}
+
+void testConstevalStatementCompletion() {
+  const auto completed =
+      lang::Frontend().analyze("consteval-statement-completion.gti", R"(
+mut int global = 7;
+constexpr int choose(bool read) { return read ? global : 2; }
+consteval void validate(bool read) { int checked = choose(read); }
+struct Port { int value; implicit consteval Port() : value(42) {} };
+Port make() { return; }
+int main() {
+  mut int& held = global;
+  validate(false);
+  return held + make().value - 49;
+}
+)");
+  if (!completed.canGenerateCode())
+    for (const auto &diagnostic : completed.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(completed.canGenerateCode() &&
+             lang::verifyHirProgramPlans(completed.semantics, completed.hir)
+                 .valid() &&
+             lang::verifyMirProgram(completed.mir).valid(),
+         "standalone immediate void calls and implicit bare returns publish "
+         "through verified HIR/MIR without runtime effects");
+  if (completed.canGenerateCode()) {
+    const auto rejectVoidMutation = [&](auto mutate) {
+      auto changed = completed.hir;
+      bool found = false;
+      for (const auto &function : changed.functionInstances()) {
+        if (function.body.immediateVoidCompletions.empty())
+          continue;
+        auto &body = const_cast<lang::HirBody &>(function.body);
+        mutate(body);
+        found = true;
+        break;
+      }
+      expect(found && !lang::verifyHirProgramPlans(completed.semantics, changed)
+                           .valid(),
+             "void completion HIR must retain its exact statement proof");
+    };
+    rejectVoidMutation(
+        [](lang::HirBody &body) { body.immediateVoidCompletions.clear(); });
+    rejectVoidMutation([](lang::HirBody &body) {
+      body.immediateVoidCompletions.push_back(
+          body.immediateVoidCompletions.front());
+    });
+    rejectVoidMutation([](lang::HirBody &body) {
+      body.immediateVoidCompletions.front().source = nullptr;
+    });
+    rejectVoidMutation([](lang::HirBody &body) {
+      auto &entry = body.immediateVoidCompletions.front();
+      for (auto &statement : body.statements)
+        if (statement.source == entry.source) {
+          statement.kind = lang::HirStatementKind::Return;
+          break;
+        }
+    });
+    const auto rejectReturnMutation = [&](auto mutate) {
+      auto changed = completed.hir;
+      bool found = false;
+      for (const auto &function : changed.functionInstances()) {
+        if (function.body.emptyReturnConstructions.empty())
+          continue;
+        auto &body = const_cast<lang::HirBody &>(function.body);
+        mutate(body);
+        found = true;
+        break;
+      }
+      expect(found && !lang::verifyHirProgramPlans(completed.semantics, changed)
+                           .valid(),
+             "immediate bare return HIR must retain its exact constant proof");
+    };
+    rejectReturnMutation(
+        [](lang::HirBody &body) { body.emptyReturnConstructions.clear(); });
+    rejectReturnMutation([](lang::HirBody &body) {
+      body.emptyReturnConstructions.front().source = nullptr;
+    });
+    rejectReturnMutation([](lang::HirBody &body) {
+      auto *value = const_cast<lang::HirValue *>(
+          body.findValue(body.emptyReturnConstructions.front().value));
+      value->constant.reset();
+    });
+    rejectReturnMutation([](lang::HirBody &body) {
+      auto *value = const_cast<lang::HirValue *>(
+          body.findValue(body.emptyReturnConstructions.front().value));
+      value->programConstantSubstitution = false;
+    });
+  }
+
+  const auto generic =
+      lang::Frontend().analyze("consteval-statement-generics.gti", R"(
+struct Port<uint64_t N> {
+  int value;
+  implicit consteval Port() : value(int(N)) {}
+};
+Port<N> make<uint64_t N>() { return; }
+consteval void validate(int n) { int checked = 100 / n; }
+void call<uint64_t N>() { validate(int(N)); }
+int main() { call<2>(); return make<42>().value - 42; }
+)");
+  expect(generic.canGenerateCode() &&
+             lang::verifyMirProgram(generic.mir).valid(),
+         "dependent void completion and implicit construction are checked "
+         "for each concrete generic instance");
+
+  const auto method =
+      lang::Frontend().analyze("consteval-statement-method.gti", R"(
+struct Validator {
+  int limit;
+  constexpr Validator(int value) : limit(value) {}
+  consteval void check(int value) {
+    int proof = 100 / (value == this.limit ? 1 : 0);
+  }
+};
+int main() { Validator(5).check(5); return 0; }
+)");
+  expect(method.canGenerateCode() && lang::verifyMirProgram(method.mir).valid(),
+         "immediate void methods use their exact constant receiver in the "
+         "statement completion profile");
+
+  for (const std::string source :
+       {"consteval void check(int n){int x=100/n;} int main(){check(0);"
+        "return 0;}",
+        "consteval void check(int n){int x=100/n;} int main(){int n=2;"
+        "check(n);return 0;}",
+        "consteval void check(){} int main(){(check());return 0;}",
+        "consteval void recurse(int n){recurse(n+1);} int main(){"
+        "recurse(0);return 0;}",
+        "struct Port{int value;implicit consteval Port():value(1/0){}};"
+        "Port make(){return;} int main(){return make().value;}",
+        "mut int global=7; struct Port{int value;implicit consteval "
+        "Port(int x=global):value(x){}}; Port make(){return;} "
+        "int main(){return make().value;}",
+        "struct Owner{int value;implicit consteval Owner():value(1){} "
+        "~Owner(){}}; Owner make(){return;} int main(){return 0;}",
+        "struct Port<uint64_t N>{int value;implicit consteval Port():"
+        "value(100/int(N)) {}}; Port<N> make<uint64_t N>(){return;} "
+        "int main(){return make<0>().value;}",
+        "consteval void check(int n){int x=100/n;} "
+        "void call<uint64_t N>(){check(int(N));} "
+        "int main(){call<0>();return 0;}"}) {
+    const auto rejected =
+        lang::Frontend().analyze("consteval-statement-invalid.gti", source);
+    expect(!rejected.canGenerateCode() &&
+               hasDiagnosticCode(rejected.diagnostics, "GTI-S2057") &&
+               std::none_of(rejected.diagnostics.begin(),
+                            rejected.diagnostics.end(),
+                            [](const auto &diagnostic) {
+                              return diagnostic.code.starts_with("GTI-B");
+                            }),
+           "invalid immediate statement or bare return rejects in semantics: " +
+               source);
+  }
+}
+
 constexpr NamedTest kTests[] = {
+    {"testConsteval", testConsteval},
+    {"testConstevalStatementCompletion", testConstevalStatementCompletion},
     {"testFixedWidthIntegers", testFixedWidthIntegers},
     {"testContextualSignedIntegerLiterals",
      testContextualSignedIntegerLiterals},

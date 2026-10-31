@@ -537,7 +537,8 @@ private:
   }
 
   void printValue(const LoweredClassDeclaration &value) {
-    output << "class(id=" << value.id << ";unit=" << value.sourceUnit
+    output << "class(exported=" << value.explicitlyExported
+           << ";id=" << value.id << ";unit=" << value.sourceUnit
            << ";qualified=" << std::quoted(value.qualifiedName)
            << ";kind=" << number(value.kind)
            << ";definition-family=" << value.definitionFamilyPrimary
@@ -605,6 +606,14 @@ private:
       }
       output << ']';
     }
+    output << ";defaulted-default-access=";
+    if (value.defaultedDefaultAccess)
+      output << number(*value.defaultedDefaultAccess);
+    else
+      output << '-';
+    output << ";declared-members=" << value.declaresOtherConstructors << ':'
+           << value.declaresMemberFunctions << ':' << value.declaresDestructor
+           << ':' << value.declaresNestedTypes;
     output << ";transfer=" << number(value.transferPolicy)
            << ";share=" << number(value.sharePolicy)
            << ";special=" << number(value.defaultConstructor) << ':'
@@ -627,7 +636,8 @@ private:
   }
 
   void printValue(const LoweredEnumDeclaration &value) {
-    output << "enum(id=" << value.id << ";unit=" << value.sourceUnit
+    output << "enum(exported=" << value.explicitlyExported << ";id=" << value.id
+           << ";unit=" << value.sourceUnit
            << ";qualified=" << std::quoted(value.qualifiedName) << ";type=";
     type(value.type);
     output << ";generics=";
@@ -785,6 +795,8 @@ private:
            << ";cthread-operation=" << number(value.cThreadOperation)
            << ";process-memory-operation="
            << number(value.processMemoryOperation) << ')';
+    if (value.explicitlyExported)
+      output << ":explicitly-exported";
   }
 
   void printValue(const LoweredConstructorDeclaration &value) {
@@ -852,6 +864,11 @@ private:
     } else {
       output << '-';
     }
+    output << ";initializer-constant=";
+    if (value.initializerConstant)
+      constant(*value.initializerConstant);
+    else
+      output << '-';
     output << ";mutability=" << number(value.mutability)
            << ";flags=" << value.staticStorage << ':'
            << value.threadLocalStorage << ':' << value.internalLinkage << ':'
@@ -879,7 +896,26 @@ std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
 
 void LoweredProgramPrinter::print(const LoweredProgram &program,
                                   std::ostream &output) const {
-  output << "lowered-program-v27\n";
+  output << "lowered-program-v30\n";
+  if (!program.compiledScalarBindings().empty()) {
+    output << "compiled-scalar producer=" << program.compiledScalarProducer()
+           << '\n';
+    for (const auto &binding : program.compiledScalarBindings()) {
+      output << "compiled-binding " << binding.function
+             << " imported=" << binding.imported
+             << " source-unit=" << binding.sourceUnit << " result=";
+      DeclarationPayloadPrinter(output).semanticType(binding.result);
+      output << " key=" << std::quoted(binding.key)
+             << " type-metadata=" << std::quoted(binding.typeMetadata)
+             << " result-recipe=" << std::quoted(binding.resultRecipe)
+             << " borrow-origin="
+             << static_cast<unsigned>(binding.borrow.origin)
+             << " borrow-parameter=" << binding.borrow.parameter
+             << " borrow-access="
+             << static_cast<unsigned>(binding.borrow.access)
+             << " symbol=" << std::quoted(binding.symbol) << '\n';
+    }
+  }
   output << "source-debug-profile="
          << sourceDebugProfileName(program.sourceDebugProfile()) << '\n';
   output << "target os=" << std::quoted(program.target().os)

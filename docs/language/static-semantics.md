@@ -1723,9 +1723,12 @@ and requires mutable enum storage. A consumed subject provides neither
 reference. The entire matched enum is the conservative alias-conflict root,
 including for sibling fields: two mutable payload bindings in the same arm
 conflict. Owner replacement, movement, or conflicting access is forbidden
-while the loan lives. Existing checked return summaries can relay payload
-references derived from the receiver or from a reference parameter, but cannot
-let local, by-value-parameter or temporary payloads escape. Every alternative must be handled exactly once unless a
+while the loan lives. By-value sibling bindings copy their payloads before an
+exclusive binding becomes active, regardless of their order in the pattern.
+Existing checked return summaries can relay payload references derived from
+the receiver or from a reference parameter, including nested payload patterns,
+but cannot let local, by-value-parameter or temporary payloads escape. Every
+alternative must be handled exactly once unless a
 `default` arm is present. A complete payload switch is exhaustive for return,
 ownership-state, loan, HIR, and MIR control-flow analysis. `GTI-S2067` owns
 payload declaration, construction, and pattern/exhaustiveness, local-value
@@ -2215,6 +2218,69 @@ payloads are permitted only within the evaluation request; persistent constants
 remain passive and cannot retain references. The evaluator uses verified MIR,
 including active-variant cleanup, rather than a second enum execution model.
 
+### 3.11.1 Immediate Functions And Constructors
+
+`consteval` declares an immediate function, method, operator, or ordinary
+constructor. It implies constant eligibility and cannot be combined with
+`constexpr`. It is not a variable, destructor, or special-member modifier.
+The existing constexpr declaration, linkage, receiver, generic and ownership
+rules apply. An out-of-class declaration and definition must agree on
+immediacy. Immediate declarations require an available source definition;
+foreign/runtime bindings, polymorphic functions and the program entry point
+cannot be immediate.
+
+An ordinary invocation of an immediate declaration must complete constant
+evaluation during semantic analysis, even when its surrounding expression or
+API also receives runtime arguments. Exact overload and constructor selection
+happens first; immediacy does not rank candidates or introduce conversions.
+An `implicit consteval` constructor participates in GTI's existing declaration
+initialization conversion. Ordinary function arguments still require exact
+types, such as `send(Port(443), runtime_payload)`.
+
+Inside an immediate function or constructor body, parameters and local values
+may feed other constexpr or immediate calls: their enclosing immediate
+invocation supplies the execution frame. An ordinary constexpr body does not
+become immediate; a call there must independently have constant arguments.
+Dependent calls defer until concrete generic semantic reanalysis. Every
+selected immediate specialization must satisfy the same rule, including
+otherwise runtime-only substitutions. Immediate declarations cannot become
+function items or native callbacks; this bounded rule also excludes references
+to them used only during constant evaluation.
+
+Execution uses staged, canonical verified MIR and the existing shared
+4096-step/64-call-depth limits. It never retries an immediate request through
+the compatibility AST function interpreter. Runtime-dependent arguments,
+unsupported executed operations, arithmetic failures and resource exhaustion
+produce `GTI-S2057`, with the invocation and failing operation retained.
+The staged call closure must be structurally available to the MIR evaluator;
+an unavailable runtime-only callee can therefore reject a request even in an
+unexecuted branch. Constant execution itself preserves ordinary lazy branch
+selection. Transient allocations
+and cleanup supported by that evaluator remain confined to the request.
+
+A successful ordinary invocation publishes an exact supported scalar, text,
+array, passive record or passive sum value. No constructor or immediate
+function call executes at runtime to recreate that value. Reference results,
+stored references, raw addresses, escaping allocations and values requiring
+active cleanup cannot be published. A selected immediate `void` call may
+complete as a standalone expression statement. Its verified MIR execution
+finishes during semantic analysis; the statement has no runtime call or result.
+Other root `void` expression shapes, including a parenthesized call, remain
+outside this statement-completion profile. Void helpers may also execute inside
+an immediate body that publishes a supported value. An empty `return;` may
+select an implicit immediate constructor: its passive result is evaluated at
+that return and published as the returned constant. Failed evaluation or an
+unpublishable result produces `GTI-S2057`; a dependent return is checked in
+each concrete generic instance. These are structural evaluator/publication
+limits, not rules for particular library names. LLVM consumes the proved
+values. The C++ backend can consume an erased `void` statement but still fails
+closed for aggregate constant publication; no C++ backend work accompanies
+this feature.
+
+See [`183-immediate-functions.gti`](../../examples/183-immediate-functions.gti)
+for an immediate calculation, standalone void validation, bare-return
+construction, and a checked port combined with runtime data.
+
 ## 3.12 Compile-Time Iteration And Reflection
 
 ### 3.12.1 `constexpr for`
@@ -2427,10 +2493,30 @@ declared constructors as `std::meta::constructor<T, I>`. A method reports
 `parameters()` (a list of `std::meta::parameter<T, I, P>` with `name()`,
 `index()` and `type()`, backed by the computed `parameter_type<T, I, P>`)
 and `result()` (a type metaobject of `return_type<T, I>`); a constructor
-reports `index()`, `parameter_count()` and `parameters()` likewise. This is
-metadata only: invoking a method or constructor through a metaobject is a
-separate capability that this slice does not provide. Indices out of range
-are rejected like field indices (`GTI-S2111`).
+reports `index()`, `parameter_count()` and `parameters()` likewise. Indices out
+of range are rejected like field indices (`GTI-S2111`).
+
+For a concrete, non-static, non-operator instance method,
+`method<T, I>().invoke(receiver, arguments...)` selects the declaration named
+by `T` and `I` during semantic analysis. A `constexpr for` over
+`methods_of<T>()` or `lookup_methods_of<T>()` can select a descriptor by its
+metadata and then pass ordinary runtime values to `invoke`. Overloads are
+selected by descriptor identity; another overload with the same name is never
+substituted to make the arguments fit. Explicit method-generic arguments use
+`invoke<...>` and ordinary method-generic deduction remains available. The
+receiver must admit that declaration through ordinary member lookup, including
+inherited members; a base reference retains ordinary virtual dispatch.
+
+Invocation applies the same access, unsafe, receiver mutability, consuming
+transfer, argument/default, result type, reference-origin, loan and cleanup
+rules as the equivalent direct method call. The metaobject expression is
+evaluated once before the receiver and arguments when it has effects. The
+method body and runtime arguments execute normally; no runtime name lookup,
+metadata registry or argument boxing is involved. `invoke` adds no new
+constant-evaluation permission. Static and operator descriptors are rejected
+by `GTI-S2125` in this profile; they require, respectively, qualified static
+call geometry and checked operator-call geometry. Constructor invocation
+through a metaobject remains a separate goal.
 
 `std::meta::callable_return_type<F>` is a computed type projecting the exact
 declared result of a function signature, a selected GTI function item, a native
@@ -2447,6 +2533,10 @@ The query neither invokes the callable nor changes its calling contract.
 Native invocations still need `unsafe`, and projected reference results still
 need the same origin, access and lifetime proof as an explicitly spelled
 reference. It does not provide a reference origin or authorize capture escape.
+A projected reference may be used directly as a contracted function result;
+it cannot be hidden behind an ordinary `using` alias. Alias validation checks
+the resolved target, so reflected results and associated type families obey
+the same reference-alias restriction.
 See `examples/167-callable-result-types.gti` for an unrelated source-defined
 container using the projection.
 
