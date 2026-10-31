@@ -206,6 +206,7 @@ if(Python3_Interpreter_FOUND)
     structural_relocation_runtime temporary_owner_borrow_runtime unordered_map
     interface_static_runtime
     uninitialized_carrier_runtime
+    vector_empty_constructor_runtime
     stdlib_modules
     stdlib_surface
   )
