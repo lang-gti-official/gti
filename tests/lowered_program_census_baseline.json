@@ -1378,8 +1378,8 @@
     },
     "090-generic-algorithms.gti": {
       "declarations": 2083,
-      "bodies": 444,
-      "generated_items": 333,
+      "bodies": 436,
+      "generated_items": 325,
       "generated_kinds": {
         "program_initialization": 0,
         "hosted_entry": 1,
@@ -1388,7 +1388,7 @@
         "lifecycle_cleanup": 9,
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
-        "concrete_instance_adapter": 260,
+        "concrete_instance_adapter": 252,
         "thread_local_storage": 0
       }
     },
@@ -2226,8 +2226,8 @@
     },
     "143-checked-container-iteration.gti": {
       "declarations": 2003,
-      "bodies": 534,
-      "generated_items": 399,
+      "bodies": 526,
+      "generated_items": 391,
       "generated_kinds": {
         "program_initialization": 0,
         "hosted_entry": 1,
@@ -2236,7 +2236,7 @@
         "lifecycle_cleanup": 12,
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
-        "concrete_instance_adapter": 324,
+        "concrete_instance_adapter": 316,
         "thread_local_storage": 0
       }
     },
@@ -2867,8 +2867,8 @@
   },
   "totals": {
     "declarations": 218625,
-    "bodies": 27297,
-    "generated_items": 15997
+    "bodies": 27281,
+    "generated_items": 15981
   },
   "target": "arm64-apple-macos",
   "variants": {
@@ -2905,44 +2905,12 @@
             "concrete_instance_adapter": 522,
             "thread_local_storage": 0
           }
-        },
-        "090-generic-algorithms.gti": {
-          "declarations": 2083,
-          "bodies": 443,
-          "generated_items": 332,
-          "generated_kinds": {
-            "program_initialization": 0,
-            "hosted_entry": 1,
-            "structural_operator_adapter": 43,
-            "callable_adapter": 20,
-            "lifecycle_cleanup": 9,
-            "native_interop_adapter": 0,
-            "thread_task_adapter": 0,
-            "concrete_instance_adapter": 259,
-            "thread_local_storage": 0
-          }
-        },
-        "143-checked-container-iteration.gti": {
-          "declarations": 2003,
-          "bodies": 533,
-          "generated_items": 398,
-          "generated_kinds": {
-            "program_initialization": 0,
-            "hosted_entry": 1,
-            "structural_operator_adapter": 43,
-            "callable_adapter": 19,
-            "lifecycle_cleanup": 12,
-            "native_interop_adapter": 0,
-            "thread_task_adapter": 0,
-            "concrete_instance_adapter": 323,
-            "thread_local_storage": 0
-          }
         }
       },
       "totals": {
         "declarations": 218625,
-        "bodies": 27293,
-        "generated_items": 15993
+        "bodies": 27279,
+        "generated_items": 15979
       }
     }
   }

@@ -3,7 +3,7 @@
   "provenance": {
     "frozen_commit": "3cc3b3dc1b39b9cf55f04d1ddae7d533bde2b86d",
     "version": "0.473.0",
-    "reconciled_through": "a2b18bed3952f52a51dd7fc47865d5c8537c01a4"
+    "reconciled_through": "c9d6f74e3ebeb50ab95f5b6b44c97ffbf2b5da93"
   },
   "providers": [
     {
@@ -11,7 +11,7 @@
       "kind": "source-census",
       "manifest": "tests/mir_census_baseline.json",
       "member_count": 179,
-      "inventory_sha256": "8c28b73a070fc8439069dba08828fe8fb999680d066f36ae43ff58ecbc3f221f"
+      "inventory_sha256": "7d50a15810e10bba93fa1565f11f1ca161e7458698e01cc1640194423abd9233"
     },
     {
       "id": "registered-llvm-evidence",
