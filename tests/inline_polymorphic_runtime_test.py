@@ -50,7 +50,7 @@ transfer move allocations 0
 transfer call 7
 transfer large allocations 1
 transfer wide 10
-transfer once allocations 1
+transfer once allocations 0
 transfer consumed 42
 live 0
 """

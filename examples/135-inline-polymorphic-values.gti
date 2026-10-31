@@ -31,6 +31,16 @@ public:
 };
 
 using sensor_slot = std::inline_polymorphic<sensor, 32, 8>;
+
+interface command {
+  int operator()(int input) &&;
+};
+class add : public command {
+  int amount;
+public:
+  add(int amount) : amount(amount) {}
+  int operator()(int input) && override { return input + this.amount; }
+};
 }
 
 int main() {
@@ -59,5 +69,12 @@ int main() {
   probe.replace(application::counter_sensor(7));
   std::string name = probe.get().name();
   std::println(std::format("{} {}", name.view(), probe.is_inline() ? "inline" : "boxed"));
+  // Consuming invocation keeps the payload inside its owner until cleanup.
+  // A second use of operation, or a live get() borrow across this call, is invalid.
+  std::inline_polymorphic<application::command, 32, 8> operation{application::add(7)};
+  if (!operation.is_inline()) return 1;
+  int answer = std::move(operation).invoke_once<int>(35);
+  std::println(std::format("consumed inline {}", answer));
+  if (answer != 42) return 2;
   return 0;
 }

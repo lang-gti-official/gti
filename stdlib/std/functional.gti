@@ -40,9 +40,8 @@ namespace gti_internal {
 // Each repeatable wrapper owns one erased model. A model that is an inline
 // polymorphic payload and fits the 32-byte slot lives inside the wrapper; any
 // other model is boxed. Moving a wrapper relocates an inline model with it.
-// Once-callable wrappers keep a boxed target: consuming invocation projects
-// ownership through a transparent unique-owner accessor, which the inline
-// slot does not provide yet.
+// Once-callable wrappers use the same storage. Consuming invocation retains
+// the outer owner's cleanup while projecting either its inline or boxed target.
 export interface function_target<R, Args...> {
   R invoke(Args... args);
   void clone_into(mut std::inline_polymorphic<function_target<R, Args...>, 32, 8>& destination);
@@ -56,11 +55,6 @@ public:
   void clone_into(mut std::inline_polymorphic<function_target<R, Args...>, 32, 8>& destination) override {
     destination.replace(function_model<Callable, R, Args...>(this.callable));
   }
-};
-
-export class function_signature<Signature> {
-public:
-  function_signature() = default;
 };
 
 export interface move_function_target<R, Args...> {
@@ -106,15 +100,6 @@ public:
   R operator()(Args... args) && override { return std::move(this.callable)(args...); }
 };
 
-export std::unique_ptr<once_transfer_function_target<R, Args...>>
-make_once_transfer_function_target<R, std::transferable Callable, Args...>(
-    Callable callable, function_signature<R(Args...) &&>& signature) {
-  auto model = std::make_unique<once_transfer_function_model<Callable, R, Args...>>(
-      std::move(callable));
-  return std::upcast_unique<once_transfer_function_target<R, Args...>,
-      once_transfer_function_model<Callable, R, Args...>>(std::move(model));
-}
-
 export class move_function_model<Callable, R, Args...> : public move_function_target<R, Args...> {
   Callable callable;
 public:
@@ -124,7 +109,7 @@ public:
 
 export interface once_function_target<R, Args...> {
   R operator()(Args... args) &&;
-  std::unique_ptr<once_function_target<R, Args...>> clone();
+  void clone_into(mut std::inline_polymorphic<once_function_target<R, Args...>, 32, 8>& destination);
 };
 
 export class once_function_model<Callable, R, Args...> : public once_function_target<R, Args...> {
@@ -132,19 +117,10 @@ export class once_function_model<Callable, R, Args...> : public once_function_ta
 public:
   once_function_model(Callable callable) : callable(std::move(callable)) {}
   R operator()(Args... args) && override { return std::move(this.callable)(args...); }
-  std::unique_ptr<once_function_target<R, Args...>> clone() override {
-    auto model = std::make_unique<once_function_model<Callable, R, Args...>>(this.callable);
-    return std::upcast_unique<once_function_target<R, Args...>, once_function_model<Callable, R, Args...>>(
-        std::move(model));
+  void clone_into(mut std::inline_polymorphic<once_function_target<R, Args...>, 32, 8>& destination) override {
+    destination.replace(once_function_model<Callable, R, Args...>(this.callable));
   }
 };
-
-export std::unique_ptr<once_function_target<R, Args...>> make_once_function_target<R, Callable, Args...>(
-    Callable callable, function_signature<R(Args...) &&>& signature) {
-  auto model = std::make_unique<once_function_model<Callable, R, Args...>>(std::move(callable));
-  return std::upcast_unique<once_function_target<R, Args...>, once_function_model<Callable, R, Args...>>(
-      std::move(model));
-}
 
 export interface once_move_function_target<R, Args...> {
   R operator()(Args... args) &&;
@@ -156,13 +132,6 @@ public:
   once_move_function_model(Callable callable) : callable(std::move(callable)) {}
   R operator()(Args... args) && override { return std::move(this.callable)(args...); }
 };
-
-export std::unique_ptr<once_move_function_target<R, Args...>> make_once_move_function_target<R, Callable, Args...>(
-    Callable callable, function_signature<R(Args...) &&>& signature) {
-  auto model = std::make_unique<once_move_function_model<Callable, R, Args...>>(std::move(callable));
-  return std::upcast_unique<once_move_function_target<R, Args...>, once_move_function_model<Callable, R, Args...>>(
-      std::move(model));
-}
 
 export interface mut_function_target<R, Args...> {
   R invoke(Args... args) mut;
@@ -296,46 +265,41 @@ public:
     R operator()(Args... args) mut { return this.target.get().invoke(args...); }
   };
 
-  /// A transferable callback invoked once through consuming access. Like the
-  /// ordinary once-callable owner, its target is boxed so consuming projection
-  /// uses the existing unique-owner lifetime contract.
+  /// A transferable callback invoked once through consuming access. Eligible
+  /// small targets live inline; other targets retain unique-owned storage.
   export class transfer_function<R(Args...) &&> {
-    mut std::unique_ptr<gti_internal::once_transfer_function_target<R, Args...>> target = nullptr;
+    mut std::inline_polymorphic<gti_internal::once_transfer_function_target<R, Args...>, 32, 8> target{};
   public:
     transfer_function() {}
     transfer_function<std::transferable Callable>(Callable callable) {
-      gti_internal::function_signature<R(Args...) &&> signature{};
-      this.target = gti_internal::make_once_transfer_function_target(std::move(callable), signature);
+      this.target.replace(gti_internal::once_transfer_function_model<Callable, R, Args...>(std::move(callable)));
     }
-    bool empty() { return this.target == nullptr; }
+    bool empty() { return !this.target.has_value(); }
     void reset() mut { this.target.reset(); }
     void replace<std::transferable Callable>(Callable callable) mut {
-      gti_internal::function_signature<R(Args...) &&> signature{};
-      this.target = gti_internal::make_once_transfer_function_target(std::move(callable), signature);
+      this.target.replace(gti_internal::once_transfer_function_model<Callable, R, Args...>(std::move(callable)));
     }
-    R operator()(Args... args) && { return std::move(*this.target)(args...); }
+    R operator()(Args... args) && { return std::move(this.target).invoke_once<R>(args...); }
   };
 
   /// Own a callback invoked once through consuming access. An explicit clone
   /// creates another independently consumable target before invocation.
   export class function<R(Args...) &&> {
-    mut std::unique_ptr<gti_internal::once_function_target<R, Args...>> target = nullptr;
+    mut std::inline_polymorphic<gti_internal::once_function_target<R, Args...>, 32, 8> target{};
   public:
     function() {}
     function<Callable>(Callable callable) requires std::copy_constructible<Callable> {
-      gti_internal::function_signature<R(Args...) &&> signature{};
-      this.target = gti_internal::make_once_function_target(std::move(callable), signature);
+      this.target.replace(gti_internal::once_function_model<Callable, R, Args...>(std::move(callable)));
     }
-    bool empty() { return this.target == nullptr; }
+    bool empty() { return !this.target.has_value(); }
     void reset() mut { this.target.reset(); }
     void replace<Callable>(Callable callable) mut requires std::copy_constructible<Callable> {
-      gti_internal::function_signature<R(Args...) &&> signature{};
-      this.target = gti_internal::make_once_function_target(std::move(callable), signature);
+      this.target.replace(gti_internal::once_function_model<Callable, R, Args...>(std::move(callable)));
     }
-    R operator()(Args... args) && { return std::move(*this.target)(args...); }
+    R operator()(Args... args) && { return std::move(this.target).invoke_once<R>(args...); }
     function<R(Args...) &&> clone() {
       mut function<R(Args...) &&> copy{};
-      if (!this.empty()) { copy.target = this.target->clone(); }
+      if (!this.empty()) { this.target.get().clone_into(copy.target); }
       return std::move(copy);
     }
   };
@@ -343,20 +307,18 @@ public:
   /// Own a once-invoked callback without requiring copyable captured state.
   /// Remaining captures live through the invocation's enclosing expression.
   export class move_only_function<R(Args...) &&> {
-    mut std::unique_ptr<gti_internal::once_move_function_target<R, Args...>> target = nullptr;
+    mut std::inline_polymorphic<gti_internal::once_move_function_target<R, Args...>, 32, 8> target{};
   public:
     move_only_function() {}
     move_only_function<Callable>(Callable callable) {
-      gti_internal::function_signature<R(Args...) &&> signature{};
-      this.target = gti_internal::make_once_move_function_target(std::move(callable), signature);
+      this.target.replace(gti_internal::once_move_function_model<Callable, R, Args...>(std::move(callable)));
     }
-    bool empty() { return this.target == nullptr; }
+    bool empty() { return !this.target.has_value(); }
     void reset() mut { this.target.reset(); }
     void replace<Callable>(Callable callable) mut {
-      gti_internal::function_signature<R(Args...) &&> signature{};
-      this.target = gti_internal::make_once_move_function_target(std::move(callable), signature);
+      this.target.replace(gti_internal::once_move_function_model<Callable, R, Args...>(std::move(callable)));
     }
-    R operator()(Args... args) && { return std::move(*this.target)(args...); }
+    R operator()(Args... args) && { return std::move(this.target).invoke_once<R>(args...); }
   };
 
   /// Own a repeatable callback invoked through exclusive mutable access.

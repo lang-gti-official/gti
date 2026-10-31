@@ -7275,6 +7275,9 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     ~RestoreImmediateReceiver() { slot = previous; }
   } restoreImmediate{immediateCallReceiver, immediateCallReceiver};
   immediateCallReceiver = directCall(expr.callee());
+  if (const auto *member = exprAs<Get>(expr.callee().get());
+      member != nullptr && member->access().kind == TokenKind::DOT)
+    immediateCallReceiver = directCall(member->object());
   // In factory(callback)(args), only each call's own callee is a callee-name
   // context. Its arguments remain values, including exact function items.
   struct RestoreCalleeContext {
