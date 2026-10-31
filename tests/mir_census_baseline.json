@@ -86,7 +86,7 @@
     "087-associative-containers.gti": 448,
     "088-consuming-builders.gti": 176,
     "089-library-workflow.gti": 913,
-    "090-generic-algorithms.gti": 443,
+    "090-generic-algorithms.gti": 435,
     "091-json-documents.gti": 639,
     "092-json-codecs.gti": 610,
     "093-http-json-client.gti": 708,
@@ -139,7 +139,7 @@
     "140-environment-configuration.gti": 188,
     "141-reflected-json.gti": 702,
     "142-constexpr-builders.gti": 122,
-    "143-checked-container-iteration.gti": 533,
+    "143-checked-container-iteration.gti": 525,
     "144-checked-view-iteration.gti": 444,
     "145-live-slot-and-lane-iteration.gti": 411,
     "146-counted-text-view-iteration.gti": 186,
@@ -180,5 +180,15 @@
     "180-compact-source-owners.gti": 193,
     "181-general-object-layout.gti": 170
   },
-  "total": 27179
+  "total": 27163,
+  "target": "arm64-apple-macos",
+  "variants": {
+    "x86_64-unknown-linux": {
+      "examples": {
+        "087-associative-containers.gti": 447,
+        "089-library-workflow.gti": 912
+      },
+      "total": 27161
+    }
+  }
 }

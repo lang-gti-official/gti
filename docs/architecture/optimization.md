@@ -1402,6 +1402,72 @@ inapplicable analysis. This avoids repeating the bounded interprocedural
 analysis for each safety family without turning cached pass claims into backend
 authority.
 
+### Process-allocation facts
+
+The native adapter preserves the existing sealed process-memory contract on
+each verified LLVM call edge. POSIX and Windows allocation results carry
+`noalias`: a successful result denotes fresh storage; null remains a possible
+failure result. The POSIX status pointer is noncapturing (`captures(none)` on
+LLVM 21+, `nocapture` on earlier supported versions). These facts come from
+the exact target-selected runtime operation, not a public allocator spelling,
+pointer type, or an arbitrary foreign function's symbol.
+
+The shared physical declaration remains unannotated, so an ordinary foreign
+call does not inherit those guarantees. Custom resource providers retain their
+existing alias contracts. No extent, nonnull, no-unwind, memory-effect, or
+speculation promise is added: in particular, the raw provider's fixed-width
+byte count is narrowed to native `size_t`, so it is not an unconditional LLVM
+`allocsize` contract. Address-alignment queries do not receive a noncapture
+promise merely because MIR says that their arguments do not escape; their
+results expose address-bit information.
+
+The owning `llvm_memory_contracts` test checks actual alias-analysis results,
+including prior storage, separate allocations, derived aliases and unclassified
+calls, while the existing target-family matrix rejects cross-family adapters.
+Native execution remains limited by the backend's macOS arm64/Linux x86_64
+admission; the Windows provider mapping is not Windows execution evidence.
+Fresh allocation does not imply that pointers copied from it are disjoint from
+one another. Nor does this annotation alone export fresh output fields through
+an outlined source helper;
+inlining and interprocedural representation remain separate optimization work.
+See LLVM's [return-value alias contract](https://llvm.org/docs/LangRef.html#parameter-attributes).
+
+### Failure-edge likelihood
+
+The native source-body adapter supplies a successful-execution likelihood for
+boolean ABI failure-status edges of direct calls, function-pointer calls,
+memory operations and cleanup. `Failures::branchOnSuccess` centralizes this
+predicate convention. Both continuations remain present, with relative weights
+of 2000 for success and 1 for failure. These are backend heuristics, not measured
+profile counts, semantic assumptions, or permissions to remove a check. They
+let LLVM's block layout and cost models retain the expected preference when a
+failure merely propagates and has no directly visible cold originator call.
+The boundary is the ABI transport operation; a callee can still inline later.
+
+Direct checked-operation detectors receive no explicit branch weights. Their
+failure successor already calls a cold originator, allowing LLVM to infer the
+preference from the visible control flow. Explicit weights there can change hot
+loop placement without reducing work; a controlled reverse-sort comparison
+exposed that sensitivity. Keeping the hint on status transport avoids overriding
+this existing inference path without introducing a workload-specific rule.
+
+The helper creates only these specific failure-status branches. Ordinary MIR
+branches, recoverable result payloads, ownership-liveness branches and decisions
+already inside the exceptional cleanup machinery do not acquire this preference.
+Existing profile metadata is not rewritten. Body lowering still owns the exact
+failure record, source identity, continuation and cleanup schedule; the
+representation hint changes none of those contracts. LLVM's existing cold
+originator and terminal helpers retain their separate attributes.
+
+Before optimization, `llvm_optimization_pipeline` checks the status predicate
+polarity, a nonzero failure weight, cleanup-status edges, and the absence of
+explicit hints on direct detectors, ordinary control and liveness branches.
+LLVM may infer or transform metadata in its subsequent optimization pipeline.
+Native callable and cleanup regressions exercise failing inputs as well as
+successful execution. Performance remains a measured acceptance obligation:
+this preference is not a claim about the frequency or speed of every
+application's failure path.
+
 ## Per-Instance Effects
 
 `mir_effects.h` supplies exhaustive conservative effects for every
