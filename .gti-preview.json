@@ -13,10 +13,23 @@
         "a1de1f167320ca05fb373c9b72743ef5c716e207"
       ],
       "merge": "a1de1f167320ca05fb373c9b72743ef5c716e207"
+    },
+    {
+      "task": "rollup-origin",
+      "pr": 98,
+      "head": "8592d1a1e75c533190fc34dcf8fc9e38c2d64910",
+      "tests": [
+        "rollup",
+        "ci_release"
+      ],
+      "contributions": [
+        "1d5b1ae8a696c343b0af0f0762c76bdcf3d9b619"
+      ],
+      "merge": "1d5b1ae8a696c343b0af0f0762c76bdcf3d9b619"
     }
   ],
   "removed": [],
   "main": "cfb28948a26a14e58ffb720c3474cbbed8d3f2ff",
-  "previous": null,
-  "candidate": "2537a249e0694a959fdb4beb06e8d921"
+  "previous": "675eedd87ff0703decf345565728210bb89a2ed7",
+  "candidate": "9464524b7f1e41fd86bba8ac831d4a7f"
 }
