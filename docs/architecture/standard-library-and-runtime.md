@@ -607,7 +607,12 @@ capacity. Successful initial prefix allocation then publishes zero live elements
 after its own allocation-result temporary is retired; the one-argument entry
 delegates to this same alignment-aware path. Rejected allocation on a nonempty
 buffer and provider failure leave its prior count, capacity and elements intact.
-An empty reservation makes no provider call. Descriptor copies remain passive
+An empty reservation makes no provider call. Default `std::vector<T>`
+construction directly creates an empty prefix owner; it does not enter the
+fallible count-based allocation path with a zero request. Pointer, capacity and
+live count start empty, no `T` is constructed, and later reserve/append use the
+same allocation and publication rules. This also applies to nested vectors and
+vectors of non-default-constructible elements. Descriptor copies remain passive
 and never gain release authority.
 
 Capabilities expose only irreducible representation invariants. Public logical

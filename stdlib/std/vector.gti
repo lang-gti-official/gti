@@ -209,7 +209,7 @@ public:
   using reverse_iterator = detail::vector_mut_iterator<T, 1>;
   using const_reverse_iterator = detail::vector_iterator<T, 1>;
 
-  vector() : data(std::detail::prefix_owner<T>(uint64_t(0))) {}
+  vector() : data(std::detail::prefix_owner<T>()) {}
 
   /// Collection-brace protocol: reserve once, then consume each owned element.
   static vector<T> collection_init(uint64_t count) {
