@@ -176,6 +176,9 @@ class Repositories(unittest.TestCase):
         self.root = Path(self.temp.name).resolve()
         self.remote = self.root / "remote.git"
         subprocess.run(["git", "init", "--bare", "-b", "main", str(self.remote)], check=True, capture_output=True)
+        # The simulated server creates merge commits in the bare repository.
+        git(self.remote, "config", "user.name", "Rollup Test")
+        git(self.remote, "config", "user.email", "test@example.invalid")
         self.dev = self.clone("dev")
         (self.dev / "base.txt").write_text("base\n")
         (self.dev / "shared.txt").write_text("one\ntwo\nthree\n")
