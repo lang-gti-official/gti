@@ -39,7 +39,7 @@ AUTOMATION_TESTS = {"agent_workflow_test.py", "preview_workflow_test.py", "build
                     "bounded_log_test.py", "release_version_test.py", "ci_resources_test.py",
                     "repository_hosting_test.py", "cut_release_test.py",
                     "ownership_map_test.py", "plan_checks_test.py", "rollup_test.py",
-                    "release_train_test.py"}
+                    "release_train_test.py", "named_test_shards_test.py"}
 # A rollup's membership record lists queue-validated members; unlike a degraded-
 # mode batch manifest it adds no admission obligation, so it leaves the
 # classification of the members' own paths unchanged.
