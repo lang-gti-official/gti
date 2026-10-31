@@ -126,19 +126,19 @@ def main():
                 mock.patch.object(installer.shutil, "which", return_value="nvim"), \
                 mock.patch.object(installer, "run", side_effect=probe_installed), \
                 mock.patch.object(installer, "discover_llvm", side_effect=AssertionError("activation consulted LLVM")), \
-                mock.patch.object(sys, "argv", ["installer", "--activate-only", "--bin-dir", str(commands)]):
+                mock.patch.object(sys, "argv", ["installer", "--local", "--activate-only", "--bin-dir", str(commands)]):
             installer.main()
             assert cli.readlink() == toolchain / "bin/gti"
             assert (root / "nvim/lua/plugins/gti.lua").is_file()
             assert installer.validate_installed_toolchain(toolchain) == "0.1.0"
-            with mock.patch.object(sys, "argv", ["installer", "--activate-only", "--dry-run",
+            with mock.patch.object(sys, "argv", ["installer", "--local", "--activate-only", "--dry-run",
                                                 "--bin-dir", str(root / "dry-bin"),
                                                 "--config", str(root / "dry-config.lua")]):
                 installer.main()
             assert not (root / "dry-bin").exists() and not (root / "dry-config.lua").exists()
             cli.unlink()
             cli.write_text("independent compiler")
-            with mock.patch.object(sys, "argv", ["installer", "--activate-only", "--no-terminal"]):
+            with mock.patch.object(sys, "argv", ["installer", "--local", "--activate-only", "--no-terminal"]):
                 installer.main()
             assert cli.read_text() == "independent compiler"
         with mock.patch.object(installer, "run", return_value=mock.Mock(stdout="gti 0.2.0\n")):
@@ -214,7 +214,7 @@ def main():
                     "valid cached LLVM must not need discovery")), \
                 mock.patch.object(installer, "configure_command", wraps=configure) as refreshed, \
                 mock.patch.dict(installer.os.environ, {"LLVM_DIR": ""}), \
-                mock.patch.object(sys, "argv", ["installer", "--dry-run", "--no-terminal",
+                mock.patch.object(sys, "argv", ["installer", "--local", "--dry-run", "--no-terminal",
                                                 "--build-dir", str(upgrade_build),
                                                 "--config", str(project / "gti.lua")]):
             installer.main()

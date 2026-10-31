@@ -124,7 +124,15 @@ deferred, never as passed.
    `verify --focused --checks-file ...` runs owning checks directly and records
    scope `automation` or `source-stdlib`; its diff guard rejects compiler,
    native runtime and build-system changes.
-3. Write the final PR description to a temporary file: behaviour, exactly
+3. After focused validation passes and the PR is published, submit every completed
+   task with `preview submit <task> --tests <exact-owning-ctest-names>`. This is
+   the standing default, including fixes and automation work; do not ask again.
+   Explicit no-preview or no-publication instructions override it. Select this
+   task only, never sweep other PRs. Submission is detached and combined preview
+   admission remains mandatory; report a failure without blocking main delivery.
+   Continue normal integration without waiting for preview.
+
+   Write the final PR description to a temporary file: behaviour, exactly
    which checks ran, and "complete suite deferred to the merge queue". Unless
    the change is automation-only, end it with a `Validation:` block whose `T0`
    and `T1` items list the CTest names you ran, comma-separated; other items

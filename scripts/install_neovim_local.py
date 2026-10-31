@@ -265,8 +265,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-dir", type=pathlib.Path,
                         help="build directory (default: selected source's out/neovim-local-build)")
-    parser.add_argument("--preview", action="store_true",
-                        help="build canonical preview in an isolated checkout and activate it")
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument("--preview", dest="preview", action="store_true",
+                        help="build canonical preview in an isolated checkout (default)")
+    source.add_argument("--local", dest="preview", action="store_false",
+                        help="build or activate this checkout instead of preview")
+    parser.set_defaults(preview=True)
     parser.add_argument("--llvm-dir", type=pathlib.Path,
                         help="directory containing LLVMConfig.cmake")
     parser.add_argument("--config", type=pathlib.Path,
@@ -293,7 +297,7 @@ def main():
         parser.error("--jobs must be a positive integer")
     if args.preview:
         if args.activate_only:
-            parser.error("--preview selects and builds source; it cannot be combined with --activate-only")
+            parser.error("preview selects and builds source; use --local with --activate-only")
         selected, head = preview_source(ROOT, args.dry_run)
         if selected is None:
             return
