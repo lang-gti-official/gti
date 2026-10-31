@@ -632,8 +632,11 @@ def worker(root_value, run_id):
         # failed. A small fallback bundle keeps that diagnostic retrievable.
         try:
             publish_report(run, state)
-        finally:
+        except BaseException:
             write_json(run / "state.json", state)
+            raise
+        # publish_report already published terminal state. Do not write again:
+        # a client may have observed completion and removed the run directory.
         for number, handler in previous.items():
             signal.signal(number, handler)
     return state["exit_code"]

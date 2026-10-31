@@ -302,25 +302,22 @@ jobs:
           key: gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-native-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-${{ github.sha }}
 
   sanitizers:
-    name: Compiler sanitizers (${{ matrix.partition }})
+    name: Compiler sanitizers (${{ matrix.kind }} ${{ matrix.index }}/2)
     if: github.event_name == 'merge_group' && needs.plan.outputs.mode == 'full'
     needs: [plan, automation-tests, formatting, release-version, tree-sitter]
-    # Keep the long compiler aggregate separate from driver_pipeline. Their
-    # registration positions are both odd, so alternating tests serialized
-    # both on one runner. The gate requires both exhaustive partitions.
+    # The compiler aggregate exceeded three hours serially. Split its six
+    # suites across two runners, separately from the two library partitions.
+    # Every compiler partition verifies the complete manifest census first.
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - partition: compiler
-            tests: '^compiler_pipeline$'
-          - partition: libraries
-            tests: 'compiler_library_boundary|driver_library_boundary|driver_pipeline|project_model|optimizer_foundation|raw_pointer_pipeline|mir_program_initialization|mir_hosted_startup|mir_backend_first_family$|mir_backend_scalar_cfg$|mir_backend_scalar_direct_call$|mir_backend_class_default_cleanup$|mir_backend_owned_lifecycle$|mir_backend_scalar_failure_callgraph$|cpp_mir_body_emitter_(preflight|text|lifecycle|census|corpus_protocol)$|cpp_mir_program_plan|cpp_mir_representation_snapshot'
+        kind: [compiler, libraries]
+        index: [1, 2]
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     env:
       # The curated subset; the build compiles only the targets it runs.
-      GTI_SANITIZER_TESTS: ${{ matrix.tests }}
+      GTI_SANITIZER_TESTS: 'compiler_library_boundary|driver_library_boundary|driver_pipeline|project_model|compiler_pipeline|optimizer_foundation|raw_pointer_pipeline|mir_program_initialization|mir_hosted_startup|mir_backend_first_family$|mir_backend_scalar_cfg$|mir_backend_scalar_direct_call$|mir_backend_class_default_cleanup$|mir_backend_owned_lifecycle$|mir_backend_scalar_failure_callgraph$|cpp_mir_body_emitter_(preflight|text|lifecycle|census|corpus_protocol)$|cpp_mir_program_plan|cpp_mir_representation_snapshot'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Configure runner resources
@@ -378,18 +375,25 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-        run: >-
-          ctest --test-dir build-sanitized --verbose --output-on-failure --no-tests=error
-          --output-junit "${RUNNER_TEMP}/sanitizers-${{ matrix.partition }}.xml"
-          --parallel "${GTI_TEST_JOBS}"
-          -R "${GTI_SANITIZER_TESTS}"
+        run: |
+          if [[ "${{ matrix.kind }}" == "compiler" ]]; then
+            GTI_COMPILER_TEST_SHARD_INDEX="${{ matrix.index }}" GTI_COMPILER_TEST_SHARD_COUNT=2 \
+              ctest --test-dir build-sanitized --verbose --output-on-failure --no-tests=error \
+              --output-junit "${RUNNER_TEMP}/sanitizers-${{ matrix.kind }}-${{ matrix.index }}.xml" \
+              -R '^compiler_pipeline$'
+          else
+            ctest --test-dir build-sanitized --verbose --output-on-failure --no-tests=error \
+              --output-junit "${RUNNER_TEMP}/sanitizers-${{ matrix.kind }}-${{ matrix.index }}.xml" \
+              --parallel "${GTI_TEST_JOBS}" -R "${GTI_SANITIZER_TESTS}" \
+              -E '^compiler_pipeline$' -I "${{ matrix.index }},,2"
+          fi
       - name: Preserve sanitizer test evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: sanitizers-${{ matrix.partition }}
+          name: sanitizers-${{ matrix.kind }}-${{ matrix.index }}
           path: |
-            ${{ runner.temp }}/sanitizers-${{ matrix.partition }}.xml
+            ${{ runner.temp }}/sanitizers-${{ matrix.kind }}-${{ matrix.index }}.xml
             build-sanitized/Testing/Temporary/LastTest.log
             build-sanitized/Testing/Temporary/LastTestsFailed.log
           if-no-files-found: warn

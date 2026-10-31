@@ -405,7 +405,9 @@ Every run uses a marked directory below
 the selected root's `runs/run-<32-hex-digits>`. Source, build, upload
 and staging files are deleted **before completion**, on success, failure,
 timeout and cancellation. Only a small result bundle, state and worker scripts
-remain until fetching; fetching deletes the whole run directory. Unfetched
+remain until fetching; fetching deletes the whole run directory. Terminal state
+is published once, as the worker's final filesystem write, so fetching can safely
+remove results immediately after observing completion. Unfetched
 results expire after 24 hours. Each remote action sweeps only marked inactive
 runs; after a crash/reboot, it also recovers abandoned uploads/workers after a
 60-second launch grace period. Active workers/recorded children are never
