@@ -26,10 +26,29 @@
         "a4cdea27f7799b9a708cd740393184f40017f836"
       ],
       "merge": "a4cdea27f7799b9a708cd740393184f40017f836"
+    },
+    {
+      "task": "runtime-allocation-hints",
+      "pr": 101,
+      "head": "ba3dca145e8bc87c377c89fdcab7719221518b2c",
+      "tests": [
+        "llvm_memory_contracts",
+        "llvm_optimization_pipeline",
+        "vector_empty_constructor_runtime",
+        "llvm_memory_execution",
+        "llvm_callable_execution",
+        "llvm_cleanup_context_execution",
+        "llvm_cleanup_composition_execution",
+        "wrapping_context_runtime"
+      ],
+      "contributions": [
+        "b56d941f3f9dfc814317a730e6f90252b8a04cfa"
+      ],
+      "merge": "b56d941f3f9dfc814317a730e6f90252b8a04cfa"
     }
   ],
   "removed": [],
   "main": "cfb28948a26a14e58ffb720c3474cbbed8d3f2ff",
-  "previous": "675eedd87ff0703decf345565728210bb89a2ed7",
-  "candidate": "dd2eef0d6c9845c4bf0a37ee56a820f6"
+  "previous": "af212090a1cdd1ca95ab068eecc7c0f31df2b2ee",
+  "candidate": "e890a53f580f4f2bacd18c4e7ba4d0af"
 }
