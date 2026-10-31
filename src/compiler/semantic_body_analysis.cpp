@@ -11534,10 +11534,27 @@ auto SemanticVisitor::Impl::visitQualifiedNameExpr(const QualifiedName &expr)
   if (expr.name().segments.size() > 1) {
     NamePath ownerPath(std::vector<Token>(expr.name().segments.begin(),
                                           expr.name().segments.end() - 1));
-    if (const auto owner = resolveClassPath(ownerPath, currentNamespace);
-        owner && !validateNestedClassAccess(*owner, expr.name().last())) {
-      currentType = SemanticType::Unknown;
-      return;
+    if (const auto owner = resolveClassPath(ownerPath, currentNamespace)) {
+      if (!validateNestedClassAccess(*owner, expr.name().last())) {
+        currentType = SemanticType::Unknown;
+        return;
+      }
+      // Validate the source path before instantiating its generic owner.
+      // A qualified static member is not a protocol invocation; otherwise
+      // unrelated diagnostics inside the instance can mask this path rule.
+      const ClassInfo &ownerInfo = classInfo(*owner);
+      const auto member = ownerInfo.members.find(expr.name().last().lexeme);
+      if (expr.ownerType() && !ownerInfo.genericParameters.empty() &&
+          member != ownerInfo.members.end() &&
+          member->second.symbol.staticMember) {
+        report(expr.name().last(),
+               "Static members of generic classes and structs require "
+               "qualified generic member paths, which are not supported "
+               "yet.",
+               "GTI-S2039");
+        currentType = SemanticType::Unknown;
+        return;
+      }
     }
   }
   if (expr.ownerType()) {
