@@ -11500,11 +11500,10 @@ private:
       const bool replacementFallible = std::any_of(
           assign.definedFailure.localOrigins.begin(),
           assign.definedFailure.localOrigins.end(), [](const auto &origin) {
-            return std::any_of(
-                origin.outcomes.begin(), origin.outcomes.end(),
-                [](const DefinedFailureOutcome outcome) {
-                  return !threadLocalGuardOutcome(outcome);
-                });
+            return std::any_of(origin.outcomes.begin(), origin.outcomes.end(),
+                               [](const DefinedFailureOutcome outcome) {
+                                 return !threadLocalGuardOutcome(outcome);
+                               });
           });
       const bool checkedReplacement =
           replacementPlace != nullptr &&

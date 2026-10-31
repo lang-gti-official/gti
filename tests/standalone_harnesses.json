@@ -1,0 +1,140 @@
+{
+  "schema": 1,
+  "description": "Tracked tests/ harnesses that are deliberately not CTest gates. Each is run by hand or by a campaign. Registering one, or deleting it, removes its entry; test_throughput_registration rejects any harness that is neither registered, conditionally registered, used by another harness, run by a workflow, nor listed here.",
+  "categories": {
+    "automation": "Unit tests for a repository script that no workflow job runs yet.",
+    "cost-evidence-controls": "Mutation and provenance controls for the LLVM cost and evaluation reporters; no workload timing.",
+    "performance-measurement": "Timed observations that need a quiet host; not pass/fail parity gates.",
+    "test-only-abi-oracle": "Test-only ABI proposals or contracts, not evidence that GTI admits the operation.",
+    "instrumentation": "Sanitizer or memory-instrumentation runs that need an instrumented toolchain.",
+    "debugger": "Needs an interactive-capable debugger (LLDB) on the host.",
+    "execution-review": "Execution checks whose coverage may already be registered elsewhere; review for registration."
+  },
+  "harnesses": [
+    {
+      "harness": "compiler_structural_snapshot_test.py",
+      "category": "automation",
+      "purpose": "Focused unit tests for the structural evidence format and comparator."
+    },
+    {
+      "harness": "llvm_allocator_entry_test.py",
+      "category": "cost-evidence-controls",
+      "purpose": "Observe selected public allocator entries through real production links."
+    },
+    {
+      "harness": "llvm_atomic_wait_cost_test.py",
+      "category": "performance-measurement",
+      "purpose": "Measure identical GTI synchronization source through public LLVM and C++ backends."
+    },
+    {
+      "harness": "llvm_atomic_wait_lane_contract_test.py",
+      "category": "test-only-abi-oracle",
+      "purpose": "Test-only reviewed raw-lane extension guards/codegen, not GTI wait admission."
+    },
+    {
+      "harness": "llvm_atomic_wait_oracle_test.py",
+      "category": "test-only-abi-oracle",
+      "purpose": "Test-only wait ABI proposal, not generated GTI execution/admission evidence."
+    },
+    {
+      "harness": "llvm_c04_allocations_test.py",
+      "category": "cost-evidence-controls",
+      "purpose": "Mutation controls for bounded C04 allocation observations."
+    },
+    {
+      "harness": "llvm_c04_cost_test.py",
+      "category": "cost-evidence-controls",
+      "purpose": "Automation-only controls for the optional C04 cost reporter."
+    },
+    {
+      "harness": "llvm_cost_compiler_observer_test.py",
+      "category": "cost-evidence-controls",
+      "purpose": "Actual-input retention, failure propagation and tamper controls."
+    },
+    {
+      "harness": "llvm_cost_target_test.py",
+      "category": "cost-evidence-controls",
+      "purpose": "Actual-input target-policy controls for the bounded macOS comparator."
+    },
+    {
+      "harness": "llvm_generated_memory_test.py",
+      "category": "instrumentation",
+      "purpose": "Run generated-GTI memory checks with retained, uniquely named evidence."
+    },
+    {
+      "harness": "llvm_mutex_slot_oracle_test.py",
+      "category": "test-only-abi-oracle",
+      "purpose": "Test-only native lock slot contract, not GTI mutex admission evidence."
+    },
+    {
+      "harness": "llvm_native_c_callback_oracle_test.py",
+      "category": "test-only-abi-oracle",
+      "purpose": "Native callback ABI/firewall oracle with explicit synthetic GTI test bodies."
+    },
+    {
+      "harness": "llvm_native_c_execution_test.py",
+      "category": "execution-review",
+      "purpose": "Real GTI-to-C execution, native headers, staging, foreign effects and cleanup."
+    },
+    {
+      "harness": "llvm_native_debugger_test.py",
+      "category": "debugger",
+      "purpose": "Native LLVM source breakpoint, locals, step and backtrace acceptance probe."
+    },
+    {
+      "harness": "llvm_native_sanitizer_test.py",
+      "category": "instrumentation",
+      "purpose": "Native instrumentation controls over actual GTI-lowered loads and stores."
+    },
+    {
+      "harness": "llvm_optimization_execution_test.py",
+      "category": "execution-review",
+      "purpose": "Native O0-O3 execution at contraction, IEEE and checked-failure boundaries."
+    },
+    {
+      "harness": "llvm_runtime_cost_provenance_test.py",
+      "category": "cost-evidence-controls",
+      "purpose": "Failure controls for runtime-cost producer and material attribution."
+    },
+    {
+      "harness": "llvm_runtime_cost_resources_test.py",
+      "category": "cost-evidence-controls",
+      "purpose": "Focused build-resource controls; no GTI compilation or workload timings."
+    },
+    {
+      "harness": "llvm_thread_sanitizer_test.py",
+      "category": "instrumentation",
+      "purpose": "TSan component checks: real GTI plain accesses plus explicit LLVM atomics."
+    },
+    {
+      "harness": "llvm_visibility_execution_test.py",
+      "category": "execution-review",
+      "purpose": "Production visibility/failure/cleanup checks, with explicit callable selection."
+    },
+    {
+      "harness": "llvm_visibility_packet_test.py",
+      "category": "cost-evidence-controls",
+      "purpose": "Replay the published O09 pointer-cost packet through O15's general policy."
+    },
+    {
+      "harness": "native_package_symbols_test.py",
+      "category": "execution-review",
+      "purpose": "Check exposed C functions against smoke executables and native archives."
+    },
+    {
+      "harness": "runtime_atomic_wait_cost_test.py",
+      "category": "performance-measurement",
+      "purpose": "Retain successful-path wait service cost observations, not a parity gate."
+    },
+    {
+      "harness": "runtime_mutex_cost_test.py",
+      "category": "performance-measurement",
+      "purpose": "Observe mutex boundary costs without asserting public-lifecycle parity."
+    },
+    {
+      "harness": "thread_local_performance_test.py",
+      "category": "performance-measurement",
+      "purpose": "Interleaved O3 native TLS costs, preserving the dynamic registry contract."
+    }
+  ]
+}

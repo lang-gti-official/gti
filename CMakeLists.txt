@@ -856,6 +856,7 @@ target_compile_definitions(
 add_executable("gti_docgen" EXCLUDE_FROM_ALL
                "src/docgen/main.cpp")
 target_link_libraries("gti_docgen" PRIVATE gti_compiler)
+target_include_directories("gti_docgen" SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
 target_compile_definitions(
   "gti_docgen"
   PRIVATE

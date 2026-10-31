@@ -28,7 +28,15 @@ SHARED = ("include/gti/semantic", "include/gti/hir", "include/gti/mir",
           "src/compiler/semantic_generic", "src/compiler/mir_", "src/compiler/hir_",
           "src/compiler/cpp_", "src/compiler/optimization/", "runtime/")
 AUTOMATION = ("docs/", ".codex/", ".claude/", ".agents/")
-AUTOMATION_FILES = {"AGENTS.md", "CLAUDE.md", "README.md", ".gitea/workflows/ci.yml"}
+# CI workflow edits select full coverage, so the queue validates the jobs it changes.
+AUTOMATION_FILES = {"AGENTS.md", "CLAUDE.md", "README.md"}
+AUTOMATION_SCRIPTS = {"agent_workflow.py", "validation_batch.py", "validation_checks.py",
+                      "preview_workflow.py", "preview_submit.py", "build_window.py", "bounded_log.py"}
+# Exactly the existing harnesses that CI's workflow-regression job runs. The
+# batch, validation and preview-submit scripts are covered by agent_workflow_test.
+AUTOMATION_TESTS = {"agent_workflow_test.py", "preview_workflow_test.py", "build_window_test.py",
+                    "bounded_log_test.py", "release_version_test.py", "ci_resources_test.py",
+                    "repository_hosting_test.py"}
 
 
 def focused_scope(paths):
@@ -179,29 +187,37 @@ def ci_mode(event, paths):
             return "draft"
     # Compiler tests, CMake and packaged scripts are deliberately not inferred
     # safe just because their filename includes 'test' or 'workflow'.
-    automation_scripts = {"agent_workflow.py", "validation_batch.py", "validation_checks.py",
-                          "preview_workflow.py", "preview_submit.py", "build_window.py", "bounded_log.py"}
-    automation_tests = {name.removesuffix(".py") + "_test.py" for name in automation_scripts}
-    automation_tests |= {"validation_ci_test.py", "release_version_test.py", "ci_resources_test.py",
-                         "repository_hosting_test.py"}
     if paths and all(path in AUTOMATION_FILES or path.startswith(AUTOMATION) or
-                     path in {"scripts/" + name for name in automation_scripts} or
-                     path in {"tests/" + name for name in automation_tests} for path in paths):
+                     path in {"scripts/" + name for name in AUTOMATION_SCRIPTS} or
+                     path in {"tests/" + name for name in AUTOMATION_TESTS} for path in paths):
         return "automation"
     return "full"
 
 
-def admission(mode, results):
-    if mode in {"draft", "component"}:
-        raise ValueError("Awaiting integration: draft/component PRs cannot merge directly; prepare a validated batch or withdraw admission")
-    required = {"validation-plan", "formatting", "release-version", "tree-sitter", "automation-tests"}
+LINT_JOBS = {"plan", "formatting", "release-version", "tree-sitter", "automation-tests"}
+EVENTS = {"pull_request", "merge_group"}
+
+
+def admission(mode, results, event="pull_request"):
+    """The one required check. A PR proves its fast checks before it may queue;
+    the merge queue proves the complete suite on the exact candidate."""
+    if event not in EVENTS:
+        raise ValueError("Unknown CI event")
+    if mode == "component":
+        raise ValueError("Awaiting integration: a batch component cannot merge directly; finish its validated batch or withdraw admission")
+    required = set(LINT_JOBS)
     if mode == "full":
-        required |= {"build-and-test", "compiler-sanitizers"}
+        # Installed-toolchain and docgen checks run inside the first Linux shard.
+        required |= {"fast"} if event == "pull_request" else {"integration", "sanitizers"}
+    elif mode == "draft":
+        if event != "pull_request":
+            raise ValueError("A draft cannot enter the merge queue")
     elif mode != "automation":
         raise ValueError("Unknown CI validation mode")
     missing = sorted(key for key in required if results.get(key, {}).get("result") != "success")
     if missing:
         raise ValueError("Required validation did not pass: " + ", ".join(missing))
+    return required
 
 
 def build_cache(root, build):
@@ -236,6 +252,95 @@ def results(path, expected, required):
     if set(required) & set(skipped):
         raise ValueError("A required member regression/owning/smoke test was skipped")
     return skipped
+
+
+QUARANTINE = "tests/ci_quarantine.json"
+QUARANTINE_ISSUE = re.compile(r"https://github\.com/lang-gti-official/gti/issues/[1-9][0-9]*\Z")
+QUARANTINE_PLATFORMS = {"darwin", "linux"}
+
+
+def load_quarantine(root):
+    """Known failures already on main that the queue's suite excludes until fixed.
+
+    Each entry names one registered test, the platforms it fails on, the issue
+    tracking its fix, and why. Adding or widening an entry edits this file in
+    review and runs the complete suite; the gate prints every exclusion it
+    applies, and the smoke can never be quarantined.
+    """
+    path = Path(root) / QUARANTINE
+    document = json.loads(path.read_text()) if path.exists() else {"schema": 1, "tests": []}
+    if (not isinstance(document, dict) or document.get("schema") != 1
+            or set(document) - {"schema", "description", "tests"} or not isinstance(document.get("tests"), list)):
+        raise ValueError(QUARANTINE + " must be a schema 1 object with a tests list")
+    table = {}
+    for row in document["tests"]:
+        if not isinstance(row, dict) or set(row) != {"name", "platforms", "issue", "reason", "since"}:
+            raise ValueError("Each quarantine entry needs exactly name, platforms, issue, reason and since")
+        name, platforms = row["name"], row["platforms"]
+        if not isinstance(name, str) or not NAME.fullmatch(name) or name == SMOKE or name in table:
+            raise ValueError(f"Invalid, duplicate or unquarantinable test: {name!r}")
+        if (not isinstance(platforms, list) or not platforms or len(set(platforms)) != len(platforms)
+                or set(platforms) - QUARANTINE_PLATFORMS):
+            raise ValueError(f"Quarantine of {name} must list darwin and/or linux once each")
+        if not isinstance(row["issue"], str) or not QUARANTINE_ISSUE.fullmatch(row["issue"]):
+            raise ValueError(f"Quarantine of {name} must link its tracking issue in lang-gti-official/gti")
+        if not isinstance(row["reason"], str) or not row["reason"].strip():
+            raise ValueError(f"Quarantine of {name} must say why it fails")
+        if not isinstance(row["since"], str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", row["since"]):
+            raise ValueError(f"Quarantine of {name} must record the date it began")
+        table[name] = set(platforms)
+    return table
+
+
+def quarantined_on(table, platform):
+    return sorted(name for name, platforms in table.items() if platform in platforms)
+
+
+def shard_assignment(names, durations, shards, default=30.0):
+    """Deterministic cost-balanced partition: longest first onto the lightest shard."""
+    if shards < 1:
+        raise ValueError("shards must be positive")
+    loads, assigned = [0.0] * shards, [[] for _ in range(shards)]
+    for name in sorted(names, key=lambda item: (-float(durations.get(item, default)), item)):
+        index = min(range(shards), key=lambda candidate: (loads[candidate], candidate))
+        assigned[index].append(name)
+        loads[index] += float(durations.get(name, default))
+    return [sorted(rows) for rows in assigned]
+
+
+def merge_shards(reports, platforms):
+    """Prove that each platform's shards ran exactly its whole inventory once."""
+    summary = {}
+    for platform in sorted(platforms):
+        rows = [report for report in reports if report.get("platform") == platform]
+        if not rows:
+            raise ValueError("No shard results for required platform " + platform)
+        first = rows[0]
+        count = first.get("shards")
+        if (not isinstance(count, int) or count < 1 or len(rows) != count or
+                sorted(report.get("index") for report in rows) != list(range(count))):
+            raise ValueError("Incomplete or duplicated shards for " + platform)
+        for report in rows:
+            if (report.get("scope") != "shard" or report.get("shards") != count or
+                    report.get("head") != first.get("head") or report.get("tree") != first.get("tree") or
+                    report.get("inventory") != first.get("inventory") or report.get("build_type") not in OPTIMIZED
+                    or report.get("quarantined", []) != first.get("quarantined", [])):
+                raise ValueError("Shards for " + platform + " disagree on source, inventory, quarantine or build")
+        excluded = set(first.get("quarantined", []))
+        if SMOKE in excluded or excluded - set(first["inventory"]):
+            raise ValueError("Shards for " + platform + " quarantined the smoke or an unregistered test")
+        executed = [name for report in rows for name in report.get("tests", [])]
+        if len(executed) != len(set(executed)) or set(executed) != set(first["inventory"]) - excluded:
+            raise ValueError("Shards for " + platform + " did not run their inventory exactly once")
+        if not any(report.get("smoke") for report in rows):
+            raise ValueError("No compiler smoke result for " + platform)
+        summary[platform] = {"head": first["head"], "tests": len(executed), "shards": count,
+                             "quarantined": sorted(excluded),
+                             "skipped": sorted(name for report in rows for name in report.get("skipped", []))}
+    heads = {row["head"] for row in summary.values()}
+    if len(heads) != 1:
+        raise ValueError("Platforms validated different sources")
+    return summary
 
 
 def smoke(root, build, log=None):
@@ -329,6 +434,77 @@ def run(root, build, required, full, targets=(), extra=(), jobs=4, log=None, jun
             "compiler": str(build / "gti"), "required": sorted(required), "smoke": smoke_results}
 
 
+def run_shard(root, build, shards, index, durations, jobs=4, log=None, junit=None):
+    cache = build_cache(root, build)
+    if not 0 <= index < shards:
+        raise ValueError("shard index out of range")
+    subprocess.run(["cmake", "--build", str(build), "--parallel", str(jobs)],
+                   check=True, cwd=root, stdout=log, stderr=subprocess.STDOUT)
+    document = json.loads(subprocess.check_output(["ctest", "--test-dir", str(build), "--show-only=json-v1"], text=True))
+    expected = inventory(document, {SMOKE})
+    excluded = set(quarantined_on(load_quarantine(root), sys.platform))
+    if excluded - expected:
+        raise ValueError("Quarantined tests are not registered; remove them: " + ", ".join(sorted(excluded - expected)))
+    table = json.loads(Path(durations).read_text())
+    selected = shard_assignment(expected - excluded, table["seconds"], shards, table.get("default_seconds", 30))[index]
+    skipped = []
+    if selected:
+        with tempfile.TemporaryDirectory(prefix="gti-validation-shard-") as directory:
+            report = Path(junit) if junit else Path(directory) / "ctest.xml"
+            subprocess.run(["ctest", "--test-dir", str(build), "--no-tests=error", "--output-on-failure",
+                            "--parallel", str(jobs), "--output-junit", str(report),
+                            "-R", "^(" + "|".join(re.escape(name) for name in selected) + ")$"],
+                           check=True, stdout=log, stderr=subprocess.STDOUT)
+            skipped = results(report, set(selected), set(selected) & {SMOKE})
+    smoke_results = smoke(root, build, log) if index == 0 else []
+    return {"head": git(root, "rev-parse", "HEAD"), "tree": git(root, "rev-parse", "HEAD^{tree}"),
+            "platform": sys.platform, "build_type": cache["CMAKE_BUILD_TYPE"], "scope": "shard",
+            "shards": shards, "index": index, "inventory": sorted(expected), "tests": selected,
+            "quarantined": sorted(excluded), "skipped": skipped, "smoke": smoke_results}
+
+
+# CMake writes each argument either quoted ("...") or as a bracket argument
+# ([=[...]=]), depending on its version; accept both.
+TEST_LINE = re.compile(r'^add_test\((?P<name>"(?:[^"\\]|\\.)*"|\[(?P<level>=*)\[.*?\](?P=level)\]) '
+                       r'(?P<arguments>.*)\)$', re.M)
+QUOTED = re.compile(r'"((?:[^"\\]|\\.)*)"|\[(=*)\[(.*?)\]\2\]')
+
+
+def cmake_argument(text):
+    match = QUOTED.fullmatch(text)
+    return match.group(1) if match.group(1) is not None else match.group(3)
+
+
+def test_targets(build, pattern):
+    """The build targets the tests matching `pattern` run, read from a configured tree.
+
+    CTest learns a test's command only once it is built, so this reads the
+    generated CTestTestfile.cmake files instead: every argument (or `key=path`
+    argument) naming a file in the build tree is a target's output. The
+    compiler and runtime are always included. A target this misses makes its
+    test fail as not found, never pass.
+    """
+    build = Path(build).resolve()
+    selected = re.compile(pattern)
+    targets, matched = {"gti", "gti_runtime"}, 0
+    for path in sorted(build.rglob("CTestTestfile.cmake")):
+        for match in TEST_LINE.finditer(path.read_text(encoding="utf-8")):
+            if not selected.search(cmake_argument(match.group("name"))):
+                continue
+            matched += 1
+            for token in QUOTED.finditer(match.group("arguments")):
+                argument = token.group(1) if token.group(1) is not None else token.group(3)
+                for part in argument.split("="):
+                    if part.startswith(str(build) + "/"):
+                        name = Path(part).name
+                        name = name.removeprefix("lib").rsplit(".", 1)[0] if name.startswith("lib") else name
+                        if NAME.fullmatch(name):
+                            targets.add(name)
+    if not matched:
+        raise ValueError("No configured test matches " + pattern)
+    return sorted(targets)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -339,6 +515,20 @@ def main(argv=None):
     gate = sub.add_parser("ci-gate")
     gate.add_argument("--mode", required=True)
     gate.add_argument("--results", required=True)
+    gate.add_argument("--event", default="pull_request")
+    gate.add_argument("--shard-reports", help="directory of shard reports, required for merge_group full")
+    gate.add_argument("--platforms", default="darwin,linux")
+    shard = sub.add_parser("shard")
+    shard.add_argument("--build", required=True)
+    shard.add_argument("--shards", type=int, required=True)
+    shard.add_argument("--index", type=int, required=True)
+    shard.add_argument("--durations", default="tests/ci_test_durations.json")
+    shard.add_argument("--jobs", type=int, default=4)
+    shard.add_argument("--report", required=True)
+    shard.add_argument("--log")
+    targets = sub.add_parser("test-targets", help="print the build targets the matching tests run")
+    targets.add_argument("--build", required=True)
+    targets.add_argument("--regex", required=True)
     for name in ("focused", "full"):
         run_parser = sub.add_parser(name)
         run_parser.add_argument("--build", required=True)
@@ -358,7 +548,31 @@ def main(argv=None):
         if args.mode == "metadata":
             print("Metadata-only PR edit: no compiler validation or integration acceptance is claimed.")
             return
-        admission(args.mode, json.loads(args.results))
+        admission(args.mode, json.loads(args.results), args.event)
+        if args.mode == "full" and args.event == "merge_group":
+            if not args.shard_reports:
+                raise ValueError("The merge queue gate needs the shard reports")
+            reports = [json.loads(path.read_text()) for path in sorted(Path(args.shard_reports).rglob("*.json"))]
+            summary = merge_shards(reports, [p for p in args.platforms.split(",") if p])
+            print("GTI_INTEGRATION_RESULT=" + json.dumps(summary, sort_keys=True))
+        return
+    if args.command == "test-targets":
+        print(" ".join(test_targets(args.build, args.regex)))
+        return
+    if args.command == "shard":
+        for path in (args.report, args.log):
+            if path:
+                Path(path).parent.mkdir(parents=True, exist_ok=True)
+        log = Path(args.log).open("w") if args.log else None
+        try:
+            report = run_shard(root, Path(args.build).resolve(), args.shards, args.index,
+                               root / args.durations, args.jobs, log,
+                               str(Path(args.report).with_suffix(".xml")))
+        finally:
+            if log:
+                log.close()
+        Path(args.report).write_text(json.dumps(report, indent=2) + "\n")
+        print("GTI_SHARD_RESULT=" + json.dumps({k: report[k] for k in ("platform", "index", "shards")}))
         return
     if args.jobs < 1:
         raise ValueError("jobs must be positive")

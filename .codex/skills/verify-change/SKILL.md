@@ -110,11 +110,10 @@ invalid setup cheaply; they do not replace required broad coverage.
    coverage. Keep
    `scripts/local_language_audit.py --full` non-gating; turn any bug it finds
    into a minimal deterministic regression in the owning suite.
-   In a batch, perform component regressions, owning/cross-phase checks and
-   relevant subsystem coverage once at admission. The designated batch owner
-   runs full coverage on the combined candidate; component agents do not each
-   repeat that campaign. Full/platform/performance requirements remain part
-   of integration acceptance, with original and combined evidence distinguished.
+   The complete suite is never a contributor gate: the merge queue runs it on
+   the exact candidate on every required platform. Platform, runtime and
+   performance obligations that the queue does not cover (for example a
+   benchmark comparison under ADR 012) remain yours to run and record.
 4. Run `git diff --check` and inspect the complete scoped diff for unintended
    generated, vendored, user, or semantic changes.
 5. If a check fails, preserve its raw command and output, identify the owning
@@ -127,23 +126,28 @@ proof of success: verify exit status, test counts/skips, source identity and
 truncation metadata. Keep the complete evidence available under the runner's
 retention contract; do not reduce test execution to meet a display budget.
 
-When upstream changes invalidate integration binding, inspect the delta and
-record why each gate remains applicable or needs fresh execution. Validate the
-new clean published head/base through the helper. Repeat every affected,
-previously failed and required broad/platform gate; broaden when interaction
-risk is uncertain. Earlier passes stay attributed to their original sources,
-not substituted for fresh acceptance. Do not restart a running suite merely
-because main advanced. Deeper correctness/design analysis can expand the
-checks at any point; cost controls never waive the resulting obligations.
+Focused evidence binds to the task head. An advancing `main` does not void it:
+the merge queue validates the combination. A new commit on the task does, so
+verify again after any change. Deeper correctness/design analysis can expand
+the checks at any point; cost controls never waive the resulting obligations.
 
 ## Report The Result
 
-Use `batch enroll <task> --plan <json> --build <optimized-tree>` for focused
-handoff. Report "ready for integration; full combined validation pending",
-including the exact source, tier/rationale, tests, before-fix evidence,
-platforms and retained logs. This is a handoff checkpoint, not completed
-integration. An integrated full-suite failure is attributed to the owning
-change; helpers may assist after establishing the intended invariant.
+Record the focused checks with `verify`, then hand the task to the merge queue
+with `finish`. Report "focused validation passed; complete suite deferred to
+the merge queue", with the exact source, risk tier and rationale, tests,
+before-fix evidence, platforms and retained logs. A complete-suite failure in
+the queue is attributed to the change that introduced it; helpers may assist
+after establishing the intended invariant. For example:
+
+```text
+Validation:
+- reproducer fails on parent and passes on patch
+- owning semantic suite passes
+- affected MIR/LLVM tests pass
+- relevant runtime tests pass
+- complete suite deferred to the merge queue
+```
 
 Report:
 
@@ -158,7 +162,6 @@ Do not call a change verified while a required gate is failing or unrun. State
 "partially verified" when environmental limits or task scope leave required
 evidence outstanding.
 
-Gitea CI is advisory, not one of those required acceptance gates. Do not wait
-for Actions to pass before handing off or merging locally validated work.
-Keep local/managed-runner requirements intact and distinguish their evidence
-from pending or failed CI feedback; a known CI failure is not a passing result.
+The merge queue's `CI gate` is the required integration gate. Do not poll it or
+duplicate it locally; report the PR as queued, and report a queue failure
+honestly rather than as a pass.

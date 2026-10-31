@@ -78,6 +78,9 @@ int main(int argc, char **argv) {
       if (mode == "background_timeout")
         for (;;)
           std::this_thread::sleep_for(10ms);
+      // Normal completion must tolerate startup/scheduling delays beyond the
+      // deliberately short deadline used by the hanging-child case.
+      std::this_thread::sleep_for(150ms);
       return 0;
     }
     if (mode == "barrier_a" || mode == "barrier_b") {
@@ -229,12 +232,12 @@ int main(int argc, char **argv) {
         "process ownership must move once and reject a second wait");
   for (const auto *mode : {"background", "background_timeout"}) {
     const auto marker = directory / mode;
-    const auto child =
-        invokeProcess({executable.string(), mode},
-                      {.captureSuccessfulOutput = true,
-                       .environment = {{"GTI_RUNNER_MARKER", marker.string()}},
-                       .timeout = 100ms,
-                       .isolateProcessGroup = true});
+    const auto child = invokeProcess(
+        {executable.string(), mode},
+        {.captureSuccessfulOutput = true,
+         .environment = {{"GTI_RUNNER_MARKER", marker.string()}},
+         .timeout = std::string(mode) == "background_timeout" ? 100ms : 2s,
+         .isolateProcessGroup = true});
     check(child.timedOut == (std::string(mode) == "background_timeout"),
           "timeout fact must reflect the actual deadline");
     std::this_thread::sleep_for(650ms);

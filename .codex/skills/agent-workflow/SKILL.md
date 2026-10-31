@@ -1,38 +1,36 @@
 ---
 name: agent-workflow
-description: Carry GTI implementation tasks through isolated branches, published checkpoints, validated Gitea PR integration, local-main synchronization, and safe worktree cleanup. Use for repository changes and resuming unfinished implementation tasks; read-only discussions and audits do not create branches or PRs.
+description: Carry GTI implementation tasks through isolated branches, published checkpoints, focused validation, GitHub merge-queue integration, local-main synchronization, and safe worktree cleanup. Use for repository changes and resuming unfinished implementation tasks; read-only discussions and audits do not create branches or PRs.
 ---
 
 # GTI Agent Workflow
 
-The normal implementation outcome is a merged Gitea PR and a primary checkout
-on current `main`, ready for the user's local installer. The repository owner's
-standing authorization is in `AGENTS.md`. Explicit instructions such as
-"PR only", "leave local", "do not merge", or a release/install request override
-the default. Never infer permission to change other repositories or services.
+The normal implementation outcome is a PR that is ready and in the merge
+queue with its focused validation recorded; the queue merges it, and `sync`
+brings the primary checkout to current `main` for the user's local installer.
+The repository owner's standing authorization is in `AGENTS.md`. Explicit
+instructions such as "PR only", "leave local", "do not merge", or a
+release/install request override the default. Never infer permission to change
+other repositories or services.
 
-Use `scripts/agent_workflow.py` for shared Git/API operations. Gitea
-(`gti-lang/gti`, remote `origin`) is the canonical host for branches,
-PRs, issues, CI and releases at `git.internal.howetotech.dev`. The helper
-never pushes to GitHub or an automatic backup. It authenticates with
-`GTI_GITEA_TOKEN`/`GITEA_TOKEN`, including from the primary
-checkout's ignored `.env`, and keeps token-free recovery records in the common
-Git directory. Run it from any checkout of the repository, or pass
-`--repo <checkout>`; it always acts on the primary checkout it shares a Git
-directory with. Do not copy credentials into worktrees. Task records from
-the GitHub period show as `legacy-github` in `status`; use explicit
-`rehost <task> --pr <verified-imported-number>` to preserve their exact-source
-evidence and original identity. Wait for the validation owner to finish live
-runs first. Older Gitea records refer to the archived, distinct tracker, not
-the replacement repository; preserve them when using `start --adopt`. Read
+Use `scripts/agent_workflow.py` for shared Git/API operations. GitHub
+(`lang-gti-official/gti`, remote `origin`) is the canonical host for branches,
+PRs, issues, CI and toolchain releases. Gitea keeps only the reference website
+and the `gti add` package registry, and its `main` is frozen. The helper authenticates through the GitHub CLI
+(`gh auth login`) or `GH_TOKEN` and never stores a token; it keeps token-free
+recovery records in the common Git directory. Run it from any checkout of the
+repository, or pass `--repo <checkout>`; it always acts on the primary checkout
+it shares a Git directory with. Read
 [the command contract](../../../docs/architecture/agent-workflow.md) when
 recovering interruptions or interpreting a refused operation.
 
-An older worktree may contain pre-cutover GitHub instructions and a GitHub-only
-helper. Read the current primary checkout's `AGENTS.md` and this skill there,
-and run that primary helper with `--repo <task-worktree>` until current main is
-reconciled. Do not restore a retired remote to satisfy a stale helper. Preserve
-in-flight runs; rehost their records only after the validation owner is finished.
+GitHub history carries rewritten commit identities: every tree is identical to
+Gitea's, but commit IDs differ. Gitea-era task records show as `legacy-gitea`
+in `status`. Publish the task's branch to GitHub with the same rewritten
+identity, open its PR, then run `rehost <task> --pr <number>`; it requires the
+PR head to carry the task's published tree and moves a clean worktree onto the
+identical rewritten commit. Wait for any live validation to finish first. Do not
+restore a retired remote to satisfy a stale helper.
 
 ## Execution discipline
 
@@ -93,51 +91,20 @@ Use the owning feature skill and `verify-change` to select real checks with an
 optimized GTI compiler. Provide required runnable examples and their inventory
 updates for language changes. Use `finish-release` for VERSION decisions.
 
-For concurrent fixes, use the canonical
-[risk-based batch contract](../../../docs/architecture/agent-workflow.md#risk-based-batch-validation):
+**You validate the change; the merge queue validates integration.** Run the
+exact reproducer or new regression (failing on the parent revision for a fix),
+the owning subsystem's tests and the affected cross-phase and tooling
+consumers, plus `compiler_pipeline` and the native smoke. Never run the
+complete suite to finish a task: the queue runs it on the exact candidate that
+becomes `main`, sharded across macOS arm64 and Linux x64, and its `CI gate`
+proves every registered test ran. Deferring it is complete work; report it as
+deferred, never as passed.
 
-- Enroll a completed published draft with a reviewed T1/T2/T3 plan, original
-  regression evidence, exact owning/cross-phase tests, appropriate broader
-  checks, targets and platform obligations. `batch enroll` rebuilds the
-  optimized compiler, runs those checks plus smoke, and records **ready for
-  integration**. It does not authorize a direct merge.
-- The designated integrator selects at most eight ready tasks explicitly with
-  `batch prepare`. Keep collection to at most ten minutes; never wait for an
-  unfinished feature. A single ready fix may proceed alone. `batch status`
-  exposes queued age and the one active batch. Do not sweep unadmitted PRs in.
-- Resolve source conflicts in the candidate, preserving original commits,
-  then `batch resume`. Run `batch verify` on the combined source for each
-  required platform. This executes the full suite and all members' required
-  tests and rejects missing/skipped regressions. Use the ordinary `finish`
-  only after full exact-source/platform evidence passes. Gitea CI is advisory.
-  Never merge `preview`.
-- Diagnose combined failures before changing tests. The owner of the violated
-  invariant repairs its patch, or the integrator releases the batch with a
-  reason and prepares a new explicit selection. Source heads cannot silently
-  change inside a running batch. Preserve each attempt's evidence.
-- `batch withdraw` returns an unassigned component to independent validation;
-  `batch release` closes a published unsuccessful batch while preserving its
-  work and returning its members to the queue. After the umbrella merge,
-  original-component `sync` verifies exact committed membership and full-platform
-  proof before closing a Gitea PR as integrated via that batch. It records the
-  umbrella link, not a fabricated remote merged state. Normal cleanup repeats
-  those checks; no heuristic/manual-merge override is needed.
-
-Draft/component CI skips full native builds and reports incomplete integration;
-the helper, not Gitea CI, blocks component merges until combined validation.
-Ready independent/candidate PRs start additional CI feedback. Gitea CI is
-advisory: never wait for it before merge, synchronization or completion, and do
-not duplicate validation because Actions is queued. Retain required optimized
-local/managed-runner coverage, including full combined/platform evidence.
-Report CI as pending/failed when applicable, never as passed. Retrying `finish`
-with an unchanged description does not restart CI. The owner authorizes
-`protection --configure --advisory-ci` to remove required check contexts/app
-pins while preserving strict PR freshness, admin enforcement and reviews.
-
-1. Run `reconcile <task>` to merge current `origin/main` into the task branch
-   and push. Resolve any conflicts in this worktree; do not force-push.
-2. Put the proportionate final commands in a temporary JSON file containing
-   argv arrays, then run `verify <task> --checks-file <file>`. For example:
+1. Reconcile only to resolve a conflict (`reconcile <task>` merges current
+   `origin/main` and pushes; resolve conflicts in this worktree, never
+   force-push). An advancing `main` does not void focused evidence.
+2. Put the focused commands in a temporary JSON file containing argv arrays,
+   then run `verify <task> --checks-file <file>`. For example:
 
    ```json
    [["git", "diff", "--check"],
@@ -146,46 +113,36 @@ pins while preserving strict PR freshness, admin enforcement and reviews.
 
    Build necessary targets first, through a build-window slot:
    `python3 scripts/build_window.py --kind build -- cmake --build <tree> ...`.
-   The helper executes these commands inside a build-window `suite` slot and
-   holds its metadata lock only while recording, so other sessions can still
-   start, checkpoint and inspect tasks while it waits for or runs validation;
-   `python3 scripts/build_window.py --status` shows who holds the window. It
-   binds passing evidence to the clean, published head and current remote
-   base. It does not select adequate tests or prove their quality; that
-   remains the agent's responsibility. Changes or upstream advancement require
-   revalidation. If main advances during a run, retain that run's exact-source
-   results, inspect the delta once the run finishes, and select fresh checks
-   for the reconciled head/base with `verify-change`. Do not automatically
-   restart a full suite on every status poll, or relabel earlier results as
-   current. Required/affected broad and platform gates remain mandatory.
+   The helper runs the checks inside a build-window `suite` slot, holding its
+   metadata lock only while recording, and binds passing evidence to the clean
+   published head. It does not select adequate tests or prove their quality;
+   that remains your responsibility. A new commit requires verifying again.
    For developer-automation-only or source-only GTI stdlib changes,
    `verify --focused --checks-file ...` runs owning checks directly and records
-   scope `automation` or `source-stdlib`. Its diff guard rejects compiler,
-   native runtime and build-system changes. Source-library checks must include
-   a named owning Python test harness or an exact-name CTest, using an optimized
-   compiler; obvious full builds and unfiltered CTest are rejected. Review the
-   actual harness scope and required evidence rather than trusting its name.
-   Select the full/broad window normally
-   if the actual check workload is broad. This is separate from compiler
-   component admission through `batch enroll`.
-3. Write the final PR description to a temporary file, including behaviour,
-   validation and limitations. Run `finish <task> --body-file <file>`.
-   It marks the PR ready, checks validation and branch protection, merges through
-   Gitea with the exact tested head, then attempts a local-main fast-forward.
-   It does not push to any backup remote.
+   scope `automation` or `source-stdlib`; its diff guard rejects compiler,
+   native runtime and build-system changes.
+3. Write the final PR description to a temporary file: behaviour, exactly
+   which checks ran, and "complete suite deferred to the merge queue". Run
+   `finish <task> --body-file <file>`. It marks the PR ready, checks the
+   `main` ruleset, and adds the PR to the merge queue pinned to the verified
+   head. The task is then `queued`; that is the normal completion point.
    Use `--pr-only` when the user requested review before integration.
-4. Required reviews and PR freshness are respected; never force or administratively
-   bypass a rejection. If old required CI contexts remain, apply the separately
-   owner-authorized advisory-CI protection policy; do not bypass a server rule.
-   Do not wait for advisory CI or silently downgrade the outcome to "PR opened".
-   Packaging/nightly/stable jobs after integration
-   do not block completion or the user's local installation.
+4. The queue merges asynchronously. Run `sync <task>` (or `finish` again) once
+   it has merged. If the queue removes the PR because the complete suite failed,
+   the failure belongs to this change: reproduce the failing tests locally,
+   repair them without weakening unrelated expectations, verify, and `finish`
+   again. Never wait in a polling loop for the queue.
 
 `protection` audits server enforcement. `protection --configure` installs the
-owner-approved `main` rule denying direct/force pushes and bypasses and requiring
-an up-to-date branch. By default it preserves review/status-check requirements;
-the owner-authorized `--advisory-ci` policy removes only required status checks.
-Other changes to those requirements need separate authorization.
+owner-approved `main` ruleset: pull requests only, the merge queue and the
+`CI gate` check required, no force push or deletion, and no bypass for any role.
+
+**Degraded mode and batches.** `batch enroll`/`prepare`/`verify` remain for one
+purpose: when GitHub Actions has been unavailable for more than four hours, a
+designated integrator may combine admitted tasks into one candidate, validate
+it on a remote runner with `batch verify`, and record that evidence on the PR.
+Components never merge directly; `sync` closes them as integrated via the
+combined PR with exact membership proof. Never merge `preview`.
 
 ## Sync, cleanup and recovery
 
@@ -208,7 +165,7 @@ deletes the integrated local branch. Unexpected commits stop deletion.
 interrupted request; PR lookup prevents duplicate creation, and confirmed merges
 can resume sync/cleanup without merging twice. Inspect a stale lock's owner
 before removing that exact lock directory; the lock is short, and a build-window
-slot whose owner exited is reclaimed on its own. Records are recovery aids; Gitea PRs
+slot whose owner exited is reclaimed on its own. Records are recovery aids; GitHub PRs
 and published Git commits remain the work inventory. Losing local records can
 be recovered by adopting the preserved branch and rediscovering its PR.
 
@@ -218,10 +175,13 @@ published branch and worktree. Never delete unmerged work because of its age.
 A task with no PR and no commits beyond `origin/main` holds no work, so the
 same command removes its clean worktree and branches instead of opening a PR.
 
-Report the merged PR, resulting local-main commit, validation and any cleanup
-exception. State that the checkout is ready for the installer only after sync.
+Report the PR, its queue or merge state, exactly which focused checks ran,
+that the complete suite is the queue's, the resulting local-main commit once
+synced, and any cleanup exception. State that the checkout is ready for the
+installer only after sync.
 Run the installer automatically only when the user asked for installation.
 After delivering the requested outcome, rename the chat `Complete — <task>`.
-Do not mark work complete while required validation/integration remains; a
-component handed off for integration is `Handed off — <task>`, not complete.
+A queued task whose focused validation is recorded is complete; title it
+`Complete — <task> (queued)` until it merges. A batch component handed off for
+integration is `Handed off — <task>`.
 Explicit PR-only or local-only requests use their requested delivery boundary.

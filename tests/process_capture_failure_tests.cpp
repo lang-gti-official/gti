@@ -36,11 +36,15 @@ template <class Function> Function original(const char *name) {
   return function;
 }
 
-// Match libc's exception specifications on both Darwin and Linux.
-constexpr bool seekNoexcept = noexcept(std::fseek(nullptr, 0, 0));
-constexpr bool tellNoexcept = noexcept(std::ftell(nullptr));
-constexpr bool readNoexcept = noexcept(std::fread(nullptr, 0, 0, nullptr));
-constexpr bool closeNoexcept = noexcept(std::fclose(nullptr));
+// Match libc's exception specifications on both Darwin and Linux. The probes
+// use declval, not nullptr, because glibc declares the stream nonnull.
+constexpr bool seekNoexcept =
+    noexcept(std::fseek(std::declval<std::FILE *>(), 0, 0));
+constexpr bool tellNoexcept = noexcept(std::ftell(std::declval<std::FILE *>()));
+constexpr bool readNoexcept = noexcept(
+    std::fread(std::declval<void *>(), 0, 0, std::declval<std::FILE *>()));
+constexpr bool closeNoexcept =
+    noexcept(std::fclose(std::declval<std::FILE *>()));
 } // namespace
 
 extern "C" int fseek(std::FILE *stream, long offset,

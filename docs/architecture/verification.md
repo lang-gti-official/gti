@@ -9462,8 +9462,9 @@ units, the native CI build 2048 MiB per compile job and 3072 MiB per test worker
 and the ASan/UBSan build 3072 MiB per
 compile job and 4096 MiB per test worker, since an instrumented compiler
 suite grows several times larger than its plain run (six workers on a 12 GiB
-runner had the ownership suite OOM-killed). The sanitizer job also gives
-tests without their own `TIMEOUT` an hour (`ctest --timeout 3600`) and runs
+runner had the ownership suite OOM-killed). The sanitizer job also scales
+every test timeout six times (`-DGTI_TEST_TIMEOUT_SCALE=6`, so the 600-second
+default becomes an hour) and runs
 the emitter's preflight, text, lifecycle, census and corpus-protocol checks
 rather than the whole generated-C++ corpus, and omits `failure_metadata`:
 both exceeded an hour under ASan on the 6-core runner and remain the plain
@@ -11071,6 +11072,18 @@ All registered tests automatically carry `coverage-full`. A deliberately
 partial group of in-process compiler/IR/model contracts carries
 `feedback-fast`; `lsp`, `end-to-end`, and `bounded-case-workers` are additional
 selection labels. Labels do not disable tests or change default execution.
+`feedback-fast` excludes `failure_metadata`, whose full matrix alone took
+most of the label's time.
+
+Every registered test also has a `TIMEOUT`, so a hung gate fails at a known
+bound instead of CTest's implicit 1500 seconds. A test that declares none gets
+`GTI_TEST_DEFAULT_TIMEOUT` (600 seconds). `tests/TestThroughput.cmake` gives
+the single-process gates measured near or past that bound explicit headroom:
+the next standard bound at or above 1.5 times their slowest contended
+full-suite duration. `GTI_TEST_TIMEOUT_SCALE` multiplies every bound for
+instrumented or slow hosts; `ctest --timeout` cannot do this, because it only
+reaches tests without a declared timeout. `test_throughput_registration`
+rejects an unbounded registration.
 
 ```sh
 python3 scripts/build_window.py --kind suite -- \

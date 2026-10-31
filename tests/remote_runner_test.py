@@ -311,6 +311,29 @@ class RemoteRunner(unittest.TestCase):
         self.assertTrue(all(process.poll() is not None for process in children))
         self.assert_clean(run_id)
 
+    def test_terminal_publication_allows_immediate_result_removal(self):
+        run_id = self.prepare_inline_worker()
+        run = self.root / "runs" / run_id
+        path = run / "input/request.json"
+        request = runner.read_json(path)
+        request["steps"][0]["argv"] = [sys.executable, "-c", "pass"]
+        runner.write_json(path, request)
+        write_json = runner.write_json
+        removed = []
+
+        def publish(path, value):
+            write_json(path, value)
+            if Path(path) == run / "state.json" and value["state"] in runner.TERMINAL:
+                # A client may fetch/remove immediately after observing completion.
+                self.assert_clean(run_id)
+                runner.remote_action("remove", str(self.root), run_id)
+                removed.append(run_id)
+
+        with mock.patch.object(runner, "write_json", side_effect=publish):
+            self.assertEqual(runner.worker(str(self.root), run_id), 0)
+        self.assertEqual(removed, [run_id])
+        self.assertFalse(run.exists())
+
     def test_cleanup_error_cannot_be_reported_as_passed(self):
         run_id = self.prepare_inline_worker()
         path = self.root / "runs" / run_id / "input/request.json"

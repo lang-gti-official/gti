@@ -23,8 +23,10 @@ def run(command, cwd, success=True):
 
 def workflow_contract(root):
     release = (root / ".gitea/workflows/release.yml").read_text()
-    ci = (root / ".gitea/workflows/ci.yml").read_text()
-    assert not (root / ".github/workflows").exists() or not list((root / ".github/workflows").glob("*.yml"))
+    ci = (root / ".github/workflows/ci.yml").read_text()
+    # CI runs on GitHub; packages publish only from the Gitea release workflow.
+    assert sorted(p.name for p in (root / ".github/workflows").glob("*.yml")) == ["ci.yml"]
+    assert not (root / ".gitea/workflows/ci.yml").exists()
     assert "branches:\n      - main" in release and "paths:" not in release
     assert release.count("-DGTI_RELEASE_BUILD=ON") == 1, "channels must share one configure"
     assert release.count('run: cmake --build build --config Release --parallel "${GTI_JOBS}"') == 1
@@ -59,7 +61,12 @@ def workflow_contract(root):
     assert "permissions:\n  contents: read" in release
     assert "documentation-index:" not in ci, "documentation must reuse the native compiler"
     assert "build/gti_docgen --stdlib stdlib" in ci
-    for contents, profiles in ((ci, ("native", "sanitizers")), (release, ("release",))):
+    for profile in ("native", "sanitizers"):
+        assert f"gti-ccache-v1-${{{{ runner.os }}}}-${{{{ runner.arch }}}}-{profile}-" in ci
+    assert "actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9" in ci
+    assert "actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9" in ci
+    assert "path: ${{ env.CCACHE_DIR }}" in ci and "secrets." not in ci
+    for contents, profiles in ((release, ("release",)),):
         assert contents.count("bash scripts/configure_ci_cache.sh") == len(profiles)
         assert contents.count("https://gitea.com/actions/cache/restore@2cdf405574d6ef1f33a1d12acccd3ae82f47b3f2") == len(profiles)
         assert contents.count("https://gitea.com/actions/cache/save@2cdf405574d6ef1f33a1d12acccd3ae82f47b3f2") == len(profiles)

@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 
 from case_jobs import configured_jobs, positive_jobs, run_cases
-from sanitizer_support import SANITIZED_BUILD_TIMEOUT
+from sanitizer_support import SANITIZED_BUILD_TIMEOUT, scaled_timeout
 from internal_module_fixture import private_library, private_source
 
 
@@ -70,7 +70,7 @@ def main(names=None, cases=None, execution_profile=None, stdin_by_name=None,
                 native_arguments += native_arguments_by_case(name, label, environment)
             if native_arguments:
                 command += ["--", *native_arguments]
-            timeout = SANITIZED_BUILD_TIMEOUT if label == "sanitized" else 120
+            timeout = SANITIZED_BUILD_TIMEOUT if label == "sanitized" else scaled_timeout(120)
             expected_cpp_limitation = cpp_unsupported and "--std" in flags
             if expected_cpp_limitation:
                 binary.write_bytes(b"preserved unsupported output")
@@ -105,7 +105,7 @@ def main(names=None, cases=None, execution_profile=None, stdin_by_name=None,
                 raise ValueError(f"{name} has no execution observations")
             for arguments, expected in runs:
                 result = subprocess.run([str(binary), *arguments], capture_output=True, text=True,
-                                        timeout=30, env=environment,
+                                        timeout=scaled_timeout(30), env=environment,
                                         input=(stdin_by_name or {}).get(name))
                 if (result.returncode, result.stdout, result.stderr) != expected:
                     raise AssertionError((name, label, result))

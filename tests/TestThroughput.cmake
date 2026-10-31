@@ -16,6 +16,60 @@ set(gti_heavy_case_suites
   stdlib_surface returned_field_address_runtime
   generic_algorithm_breadth complete_containers)
 
+# Every gate has a bound, so a hung test fails at a known point instead of at
+# CTest's implicit 1500 seconds. A test without its own TIMEOUT gets the
+# default. Single-process gates measured near or past it get explicit
+# headroom: the next standard bound at or above 1.5x their slowest contended
+# full-suite duration (remote runs, October 2026). Instrumented or slow hosts
+# scale every bound instead of relying on `ctest --timeout`, which reaches only
+# tests that declare none.
+set(GTI_TEST_DEFAULT_TIMEOUT "600" CACHE STRING
+  "Timeout in seconds for a test that declares none")
+if(NOT GTI_TEST_DEFAULT_TIMEOUT MATCHES "^[1-9][0-9]*$")
+  message(FATAL_ERROR "GTI_TEST_DEFAULT_TIMEOUT must be a positive integer")
+endif()
+set(GTI_TEST_TIMEOUT_SCALE "1" CACHE STRING
+  "Integer multiplier applied to every test timeout, such as for sanitizer builds")
+if(NOT GTI_TEST_TIMEOUT_SCALE MATCHES "^[1-9][0-9]*$")
+  message(FATAL_ERROR "GTI_TEST_TIMEOUT_SCALE must be a positive integer")
+endif()
+set(gti_long_gate_timeouts
+  failure_metadata 2400
+  operator_relay_pipeline 2400
+  body_analysis_order 1800
+  compiler_pipeline 1800
+  reflection_semantics 1800
+  view_fields 900
+  cpp_mir_body_emitter_lifecycle 900)
+list(LENGTH gti_long_gate_timeouts gti_long_timeout_count)
+math(EXPR gti_long_timeout_last "${gti_long_timeout_count} - 1")
+foreach(index RANGE 0 ${gti_long_timeout_last} 2)
+  list(GET gti_long_gate_timeouts ${index} gti_long_gate)
+  math(EXPR gti_timeout_index "${index} + 1")
+  list(GET gti_long_gate_timeouts ${gti_timeout_index} gti_long_gate_timeout)
+  if(NOT TEST "${gti_long_gate}")
+    message(FATAL_ERROR "Long-timeout gate is not registered: ${gti_long_gate}")
+  endif()
+  get_test_property("${gti_long_gate}" TIMEOUT gti_declared_timeout)
+  if(gti_declared_timeout)
+    message(FATAL_ERROR "Long-timeout gate already declares a TIMEOUT: ${gti_long_gate}")
+  endif()
+  set_tests_properties("${gti_long_gate}" PROPERTIES TIMEOUT "${gti_long_gate_timeout}")
+endforeach()
+get_property(gti_bounded_tests DIRECTORY PROPERTY TESTS)
+foreach(suite IN LISTS gti_bounded_tests)
+  get_test_property("${suite}" TIMEOUT gti_declared_timeout)
+  if(NOT gti_declared_timeout)
+    set(gti_declared_timeout "${GTI_TEST_DEFAULT_TIMEOUT}")
+  endif()
+  math(EXPR gti_scaled_timeout "${gti_declared_timeout} * ${GTI_TEST_TIMEOUT_SCALE}")
+  set_tests_properties("${suite}" PROPERTIES TIMEOUT "${gti_scaled_timeout}")
+  # Harnesses scale their own per-compile and per-run bounds to match
+  # (tests/sanitizer_support.py scaled_timeout).
+  set_property(TEST "${suite}" APPEND PROPERTY ENVIRONMENT
+    "GTI_TEST_TIMEOUT_SCALE=${GTI_TEST_TIMEOUT_SCALE}")
+endforeach()
+
 if(Python3_Interpreter_FOUND)
   set(gti_parallel_case_suites
     callable_return_type_runtime
@@ -224,6 +278,10 @@ if(Python3_Interpreter_FOUND)
     COMMAND "${Python3_EXECUTABLE}"
       "${PROJECT_SOURCE_DIR}/tests/test_throughput_registration_test.py"
       "${PROJECT_SOURCE_DIR}" "${PROJECT_BINARY_DIR}")
+  # Registered after the bounding pass above, so bound them here.
+  math(EXPR gti_scaled_timeout "300 * ${GTI_TEST_TIMEOUT_SCALE}")
+  set_tests_properties(test_case_jobs test_throughput_registration
+    PROPERTIES TIMEOUT "${gti_scaled_timeout}")
 endif()
 
 # Full is a census of every registered gate, never a hand-maintained subset.
@@ -234,7 +292,7 @@ set(gti_fast_feedback_tests
   compiler_library_boundary cpp_backend_library_boundary driver_library_boundary
   project_model executable_entry_semantics include_suggestions
   raw_pointer_pipeline raw_borrow_contract raw_access_contract
-  mir_full_expression failure_metadata mir_program_initialization mir_hosted_startup
+  mir_full_expression mir_program_initialization mir_hosted_startup
   optimizer_foundation optimizer_analyses optimizer_conformance
   layout_query_pipeline native_record_pipeline bindgen_pipeline
   source_text_pipeline source_unit_services optional_compiler_contract

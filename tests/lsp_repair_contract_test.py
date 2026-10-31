@@ -6,6 +6,7 @@ import sys
 import tempfile
 
 from lsp_smoke_test import LspSession
+from sanitizer_support import scaled_timeout
 
 
 def apply_action(action, uri, version, source):
@@ -59,7 +60,7 @@ def run(executable, root):
         return session.receive_until(lambda message:
             message.get("method") == "textDocument/publishDiagnostics"
             and message["params"].get("uri") == uri
-            and message["params"].get("version") == version, timeout=30
+            and message["params"].get("version") == version, timeout=scaled_timeout(30)
         )["params"]["diagnostics"]
 
     def actions(diagnostic, automatic=False):

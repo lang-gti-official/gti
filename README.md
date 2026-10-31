@@ -1,9 +1,8 @@
 # GTI
 
 <p align="center">
-  <a href="https://git.internal.howetotech.dev/gti-lang/gti/actions/workflows/ci.yml"><img src="https://git.internal.howetotech.dev/gti-lang/gti/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status"></a>
-  <a href="https://git.internal.howetotech.dev/gti-lang/gti/actions/workflows/release.yml"><img src="https://git.internal.howetotech.dev/gti-lang/gti/actions/workflows/release.yml/badge.svg?branch=main" alt="Release status"></a>
-  <a href="https://git.internal.howetotech.dev/gti-lang/gti/src/branch/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
+  <a href="https://github.com/lang-gti-official/gti/actions/workflows/ci.yml"><img src="https://github.com/lang-gti-official/gti/actions/workflows/ci.yml/badge.svg?event=merge_group" alt="CI status"></a>
+  <a href="https://github.com/lang-gti-official/gti/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
 </p>
 
 <p align="center">
@@ -175,7 +174,7 @@ currently emits the documented scalar executable profile. See
 boundaries.
 
 ```sh
-git clone https://git.internal.howetotech.dev/gti-lang/gti.git gti
+git clone https://github.com/lang-gti-official/gti.git gti
 cd gti
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel 4
@@ -193,10 +192,10 @@ cmake --build build --parallel 4
 ```
 
 The canonical repository is
-https://git.internal.howetotech.dev/gti-lang/gti: pull requests, issues, CI,
-tags and releases live there. GitHub automation is retired and no automatic
-backup push is configured. The older, separate Gitea tracker is preserved in
-`gti-lang/gti-legacy-gitea-20261024`.
+https://github.com/lang-gti-official/gti: source, pull requests, issues and CI live there, and every change reaches
+`main` through its merge queue. Packages and the reference website stay on
+Gitea (`git.internal.howetotech.dev`) for now; the earlier Gitea source
+repository is frozen.
 
 Run the test suite with:
 
@@ -471,7 +470,7 @@ language server, standard library, runtime, and native Tree-sitter parser:
 ```lua
 return {
   {
-    "https://git.internal.howetotech.dev/gti-lang/gti.git",
+    "https://github.com/lang-gti-official/gti.git",
     name = "gti",
     version = "*",
   },

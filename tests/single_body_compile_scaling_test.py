@@ -18,6 +18,7 @@ times or far more.
 from __future__ import annotations
 
 import resource
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -50,7 +51,7 @@ BLOCK = """  show(std::try_format("[{:>8}]", int32_t(-12345)));
 
 SMALL = 45
 LARGE = 4 * SMALL
-RUNS = 2
+RUNS = 3
 # The large body is four times the small one. Linear work grows by four;
 # allow twice that before calling the growth superlinear.
 GROWTH_LIMIT = 8.0
@@ -84,10 +85,6 @@ def compile_seconds(compiler: str, source: Path, timeout: float) -> float:
             (after.ru_stime - before.ru_stime))
 
 
-def fastest(compiler: str, source: Path, timeout: float) -> float:
-    return min(compile_seconds(compiler, source, timeout) for _ in range(RUNS))
-
-
 def main() -> int:
     if len(sys.argv) != 2:
         print("usage: single_body_compile_scaling_test.py <gti>", file=sys.stderr)
@@ -101,19 +98,25 @@ def main() -> int:
             sources[name] = directory / f"{name}.gti"
             sources[name].write_text(program(repetitions))
 
-        base = fastest(compiler, sources["base"], timeout=300)
-        small = fastest(compiler, sources["small"], timeout=300)
-        # A superlinear regression is reported as a timeout instead of
-        # stalling the suite for many minutes.
-        large = fastest(compiler, sources["large"],
-                        timeout=max(300.0, 40.0 * small))
+        # Warm each workload before measuring. Then keep baseline and body
+        # measurements together instead of subtracting independent minima from
+        # different phases of runner startup/cache/CPU conditions.
+        for source in sources.values():
+            compile_seconds(compiler, source, timeout=300)
+        growth_samples = []
+        for sample in range(RUNS):
+            base = compile_seconds(compiler, sources["base"], timeout=300)
+            small = compile_seconds(compiler, sources["small"], timeout=300)
+            large = compile_seconds(compiler, sources["large"],
+                                    timeout=max(300.0, 40.0 * small))
+            small_body = max(small - base, MINIMUM_BODY_SECONDS)
+            growth_samples.append(max(large - base, 0.0) / small_body)
+            print(f"sample {sample + 1}: cpu seconds base {base:.2f}, "
+                  f"{SMALL} blocks {small:.2f}, {LARGE} blocks {large:.2f}; "
+                  f"body growth {growth_samples[-1]:.2f}x", flush=True)
 
-    small_body = max(small - base, MINIMUM_BODY_SECONDS)
-    large_body = max(large - base, 0.0)
-    growth = large_body / small_body
-    print(f"cpu seconds: base {base:.2f}, {SMALL} blocks {small:.2f}, "
-          f"{LARGE} blocks {large:.2f}; body growth {growth:.2f}x for "
-          f"{LARGE // SMALL}x statements")
+    growth = statistics.median(growth_samples)
+    print(f"median body growth {growth:.2f}x for {LARGE // SMALL}x statements")
     if growth > GROWTH_LIMIT:
         print(f"single-body compile time grew {growth:.2f}x for "
               f"{LARGE // SMALL}x statements (limit {GROWTH_LIMIT:.0f}x)",

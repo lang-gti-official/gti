@@ -8,6 +8,8 @@ import tempfile
 import statistics
 import time
 
+from sanitizer_support import scaled_timeout
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -23,6 +25,7 @@ def main():
                        UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1")
 
     def run(command, timeout=180):
+        timeout = scaled_timeout(timeout)
         return subprocess.run([str(item) for item in command], env=environment,
                               text=True, capture_output=True, timeout=timeout)
 
