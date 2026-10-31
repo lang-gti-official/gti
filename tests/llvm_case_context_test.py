@@ -128,7 +128,8 @@ def main() -> None:
             env = examples.environment(root, inherited)
             assert options == {"capture_output": True, "text": True, "env": env, "timeout": 180}
             if command[0] == "/controlled/gti_lowered_program_census":
-                assert command == ["/controlled/gti_lowered_program_census", str(root), source.name]
+                assert command == ["/controlled/gti_lowered_program_census", str(root),
+                                   "--target", census.reviewed.host_target(), source.name]
                 calls.append(command)
                 return subprocess.CompletedProcess(command, 0,
                     "generated_kinds\n" + source.name + "\t9\t2\t0\n", "")

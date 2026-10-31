@@ -179,13 +179,6 @@ void Failures::branchOnSuccess(llvm::IRBuilder<> &ir, llvm::Value *status,
   ir.CreateCondBr(status, normal, failed, weights);
 }
 
-void Failures::branchOnFailure(llvm::IRBuilder<> &ir, llvm::Value *condition,
-                               llvm::BasicBlock *failed,
-                               llvm::BasicBlock *normal) {
-  auto *weights = llvm::MDBuilder(ir.getContext()).createBranchWeights(1, 2000);
-  ir.CreateCondBr(condition, failed, normal, weights);
-}
-
 void Failures::copyChannel(llvm::IRBuilder<> &ir, llvm::Value *destination,
                            llvm::Value *source) {
   // Failure channels are plain ABI storage, not source-language owners. Keep

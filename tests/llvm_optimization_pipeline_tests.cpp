@@ -64,10 +64,12 @@ void verifyFailureBranchHints(
       if (!branch || branch->getNumSuccessors() != 2)
         continue;
       std::optional<unsigned> failure;
+      bool detector = false;
       for (unsigned index = 0; index < 2; ++index) {
         const auto name = branch->getSuccessor(index)->getName().str();
         if (name.starts_with("check.failed")) {
           ++checks;
+          detector = true;
           failure = index;
         } else if (name.starts_with("call.failed")) {
           ++calls;
@@ -78,6 +80,12 @@ void verifyFailureBranchHints(
         }
       }
       const auto *metadata = branch->getMetadata(llvm::LLVMContext::MD_prof);
+      if (detector) {
+        if (metadata)
+          throw std::runtime_error(
+              "direct detector acquired an explicit failure preference");
+        continue;
+      }
       if (!failure) {
         ++ordinary;
         if (metadata)

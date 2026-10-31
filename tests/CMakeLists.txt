@@ -3417,6 +3417,11 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/scripts/sync_release_assets.py"
   )
   add_test(
+    NAME mir_census_profile_controls
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/mir_census_profile_test.py"
+  )
+  add_test(
     NAME mir_census_regression
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/mir_census_test.py"

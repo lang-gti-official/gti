@@ -26,6 +26,7 @@ import sys
 import tempfile
 
 import example_case_context as examples
+import mir_census_baseline as reviewed
 
 MARKER = "GTI verified-MIR body"
 MARKER_PATTERN = re.compile(
@@ -53,6 +54,7 @@ def emitted_body_count(text: str) -> int:
 def census(gti: Path, root: Path) -> dict[str, int | None]:
     """Per-example MIR-emitted body counts. None means the example failed."""
     counts: dict[str, int | None] = {}
+    target = reviewed.host_target()
     # A release-configured gti discovers only the installed stdlib layout;
     # point it at the repository stdlib so the census is build-flavor
     # independent.
@@ -67,7 +69,8 @@ def census(gti: Path, root: Path) -> dict[str, int | None]:
                 # Inventory comes from the sealed LoweredProgram, independently
                 # of target emission. Native execution remains the corpus oracle.
                 inventory = subprocess.run(
-                    [str(gti.parent / "gti_lowered_program_census"), str(root), source.name],
+                    [str(gti.parent / "gti_lowered_program_census"), str(root),
+                     "--target", target, source.name],
                     capture_output=True, text=True, env=env, timeout=examples.CENSUS_TIMEOUT)
                 if inventory.returncode != 0:
                     counts[source.name] = None
@@ -108,6 +111,8 @@ def main() -> int:
     parser.add_argument("gti")
     parser.add_argument("root")
     parser.add_argument("baseline")
+    parser.add_argument("--target", choices=reviewed.TARGETS,
+                        help="assert the native host target; cross-target execution is not supported")
     parser.add_argument(
         "--update",
         action="store_true",
@@ -119,30 +124,30 @@ def main() -> int:
     root = Path(arguments.root).resolve()
     baseline_path = Path(arguments.baseline)
 
+    try:
+        document = json.loads(baseline_path.read_text(encoding="utf-8"))
+        target = reviewed.host_target()
+        if arguments.target is not None and arguments.target != target:
+            parser.error(f"--target {arguments.target} does not match executing host {target}")
+        baseline = reviewed.select(document, target)
+    except (OSError, ValueError) as error:
+        print(f"FAIL: {error}", file=sys.stderr)
+        return 1
+
     current = census(gti, root)
     if not current:
         print("FAIL: no examples/*.gti found", file=sys.stderr)
         return 1
 
     if arguments.update:
-        baseline_path.write_text(
-            json.dumps(
-                {"total": total(current), "examples": current},
-                indent=2,
-                sort_keys=True,
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        print(f"baseline updated: {total(current)} bodies across {len(current)} examples")
+        try:
+            document = reviewed.updated(document, target, current)
+        except ValueError as error:
+            print(f"FAIL: {error}", file=sys.stderr)
+            return 1
+        baseline_path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+        print(f"baseline updated ({target}): {total(current)} bodies across {len(current)} examples")
         return 0
-
-    if not baseline_path.is_file():
-        print(f"FAIL: missing baseline {baseline_path}; run with --update from a "
-              "clean tree", file=sys.stderr)
-        return 1
-
-    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))["examples"]
 
     broken = sorted(name for name, value in current.items() if value is None)
     changed = sorted(
@@ -156,7 +161,7 @@ def main() -> int:
     added = sorted(name for name in current if name not in baseline)
     removed = sorted(name for name in baseline if name not in current)
 
-    print(f"MIR census: {total(current)} bodies across {len(current)} examples "
+    print(f"MIR census ({target}): {total(current)} bodies across {len(current)} examples "
           f"(baseline {sum(v for v in baseline.values() if v)})")
 
     if broken:

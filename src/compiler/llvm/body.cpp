@@ -841,7 +841,9 @@ private:
         llvm::BasicBlock::Create(session.context(), "check.failed", &function);
     auto *normal =
         llvm::BasicBlock::Create(session.context(), "check.success", &function);
-    Failures::branchOnFailure(ir, condition, failed, normal);
+    // Direct detectors expose a cold originator in the failed successor.
+    // Leave their likelihood to LLVM rather than overriding that inference.
+    ir.CreateCondBr(condition, failed, normal);
     ir.SetInsertPoint(failed);
     if (terminalAllocation) {
       llvm::IRBuilder<> entry(&function.getEntryBlock(),

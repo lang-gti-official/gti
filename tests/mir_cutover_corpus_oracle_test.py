@@ -29,6 +29,7 @@ import sys
 import tempfile
 
 from backend_execution import Endpoint, execute
+import mir_census_baseline as reviewed
 from example_case_context import LLVM_ONLY_EXAMPLES, require_cpp_limitation
 
 
@@ -118,6 +119,8 @@ def main() -> int:
     parser.add_argument("gti")
     parser.add_argument("root")
     parser.add_argument("baseline")
+    parser.add_argument("--target", choices=reviewed.TARGETS,
+                        help="assert the native host target; cross-target execution is not supported")
     parser.add_argument("runtime_library")
     parser.add_argument("--jobs", type=int, default=min(4, os.cpu_count() or 1))
     parser.add_argument("--backend", choices=("cpp", "llvm"), default="cpp")
@@ -135,8 +138,15 @@ def main() -> int:
         print(f"FAIL: missing MIR census baseline {baseline_path}", file=sys.stderr)
         return 1
 
-    baseline_document = json.loads(baseline_path.read_text(encoding="utf-8"))
-    expected: dict[str, int] = baseline_document["examples"]
+    try:
+        baseline_document = json.loads(baseline_path.read_text(encoding="utf-8"))
+        target = reviewed.host_target()
+        if arguments.target is not None and arguments.target != target:
+            parser.error(f"--target {arguments.target} does not match executing host {target}")
+        expected = reviewed.select(baseline_document, target)
+    except (OSError, ValueError) as error:
+        print(f"FAIL: {error}", file=sys.stderr)
+        return 1
     sources = sorted((root / "examples").glob("*.gti"))
     source_names = {source.name for source in sources}
     if source_names != set(expected):
@@ -148,11 +158,6 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
-    if sum(expected.values()) != baseline_document.get("total"):
-        print("FAIL: MIR census baseline total is internally inconsistent",
-              file=sys.stderr)
-        return 1
-
     if arguments.selected_cases:
         unknown = set(arguments.selected_cases) - source_names
         if unknown:
@@ -244,7 +249,7 @@ def main() -> int:
             )
 
     print(
-        f"MIR corpus oracle ({arguments.backend}): {len(sources)} examples, "
+        f"MIR corpus oracle ({arguments.backend}, {target}): {len(sources)} examples, "
         f"{sum(expected[source.name] for source in sources)} reviewed body identities, "
         f"{len(configurations)} endpoint configurations"
     )

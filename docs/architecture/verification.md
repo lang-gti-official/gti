@@ -10718,6 +10718,17 @@ the requisite native lowering milestones, and does not certify support today.
 
 ### MIR And C++ Corpus Gates
 
+The MIR census and native corpus oracle select the reviewed host target from
+`mir_census_baseline.json`: common `arm64-apple-macos` counts with sparse
+`x86_64-unknown-linux` overrides, matching the LoweredProgram census convention.
+Both validate the complete example inventory and every profile total before
+using a selected-case filter. Unknown hosts, targets, examples and malformed
+counts fail closed. LLVM-only inventory observations explicitly pass the same
+host target to the LoweredProgram helper. Refreshing one measured profile keeps
+the other profile's reviewed counts; incomplete observations cannot update it.
+`mir_census_profile_controls` checks target selection, both consumers, malformed
+profiles and update isolation without claiming native execution evidence.
+
 The base-constructor stage gate retains the existing generated-base, owning
 payload-argument and field-after-base ordering mutations. Checked/effectful
 scalar preparation additionally checks forged parameter, receiver, borrow,

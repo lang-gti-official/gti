@@ -1435,16 +1435,23 @@ See LLVM's [return-value alias contract](https://llvm.org/docs/LangRef.html#para
 ### Failure-edge likelihood
 
 The native source-body adapter supplies a successful-execution likelihood for
-checked detectors and the boolean failure-status edges of direct calls,
-function-pointer calls, memory operations and cleanup. `Failures::branchOnSuccess`
-and `branchOnFailure` centralize the opposite predicate conventions. Both
-continuations remain present, with relative weights of 2000 for success and 1
-for failure. These are backend heuristics, not measured profile counts,
-semantic assumptions, or permissions to remove a check. They let LLVM's block
-layout and cost models retain the expected preference when a failure merely
-propagates and has no directly visible cold originator call.
+boolean ABI failure-status edges of direct calls, function-pointer calls,
+memory operations and cleanup. `Failures::branchOnSuccess` centralizes this
+predicate convention. Both continuations remain present, with relative weights
+of 2000 for success and 1 for failure. These are backend heuristics, not measured
+profile counts, semantic assumptions, or permissions to remove a check. They
+let LLVM's block layout and cost models retain the expected preference when a
+failure merely propagates and has no directly visible cold originator call.
+The boundary is the ABI transport operation; a callee can still inline later.
 
-The helpers create only these specific failure-transport branches. Ordinary MIR
+Direct checked-operation detectors receive no explicit branch weights. Their
+failure successor already calls a cold originator, allowing LLVM to infer the
+preference from the visible control flow. Explicit weights there can change hot
+loop placement without reducing work; a controlled reverse-sort comparison
+exposed that sensitivity. Keeping the hint on status transport avoids overriding
+this existing inference path without introducing a workload-specific rule.
+
+The helper creates only these specific failure-status branches. Ordinary MIR
 branches, recoverable result payloads, ownership-liveness branches and decisions
 already inside the exceptional cleanup machinery do not acquire this preference.
 Existing profile metadata is not rewritten. Body lowering still owns the exact
@@ -1452,12 +1459,14 @@ failure record, source identity, continuation and cleanup schedule; the
 representation hint changes none of those contracts. LLVM's existing cold
 originator and terminal helpers retain their separate attributes.
 
-`llvm_optimization_pipeline` checks both predicate polarities, a nonzero failure
-weight, cleanup-status edges, and the absence of hints on ordinary control and
-liveness branches. Native callable and cleanup regressions exercise failing
-inputs as well as successful execution. Performance remains a measured
-acceptance obligation: this preference is not a claim about the frequency or
-speed of every application's failure path.
+Before optimization, `llvm_optimization_pipeline` checks the status predicate
+polarity, a nonzero failure weight, cleanup-status edges, and the absence of
+explicit hints on direct detectors, ordinary control and liveness branches.
+LLVM may infer or transform metadata in its subsequent optimization pipeline.
+Native callable and cleanup regressions exercise failing inputs as well as
+successful execution. Performance remains a measured acceptance obligation:
+this preference is not a claim about the frequency or speed of every
+application's failure path.
 
 ## Per-Instance Effects
 

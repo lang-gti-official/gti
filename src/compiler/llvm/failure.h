@@ -8,14 +8,11 @@ namespace lang::native_llvm {
 class Failures final {
 public:
   explicit Failures(Session &session);
-  // Likelihood hints for newly lowered checked-operation/status edges. These
-  // do not discharge a detector or make either continuation unreachable.
+  // Likelihood hints for newly lowered ABI failure-status edges. These do not
+  // discharge a detector or make either continuation unreachable.
   static void branchOnSuccess(llvm::IRBuilder<> &ir, llvm::Value *status,
                               llvm::BasicBlock *normal,
                               llvm::BasicBlock *failed);
-  static void branchOnFailure(llvm::IRBuilder<> &ir, llvm::Value *condition,
-                              llvm::BasicBlock *failed,
-                              llvm::BasicBlock *normal);
   [[nodiscard]] llvm::Constant *artifact() const { return artifact_; }
   [[nodiscard]] llvm::Value *record(llvm::IRBuilder<> &ir,
                                     llvm::Value *channel);
