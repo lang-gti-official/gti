@@ -625,7 +625,7 @@
       }
     },
     "041-owner-dependencies.gti": {
-      "declarations": 431,
+      "declarations": 435,
       "bodies": 28,
       "generated_items": 4,
       "generated_kinds": {
@@ -2866,7 +2866,7 @@
     }
   },
   "totals": {
-    "declarations": 218272,
+    "declarations": 218280,
     "bodies": 27335,
     "generated_items": 16019
   },
@@ -2940,7 +2940,7 @@
         }
       },
       "totals": {
-        "declarations": 218272,
+        "declarations": 218280,
         "bodies": 27331,
         "generated_items": 16015
       }
