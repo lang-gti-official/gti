@@ -2808,6 +2808,8 @@ if(Python3_Interpreter_FOUND)
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/agent_workflow_test.py"
   )
+  add_test(NAME rollup
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/rollup_test.py")
   add_test(NAME preview_workflow
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/preview_workflow_test.py")
   # Only combined preview candidates register this aggregate gate. Ordinary
