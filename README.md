@@ -540,11 +540,12 @@ python3 scripts/install_neovim_local.py --dry-run --replace-config --replace-bin
 python3 scripts/install_neovim_local.py --replace-config --replace-bin
 ```
 
-To select the early combined preview instead, once `preview` has been published:
+These commands select early combined preview by default, once `preview` has been
+published. `--preview` remains an explicit alias. To build this checkout instead:
 
 ```sh
-python3 scripts/install_neovim_local.py --preview --dry-run
-python3 scripts/install_neovim_local.py --preview --replace-config --replace-bin
+python3 scripts/install_neovim_local.py --local --dry-run
+python3 scripts/install_neovim_local.py --local --replace-config --replace-bin
 ```
 
 Preview may contain PRs still awaiting full validation and review. The script
@@ -552,8 +553,9 @@ pins the canonical preview commit in an isolated, persistent source checkout
 and installs its compiler, LSP and parser together. It reports the source
 commit and preserves your current checkout, including uncommitted edits.
 Preview dry run only resolves/reports the source; it performs no fetch, build
-or destination inspection. Without `--preview`, installation still uses this
-checkout. Run the normal command again to return to its toolchain. The
+or destination inspection. A missing preview fails without installing anything;
+there is no silent fallback. Use `--local` to return to this checkout’s toolchain,
+including with `--activate-only`. The
 [preview workflow](docs/architecture/agent-workflow.md#early-combined-preview)
 describes admission checks and the automated examples/platform coverage.
 
