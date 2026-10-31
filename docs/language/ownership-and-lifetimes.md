@@ -529,6 +529,22 @@ pattern bound inside `this`. A `mut auto&` binding through a `mut T&`
 parameter may be returned as `mut T&`. A pattern over a local copy, a by-value
 parameter or a temporary does not outlive the call and remains rejected:
 
+Local reference aliases may relay that same caller-owned referent through
+arbitrarily nested reborrow chains. For example, a method may bind
+`mut int& parent = this.value; mut int& child = parent;` and return `child`.
+The local reference slots do not own the referenced field. A chain rooted in
+a reference parameter works the same way, including concrete generic calls,
+field projections, and accessor results. Shared children retain read-only
+access. Returning a borrowed carrier constructed from the child remains
+subject to that carrier's existing return contract.
+
+The compiler follows the checked loan ancestry to incoming reference authority
+or receiver storage and independently verifies the result's declared owner,
+projection and access. Local/by-value storage, temporaries and cleanup-bound
+carrier dependencies still cannot escape. Returning a child keeps the borrow
+attached to the caller's owner; it does not reactivate that owner's conflicting
+access while the returned borrow remains live. No lifetime syntax is added.
+
 Nested patterns may relay the same caller-owned referent: a reference binding
 to an outer payload is an alias of that payload, so an inner payload reference
 can be returned when the complete loan ancestry reaches the receiver or a
@@ -1091,9 +1107,10 @@ the complete origin, access, field-path and alternative-tag set is unchanged.
 It preserves every external owner, including additional owners, after the
 original carrier's last use; it does not permit assignment or copying an
 exclusive or cleanup-bound capability.
-This does not remove child-loan ancestry: an enum carrying a class constructed
-from a local child reborrow still cannot return that dependency under a
-conditional borrowed-result contract, with or without an intervening copy.
+This does not remove child-loan ancestry: every returned dependency must
+still reach its declared external owner, with or without an intervening copy.
+Local references may relay incoming authority; a local object's storage or a
+separate cleanup-bound carrier cannot provide an escaping dependency.
 Direct reference alternatives can retain an eligible caller-owned reference
 through a copied return under their verified result contract.
 HIR carries
@@ -1634,8 +1651,9 @@ Two general facilities support this ordinary source wrapper:
   alone does not grant restoration authority.
   A named restored-reference local may be returned only while retaining the
   exact selected reference-parameter witness and access permission, without
-  another local-owned or cleanup-bound dependency. This does not authorize
-  general local child-reborrow escapes or returning a local object's storage.
+  another local-owned or cleanup-bound dependency. Ordinary local reborrows
+  may relay that same witness under the general ancestry rule above; they
+  cannot return a local object's storage or change its access permission.
 - `std::function_ptr<R(Args...)>` is a non-null, typed GTI invocation pointer
   constructed from an exact namespace-function item or captureless lambda.
   It preserves GTI's failure and argument/result ownership convention. It is

@@ -3471,6 +3471,16 @@ nested chains; read-only-to-mutable upgrades are rejected. Dynamic indexed,
 raw, and opaque sources do not receive precise conflict treatment in this
 slice.
 
+Reference-return escape checking follows ordinary reference aliases through
+`SemanticLoanInfo::parent`, as it already follows accessor transients and stored
+reference dependencies. A local reference slot is not an owner of its referent.
+The ancestry must reach an entry loan or receiver storage; local physical
+storage and cleanup-bound ancestors remain invalid. The separate return-origin
+check still proves the exact selected owner, projection and access permission.
+This general rule also covers restored-reference locals, replacing their former
+special-case escape exemption. HIR/MIR retain the existing loan graph and return
+metadata; no runtime lifetime state, allocation or backend inference is added.
+
 Semantics chooses all proven endpoints and reports invalidation conflicts. HIR
 and MIR preserve those choices; they do not recompute liveness from emitted
 C++ references.

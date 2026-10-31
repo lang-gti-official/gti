@@ -10306,6 +10306,16 @@ and empty arguments through C++20/C++23 executables and `gti run --`, while
 `lsp_protocol` checks publication of the shared invalid-signature diagnostic.
 The optional audit retains a compact execution snapshot.
 
+`testExclusiveReborrowLoanGraph` also checks returns through local receiver,
+reference-parameter, generic, projected and accessor-result aliases, including
+read-only children and borrowed carrier results. Local storage, wrong-owner
+returns, and caller-side invalidation remain negative cases. MIR mutations
+remove an accessor parent or the returned child's retirement and must fail
+verification. Example 042 executes receiver and generic return chains through
+the existing corpus gates; its reviewed census adds two accessors and one
+concrete generic body. Owning callable coverage separately rejects borrowed
+heap environments before MIR while retaining tracked locals and owned targets.
+
 Neither exclusive reborrows nor the additional `main` signature adds a token,
 grammar production, or formatting rule. The LSP receives their semantic
 diagnostics through the shared frontend and should not implement separate

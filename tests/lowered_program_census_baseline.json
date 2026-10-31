@@ -641,9 +641,9 @@
       }
     },
     "042-exclusive-reborrows.gti": {
-      "declarations": 1093,
-      "bodies": 76,
-      "generated_items": 21,
+      "declarations": 1096,
+      "bodies": 79,
+      "generated_items": 22,
       "generated_kinds": {
         "program_initialization": 0,
         "hosted_entry": 1,
@@ -652,7 +652,7 @@
         "lifecycle_cleanup": 1,
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
-        "concrete_instance_adapter": 7,
+        "concrete_instance_adapter": 8,
         "thread_local_storage": 0
       }
     },
@@ -2930,9 +2930,9 @@
     }
   },
   "totals": {
-    "declarations": 223504,
-    "bodies": 28187,
-    "generated_items": 16587
+    "declarations": 223507,
+    "bodies": 28190,
+    "generated_items": 16588
   },
   "target": "arm64-apple-macos",
   "variants": {
@@ -3004,9 +3004,9 @@
         }
       },
       "totals": {
-        "declarations": 223504,
-        "bodies": 28183,
-        "generated_items": 16583
+        "declarations": 223507,
+        "bodies": 28186,
+        "generated_items": 16584
       }
     }
   }
