@@ -3345,6 +3345,11 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/sanitizer_support_test.py"
   )
   add_test(
+    NAME named_test_shards
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/named_test_shards_test.py"
+  )
+  add_test(
     NAME ci_resources
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/ci_resources_test.py"
