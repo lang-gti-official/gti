@@ -826,11 +826,6 @@ for what minor and patch releases mean.
 - Fixed: since 0.468.0, `std::string_view& view = maybe.value();
   view.begin()` on a `std::optional<std::string_view>` holding text owned by a
   `std::string` reported `error[GTI-B0001]`; it works again.
-- Not yet supported: constructing a carrier class directly from a returned
-  reference, as in `Cursor(box.get())`, still reports `GTI-B0001`. Call a
-  function that constructs it, as `open(box.get())` does.
-
-
 ## 0.468.2 — References to payload enums held inside another enum
 
 - `std::optional<Shape>::value()` for a payload enum without cleanup, such as

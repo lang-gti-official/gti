@@ -291,6 +291,10 @@ std::size_t copied_size(std::string_view& input) {
   std::string_view copy = input;
   return copy.size();
 }
+std::size_t relayed_size(std::string_view& input) {
+  std::string_view copy = relay(input);
+  return copy.size();
+}
 )gti";
   const auto run = [&](std::string body) {
     return lang::Frontend().analyze("text-reference-reads.gti", prefix + body,
@@ -303,12 +307,12 @@ int main() {
   std::string_view view = owner.view();
   TextReader reader{view};
   std::string_view read = reader.view();
-  return int(read.size() + copied_size(view) + reader.size()) - 15;
+  return int(read.size() + copied_size(view) + relayed_size(view) +
+             reader.size()) - 20;
 }
 )gti");
   expect(frontend.canGenerateCode(),
-         "a text reference field returns, and a reference formal copies, its "
-         "dependent view");
+         "text reference fields and formal relays copy dependent views");
   if (!frontend.canGenerateCode()) {
     for (const auto &diagnostic : frontend.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
@@ -383,7 +387,12 @@ int main() {
         "std::string_view escape() { std::string owner = "
         "std::string(\"text\"); std::string_view view = owner.view(); "
         "TextReader reader{view}; return reader.view(); } "
-        "int main() { return 0; }"}) {
+        "int main() { return 0; }",
+        "int main() { mut std::string owner = std::string(\"text\"); "
+        "std::string_view view = owner.view(); "
+        "std::string_view& reference = view; "
+        "std::string_view copy = relay(reference); owner.clear(); "
+        "return int(copy.size()); }"}) {
     const auto rejected = run(invalid);
     expect(!rejected.semanticValid &&
                !hasDiagnosticCode(rejected.diagnostics, "GTI-B0001"),
@@ -1943,11 +1952,17 @@ int main() {
   std::string_view& named = literal.get();
   auto third = named.begin();
   Cursor cursor = open(owned.get());
+  Cursor directOwned = Cursor(owned.get());
+  Cursor directLiteral = Cursor(literal.get());
+  Cursor directNamed = Cursor(named);
   std::optional<std::string_view> maybe =
       std::optional<std::string_view>(owner.view());
   auto fourth = maybe.value().begin();
   if (*first != 'o' || *second != 'l' || *third != 'l' ||
-      cursor.size() != std::size_t(5) || *fourth != 'o')
+      cursor.size() != std::size_t(5) ||
+      directOwned.size() != std::size_t(5) ||
+      directLiteral.size() != std::size_t(7) ||
+      directNamed.size() != std::size_t(7) || *fourth != 'o')
     return 1;
   return 0;
 }
@@ -2007,9 +2022,13 @@ int main() {
         // Ownerless text is proved only at the exact returned referent under
         // its result loan, never at the accessor's owner.
         ++ownerless;
-        expect(rejectedWith(mutate([](auto &changed) { changed.parent = 0; }),
+        const auto detached = mutate([](auto &changed) { changed.parent = 0; });
+        expect(rejectedWith(detached,
                             "carrier reference result requires one exact "
-                            "stored dependency"),
+                            "stored dependency") ||
+                   rejectedWith(detached,
+                                "stored construction must preserve its "
+                                "accessor parent"),
                "ownerless accessor text is proved only under its result loan");
         expect(rejectedWith(mutate([&](auto &changed) {
                               changed.source = accessor->source;
@@ -2033,6 +2052,12 @@ public:
   Box(std::string_view text) : text(text) {}
   std::string_view& get() { return this.text; }
 };
+class Cursor {
+  std::string_view& view;
+public:
+  Cursor(std::string_view& view) : view(view) {}
+  std::size_t size() { return this.view.size(); }
+};
 int main() {
   mut std::string owner = std::string("owned");
 )gti";
@@ -2048,7 +2073,13 @@ int main() {
          "std::optional<std::string_view> o = "
          "std::optional<std::string_view>(owner.view()); auto it = "
          "o.value().begin(); owner.push_back('x'); return *it == 'o' ? 0 "
-         ": 1;"}}) {
+         ": 1;"},
+        {"direct carrier text owner",
+         "Box b = Box(owner.view()); Cursor c = Cursor(b.get()); "
+         "owner.push_back('x'); return int(c.size());"},
+        {"direct carrier accessor owner",
+         "mut Box b = Box(\"literal\"); Cursor c = Cursor(b.get()); "
+         "b.text = \"other\"; return int(c.size());"}}) {
     const auto rejected = lang::Frontend().analyze(
         "accessor-text-carrier-mutation.gti", box + std::string(body) + "\n}\n",
         {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
@@ -2062,6 +2093,36 @@ int main() {
            std::string("an accessor text carrier keeps its ") +
                std::string(label) + " borrowed");
   }
+  const auto userCarrier = lang::Frontend().analyze(
+      "accessor-user-carrier.gti", R"gti(
+class Gauge {
+public:
+  int value;
+  Gauge(int value) : value(value) {}
+  int read() { return this.value; }
+};
+class Panel {
+  Gauge gauge;
+public:
+  Panel(Gauge gauge) : gauge(gauge) {}
+  Gauge& current() { return this.gauge; }
+};
+class Dial {
+  Gauge& gauge;
+public:
+  Dial(Gauge& gauge) : gauge(gauge) {}
+  int read() { return this.gauge.read(); }
+};
+int main() {
+  Panel panel = Panel(Gauge(7));
+  Dial dial = Dial(panel.current());
+  return dial.read() - 7;
+}
+)gti",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(userCarrier.canGenerateCode() &&
+             lang::verifyMirProgram(userCarrier.mir).valid(),
+         "an unrelated user carrier accepts an accessor's returned referent");
 }
 
 void checkSharedAccessorRange() {

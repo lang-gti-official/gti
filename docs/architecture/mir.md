@@ -2035,6 +2035,14 @@ parameter such as `std::unique_ptr<Dir>&`. A Local loan on the projected
 place would leave the call's owner unborrowed, and one on the semantic origin
 could not name the address; `referenceAddressRetainsLoan` rejects both.
 
+A carrier construction that stores such a returned reference also retains
+the exact call-result loan as its parent, whether its input is the direct
+accessor result or a reference binding initialized from it. Its Stored loan
+keeps the accessor result's external dependency separately from the physical
+referent address. This applies to `Construct` as well as function calls;
+verification checks the exact constructor input and dependency before either
+backend can use the carrier.
+
 A read-only binding through a mutable owner's smart pointer retains a
 read-only call-result loan: semantics selects the read-only `operator->` or
 `operator*` step from the binding's use (static semantics, accessor pairs), so
@@ -2093,6 +2101,12 @@ producer must be a `Call` with an Argument origin and no field mapping, and the
 returned value must be that call's result. `verifyMirBorrowProducers` already
 proves that such a call's result loan names its selected input, so the formal
 is the only owner either way.
+A local copy of a text value relayed from a reference formal uses the same
+entry authority. The abstract stored-entry publication proof checks the
+call-result loan, its exact value input load from the formal's dereference,
+and dominance of the call over the local initialization, including an `Invoke`
+success edge. A matching declared return dependency alone cannot publish the
+entry into an unrelated local.
 The success loan always uses read-only access, including when the enclosing
 method has a mutable receiver. A by-value nominal carrier parameter can provide
 that success through its one exact designated reference path; the Return
