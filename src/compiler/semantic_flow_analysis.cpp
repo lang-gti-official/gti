@@ -8847,6 +8847,20 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
       return result;
     }
   }
+  // Built-in assignment publishes a value copy after committing the target;
+  // a conditional publishes one joined value. Both are self-contained class
+  // temporaries with the same full-expression lifetime as a call result.
+  // An overloaded assignment is a call and retains its separate call proof.
+  const auto *assignment = exprAs<Assign>(producer);
+  const bool freshAssignment =
+      assignment != nullptr && assignment->oper().kind == TokenKind::EQUAL &&
+      semanticModel.findOperator(*producer) == nullptr &&
+      info->traits.copyable && !requiresActiveCleanupFor(info->type);
+  if (freshAssignment || exprAs<ConditionalExpr>(producer) != nullptr) {
+    result.eligible = true;
+    result.failure = FreshTemporaryValueFailure::None;
+    return result;
+  }
   if (const ResolvedOperatorInfo *resolved =
           semanticModel.findOperator(*producer);
       resolved != nullptr && resolved->function != 0 &&

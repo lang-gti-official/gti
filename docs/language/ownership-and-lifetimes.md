@@ -462,7 +462,11 @@ fields are destroyed before the carrier's external loans end.
 
 A direct ordinary constructor or by-value GTI call may also produce a fresh,
 self-contained class or struct value for one exact read-only `T&` argument of
-an ordinary GTI function or non-operator method. A payload enum's alternative,
+an ordinary GTI function or non-operator method. A built-in class assignment
+returns a fresh copy of its committed destination, and a class conditional
+joins the selected arm into a fresh value; both can supply that same call-only
+borrow. Each assignment result captures its value before the next argument
+runs. A payload enum's alternative,
 with or without fields, such as `state::engaged(1)` or `state::empty`, and a
 by-value GTI call returning a payload enum produce such a value too, so
 `observe(make_state())` borrows the fresh enum for that call. A scalar-backed
