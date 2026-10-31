@@ -39,10 +39,32 @@
         "e54a2315248672f40b0fe05a5b911f4e18b9d49f"
       ],
       "merge": "e54a2315248672f40b0fe05a5b911f4e18b9d49f"
+    },
+    {
+      "task": "runtime-allocation-hints",
+      "pr": 101,
+      "head": "e4609846b7b68888b1d33c70c21e5ba9df5fbd29",
+      "tests": [
+        "llvm_memory_contracts",
+        "llvm_optimization_pipeline",
+        "vector_empty_constructor_runtime",
+        "stdlib_surface_manifest",
+        "llvm_memory_execution",
+        "llvm_callable_execution",
+        "llvm_cleanup_context_execution",
+        "llvm_cleanup_composition_execution",
+        "wrapping_context_runtime",
+        "mir_census_profile_controls",
+        "llvm_case_context_controls"
+      ],
+      "contributions": [
+        "48f6c8bb60cafdc22a6fdf237824cfd2be57cda6"
+      ],
+      "merge": "48f6c8bb60cafdc22a6fdf237824cfd2be57cda6"
     }
   ],
   "removed": [],
   "main": "cfb28948a26a14e58ffb720c3474cbbed8d3f2ff",
-  "previous": "af212090a1cdd1ca95ab068eecc7c0f31df2b2ee",
-  "candidate": "b5ddab2608544f4dac9f19f69b33bb82"
+  "previous": "5a22de83762fdbe4145c62108a0fd3d17a026ad3",
+  "candidate": "c9c55fbdb89d4102b891d568ee1ede88"
 }
