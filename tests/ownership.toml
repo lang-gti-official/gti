@@ -1493,6 +1493,8 @@ paths = [
   "scripts/validation_checks.py",
   "scripts/configure_ci_*",
   "scripts/check_ci_sanitizers.py",
+  "scripts/named_test_shards.py",
+  "tests/named_test_shards_test.py",
 ]
 owners = [
   "agent_workflow",
@@ -1501,6 +1503,7 @@ owners = [
   "ci_cache",
   "ci_release",
   "ci_sanitizer_capability",
+  "named_test_shards",
 ]
 consumers = [
   "release_version_policy",

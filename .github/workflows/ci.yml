@@ -76,6 +76,7 @@ jobs:
           python3 tests/repository_hosting_test.py .
           python3 tests/ownership_map_test.py
           python3 tests/plan_checks_test.py
+          python3 tests/named_test_shards_test.py
 
   formatting:
     name: Formatting
@@ -363,7 +364,11 @@ jobs:
         # Instrumenting the whole tree took longer than the integration shards
         # while only these tests run; CTestTestfile.cmake names their targets.
         run: |
-          targets="$(python3 scripts/validation_checks.py test-targets --build build-sanitized --regex "${GTI_SANITIZER_TESTS}")"
+          pattern="${GTI_SANITIZER_TESTS}"
+          if [[ "${{ matrix.kind }}" == "compiler" ]]; then
+            pattern='^compiler_pipeline$'
+          fi
+          targets="$(python3 scripts/validation_checks.py test-targets --build build-sanitized --regex "${pattern}")"
           read -r -a target_list <<< "${targets}"
           cmake --build build-sanitized --parallel "${GTI_JOBS}" --target "${target_list[@]}"
       - name: Test compiler and driver libraries
@@ -385,8 +390,21 @@ jobs:
             ctest --test-dir build-sanitized --verbose --output-on-failure --no-tests=error \
               --output-junit "${RUNNER_TEMP}/sanitizers-${{ matrix.kind }}-${{ matrix.index }}.xml" \
               --parallel "${GTI_TEST_JOBS}" -R "${GTI_SANITIZER_TESTS}" \
-              -E '^compiler_pipeline$' -I "${{ matrix.index }},,2"
+              -E '^(compiler_pipeline|cpp_mir_body_emitter_lifecycle)$' -I "${{ matrix.index }},,2"
           fi
+      - name: Test named lifecycle cases
+        # The aggregate took 83 minutes against its 90-minute bound. Split
+        # every existing case across the library jobs, retaining that bound.
+        if: ${{ !cancelled() && matrix.kind == 'libraries' }}
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: >-
+          python3 scripts/named_test_shards.py run
+          --executable build-sanitized/gti_cpp_mir_body_emitter_lifecycle_tests
+          --index "${{ matrix.index }}" --count 2 --timeout 5400
+          --source "${{ github.sha }}"
+          --report "${RUNNER_TEMP}/lifecycle-${{ matrix.index }}.json"
       - name: Preserve sanitizer test evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -394,6 +412,7 @@ jobs:
           name: sanitizers-${{ matrix.kind }}-${{ matrix.index }}
           path: |
             ${{ runner.temp }}/sanitizers-${{ matrix.kind }}-${{ matrix.index }}.xml
+            ${{ runner.temp }}/lifecycle-${{ matrix.index }}.json
             build-sanitized/Testing/Temporary/LastTest.log
             build-sanitized/Testing/Temporary/LastTestsFailed.log
           if-no-files-found: warn
@@ -420,6 +439,18 @@ jobs:
         with:
           pattern: shard-*
           path: ${{ runner.temp }}/shards
+      - name: Collect lifecycle sanitizer evidence
+        if: github.event_name == 'merge_group' && needs.plan.outputs.mode == 'full'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: sanitizers-libraries-*
+          path: ${{ runner.temp }}/lifecycle-shards
+      - name: Require every lifecycle sanitizer case
+        if: github.event_name == 'merge_group' && needs.plan.outputs.mode == 'full'
+        run: >-
+          python3 scripts/named_test_shards.py verify
+          --reports "${RUNNER_TEMP}/lifecycle-shards"
+          --source "${{ github.sha }}" --count 2
       - name: Decide integration acceptance
         env:
           GTI_VALIDATION_MODE: ${{ needs.plan.outputs.mode }}
