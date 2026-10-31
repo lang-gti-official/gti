@@ -26,10 +26,27 @@
         "a4cdea27f7799b9a708cd740393184f40017f836"
       ],
       "merge": "a4cdea27f7799b9a708cd740393184f40017f836"
+    },
+    {
+      "task": "owned-inline-publication",
+      "pr": 100,
+      "head": "df7dea9f61ef700f3130039f5c2ee32a9acbc43d",
+      "tests": [
+        "owned_inline_consumption_runtime",
+        "consuming_owned_pointee",
+        "consuming_receiver_types",
+        "llvm_admission",
+        "inline_polymorphic_runtime",
+        "owning_function_policy_failure_runtime"
+      ],
+      "contributions": [
+        "f08fa8684f048f47c7dfb26aa6b5975313cff3e9"
+      ],
+      "merge": "f08fa8684f048f47c7dfb26aa6b5975313cff3e9"
     }
   ],
   "removed": [],
   "main": "cfb28948a26a14e58ffb720c3474cbbed8d3f2ff",
-  "previous": "675eedd87ff0703decf345565728210bb89a2ed7",
-  "candidate": "dd2eef0d6c9845c4bf0a37ee56a820f6"
+  "previous": "af212090a1cdd1ca95ab068eecc7c0f31df2b2ee",
+  "candidate": "0681130f3cbe4aa2b77508037a18df70"
 }
