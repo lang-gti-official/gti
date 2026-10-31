@@ -1,0 +1,63 @@
+import std.vector;
+import std.meta;
+
+extern "C" {
+  void adoption_fail_at(uint64_t allocation);
+  void adoption_trace(int value);
+  void adoption_check_cleanup();
+  uint64_t adoption_allocations();
+}
+
+class Cleanup {
+public:
+  Cleanup() {}
+  ~Cleanup() { adoption_trace(99); adoption_check_cleanup(); }
+};
+
+class NoDefault {
+  int identity;
+public:
+  NoDefault(int identity) : identity(identity) {}
+  NoDefault(NoDefault& other) = delete;
+  NoDefault(NoDefault&& other) = default;
+  ~NoDefault() { adoption_trace(this.identity); }
+};
+
+static_assert(!std::meta::is_default_initializable<NoDefault>());
+
+int main() {
+  Cleanup cleanup{};
+  // Any provider call here would fail. Empty ownership must not instantiate
+  // an element or acquire a region, including nested and moved empty owners.
+  adoption_fail_at(uint64_t(1));
+  {
+    mut std::vector<NoDefault> empty{};
+    mut std::vector<int> values{};
+    mut std::vector<std::vector<NoDefault>> nested{};
+    values.reserve(std::size_t(0));
+    values.resize(std::size_t(0));
+    values.clear();
+    values.shrink_to_fit();
+    auto moved = std::move(empty);
+    if (!moved.empty() || moved.capacity() != std::size_t(0) ||
+        !values.empty() || values.capacity() != std::size_t(0) ||
+        !nested.empty() || nested.capacity() != std::size_t(0)) return 1;
+  }
+  if (adoption_allocations() != uint64_t(0)) return 2;
+  adoption_fail_at(uint64_t(0));
+  {
+    mut std::vector<NoDefault> values{};
+    values.reserve(std::size_t(2));
+    [[discard]] values.emplace_back(7);
+    values.push_back(NoDefault(8));
+    values.reserve(std::size_t(8));
+    mut std::vector<std::vector<NoDefault>> nested{};
+    nested.reserve(std::size_t(2));
+    [[discard]] nested.emplace_back();
+    if (values.size() != std::size_t(2) ||
+        nested.size() != std::size_t(1) ||
+        !nested.front().empty()) return 3;
+    if (adoption_allocations() != uint64_t(3)) return 4;
+  }
+  return 0;
+}

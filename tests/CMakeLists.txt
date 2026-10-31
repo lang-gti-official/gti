@@ -1001,6 +1001,10 @@ add_test(NAME polymorphic_storage_compiler_contract
 add_executable(gti_prefix_constructor_tests prefix_constructor_tests.cpp)
 target_link_libraries(gti_prefix_constructor_tests PRIVATE gti_cpp_backend)
 add_test(NAME prefix_constructor_contract COMMAND gti_prefix_constructor_tests)
+add_test(NAME vector_empty_constructor_runtime
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/vector_empty_constructor_runtime_test.py" $<TARGET_FILE:gti>)
+set_tests_properties(vector_empty_constructor_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME vector_prepared_constructor_runtime
   COMMAND "${Python3_EXECUTABLE}"
           "${PROJECT_SOURCE_DIR}/tests/vector_prepared_constructor_runtime_test.py" $<TARGET_FILE:gti>)

@@ -4,6 +4,7 @@
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/GlobalVariable.h>
 #include <llvm/IR/Intrinsics.h>
+#include <llvm/IR/MDBuilder.h>
 
 namespace lang::native_llvm {
 namespace {
@@ -165,6 +166,24 @@ llvm::Value *Failures::origin(llvm::IRBuilder<> &ir, llvm::Value *channel) {
   return ir.CreateLoad(
       session.layouts().pointer(),
       ir.CreateStructGEP(session.abi().failureChannel(), channel, 1));
+}
+
+void Failures::branchOnSuccess(llvm::IRBuilder<> &ir, llvm::Value *status,
+                               llvm::BasicBlock *normal,
+                               llvm::BasicBlock *failed) {
+  // A heuristic successful-execution preference, not a measured probability
+  // or semantic assumption. Both weights remain nonzero. Only newly created
+  // failure-transport edges use it; ordinary control/result branches and any
+  // existing profile metadata remain untouched.
+  auto *weights = llvm::MDBuilder(ir.getContext()).createBranchWeights(2000, 1);
+  ir.CreateCondBr(status, normal, failed, weights);
+}
+
+void Failures::branchOnFailure(llvm::IRBuilder<> &ir, llvm::Value *condition,
+                               llvm::BasicBlock *failed,
+                               llvm::BasicBlock *normal) {
+  auto *weights = llvm::MDBuilder(ir.getContext()).createBranchWeights(1, 2000);
+  ir.CreateCondBr(condition, failed, normal, weights);
 }
 
 void Failures::copyChannel(llvm::IRBuilder<> &ir, llvm::Value *destination,
