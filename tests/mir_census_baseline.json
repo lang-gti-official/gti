@@ -178,7 +178,8 @@
     "178-wrapping-atomic-counters.gti": 25,
     "179-weak-ownership.gti": 164,
     "180-compact-source-owners.gti": 193,
-    "181-general-object-layout.gti": 170
+    "181-general-object-layout.gti": 170,
+    "182-bounded-array-borrows.gti": 156
   },
-  "total": 27179
+  "total": 27335
 }

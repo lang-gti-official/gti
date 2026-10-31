@@ -4198,7 +4198,6 @@ private:
                                   std::string_view context,
                                   bool allowRvalueReference = false,
                                   bool typeMetadata = false,
-                                  bool genericFunctionParameter = false,
                                   bool contractedReferenceResult = false);
 
   void validateReferenceReferent(const SemanticType &type, const Token &site);

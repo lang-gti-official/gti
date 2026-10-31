@@ -184,10 +184,10 @@ int main() {
        R"(int main() { mut int owner[2] = {1, 2}; mut TYPE& alias = owner[0];
     alias = 3; return alias - 3; })",
        true);
-  pair("whole array boundary", "int[2]",
+  pair("whole array", "int[2]",
        R"(int main() { int owner[2] = {1, 2}; TYPE& alias = owner;
     return alias[0] - 1; })",
-       false);
+       true);
   pair("reference result", "int",
        R"(int main() { mut Owner owner{}; mut TYPE& alias = owner.field_mut();
     alias = 8; return alias - 8; })",

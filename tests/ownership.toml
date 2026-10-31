@@ -273,6 +273,8 @@ owners = [
   "tryable_propagation",
   "borrow_origin",
   "local_reference_inference",
+  "bounded_array_borrows",
+  "bounded_array_borrows_runtime",
   "unsafe_function_contract",
   "unsafe_expression_contract",
   "discardable_result",

@@ -3402,7 +3402,6 @@ int main() {
                         "mutable reference requires a mutable initializer") &&
           hasDiagnostic(invalid.diagnostics,
                         "Reference bindings require an initializer") &&
-          hasDiagnostic(invalid.diagnostics, "References to fixed arrays") &&
           hasDiagnostic(invalid.diagnostics,
                         "complete checked dependency contract") &&
           hasDiagnostic(invalid.diagnostics, "derived from temporary storage"),
@@ -9288,16 +9287,15 @@ int main() {
 }
 
 void testCompleteRangeConceptsAndAlgorithms() {
-  for (const std::string &rejected :
+  for (const std::string &supported :
        {std::string("void invalid(int[3]& values) {}"),
         std::string("using Triple = int[3]; void invalid(Triple& values) {}"),
         std::string("using Callback = void(int[3]&);")}) {
-    const auto invalid =
-        lang::Frontend().analyze("array-reference-boundary.gti", rejected);
-    expect(!invalid.canGenerateCode() &&
-               hasDiagnostic(invalid.diagnostics, "References to fixed arrays"),
-           "generic range substitution does not enable explicit or aliased "
-           "array-reference parameters or callback signature metadata");
+    const auto valid =
+        lang::Frontend().analyze("array-reference-boundary.gti", supported);
+    expect(valid.canGenerateCode(),
+           "explicit, aliased and signature array references use the same "
+           "complete array type as generic range substitution");
   }
   const lang::FrontendResult valid = lang::Frontend().analyze(
       "complete-range-concepts.gti", R"(

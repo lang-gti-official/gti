@@ -4407,7 +4407,7 @@ auto SemanticVisitor::Impl::activeTypePackIdentity(const TypeRef &type) const
 
 auto SemanticVisitor::Impl::validateReferencePlacement(
     const TypeRef &type, bool allowTopLevel, std::string_view context,
-    bool allowRvalueReference, bool typeMetadata, bool genericFunctionParameter,
+    bool allowRvalueReference, bool typeMetadata,
     bool contractedReferenceResult) -> void {
   const SemanticType resolved = typeOf(type);
   if (resolved.kind == SemanticType::FunctionSignature) {
@@ -4437,26 +4437,12 @@ auto SemanticVisitor::Impl::validateReferencePlacement(
              "References cannot be used as a " + std::string(context) + " yet.",
              "GTI-S2017");
     }
-    if (!type.arrayExtents.empty()) {
-      report(*type.reference,
-             "References to fixed arrays are not supported yet.", "GTI-S2017");
-    }
   }
-  // Range& parameters already support concrete fixed-array range instances.
-  // This is a declaration-bound generic substitution, not permission to spell
-  // array references as storage, aliases, returns, or signature metadata.
-  const auto genericReferent =
-      genericFunctionParameter ? resolveTypeParameter(type.name) : std::nullopt;
-  const bool substitutedArrayParameter =
-      !typeMetadata && allowTopLevel && type.reference &&
-      type.arrayExtents.empty() && genericReferent &&
-      genericReferent->kind == SemanticType::Array &&
-      resolved.kind == SemanticType::Reference &&
-      resolved.arguments.size() == 1 &&
-      resolved.arguments.front() == *genericReferent;
-  if (!substitutedArrayParameter)
-    validateReferenceReferent(resolved, type.reference ? *type.reference
-                                                       : type.name.last());
+  // Fixed arrays retain their complete element type and extents when borrowed.
+  // Explicit, inferred and generic references share the same place/loan rules;
+  // generic range parameters do not need a separate admission exception.
+  validateReferenceReferent(resolved, type.reference ? *type.reference
+                                                     : type.name.last());
   const auto nominalKind = baseTypeOf(type, currentNamespace).kind;
   // A checked projected reference result is the resolved referent, not a
   // container for the syntactic projection operands. A callable operand may
@@ -4488,10 +4474,6 @@ auto SemanticVisitor::Impl::validateReferenceReferent(const SemanticType &type,
   const SemanticType &referencedType = type.arguments.front();
   if (referencedType == SemanticType::Void) {
     report(site, "References cannot refer to void.", "GTI-S2017");
-  }
-  if (referencedType.kind == SemanticType::Array) {
-    report(site, "References to fixed arrays are not supported yet.",
-           "GTI-S2017");
   }
   if (referencedType.kind == SemanticType::Reference) {
     report(site, "References cannot refer to another reference.", "GTI-S2017");
