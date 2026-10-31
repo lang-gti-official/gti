@@ -1,0 +1,23 @@
+import std.utility;
+
+int32_t[3] make_values(int32_t first) {
+  int32_t[3] values = {first, 2, 3};
+  return values;
+}
+
+struct Row {
+  int32_t[2] cells;
+  Row(int32_t first) : cells({first, 2}) {}
+};
+
+Row make_row(int32_t first) { return Row(first); }
+
+int main() {
+  int32_t[3] values = {4, 5, 6};
+  Row row{7};
+  if (make_values(1)[0] != 1 || std::move(values)[1] != 5 ||
+      make_row(8).cells[0] != 8 || std::move(row).cells[1] != 2) {
+    return 1;
+  }
+  return 0;
+}

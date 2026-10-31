@@ -22557,10 +22557,10 @@ int main() {
   return 0;
 }
 )");
-  expect(!compound.canGenerateCode() &&
-             hasDiagnosticCode(compound.diagnostics, "GTI-S2017"),
-         "a conditional class producer should remain outside the first "
-         "temporary-argument slice");
+  expect(compound.canGenerateCode() &&
+             lang::verifyMirProgram(compound.mir).valid(),
+         "a conditional class producer should bind an exact call-scoped "
+         "read-only argument");
 
   const lang::FrontendResult borrowedState =
       rejected("borrowed-state-temporary-argument.gti", R"(

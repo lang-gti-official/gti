@@ -108,7 +108,7 @@ SignaturePrinter::function(const FunctionInfo &info,
     result += "static ";
   }
   if (declaration != nullptr && declaration->isConstexpr()) {
-    result += "constexpr ";
+    result += declaration->isConsteval() ? "consteval " : "constexpr ";
   }
   const bool conversion =
       declaration != nullptr && declaration->operatorName() &&
@@ -263,7 +263,9 @@ SignaturePrinter::constructor(const ClassTypeInfo &owner,
   }
   std::string result =
       selected.declaration != nullptr && selected.declaration->isConstexpr()
-          ? "constexpr " + constructedType
+          ? std::string(selected.declaration->isConsteval() ? "consteval "
+                                                            : "constexpr ") +
+                constructedType
           : constructedType;
   if (selected.declaration != nullptr && selected.declaration->unsafeKeyword())
     result = "unsafe " + result;
@@ -316,7 +318,9 @@ SignaturePrinter::constructor(const ClassTypeInfo &owner,
   }
   std::string result =
       info.declaration != nullptr && info.declaration->isConstexpr()
-          ? "constexpr " + ownerName
+          ? std::string(info.declaration->isConsteval() ? "consteval "
+                                                        : "constexpr ") +
+                ownerName
           : ownerName;
   if (info.requiresUnsafe)
     result = "unsafe " + result;

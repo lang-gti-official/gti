@@ -1136,16 +1136,17 @@ basicSemanticType(const std::vector<lang::Token> &tokens, std::size_t index) {
     return std::nullopt;
   }
 
-  // `implicit` is a modifier only before a constructor's name or `constexpr`,
-  // or before a conversion operator: `operator` and its target type, possibly
-  // after `virtual`.
+  // `implicit` is a modifier only before a constructor's name or constant
+  // specifier, or before a conversion operator: `operator` and its target type,
+  // possibly after `virtual`.
   const auto conversionOperatorAt = [&](std::size_t at) {
     return at + 1 < tokens.size() && tokens[at].kind == OPERATOR &&
            (tokens[at + 1].kind == IDENTIFIER ||
             lang::isTypeKeywordToken(tokens[at + 1].kind));
   };
   if (token.lexeme == "implicit" && index + 2 < tokens.size() &&
-      (tokens[index + 1].kind == CONSTEXPR || conversionOperatorAt(index + 1) ||
+      (tokens[index + 1].kind == CONSTEXPR ||
+       tokens[index + 1].kind == CONSTEVAL || conversionOperatorAt(index + 1) ||
        (tokens[index + 1].kind == VIRTUAL && conversionOperatorAt(index + 2)) ||
        (tokens[index + 1].kind == IDENTIFIER &&
         (tokens[index + 2].kind == LEFT_PAREN ||

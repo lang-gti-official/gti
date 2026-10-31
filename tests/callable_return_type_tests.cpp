@@ -173,13 +173,25 @@ int main() { return zero(); }
 import std.meta;
 using Number = std::meta::callable_return_type<int(int)>;
 using Empty = std::meta::callable_return_type<void()>;
-using Shared = std::meta::callable_return_type<int&(int&)>;
 using MutableAction = std::meta::callable_return_type<void() mut>;
 Number identity(Number value) { return value; }
 Empty nothing() { return; }
-int main() { nothing(); return identity(0); }
+[[borrowed_from(value)]]
+std::meta::callable_return_type<int&(int&)> shared(int& value) { return value; }
+int main() {
+  int value = 0;
+  int& result = shared(value);
+  nothing();
+  return identity(result);
+}
 )",
            "signature results preserve scalar, void and reference metadata");
+  rejected(R"(
+import std.meta;
+using Shared = std::meta::callable_return_type<int&(int&)>;
+int main() { return 0; }
+)",
+           "GTI-S2030", "Reference aliases are not supported");
   accepted(R"(
 import std.meta;
 std::meta::callable_return_type<F> apply<F, T>(F& fn, T value) {

@@ -1,0 +1,62 @@
+// A compile-time-selected method calls ordinary runtime data. The method
+// descriptor is chosen by metadata, including an overload's parameter type.
+import std.meta;
+
+class Accumulator {
+  mut int32_t total;
+public:
+  Accumulator(int32_t start) : total(start) {}
+  void add(int32_t value) mut { this.total = this.total + value; }
+  void add(bool value) mut { if (value) { this.total = this.total + 100; } }
+  int32_t read() { return this.total; }
+};
+
+// A second, unrelated type exercises the same source-defined binding logic.
+struct Progress {
+  mut int32_t completed = 0;
+  Progress() = default;
+  void update(int32_t amount) mut { this.completed = this.completed + amount; }
+  int32_t read() { return this.completed; }
+};
+
+class Score {
+  mut int32_t points;
+public:
+  Score(int32_t start) : points(start) {}
+  void update(int32_t amount) mut { this.points = this.points + amount * 2; }
+  int32_t read() { return this.points; }
+};
+
+// Bind every eligible update method using its metadata. Runtime values still
+// enter the selected method as ordinary typed arguments.
+void apply_update<T>(mut T& receiver, int32_t amount) {
+  constexpr for (auto method : std::meta::lookup_methods_of<T>()) {
+    if constexpr (method.name() == "update" && !method.is_static() &&
+                  !method.is_operator() && method.parameter_count() == 1) {
+      constexpr for (auto parameter : method.parameters()) {
+        if constexpr (parameter.type().is_integral()) {
+          method.invoke(receiver, amount);
+        }
+      }
+    }
+  }
+}
+
+int main() {
+  mut Accumulator accumulator = Accumulator(5);
+  constexpr for (auto method : std::meta::methods_of<Accumulator>()) {
+    if constexpr (method.name() == "add" && method.parameter_count() == 1) {
+      constexpr for (auto parameter : method.parameters()) {
+        if constexpr (parameter.type().is_integral()) {
+          method.invoke(accumulator, int32_t(7));
+        }
+      }
+    }
+  }
+  mut Progress progress{};
+  mut Score score = Score(4);
+  apply_update(progress, int32_t(3));
+  apply_update(score, int32_t(3));
+  return accumulator.read() == 12 && progress.read() == 3 &&
+                 score.read() == 10 ? 0 : 1;
+}

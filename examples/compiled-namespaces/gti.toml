@@ -1,0 +1,21 @@
+manifest-version = 1
+[package]
+name = "compiled-namespaces"
+version = "0.1.0"
+[targets.geometry]
+kind = "gti-library"
+root = "shapes.gti"
+functions = ["domain::geometry::make", "domain::geometry::echo", "domain::geometry::view", "domain::geometry::edit", "domain::geometry::status", "domain::geometry::operations::sum", "shadow::echo", "gtilib_type_0_::count"]
+[targets.telemetry]
+kind = "gti-library"
+root = "readings.gti"
+functions = ["domain::telemetry::echo", "domain::telemetry::count"]
+[targets.app]
+kind = "executable"
+root = "main.gti"
+[[targets.app.compiled-dependencies]]
+target = "geometry"
+interface = "api/geometry.gti"
+[[targets.app.compiled-dependencies]]
+target = "telemetry"
+interface = "api/telemetry.gti"

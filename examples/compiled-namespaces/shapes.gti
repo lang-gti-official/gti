@@ -1,0 +1,49 @@
+export module geometry_api;
+namespace domain {
+    namespace detail {
+        struct Point { int marker = 99; Point() = default; };
+    }
+    export namespace geometry {
+        struct Point {
+            mut int x = 0;
+            mut int y = 0;
+        private:
+            domain::detail::Point hidden;
+        public:
+            Point() = default;
+        };
+        enum class Status : uint8_t { ready = 7 };
+        Point make(int x, int y) {
+            mut Point result{};
+            result.x = x;
+            result.y = y;
+            return result;
+        }
+        Point echo(Point value) { return value; }
+        [[borrowed_from(value)]] Point& view(Point& value) { return value; }
+        [[borrowed_from(value)]] mut Point& edit(mut Point& value) { return value; }
+        Status status(Status value) { return value; }
+        namespace operations {
+            int sum(Point value) { return value.x + value.y; }
+        }
+    }
+}
+// Reopening the namespace does not export its private siblings.
+namespace domain { namespace geometry { int secret() { return 91; } } }
+
+// A root alias selects the original type even inside a shadowing namespace.
+using RootPoint = domain::geometry::Point;
+using RootStatus = domain::geometry::Status;
+export namespace shadow {
+    namespace domain { namespace geometry {
+        struct Point { bool flag = true; Point() = default; };
+    } }
+    struct Packet {
+        RootPoint point;
+        domain::geometry::Point local;
+        RootStatus status = RootStatus::ready;
+        Packet() = default;
+    };
+    Packet echo(Packet value) { return value; }
+}
+namespace gtilib_type_0_ { export int count(int value) { return value; } }

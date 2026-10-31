@@ -27,6 +27,8 @@ public:
     this.calls++;
     Guard call{std::string("call")};
     if (mode == 2 && this.calls == 4) { int failure = 1 / (mode - 2); }
+    if (mode == 4 && this.calls == 4) { int failure = 1 / (mode - 4); }
+    if (mode == 5 && this.calls == 4) { int failure = 1 / (mode - 5); }
     return left < right;
   }
 };
@@ -35,6 +37,10 @@ int main(int argc, std::vector<std::string> argv) {
   mode = argc;
   Guard outer{std::string("outer")};
   mut std::vector<int> values = {4, 3, 2, 1};
+  if (mode == 4 || mode == 5) {
+    values.clear();
+    for (mut int i = 0; i < 32; i++) { values.push_back(mode == 4 ? i : (i * 17) % 32); }
+  }
   std::sort(values, Ordering());
   for (auto& value : values) { std::println(value); }
   return 0;

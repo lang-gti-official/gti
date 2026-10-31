@@ -261,8 +261,15 @@ of `tests/fixtures/reflection_construct.gti` and
 subsequently implemented and promoted as described in the completed acceptance
 gate below. The two reflection defects found by the audit (GitHub #4, dropped
 receiver evaluation; GitHub #5, unchecked owner type) are fixed here.
-Invocation through a metaobject (`invoke`) is not provided (Q16: metadata
-first); static fields and a declaration-position type spelling (R7) remain
+**Revision (2026-10-30):** the earlier Q16 metadata-first boundary has been
+advanced by the owner's Q10 choice of typed, compile-time-selected invocation.
+Instance-method invocation through a selected method metaobject is now
+implemented for concrete non-static, non-operator methods, including inherited,
+virtual, generic and consuming methods, through ordinary checked call lowering.
+Qualified static, operator and constructor invocation remain separate goals:
+their prerequisites are checked static/operator/constructor call geometry with
+declaration identity and the same access, loan and lifecycle proofs as a direct
+call. Static fields and a declaration-position type spelling (R7) remain
 open. `primary_name_of<T>()` answers the primary-template question as a name
 (the JSON gate needed it to recognise `std::vector` fields).
 

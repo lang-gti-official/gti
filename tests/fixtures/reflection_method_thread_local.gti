@@ -1,0 +1,18 @@
+import std.meta;
+mut int32_t steps = 0;
+class Probe {
+public:
+  Probe() = default;
+  int32_t read() { return 7; }
+};
+std::meta::method<Probe, 0> select_method() {
+  steps = steps + 1;
+  return std::meta::method<Probe, 0>();
+}
+thread_local std::meta::method<Probe, 0> descriptor = select_method();
+int main() {
+  Probe probe{};
+  int32_t result = descriptor.invoke(probe);
+  int32_t again = descriptor.invoke(probe);
+  return result == 7 && again == 7 && steps == 1 ? 0 : 1;
+}

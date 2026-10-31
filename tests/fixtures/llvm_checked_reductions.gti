@@ -1,0 +1,100 @@
+import std.algorithm;
+import std.string;
+import std.vector;
+
+class ReductionCleanup {
+  int identity;
+public:
+  ReductionCleanup(int identity) : identity(identity) {}
+  ~ReductionCleanup() { std::println(this.identity); }
+};
+
+// This predicate is user-defined ordinary source, not a standard-library hook.
+class SelectRemainder {
+  int excluded;
+public:
+  SelectRemainder(int excluded) : excluded(excluded) {}
+  bool accepts(int value) { return value % 3 != this.excluded; }
+};
+
+int ordinary(int limit) {
+  ReductionCleanup inner{2};
+  SelectRemainder predicate{1};
+  mut int count = 0;
+  mut int sum = 7;
+  mut int visits = 0;
+  for (mut int index = 0; index < limit; index++) {
+    visits += 1;
+    if (predicate.accepts(index)) {
+      count += 1;
+      sum += 2;
+      sum += 3;
+    }
+  }
+  // Exercise the generic iterator/captured-callable consumer independently.
+  mut std::vector<int> values{};
+  for (mut int index = 0; index < limit; index++) values.push_back(index);
+  int excluded = 1;
+  int selected = int(std::count_if(values, [excluded](int &value) -> bool {
+    return value % 3 != excluded;
+  }));
+  std::println(visits);
+  std::println(selected);
+  std::println(sum);
+  return count;
+}
+
+int signed_boundary(int limit) {
+  ReductionCleanup inner{2};
+  mut int total = 2147483640;
+  for (mut int index = 0; index < limit; index++) {
+    ReductionCleanup iteration{9};
+    total += 3; // signed-boundary
+  }
+  return total;
+}
+
+uint32_t unsigned_boundary(int limit) {
+  ReductionCleanup inner{2};
+  mut uint32_t total = uint32_t(4294967290);
+  for (mut int index = 0; index < limit; index++) {
+    ReductionCleanup iteration{9};
+    total += uint32_t(2); // unsigned-boundary
+  }
+  return total;
+}
+
+int narrow_boundary(int limit) {
+  ReductionCleanup inner{2};
+  mut int8_t total = int8_t(120);
+  for (mut int index = 0; index < limit; index++) {
+    ReductionCleanup iteration{9};
+    total += 3; // narrow-boundary
+  }
+  return int(total);
+}
+
+int alternative(int limit) {
+  ReductionCleanup inner{2};
+  mut int decreasing = 0;
+  mut int dynamic = 5;
+  for (mut int index = 0; index < limit; index++) {
+    decreasing -= 2;
+    dynamic += limit;
+    if (index == 5) break;
+  }
+  return decreasing + dynamic;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc != 3) return 10;
+  int mode = int(argv[std::size_t(1)].size());
+  int limit = int(argv[std::size_t(2)].size());
+  ReductionCleanup outer{1};
+  if (mode == 0) std::println(ordinary(limit));
+  else if (mode == 1) std::println(signed_boundary(limit));
+  else if (mode == 2) std::println(unsigned_boundary(limit));
+  else if (mode == 3) std::println(narrow_boundary(limit));
+  else std::println(alternative(limit));
+  return 0;
+}

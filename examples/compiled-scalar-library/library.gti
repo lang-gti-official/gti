@@ -1,0 +1,6 @@
+export module numbers;
+import "implementation.gti";
+
+export int choose(int value) {
+    return choose_impl(value);
+}

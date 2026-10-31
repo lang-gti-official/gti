@@ -16,6 +16,12 @@
 namespace lang {
 namespace {
 
+// A distinct element type prevents linker coalescing with uninstrumented
+// integer deque operations in prebuilt LLVM libraries.
+struct CaptureWorkItem {
+  std::size_t value;
+};
+
 [[nodiscard]] bool rawProjection(const MirPlace &place) {
   return std::any_of(place.projections.begin(), place.projections.end(),
                      [](const MirPlaceProjection &projection) {
@@ -1100,7 +1106,7 @@ struct CaptureFlow {
     return result;
   std::vector<std::optional<KeySet>> entering(body.blocks.size());
   entering[body.entry - 1] = initial;
-  std::deque<MirBlockId> work{body.entry};
+  std::deque<CaptureWorkItem> work{{body.entry}};
   std::map<MirInstructionId, KeySet> before;
   const auto propagate = [&](MirBlockId successor, const KeySet &state) {
     if (successor == 0 || successor > entering.size())
@@ -1114,10 +1120,10 @@ struct CaptureFlow {
       changed = next->merge(state);
     }
     if (changed)
-      work.push_back(successor);
+      work.push_back({successor});
   };
   while (!work.empty()) {
-    const MirBlockId id = work.front();
+    const MirBlockId id = work.front().value;
     work.pop_front();
     const MirBlock *block = body.findBlock(id);
     if (block == nullptr || !entering[id - 1])
@@ -1368,10 +1374,10 @@ deriveMirProgramCaptureSummaries(const MirProgram &program) {
     std::sort(list.begin(), list.end());
     list.erase(std::unique(list.begin(), list.end()), list.end());
   }
-  std::deque<std::size_t> work;
+  std::deque<CaptureWorkItem> work;
   std::vector<bool> queued(result.bodies.size(), true);
   for (std::size_t index = 0; index < result.bodies.size(); ++index)
-    work.push_back(index);
+    work.push_back({index});
   std::size_t visits = 0;
   const std::size_t budget = 16 * result.bodies.size() + 16;
   bool converged = true;
@@ -1380,7 +1386,7 @@ deriveMirProgramCaptureSummaries(const MirProgram &program) {
       converged = false;
       break;
     }
-    const std::size_t index = work.front();
+    const std::size_t index = work.front().value;
     work.pop_front();
     queued[index] = false;
     auto &[address, summary] = result.bodies[index];
@@ -1392,7 +1398,7 @@ deriveMirProgramCaptureSummaries(const MirProgram &program) {
     for (const std::size_t caller : callers[index])
       if (!queued[caller]) {
         queued[caller] = true;
-        work.push_back(caller);
+        work.push_back({caller});
       }
   }
   if (!converged)

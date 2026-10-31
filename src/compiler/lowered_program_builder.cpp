@@ -28,6 +28,59 @@
 namespace lang {
 namespace {
 
+std::optional<ConstantValue>
+declarationDefault(const VariableDecl &declaration, const BindingInfo &binding,
+                   const SemanticModel &semantics) {
+  const auto *expression = declaration.initializer().get();
+  if (!expression)
+    return std::nullopt;
+  if (auto value = semantics.findConstant(*expression))
+    return convertConstantToType(*value, binding.type).value;
+  if (const auto *qualified = exprAs<QualifiedName>(expression)) {
+    if (const auto *enumerator = semantics.findEnumerator(*qualified)) {
+      const auto *owner = semantics.findEnumType(enumerator->owner);
+      if (owner && !owner->payload && enumerator->type == binding.type)
+        if (const auto domain = constantIntegerDomain(owner->underlyingType))
+          return ConstantEnum{
+              enumerator->owner,
+              makeConstantInteger({.negative = enumerator->value.negative,
+                                   .magnitude = enumerator->value.magnitude},
+                                  *domain)};
+    }
+  }
+  // Literal defaults already have resolved types. Reuse the shared literal
+  // conversion kernel; this is deliberately not another expression evaluator.
+  if (const auto *literal = exprAs<LiteralExpr>(expression)) {
+    auto value = evaluateConstantLiteral(literal->value(),
+                                         constantIntegerDomain(binding.type));
+    if (value.value)
+      return convertConstantToType(*value.value, binding.type).value;
+  }
+  if (const auto *unary = exprAs<Unary>(expression);
+      unary && unary->oper().kind == TokenKind::MINUS) {
+    if (const auto *literal = exprAs<LiteralExpr>(unary->right().get())) {
+      if (const auto *magnitude =
+              std::get_if<std::uint64_t>(&literal->value())) {
+        if (const auto domain = constantIntegerDomain(binding.type))
+          return convertConstantToType(
+                     makeConstantInteger(
+                         {.negative = true, .magnitude = *magnitude}, *domain),
+                     binding.type)
+              .value;
+      }
+      auto value = evaluateConstantLiteral(literal->value());
+      if (value.value) {
+        auto negative =
+            evaluateConstantUnary(TokenKind::MINUS, *value.value,
+                                  constantIntegerDomain(binding.type));
+        if (negative.value)
+          return convertConstantToType(*negative.value, binding.type).value;
+      }
+    }
+  }
+  return std::nullopt;
+}
+
 // The lowered contract carries dispatch selections in its own identities,
 // which number instances exactly as HIR does.
 std::vector<LoweredVirtualDispatch>
@@ -601,6 +654,45 @@ public:
   }
 
 private:
+  void retainSourceMembers(LoweredClassDeclaration &record,
+                           const StmtList &members) const {
+    for (const auto &member : members) {
+      if (!member)
+        continue;
+      if (const auto *conditional = stmtAs<ConditionalStmt>(member.get())) {
+        if (const auto *active = conditional->activeBranch(target_))
+          retainSourceMembers(record, *active);
+      } else if (const auto *group =
+                     stmtAs<MutableFieldGroupDecl>(member.get())) {
+        retainSourceMembers(record, group->members());
+      } else if (const auto *constructor =
+                     stmtAs<ConstructorDecl>(member.get())) {
+        const auto *info = semantics_.findConstructor(*constructor);
+        if (info && info->kind == ConstructorKind::Ordinary &&
+            info->parameterTypes.empty() && info->genericParameters.empty() &&
+            info->requirements.empty() && !constructor->requiresClause() &&
+            !info->constexprConstructor && !info->requiresUnsafe &&
+            !info->compilerPrivate && !info->borrowParameter &&
+            constructor->specifier() &&
+            constructor->specifier()->kind ==
+                SpecialMemberSpecifierKind::Defaulted &&
+            !record.defaultedDefaultAccess)
+          record.defaultedDefaultAccess = info->access;
+        else
+          record.declaresOtherConstructors = true;
+      } else if (stmtAs<FunctionDecl>(member.get())) {
+        record.declaresMemberFunctions = true;
+      } else if (stmtAs<DestructorDecl>(member.get())) {
+        record.declaresDestructor = true;
+      } else if (!stmtAs<VariableDecl>(member.get()) &&
+                 !stmtAs<AccessSpecifierDecl>(member.get()) &&
+                 !stmtAs<StaticAssertDecl>(member.get()) &&
+                 !stmtAs<EmptyStmt>(member.get())) {
+        record.declaresNestedTypes = true;
+      }
+    }
+  }
+
   [[nodiscard]] bool nonGenericClass(ClassId id) const {
     const ClassTypeInfo *owner = semantics_.findClassType(id);
     return owner != nullptr && owner->genericParameters.empty();
@@ -633,17 +725,20 @@ private:
 
   void collectList(const StmtList &statements, LoweredDeclarationId parent,
                    ClassId ownerClass,
-                   const std::vector<std::string> &namespaceScope) {
+                   const std::vector<std::string> &namespaceScope,
+                   bool inheritedExport = false) {
     for (const StmtPtr &statement : statements) {
       if (statement != nullptr) {
-        collectStatement(*statement, parent, ownerClass, namespaceScope);
+        collectStatement(*statement, parent, ownerClass, namespaceScope,
+                         inheritedExport);
       }
     }
   }
 
   void collectStatement(const Stmt &statement, LoweredDeclarationId parent,
                         ClassId ownerClass,
-                        const std::vector<std::string> &namespaceScope) {
+                        const std::vector<std::string> &namespaceScope,
+                        bool inheritedExport = false) {
     // A separate body contributes executable syntax to its semantic canonical
     // declaration, never a second backend declaration with the same identity.
     if (const auto *definition = stmtAs<FunctionDecl>(&statement)) {
@@ -653,12 +748,14 @@ private:
     }
     if (const auto *conditional = stmtAs<ConditionalStmt>(&statement)) {
       if (const StmtList *active = conditional->activeBranch(target_)) {
-        collectList(*active, parent, ownerClass, namespaceScope);
+        collectList(*active, parent, ownerClass, namespaceScope,
+                    inheritedExport);
       }
       return;
     }
     if (const auto *group = stmtAs<MutableFieldGroupDecl>(&statement)) {
-      collectList(group->members(), parent, ownerClass, namespaceScope);
+      collectList(group->members(), parent, ownerClass, namespaceScope,
+                  inheritedExport);
       return;
     }
     if (stmtAs<StaticAssertDecl>(&statement) != nullptr ||
@@ -681,6 +778,8 @@ private:
         row.source = tokenSpan(declaration->name());
         row.semanticIdentity = instance.declaration;
         LoweredEnumDeclaration payload{
+            .explicitlyExported =
+                inheritedExport || declaration->exportKeyword().has_value(),
             .id = instance.declaration,
             .type = instance.type,
             .sourceUnit = instance.sourceUnit,
@@ -718,12 +817,14 @@ private:
     const StmtList *children = nullptr;
     std::vector<std::string> childNamespace = namespaceScope;
     ClassId childOwner = ownerClass;
+    bool childExport = inheritedExport;
     if (const auto *declaration = stmtAs<NamespaceDecl>(&statement)) {
       row.kind = LoweredDeclarationKind::Namespace;
       row.name = declaration->name().lexeme;
       row.source = tokenSpan(declaration->name());
       children = &declaration->declarations();
       childNamespace.push_back(row.name);
+      childExport = inheritedExport || declaration->exportKeyword().has_value();
     } else if (const auto *declaration =
                    stmtAs<NamespaceAliasDecl>(&statement)) {
       row.kind = LoweredDeclarationKind::NamespaceAlias;
@@ -762,6 +863,8 @@ private:
         childNamespace = row.namespaceScope;
         childOwner = info->id;
         LoweredClassDeclaration payload{
+            .explicitlyExported =
+                inheritedExport || declaration->exportKeyword().has_value(),
             .id = info->id,
             .sourceUnit = info->sourceUnit,
             .qualifiedName = info->qualifiedName,
@@ -790,6 +893,7 @@ private:
             .compilerPrivate = info->compilerPrivate,
             .reflectPrivate = info->reflectPrivate,
             .computedTypeProjection = info->computedTypeProjection};
+        retainSourceMembers(payload, declaration->members());
         payload.bases.reserve(info->bases.size());
         for (std::size_t index = 0; index < info->bases.size(); ++index) {
           payload.bases.push_back({.type = info->bases[index].type,
@@ -873,7 +977,9 @@ private:
             .pureVirtual = info->pureVirtual,
             .overrideMethod = info->overrideMethod,
             .hasRequiresClause = declaration->requiresClause().has_value(),
-            .compilerPrivate = info->compilerPrivate};
+            .compilerPrivate = info->compilerPrivate,
+            .explicitlyExported =
+                inheritedExport || declaration->exportKeyword().has_value()};
       }
     } else if (const auto *declaration = stmtAs<ConstructorDecl>(&statement)) {
       row.kind = LoweredDeclarationKind::Constructor;
@@ -944,6 +1050,9 @@ private:
             .access = info->access,
             .traits = info->traits,
             .constant = info->constant,
+            .initializerConstant =
+                ownerClass ? declarationDefault(*declaration, *info, semantics_)
+                           : std::nullopt,
             .mutability = declaration->mutability(),
             .staticStorage = info->staticStorage,
             .threadLocalStorage = info->threadLocal,
@@ -979,7 +1088,7 @@ private:
     result_.push_back(std::move(row));
     const LoweredDeclarationId id = result_.back().id;
     if (children != nullptr) {
-      collectList(*children, id, childOwner, childNamespace);
+      collectList(*children, id, childOwner, childNamespace, childExport);
     }
     if (stmtAs<ClassDecl>(&statement) != nullptr) {
       for (const auto &constructor : semantics_.designatedConstructors) {

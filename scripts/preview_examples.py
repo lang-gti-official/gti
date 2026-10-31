@@ -12,7 +12,7 @@ import xml.etree.ElementTree as ET
 
 # The corpus owns all numbered top-level programs; the remaining established
 # harnesses own nested projects and local HTTP/native prerequisites.
-TESTS = {"mir_cutover_corpus_oracle", "practical_examples",
+TESTS = {"compiled_namespaces", "compiled_dependency_project", "compiled_value_types", "compiled_borrow_library", "compiled_primitive_library", "compiled_libraries_project", "compiled_library_project", "compiled_scalar_library", "mir_cutover_corpus_oracle", "practical_examples",
          "project_cli_workflow", "scoped_configuration_defines", "native_enum_bindgen",
          "native_typedef_bindgen", "native_union_bindgen", "native_variable_bindgen",
          "process_resource_policy", "llvm_embedding_project",
@@ -21,7 +21,7 @@ TESTS = {"mir_cutover_corpus_oracle", "practical_examples",
          "llvm_payload_execution", "llvm_placement_execution", "llvm_dispatch_execution",
          "llvm_native_c_indirect_execution", "llvm_native_c_aggregate_execution",
          "llvm_native_c_storage_execution"}
-NESTED = {"allocator-support", "annotated-tests", "infallible-embedding",
+NESTED = {"compiled-namespaces", "compiled-dependencies", "compiled-value-types", "compiled-borrowing", "compiled-primitive-library", "compiled-libraries", "compiled-scalar-library", "allocator-support", "annotated-tests", "infallible-embedding",
           "libc-region-provider", "llvm", "module-only", "module-system", "native-callback-slots",
           "native-enum-bindings", "native-union-bindings", "native-variable-bindings",
           "objective-cpp-bridge", "scoped-configuration",
