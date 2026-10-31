@@ -1576,6 +1576,7 @@ paths = [
 ]
 owners = [
   "agent_workflow",
+  "rollup",
 ]
 consumers = []
 
@@ -1594,6 +1595,7 @@ paths = [
 ]
 owners = [
   "agent_workflow",
+  "rollup",
 ]
 consumers = [
   "preview_workflow",
