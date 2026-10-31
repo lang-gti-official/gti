@@ -1427,10 +1427,37 @@ calls, while the existing target-family matrix rejects cross-family adapters.
 Native execution remains limited by the backend's macOS arm64/Linux x86_64
 admission; the Windows provider mapping is not Windows execution evidence.
 Fresh allocation does not imply that pointers copied from it are disjoint from
-one another. Nor does this
-annotation alone export fresh output fields through an outlined source helper;
+one another. Nor does this annotation alone export fresh output fields through
+an outlined source helper;
 inlining and interprocedural representation remain separate optimization work.
 See LLVM's [return-value alias contract](https://llvm.org/docs/LangRef.html#parameter-attributes).
+
+### Failure-edge likelihood
+
+The native source-body adapter supplies a successful-execution likelihood for
+checked detectors and the boolean failure-status edges of direct calls,
+function-pointer calls, memory operations and cleanup. `Failures::branchOnSuccess`
+and `branchOnFailure` centralize the opposite predicate conventions. Both
+continuations remain present, with relative weights of 2000 for success and 1
+for failure. These are backend heuristics, not measured profile counts,
+semantic assumptions, or permissions to remove a check. They let LLVM's block
+layout and cost models retain the expected preference when a failure merely
+propagates and has no directly visible cold originator call.
+
+The helpers create only these specific failure-transport branches. Ordinary MIR
+branches, recoverable result payloads, ownership-liveness branches and decisions
+already inside the exceptional cleanup machinery do not acquire this preference.
+Existing profile metadata is not rewritten. Body lowering still owns the exact
+failure record, source identity, continuation and cleanup schedule; the
+representation hint changes none of those contracts. LLVM's existing cold
+originator and terminal helpers retain their separate attributes.
+
+`llvm_optimization_pipeline` checks both predicate polarities, a nonzero failure
+weight, cleanup-status edges, and the absence of hints on ordinary control and
+liveness branches. Native callable and cleanup regressions exercise failing
+inputs as well as successful execution. Performance remains a measured
+acceptance obligation: this preference is not a claim about the frequency or
+speed of every application's failure path.
 
 ## Per-Instance Effects
 
