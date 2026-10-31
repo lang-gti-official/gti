@@ -1,5 +1,6 @@
 import std.memory;
 import std.format;
+import std.string;
 import std.vector;
 
 // Each node owns its successor. No raw pointer establishes this relationship.
