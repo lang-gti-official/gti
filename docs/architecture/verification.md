@@ -9247,8 +9247,8 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `lsp_scalability_benchmark_smoke` | real JSON-RPC workload/schema, frontend work traces, root-only dependency reuse, scoped dirty-dependency invalidation, protocol-valid completion/cancellation race handling, supersession, and bounded cache occupancy without a CI wall-time threshold |
 | `c_abi_header_boundary` | C11 compatibility of public C ABI headers |
 | `release_version_policy` | version/release workflow contract |
-| `repository_hosting` | fail-closed Gitea source, workflow, release, installer, Lazy package, issue-template and delivery authority; no live GitHub automation/backup push; explicit historical identity exceptions and manual macOS platform boundaries |
-| `release_asset_sync` | Gitea release-scoped post-upload asset synchronization; deterministic retired-platform removal, incomplete-upload protection, canonical HTTPS credentials, redirect refusal, malformed-identity and empty-input rejection |
+| `repository_hosting` | fail-closed hosting split: GitHub source, CI, merge-queue gate and toolchain releases; Gitea only for the `gti add` registry and reference website; pinned actions, secret scoping, Lazy and installer URLs, explicit historical identity exceptions |
+| `release_asset_sync` | release-scoped post-upload asset synchronization for the frozen Gitea release workflow; deterministic retired-platform removal, incomplete-upload protection, canonical HTTPS credentials, redirect refusal, malformed-identity and empty-input rejection |
 | `benchmark_harness` | strict schema-1 GTI/C++ and schema-2 multi-GTI/profile descriptors; schema-3 fixed-native attribution; schema-4 bounded generated arithmetic proxies; path and provenance containment; correctness records; deterministic interleaving; and threshold-free vector plus managed-thread smoke execution |
 | `compile_time_harness` | sequential clean/full/emission/native/C++ attribution with preserved compiler identities; raw samples and randomized order; before/after emission equality and optimized runtime output checks; existing-output preservation and invalid repetition rejection, without a timing threshold |
 | `runtime_performance_workloads` | threshold-free build, execution, descriptor, and exact-result-record coverage for the admitted checked-scalar, fixed-array proof/overflow, strict-FP, optimizer-level, and game-update workloads |
@@ -9426,15 +9426,14 @@ when the public wrapper is added.
 `installed_native_record_pipeline` additionally verifies that the packaged
 compiler library exposes the same semantic/HIR/MIR native-record contract.
 
-The live workflows are Gitea Actions under `.gitea/workflows/` of canonical
-`gti-lang/gti` (`ci.yml`, `release.yml`), running on existing Linux runners.
-Policy revision (2026-10-24): GitHub automation is retired under
-`docs/plans/archive/github-actions-20261024/`; no helper/workflow pushes to
-GitHub or a backup. The owner selected manual Apple Silicon stable publication,
-not installation of a macOS runner service. Linux-only automated nightly assets
-must not imply automatic macOS availability. See the manual release contract in
-`build-and-driver.md`. Local/managed-runner macOS validation remains required
-where the affected invariant requires it. The budgets, preflights and selections below remain enforced,
+The live workflows are GitHub Actions under `.github/workflows/` of canonical
+`lang-gti-official/gti`: `ci.yml` (the required `CI gate`, including the
+merge-queue suite), the nightly and release-train workflows, and the rollup
+bot. They run on GitHub-hosted `ubuntu-24.04` and `macos-26` runners. Policy
+revision (2026-10-29): this supersedes the 2026-10-24 Gitea-only policy, and
+`.gitea/workflows/release.yml` is the frozen predecessor. See "Required CI and
+the merge queue" in `agent-workflow.md` and the channels in
+`build-and-driver.md`. The budgets, preflights and selections below remain enforced,
 and the helper scripts and their gates (`ci_resources`, `ci_cache`,
 `ci_sanitizer_capability`, `ci_release`, `release_asset_sync`,
 `release_version_policy`, `repository_hosting`) guard them. The CI workflow
@@ -10832,11 +10831,10 @@ conflict resume, duplicate-batch exclusion, withdrawal/release, stale source
 and missing-platform refusal, complete CTest inventories/results, required
 regression skips, optimized build ownership, and advisory CI classification. Workflow-only
 changes use these tests and their affected tooling gates rather than a full
-GTI semantic suite. CI still runs full native/sanitizer coverage for compiler
-integration candidates as advisory feedback. Gitea Actions never gates local
-validation, integration or completion; preserve exact-source local/managed-runner
-coverage and required platform/performance evidence, and report pending/failed
-CI separately rather than waiting for runner capacity or calling it passed.
+GTI semantic suite. The merge queue runs the complete native and sanitizer
+suite on every candidate and is the required integration gate. Contributors
+run focused checks and report the complete suite as deferred to the queue,
+never as passed.
 
 ## Development And Completion Cadence
 
@@ -11328,7 +11326,7 @@ instrumentation retained.
 
 ## Repository Build Generator
 
-First-party developer instructions and Gitea automation configure CMake
+First-party developer instructions and GitHub Actions configure CMake
 with the Ninja generator. CMake remains the portable configuration and build
 entry point; workflows invoke `cmake --build` rather than calling `ninja`
 directly. Every fresh production build tree, including sanitizer, release, and
@@ -11348,9 +11346,10 @@ they exercise the explicit CMake/CTest/Make bootstrap without compiling GTI.
 ## Platform Signal
 
 Local verification uses macOS/AppleClang and the configured Linux managed
-runners where the changed invariant requires Linux evidence. Gitea Actions
-(`ubuntu-latest`, GCC/libstdc++) supplies advisory feedback, not a replacement
-for required exact-source local/managed-runner platform checks. Two additional
+runners where the changed invariant requires Linux evidence. The merge queue
+runs the complete suite on Linux x64 (GCC 14, libstdc++) and macOS arm64 (Apple
+clang 21) for every candidate, so a GCC-only divergence fails integration
+rather than surfacing later. Two additional
 mitigations catch platform differences. First, all first-party targets compile with `-Wall -Wextra
 -Werror`, which turns the compiler-divergence class that previously
 surfaced only on GCC — for example C++20 designated-initializer

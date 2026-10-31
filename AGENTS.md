@@ -9,6 +9,9 @@ the `gti add` package registry (`gti-lang` library packages such as libc); its
 `gti-lang/gti` `main` is frozen and accepts no merges. GitHub
 history carries rewritten commit identities (identical trees, new commit IDs),
 so Gitea-era branches and task records move over by tree identity (`rehost`).
+Every Gitea issue was migrated to GitHub with a new number. An issue or PR
+number cited before 2026-10-29 is a Gitea number: translate it with
+`docs/plans/archive/gitea-issue-map.md`.
 When resuming an old worktree, read the current primary checkout's guidance and
 workflow skill, and use its helper with `--repo <task-worktree>`.
 
@@ -187,8 +190,11 @@ not a C++ wrapper, and neither backend defines its semantics.
   detached run IDs remember their original connection. Do not leave ad hoc
   clones or builds on any runner.
 - Use `scripts/agent_workflow.py` for lifecycle operations. `finish` marks the
-  PR ready and adds it to the merge queue pinned to the verified head; the
-  queue merges asynchronously and `sync` advances local `main` once it lands.
+  PR ready and either labels it for a rollup (phase `rollup`), which the rollup
+  bot combines with other green PRs into one queue entry, or, for Risk-system
+  diffs and `--no-rollup`, adds it to the merge queue alone pinned to the
+  verified head (phase `queued`). Both are completion points; the queue merges
+  asynchronously and `sync` advances local `main` once it lands.
   Reconcile only to resolve conflicts: an advancing `main` does not void
   focused evidence. No direct pushes to `main`, rewritten shared history, or
   administrative bypasses. The owner authorizes the helper's
@@ -289,31 +295,51 @@ one-off implementation-note or redesign files when an existing category fits.
 ## Release Channels And VERSION
 
 Two channels publish this repository, and they answer different questions.
-Toolchain releases are moving to GitHub Releases on `lang-gti-official/gti`.
-The previous workflow (`.gitea/workflows/release.yml`) fired on Gitea `main`,
-which is now frozen, so no toolchain release publishes until the GitHub release
-workflow replaces it; until then the installer keeps downloading the existing
-Gitea release archives. Do not publish new toolchain releases to Gitea, and do
-not promise automatic nightly or macOS assets before that workflow lands. The
-`gti add` package registry stays on Gitea and is unaffected. See the manual
-publication contract in `docs/architecture/build-and-driver.md`.
+Toolchain releases publish to GitHub Releases on `lang-gti-official/gti`.
+`.github/workflows/nightly.yml` and the release train (`train.yml`, `beta.yml`,
+`backport.yml`, `rollback.yml`, logic in `scripts/release_train.py`) package
+`linux-x64` and `darwin-arm64` on GitHub-hosted runners; `linux-arm64` waits
+for a reviewed linux-aarch64 runtime compiler profile. The Neovim installer
+downloads from GitHub Releases. The
+frozen Gitea workflow (`.gitea/workflows/release.yml`) no longer runs. Do not
+publish toolchain releases to Gitea. The `gti add` package registry stays
+on Gitea and is unaffected. See "Published Toolchain Channels" in
+`docs/architecture/build-and-driver.md`.
 
-- **Nightly** republishes one rolling `nightly` release per commit on `main`.
-  It is automatic, replaces its own assets, and needs no `VERSION` change.
-  Every merged commit reaches users through this channel.
-- **Stable** publishes `v<VERSION>` when `VERSION` changes. It is the channel
-  someone pins to.
+- **Nightly** republishes one rolling `nightly` prerelease, daily, from the
+  newest `main` commit that passed the merge queue's `CI gate`. It replaces
+  its own assets and needs no `VERSION` change. Every merged commit reaches
+  users through this channel.
+- **Beta** is `v<VERSION>-beta.<K>`, a GitHub prerelease. Every 48 hours the
+  train cuts the published nightly's commit, once it has been on `main` for 24
+  hours, into a `Release-Cut:` PR that the merge queue lands like any other
+  change; `beta.yml` then builds that cut commit, opens the
+  `beta/<major>.<minor>` line and publishes beta 1. Fixes reach a line only as
+  `git cherry-pick -x` backports of `main` commits through `backport.yml`; a
+  user-visible backport ends with a patch release cut.
+- **Stable** is `v<VERSION>`, the channel someone pins to and the tag Lazy's
+  `version = "*"` resolves (it ignores prerelease tags). The train promotes a
+  beta that soaked 48 hours with no open `release-blocker` issue naming its
+  version, behind the protected `stable` environment, by republishing the
+  beta's archives byte for byte. Stable tags and releases are immutable.
+  `rollback.yml` withdraws a beta or yanks a stable version through the
+  `release-status` branch, which the installer reads; it never installs a
+  yanked version or another version in its place.
 
-Advance `VERSION` only when a user of the toolchain would observe the change:
-language surface, CLI or driver behavior, diagnostics they would see, packaged
-contents, or a fix to any of those. Bump the patch component for a fix and the
-minor component for new or changed surface.
+Never push a `v*` tag or the `release-status` branch by hand, change a
+`beta/*` line only through a backport PR, and never move or delete any of them.
+See "GitHub release train" in `docs/architecture/build-and-driver.md`.
 
-Do **not** advance `VERSION` for work that is invisible from outside the
-toolchain, including internal refactors, moving authority between compiler
-phases, added tests, documentation, or plan updates. Nightly already delivers
-that work. A commit that changes no user-visible behavior should leave
-`VERSION` alone, and most commits during an internal campaign will.
+Pull requests never edit `VERSION` or `CHANGELOG.md`. A change a toolchain user
+would observe (language surface, CLI or driver behavior, diagnostics they would
+see, packaged contents, or a fix to any of those) adds one
+[changelog fragment](changes/README.md), `changes/<name>.<kind>.md`, with kind
+`breaking`, `feature` or `fix`. Invisible work (internal refactors, moving
+authority between compiler phases, tests, documentation, plans) needs no
+fragment, or an `internal` one, or the `Release-Impact: internal` trailers.
+A release cut (`scripts/cut_release.py`) assembles pending fragments into one
+CHANGELOG section and the next `VERSION`; only its `Release-Cut:` commit
+changes `VERSION`, so concurrent pull requests never collide on a version.
 
 ## Outcome Priority
 

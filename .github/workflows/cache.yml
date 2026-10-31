@@ -1,0 +1,93 @@
+name: Compiler cache
+
+# GitHub shares an Actions cache across branches only when the default branch
+# saved it. CI runs on pull requests and merge-queue refs, never on main, so
+# without this workflow every PR and every queue entry compiled the whole tree
+# cold. After each merge to main, this builds each CI compile configuration
+# (no tests) and saves its ccache under main, where every later pull request
+# and merge-group run restores it. The configure lines must match ci.yml
+# exactly (tests/repository_hosting_test.py checks), or the objects miss.
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 3 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer main supersedes a warm-up still compiling an older one.
+concurrency:
+  group: gti-compiler-cache
+  cancel-in-progress: true
+
+jobs:
+  warm:
+    name: Warm the ${{ matrix.profile }} cache (${{ matrix.platform }})
+    if: github.repository == 'lang-gti-official/gti'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-24.04, platform: linux, profile: native, memory: 2048, build: build}
+          - {os: macos-26, platform: darwin, profile: native, memory: 2048, build: build}
+          - {os: ubuntu-24.04, platform: linux, profile: sanitizers, memory: 3072, build: build-sanitized}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Configure runner resources
+        shell: bash
+        env:
+          GTI_CONFIGURED_JOBS: ${{ vars.GTI_JOBS }}
+          GTI_CONFIGURED_TEST_JOBS: ${{ vars.GTI_TEST_JOBS }}
+          GTI_MEMORY_PER_JOB_MIB: ${{ matrix.memory }}
+          GTI_MEMORY_PER_TEST_MIB: 3072
+        run: bash scripts/configure_ci_resources.sh
+      - name: Install the reviewed compiler, Ninja and LLVM
+        run: bash scripts/configure_ci_toolchain.sh
+      - name: Configure compiler object cache
+        env:
+          GTI_CACHE_DIRECTORY: ${{ runner.temp }}/gti-ccache/${{ matrix.profile }}
+        run: bash scripts/configure_ci_cache.sh
+      - name: Restore the previous main cache
+        id: cache
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.profile }}-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-${{ github.sha }}
+          restore-keys: |
+            gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.profile }}-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-
+            gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.profile }}-
+      - name: Configure
+        if: matrix.profile == 'native'
+        run: >-
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF
+      - name: Configure the sanitizer build
+        if: matrix.profile == 'sanitizers'
+        run: >-
+          cmake -S . -B build-sanitized -G Ninja
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DGTI_BUILD_LSP=OFF
+          -DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF
+          -DGTI_TEST_TIMEOUT_SCALE=6
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+      - name: Build
+        run: cmake --build "${{ matrix.build }}" --parallel "${GTI_JOBS}" -- -k 0
+      - name: Report compiler cache statistics
+        if: always()
+        run: ccache --show-stats || true
+      - name: Save the cache under main
+        if: always() && steps.cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.profile }}-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-${{ github.sha }}

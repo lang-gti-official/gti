@@ -1,0 +1,112 @@
+name: Rollup
+
+# Compose green, rollup-labelled pull requests into one merge-queue entry,
+# queue it, and reconcile the queue's verdict (scripts/rollup.py). Only main's
+# code runs here: no pull-request content is checked out or executed; trial
+# merges are Git plumbing with hooks disabled and no custom merge drivers.
+on:
+  schedule:
+    - cron: "7,37 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Print planned actions without writing
+        type: boolean
+        default: false
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+jobs:
+  authorize:
+    name: Authorize
+    # A comment runs the bot only when its body is exactly /rollup and the
+    # commenter has write, maintain or admin permission (checked by the API).
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name != 'issue_comment' || github.event.comment.body == '/rollup')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      authorized: ${{ steps.check.outputs.authorized }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Check the event and the commenter's permission
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GTI_EVENT_NAME: ${{ github.event_name }}
+          GTI_EVENT_PATH: ${{ github.event_path }}
+        run: |
+          python3 scripts/rollup.py authorize --event-name "${GTI_EVENT_NAME}" \
+            --event "${GTI_EVENT_PATH}" >> "${GITHUB_OUTPUT}"
+
+  rollup:
+    name: Rollup
+    needs: authorize
+    if: needs.authorize.outputs.authorized == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    # One bot at a time across every trigger; a run in progress is never cancelled.
+    concurrency:
+      group: rollup
+      cancel-in-progress: false
+    permissions:
+      # GITHUB_TOKEN only reads: the checkout and the merge-queue CI run list.
+      contents: read
+      actions: read
+    steps:
+      - name: Require the rollup GitHub App secrets
+        env:
+          GTI_ROLLUP_APP_ID: ${{ secrets.GTI_ROLLUP_APP_ID }}
+          GTI_ROLLUP_APP_PRIVATE_KEY: ${{ secrets.GTI_ROLLUP_APP_PRIVATE_KEY }}
+        run: |
+          missing=()
+          [[ -n "${GTI_ROLLUP_APP_ID}" ]] || missing+=(GTI_ROLLUP_APP_ID)
+          [[ -n "${GTI_ROLLUP_APP_PRIVATE_KEY}" ]] || missing+=(GTI_ROLLUP_APP_PRIVATE_KEY)
+          if (( ${#missing[@]} )); then
+            echo "::error::Missing repository secret(s): ${missing[*]}. The rollup bot needs both GTI_ROLLUP_APP_ID and GTI_ROLLUP_APP_PRIVATE_KEY for its GitHub App; it never writes with GITHUB_TOKEN. See .github/README.md, section \"Rollup bot\"."
+            exit 1
+          fi
+      - name: Mint a short-lived installation token for this repository only
+        id: token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ secrets.GTI_ROLLUP_APP_ID }}
+          private-key: ${{ secrets.GTI_ROLLUP_APP_PRIVATE_KEY }}
+          owner: lang-gti-official
+          repositories: gti
+          permission-contents: write
+          permission-pull-requests: write
+          permission-merge-queues: write
+          permission-issues: write
+          permission-checks: read
+          permission-statuses: read
+          permission-metadata: read
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Reconcile, queue and compose rollups
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          GTI_READ_TOKEN: ${{ github.token }}
+          GTI_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          git config --global user.name "GTI rollup bot"
+          git config --global user.email "rollup-bot@users.noreply.github.com"
+          git config --global core.hooksPath /dev/null
+          options=()
+          if [[ "${GTI_DRY_RUN}" == "true" ]]; then
+            options+=(--dry-run)
+          fi
+          python3 scripts/rollup.py reconcile "${options[@]}"
+          python3 scripts/rollup.py enqueue "${options[@]}"
+          python3 scripts/rollup.py compose "${options[@]}"

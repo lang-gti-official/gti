@@ -59,11 +59,11 @@ def main():
         failure = run(
             [sys.executable, checker, documentation, unversioned], root, expected=1
         )
-        if "without advancing VERSION" not in failure.stderr:
+        if "without a changelog fragment" not in failure.stderr:
             raise AssertionError("missing actionable release-version diagnostic")
 
         (root / "VERSION").write_text("1.1.0\n", encoding="utf-8")
-        released = commit(root, "release tool change")
+        released = commit(root, "release tool change\n\nRelease-Cut: 1.1.0")
         run([sys.executable, checker, documentation, released], root)
 
         header = root / "include" / "gti" / "frontend.h"
@@ -124,8 +124,10 @@ def main():
         # Same final version does not exempt a downgrade-and-restore sequence.
         run([sys.executable, checker, restored, churn], root, expected=1)
         (root / "VERSION").write_text("1.1.1\n", encoding="utf-8")
-        final = commit(root, "release accumulated user-visible changes")
-        run([sys.executable, checker, documented, final], root)
+        final = commit(root, "release accumulated user-visible changes\n\nRelease-Cut: 1.1.1")
+        run([sys.executable, checker, churn, final], root)
+        # An uncut downgrade-and-restore inside the range is still refused.
+        run([sys.executable, checker, documented, final], root, expected=1)
 
         # A merge delivers its branch commits, each judged on its own; the
         # merge commit itself needs a declaration only for what it introduces
@@ -185,6 +187,40 @@ def main():
         run(["git", "commit", "--amend", "-m", internal_message], root)
         annotated_merge = run(["git", "rev-parse", "HEAD"], root).stdout.strip()
         run([sys.executable, checker, final, annotated_merge], root)
+
+        # A changelog fragment describes a shipped change without touching
+        # VERSION; the next release cut consumes the fragments.
+        run(["git", "checkout", "-b", "fragments", annotated_merge], root)
+        changes = root / "changes"
+        changes.mkdir()
+        header.write_text("// described by a fragment\n", encoding="utf-8")
+        (changes / "header-fix.fix.md").write_text("Headers no longer drift.\n", encoding="utf-8")
+        described = commit(root, "fix the header")
+        accepted = run([sys.executable, checker, annotated_merge, described], root)
+        if "changes/header-fix.fix.md" not in accepted.stdout:
+            raise AssertionError("fragment acceptance must name the fragment")
+        for name, text in (("Header.md", "text"), ("header.minor.md", "text"),
+                           ("empty.feature.md", "")):
+            run(["git", "checkout", "-q", "-B", "bad-fragment", described], root)
+            header.write_text(f"// {name}\n", encoding="utf-8")
+            (changes / name).write_text(text, encoding="utf-8")
+            bad = commit(root, "bad fragment " + name)
+            run([sys.executable, checker, described, bad], root, expected=1)
+        run(["git", "checkout", "-q", "-B", "cuts", described], root)
+        (root / "VERSION").write_text("1.2.0\n", encoding="utf-8")
+        uncut = commit(root, "bump without a cut")
+        failure = run([sys.executable, checker, described, uncut], root, expected=1)
+        if "Release-Cut" not in failure.stderr:
+            raise AssertionError("an uncut VERSION change must point at the release cut")
+        run(["git", "checkout", "-q", "-B", "cuts", described], root)
+        (root / "VERSION").write_text("1.2.0\n", encoding="utf-8")
+        wrong = commit(root, "cut\n\nRelease-Cut: 1.3.0")
+        run([sys.executable, checker, described, wrong], root, expected=1)
+        run(["git", "checkout", "-q", "-B", "cuts", described], root)
+        (root / "VERSION").write_text("1.2.0\n", encoding="utf-8")
+        (changes / "header-fix.fix.md").unlink()
+        cut = commit(root, "Release 1.2.0\n\nRelease-Cut: 1.2.0")
+        run([sys.executable, checker, described, cut], root)
 
         # Reject unrelated revision comparisons rather than silently omitting
         # changes through a range that never reaches the base.

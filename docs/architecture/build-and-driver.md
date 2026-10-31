@@ -173,18 +173,38 @@ package does not load a downstream LLVM package.
 
 ## Published Toolchain Channels
 
-Source lives on GitHub (`lang-gti-official/gti`), and toolchain releases move
-to its GitHub Releases. Until the GitHub release workflow and installer switch
-land, no new toolchain release publishes and the plugin keeps downloading the
-existing archives from the self-hosted Gitea (`gti-lang/gti`) at
-`https://git.internal.howetotech.dev/gti-lang/gti/releases/download/<tag>/<asset>`.
+Source lives on GitHub (`lang-gti-official/gti`), and toolchain releases
+publish to its GitHub Releases through `.github/workflows/nightly.yml`, described
+under [GitHub nightly publication](#github-nightly-publication), and the
+[release train](#github-release-train) (`train.yml`, `beta.yml`, `backport.yml`,
+`rollback.yml`). The plugin downloads them from
+`https://github.com/lang-gti-official/gti/releases/download/<tag>/<asset>`.
+A Lazy checkout runs its own installer, so a Git tag cut before this switch
+still downloads from the frozen self-hosted Gitea release (`gti-lang/gti`),
+whose archives no longer advance.
+
+The `nightly` channel reads the rolling `nightly` release. The default `stable`
+channel downloads `v<VERSION>` for the checkout's `VERSION`, which the release
+train publishes. A checkout whose `VERSION` has no stable release (main, or a
+beta tag) fails with an error that names that tag and the nightly channel
+(`vim.g.gti_channel = "nightly"` or `GTI_CHANNEL=nightly`). Before a stable
+download, and before reusing an installed stable toolchain, the installer reads
+the [release status](#release-status-and-rollback) and refuses a yanked version
+with its reason and the newest stable version that is not yanked; an
+unreadable status stops a new installation and keeps an installed one. A
+locally built archive (`scripts/install_neovim_local.py`) is installed offline
+without that check. The installer never falls back to Gitea, to another
+version, or to a nightly build on its own, and has no beta channel: a beta's
+archives are downloaded from its prerelease.
 The plugin uses a full HTTPS Git URL, not owner/repository shorthand. Archive
 shapes exist for Linux x64, Linux arm64, and macOS arm64, but an archive is
-published only after native validation. Existing Gitea Linux runners package
-`linux-x64` automatically. The owner selected manual Apple Silicon stable
-publication instead of installing a macOS Actions runner. Linux arm64 has no
-package job. The rolling nightly release is currently Linux-only; do not infer
-macOS availability from a tag or silently serve an older macOS nightly asset.
+published only after native validation on its platform. The GitHub nightly
+packages `linux-x64` and `darwin-arm64`. `linux-arm64` is not packaged: the
+runtime's raw atomic lanes (`runtime/src/atomic_lane.h`) have no reviewed
+linux-aarch64 compiler profile, so no admitted compiler exists for it. TODO:
+add the `ubuntu-24.04-arm` matrix entry once a runtime-safety review admits a
+linux-aarch64 profile. Do not infer a platform's availability from a tag or
+serve an older asset for a platform the current build did not produce.
 Version `v0.299.0` is the final historical macOS x64 toolchain; source
 compilation can still target or run on Intel macOS when its prerequisites are
 supplied locally.
@@ -260,76 +280,221 @@ Builds default to all detected logical CPUs (one if detection is unavailable),
 at normal process priority. `--jobs N` overrides the job count; the dry-run and
 normal output both report the selected parallelism.
 
-A single toolchain-release workflow builds, tests, stages, and smoke-tests each
-Gitea `main` commit on Linux with bundled LLVM/Clang. That verified stage supplies
-nightly and, when `VERSION` changes, stable archives. Stable is archived before
-the nightly `BUILD_ID` stamp; the two channels retain separate artifact names.
-The stable publication job owns the matching immutable tag and versioned
-release. A manual dispatch may rebuild that exact tagged commit, but cannot
-move a stable tag to another commit. New main commits do not cancel stable
-publication.
+### GitHub nightly publication
 
-The `nightly` release is one mutable channel whose tag and `BUILD_ID` advance
-to each admitted Gitea `main` commit. Nightly publication is serialized and
-checks current remote main before changing the tag; a superseded build skips
-publication. Its publication step uploads the complete current asset set before a
-Gitea API pass (`scripts/sync_release_assets.py`) removes any asset not produced by that build. This exact
-synchronization keeps retired platform archives from surviving a successful
-rolling publication while preserving current archives if upload is
-interrupted.
+`.github/workflows/nightly.yml` runs daily at 02:00 UTC and on manual dispatch.
+It publishes only the rolling `nightly` channel. Stable `v<VERSION>` releases
+come from the [release train](#github-release-train), which cuts the commit
+this workflow published.
 
-### Manual macOS release publication
+1. **Select.** The workflow runs only from main's own definition in
+   `lang-gti-official/gti`. It takes main head, or on dispatch an exact 40-hex
+   commit that must be on main. `scripts/resolve_release_source.py
+   select-nightly` requires merge-queue evidence for that exact commit: a
+   `merge_group` run of `.github/workflows/ci.yml` on a
+   `gh-readonly-queue/main/...` branch of this repository whose `head_sha` is
+   the commit and whose latest `CI gate` job concluded `success`. The queue
+   merges by fast-forwarding main to the candidate it tested, so every queued
+   main commit carries that run; CI has no push trigger, and pull-request or
+   dispatch runs are not evidence. A scheduled run skips building when main
+   head is not newer than the published nightly.
+2. **Package.** Each platform (`ubuntu-24.04` for `linux-x64`, `macos-26` for
+   `darwin-arm64`) uses the reviewed compiler from
+   `scripts/configure_ci_toolchain.sh`, configures one
+   `-DCMAKE_BUILD_TYPE=Release -DGTI_RELEASE_BUILD=ON` build with the pinned
+   bundled LLVM/Clang, builds, stages `gti_toolchain` into a fresh directory,
+   and runs the installed CLI/LSP/project, process-resource, managed-thread,
+   atomic-runtime and installed-library consumer checks against that stage.
+   macOS installation generates and verifies `share/gti/host-runtime.json`;
+   `cmake/PackageRelease.cmake` refuses a macOS stage without it. The validated
+   stage becomes `gti-nightly-<platform>.tar.gz` with its `.sha256` sidecar
+   and a `share/gti/BUILD_ID` stamp naming the commit.
+3. **Release suite.** The complete CTest suite exceeds one hosted job's time
+   limit, so it runs on the identical release configuration in the merge
+   queue's cost-balanced shards (`scripts/validation_checks.py shard`), each
+   rebuilding from the packaging job's object cache. The release gate
+   (`validation_checks.py merge-shards`) fails unless every platform ran its
+   whole inventory exactly once on that commit. This is the same rebuilt-tree
+   equivalence the merge queue relies on; the packaged tree itself runs the
+   installed-toolchain checks.
+4. **Publish.** One serialized job (`gti-nightly-publication`, never
+   cancelled in progress) holds the workflow's only write token. It verifies
+   every archive's checksum and stamped `BUILD_ID`, writes the `BUILD_ID`
+   asset, and admits the build (`resolve_release_source.py admit-nightly`) only
+   if the commit is still main head and is newer than or equal to the commit
+   the `nightly` tag names. Equality permits a failed publish job or an explicit
+   dispatch to finish interrupted uploads after the tag moved; scheduled
+   selection still skips unchanged main. An older commit is skipped, and a
+   nightly tag outside main's history is an error. It then attests build provenance, moves
+   the `nightly` tag with `git push --force-with-lease=refs/tags/nightly:<value
+   admission read>` (an empty lease requires the tag not to exist), creates or
+   edits the `nightly` prerelease, uploads archives and checksums before
+   `BUILD_ID`, and only after every current asset is present removes any asset
+   this build did not produce.
 
-This contract governed manual uploads to Gitea releases. No new toolchain
-release is published to Gitea; the GitHub release workflow replaces this
-procedure when it lands, and until then nothing is published.
+The installer contract is unchanged: it reads the `nightly` release's
+`BUILD_ID` asset, downloads `gti-nightly-<platform>.tar.gz` and its `.sha256`,
+and requires the extracted `share/gti/BUILD_ID` to match. A download that races
+publication fails that identity or checksum check and installs nothing. Only
+the moving `nightly` tag exists; dated per-build tags are not created, because
+no client reads them and each would retain full archives.
 
-No macOS background runner is configured or authorized by the hosting cutover.
-For an Apple Silicon **stable** release, use a clean, separate checkout of the
-exact immutable `v<VERSION>` commit advertised by canonical Gitea, not a newer
-`main` with the same archive name. Confirm its tag/commit and `VERSION` agree.
-Build with `-DCMAKE_BUILD_TYPE=Release -DGTI_RELEASE_BUILD=ON` and the documented
-macOS dependencies, using `scripts/build_window.py --kind build` for the full
-build and `--kind suite` for full CTest. Do not use an unoptimized compiler or
-drop required platform/runtime checks.
-
-Stage `gti_toolchain` into a fresh temporary directory with
-`cmake --install <build> --config Release --prefix <stage> --component gti_toolchain`.
-This is private packaging, not installation into the user's active toolchain.
-Run the same installed CLI/LSP/project, process-resource, managed-thread,
-atomic-runtime and installed-library consumer checks as the release workflow,
-against that stage. macOS installation must generate and verify
-`share/gti/host-runtime.json`; do not package a stage with unresolved Homebrew
-runtime dependencies. Then package the checked stage:
-
-```sh
-cmake -DGTI_SOURCE_DIR=<exact-source> -DGTI_STAGE_DIR=<validated-stage> \
-  -DGTI_OUTPUT_DIR=<output-directory> -DGTI_PLATFORM=darwin-arm64 \
-  -DGTI_EXPECTED_TAG=v<VERSION> -P cmake/PackageRelease.cmake
-```
-
-The packager checks the stage, version/tag agreement and macOS runtime manifest,
-and writes `gti-v<VERSION>-darwin-arm64.tar.gz` plus its `.sha256` file. Verify
-the checksum, retain exact-source build/test evidence, then use Gitea's release
-editor to attach **both** files to the existing matching stable release. Do not
-move its tag, create a competing version, delete Linux assets, or upload a
-system-LLVM-only local-install archive as a bundled release. Until those files
-are uploaded, a macOS download is unavailable; source/local installation remains
-available. Stable macOS publication is manual and is not a completed automated
-platform check. Nightly asset pruning intentionally removes archives outside
-its current Linux build rather than retaining misleading old macOS binaries.
+`.gitea/workflows/release.yml` is the frozen predecessor. It built Linux x64
+on each Gitea `main` push, archived stable before the nightly `BUILD_ID` stamp
+when `VERSION` changed, and pruned nightly assets through
+`scripts/sync_release_assets.py`. Gitea `main` no longer advances, so it does
+not run; it stays only as the record of that contract. Manual macOS uploads to
+Gitea releases are retired: GitHub-hosted `macos-26` runners package Apple
+Silicon automatically.
 
 Release archives explicitly use GNU tar format so macOS extended attributes do
 not become AppleDouble companion files after extraction. This preserves the
 installed runtime-header tree's content identity for relocated native cache
 entries; the cache still hashes every real file in that tree.
 
-Stable versions describe user-visible toolchain behavior. Internal compiler or
-runtime work, tests, and documentation alone retain `VERSION` and reach users
-through nightly. `scripts/check_release_version.py` conservatively identifies
-potentially shipped files, including deletions and moves. An unchanged version
-requires each affected commit delivered by the checked range to carry these
-Git trailers. A merge commit is judged only by what differs from the
+### GitHub release train
+
+`scripts/release_train.py` holds every train decision (unit tests:
+`tests/release_train_test.py`; workflow shapes: `tests/ci_release_test.py`).
+The workflows only pass validated values between those checks and `git push`
+or `gh`. Every train ref is created by a plain push that fails rather than
+overwrites; no tag or branch is ever forced, moved or deleted.
+
+1. **Cut** (`train.yml`, job `cut`). The schedule fires daily at 04:00 UTC and
+   the train admits every other UTC day (epoch-day parity), a 48-hour cadence
+   without month-end drift; a dispatch always runs. The source is the commit
+   the `nightly` tag names. It must be on main, carry the same merge-queue
+   evidence nightly selection requires (`resolve_release_source.py
+   queue_evidence`), have the complete uploaded nightly asset set with GitHub's
+   digest of the final `BUILD_ID` matching that commit, and have been on main
+   at least 24 hours, measured from its
+   committer time, which the queue sets when it lands the commit. A dispatch's
+   `min_age_hours` may lower the age for the owner's bootstrap; nothing lowers
+   the queue evidence. The train skips with a notice when a cut already landed
+   after that nightly, when no fragment is pending, or when only fixes are:
+   a train cut opens the next minor line, and patch releases come only from
+   backports. It runs `cut_release.py` on a worktree of the nightly commit,
+   commits the result with its `Release-Cut:` trailer, pushes
+   `release-cut/<version>` and opens the pull request with the gti-rollup App
+   token (a `GITHUB_TOKEN` PR would get no PR checks). It labels the PR
+   `rollup=never` and `release-cut`, waits up to 150 minutes for its `CI gate`
+   and queues its exact head with `enqueuePullRequest`. An open cut PR is
+   resumed instead of cutting again; one the queue rejected stops the train
+   until it is closed (delete its branch with it). The PR body declares
+   `release_version_policy` and `cut_release_policy` as its `Validation:` T1.
+   The App has no Workflows permission and the cut touches only `VERSION`,
+   `CHANGELOG.md` and `changes/`.
+2. **Beta** (`beta.yml`). It runs on `push` to `main` and `beta/**`. A merge
+   queue merge into main is a push made by GitHub, not with `GITHUB_TOKEN`, so
+   it triggers workflows, as does merging a backport PR; only the train's own
+   `GITHUB_TOKEN` tag and branch pushes trigger nothing. A daily 05:30 UTC
+   schedule and dispatch are fallbacks, and selection is idempotent. On main,
+   selection takes the newest first-parent commit whose `VERSION` differs from
+   its first parent's and requires exactly one `Release-Cut: <that version>`
+   commit among the commits it delivered. A `VERSION` change without one, such
+   as imported history, is not a train cut. The beta is built from that cut
+   commit, not from the queue's merge onto a newer main: the cut changes only
+   release metadata on top of its queue-verified parent, the soaked nightly,
+   so the beta is exactly the code nightly users ran. The cut's parent and the
+   landing merge both need queue evidence, and `beta/<major>.<minor>` must not
+   already hold another commit. On a `beta/X.Y` push, selection verifies the
+   backports since the line's newest beta, refuses pending user-visible
+   fragments, publishes nothing when `VERSION` is already stable, and numbers
+   the next beta. Packaging, the installed-toolchain checks, the release-suite
+   shards and the merge-shards gate are the nightly's, on the beta commit. The
+   serialized publish job (the only one that writes) re-verifies the asset set,
+   admits the beta (the tag is absent or already at that commit, and a newer
+   push did not supersede it), attests build provenance, pushes
+   `v<VERSION>-beta.<K>`, replaces any leftover draft, creates a draft
+   prerelease that is never latest, uploads, publishes it, and only then
+   creates `beta/<major>.<minor>`, so a refused branch push cannot block the
+   published beta.
+3. **Backport** (`backport.yml`). A pull request into `beta/*` labelled
+   `backport` runs `Backport provenance` with main's own copy of the checker,
+   so the PR cannot weaken it. Every commit must be a `git cherry-pick -x` of a
+   commit already on main, with the same `git patch-id`, or a
+   `Backport-Adjusted: <reason>` trailer explaining a resolved conflict. Merges
+   and `VERSION` changes are refused, except one final release cut that
+   advances only the patch version and changes only release metadata.
+   Pending user-visible fragments require that cut, so a beta's `VERSION` and
+   CHANGELOG always describe its content: a user-visible backport becomes
+   `vX.Y.(Z+1)-beta.1`, an internal one `vX.Y.Z-beta.(K+1)`, or nothing once
+   `X.Y.Z` is stable. The complete suite then runs on the release configuration
+   in the nightly's shards, and `Backport gate` requires both. The main
+   ruleset and merge queue do not cover `beta/*`; the proposed `beta` ruleset
+   requires a PR merged by rebase (picks keep their `-x` lines), linear
+   history, an up-to-date branch, `CI gate` and `Backport gate`.
+4. **Promotion** (`train.yml`, job `promote`). Candidates are versions with a
+   beta newer than every stable tag; a version a higher patch beta on its line
+   supersedes is skipped. From the highest down, the version's newest beta
+   must be a published, not withdrawn prerelease that has soaked 48 hours
+   since publication, and no open issue labelled `release-blocker` may name
+   the version in its title or body (`0.494.0`, `v0.494.0` or any
+   `0.494.0-beta.K`; `10.494.0` or `0.494.0.1` do not count). A dispatch's
+   `soak_hours` may lower the soak; the stable notes record it. The job waits
+   for the protected `stable` environment's approval and then re-admits the
+   beta. That recheck rejects the selected beta if a newer stable release or
+   a newer patch beta on the same line arrived while approval was pending.
+   It downloads the beta's assets, verifies their checksums, channel
+   neutrality and the beta workflow's provenance attestation, pushes
+   `v<VERSION>` at the beta's commit, uploads the same files to a draft,
+   reads the draft's assets back through the API and compares every archive
+   byte and member before publishing the release as latest, and records the
+   version in the release status. Promotion never rebuilds or repackages.
+
+**Same bytes.** A stable-channel archive from `cmake/PackageRelease.cmake` is
+named `gti-v<VERSION>-<platform>.tar.gz`, identifies itself only by
+`share/gti/VERSION`, and carries no `BUILD_ID`; the binaries embed only the
+CMake project `VERSION` (`GTI_VERSION`). Nothing in it names a channel, and a
+beta is built from the release cut whose `VERSION` is the stable version, so
+the beta publishes the stable archive itself and promotion republishes the
+same files: nothing is re-stamped. `release_train.py same-bytes` proves it per
+file, and packaging refuses a stage that nightly packaging already stamped
+with `BUILD_ID`. Only the release around the files differs: tag, title, notes
+and prerelease flag.
+
+#### Release status and rollback
+
+The `release-status` branch holds one document, `release-status.json`
+(schema 1): `stable`, the published stable versions in ascending order;
+`yanked`, entries of `version`, `reason` and `at`; and `withdrawn`, beta tags
+with a reason and time. Promotion and `rollback.yml` append to it with
+fast-forward commits, never forced, so its history is the audit log. It is a
+branch, not a release asset, because GitHub release immutability locks a
+published release's assets. The installer reads it from
+`https://raw.githubusercontent.com/lang-gti-official/gti/release-status/release-status.json`.
+
+`rollback.yml` is dispatch-only and runs behind the `stable` environment.
+`withdraw-beta` records the beta as withdrawn, so promotion never selects it,
+and edits its prerelease's title and notes. The prerelease stays as evidence:
+deleting an immutable release would also retire its tag name for good.
+`yank-stable` records the yank, banners the release notes and marks the
+newest non-yanked stable release latest. The yanked tag stays, so Lazy's
+`version = "*"` can still resolve it until a newer stable exists; the
+installer then refuses it, names the newest non-yanked stable version, and
+never installs that one instead on its own.
+
+Lazy's `version = "*"` resolves the highest plain `vX.Y.Z` tag. Its semver
+range requires a candidate's prerelease to equal the range's own, which `*`
+has none of, so `v0.494.0-beta.1` is never selected and `nightly` does not
+parse as a version (lazy.nvim `lua/lazy/manage/semver.lua`, `Range:matches`).
+Stable tags therefore stay plain `v0.N.x`, above the imported `v0.332.0`.
+Pinning `version = "0.494.0-beta.1"` selects that beta's commit, whose stable
+channel looks for the not yet published `v0.494.0`.
+
+Stable versions describe user-visible toolchain behavior. Pull requests never
+edit `VERSION` or `CHANGELOG.md`; a shipped change adds a
+[changelog fragment](../../changes/README.md) `changes/<name>.<kind>.md`
+(`breaking`, `feature`, `fix` or `internal`), and a release cut
+(`scripts/cut_release.py`) assembles the pending fragments into one CHANGELOG
+section and the next version. Only a commit carrying `Release-Cut: <version>`,
+matching the `VERSION` it writes, may change `VERSION`; concurrent pull requests
+therefore never contend for a version number. Internal compiler or runtime
+work, tests, and documentation alone retain `VERSION` and reach users through
+nightly. `scripts/check_release_version.py` conservatively identifies
+potentially shipped files, including deletions and moves. A range with shipped
+changes passes when it adds a valid fragment or a release cut; otherwise each
+affected commit delivered by the checked range must carry these Git trailers. A merge commit is judged only by what differs from the
 automatic merge of its parents (`git merge-tree`), which is its conflict
 resolution: a hosted pull-request merge or an upstream reconciliation merge
 introduces nothing, even when both sides touched the same files, carries no
@@ -343,13 +508,15 @@ Release-Reason: Explain why no user-visible behavior or public API changes.
 ```
 
 This is an explicit author/reviewer impact assertion, not automated proof that
-a change is invisible. User-visible fixes still require a patch increment;
-new or changed surface requires a minor increment. Missing, duplicate,
+a change is invisible. User-visible fixes still need a `fix` fragment and new
+or changed surface a `feature` or `breaking` one; the cut turns them into a
+patch or minor increment. Missing, duplicate,
 malformed, or reason-free declarations fail the check, and a later internal
 commit cannot excuse earlier unclassified changes. Versions may not decrease;
 an internal declaration cannot authorize version churn. Documentation-only
-changes need no trailer. A stable-version advance retains the ordinary release
-workflow, with no competing manual tag.
+changes need no trailer. A `VERSION` advance on main publishes a beta through
+the release train, and stable follows only by promotion; never push a `v*` tag
+by hand.
 
 ## Live Build Progress
 

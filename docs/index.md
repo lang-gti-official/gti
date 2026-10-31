@@ -7,7 +7,10 @@ Canonical source, PRs, issues and CI are on
 [GitHub](https://github.com/lang-gti-official/gti), where toolchain releases
 are moving too; the reference website and the `gti add` package registry stay
 on Gitea. Historical hosting statements do not override the current
-[agent workflow](architecture/agent-workflow.md).
+[agent workflow](architecture/agent-workflow.md). Issue and PR numbers cited
+before 2026-10-29 are Gitea numbers; the
+[issue map](plans/archive/gitea-issue-map.md) gives each migrated issue's
+GitHub number.
 
 GTI is an independent systems language with strong C++ syntax familiarity,
 excellent safety as a design goal, and source-defined public library policy over

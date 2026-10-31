@@ -1,6 +1,11 @@
 local repository = assert(vim.env.GTI_TEST_REPOSITORY, "GTI_TEST_REPOSITORY is required")
-local archive = assert(vim.env.GTI_TEST_ARCHIVE, "GTI_TEST_ARCHIVE is required")
-local checksum = assert(vim.env.GTI_TEST_CHECKSUM, "GTI_TEST_CHECKSUM is required")
+-- GTI_TEST_INSTALLER_ONLY=1 runs only the offline installer-policy sections,
+-- which need no built toolchain archive:
+--   GTI_TEST_INSTALLER_ONLY=1 GTI_TEST_REPOSITORY=$PWD GTI_TEST_PLATFORM=linux-x64 \
+--     nvim --headless -l tests/nvim_plugin_smoke_test.lua
+local installer_only = vim.env.GTI_TEST_INSTALLER_ONLY == "1"
+local archive = installer_only and "" or assert(vim.env.GTI_TEST_ARCHIVE, "GTI_TEST_ARCHIVE is required")
+local checksum = installer_only and "" or assert(vim.env.GTI_TEST_CHECKSUM, "GTI_TEST_CHECKSUM is required")
 local platform = assert(vim.env.GTI_TEST_PLATFORM, "GTI_TEST_PLATFORM is required")
 local version = vim.trim(table.concat(vim.fn.readfile(vim.fs.joinpath(repository, "VERSION")), "\n"))
 
@@ -24,9 +29,153 @@ local ok, problem = xpcall(function()
 
   local installer = dofile(vim.fs.joinpath(repository, "lua", "gti", "installer.lua"))
   local expected_release_url =
-    "https://git.internal.howetotech.dev/gti-lang/gti/releases/download/nightly/BUILD_ID"
+    "https://github.com/lang-gti-official/gti/releases/download/nightly/BUILD_ID"
   if installer.release_url("nightly", "BUILD_ID") ~= expected_release_url then
-    fail("installer does not resolve release assets from the Gitea package host")
+    fail("installer does not resolve release assets from GitHub Releases")
+  end
+
+  -- Stub downloaders keep the installer-policy sections offline. curl serves
+  -- the release-status document from GTI_TEST_STATUS_FILE when one is set and
+  -- logs every URL it is asked for; every other download is a 404.
+  local offline = vim.fs.joinpath(temporary, "offline-bin")
+  local requests = vim.fs.joinpath(temporary, "requests.log")
+  vim.fn.mkdir(offline, "p")
+  local curl = vim.fs.joinpath(offline, "curl")
+  vim.fn.writefile({
+    "#!/bin/sh",
+    'dest=""; url=""',
+    'while [ $# -gt 0 ]; do case "$1" in -o) dest="$2"; shift 2;; *) url="$1"; shift;; esac; done',
+    'printf "%s\\n" "$url" >> "$GTI_TEST_REQUESTS"',
+    'if [ "$url" = "$GTI_TEST_STATUS_URL" ] && [ -n "$GTI_TEST_STATUS_FILE" ]; then',
+    '  cp "$GTI_TEST_STATUS_FILE" "$dest"; exit $?',
+    "fi",
+    "echo 'The requested URL returned error: 404' >&2",
+    "exit 22",
+  }, curl)
+  vim.uv.fs_chmod(curl, 493)
+  local wget = vim.fs.joinpath(offline, "wget")
+  vim.fn.writefile({ "#!/bin/sh", "echo 'ERROR 404: Not Found.' >&2", "exit 8" }, wget)
+  vim.uv.fs_chmod(wget, 493)
+  local saved_path = vim.env.PATH
+  vim.env.PATH = offline .. ":" .. saved_path
+  vim.env.GTI_TEST_REQUESTS = requests
+  vim.env.GTI_TEST_STATUS_URL = installer.release_status_url
+  if installer.release_status_url
+    ~= "https://raw.githubusercontent.com/lang-gti-official/gti/release-status/release-status.json"
+  then
+    fail("the installer must read the release status from the GitHub release-status branch")
+  end
+
+  local function status_file(name, document)
+    local path = vim.fs.joinpath(temporary, name .. ".json")
+    vim.fn.writefile({ type(document) == "string" and document or vim.json.encode(document) }, path)
+    return path
+  end
+  local function requested()
+    return vim.fn.filereadable(requests) == 1 and table.concat(vim.fn.readfile(requests), "\n") or ""
+  end
+  local function attempt(root, wanted, status)
+    vim.fn.delete(requests)
+    vim.env.GTI_TEST_STATUS_FILE = status
+    local attempted_ok, result = pcall(installer.install, {
+      root = vim.fs.joinpath(temporary, root),
+      channel = "stable",
+      version = wanted,
+      platform = platform,
+    })
+    vim.env.GTI_TEST_STATUS_FILE = nil
+    return attempted_ok, tostring(result)
+  end
+  local yanks = status_file("yanks", {
+    schema = 1,
+    stable = { "0.0.1", "0.0.2", "0.0.3" },
+    yanked = {
+      { version = "0.0.3", reason = "miscompiles loops", at = "2026-10-30T00:00:00Z" },
+    },
+    withdrawn = {},
+  })
+
+  -- A yanked stable version is refused before any archive download, naming
+  -- the reason and the newest stable release that is not yanked.
+  local yanked_ok, yanked = attempt("yanked", "0.0.3", yanks)
+  if yanked_ok
+    or not yanked:find("GTI 0.0.3 was yanked (miscompiles loops)", 1, true)
+    or not yanked:find("The newest stable release that is not yanked is v0.0.2", 1, true)
+    or not yanked:find('version = "0.0.2"', 1, true)
+    or not yanked:find('vim.g.gti_channel = "nightly"', 1, true)
+    or requested():find("releases/download", 1, true)
+  then
+    fail("a yanked stable version must be refused before downloading: " .. yanked)
+  end
+
+  -- With every stable yanked, the message says none is installable.
+  local all_ok, all = attempt("all-yanked", "0.0.1", status_file("all", {
+    schema = 1,
+    stable = { "0.0.1" },
+    yanked = { { version = "0.0.1", reason = "broken", at = "2026-10-30T00:00:00Z" } },
+    withdrawn = {},
+  }))
+  if all_ok or not all:find("No stable release is currently installable", 1, true) then
+    fail("an all-yanked status must say no stable release is installable: " .. all)
+  end
+
+  -- An unreadable or malformed status installs nothing.
+  local unreadable_ok, unreadable = attempt("unreadable", "0.0.2", nil)
+  if unreadable_ok
+    or not unreadable:find("could not read the GTI release status", 1, true)
+    or requested():find("releases/download", 1, true)
+  then
+    fail("an unreadable release status must stop a stable install: " .. unreadable)
+  end
+  local malformed_ok, malformed = attempt("malformed", "0.0.2", status_file("malformed", "{\"schema\": 2}"))
+  if malformed_ok or not malformed:find("not a schema 1 document", 1, true) then
+    fail("a malformed release status must stop a stable install: " .. malformed)
+  end
+
+  -- An installed toolchain that was later yanked is reported, not kept
+  -- silently; when the status is unreachable the installed one is kept.
+  local fake = vim.fs.joinpath(temporary, "installed", "toolchain")
+  for _, relative in ipairs({ "bin", "share/gti/parser", "share/gti/stdlib/std" }) do
+    vim.fn.mkdir(vim.fs.joinpath(fake, relative), "p")
+  end
+  for _, tool in ipairs({ "gti", "gti_lsp" }) do
+    vim.fn.writefile({ "#!/bin/sh", "exit 0" }, vim.fs.joinpath(fake, "bin", tool))
+    vim.uv.fs_chmod(vim.fs.joinpath(fake, "bin", tool), 493)
+  end
+  vim.fn.writefile({ "" }, vim.fs.joinpath(fake, "share/gti/parser/gti.so"))
+  vim.fn.writefile({ "" }, vim.fs.joinpath(fake, "share/gti/stdlib/std/array.gti"))
+  vim.fn.writefile({ "0.0.3" }, vim.fs.joinpath(fake, "share/gti/VERSION"))
+  local kept_ok, kept = attempt("installed", "0.0.3", yanks)
+  if kept_ok or not kept:find("The installed toolchain is that yanked version", 1, true) then
+    fail("an installed yanked toolchain must be reported: " .. kept)
+  end
+  local offline_ok, offline_root = attempt("installed", "0.0.3", nil)
+  if not offline_ok or offline_root ~= fake then
+    fail("an installed toolchain must be kept when the release status is unreachable: " .. offline_root)
+  end
+
+  -- A version that is not yanked passes the check. An unpublished stable
+  -- release then fails clearly and names the nightly channel; it never falls
+  -- back to another version or host.
+  local missing_ok, missing = attempt("unpublished", "0.0.0", yanks)
+  if not requested():find(installer.release_url("v0.0.0", "gti-v0.0.0-" .. platform .. ".tar.gz"), 1, true) then
+    fail("a version that is not yanked must reach the archive download: " .. missing)
+  end
+  vim.env.PATH = saved_path
+  if missing_ok
+    or not missing:find("no stable GTI v0.0.0 toolchain", 1, true)
+    or not missing:find('vim.g.gti_channel = "nightly"', 1, true)
+    or not missing:find(
+      "https://github.com/lang-gti-official/gti/releases/download/v0.0.0/gti-v0.0.0-" .. platform .. ".tar.gz",
+      1,
+      true
+    )
+    or missing:find("howetotech", 1, true)
+  then
+    fail("an unpublished stable release must fail clearly and name the nightly channel: " .. missing)
+  end
+  if installer_only then
+    return
   end
   local installed = installer.install({
     root = temporary,

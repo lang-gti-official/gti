@@ -31,12 +31,35 @@ AUTOMATION = ("docs/", ".codex/", ".claude/", ".agents/")
 # CI workflow edits select full coverage, so the queue validates the jobs it changes.
 AUTOMATION_FILES = {"AGENTS.md", "CLAUDE.md", "README.md"}
 AUTOMATION_SCRIPTS = {"agent_workflow.py", "validation_batch.py", "validation_checks.py",
-                      "preview_workflow.py", "preview_submit.py", "build_window.py", "bounded_log.py"}
+                      "preview_workflow.py", "preview_submit.py", "build_window.py", "bounded_log.py",
+                      "cut_release.py", "check_release_version.py", "rollup.py", "release_train.py"}
 # Exactly the existing harnesses that CI's workflow-regression job runs. The
 # batch, validation and preview-submit scripts are covered by agent_workflow_test.
 AUTOMATION_TESTS = {"agent_workflow_test.py", "preview_workflow_test.py", "build_window_test.py",
                     "bounded_log_test.py", "release_version_test.py", "ci_resources_test.py",
-                    "repository_hosting_test.py"}
+                    "repository_hosting_test.py", "cut_release_test.py",
+                    "ownership_map_test.py", "plan_checks_test.py", "rollup_test.py",
+                    "release_train_test.py"}
+# A rollup's membership record lists queue-validated members; unlike a degraded-
+# mode batch manifest it adds no admission obligation, so it leaves the
+# classification of the members' own paths unchanged.
+ROLLUP_MANIFEST = re.compile(re.escape(BATCH_DIRECTORY) + r"rollup-[0-9]{8}-[0-9]{1,4}\.json\Z")
+# Changes that must validate alone in the merge queue and never inside a rollup:
+# build-system and toolchain files, CI workflows, test registration and
+# throughput, CI configuration scripts, and the runtime ABI/layout surface that
+# generated code links against. A deliberately small, conservative path rule.
+# TODO: read the `risk = "system"` areas of tests/ownership.toml once it lands.
+SYSTEM_RISK_FILES = {"tests/CMakeLists.txt", "tests/TestThroughput.cmake", "CMakePresets.json",
+                     "include/gti/object_layout.h", "runtime/src/atomic_lane.h"}
+SYSTEM_RISK_PREFIXES = ("cmake/", ".github/workflows/", "scripts/configure_ci_", "runtime/include/gti/",
+                        "src/compiler/llvm/abi.", "src/compiler/llvm/layout.",
+                        "src/compiler/llvm/native_c_abi.", "src/compiler/llvm/runtime_abi.")
+
+
+def system_risk(paths):
+    """The paths that make a change Risk-system: it must validate alone, never in a rollup."""
+    return sorted({path for path in paths if path in SYSTEM_RISK_FILES or path.startswith(SYSTEM_RISK_PREFIXES)
+                   or Path(path).name == "CMakeLists.txt" or path.endswith((".cmake", ".cmake.in"))})
 
 
 def focused_scope(paths):
@@ -175,9 +198,9 @@ def component_body(body, record=None):
 def ci_mode(event, paths):
     pr = event.get("pull_request")
     if pr:
-        # Gitea's WIP title transitions arrive as `edited`, not GitHub's
-        # ready_for_review. Only an identified body-only edit is metadata;
-        # unknown edit payloads stay conservative and title changes reclassify.
+        # CI does not subscribe to `edited`; a caller replaying one gets the
+        # conservative rule: only an identified body-only edit is metadata,
+        # and unknown edit payloads or title changes reclassify.
         changes = event.get("changes")
         if event.get("action") == "edited" and isinstance(changes, dict) and set(changes) == {"body"}:
             return "metadata"
@@ -187,9 +210,10 @@ def ci_mode(event, paths):
             return "draft"
     # Compiler tests, CMake and packaged scripts are deliberately not inferred
     # safe just because their filename includes 'test' or 'workflow'.
-    if paths and all(path in AUTOMATION_FILES or path.startswith(AUTOMATION) or
-                     path in {"scripts/" + name for name in AUTOMATION_SCRIPTS} or
-                     path in {"tests/" + name for name in AUTOMATION_TESTS} for path in paths):
+    own = [path for path in paths if not ROLLUP_MANIFEST.fullmatch(path)]
+    if own and all(path in AUTOMATION_FILES or path.startswith(AUTOMATION) or
+                   path in {"scripts/" + name for name in AUTOMATION_SCRIPTS} or
+                   path in {"tests/" + name for name in AUTOMATION_TESTS} for path in own):
         return "automation"
     return "full"
 
@@ -463,6 +487,93 @@ def run_shard(root, build, shards, index, durations, jobs=4, log=None, junit=Non
             "quarantined": sorted(excluded), "skipped": skipped, "smoke": smoke_results}
 
 
+DECLARED_KEYS = ("T0", "T1")
+DECLARED_LIMIT = 60
+DECLARATION_ITEM = re.compile(r"-\s+([A-Za-z0-9_-]+):\s*(.*)")
+
+
+def declared_tests(body):
+    """The CTest names a pull request declares as its T0 and T1 evidence.
+
+    The PR body's `Validation:` block lists `- <key>: <value>` items. `T0` and
+    `T1` items hold comma-separated CTest names only (continued on more-indented
+    lines); every other key is free prose for reviewers. PR CI re-runs exactly
+    these names on both platforms, so the body is untrusted input: anything that
+    is not a plain test name is rejected rather than interpreted.
+    """
+    lines = (body or "").splitlines()
+    starts = [index for index, line in enumerate(lines) if line.strip() == "Validation:"]
+    if len(starts) != 1:
+        raise ValueError("Add exactly one `Validation:` block naming the T0 and T1 CTest names the change ran")
+    declared, key = {}, None
+    for line in lines[starts[0] + 1:]:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("```"):
+            break
+        item = DECLARATION_ITEM.fullmatch(stripped)
+        if item:
+            key, value = item.groups()
+        elif line[:1].isspace() and key is not None:
+            value = stripped
+        else:
+            break
+        if key in DECLARED_KEYS:
+            for name in (token.strip() for token in value.split(",")):
+                if not name:
+                    continue
+                if not NAME.fullmatch(name):
+                    raise ValueError(f"Validation {key} lists CTest names only; move notes such as {name!r} to another key")
+                declared.setdefault(name, key)
+    if not declared:
+        raise ValueError("The `Validation:` block must name at least one T0 or T1 CTest test")
+    if len(declared) > DECLARED_LIMIT:
+        raise ValueError(f"Declare at most {DECLARED_LIMIT} T0/T1 tests; the merge queue runs the rest")
+    return sorted(declared)
+
+
+def uncovered_declarations(names, checks, root):
+    """Declared names that no recorded check ran: a PR may only claim what it ran.
+
+    A recorded check covers a name through a `ctest -R/--tests-regex` pattern
+    or a `validation_checks.py focused --plan` plan. Labels and wrapper scripts
+    are not expanded, so declare tests that a name-selecting check ran.
+    """
+    patterns, planned = [], set()
+    for check in checks:
+        argv = check.get("argv", []) if isinstance(check, dict) else check
+        ctest = next((index for index, argument in enumerate(argv) if Path(argument).name == "ctest"), None)
+        focused = "focused" in argv and any(Path(argument).name == "validation_checks.py" for argument in argv)
+        for index, argument in enumerate(argv[:-1]):
+            if ctest is not None and index > ctest and argument in ("-R", "--tests-regex"):
+                patterns.append(argv[index + 1])
+            elif focused and argument == "--plan":
+                planned.update(plan_tests(validate_plan(json.loads((Path(root) / argv[index + 1]).read_text()))))
+    def covered(name):
+        return name in planned or any(re.search(pattern, name) for pattern in patterns)
+    return [name for name in names if not covered(name)]
+
+
+def run_declared(build, names, jobs=4, log=None):
+    """Re-run declared tests by exact name; every one must be registered and enabled."""
+    selected = sorted(set(names) - {SMOKE})
+    if not selected:
+        return []
+    pattern = "^(" + "|".join(re.escape(name) for name in selected) + ")$"
+    document = json.loads(subprocess.check_output(["ctest", "--test-dir", str(build), "--show-only=json-v1"], text=True))
+    registered = {row["name"] for row in document.get("tests", [])}
+    missing = [name for name in selected if name not in registered]
+    if missing:
+        raise ValueError("Declared tests are not registered CTest tests: " + ", ".join(missing))
+    inventory(document, selected)
+    with tempfile.TemporaryDirectory(prefix="gti-declared-") as directory:
+        report = Path(directory) / "ctest.xml"
+        subprocess.run(["ctest", "--test-dir", str(build), "--no-tests=error", "--output-on-failure",
+                        "--parallel", str(jobs), "--output-junit", str(report), "-R", pattern],
+                       check=True, stdout=log, stderr=subprocess.STDOUT)
+        results(report, set(selected), set(selected))
+    return selected
+
+
 # CMake writes each argument either quoted ("...") or as a bracket argument
 # ([=[...]=]), depending on its version; accept both.
 TEST_LINE = re.compile(r'^add_test\((?P<name>"(?:[^"\\]|\\.)*"|\[(?P<level>=*)\[.*?\](?P=level)\]) '
@@ -518,6 +629,10 @@ def main(argv=None):
     gate.add_argument("--event", default="pull_request")
     gate.add_argument("--shard-reports", help="directory of shard reports, required for merge_group full")
     gate.add_argument("--platforms", default="darwin,linux")
+    release = sub.add_parser("merge-shards", help="prove a release suite ran every test once per platform")
+    release.add_argument("--shard-reports", required=True)
+    release.add_argument("--platforms", default="darwin,linux")
+    release.add_argument("--head", required=True)
     shard = sub.add_parser("shard")
     shard.add_argument("--build", required=True)
     shard.add_argument("--shards", type=int, required=True)
@@ -526,6 +641,13 @@ def main(argv=None):
     shard.add_argument("--jobs", type=int, default=4)
     shard.add_argument("--report", required=True)
     shard.add_argument("--log")
+    declared = sub.add_parser("declared")
+    declared.add_argument("--event", required=True)
+    declared.add_argument("--build", help="re-run the declared tests in this build tree")
+    declared.add_argument("--jobs", type=int, default=4)
+    smoke_parser = sub.add_parser("smoke", help="run only the native O0/O3 compiler smoke")
+    smoke_parser.add_argument("--build", required=True)
+    smoke_parser.add_argument("--log")
     targets = sub.add_parser("test-targets", help="print the build targets the matching tests run")
     targets.add_argument("--build", required=True)
     targets.add_argument("--regex", required=True)
@@ -556,6 +678,20 @@ def main(argv=None):
             summary = merge_shards(reports, [p for p in args.platforms.split(",") if p])
             print("GTI_INTEGRATION_RESULT=" + json.dumps(summary, sort_keys=True))
         return
+    if args.command == "declared":
+        pr = json.loads(Path(args.event).read_text()).get("pull_request") or {}
+        names = declared_tests(pr.get("body"))
+        if args.build:
+            names = run_declared(Path(args.build).resolve(), names, args.jobs)
+        print("GTI_DECLARED_TESTS=" + json.dumps(names))
+        return
+    if args.command == "merge-shards":
+        reports = [json.loads(path.read_text()) for path in sorted(Path(args.shard_reports).rglob("*.json"))]
+        summary = merge_shards(reports, [p for p in args.platforms.split(",") if p])
+        if {row["head"] for row in summary.values()} != {args.head}:
+            raise ValueError("Release suite shards validated a different source")
+        print("GTI_RELEASE_SUITE_RESULT=" + json.dumps(summary, sort_keys=True))
+        return
     if args.command == "test-targets":
         print(" ".join(test_targets(args.build, args.regex)))
         return
@@ -573,6 +709,15 @@ def main(argv=None):
                 log.close()
         Path(args.report).write_text(json.dumps(report, indent=2) + "\n")
         print("GTI_SHARD_RESULT=" + json.dumps({k: report[k] for k in ("platform", "index", "shards")}))
+        return
+    if args.command == "smoke":
+        log = Path(args.log).open("w") if args.log else None
+        try:
+            executed = smoke(root, Path(args.build).resolve(), log)
+        finally:
+            if log:
+                log.close()
+        print("GTI_SMOKE_RESULT=" + json.dumps(executed))
         return
     if args.jobs < 1:
         raise ValueError("jobs must be positive")

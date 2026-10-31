@@ -10,6 +10,8 @@ import sys
 
 RELEASE_FILES = {
     ".gitea/workflows/release.yml",
+    ".github/workflows/nightly.yml",
+    ".github/workflows/beta.yml",
     "CMakeLists.txt",
     "LICENSE",
     "VERSION",
@@ -37,6 +39,11 @@ RELEASE_PREFIXES = (
 )
 
 VERSION_PATTERN = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+# A pull request describes its shipped change with one changelog fragment
+# instead of editing VERSION or CHANGELOG.md; a release cut consumes them.
+FRAGMENT_DIRECTORY = "changes/"
+FRAGMENT_PATTERN = re.compile(r"changes/[a-z0-9][a-z0-9-]*\.(breaking|feature|fix|internal)\.md")
+FRAGMENT_EXEMPT = {"changes/README.md"}
 
 
 def git(*arguments: str) -> str:
@@ -75,6 +82,47 @@ def changed_paths(base: str, head: str) -> list[str]:
     return [path for path in git(
         "diff", "--no-renames", "--name-only", "-z", base, head
     ).split("\0") if path]
+
+
+def release_cut(revision: str) -> str | None:
+    values = git(
+        "show", "-s", "--format=%(trailers:key=Release-Cut,valueonly,unfold)", revision,
+    ).strip().splitlines()
+    return values[0].strip() if len(values) == 1 and values[0].strip() else None
+
+
+def fragment_errors(base: str, head: str) -> list[str]:
+    errors = []
+    for path in changed_paths(base, head):
+        if not path.startswith(FRAGMENT_DIRECTORY) or path in FRAGMENT_EXEMPT:
+            continue
+        present = subprocess.run(["git", "cat-file", "-e", f"{head}:{path}"],
+                                 check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if present.returncode != 0:
+            continue  # consumed by a release cut
+        if FRAGMENT_PATTERN.fullmatch(path) is None:
+            errors.append(f"{path}: name a fragment changes/<name>.<breaking|feature|fix|internal>.md")
+        elif not git("show", f"{head}:{path}").strip():
+            errors.append(f"{path}: a changelog fragment needs its user-facing text")
+    return errors
+
+
+def added_fragments(base: str, head: str) -> list[str]:
+    paths = git("diff", "--no-renames", "--name-only", "--diff-filter=A", "-z",
+                base, head, "--", FRAGMENT_DIRECTORY).split("\0")
+    return [path for path in paths if FRAGMENT_PATTERN.fullmatch(path)]
+
+
+def uncut_version_changes(base: str, head: str) -> list[str]:
+    """Every commit that changes VERSION must be a release cut naming that version."""
+    missing = []
+    for revision in git("rev-list", "--reverse", f"{base}..{head}").splitlines():
+        parents = git("rev-list", "--parents", "-n", "1", revision).split()[1:]
+        paths = merge_introduced_paths(revision, parents) if len(parents) > 1 else \
+            changed_paths(parents[0], revision)
+        if "VERSION" in paths and release_cut(revision) != git("show", f"{revision}:VERSION").strip():
+            missing.append(revision)
+    return missing
 
 
 def internal_change_reason(revision: str) -> str | None:
@@ -157,6 +205,12 @@ def main() -> int:
         "rev-parse", f"{arguments.base}^{{commit}}"
     ).strip():
         raise ValueError("base must be an ancestor of head")
+    errors = fragment_errors(arguments.base, arguments.head)
+    if errors:
+        print("Invalid changelog fragments:", file=sys.stderr)
+        for error in errors:
+            print(f"  {error}", file=sys.stderr)
+        return 1
     changed = changed_paths(arguments.base, arguments.head)
     shipped = [path for path in changed if is_release_file(path)]
     if not shipped:
@@ -168,38 +222,43 @@ def main() -> int:
     if head_version < base_version:
         print(f"VERSION cannot decrease from {base_text} to {head_text}.", file=sys.stderr)
         return 1
-    if head_version == base_version:
-        missing = unclassified_changes(arguments.base, arguments.head)
-        if not missing:
-            print(
-                f"Internal-only changes retain VERSION {head_text}; nightly "
-                "publishes them without a stable release."
-            )
-            return 0
-        print(
-            "Release-sensitive files changed without advancing VERSION ",
-            f"beyond {base_text}:",
-            sep="",
-            file=sys.stderr,
-        )
-        for path in shipped:
-            print(f"  {path}", file=sys.stderr)
-        print("Commits without an internal-only declaration:", file=sys.stderr)
-        for revision in missing:
+    uncut = uncut_version_changes(arguments.base, arguments.head)
+    if uncut:
+        print("VERSION changes only in a release cut (scripts/cut_release.py), whose commit "
+              "carries a 'Release-Cut: <new VERSION>' trailer. Describe a change with a "
+              "changelog fragment instead. Commits changing VERSION without one:", file=sys.stderr)
+        for revision in uncut:
             print(f"  {revision}", file=sys.stderr)
-        print(
-            "User-visible changes must advance VERSION. For internal-only work, "
-            "each relevant commit instead needs 'Release-Impact: internal' and "
-            "a nonempty 'Release-Reason:' Git trailer. This is a reviewed impact "
-            "declaration, not permission to omit a user-visible version change.",
-            file=sys.stderr,
-        )
         return 1
-
+    if head_version > base_version:
+        print(f"Release cut advances VERSION from {base_text} to {head_text}.")
+        return 0
+    fragments = added_fragments(arguments.base, arguments.head)
+    if fragments:
+        print(f"Shipped changes are described by {', '.join(fragments)}; the next release "
+              f"cut assembles them. VERSION stays {head_text}.")
+        return 0
+    missing = unclassified_changes(arguments.base, arguments.head)
+    if not missing:
+        print(
+            f"Internal-only changes retain VERSION {head_text}; nightly "
+            "publishes them without a stable release."
+        )
+        return 0
+    print("Release-sensitive files changed without a changelog fragment:", file=sys.stderr)
+    for path in shipped:
+        print(f"  {path}", file=sys.stderr)
+    print("Commits without an internal-only declaration:", file=sys.stderr)
+    for revision in missing:
+        print(f"  {revision}", file=sys.stderr)
     print(
-        f"Release-sensitive changes advance VERSION from {base_text} to {head_text}."
+        "Describe the change in changes/<name>.<breaking|feature|fix|internal>.md. "
+        "Without a fragment, each relevant commit needs 'Release-Impact: internal' and "
+        "a nonempty 'Release-Reason:' Git trailer. This is a reviewed impact "
+        "declaration, not permission to omit a user-visible change.",
+        file=sys.stderr,
     )
-    return 0
+    return 1
 
 
 if __name__ == "__main__":

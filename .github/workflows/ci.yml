@@ -45,6 +45,11 @@ jobs:
           fi
           python3 scripts/validation_checks.py ci-mode \
             --event "${GTI_EVENT_PATH}" --base "${base}" >> "${GITHUB_OUTPUT}"
+      - name: Check the declared T0/T1 tests
+        if: github.event_name == 'pull_request' && steps.plan.outputs.mode == 'full'
+        env:
+          GTI_EVENT_PATH: ${{ github.event_path }}
+        run: python3 scripts/validation_checks.py declared --event "${GTI_EVENT_PATH}"
 
   automation-tests:
     name: Workflow regression tests
@@ -61,11 +66,16 @@ jobs:
           git config --global user.email "ci@example.invalid"
           python3 tests/agent_workflow_test.py
           python3 tests/preview_workflow_test.py
+          python3 tests/rollup_test.py
           python3 tests/build_window_test.py
           python3 tests/bounded_log_test.py
           python3 tests/release_version_test.py scripts/check_release_version.py
+          python3 tests/cut_release_test.py
+          python3 tests/release_train_test.py
           python3 tests/ci_resources_test.py scripts/configure_ci_resources.sh
           python3 tests/repository_hosting_test.py .
+          python3 tests/ownership_map_test.py
+          python3 tests/plan_checks_test.py
 
   formatting:
     name: Formatting
@@ -170,6 +180,15 @@ jobs:
           ctest --test-dir build --output-on-failure --no-tests=error
           --parallel "${GTI_TEST_JOBS}" -L feedback-fast
           && ctest --test-dir build --output-on-failure --no-tests=error -R '^compiler_pipeline$'
+      - name: Re-run the tests this pull request declares
+        if: github.event_name == 'pull_request'
+        # The body is untrusted: the script validates every name and passes
+        # them to CTest as an escaped, anchored pattern, never through a shell.
+        env:
+          GTI_EVENT_PATH: ${{ github.event_path }}
+        run: >-
+          python3 scripts/validation_checks.py declared --event "${GTI_EVENT_PATH}"
+          --build build --jobs "${GTI_TEST_JOBS}"
       - name: Save compiler object cache
         if: always() && steps.cache.outputs.cache-hit != 'true'
         continue-on-error: true
@@ -360,12 +379,25 @@ jobs:
           if [[ "${{ matrix.kind }}" == "compiler" ]]; then
             GTI_COMPILER_TEST_SHARD_INDEX="${{ matrix.index }}" GTI_COMPILER_TEST_SHARD_COUNT=2 \
               ctest --test-dir build-sanitized --verbose --output-on-failure --no-tests=error \
+              --output-junit "${RUNNER_TEMP}/sanitizers-${{ matrix.kind }}-${{ matrix.index }}.xml" \
               -R '^compiler_pipeline$'
           else
             ctest --test-dir build-sanitized --verbose --output-on-failure --no-tests=error \
+              --output-junit "${RUNNER_TEMP}/sanitizers-${{ matrix.kind }}-${{ matrix.index }}.xml" \
               --parallel "${GTI_TEST_JOBS}" -R "${GTI_SANITIZER_TESTS}" \
               -E '^compiler_pipeline$' -I "${{ matrix.index }},,2"
           fi
+      - name: Preserve sanitizer test evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sanitizers-${{ matrix.kind }}-${{ matrix.index }}
+          path: |
+            ${{ runner.temp }}/sanitizers-${{ matrix.kind }}-${{ matrix.index }}.xml
+            build-sanitized/Testing/Temporary/LastTest.log
+            build-sanitized/Testing/Temporary/LastTestsFailed.log
+          if-no-files-found: warn
+          retention-days: 7
       - name: Save compiler object cache
         if: always() && steps.cache.outputs.cache-hit != 'true'
         continue-on-error: true

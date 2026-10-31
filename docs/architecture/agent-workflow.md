@@ -3,8 +3,9 @@
 Status: Repository automation and the owner's implementation-task contract.
 
 Canonical `origin` is `https://github.com/lang-gti-official/gti.git`. GitHub
-owns branches, PRs, issues and CI; Gitea keeps the reference website and
-packages, and its `gti-lang/gti` `main` is frozen. Gitea-era instructions in
+owns branches, PRs, issues, CI and toolchain releases; Gitea keeps only the
+reference website and the `gti add` package registry, and its `gti-lang/gti`
+`main` is frozen. Gitea-era instructions in
 historical notes or pre-cutover worktrees do not select the current host. For a
 preserved worktree, consult the primary checkout's current `AGENTS.md` and
 skill, and invoke its helper with `--repo <task-worktree>`. Preserve live runs
@@ -145,9 +146,9 @@ local race with other tasks needs closing. Nothing locks ordinary editing.
 | `reconcile <task>` | Merge current main into the task branch to resolve a conflict, preserve conflicts for resolution, invalidate old validation and publish. |
 | `verify <task> --checks-file <json>` | Record the attempt, release the lock, execute nonempty argv arrays without a shell inside a build-window `suite` slot, then record passing focused checks against the published clean head. An advancing main does not void them. |
 | `verify <task> --focused --checks-file <json>` | For a checked automation-only or source-only GTI stdlib diff, run owning checks directly and record scope `automation` or `source-stdlib`; refuse compiler/native/build changes and remote use. Actual broad workloads still use the window. |
-| `finish <task> --body-file <text> [--pr-only]` | Publish the final PR description, mark ready, verify identities and the `main` ruleset, and add the PR to the merge queue pinned to the verified head (phase `queued`). Once merged, it synchronizes local main. PR-only stops ready for review. |
-| `sync <task>` | Confirm merged-head/merge-commit reachability and fast-forward primary main, preserving unrelated local edits. Never push to a backup. |
-| `rehost <task> --pr <number>` | Explicitly bind a Gitea-era task to its migrated GitHub PR when the PR head carries the task's published tree; move a clean worktree onto the identical rewritten commit and preserve the original record. Refuse live verification. |
+| `finish <task> --body-file <text> [--pr-only] [--no-rollup]` | Publish the final PR description, mark ready, verify identities and the `main` ruleset. A rollup-eligible PR is labelled `rollup=maybe` (`rollup=always` when automation-only) and waits for the rollup bot (phase `rollup`); a Risk-system or `--no-rollup` PR is labelled `rollup=never` and joins the merge queue alone pinned to the verified head (phase `queued`). Once merged, it synchronizes local main. PR-only stops ready for review. |
+| `sync <task>` | Confirm merged-head/merge-commit reachability, or the rollup bot's proof for a member it closed, and fast-forward primary main, preserving unrelated local edits. Never push to a backup. |
+| `rehost <task> --pr <number>` | Explicitly bind a schema-2 GitHub or schema-3 Gitea task to its migrated GitHub PR when the PR head carries the task's published tree; move a clean worktree onto the identical rewritten commit and preserve the original record. Refuse live verification. |
 | `cleanup <task>` | After confirmed merge/sync, remove a plain clean worktree with no ignored files and delete only unchanged integrated branches. |
 | `abandon <task> --reason <text>` | Publish the final checkpoint and close its PR with a reason, preserving branch and worktree. A task with no PR whose branch holds no commits beyond `origin/main` has nothing to preserve. Its clean worktree and branches are removed and the reason is recorded. |
 | `status [task]` | Read task records and current remote PR state. |
@@ -177,7 +178,9 @@ retains the old-to-new map outside the repository.
 
 New helper records use schema 4 and `host: github`. Gitea-era schema-3 records
 show `legacy-gitea`, and older records `legacy-<host>`, without contacting an
-API using their old numbers. To move a Gitea-era task, publish its branch to
+API using their old numbers. Schema-2 GitHub records also refer to the earlier
+repository history and PR numbers, even when their URL names this repository.
+To move either a schema-2 GitHub or schema-3 Gitea task, publish its branch to
 GitHub with the same identity rewrite, open its PR, and run
 `rehost <task> --pr <number>` once its live validation has finished. The helper
 requires the PR head to carry exactly the task's published tree, saves the
@@ -185,7 +188,7 @@ unmodified original record under task evidence, moves a clean worktree whose
 head is the published head onto the identical rewritten commit, and records
 both identities. Focused evidence bound to old commit IDs is dropped and must be
 recorded again with `verify`. A running `verifying` record refuses rehosting,
-and `start --adopt` cannot silently replace a migrated Gitea PR.
+and `start --adopt` cannot silently replace either kind of migrated PR.
 
 ## Build window
 
@@ -470,14 +473,15 @@ record includes executed commands, head, base and time. Any changed commit or
 dirty source requires verifying again; an advancing main does not, because the
 merge queue validates the combination. Failed checks never mark the task ready.
 
-`finish` adds the PR to the merge queue with `expectedHeadOid` pinned to the
-validated head, so a branch that moved is refused. The `main` ruleset requires
+`finish` hands the PR to a rollup (below) or adds it to the merge queue with
+`expectedHeadOid` pinned to the validated head, so a branch that moved is
+refused. The `main` ruleset requires
 pull requests, the merge queue and the `CI gate` status check, denies force
 pushes and deletion, and has no bypass actors, administrators included. The
 queue builds each candidate on the current `main`, runs the complete suite and
 merges it only if `CI gate` passes; it removes a failing PR and rebuilds the
-entries behind it. The task stays `queued` until GitHub reports the merge, and
-`sync` (or a repeated `finish`) then advances local main. Do not force a merge
+entries behind it. The task stays `rollup` or `queued` until GitHub reports
+the merge, and `sync` (or a repeated `finish`) then advances local main. Do not force a merge
 or bypass a server rule. Release workflows run after integration and need not
 finish before local installation. VERSION follows normal repository policy;
 workflow-only automation does not change the packaged compiler version.
@@ -510,6 +514,19 @@ selected gates cover the change. Shared-contract or cross-cutting changes need
 broader consumer coverage; full integration/release campaigns and the combined
 batch protocol below retain their explicit full-suite requirements. This is
 test selection, not permission to skip an affected, failed or mandatory gate.
+
+[`tests/ownership.toml`](../../tests/ownership.toml) is the shared source for
+this selection. It maps source paths to their owning (T1) and consumer (T2)
+CTest tests and marks `shared` and `system` risk; `system` areas (ABI/layout,
+runtime services and allocation, CMake/toolchain, CI and release workflows,
+test infrastructure) validate alone and are never combined with other
+changes. It is the one source the planner, PR CI and reviewers share: the
+verify-change planner selects from it, CI's workflow regression job
+validates it, and reviewers check a change's evidence against it. Its
+selection is a lower bound that the author extends from the changed
+invariant. `tests/ownership_map_test.py` keeps it complete: every tracked
+source file has an area or a stated reason, and the `test_ownership_map`
+CTest requires every named test to be registered.
 
 The compiler-smoke execution covers scalar control flow and owning strings in
 a vector at O0/O3. The GTI executable itself is always optimized. Each plan
@@ -664,7 +681,7 @@ advisory-CI policy. `.github/workflows/ci.yml` reports one required check,
 
 | Event | Mode | Jobs the gate requires |
 | --- | --- | --- |
-| `pull_request` (ready) | full | lint (formatting, release version, Tree-sitter), workflow regressions, and `fast` on macOS arm64 and Linux x64 (`feedback-fast` plus `compiler_pipeline`) |
+| `pull_request` (ready) | full | lint (formatting, release version, Tree-sitter), workflow regressions, and `fast` on macOS arm64 and Linux x64 (`feedback-fast`, `compiler_pipeline` and the PR's declared T0/T1 tests) |
 | `pull_request` (draft) | draft | lint and workflow regressions only; a draft cannot enter the queue |
 | `merge_group` | full | lint, workflow regressions, every `integration` shard on both platforms, and `sanitizers` |
 | either | automation | lint and workflow regressions only |
@@ -705,6 +722,20 @@ that runs the complete suite, and it is only for a failure reproduced on a clean
 `main` build, never for a regression a pull request introduces. The fix for a
 quarantined test removes its entry in the same change.
 
+A ready, full-mode pull request declares its evidence in a `Validation:` block
+in its body. The `T0` (reproducer or new regression) and `T1` (owning tests)
+items list CTest names only; other items are prose for reviewers.
+`validation_checks.py declared` parses the block: the plan job rejects a missing
+or malformed declaration, and the `fast` job re-runs the declared tests by exact
+name on both platforms. Each one must be registered and enabled. The body is
+untrusted input, so a name must match the CTest name grammar and reaches CTest
+only as an escaped, anchored pattern. `finish` enforces the same declaration
+locally and refuses a declared test that the recorded `verify` checks did not
+select. A test counts as selected when a `ctest -R` or `--tests-regex` pattern
+matches it or a focused validation plan names it. The re-run guards against a
+claimed but unrun or host-specific result; the merge queue still runs the
+complete suite.
+
 A queue failure belongs to the change that introduced it. The queue removes
 that PR and rebuilds the entries behind it, so other work keeps merging; the
 owner reproduces the failing tests locally, repairs the change without
@@ -712,7 +743,67 @@ weakening unrelated expectations, verifies and re-queues. The Linux
 workflow-regression job installs CMake (including CTest) and Make explicitly
 before its real, disposable CMake/CTest batch fixtures run. `CIEnvironment` in
 `agent_workflow` executes these shell steps with missing event aliases and an
-initially tool-free PATH. The lightweight job also runs `repository_hosting`.
+initially tool-free PATH. The lightweight job also runs `repository_hosting`,
+the ownership-map coverage check and the planner's tests.
+
+### Rollups
+
+A complete queue run is long and hosted macOS concurrency is small, so the
+queue's group size is one and rollups combine compatible work instead.
+`scripts/rollup.py`, run by `.github/workflows/rollup.yml` every 30 minutes,
+on dispatch, and on an exact `/rollup` comment from a writer, composes several
+green PRs into one queue entry. Only `main`'s code runs; PR content is never
+checked out or executed, and merges are Git plumbing with hooks disabled.
+
+| Label | Meaning |
+| --- | --- |
+| `rollup=maybe` | Default for a ready PR that is not Risk-system |
+| `rollup=always` | Automation-only (docs and workflow scripts with their tests) |
+| `rollup=never` | Validates alone; `finish` sets it for Risk-system diffs and `--no-rollup`, and on every rollup PR |
+| `p=N` | Priority; higher goes first |
+| `rollup-failed` | Bot-managed: the PR was in a failed rollup and validates alone |
+| `needs-rebase` | Bot-managed: the PR conflicts with `main`; cleared once it merges cleanly |
+
+Risk-system is a conservative path rule (`validation_checks.system_risk`),
+applied to the diff and to every path any member commit touched: CMake and
+toolchain files, `.github/workflows/`, `tests/CMakeLists.txt`,
+`tests/TestThroughput.cmake`, `scripts/configure_ci_*`, `runtime/include/gti/`,
+`runtime/src/atomic_lane.h`, `include/gti/object_layout.h` and the LLVM ABI,
+layout and runtime-ABI sources. It will later read the `risk = "system"`
+areas of the test ownership map.
+
+`compose` takes open, ready PRs on `main` labelled `rollup=maybe` or
+`rollup=always` whose `CI gate` passed on their current head, excluding queued
+PRs, members of an open rollup, and `rollup=never` or `rollup-failed` PRs. It
+orders them by priority, then the time their gate passed, then number, and
+merges each exact head onto current `main` with `--no-ff`, up to six members. A
+PR that conflicts with `main` is skipped and labelled `needs-rebase` with a
+comment; one that conflicts only with an earlier member waits for a later
+rollup. The bot never resolves conflicts. With fewer than two members it does
+nothing. Otherwise it commits `.gti-validation/batches/rollup-<date>-<n>.json`
+(the batch manifest schema that `validation_checks.py full` checks) and opens
+`Rollup of N pull requests`, labelled `rollup=never`, listing each member and
+carrying a `Validation:` block whose T0/T1 items are the deduplicated union of
+the members' declared tests, at most 60. Members are not batch admissions, so
+each manifest plan names only the member's declared T0/T1 tests (the compiler
+smoke when it declared none), records an undeclared tier as T2 and points to
+the member's PR for reproduction; it claims no other evidence. A rollup
+manifest does not change the CI mode its members' paths select.
+
+`enqueue` queues a rollup once its own `CI gate` passed, pinned to its head.
+`reconcile` handles the verdict. When a rollup merged, it closes every member
+whose head is now reachable from `main` with a comment that records the proof
+`sync` checks (a merged canonical rollup PR whose head contains the member's
+exact head, with both reachable from `main`); a member with newer commits stays
+open with a note. When the rollup failed (its merge-queue `CI gate` or its PR
+`CI gate` failed), it labels every member `rollup-failed` with a link, queues
+each one alone so the queue isolates the culprit, then closes the rollup and
+deletes its branch. A queue drop without a `CI gate` verdict counts as
+infrastructure and is re-queued once per rollup. A member that moves or closes
+before its rollup is queued makes the rollup stale: the bot closes it and the
+members return to the pool. Close a rollup PR to stop it. Bisection of a
+failed rollup is future work. Every command takes `--dry-run`. The bot writes
+only with its GitHub App installation token; see `.github/README.md`.
 
 Automation-only and source-only GTI stdlib local owning checks may use
 `verify --focused`, which checks the actual diff and does not reserve a

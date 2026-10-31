@@ -2,7 +2,8 @@
 
 This is a curated overview of recent user-facing GTI changes, not a commit log
 or a claim of full C++ library compatibility. [VERSION](VERSION) identifies the
-current packaged version. Earlier changes are grouped by outcome rather than
+current packaged version. Pending changes live as
+[fragments](changes/README.md) until a release cut assembles them here. Earlier changes are grouped by outcome rather than
 assigned speculative first-release numbers.
 
 GTI remains experimental and pre-1.0. See the

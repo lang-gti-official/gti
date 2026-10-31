@@ -17,6 +17,9 @@ measurements, and implementation rationale. Those historical details should
 not be updated merely to match a later compiler state. Correct a record only
 when its own evidence or links are wrong.
 
+[`gitea-issue-map.md`](gitea-issue-map.md) maps every migrated Gitea issue
+number to its GitHub issue.
+
 The bug-finding record also retains a
 [legacy redirect](../compiler-bug-finding-and-triage.md) because repository
 debugging and fuzzing tools cite that established path.

@@ -131,8 +131,14 @@ endif()
 # Stamp the build identity into the staged toolchain before archiving. On the
 # nightly channel VERSION does not change between builds, so this is the only
 # fact an installed toolchain can compare to decide whether it is current.
+# A stable archive is channel-neutral: the release train publishes it as a
+# beta and republishes the same bytes as stable, so a stage that a nightly
+# packaging already stamped is refused rather than archived with that stamp.
 if(GTI_CHANNEL STREQUAL "nightly")
   file(WRITE "${GTI_STAGE_DIR}/share/gti/BUILD_ID" "${GTI_BUILD_ID}\n")
+elseif(EXISTS "${GTI_STAGE_DIR}/share/gti/BUILD_ID")
+  message(FATAL_ERROR
+          "Release staging carries a nightly share/gti/BUILD_ID; a stable archive is channel-neutral")
 endif()
 
 file(MAKE_DIRECTORY "${GTI_OUTPUT_DIR}")

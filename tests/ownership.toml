@@ -1,0 +1,1811 @@
+# GTI test-ownership map: the shared source for the verification planner
+# (.codex/skills/verify-change/scripts/plan_checks.py), PR CI and reviewers.
+#
+# Each [[area]] maps source paths to the CTest tests that own them (T1) and to
+# the downstream phases and tooling that consume their behaviour (T2). The
+# selection is a lower bound: authors extend it from their own analysis of the
+# changed invariant. tests/ownership_map_test.py validates this file.
+#
+# Fields:
+#   area       unique short label
+#   paths      "dir/" prefixes, exact files, or globs ("*" stays inside one
+#              path segment, "**" crosses segments); each must match a
+#              tracked file
+#   owners     T1 CTest names, or anchored regexes ("^...") for a well-defined
+#              family
+#   consumers  T2 CTest names or anchored regexes
+#   risk       optional: "shared" (scripts/validation_checks.py SHARED floor,
+#              or an equally shared contract) or "system" (validate alone,
+#              never combined with other changes)
+#
+# Every changed implementation path also gets the baseline that the policy
+# requires of every change: `compiler_pipeline` and the native O0/O3 smoke.
+# The planner adds that baseline; entries do not repeat it.
+
+schema = 1
+
+# Tests registered only in some configurations (platform, optional tools or
+# build options). The inventory check accepts their absence from one build's
+# inventory when tests/CMakeLists.txt still registers them by name.
+[configuration_dependent]
+reason = "registered only on some hosts or with optional tools or build options"
+tests = [
+  # GTI_BUILD_LSP=OFF omits these registrations.
+  "block_comment_lsp",
+  "comment_placement_lsp",
+  "concurrency_composition_lsp",
+  "diagnostic_explanations",
+  "diagnostic_recovery_lsp",
+  "executable_entry_cli_lsp",
+  "export_placement_lsp",
+  "extensible_formatting_lsp",
+  "frontend_cache_invalidation",
+  "include_removal_lsp",
+  "lsp_code_snippets",
+  "lsp_configuration",
+  "lsp_include_suggestions",
+  "lsp_project_facts",
+  "lsp_protocol",
+  "lsp_scalability_benchmark_smoke",
+  "missing_definition_cli_lsp",
+  "module_map_lsp",
+  "module_navigation_lsp",
+  "raw_pointer_audit_policy",
+  "resource_protocol_lsp",
+  "source_modules_lsp",
+  "source_text_lsp",
+
+  "compact_owner_layout_instrumented",
+  "cpp_debug_artifacts",
+  "issues_30_33_lsp",
+  "llvm_atomic_wait_service",
+  "llvm_mutex_service",
+  "llvm_native_runtime_identity",
+  "macos_installed_runtime",
+  "macro_neovim_syntax",
+  "neovim_lsp_configuration",
+  "optimizer_coverage_growth",
+  "runtime_synchronization",
+  "shared_ownership_instrumented",
+  "source_debug_lldb",
+]
+
+# ---------------------------------------------------------------------------
+# Frontend: syntax, formatting, source loading and modules
+# ---------------------------------------------------------------------------
+
+[[area]]
+area = "syntax"
+paths = [
+  "src/compiler/lexer.cpp",
+  "src/compiler/parser.cpp",
+  "src/compiler/token.cpp",
+  "src/compiler/ast_clone.cpp",
+  "src/compiler/ast_printer.cpp",
+  "src/compiler/loaded_lexical_unit.*",
+  "src/compiler/configuration_directive_processor.*",
+  "src/compiler/source_text.h",
+  "include/gti/ast.h",
+  "include/gti/ast_clone.h",
+  "include/gti/ast_printer.h",
+  "include/gti/lexer.h",
+  "include/gti/parser.h",
+  "include/gti/token.h",
+  "include/gti/configuration_flags.h",
+]
+owners = [
+  "parser_conditional_recovery",
+  "source_text_pipeline",
+  "source_unit_services",
+  "block_comment_pipeline",
+  "borrow_origin_syntax",
+  "foreign_variable_syntax",
+  "nested_type_syntax",
+  "pack_fold_syntax",
+  "thread_local_syntax",
+  "macro_result_parser",
+  "sum_type_pipeline",
+  "generic_enum_declaration",
+  "scoped_configuration_defines",
+]
+consumers = [
+  "language_coverage_corpus",
+  "lsp_protocol",
+  "diagnostic_recovery_lsp",
+  "block_comment_lsp",
+  "source_text_lsp",
+  "module_editor_recovery",
+  "tree_sitter_queries",
+  "constructor_formatting",
+  "lambda_formatting",
+]
+
+[[area]]
+area = "formatter"
+paths = [
+  "src/compiler/formatter.cpp",
+  "src/compiler/format_config.cpp",
+  "include/gti/formatter.h",
+  "include/gti/format_config.h",
+]
+owners = [
+  "constructor_formatting",
+  "lambda_formatting",
+  "block_comment_pipeline",
+  "pack_fold_syntax",
+  "nested_type_syntax",
+]
+consumers = [
+  "lsp_protocol",
+  "comment_placement_lsp",
+  "export_placement_lsp",
+  "block_comment_lsp",
+  "cli_workflow",
+]
+
+[[area]]
+area = "source-modules"
+paths = [
+  "src/compiler/source_loader.cpp",
+  "src/compiler/source_graph.cpp",
+  "src/compiler/standard_library.cpp",
+  "src/compiler/frontend.cpp",
+  "src/compiler/frontend_cache.cpp",
+  "src/compiler/instance_analysis_cache.cpp",
+  "include/gti/source_loader.h",
+  "include/gti/source_graph.h",
+  "include/gti/source_owner.h",
+  "include/gti/module_name.h",
+  "include/gti/standard_library.h",
+  "include/gti/frontend.h",
+  "include/gti/frontend_cache.h",
+  "include/gti/frontend_work.h",
+  "include/gti/instance_analysis_cache.h",
+  "include/gti/program_request.h",
+  "include/gti/progress.h",
+]
+owners = [
+  "source_owner_registration",
+  "source_unit_services",
+  "module_queries",
+  "module_semantic_identity",
+  "module_preamble_identity",
+  "module_editor_recovery",
+  "module_system_runtime",
+  "module_initialization_runtime",
+  "module_cpp_boundary",
+  "include_removal",
+  "frontend_cache_invalidation",
+  "stdlib_module_boundaries",
+  "stdlib_modules",
+  "executable_entry_semantics",
+]
+consumers = [
+  "driver_module_facts",
+  "driver_pipeline",
+  "project_model",
+  "module_map_lsp",
+  "module_navigation_lsp",
+  "source_modules_lsp",
+  "include_removal_lsp",
+  "lsp_protocol",
+  "lsp_project_facts",
+  "language_coverage_corpus",
+]
+
+[[area]]
+area = "diagnostics"
+paths = [
+  "src/compiler/diagnostic.cpp",
+  "src/compiler/diagnostic_registry.h",
+  "include/gti/diagnostic.h",
+  "diagnostics/",
+  "scripts/generate_diagnostics.py",
+]
+owners = [
+  "diagnostic_registry_generator",
+  "diagnostic_explanations",
+  "diagnostic_recovery_lsp",
+]
+consumers = [
+  "lsp_protocol",
+  "missing_definition_cli_lsp",
+  "cli_workflow",
+]
+
+[[area]]
+area = "language-queries"
+paths = [
+  "src/compiler/language_queries.cpp",
+  "src/compiler/language_snippets.*",
+  "src/compiler/include_suggestions.cpp",
+  "src/compiler/documentation.cpp",
+  "include/gti/language_queries.h",
+  "include/gti/include_suggestions.h",
+  "include/gti/documentation.h",
+]
+owners = [
+  "code_snippets",
+  "include_suggestions",
+  "macro_expansion_queries",
+  "module_queries",
+  "generic_method_tooling",
+  "documentation_index",
+]
+consumers = [
+  "lsp_protocol",
+  "lsp_code_snippets",
+  "lsp_include_suggestions",
+  "^(lsp_.*|.*_lsp)$",
+]
+
+# ---------------------------------------------------------------------------
+# Semantic analysis and constant evaluation
+# ---------------------------------------------------------------------------
+
+[[area]]
+area = "semantics"
+paths = [
+  "src/compiler/semantic_*",
+  "include/gti/semantic_*",
+  "include/gti/generic_constraint.h",
+  "include/gti/generic_instantiation_limits.h",
+  "include/gti/concurrency.h",
+]
+owners = [
+  "^.*_semantic_ir$",
+  "semantic_header_boundary",
+  "semantic_header_self_containment",
+  "general_requires_semantics",
+  "reflection_semantics",
+  "reference_payload_semantics",
+  "borrowing_capture_semantics",
+  "protocol_concepts",
+  "protected_members",
+  "qualified_type_members",
+  "instance_reuse",
+  "trusted_body_analysis",
+  "body_analysis_order",
+  "thread_local_semantic",
+  "executable_entry_semantics",
+  "generic_discovery",
+  "generic_initialization",
+  "tryable_propagation",
+  "borrow_origin",
+  "local_reference_inference",
+  "unsafe_function_contract",
+  "unsafe_expression_contract",
+  "discardable_result",
+  "conversion_operators",
+  "function_signature_types",
+  "callable_return_type",
+  "stored_callable_types",
+  "owning_function_types",
+  "consuming_receiver_types",
+]
+consumers = [
+  "language_coverage_corpus",
+  "lsp_protocol",
+  "diagnostic_recovery_lsp",
+  "generic_algorithm_errors",
+  "generic_algorithm_breadth",
+]
+
+[[area]]
+area = "semantics-shared"
+risk = "shared"
+paths = [
+  "include/gti/semantic*",
+  "src/compiler/semantic_analyzer_impl.h",
+  "src/compiler/semantic_model.cpp",
+  "src/compiler/semantic_flow_analysis.cpp",
+  "src/compiler/semantic_constexpr.cpp",
+  "src/compiler/semantic_ownership*",
+  "src/compiler/semantic_type*",
+]
+owners = [
+  "semantic_header_boundary",
+  "semantic_header_self_containment",
+  "complete_borrow_summaries",
+  "cleanup_bound_borrow",
+  "temporary_owner_borrow",
+  "fresh_callable_borrow",
+  "foreign_variable_borrow",
+  "shared_ownership_pipeline",
+]
+consumers = [
+  "mir_cutover_corpus_oracle",
+  "language_coverage_corpus",
+  "lowered_program_corpus_census",
+  "mir_census_regression",
+  "typed_differential_smoke",
+  "feature_interaction_smoke",
+]
+
+[[area]]
+area = "constexpr"
+paths = [
+  "src/compiler/constant_evaluator.cpp",
+  "src/compiler/mir_constant_evaluator.cpp",
+  "src/compiler/semantic_constexpr.cpp",
+  "include/gti/constant_evaluator.h",
+  "include/gti/mir_constant_evaluator.h",
+]
+owners = [
+  "^constexpr_",
+  "macro_values_semantic_ir",
+  "macro_values_runtime",
+  "macro_fresh_callables",
+  "macro_fresh_callable_runtime",
+  "global_borrow_carriers_runtime",
+]
+consumers = [
+  "language_coverage_corpus",
+  "mir_cutover_corpus_oracle",
+]
+
+[[area]]
+area = "numerics"
+paths = [
+  "src/compiler/binary_float.cpp",
+  "src/compiler/checked_integer.cpp",
+  "include/gti/binary_float.h",
+  "include/gti/checked_integer.h",
+]
+owners = [
+  "binary64_pipeline",
+  "binary64_runtime",
+  "defined_integer_arithmetic",
+  "^defined_integer_runtime_",
+  "checked_integer_overflow_runtime",
+  "numeric_boundaries_runtime",
+  "contextual_numeric_literals_runtime",
+  "float_text_runtime",
+]
+consumers = [
+  "^constexpr_",
+  "language_coverage_corpus",
+]
+
+[[area]]
+area = "compiler-support"
+paths = [
+  "src/compiler/support.cpp",
+  "include/gti/support.h",
+]
+owners = [
+  "compiler_library_boundary",
+  "driver_library_boundary",
+]
+consumers = [
+  "cli_workflow",
+  "lsp_protocol",
+  "language_coverage_corpus",
+]
+
+# ---------------------------------------------------------------------------
+# HIR, MIR, the optimizer and LoweredProgram
+# ---------------------------------------------------------------------------
+
+[[area]]
+area = "hir"
+risk = "shared"
+paths = [
+  "src/compiler/hir_*",
+  "src/compiler/hir.cpp",
+  "include/gti/hir*",
+]
+owners = [
+  "generic_discovery",
+  "generic_layout",
+  "generic_initialization",
+  "instance_reuse",
+  "ownerless_text_contracts",
+  "view_fields",
+  "field_symbol_identity",
+  "typed_program_model",
+  "output_determinism",
+]
+consumers = [
+  "mir_full_expression",
+  "mir_program_initialization",
+  "lowered_program_contract",
+  "mir_cutover_corpus_oracle",
+  "language_coverage_corpus",
+  "lowered_program_corpus_census",
+  "mir_census_regression",
+]
+
+[[area]]
+area = "mir"
+risk = "shared"
+paths = [
+  "src/compiler/mir_*",
+  "src/compiler/mir.cpp",
+  "include/gti/mir*",
+]
+owners = [
+  "^mir_",
+  "ephemeral_carrier_mir",
+  "borrowing_callbacks_mir",
+  "storage_adoption_contract",
+  "resource_protocol_contract",
+  "complete_borrow_summaries",
+  "cleanup_bound_borrow_mutations",
+  "uninitialized_carrier_contract",
+  "object_lifetime_contract",
+  "source_sparse_storage_contract",
+  "text_address_bridge_contract",
+  "raw_access_contract",
+  "borrowing_callback_alias_proof",
+  "borrowing_callback_relay_proof",
+  "borrowing_callback_restoration_return",
+]
+consumers = [
+  "lowered_program_contract",
+  "lowered_program_corpus_census",
+  "cpp_mir_body_emitter_corpus",
+  "cpp_mir_body_emitter_census",
+  "language_coverage_corpus",
+  "optimizer_conformance",
+  "optimizer_safety",
+  "llvm_coverage_evidence",
+  "llvm_scalar_execution",
+  "llvm_class_execution",
+  "typed_differential_smoke",
+]
+
+[[area]]
+area = "mir-thread-local"
+paths = [
+  "src/compiler/mir_thread_local.*",
+]
+owners = [
+  "mir_thread_local",
+  "^thread_local_",
+  "llvm_tls_contracts",
+  "llvm_tls_cleanup_context",
+]
+consumers = []
+
+[[area]]
+area = "optimizer"
+risk = "shared"
+paths = [
+  "src/compiler/optimization/",
+  "src/compiler/optimizer.cpp",
+  "src/compiler/mir_optimization_verifier.cpp",
+  "include/gti/optimization/",
+  "include/gti/optimizer.h",
+]
+owners = [
+  "^optimizer_",
+]
+consumers = [
+  "llvm_optimization_pipeline",
+  "mir_cutover_corpus_oracle",
+  "language_coverage_corpus",
+  "runtime_performance_workloads",
+  "interface_static_performance",
+  "out_of_class_performance",
+  "process_allocation_elision",
+  "deferred_assertions_cost",
+]
+
+[[area]]
+area = "lowered-program"
+# Not in the SHARED floor, but both backends consume this contract.
+risk = "shared"
+paths = [
+  "src/compiler/lowered_program*",
+  "include/gti/lowered_program*",
+]
+owners = [
+  "lowered_program_contract",
+  "lowered_program_corpus_census",
+  "lowered_program_source_boundary",
+  "backend_lowered_program_boundary",
+  "backend_lowered_program_rejection",
+]
+consumers = [
+  "cpp_mir_program_plan",
+  "cpp_mir_body_emitter_corpus",
+  "mir_cutover_corpus_oracle",
+  "llvm_backend_foundation",
+  "llvm_coverage_evidence",
+  "llvm_scalar_execution",
+  "llvm_class_execution",
+  "language_coverage_corpus",
+]
+
+# ---------------------------------------------------------------------------
+# Backends
+# ---------------------------------------------------------------------------
+
+[[area]]
+area = "backend-common"
+paths = [
+  "src/compiler/backend.cpp",
+  "src/compiler/native_header.cpp",
+  "src/compiler/failure_metadata.cpp",
+  "src/compiler/executable_path.cpp",
+  "src/compiler/process_memory_runtime.cpp",
+  "include/gti/backend.h",
+  "include/gti/native_header.h",
+  "include/gti/failure.h",
+  "include/gti/failure_metadata.h",
+  "include/gti/executable_path.h",
+  "include/gti/process_memory_runtime.h",
+  "include/gti/source_debug.h",
+  "include/gti/cpp_standard.h",
+]
+owners = [
+  "backend_execution_protocol",
+  "backend_lowered_program_boundary",
+  "failure_metadata",
+  "failure_descriptor_backend",
+  "failure_descriptor_backend_compile",
+  "native_header_pipeline",
+  "native_header_c_cpp_oracle",
+  "source_debug_info",
+  "source_debug_lldb",
+]
+consumers = [
+  "cli_workflow",
+  "project_cli_workflow",
+  "llvm_backend_foundation",
+  "cpp_backend_library_boundary",
+  "language_coverage_corpus",
+]
+
+[[area]]
+area = "cpp-backend"
+risk = "shared"
+paths = [
+  "src/compiler/cpp_*",
+  "include/gti/cpp_*",
+]
+owners = [
+  "^cpp_",
+  "^mir_backend_",
+  "mir_cutover_corpus_oracle",
+  "output_determinism",
+  "mir_associative_determinism",
+  "mir_field_determinism",
+]
+consumers = [
+  "language_coverage_corpus",
+  "typed_differential_smoke",
+  "feature_interaction_smoke",
+  "issues_117_120_regressions",
+  "issues_208_210_211_regressions",
+  "issues_212_214_regressions",
+]
+
+[[area]]
+area = "llvm-backend"
+paths = [
+  "src/compiler/llvm/",
+  "src/compiler/llvm_backend.cpp",
+  "src/compiler/llvm_embedding.cpp",
+  "include/gti/llvm_*",
+]
+owners = [
+  "^llvm_",
+]
+consumers = [
+  "cli_workflow",
+  "project_cli_workflow",
+  "language_coverage_corpus",
+  "practical_examples",
+  "source_debug_info",
+  "runtime_performance_workloads",
+  "feature_interaction_smoke",
+]
+
+[[area]]
+area = "llvm-abi-layout"
+risk = "system"
+paths = [
+  "src/compiler/llvm/abi.*",
+  "src/compiler/llvm/layout.*",
+  "src/compiler/llvm/native_c_abi.*",
+  "src/compiler/llvm/native_c_contract.h",
+  "src/compiler/llvm/runtime_abi.*",
+  "src/compiler/llvm/polymorphic_storage.*",
+  "src/compiler/llvm/payloads.h",
+  "src/compiler/target.cpp",
+  "include/gti/target.h",
+  "include/gti/object_layout.h",
+]
+owners = [
+  "llvm_target_layout_abi",
+  "^llvm_native_c_",
+  "llvm_dispatch_layout",
+  "llvm_polymorphic_storage_layout",
+  "llvm_polymorphic_storage_mechanisms",
+  "llvm_raw_pointer_array_execution",
+  "c_abi_header_boundary",
+  "runtime_abi_inventory",
+  "runtime_object_layout_contract",
+  "runtime_object_layout_runtime",
+  "layout_query_pipeline",
+  "layout_query_native_boundary",
+  "native_c_scalar_target",
+  "native_c_scalar_pipeline",
+  "native_record_pipeline",
+  "native_record_c_oracle",
+  "general_object_layout_runtime",
+  "compact_owner_layout",
+  "compact_owner_layout_runtime",
+  "environment_target_capability",
+]
+consumers = [
+  "embedding_header_c17_oracle",
+  "embedding_header_cpp20_oracle",
+  "glfw_3_4_c_oracle",
+  "native_packages",
+]
+
+[[area]]
+area = "llvm-runtime-services"
+risk = "system"
+paths = [
+  "src/compiler/llvm/threads.*",
+  "src/compiler/llvm/thread_lifecycle.*",
+  "src/compiler/llvm/thread_locals.*",
+  "src/compiler/llvm/mutexes.*",
+  "src/compiler/llvm/atomics.*",
+  "src/compiler/llvm/atomic_types.h",
+  "src/compiler/llvm/memory.*",
+  "src/compiler/llvm/memory_types.h",
+  "src/compiler/llvm/hosted.*",
+  "src/compiler/llvm/failure.*",
+  "src/compiler/llvm/embedding.*",
+]
+owners = [
+  "llvm_thread_execution",
+  "llvm_thread_lifecycle_contracts",
+  "llvm_cthread_startup_execution",
+  "llvm_tls_contracts",
+  "llvm_tls_cleanup_context",
+  "llvm_mutex_contracts",
+  "llvm_mutex_hierarchy_contracts",
+  "llvm_mutex_service",
+  "llvm_atomic_contracts",
+  "llvm_atomic_execution",
+  "llvm_atomic_wait_service",
+  "llvm_memory_contracts",
+  "llvm_memory_execution",
+  "llvm_memory_mechanisms",
+  "llvm_hosted_contracts",
+  "llvm_hosted_execution",
+  "llvm_hosted_cleanup_execution",
+  "llvm_hosted_cleanup_source_contract",
+  "llvm_embedding_execution",
+  "llvm_embedding_cost",
+  "llvm_embedding_project",
+  "runtime_synchronization",
+]
+consumers = [
+  "managed_thread_end_to_end",
+  "scoped_parallel_threads",
+  "mutex_end_to_end",
+  "atomic_end_to_end",
+  "thread_local_end_to_end",
+  "hosted_exit_status_runtime",
+  "panic_runtime",
+]
+
+# ---------------------------------------------------------------------------
+# Native runtime (runtime/ is in the SHARED floor)
+# ---------------------------------------------------------------------------
+
+[[area]]
+area = "runtime"
+risk = "shared"
+paths = [
+  "runtime/",
+]
+owners = [
+  "runtime_abi_inventory",
+  "runtime_execution_boundary",
+  "runtime_failure_boundary",
+  "runtime_io_boundary",
+  "runtime_process_boundary",
+  "c_abi_header_boundary",
+]
+consumers = [
+  "mir_cutover_corpus_oracle",
+  "language_coverage_corpus",
+  "practical_examples",
+  "cli_workflow",
+  "project_cli_workflow",
+  "scoped_concurrency_installed",
+  "macos_installed_runtime",
+  "runtime_performance_workloads",
+]
+
+[[area]]
+area = "runtime-abi-headers"
+risk = "system"
+paths = [
+  "runtime/include/gti/c_abi.h",
+  "runtime/include/gti/runtime.h",
+  "runtime/include/gti/runtime.hpp",
+]
+owners = [
+  "c_abi_header_boundary",
+  "runtime_abi_inventory",
+  "runtime_failure_header_coexistence",
+  "embedding_header_c17_oracle",
+  "embedding_header_cpp20_oracle",
+]
+consumers = [
+  "llvm_target_layout_abi",
+  "llvm_native_c_abi",
+]
+
+[[area]]
+area = "runtime-threads"
+risk = "system"
+paths = [
+  "runtime/src/thread.cpp",
+  "runtime/src/thread_internal.h",
+  "runtime/include/gti/runtime_thread.*",
+]
+owners = [
+  "managed_thread_runtime",
+  "runtime_thread_outcome_boundary",
+  "scoped_thread_runtime",
+  "scoped_thread_join_boundary",
+  "scoped_thread_c_header",
+  "thread_local_runtime_registry",
+  "managed_thread_end_to_end",
+  "managed_thread_tsan",
+  "scoped_parallel_threads",
+  "scoped_parallel_threads_tsan",
+  "scoped_parallel_cleanup_tsan",
+  "shared_mutex_threads_tsan",
+  "transfer_function_threads_tsan",
+  "shared_ownership_threads",
+]
+consumers = [
+  "llvm_thread_execution",
+  "llvm_thread_lifecycle_contracts",
+  "runtime_synchronization",
+  "concurrency_composition_lsp",
+]
+
+[[area]]
+area = "runtime-cthread"
+risk = "system"
+paths = [
+  "runtime/src/cthread*",
+  "runtime/include/gti/cthread.h",
+]
+owners = [
+  "^cthread_",
+  "llvm_cthread_startup_execution",
+]
+consumers = [
+  "runtime_synchronization",
+]
+
+[[area]]
+area = "runtime-synchronization"
+risk = "system"
+paths = [
+  "runtime/src/mutex.cpp",
+  "runtime/src/atomic_wait.cpp",
+  "runtime/src/atomic_lane.h",
+  "runtime/include/gti/runtime_mutex.h",
+  "runtime/include/gti/runtime_atomic_wait.h",
+]
+owners = [
+  "runtime_synchronization",
+  "mutex_end_to_end",
+  "mutex_tsan",
+  "mutex_cleanup_failure_runtime",
+  "mutex_move_cleanup_runtime",
+  "atomic_wait_runtime",
+  "atomic_end_to_end",
+  "atomic_tsan",
+  "llvm_mutex_service",
+  "llvm_atomic_wait_service",
+]
+consumers = [
+  "llvm_mutex_contracts",
+  "llvm_mutex_hierarchy_contracts",
+  "llvm_atomic_contracts",
+  "shared_mutex_threads_tsan",
+]
+
+[[area]]
+area = "runtime-memory"
+risk = "system"
+paths = [
+  "runtime/src/memory.cpp",
+  "runtime/include/gti/memory.h",
+]
+owners = [
+  "resource_memory_runtime",
+  "allocation_abort_runtime",
+  "allocation_default_argument_runtime",
+  "allocator_storage_runtime",
+  "arena_pool_runtime",
+  "programmable_allocators_runtime",
+  "existing_value_allocation_failure_runtime",
+  "unique_scalar_allocation_runtime",
+  "unique_class_allocation_runtime",
+  "inherited_unique_allocation_runtime",
+  "llvm_memory_execution",
+  "llvm_memory_contracts",
+]
+consumers = [
+  "process_allocation_elision",
+  "runtime_performance_workloads",
+]
+
+[[area]]
+area = "runtime-failure"
+risk = "system"
+paths = [
+  "runtime/src/failure.cpp",
+  "runtime/src/failure_internal.h",
+  "runtime/src/failure_unicode_15_1.inc",
+  "runtime/include/gti/runtime_failure.h",
+]
+owners = [
+  "runtime_failure_boundary",
+  "runtime_failure_subprocess",
+  "runtime_failure_header_coexistence",
+  "panic_runtime",
+  "panic_adoption_runtime",
+  "panic_contracts",
+  "failure_descriptor_backend",
+  "failure_descriptor_backend_compile",
+]
+consumers = [
+  "checked_integer_overflow_runtime",
+  "fixed_array_oob_write_runtime",
+  "llvm_hosted_execution",
+]
+
+[[area]]
+area = "runtime-execution-embedding"
+risk = "system"
+paths = [
+  "runtime/src/execution.cpp",
+  "runtime/src/embedding.cpp",
+  "runtime/src/embedding_internal.h",
+  "runtime/include/gti/runtime_execution.h",
+  "runtime/include/gti/embedding.h",
+]
+owners = [
+  "runtime_execution_boundary",
+  "runtime_embedding_context",
+  "embedding_foundation",
+  "embedding_header_c17_oracle",
+  "embedding_header_cpp20_oracle",
+  "hosted_exit_status_runtime",
+  "llvm_embedding_execution",
+  "llvm_embedding_cost",
+  "llvm_embedding_project",
+  "llvm_hosted_execution",
+]
+consumers = [
+  "mir_hosted_startup",
+  "cli_workflow",
+]
+
+[[area]]
+area = "runtime-text-numbers"
+paths = [
+  "runtime/src/charconv.cpp",
+  "runtime/src/c_string.cpp",
+  "runtime/src/math.cpp",
+  "runtime/include/gti/charconv.h",
+  "runtime/include/gti/math.h",
+  "cmake/RuntimeCharconv.cmake",
+]
+owners = [
+  "charconv_runtime_boundary",
+  "charconv_runtime",
+  "float_text_runtime",
+  "c_string_import_runtime",
+  "string_c_string_runtime",
+  "cmath_runtime",
+]
+consumers = [
+  "format_output_matrix_runtime",
+  "json_runtime",
+]
+
+[[area]]
+area = "runtime-system-services"
+paths = [
+  "runtime/src/chrono*",
+  "runtime/src/environment.cpp",
+  "runtime/src/filesystem.cpp",
+  "runtime/src/io.cpp",
+  "runtime/src/process.cpp",
+  "runtime/src/random.cpp",
+  "runtime/src/http.cpp",
+  "runtime/include/gti/chrono.h",
+  "runtime/include/gti/environment.h",
+  "runtime/include/gti/filesystem.h",
+  "runtime/include/gti/random.h",
+  "runtime/include/gti/http.h",
+]
+owners = [
+  "chrono_runtime_boundary",
+  "constexpr_chrono_runtime",
+  "environment_runtime_boundary",
+  "environment_c_header",
+  "environment_runtime",
+  "filesystem_runtime_boundary",
+  "filesystem_operations_runtime",
+  "filesystem_path_runtime",
+  "runtime_io_boundary",
+  "composable_io_runtime",
+  "runtime_process_boundary",
+  "process_runtime",
+  "process_resource_policy",
+  "process_capture_failure",
+  "process_group_identity",
+  "random_engine_runtime",
+  "http_runtime",
+  "http_url_operators",
+]
+consumers = [
+  "practical_examples",
+  "expected_filesystem_prerequisites_runtime",
+  "test_runner",
+]
+
+# ---------------------------------------------------------------------------
+# Standard library
+# ---------------------------------------------------------------------------
+
+[[area]]
+area = "stdlib"
+paths = [
+  "stdlib/",
+]
+owners = [
+  "stdlib_surface",
+  "stdlib_surface_manifest",
+  "stdlib_surface_context_controls",
+  "stdlib_modules",
+  "stdlib_module_boundaries",
+  "stdlib_include_sweep",
+  "stdlib_discardable",
+  "stdlib_adoption_runtime",
+]
+consumers = [
+  "language_coverage_corpus",
+  "practical_examples",
+  "mir_census_regression",
+  "lowered_program_corpus_census",
+  "mir_cutover_corpus_oracle",
+  "trusted_body_analysis",
+  "body_analysis_order",
+]
+
+[[area]]
+area = "stdlib-modules"
+paths = [
+  "stdlib/std.gti",
+  "stdlib/prelude.gti",
+  "stdlib/module-map.json",
+]
+owners = [
+  "stdlib_modules",
+  "stdlib_module_boundaries",
+  "module_system_runtime",
+  "module_preamble_identity",
+]
+consumers = [
+  "module_map_lsp",
+  "lsp_include_suggestions",
+  "include_suggestions",
+]
+
+[[area]]
+area = "stdlib-containers"
+paths = [
+  "stdlib/std/vector.gti",
+  "stdlib/std/array.gti",
+  "stdlib/std/deque.gti",
+  "stdlib/std/list.gti",
+  "stdlib/std/forward_list.gti",
+  "stdlib/std/queue.gti",
+  "stdlib/std/map.gti",
+  "stdlib/std/set.gti",
+  "stdlib/std/unordered_map.gti",
+  "stdlib/std/unordered_set.gti",
+  "stdlib/std/span.gti",
+  "stdlib/std/paired_span.gti",
+  "stdlib/std/iterator.gti",
+  "stdlib/std/algorithm.gti",
+  "stdlib/std/numeric.gti",
+  "stdlib/std/detail/iterator.gti",
+  "stdlib/std/detail/map_*",
+  "stdlib/std/detail/unordered_map_iterators.gti",
+]
+owners = [
+  "complete_containers",
+  "complete_containers_collection",
+  "container_contract_failure",
+  "container_iterator_movement",
+  "container_swap_runtime",
+  "contiguous_iterator_completion",
+  "paired_span_iterator_completion",
+  "forward_list_runtime",
+  "forward_list_iterator_runtime",
+  "associative_map",
+  "associative_hash_contracts",
+  "associative_constructor_runtime",
+  "associative_ownership_runtime",
+  "unordered_map",
+  "map_mutable_entry_projection",
+  "mir_associative_determinism",
+  "ordered_search_runtime",
+  "storage_lane_iterator_runtime",
+  "vector_construction_only_runtime",
+  "vector_prepared_constructor_runtime",
+  "vector_scalar_constructor_runtime",
+  "generic_algorithm_breadth",
+  "generic_algorithm_cluster",
+  "generic_algorithm_errors",
+]
+consumers = [
+  "collection_initialization_runtime",
+  "collection_cleanup_failure_runtime",
+]
+
+[[area]]
+area = "stdlib-text"
+paths = [
+  "stdlib/std/string.gti",
+  "stdlib/std/string_view.gti",
+  "stdlib/std/format.gti",
+  "stdlib/std/charconv.gti",
+  "stdlib/std/detail/charconv_*",
+  "stdlib/std/encoding.gti",
+  "stdlib/std/json.gti",
+  "stdlib/std/cstdio.gti",
+]
+owners = [
+  "string_operations_runtime",
+  "string_operations_errors",
+  "string_ordering_runtime",
+  "string_owned_output_runtime",
+  "string_index_range_runtime",
+  "string_c_string_runtime",
+  "text_view_iterator_runtime",
+  "encoding_runtime",
+  "extensible_formatting_runtime",
+  "format_output_matrix_runtime",
+  "charconv_runtime",
+  "float_text_runtime",
+  "json_runtime",
+]
+consumers = [
+  "extensible_formatting_lsp",
+  "source_text_pipeline",
+]
+
+[[area]]
+area = "stdlib-concurrency"
+paths = [
+  "stdlib/std/thread.gti",
+  "stdlib/std/mutex.gti",
+  "stdlib/std/atomic.gti",
+  "stdlib/std/cthread.gti",
+]
+owners = [
+  "managed_thread_end_to_end",
+  "managed_thread_semantic_ir",
+  "scoped_parallel_threads",
+  "mutex_end_to_end",
+  "mutex_semantic_ir",
+  "atomic_end_to_end",
+  "atomic_semantic_ir",
+  "cthread_runtime",
+  "cthread_semantic_ir",
+]
+consumers = [
+  "concurrency_composition_lsp",
+  "llvm_thread_execution",
+  "llvm_atomic_execution",
+]
+
+[[area]]
+area = "stdlib-memory-resources"
+paths = [
+  "stdlib/std/memory.gti",
+  "stdlib/std/resource.gti",
+  "stdlib/std/resource_vector.gti",
+  "stdlib/std/polymorphic.gti",
+  "stdlib/std/detail/memory_*",
+  "stdlib/std/detail/resource_*",
+  "stdlib/std/detail/function_pointer.gti",
+  "stdlib/std/functional.gti",
+  "stdlib/std/utility.gti",
+  "stdlib/std/meta.gti",
+]
+owners = [
+  "shared_ownership_runtime",
+  "shared_ownership_failure",
+  "unique_owner_access_runtime",
+  "unique_scalar_allocation_runtime",
+  "unique_class_allocation_runtime",
+  "allocator_storage_runtime",
+  "programmable_allocators_runtime",
+  "resource_protocol_lsp",
+  "inline_polymorphic_runtime",
+  "polymorphic_owner_cleanup_runtime",
+]
+consumers = [
+  "resource_memory_runtime",
+  "llvm_memory_execution",
+]
+
+[[area]]
+area = "stdlib-results"
+paths = [
+  "stdlib/std/optional.gti",
+  "stdlib/std/experimental/",
+  "stdlib/std/panic.gti",
+  "stdlib/std/detail/panic.gti",
+  "stdlib/std/assert.gti",
+  "stdlib/std/testing.gti",
+  "stdlib/std/source_location.gti",
+]
+owners = [
+  "optional_runtime",
+  "experimental_optional_runtime",
+  "optional_compiler_contract",
+  "panic_runtime",
+  "panic_adoption_runtime",
+  "testing_assertions_runtime",
+  "deferred_assertions_runtime",
+  "source_location_runtime",
+  "annotated_test_suites",
+]
+consumers = [
+  "test_runner",
+  "test_command_controls",
+]
+
+[[area]]
+area = "stdlib-system"
+paths = [
+  "stdlib/std/filesystem.gti",
+  "stdlib/std/io.gti",
+  "stdlib/std/process.gti",
+  "stdlib/std/environment.gti",
+  "stdlib/std/chrono.gti",
+  "stdlib/std/random.gti",
+  "stdlib/std/cmath.gti",
+  "stdlib/std/http.gti",
+  "stdlib/std/tcp.gti",
+  "stdlib/std/simd.gti",
+  "stdlib/std/build.gti",
+]
+owners = [
+  "filesystem_operations_runtime",
+  "filesystem_path_runtime",
+  "composable_io_runtime",
+  "process_runtime",
+  "environment_runtime",
+  "constexpr_chrono_runtime",
+  "random_engine_runtime",
+  "cmath_runtime",
+  "http_runtime",
+  "http_url_operators",
+  "simd_runtime",
+  "simd_semantic_ir",
+]
+consumers = [
+  "practical_examples",
+  "llvm_simd_source",
+  "project_cli_workflow",
+]
+
+[[area]]
+area = "stdlib-package-tests"
+paths = [
+  "stdlib/tests/",
+]
+owners = [
+  "trusted_body_analysis",
+  "body_analysis_order",
+]
+consumers = []
+
+# ---------------------------------------------------------------------------
+# Driver, CLI, projects, packages and caches
+# ---------------------------------------------------------------------------
+
+[[area]]
+area = "driver"
+paths = [
+  "src/driver/",
+  "include/gti/driver/",
+  "vendor/tomlplusplus/",
+]
+owners = [
+  "driver_pipeline",
+  "driver_library_boundary",
+  "driver_module_facts",
+  "project_model",
+  "cli_workflow",
+  "project_cli_workflow",
+]
+consumers = [
+  "lsp_project_facts",
+  "lsp_configuration",
+  "llvm_cache_project_workflows",
+  "native_packages",
+]
+
+[[area]]
+area = "driver-registry"
+paths = [
+  "src/driver/registry_*",
+  "src/driver/package_archive.cpp",
+  "src/driver/semver.cpp",
+  "src/driver/dependencies.cpp",
+  "src/driver/sha256.h",
+  "include/gti/driver/registry*",
+  "include/gti/driver/semver.h",
+  "include/gti/driver/dependencies.h",
+]
+owners = [
+  "package_registry_model",
+  "package_registry_cli",
+  "package_registry_auth_model",
+  "package_registry_auth_cli",
+]
+consumers = []
+
+[[area]]
+area = "driver-test-runner"
+paths = [
+  "src/driver/test_runner.cpp",
+  "src/driver/test_report.cpp",
+  "include/gti/driver/test_runner.h",
+  "include/gti/driver/test_report.h",
+]
+owners = [
+  "test_runner",
+  "test_report",
+  "test_command_controls",
+  "annotated_test_suites",
+  "testing_assertions_runtime",
+]
+consumers = []
+
+[[area]]
+area = "driver-native-build"
+paths = [
+  "src/driver/native_toolchain.cpp",
+  "src/driver/build.cpp",
+  "src/driver/build_script.cpp",
+  "src/driver/compilation.cpp",
+  "src/driver/artifact.cpp",
+  "src/driver/install.cpp",
+  "src/driver/process.cpp",
+  "src/driver/embedding_library.cpp",
+  "include/gti/driver/native_toolchain.h",
+  "include/gti/driver/build*",
+  "include/gti/driver/compilation.h",
+  "include/gti/driver/artifact.h",
+  "include/gti/driver/install.h",
+  "include/gti/driver/process.h",
+  "include/gti/driver/embedding_library.h",
+]
+owners = [
+  "native_fixture_build",
+  "native_packages",
+  "native_framework_nonapple",
+  "objective_cpp_bridge",
+  "cli_install",
+  "cli_native_dependency_progress",
+  "llvm_cache_round_trip",
+  "llvm_cache_project_workflows",
+  "llvm_cache_component_mapping",
+  "llvm_embedding_project",
+  "process_capture_failure",
+  "process_group_identity",
+  "embedding_foundation",
+]
+consumers = [
+  "llvm_cache_installed_toolchain",
+  "scoped_concurrency_installed",
+]
+
+[[area]]
+area = "cli"
+paths = [
+  "src/cli/",
+]
+owners = [
+  "cli_workflow",
+  "project_cli_workflow",
+  "cli_color",
+  "cli_progress",
+  "cli_install",
+  "cli_hardlink_fixture",
+  "cli_native_dependency_progress",
+  "llvm_backend_cli",
+  "package_registry_cli",
+  "package_registry_auth_cli",
+  "missing_definition_cli_lsp",
+  "executable_entry_cli_lsp",
+]
+consumers = [
+  "compiler_failure_reducer",
+  "compiler_debug_tooling",
+]
+
+[[area]]
+area = "bindgen"
+paths = [
+  "src/bindgen/",
+  "include/gti/bindgen/",
+  "src/driver/bindgen_import.cpp",
+  "include/gti/driver/bindgen_import.h",
+]
+owners = [
+  "bindgen_pipeline",
+  "bindgen_module_cli",
+  "native_enum_bindgen",
+  "native_typedef_bindgen",
+  "native_union_bindgen",
+  "native_variable_bindgen",
+]
+consumers = [
+  "glfw_3_4_c_oracle",
+  "native_record_c_oracle",
+  "native_header_c_cpp_oracle",
+  "native_packages",
+]
+
+[[area]]
+area = "docgen"
+paths = [
+  "src/docgen/",
+]
+owners = [
+  "documentation_index",
+]
+consumers = []
+
+# ---------------------------------------------------------------------------
+# LSP and editor tooling
+# ---------------------------------------------------------------------------
+
+[[area]]
+area = "lsp"
+paths = [
+  "src/lsp/",
+]
+owners = [
+  "^(lsp_.*|.*_lsp)$",
+  "frontend_cache_invalidation",
+  "diagnostic_explanations",
+  "raw_pointer_audit_policy",
+]
+consumers = [
+  "neovim_lsp_configuration",
+  "package_registry_cli",
+]
+
+[[area]]
+area = "editor"
+paths = [
+  "lua/",
+  "plugin/",
+  "ftdetect/",
+  "ftplugin/",
+  "syntax/",
+  "lsp/",
+  "lazy.lua",
+  "build.lua",
+]
+owners = [
+  "neovim_lsp_configuration",
+  "macro_neovim_syntax",
+  "neovim_local_installer",
+]
+consumers = [
+  "lsp_configuration",
+  "repository_hosting",
+]
+
+[[area]]
+area = "tree-sitter"
+paths = [
+  "tree-sitter-gti/",
+  "queries/",
+]
+owners = [
+  "tree_sitter_queries",
+]
+consumers = [
+  "macro_neovim_syntax",
+]
+
+# ---------------------------------------------------------------------------
+# Build system, CI, release and test infrastructure
+# ---------------------------------------------------------------------------
+
+[[area]]
+area = "build-system"
+risk = "system"
+paths = [
+  "CMakeLists.txt",
+  "cmake/",
+  ".clang-tidy",
+]
+owners = [
+  "cmake_test_ownership",
+  "optimized_test_compiler_policy",
+  "compiler_library_boundary",
+  "cpp_backend_library_boundary",
+  "driver_library_boundary",
+  "llvm_backend_library_boundary",
+  "llvm_backend_dependency_controls",
+  "llvm_link_surface",
+  "llvm_link_surface_policy",
+  "llvm_clang_coexistence",
+  "runtime_abi_inventory",
+]
+consumers = [
+  "scoped_concurrency_installed",
+  "llvm_cache_installed_toolchain",
+  "macos_installed_runtime",
+  "macos_runtime_bundle",
+  "cli_workflow",
+]
+
+[[area]]
+area = "llvm-link-surface"
+paths = [
+  "scripts/check_llvm_link_surface.py",
+]
+owners = [
+  "llvm_link_surface",
+  "llvm_link_surface_policy",
+]
+consumers = []
+
+[[area]]
+area = "ci-workflows"
+risk = "system"
+paths = [
+  ".github/",
+  ".gitea/",
+  "scripts/validation_checks.py",
+  "scripts/configure_ci_*",
+  "scripts/check_ci_sanitizers.py",
+]
+owners = [
+  "agent_workflow",
+  "repository_hosting",
+  "ci_resources",
+  "ci_cache",
+  "ci_release",
+  "ci_sanitizer_capability",
+]
+consumers = [
+  "release_version_policy",
+  "preview_workflow",
+]
+
+[[area]]
+area = "release-packaging"
+risk = "system"
+paths = [
+  "scripts/check_release_version.py",
+  "scripts/sync_release_assets.py",
+  "scripts/resolve_release_source.py",
+  "scripts/release_train.py",
+  "scripts/bundle_macos_runtime.py",
+  "cmake/PackageRelease.cmake",
+]
+owners = [
+  "release_version_policy",
+  "release_asset_sync",
+  "ci_release",
+  "release_train",
+  "macos_runtime_bundle",
+]
+consumers = [
+  "preview_workflow",
+  "repository_hosting",
+]
+
+[[area]]
+area = "release-metadata"
+paths = [
+  "VERSION",
+  "CHANGELOG.md",
+  "changes/",
+  "scripts/cut_release.py",
+]
+owners = [
+  "cut_release_policy",
+  "release_version_policy",
+]
+consumers = []
+
+[[area]]
+area = "test-infrastructure"
+risk = "system"
+paths = [
+  "tests/CMakeLists.txt",
+  "tests/TestThroughput.cmake",
+  "tests/ownership.toml",
+  "tests/compiler_test_aggregate.py",
+  "tests/named_test_census.py",
+  "tests/case_jobs.py",
+]
+owners = [
+  "cmake_test_ownership",
+  "test_throughput_registration",
+  "test_case_jobs",
+  "partitioned_test_protocol",
+  "test_ownership_map",
+  "plan_checks",
+  "optimized_test_compiler_policy",
+]
+consumers = []
+
+[[area]]
+area = "ci-shard-durations"
+paths = [
+  "tests/ci_test_durations.json",
+]
+owners = [
+  "agent_workflow",
+]
+consumers = []
+
+# ---------------------------------------------------------------------------
+# Automation scripts and their harnesses
+# ---------------------------------------------------------------------------
+
+[[area]]
+area = "agent-workflow"
+paths = [
+  "scripts/agent_workflow.py",
+  "scripts/rollup.py",
+  "scripts/validation_batch.py",
+  "tests/agent_workflow_test.py",
+  "tests/rollup_test.py",
+]
+owners = [
+  "agent_workflow",
+]
+consumers = [
+  "preview_workflow",
+  "repository_hosting",
+]
+
+[[area]]
+area = "build-window"
+paths = [
+  "scripts/build_window.py",
+  "tests/build_window_test.py",
+]
+owners = [
+  "build_window",
+  "agent_workflow",
+]
+consumers = [
+  "remote_runner",
+]
+
+[[area]]
+area = "bounded-log"
+paths = [
+  "scripts/bounded_log.py",
+  "tests/bounded_log_test.py",
+]
+owners = [
+  "bounded_log",
+]
+consumers = [
+  "agent_workflow",
+]
+
+[[area]]
+area = "remote-runner"
+paths = [
+  "scripts/remote_runner.py",
+]
+owners = [
+  "remote_runner",
+]
+consumers = [
+  "agent_workflow",
+]
+
+[[area]]
+area = "preview"
+paths = [
+  "scripts/preview_workflow.py",
+  "scripts/preview_submit.py",
+  "scripts/preview_examples.py",
+]
+owners = [
+  "preview_workflow",
+]
+consumers = [
+  "agent_workflow",
+]
+
+[[area]]
+area = "verification-planner"
+paths = [
+  ".codex/skills/verify-change/",
+  "tests/plan_checks_test.py",
+  "tests/ownership_map_test.py",
+]
+owners = [
+  "plan_checks",
+  "test_ownership_map",
+]
+consumers = []
+
+[[area]]
+area = "agent-guidance"
+paths = [
+  ".codex/",
+  ".claude/",
+  "AGENTS.md",
+  "CLAUDE.md",
+]
+owners = [
+  "agent_workflow",
+  "repository_hosting",
+]
+consumers = []
+
+[[area]]
+area = "benchmarks"
+paths = [
+  "benchmarks/",
+  "scripts/benchmark_compare.py",
+  "scripts/compile_time_compare.py",
+  "scripts/lsp_benchmark.py",
+]
+owners = [
+  "benchmark_harness",
+  "runtime_performance_workloads",
+  "compile_time_harness",
+  "lsp_scalability_benchmark_smoke",
+]
+consumers = []
+
+[[area]]
+area = "debug-tooling"
+paths = [
+  "scripts/debug/capture_compiler_failure.py",
+  "scripts/debug/reduce_compiler_failure.py",
+  "scripts/debug/feature_interactions.py",
+  "scripts/debug/feature_interaction_model.py",
+  "scripts/debug/typed_program_model.py",
+  "scripts/debug/stdlib_include_sweep.py",
+  "scripts/local_language_audit.py",
+]
+owners = [
+  "compiler_failure_reducer",
+  "compiler_debug_tooling",
+  "cli_progress",
+  "feature_interaction_smoke",
+  "feature_interaction_model",
+  "typed_program_model",
+  "typed_differential_smoke",
+  "stdlib_include_sweep",
+]
+consumers = []
+
+[[area]]
+area = "neovim-installer"
+paths = [
+  "scripts/install_neovim_local.*",
+]
+owners = [
+  "neovim_local_installer",
+  "preview_workflow",
+]
+consumers = []
+
+# ---------------------------------------------------------------------------
+# Corpora and documentation
+# ---------------------------------------------------------------------------
+
+[[area]]
+area = "examples"
+paths = [
+  "examples/",
+  "packages/",
+]
+owners = [
+  "practical_examples",
+  "mir_census_regression",
+  "lowered_program_corpus_census",
+  "mir_cutover_corpus_oracle",
+]
+consumers = [
+  "language_coverage_corpus",
+  "trusted_body_analysis",
+  "body_analysis_order",
+  "native_packages",
+]
+
+[[area]]
+area = "fuzz"
+paths = [
+  "fuzz/",
+]
+owners = []
+consumers = [
+  "parser_conditional_recovery",
+]
+
+[[area]]
+area = "documentation"
+paths = [
+  "docs/",
+  "README.md",
+]
+owners = [
+  "repository_hosting",
+]
+consumers = []
+
+# ---------------------------------------------------------------------------
+# Tracked files with no registered test. Each entry says why.
+# ---------------------------------------------------------------------------
+
+[[unowned]]
+paths = ["scripts/clang_format.py"]
+reason = "exercised by the CI formatting job and the planner's format check, not a CTest"
+
+[[unowned]]
+paths = ["scripts/generate_failure_unicode_table.py"]
+reason = "offline generator; its checked-in output runtime/src/failure_unicode_15_1.inc is owned by runtime-failure"
+
+[[unowned]]
+paths = [
+  "scripts/bench_simd.py",
+  "scripts/storage_migration_compare.py",
+  "scripts/compiler_structural_snapshot.py",
+]
+reason = "manual measurement or snapshot tools; no harness is registered (tests/compiler_structural_snapshot_test.py exists but is not a CTest)"
+
+[[unowned]]
+paths = [
+  "scripts/debug/container_element_matrix.py",
+  "scripts/debug/corpus_differential.py",
+  "scripts/debug/decline_census.py",
+  "scripts/debug/explain_rejection.py",
+  "scripts/debug/expr_differential.py",
+  "scripts/debug/lsp_probe.py",
+  "scripts/debug/optimizer_differential.py",
+  "scripts/debug/place_shape_matrix.py",
+  "scripts/debug/selftest.py",
+  "scripts/debug/optimizer_invariants/",
+]
+reason = "non-gating diagnostic tools for investigating failures; bugs they find become owning-suite regressions"
+
+[[unowned]]
+paths = ["scripts/highlight-inspector/"]
+reason = "interactive Neovim highlight comparison tool run by hand"

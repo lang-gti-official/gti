@@ -13,8 +13,9 @@ lifecycle here.
 
 The short version: run focused checks (reproducer, owning tests, affected
 cross-phase consumers, `compiler_pipeline`, smoke), record them with `verify`,
-and `finish` into the merge queue. Never run the complete suite to finish a
-task; the queue runs it on the exact candidate.
+and `finish`: it labels the PR for a rollup (phase `rollup`) or, for Risk-system
+diffs and `--no-rollup`, queues it alone (phase `queued`). Never run the
+complete suite to finish a task; the queue runs it on the exact candidate.
 
 For a pre-cutover worktree, read that skill from the current primary checkout,
 not its stale branch copy, and invoke the primary helper with
