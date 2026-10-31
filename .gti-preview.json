@@ -26,10 +26,23 @@
         "a4cdea27f7799b9a708cd740393184f40017f836"
       ],
       "merge": "a4cdea27f7799b9a708cd740393184f40017f836"
+    },
+    {
+      "task": "sanitizer-lifecycle",
+      "pr": 105,
+      "head": "2914f45cd6daa14549ae7842d53d18cf8a0fc960",
+      "tests": [
+        "named_test_shards",
+        "ci_release"
+      ],
+      "contributions": [
+        "e54a2315248672f40b0fe05a5b911f4e18b9d49f"
+      ],
+      "merge": "e54a2315248672f40b0fe05a5b911f4e18b9d49f"
     }
   ],
   "removed": [],
   "main": "cfb28948a26a14e58ffb720c3474cbbed8d3f2ff",
-  "previous": "675eedd87ff0703decf345565728210bb89a2ed7",
-  "candidate": "dd2eef0d6c9845c4bf0a37ee56a820f6"
+  "previous": "af212090a1cdd1ca95ab068eecc7c0f31df2b2ee",
+  "candidate": "b5ddab2608544f4dac9f19f69b33bb82"
 }
