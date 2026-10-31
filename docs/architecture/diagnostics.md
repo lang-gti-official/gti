@@ -445,6 +445,15 @@ the completed Q-FAIL-01 consumer is not proof of every proposed boundary.
 
 ## Production Rules
 
+`GTI-S2018` rejects unique allocation of an object containing checked borrowed
+state. The private owner cannot retain external lifetime dependencies, so the
+check applies structurally to ordinary classes and nested borrowing closure
+environments before MIR construction. Concrete generic publication anchors the
+diagnostic at the user's request and relates the allocation inside the library.
+The hint suggests tracked local storage or owned state; no automatic edit
+changes the program's ownership. This prevents unsupported owning callable
+erasure from reaching `GTI-B0001`.
+
 `GTI-I0014` rejects removed GTI `#include` syntax, including `export #include`,
 at the include keyword. Source loading does not load the named dependency.
 The diagnostic directs the author to an explicit module interface and import;

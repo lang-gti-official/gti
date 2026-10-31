@@ -15776,6 +15776,19 @@ auto SemanticVisitor::Impl::analyzeUniqueOwnerIntrinsicCall(
     validateType(pointeeRef);
     validateReferencePlacement(pointeeRef, false, "allocated type");
     const SemanticType pointeeType = typeOf(pointeeRef);
+    if (!containsOpenTypeParameter(pointeeType) &&
+        typeTraits(pointeeType).containsBorrowedState) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2018", DiagnosticPhase::Semantics, expr.paren(),
+          "Unique allocation cannot retain checked borrowed state because "
+          "the owner does not track external borrow dependencies.");
+      diagnostic.hints.emplace_back(
+          "Keep the borrowing value in tracked local storage, or store owned "
+          "state instead.");
+      diagnostics.push_back(std::move(diagnostic));
+      currentType = SemanticType::Unknown;
+      return;
+    }
     const bool scalar = isAllocatedScalarType(pointeeType);
     if (scalar) {
       if (const auto arguments =
