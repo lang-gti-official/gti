@@ -1143,8 +1143,14 @@ void checkOwnerChains() {
            "transitive owner borrows retain verified MIR loans");
     std::size_t checked = 0;
     for (const auto &function : frontend.mir.functionInstances()) {
-      if (function.returnBorrowOrigin != lang::BorrowOriginKind::Argument)
+      const auto *hir = frontend.hir.findFunctionInstance(function.id);
+      if (hir == nullptr || hir->source == nullptr ||
+          (hir->source->name().lexeme != "element" &&
+           hir->source->name().lexeme != "element_mut"))
         continue;
+      expect(function.returnBorrowOrigin == lang::BorrowOriginKind::Argument &&
+                 function.returnBorrowParameter == 0,
+             "each traversal retains its node parameter as the result owner");
       for (const auto &block : function.body.blocks) {
         if (block.terminator.kind != lang::MirTerminatorKind::Return ||
             !block.terminator.returnLoan)
@@ -1160,7 +1166,7 @@ void checkOwnerChains() {
         ++checked;
       }
     }
-    expect(checked >= 4, "both base and recursive paths publish checked loans");
+    expect(checked == 4, "both base and recursive paths publish checked loans");
   }
 
   const std::string prelude = R"gti(
