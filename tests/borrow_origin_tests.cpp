@@ -1126,6 +1126,136 @@ int main() {
                        }),
       "an arm's payload reference keeps its owner borrowed");
 }
+void checkOwnerChains() {
+  const auto path =
+      std::filesystem::path(__FILE__).parent_path().parent_path() /
+      "examples/ownership/owner-chain-references.gti";
+  std::ifstream input(path);
+  const std::string example{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(path.string(), example);
+  expect(frontend.canGenerateCode(),
+         "recursive checked owner chains need no unsafe lifetime assertion");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  } else {
+    expect(lang::verifyMirProgram(frontend.mir).valid(),
+           "transitive owner borrows retain verified MIR loans");
+    std::size_t checked = 0;
+    for (const auto &function : frontend.mir.functionInstances()) {
+      const auto *hir = frontend.hir.findFunctionInstance(function.id);
+      if (hir == nullptr || hir->source == nullptr ||
+          (hir->source->name().lexeme != "element" &&
+           hir->source->name().lexeme != "element_mut"))
+        continue;
+      expect(function.returnBorrowOrigin == lang::BorrowOriginKind::Argument &&
+                 function.returnBorrowParameter == 0,
+             "each traversal retains its node parameter as the result owner");
+      for (const auto &block : function.body.blocks) {
+        if (block.terminator.kind != lang::MirTerminatorKind::Return ||
+            !block.terminator.returnLoan)
+          continue;
+        auto malformed = frontend.mir;
+        auto *changed = const_cast<lang::MirFunctionInstance *>(
+            malformed.findFunctionInstance(function.id));
+        for (auto &candidate : changed->body.blocks)
+          if (candidate.id == block.id)
+            candidate.terminator.returnLoan.reset();
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "a transitive result cannot discard its protecting return loan");
+        ++checked;
+      }
+    }
+    expect(checked == 4, "both base and recursive paths publish checked loans");
+  }
+
+  const std::string prelude = R"gti(
+import std.memory;
+struct Node {
+  mut int value;
+  mut std::unique_ptr<Node> next;
+  Node(int value, std::unique_ptr<Node> next)
+      : value(value), next(std::move(next)) {}
+};
+int& element(Node& node, int position) {
+  if (position == 0) { return node.value; }
+  return element(*node.next, position - 1);
+}
+mut int& element_mut(mut Node& node, int position) {
+  if (position == 0) { return node.value; }
+  return element_mut(*node.next, position - 1);
+}
+)gti";
+  const std::string owner = R"gti(
+  mut auto root = std::make_unique<Node>(1,
+      std::make_unique<Node>(2, std::unique_ptr<Node>()));
+)gti";
+  const auto reject = [&](std::string_view label, const std::string &body,
+                          std::string_view code = "GTI-S2017") {
+    const auto invalid = analyzeWithStandardLibrary(
+        "owner-chain-" + std::string(label) + ".gti", prelude + body);
+    expect(invalid.syntaxValid && !invalid.semanticValid &&
+               !invalid.canGenerateCode(),
+           std::string(label) + " is rejected by ownership checking");
+    expect(std::any_of(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                       [&](const auto &diagnostic) {
+                         return diagnostic.code == code;
+                       }) &&
+               std::none_of(invalid.diagnostics.begin(),
+                            invalid.diagnostics.end(),
+                            [](const auto &diagnostic) {
+                              return diagnostic.code.starts_with("GTI-B");
+                            }),
+           std::string(label) + " fails before MIR/backend admission");
+  };
+  for (const std::string borrow :
+       {"auto& value = element(*root, 1);",
+        "mut auto& value = element_mut(*root, 1);"}) {
+    for (const std::string operation :
+         {"root->next.reset();", "root.reset();",
+          "auto moved = std::move(root);",
+          "mut auto& second = element_mut(*root, 1); second = 9;"}) {
+      reject("live-owner",
+             "int main() {" + owner + borrow + operation + "return value; }");
+    }
+  }
+  reject("local-escape",
+         "int& dangling() {" + owner +
+             "return element(*root, 1); } int main() { return 0; }");
+  reject("value-owner-escape", R"gti(
+int& dangling(std::unique_ptr<Node> root) { return element(*root, 1); }
+int main() { return 0; }
+)gti");
+  reject("temporary-owner", R"gti(
+int main() {
+  auto& value = element(*std::make_unique<Node>(1, std::unique_ptr<Node>()), 0);
+  return value;
+}
+)gti");
+  reject("read-upgrade", R"gti(
+mut int& upgrade(Node& node) { return element_mut(node, 0); }
+int main() { return 0; }
+)gti");
+  reject("raw-is-not-owned", R"gti(
+struct RawNode { mut int value; mut RawNode* next = nullptr; };
+int& unchecked(RawNode& root) { return root.next->value; }
+int main() { return 0; }
+)gti",
+         "GTI-S2055");
+  reject("unrelated-owner", R"gti(
+[[borrowed_from(retained)]]
+int& wrong(Node& retained, Node& other) { return element(other, 0); }
+int main() { return 0; }
+)gti");
+  reject("invalidate-in-callee", R"gti(
+mut int& wrong(mut Node& node) {
+  mut auto& value = element_mut(*node.next, 0);
+  node.next.reset();
+  return value;
+}
+int main() { return 0; }
+)gti");
+}
 } // namespace
 
 int main() {
@@ -1141,5 +1271,6 @@ int main() {
   checkLocalCarrierSelections();
   checkSelectionOwners();
   checkReferenceCallSwitchSubjects();
+  checkOwnerChains();
   return failures == 0 ? 0 : 1;
 }
