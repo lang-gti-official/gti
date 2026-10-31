@@ -1801,6 +1801,12 @@ add_test(NAME binary64_pipeline COMMAND gti_binary64_tests)
 add_executable("gti_sum_type_tests" "${PROJECT_SOURCE_DIR}/tests/sum_type_tests.cpp")
 target_link_libraries("gti_sum_type_tests" PRIVATE gti_cpp_backend)
 add_test(NAME sum_type_pipeline COMMAND gti_sum_type_tests)
+add_test(NAME payload_borrow_chains_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/payload_borrow_chains_runtime_test.py"
+                 "$<TARGET_FILE:gti>"
+                 "${PROJECT_SOURCE_DIR}/examples/182-payload-borrow-chains.gti")
+set_tests_properties(payload_borrow_chains_runtime PROPERTIES TIMEOUT 120)
 
 add_executable("gti_mir_backend_tests" "${PROJECT_SOURCE_DIR}/tests/mir_backend_tests.cpp")
 target_link_libraries("gti_mir_backend_tests" PRIVATE gti_cpp_backend)

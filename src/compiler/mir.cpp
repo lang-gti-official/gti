@@ -14128,8 +14128,18 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           // A payload borrowed through a reference parameter is a local child
           // of that parameter's caller-owned entry loan. It keeps its own
           // tag-checked activation until publication, as a selection does.
+          std::unordered_set<MirLoanId> seenParents;
           const MirLoan *entry =
               retained == nullptr ? nullptr : body.findLoan(retained->parent);
+          MirPlaceId publicationSource =
+              retained == nullptr ? 0 : retained->source;
+          while (retained != nullptr && !retained->referenceSelection &&
+                 entry != nullptr && seenParents.insert(entry->id).second &&
+                 entry->kind == MirLoanKind::Local && !entry->entry &&
+                 !entry->escapes) {
+            publicationSource = entry->source;
+            entry = body.findLoan(entry->parent);
+          }
           const MirPlace *formal =
               entry == nullptr ? nullptr : body.findPlace(entry->source);
           const bool parameterChild =
@@ -14140,13 +14150,26 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
               formal->type.kind == SemanticType::Reference &&
               std::find(entry->carriers.begin(), entry->carriers.end(),
                         formal->binding) != entry->carriers.end();
+          const bool receiverChild = [&] {
+            if (seenParents.empty() || entry != nullptr)
+              return false;
+            std::unordered_map<HirBindingId, std::vector<MirLoanId>> carriers;
+            for (const MirLoan &loan : body.loans)
+              for (const HirBindingId carrier : loan.carriers)
+                carriers[carrier].push_back(loan.id);
+            const MirCanonicalPlace physical = canonicalBorrowOriginPlace(
+                body, publicationSource, carriers, true);
+            return !physical.ambiguous &&
+                   physical.root == MirPlaceRootKind::This;
+          }();
           if (retained == nullptr || retained->id == produced.id ||
               retained->kind != MirLoanKind::Local ||
-              (!retained->referenceSelection && !parameterChild) ||
+              (!retained->referenceSelection && !parameterChild &&
+               !receiverChild) ||
               retained->entry || retained->escapes ||
               retained->producedBy == 0 ||
               retained->producedBy != instruction.hirValue ||
-              retained->source != produced.source ||
+              publicationSource != produced.source ||
               retained->storedDependency != produced.storedDependency ||
               retained->additionalDependencies !=
                   produced.additionalDependencies ||
