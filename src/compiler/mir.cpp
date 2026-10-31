@@ -12028,7 +12028,8 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                !anchor->traits.containsBorrowedState &&
                (!instruction.retainedOwnerPlace ||
                 anchor->type.kind == SemanticType::Class) &&
-               !anchor->projections.empty() &&
+               (instruction.retainedOwnerPlace ||
+                !anchor->projections.empty()) &&
                std::all_of(anchor->projections.begin(),
                            anchor->projections.end(),
                            [](const auto &projection) {

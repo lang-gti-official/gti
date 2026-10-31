@@ -9150,7 +9150,11 @@ auto SemanticVisitor::Impl::ownedPointeeReturnProjection(
   const Symbol &storage = member->second.symbol;
   const SemanticType storageType =
       substituteType(storage.type, instanceTypeSubstitution);
-  if (storageType.kind != SemanticType::UniqueOwner ||
+  const ClassInfo *storageInfo = classInfo(storageType);
+  const bool inlineStorage = storageInfo != nullptr &&
+                             storageInfo->compilerCapability ==
+                                 CompilerCapabilityTypeKind::PolymorphicStorage;
+  if ((storageType.kind != SemanticType::UniqueOwner && !inlineStorage) ||
       storageType.arguments.size() != 1 ||
       storageType.arguments.front() != function.returnType.arguments.front()) {
     return std::nullopt;
@@ -9172,8 +9176,11 @@ auto SemanticVisitor::Impl::ownedPointeeReturnProjection(
   currentNamespace = enclosingNamespace;
   currentSourceUnit = enclosingSourceUnit;
   currentClass = enclosingClass;
-  const auto expected = mutableBorrow ? IntrinsicKind::UniqueOwnerBorrowMut
-                                      : IntrinsicKind::UniqueOwnerBorrow;
+  const auto expected =
+      inlineStorage ? (mutableBorrow ? IntrinsicKind::PolymorphicStorageReadMut
+                                     : IntrinsicKind::PolymorphicStorageRead)
+                    : (mutableBorrow ? IntrinsicKind::UniqueOwnerBorrowMut
+                                     : IntrinsicKind::UniqueOwnerBorrow);
   if (!intrinsic || intrinsic->record().intrinsic != expected) {
     return std::nullopt;
   }

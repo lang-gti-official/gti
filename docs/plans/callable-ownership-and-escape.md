@@ -33,8 +33,8 @@ typed GTI invocation pointers support these ordinary source wrappers. Current
 fixtures include `borrowing_capture_tests.cpp` and
 `checked_callable_{erasure,pointer,transport,result_origin}.gti`. Borrowed
 environments remain tied to their owners; this does not deliver arbitrary
-borrowed escape, owning class results through invocation pointers or inline
-consuming projection. The original owned-escape restrictions below must be
+borrowed escape or owning class results through invocation pointers. Inline
+consuming projection is implemented in the unreleased owned-inline-consumption slice. The original owned-escape restrictions below must be
 read in that scope, not as absence of borrowing callbacks.
 
 Original design baseline: GTI 0.94.0. The status above and the operational
@@ -60,11 +60,13 @@ reset/replacement, explicit movement, and deterministic capture cleanup.
 `clone()`; both wrapper values are move-only, and `move_only_function`
 additionally accepts move-only targets without cloning. Their models and
 erasure are ordinary GTI interfaces and owners, not public-name compiler
-exceptions or native `std::function` policy. The four repeatable wrappers erase
+exceptions or native `std::function` policy. Repeatable and once-invoked wrappers erase
 into the general `std::inline_polymorphic` owner, which keeps small
-cleanup-inert relocatable models inline and boxes the rest; the consuming
-forms still erase into unique owners. Inline consuming invocation needs an
-owned-projection rule for the polymorphic slot, which is not implemented.
+cleanup-inert relocatable models inline and boxes the rest. The owned-inline-consumption slice
+extends the general retained-owner projection proof to inline slots and root
+consuming receivers, with immediate named-method invocation under the same
+non-borrowing result rule. Cleanup-bearing inline relocation remains a separate
+prerequisite; the source owner continues to box those models.
 The retained-field invocation slice now has normal-path and capture-destructor
 failure evidence: explicit MIR capture cleanup recipes drain remaining caller
 cleanup and preserve secondary-failure records. The backend emits a materialized
@@ -432,7 +434,7 @@ problem does not justify type erasure.
 | capture of another owned closure | accepted bounded move-capture slice | explicit move and acyclic construction |
 | namespace global or static field | later breadth | requires separate global init/shutdown policy |
 | direct checked-reference callable parameter | implemented confined borrowing | ordinary entry/reborrow loans, exact referent and access, repeatable invocation, caller-owned cleanup, and proven confined forwarding |
-| erased owning callable wrapper | implemented L-CALL-02 | source interfaces/owners, exact invocation and capture cleanup; bounded inline/boxed repeatable and unique-owned consuming storage |
+| erased owning callable wrapper | implemented L-CALL-02 | source interfaces/owners, exact invocation and capture cleanup; bounded inline/boxed repeatable and consuming storage |
 | checked reference/borrowed-state capture | implemented L-CALL-03 with owner-bounded storage/transport | exact dependency/access paths, last-use/cleanup endpoint and conflicting-use/escape rejection |
 | raw or unrestricted borrowed escape | outside bounded owned escape | additional lifetime/provenance contract and proof |
 
@@ -763,9 +765,9 @@ The original owning type-erasure exclusion is superseded by L-CALL-02; it is
 not an unmet wrapper prerequisite. Custom copy/move constructor bodies,
 implicit signature conversions, general typed brace expressions, allocator
 customization, and unrestricted inline-storage profiles are not requirements of
-the agreed callback API. Bounded repeatable small-buffer storage is already
-implemented; inline consuming projection remains an additional general proof
-goal. Existing language restrictions still apply; named
+the agreed callback API. Bounded repeatable and consuming small-buffer storage
+are implemented; cleanup-bearing inline relocation remains an additional
+general proof goal. Existing language restrictions still apply; named
 brace declarations and parenthesized construction support wrapper use.
 
 Further capabilities require a demonstrated client and a new or already named
