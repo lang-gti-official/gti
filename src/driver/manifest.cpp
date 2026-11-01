@@ -6,6 +6,7 @@
 
 #include "gti/driver/dependencies.h"
 #include "manifest_source.h"
+#include "module_discovery.h"
 
 #define TOML_EXCEPTIONS 0
 #include "toml.hpp"
@@ -2017,7 +2018,7 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
   validateFields(document,
                  {"manifest-version", "package", "targets", "profiles",
                   "dependencies", "workspace", "build", "bindgen", "toolchains",
-                  "modules", "module-implementations"},
+                  "modules", "module-implementations", "module-discovery"},
                  "top-level manifest", sourceName, source, result.diagnostics);
 
   if (const toml::node *version =
@@ -2305,6 +2306,73 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
     }
   }
 
+  detail::ModuleDiscoverySettings discovery{
+      .roots = {package.sourceRoot},
+      .declaration = package.sourceRootDeclaration};
+  if (const auto *node = document.get("module-discovery")) {
+    discovery.declaration = sourceSpan(sourceName, source, *node);
+    const auto *table = node->as_table();
+    if (!table) {
+      result.diagnostics.push_back(buildDiagnostic(
+          "GTI-B1004", discovery.declaration,
+          "Manifest field 'module-discovery' must be a table."));
+    } else {
+      validateFields(*table, {"roots", "exclude"}, "module discovery",
+                     sourceName, source, result.diagnostics);
+      for (const auto field : {"roots", "exclude"}) {
+        const auto *pathsNode = table->get(field);
+        if (!pathsNode)
+          continue;
+        const auto *paths = pathsNode->as_array();
+        auto &destination = std::string_view(field) == "roots"
+                                ? discovery.roots
+                                : discovery.exclusions;
+        destination.clear();
+        if (std::string_view(field) == "roots")
+          discovery.explicitRoots = true;
+        if (!paths) {
+          result.diagnostics.push_back(buildDiagnostic(
+              "GTI-B1004", sourceSpan(sourceName, source, *pathsNode),
+              "Module discovery '" + std::string(field) +
+                  "' must be an array of package-relative paths."));
+          continue;
+        }
+        for (const auto &pathNode : *paths) {
+          const auto spelling = pathNode.value<std::string>();
+          const auto where = sourceSpan(sourceName, source, pathNode);
+          if (!spelling) {
+            result.diagnostics.push_back(buildDiagnostic(
+                "GTI-B1004", where, "A module discovery path must be a string."));
+            continue;
+          }
+          const std::filesystem::path relative(*spelling);
+          if (spelling->empty() || spelling->find('\0') != std::string::npos ||
+              spelling->find_first_of("*?[") != std::string::npos ||
+              isAbsoluteOnSupportedHost(*spelling, relative)) {
+            result.diagnostics.push_back(buildDiagnostic(
+                "GTI-B1103", where,
+                "Module discovery paths must be relative file or directory "
+                "paths, without wildcard patterns."));
+            continue;
+          }
+          std::error_code pathError;
+          const auto resolved = std::filesystem::weakly_canonical(
+              packageRoot / relative, pathError);
+          if (pathError || !pathIsWithin(packageRoot, resolved)) {
+            result.diagnostics.push_back(buildDiagnostic(
+                "GTI-B1104", where,
+                "Module discovery path escapes its owning package."));
+            continue;
+          }
+          destination.push_back(resolved);
+        }
+      }
+    }
+  }
+  const auto discovered = detail::discoverModules(
+      packageRoot, discovery, result.sources, result.diagnostics);
+  detail::addDiscoveredInterfaces(package, discovered, result.diagnostics);
+
   if (const auto *node = document.get("module-implementations")) {
     const auto *table = node->as_table();
     if (table == nullptr) {
@@ -2323,7 +2391,8 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
         if (module == package.modules.end()) {
           result.diagnostics.push_back(buildDiagnostic(
               "GTI-B1005", declaration,
-              "An implementation must name a module registered in [modules]."));
+              "An implementation must name a discovered or explicitly "
+              "registered module."));
           continue;
         }
         const auto *paths = pathsNode.as_array();
@@ -2385,6 +2454,8 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
       }
     }
   }
+
+  detail::addDiscoveredImplementations(package, discovered, result.diagnostics);
 
   std::vector<ProjectDependency> dependencies = parseDependencies(
       document, packageRoot, sourceName, source, result.diagnostics);

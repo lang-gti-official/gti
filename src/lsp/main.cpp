@@ -2421,6 +2421,10 @@ private:
         const std::string uri = documentKeyFromUri(clientUri);
         const std::optional<std::filesystem::path> changedPath =
             filePathFromUri(clientUri);
+        if (changedPath && changedPath->extension() == ".gti")
+          // Saved declarations and file creation/removal can change the
+          // discovered module map, even without a prior dependency edge.
+          projectModelChanged = true;
         if (changedPath && (changedPath->filename() == "gti.toml" ||
                             changedPath->filename() == "gti.lock" ||
                             changedPath->filename() == "module-map.json")) {

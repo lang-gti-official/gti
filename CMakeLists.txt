@@ -757,6 +757,7 @@ add_library(
   "src/driver/registry_commands.cpp"
   "src/driver/semver.cpp"
   "src/driver/manifest.cpp"
+  "src/driver/module_discovery.cpp"
   "src/driver/native_toolchain.cpp"
   "src/driver/process.cpp"
   "src/driver/test_runner.cpp"

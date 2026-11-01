@@ -398,6 +398,7 @@ is a teaching helper, not a production server.
 | `151-c-string-import.gti` | unsafe C-string construction, recoverable null/allocation errors, independent owned copies and an unrelated unsafe constructor |
 | `152-unsafe-expressions.gti` | directly initialized owned results from unsafe expressions, checked factory results, and an unrelated raw reader |
 | `window-factory/` | a static interface factory and private concrete window types sharing one module across registered implementation files without circular imports; run `gti run` in the directory |
+| `module-discovery/` | discovers a named interface and two private implementation files under `src` without module tables; run `gti run --backend llvm` in the directory |
 | `libc-region-provider/` | an unrelated source-defined raw byte owner over libc, libc `malloc`/`free` bound directly with C's exact `size_t`, explicit native-size conversion, zero-size policy, ownership movement and exactly-once matching release; run `gti run` in the directory |
 
 ## Build and run

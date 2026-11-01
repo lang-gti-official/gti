@@ -763,37 +763,15 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
     moduleDeclarationSpan = processed->moduleDeclarationSpan;
     implementationDeclaration = processed->implementationDeclaration;
     implementationDeclarationSpan = processed->implementationDeclarationSpan;
-  } else if (lexed.size() >= 3 && (lexed[0].kind == TokenKind::MODULE ||
-                                   (lexed[0].kind == TokenKind::EXPORT &&
-                                    lexed[1].kind == TokenKind::MODULE))) {
-    const bool interface = lexed[0].kind == TokenKind::EXPORT;
-    const std::size_t nameStart = interface ? 2 : 1;
-    std::size_t at = nameStart;
-    std::string name;
-    while (at < lexed.size() && lexed[at].kind == TokenKind::IDENTIFIER) {
-      name += lexed[at++].lexeme;
-      if (at >= lexed.size() || lexed[at].kind != TokenKind::DOT)
-        break;
-      name += '.';
-      ++at;
+  } else if (const auto header = parseModuleHeader(lexed)) {
+    if (header->interface) {
+      moduleDeclaration = header->declaration;
+      moduleDeclarationSpan = header->span;
+    } else {
+      implementationDeclaration = header->declaration;
+      implementationDeclarationSpan = header->span;
     }
-    if (isModuleName(name) && at < lexed.size() &&
-        lexed[at].kind == TokenKind::SEMICOLON) {
-      Token declaration = lexed[nameStart];
-      declaration.lexeme = name;
-      const SourceSpan span{key, lexed[nameStart].position,
-                            lexed[at - 1].position +
-                                lexed[at - 1].lexeme.size(),
-                            lexed[nameStart].line};
-      if (interface) {
-        moduleDeclaration = declaration;
-        moduleDeclarationSpan = span;
-      } else {
-        implementationDeclaration = declaration;
-        implementationDeclarationSpan = span;
-      }
-      moduleHeaderEnd = at + 1;
-    }
+    moduleHeaderEnd = header->tokenEnd;
   }
   // `std` names the configured standard library in direct and project
   // compilation alike. A source header outside its roots cannot claim it.

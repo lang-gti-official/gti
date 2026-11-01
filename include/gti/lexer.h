@@ -25,6 +25,9 @@ public:
 
   std::vector<Token> consume(const std::filesystem::path &path);
   std::vector<Token> scan(std::string sourceText, std::string sourceName = {});
+  // Project discovery reads only a leading module declaration, not its body.
+  std::vector<Token> scanModuleHeader(std::string sourceText,
+                                      std::string sourceName = {});
   std::vector<Token> scanForCompletion(std::string sourceText,
                                        std::size_t byteOffset,
                                        std::string sourceName = {});
