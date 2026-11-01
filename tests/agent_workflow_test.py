@@ -1216,7 +1216,7 @@ class ValidationChecks(unittest.TestCase):
     def test_ci_gate_requires_fast_checks_on_prs_and_the_suite_in_the_queue(self):
         lint = {name: {"result": "success"} for name in validation.LINT_JOBS}
         pr = {**lint, "fast": {"result": "success"}}
-        queue = {**lint, "integration": {"result": "success"}, "sanitizers": {"result": "success"}}
+        queue = {**lint, "fast": {"result": "success"}, "package": {"result": "success"}, "integration": {"result": "success"}, "sanitizers": {"result": "success"}}
         validation.admission("full", pr, "pull_request")
         validation.admission("full", queue, "merge_group")
         with self.assertRaises(ValueError):
@@ -1459,7 +1459,8 @@ class ValidationChecks(unittest.TestCase):
             with self.subTest(harness=harness):
                 self.assertTrue((ROOT / "tests" / harness).is_file())
                 self.assertIn(harness, validation.AUTOMATION_TESTS)
-                self.assertEqual(validation.ci_mode({}, ["tests/" + harness]), "automation")
+                expected = "full" if "tests/" + harness in validation.FULL_VALIDATION_FILES else "automation"
+                self.assertEqual(validation.ci_mode({}, ["tests/" + harness]), expected)
 
     def test_platform_scoped_gates_keep_other_hosts_obligations(self):
         plan = batch_plan(platforms=["darwin", "linux"],

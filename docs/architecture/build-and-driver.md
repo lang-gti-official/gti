@@ -198,8 +198,8 @@ version, or to a nightly build on its own, and has no beta channel: a beta's
 archives are downloaded from its prerelease.
 The plugin uses a full HTTPS Git URL, not owner/repository shorthand. Archive
 shapes exist for Linux x64, Linux arm64, and macOS arm64, but an archive is
-published only after native validation on its platform. The GitHub nightly
-packages `linux-x64` and `darwin-arm64`. `linux-arm64` is not packaged: the
+published only after native validation on its platform. Full integration produces the GitHub nightly
+packages for `linux-x64` and `darwin-arm64`. `linux-arm64` is not packaged: the
 runtime's raw atomic lanes (`runtime/src/atomic_lane.h`) have no reviewed
 linux-aarch64 compiler profile, so no admitted compiler exists for it. TODO:
 add the `ubuntu-24.04-arm` matrix entry once a runtime-safety review admits a
@@ -288,36 +288,40 @@ It publishes only the rolling `nightly` channel. Stable `v<VERSION>` releases
 come from the [release train](#github-release-train), which cuts the commit
 this workflow published.
 
-1. **Select.** The workflow runs only from main's own definition in
-   `lang-gti-official/gti`. It takes main head, or on dispatch an exact 40-hex
-   commit that must be on main. `scripts/resolve_release_source.py
-   select-nightly` requires merge-queue evidence for that exact commit: a
-   `merge_group` run of `.github/workflows/ci.yml` on a
-   `gh-readonly-queue/main/...` branch of this repository whose `head_sha` is
-   the commit and whose latest `CI gate` job concluded `success`. The queue
-   merges by fast-forwarding main to the candidate it tested, so every queued
-   main commit carries that run; CI has no push trigger, and pull-request or
-   dispatch runs are not evidence. A scheduled run skips building when main
-   head is not newer than the published nightly.
-2. **Package.** Each platform (`ubuntu-24.04` for `linux-x64`, `macos-26` for
-   `darwin-arm64`) uses the reviewed compiler from
-   `scripts/configure_ci_toolchain.sh`, configures one
-   `-DCMAKE_BUILD_TYPE=Release -DGTI_RELEASE_BUILD=ON` build with the pinned
-   bundled LLVM/Clang, builds, stages `gti_toolchain` into a fresh directory,
-   and runs the installed CLI/LSP/project, process-resource, managed-thread,
+1. **Build and validate in integration.** Full `ci.yml` integration builds
+   production archives on `ubuntu-24.04` (`linux-x64`) and `macos-26`
+   (`darwin-arm64`). Each uses the reviewed compiler from
+   `scripts/configure_ci_toolchain.sh`, configures
+   `-DCMAKE_BUILD_TYPE=Release -DGTI_RELEASE_BUILD=ON` with pinned bundled
+   LLVM/Clang, builds, stages `gti_toolchain` into a fresh directory, and runs
+   the installed CLI/LSP/project, process-resource, managed-thread,
    atomic-runtime and installed-library consumer checks against that stage.
    macOS installation generates and verifies `share/gti/host-runtime.json`;
-   `cmake/PackageRelease.cmake` refuses a macOS stage without it. The validated
-   stage becomes `gti-nightly-<platform>.tar.gz` with its `.sha256` sidecar
-   and a `share/gti/BUILD_ID` stamp naming the commit.
-3. **Release suite.** The complete CTest suite exceeds one hosted job's time
-   limit, so it runs on the identical release configuration in the merge
-   queue's cost-balanced shards (`scripts/validation_checks.py shard`), each
-   rebuilding from the packaging job's object cache. The release gate
-   (`validation_checks.py merge-shards`) fails unless every platform ran its
-   whole inventory exactly once on that commit. This is the same rebuilt-tree
-   equivalence the merge queue relies on; the packaged tree itself runs the
-   installed-toolchain checks.
+   `cmake/PackageRelease.cmake` refuses a macOS stage without it. The stage
+   becomes `gti-nightly-<platform>.tar.gz` with a `.sha256` sidecar and
+   `share/gti/BUILD_ID` naming the exact source commit. Full integration also
+   runs the complete suite in cost-balanced shards on the same bundled-release
+   configuration, reusing the packaging job's object cache, and retains the
+   separate sanitizer gates and system-LLVM fast checks, including the Linux
+   system-LLVM installed consumers. The coverage gate proves each platform's inventory
+   ran exactly once. Packaging is a required part of the full `CI gate`.
+2. **Select validated artifacts.** Nightly runs only from main's own definition
+   in `lang-gti-official/gti`. It takes main head, or a dispatched exact 40-hex
+   commit on main. `scripts/resolve_release_source.py select-nightly` requires
+   successful full CI for that exact commit and its retained production
+   artifacts. Normally this is the `merge_group` run of
+   `.github/workflows/ci.yml` on `gh-readonly-queue/main/...`; a full main-only
+   CI dispatch also qualifies for commissioning or artifact recovery. PR runs,
+   automation-only passes and merge exceptions alone are not release evidence.
+   Scheduled selection skips unchanged main. There is no fallback that stamps
+   an older compiler with a new commit when the selected source has no artifacts.
+3. **Download and verify.** Nightly downloads the artifacts from the selected
+   successful CI run and attempt. Their manifest binds source commit, platform,
+   bundled-release configuration, run/attempt and archive checksums. Missing,
+   expired, mixed or mismatched artifacts stop publication. Nightly neither
+   rebuilds the compiler nor reruns the full suite. A new full CI dispatch on
+   main can recover unavailable artifacts while preserving the same validation
+   obligations; a fixture-only rehearsal cannot produce publishable evidence.
 4. **Publish.** One serialized job (`gti-nightly-publication`, never
    cancelled in progress) holds the workflow's only write token. It verifies
    every archive's checksum and stamped `BUILD_ID`, writes the `BUILD_ID`
@@ -364,14 +368,14 @@ overwrites; no tag or branch is ever forced, moved or deleted.
 1. **Cut** (`train.yml`, job `cut`). The schedule fires daily at 04:00 UTC and
    the train admits every other UTC day (epoch-day parity), a 48-hour cadence
    without month-end drift; a dispatch always runs. The source is the commit
-   the `nightly` tag names. It must be on main, carry the same merge-queue
-   evidence nightly selection requires (`resolve_release_source.py
-   queue_evidence`), have the complete uploaded nightly asset set with GitHub's
+   the `nightly` tag names. It must be on main, carry the same successful full CI
+   evidence nightly selection requires (`release_artifacts.py
+   release_evidence`), have the complete uploaded nightly asset set with GitHub's
    digest of the final `BUILD_ID` matching that commit, and have been on main
    at least 24 hours, measured from its
    committer time, which the queue sets when it lands the commit. A dispatch's
    `min_age_hours` may lower the age for the owner's bootstrap; nothing lowers
-   the queue evidence. The train skips with a notice when a cut already landed
+   the full CI evidence requirement. The train skips with a notice when a cut already landed
    after that nightly, when no fragment is pending, or when only fixes are:
    a train cut opens the next minor line, and patch releases come only from
    backports. It runs `cut_release.py` on a worktree of the nightly commit,
@@ -395,14 +399,20 @@ overwrites; no tag or branch is ever forced, moved or deleted.
    commit among the commits it delivered. A `VERSION` change without one, such
    as imported history, is not a train cut. The beta is built from that cut
    commit, not from the queue's merge onto a newer main: the cut changes only
-   release metadata on top of its queue-verified parent, the soaked nightly,
-   so the beta is exactly the code nightly users ran. The cut's parent and the
-   landing merge both need queue evidence, and `beta/<major>.<minor>` must not
+   release metadata on top of its full-CI-verified parent, the soaked nightly,
+   so the beta is exactly the code nightly users ran. The cut's parent needs
+   full CI artifact evidence (queue or main recovery dispatch); the landing
+   merge separately needs ordinary merge-queue evidence. Retained source
+   artifacts are required for this admission too; expiry stops the train.
+   `beta/<major>.<minor>` must not
    already hold another commit. On a `beta/X.Y` push, selection verifies the
    backports since the line's newest beta, refuses pending user-visible
    fragments, publishes nothing when `VERSION` is already stable, and numbers
-   the next beta. Packaging, the installed-toolchain checks, the release-suite
-   shards and the merge-shards gate are the nightly's, on the beta commit. The
+   the next beta. Beta retains its own bundled production build, installed-
+   toolchain checks, complete release-suite shards and merge-shards gate on the
+   beta commit. The nightly artifact-reuse path does not relabel a nightly
+   package as a versioned beta: the release cut changes the embedded version
+   and archive identity. The
    serialized publish job (the only one that writes) re-verifies the asset set,
    admits the beta (the tag is absent or already at that commit, and a newer
    push did not supersede it), attests build provenance, pushes
@@ -421,7 +431,7 @@ overwrites; no tag or branch is ever forced, moved or deleted.
    CHANGELOG always describe its content: a user-visible backport becomes
    `vX.Y.(Z+1)-beta.1`, an internal one `vX.Y.Z-beta.(K+1)`, or nothing once
    `X.Y.Z` is stable. The complete suite then runs on the release configuration
-   in the nightly's shards, and `Backport gate` requires both. The main
+   in cost-balanced shards, and `Backport gate` requires both. The main
    ruleset and merge queue do not cover `beta/*`; the proposed `beta` ruleset
    requires a PR merged by rebase (picks keep their `-x` lines), linear
    history, an up-to-date branch, `CI gate` and `Backport gate`.
@@ -450,7 +460,7 @@ CMake project `VERSION` (`GTI_VERSION`). Nothing in it names a channel, and a
 beta is built from the release cut whose `VERSION` is the stable version, so
 the beta publishes the stable archive itself and promotion republishes the
 same files: nothing is re-stamped. `release_train.py same-bytes` proves it per
-file, and packaging refuses a stage that nightly packaging already stamped
+file, and packaging refuses a stage that nightly archive production already stamped
 with `BUILD_ID`. Only the release around the files differs: tag, title, notes
 and prerelease flag.
 

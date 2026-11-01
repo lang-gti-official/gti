@@ -102,8 +102,11 @@ negative cases so an ICE cannot silently become a miscompile.
   publication behavior, CLI workflows, and installed-library boundaries as
   applicable.
 - For build, packaging, runtime, ABI, or release changes, include the affected
-  clean-stage or installed-consumer checks. Apply the repository version policy
-  to shipped behavior.
+  clean-stage or installed-consumer checks. Artifact-reuse changes must exercise
+  rejection of wrong source/run/attempt/platform/configuration, missing or expired
+  artifacts, and altered archives or checksums. Fixture publication checks do not
+  establish real compiler build or platform evidence. Apply the repository
+  version policy to shipped behavior.
 - For documentation-only changes, do not build by default unless examples,
   commands, generated material, or claimed behavior require execution.
 - Apply [the backend development policy](../../../docs/decisions/031-native-llvm-backend-foundation.md#backend-development-policy-2026-10-25):

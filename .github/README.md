@@ -27,12 +27,18 @@ python3 scripts/agent_workflow.py protection
 - On a pull request: lint (formatting, release version, Tree-sitter), the
   workflow regression tests, and a macOS arm64 and Linux x64 build running
   `feedback-fast` and `compiler_pipeline`. Drafts run lint only.
-- On manual dispatch: the same fast checks, without PR-body declarations.
-- In the merge queue: the complete suite on the exact candidate, split into
+- On manual dispatch from main: full integration and production packaging,
+  without PR-body declarations, for release commissioning or artifact recovery.
+- In the merge queue: system-LLVM fast checks plus production packaging and
+  installed-consumer checks on both platforms, and the complete suite on the
+  exact candidate in its bundled-release configuration, split into
   cost-balanced shards (`scripts/validation_checks.py shard`, balanced by
   `tests/ci_test_durations.json`) on both platforms, the ASan/UBSan subset, the
   installed-toolchain smoke and deterministic docgen. The gate merges the shard
   reports and fails unless each platform ran its whole inventory exactly once.
+- Explicitly allowlisted orchestration-only PRs and merge groups run the
+  inexpensive lint and workflow checks. They produce no release packages;
+  publication still requires full integration evidence for its exact source.
 
 Sanitizer jobs run the compiler aggregate separately from the other library
 tests, allowing the long compiler and driver suites to overlap. Both jobs are
@@ -55,15 +61,23 @@ queue failure belongs to the change that introduced it.
 ## Nightly toolchain
 
 `workflows/nightly.yml` runs daily at 02:00 UTC and on manual dispatch (an
-optional exact main commit; only main head publishes). It packages only a main
-commit whose merge-queue `merge_group` run passed `CI gate`, builds a
-`GTI_RELEASE_BUILD=ON` bundled-LLVM toolchain for `linux-x64` (`ubuntu-24.04`)
-and `darwin-arm64` (`macos-26`), runs the installed-toolchain smoke and the
-complete suite on that release configuration in shards, and republishes the
-rolling `nightly` prerelease: one archive and `.sha256` per platform plus
+optional exact main commit; only main head publishes). It downloads the
+production archives from that commit's successful full CI run and attempt,
+checks their source/platform/configuration manifest and file hashes, and
+republishes the rolling `nightly` prerelease without rebuilding or repeating
+the complete suite. Full CI builds `GTI_RELEASE_BUILD=ON` bundled-LLVM packages
+for `linux-x64` (`ubuntu-24.04`) and `darwin-arm64` (`macos-26`), validates their
+installed consumers, runs the full release suite and separate sanitizer gates,
+and retains the archives for 30 days. Nightly publishes one archive and
+`.sha256` per platform plus
 `BUILD_ID`. A commit that is no longer main head does not publish. Scheduled
 runs skip unchanged main; rerunning a failed publish job or dispatching the
-same current-main commit can finish an interrupted upload. The publish job alone holds
+same current-main commit can finish an interrupted upload. Missing, expired,
+mixed or mismatched artifacts stop publication; they never cause an older
+compiler to be stamped with a new commit. Dispatch `ci.yml` on main to obtain
+fresh full evidence when commissioning after an approved merge exception or
+recovering artifacts. A merge exception itself and PR/automation-only CI are
+not release evidence. The publish job alone holds
 `contents: write` (plus provenance attestation scopes), is serialized, and moves
 the `nightly` tag with an explicit lease. `linux-arm64` is not packaged until a
 runtime-safety review admits a linux-aarch64 compiler profile in
@@ -79,8 +93,8 @@ for the full contract.
 
 | Workflow | Trigger | Does |
 | --- | --- | --- |
-| `workflows/train.yml` job `cut` | 04:00 UTC every other day (the daily schedule admits every second UTC day), dispatch | cuts the published nightly once it has been on `main` 24 h and passed the queue; opens and queues a `rollup=never` `Release-Cut:` PR with the App token |
-| `workflows/beta.yml` | `push` to `main` (the queue's merge) or `beta/**` (a merged backport), daily 05:30 fallback, dispatch | builds the release cut (or the line's new tip) with the nightly's packaging and release-suite shards; publishes prerelease `v<VERSION>-beta.<K>` with provenance; creates `beta/<major>.<minor>` |
+| `workflows/train.yml` job `cut` | 04:00 UTC every other day (the daily schedule admits every second UTC day), dispatch | cuts the published nightly once it has been on `main` 24 h and passed full CI with retained release artifacts; opens and queues a `rollup=never` `Release-Cut:` PR with the App token |
+| `workflows/beta.yml` | `push` to `main` (the queue's merge) or `beta/**` (a merged backport), daily 05:30 fallback, dispatch | builds the release cut (or the line's new tip) with its own bundled build, installed checks and full release-suite shards; publishes prerelease `v<VERSION>-beta.<K>` with provenance; creates `beta/<major>.<minor>` |
 | `workflows/backport.yml` | pull requests into `beta/**` | `Backport provenance` (each commit a `cherry-pick -x` of a `main` commit; an optional final patch release cut), the release suite, `Backport gate` |
 | `workflows/train.yml` job `promote` | with the train, dispatch | behind the `stable` environment: republishes the newest beta that soaked 48 h with no open `release-blocker` issue naming its version as `v<VERSION>`, byte for byte, and marks it latest |
 | `workflows/rollback.yml` | dispatch only | behind the `stable` environment: `withdraw-beta` or `yank-stable`, recorded on the `release-status` branch the installer reads |
@@ -90,7 +104,8 @@ PR). Beta publication, promotion and rollback write with `GITHUB_TOKEN`
 (`contents: write`): their tags, releases and status commits need not trigger
 workflows. No train job forces, moves or deletes a tag, branch, release or
 asset. Dispatch overrides (`min_age_hours`, `soak_hours`) exist for the owner's
-bootstrap; neither waives the merge-queue evidence, and a lowered soak is
+bootstrap; neither waives full CI evidence for the nightly source or the
+separate merge-queue evidence for the release-cut landing, and a lowered soak is
 written into the stable release notes.
 
 One-time owner setup, in this order:
@@ -213,13 +228,13 @@ Only these jobs write: nightly publication, beta publication, stable promotion
 and rollback, with `GITHUB_TOKEN`; and the rollup bot and the release cut, with
 the rollup App's token. No other workflow uses a secret.
 Set positive `GTI_JOBS` and `GTI_TEST_JOBS` repository variables to override
-the CPU/memory-based budgets. Compiler-object caches are separate for native
-and sanitizer profiles; cache errors never skip builds or validation.
+the CPU/memory-based budgets. Compiler-object caches are separate for native, sanitizer and bundled-release
+profiles; cache errors never skip builds or validation.
 GitHub shares a cache across branches only when `main` saved it, so
-`workflows/cache.yml` rebuilds each CI compile configuration after every merge
-to `main` (and weekly) and saves its ccache there; pull requests and
-merge-queue runs restore it instead of compiling cold. Its configure commands
-must match `ci.yml` exactly, which `repository_hosting` checks.
+`workflows/cache.yml` warms the system-LLVM native and sanitizer configurations
+after merges to `main` (and weekly). The production package job saves the
+bundled-release cache for its integration shards. Cache reuse only accelerates
+compilation; every required test and package check still runs.
 
 Before its build, the sanitizer job runs `scripts/check_ci_sanitizers.py`: a
 small, race-free ASan/UBSan probe with no GTI code, so a runner that cannot

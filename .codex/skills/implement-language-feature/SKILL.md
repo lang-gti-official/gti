@@ -210,11 +210,11 @@ obligations; do not claim a source-defined replacement before it is implemented.
 6. Run `git diff --check`; inspect the full diff for accidental semantic or
    documentation drift. For an executable change, confirm that the diff adds no
    new AST/HIR-only `CppEmitter` behavior and cite the MIR-emitted family that
-   owns production execution. Advance `VERSION` when the repository's shipped
-   behavior/version policy requires it.
+   owns production execution. Add a changelog fragment for user-visible changes;
+   only the release train edits `VERSION` and `CHANGELOG.md`.
 7. Use `$agent-workflow` and `$finish-release` to integrate validated work through
    its PR, sync local main and apply version policy. Respect required PR checks;
-   post-merge release packaging does not block completion. Explicit PR-only or
+   post-merge release publication does not block completion. Explicit PR-only or
    local-only user instructions override integration.
 
 Do not use `1.0` as a reason to postpone a capability needed by the systems-

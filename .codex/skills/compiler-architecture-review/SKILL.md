@@ -105,6 +105,6 @@ matrix in
 [`docs/architecture/verification.md`](../../../docs/architecture/verification.md).
 For implementation work, use `$agent-workflow` and `$finish-release` after local
 validation for PR integration, local-main sync and version policy. Respect
-required PR checks; post-merge packaging does not block completion. Do not
+required PR checks; post-merge release publication does not block completion. Do not
 publish a read-only review. Explicit PR-only/local-only instructions override
 integration.
