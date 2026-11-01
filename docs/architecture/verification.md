@@ -1,6 +1,6 @@
 # Compiler Verification
 
-## Default module discovery (draft)
+## Default module discovery
 
 `project_model` owns declaration-driven registration, explicit interface and
 implementation precedence (including empty lists), overlapping/custom roots,
@@ -22,9 +22,8 @@ a watcher, and a trace assertion that body-only saves do not repeat analysis.
 
 The affected source-module, driver, cache and LSP consumers, `compiler_pipeline`
 and native O0/O3 smoke remain focused acceptance obligations. Linux portability
-checks complement macOS evidence. Complete integration is still the merge
-queue's responsibility; the owner's draft-only/no-CI instruction does not
-authorize describing this branch as release-validated.
+checks complement macOS evidence. The merge queue validates complete integration
+on macOS arm64 and Linux x64 before the change can reach nightly.
 
 ## Owned inline consumption (unreleased)
 

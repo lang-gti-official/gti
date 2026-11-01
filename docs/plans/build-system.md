@@ -30,19 +30,17 @@ backend's ordinary object ABI. Aggregate `import std` and read-only LSP
 
 ## Current Implementation
 
-The experimental module-discovery implementation derives project interface and
+Default module discovery derives project interface and
 private implementation maps from saved leading module declarations under the
 package source root by default. Optional roots/exclusions and explicit selections
 preserve control over unconventional layouts and platform alternatives. Named
 imports, package containment and frontend module semantics remain unchanged.
-The draft is for local experimentation: it is not a release/merge candidate.
 Hardening covers excluded broken/escaping aliases, directory-link cycles,
 duplicate declaration locations, streamed header reads, watcher-independent
 save recovery, cache invalidation, and workspace/re-export composition. Full
-integration and promotion remain subject to the normal CI/merge-queue gates;
-the owner's draft-only instruction keeps those gates undispatched.
+integration and promotion use the normal CI/merge-queue gates.
 Conditional discovery tables and unsaved module-identity discovery are future
-extensions; the current prototype uses saved files and explicit path selection.
+extensions; discovery uses saved files and explicit path selection.
 
 Integrated test targets now support name filtering/exclusion, discovery listing,
 explicit empty-selection policy, bounded parallel isolated children, configurable

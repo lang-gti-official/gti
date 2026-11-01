@@ -53,7 +53,7 @@ separate facility; it does not gate source-module ownership.
 
 ## Outcome
 
-The module-discovery draft revises the original explicit-only registration
+Default module discovery revises the original explicit-only registration
 policy. The owning package's source roots now authorize discovery of interfaces
 and their private implementation files from existing module headers. Explicit
 interface selections and implementation lists retain precedence; a file outside
