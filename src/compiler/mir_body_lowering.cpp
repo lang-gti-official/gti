@@ -15908,10 +15908,10 @@ private:
               }
             }
           }
-          // A payload borrowed through the summarized reference parameter is
-          // a local child of that parameter's entry loan, and its borrow
-          // reads that entry loan.
-          const auto callerOwnedPayloadChild = [&](const MirLoan &candidate) {
+          // A returned reference may relay incoming authority through local
+          // aliases and accessor results. Keep each producing loan intact and
+          // publish its evaluated address only at the return boundary.
+          const auto callerOwnedReferenceChild = [&](const MirLoan &candidate) {
             const std::optional<HirBindingId> summarized =
                 returnBorrowParameterBinding();
             if (candidate.kind != MirLoanKind::Local)
@@ -15919,8 +15919,9 @@ private:
             std::unordered_set<MirLoanId> seen;
             const MirLoan *parent = output.findLoan(candidate.parent);
             while (parent != nullptr && seen.insert(parent->id).second &&
-                   parent->kind == MirLoanKind::Local && !parent->entry &&
-                   !parent->escapes) {
+                   (parent->kind == MirLoanKind::Local ||
+                    parent->kind == MirLoanKind::CallResult) &&
+                   !parent->entry && !parent->escapes) {
               parent = output.findLoan(parent->parent);
             }
             if (!seen.empty() && parent == nullptr &&
@@ -15934,7 +15935,7 @@ private:
           if ((output.loans[borrow.loan - 1].kind == MirLoanKind::CallResult ||
                output.loans[borrow.loan - 1].kind == MirLoanKind::Stored ||
                output.loans[borrow.loan - 1].referenceSelection ||
-               callerOwnedPayloadChild(output.loans[borrow.loan - 1])) &&
+               callerOwnedReferenceChild(output.loans[borrow.loan - 1])) &&
               output.loans[borrow.loan - 1].producedBy != 0) {
             // A returned reference binding may alias the producing call's
             // own result loan, or the Stored loan of the carrier it was
@@ -15952,17 +15953,17 @@ private:
             MirPlaceId publicationSource = source.source;
             std::unordered_set<MirLoanId> seenParents;
             const MirLoan *ancestor = output.findLoan(source.parent);
-            const bool nestedPayload =
+            const bool nestedReference =
                 source.kind == MirLoanKind::Local && source.parent != 0 &&
-                !source.referenceSelection && callerOwnedPayloadChild(source);
-            while (nestedPayload && ancestor != nullptr &&
+                !source.referenceSelection && callerOwnedReferenceChild(source);
+            while (nestedReference && ancestor != nullptr &&
                    seenParents.insert(ancestor->id).second &&
-                   ancestor->kind == MirLoanKind::Local && !ancestor->entry &&
-                   !ancestor->escapes) {
-              // A nested payload borrow may be rooted in an arm-local
-              // reference alias. Its caller-visible owner is the outer
-              // selection's place, while the Loan operand below still names
-              // the inner selection's exact runtime address.
+                   (ancestor->kind == MirLoanKind::Local ||
+                    ancestor->kind == MirLoanKind::CallResult) &&
+                   !ancestor->entry && !ancestor->escapes) {
+              // Local aliases may hide the caller-visible owner behind
+              // binding slots. Preserve the outer origin separately from the
+              // exact runtime address carried by the returned child loan.
               publicationSource = ancestor->source;
               ancestor = output.findLoan(ancestor->parent);
             }

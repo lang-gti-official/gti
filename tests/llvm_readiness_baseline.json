@@ -10,8 +10,8 @@
       "id": "shipped-examples",
       "kind": "source-census",
       "manifest": "tests/mir_census_baseline.json",
-      "member_count": 183,
-      "inventory_sha256": "abce623577ff52a6cf02eea938d093d22cfa34a521618b0c3948ba1a20e43fc6"
+      "member_count": 184,
+      "inventory_sha256": "19271da9d0d29a36d954f782cd38327d0765e90e60c3261a03b4a13635a568c9"
     },
     {
       "id": "registered-llvm-evidence",

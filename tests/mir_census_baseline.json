@@ -40,7 +40,7 @@
     "039-raw-pointers.gti": 9,
     "040-loan-flow-edges.gti": 173,
     "041-owner-dependencies.gti": 186,
-    "042-exclusive-reborrows.gti": 75,
+    "042-exclusive-reborrows.gti": 78,
     "043-program-arguments.gti": 205,
     "044-bounded-requires.gti": 152,
     "045-layout-queries.gti": 8,
@@ -185,7 +185,7 @@
     "185-reflected-method-dispatch.gti": 47,
     "182-bounded-array-borrows.gti": 156
   },
-  "total": 28243,
+  "total": 28246,
   "target": "arm64-apple-macos",
   "variants": {
     "x86_64-unknown-linux": {
@@ -193,7 +193,7 @@
         "087-associative-containers.gti": 451,
         "089-library-workflow.gti": 917
       },
-      "total": 28241
+      "total": 28244
     }
   }
 }
