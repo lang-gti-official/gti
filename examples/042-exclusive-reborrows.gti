@@ -12,7 +12,29 @@ public:
   int read() {
     return this.value;
   }
+
+  // Local aliases keep this receiver's lifetime; no lifetime annotation is
+  // needed when returning a child that still designates the same field.
+  mut int& slot() mut {
+    mut int& parent = this.value;
+    mut int& child = parent;
+    return child;
+  }
+
+  int& observe() {
+    int& parent = this.value;
+    int& child = parent;
+    return child;
+  }
 };
+
+// The same rule applies to a caller-owned reference parameter, including a
+// concrete generic instance. A chain rooted in a local object cannot escape.
+mut T& relay<T>(mut T& value) {
+  mut T& parent = value;
+  mut T& child = parent;
+  return child;
+}
 
 int main() {
   mut std::unique_ptr<Counter> owner = std::make_unique<Counter>(10);
@@ -32,7 +54,14 @@ int main() {
   parent.add(4);
   owner->add(5);
 
-  if (owner->read() == 24) {
+  if (owner->read() != 24) {
+    return 1;
+  }
+
+  mut int& returned = relay(owner->slot());
+  returned += 6;
+  int& returned_read = owner->observe();
+  if (returned_read == 30) {
     std::println("exclusive reborrow test passed");
     return 0;
   }

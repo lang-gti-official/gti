@@ -322,7 +322,11 @@ The current implemented foundation includes:
   exact-value/default scalar initialization, and consuming
   `std::upcast_unique<Base, Derived>` functions. Swap exchanges the two owner
   tokens directly; it neither copies either pointee nor runs replacement
-  cleanup; and
+  cleanup. Allocated pointees must not retain checked borrowed state: the
+  unique owner does not carry external lifetime dependencies. This restriction
+  includes borrowing closure environments nested in user-defined payloads;
+  ordinary tracked local values and non-owning callable views remain supported;
+  and
 - `std.memory` `std::shared_ptr<T>` and `std::make_shared<T>` for explicit
   shared ownership: move-only handles with `clone()`, read-only dereference,
   null/default construction, null comparison, `use_count()`, reset, swap, and

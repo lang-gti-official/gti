@@ -14140,9 +14140,9 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
               instruction.hirValue != produced.producedBy)
             return false;
           const MirLoan *retained = body.findLoan(source.loan);
-          // A payload borrowed through a reference parameter is a local child
-          // of that parameter's caller-owned entry loan. It keeps its own
-          // tag-checked activation until publication, as a selection does.
+          // Local reference aliases and accessor results retain their
+          // caller-owned entry ancestry. Each local selection/borrow keeps
+          // its own activation proof until this exact publication boundary.
           std::unordered_set<MirLoanId> seenParents;
           const MirLoan *entry =
               retained == nullptr ? nullptr : body.findLoan(retained->parent);
@@ -14150,8 +14150,9 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
               retained == nullptr ? 0 : retained->source;
           while (retained != nullptr && !retained->referenceSelection &&
                  entry != nullptr && seenParents.insert(entry->id).second &&
-                 entry->kind == MirLoanKind::Local && !entry->entry &&
-                 !entry->escapes) {
+                 (entry->kind == MirLoanKind::Local ||
+                  entry->kind == MirLoanKind::CallResult) &&
+                 !entry->entry && !entry->escapes) {
             publicationSource = entry->source;
             entry = body.findLoan(entry->parent);
           }

@@ -1,6 +1,133 @@
 #include "compiler_test_fixture.h"
 
 namespace {
+void checkBorrowedTargetRejection() {
+  const std::string prefix = "import std.functional;\nimport std.memory;\n";
+  // These are application requests, not trusted library fixtures: concrete
+  // diagnostics must be anchored at the caller while retaining the internal
+  // allocation location as related information.
+  const auto analyze = [](const std::string &name, const std::string &source) {
+    return lang::Frontend().analyze(
+        std::filesystem::temp_directory_path() / name, source,
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  };
+  const std::vector<std::pair<std::string, std::string>> invalid{
+      {"fresh borrowing target",
+       "std::function<int()> f{[&value]() -> int { return value; }};"},
+      {"copied borrowing target",
+       "auto callback = [&value]() -> int { return value; }; "
+       "std::function<int()> f{callback};"},
+      {"moved borrowing target",
+       "auto callback = [&value]() -> int { return value; }; "
+       "std::function<int()> f{std::move(callback)};"},
+      {"move-only borrowing target",
+       "auto callback = [&value]() -> int { return value; }; "
+       "std::move_only_function<int()> f{std::move(callback)};"},
+      {"mutable borrowing target",
+       "auto callback = [&value]() -> int { return value; }; "
+       "std::function<int() mut> f{std::move(callback)};"},
+      {"consuming borrowing target",
+       "auto callback = [&value]() -> int { return value; }; "
+       "std::function<int() &&> f{std::move(callback)};"},
+  };
+  for (const auto &[label, body] : invalid) {
+    const std::string source =
+        prefix + "int main() { int value = 7; " + body + " return 0; }";
+    const auto result = analyze("borrowed-owning-target.gti", source);
+    const auto *diagnostic =
+        findDiagnosticByCode(result.diagnostics, "GTI-S2018");
+    expect(result.syntaxValid && !result.canGenerateCode() && diagnostic &&
+               diagnostic->phase == lang::DiagnosticPhase::Semantics &&
+               diagnostic->message.find(
+                   "Unique allocation cannot retain checked borrowed state") !=
+                   std::string::npos &&
+               !hasDiagnosticCode(result.diagnostics, "GTI-B0001"),
+           label + " is rejected semantically before MIR allocation");
+    if (!diagnostic)
+      continue;
+    expect(diagnostic->primary.source.ends_with("borrowed-owning-target.gti") &&
+               diagnostic->primary.start == source.find("f{") + 1 &&
+               diagnostic->primary.end == source.find("f{") + 2 &&
+               !diagnostic->hints.empty() && diagnostic->fixes.empty(),
+           label + " reports the caller with guidance and no unsafe fix-it");
+    expect(
+        std::any_of(
+            diagnostic->related.begin(), diagnostic->related.end(),
+            [&](const auto &related) {
+              if (!related.span.source.ends_with("std/detail/memory_core.gti"))
+                return false;
+              const auto *allocationSource =
+                  result.sources.find(related.span.source);
+              const std::string_view allocation =
+                  "gti_internal::allocate_unique_owner<T>(args...)";
+              const auto start = allocationSource
+                                     ? allocationSource->find(allocation)
+                                     : std::string::npos;
+              return start != std::string::npos &&
+                     related.span.start == start + allocation.size() - 1 &&
+                     related.span.end == start + allocation.size();
+            }),
+        label + " retains the exact unique-allocation source span");
+  }
+
+  const std::string borrowedClass = R"gti(
+class Reading {
+  int& value;
+public:
+  Reading(int& source) : value(source) {}
+  int get() { return this.value; }
+};
+)gti";
+  const auto aggregate =
+      analyze("borrowed-allocation.gti", prefix + borrowedClass + R"gti(
+int main() {
+  int value = 7;
+  auto reader = std::make_unique<Reading>(value);
+  return reader->get();
+}
+)gti");
+  expect(
+      !aggregate.canGenerateCode() &&
+          hasDiagnosticCode(aggregate.diagnostics, "GTI-S2018") &&
+          hasDiagnostic(
+              aggregate.diagnostics,
+              "Unique allocation cannot retain checked borrowed state") &&
+          !hasDiagnosticCode(aggregate.diagnostics, "GTI-B0001"),
+      "unique allocation applies the same rule to an unrelated borrowed class");
+
+  const auto ownedAggregate = analyze("owned-allocation.gti", prefix + R"gti(
+class Reading {
+  int value;
+public:
+  Reading(int source) : value(source) {}
+  int get() { return this.value; }
+};
+int main() {
+  auto reader = std::make_unique<Reading>(7);
+  return reader->get() - 7;
+}
+)gti");
+  expect(ownedAggregate.canGenerateCode(),
+         "unique allocation still accepts a class containing owned state");
+
+  const auto supported =
+      analyze("tracked-and-owned-targets.gti", prefix + borrowedClass + R"gti(
+int main() {
+  int value = 7;
+  Reading local{value};
+  auto borrowed = [&value]() -> int { return value; };
+  std::function_ref<int()> view{borrowed};
+  auto owned = [value]() -> int { return value; };
+  std::function<int()> callback{std::move(owned)};
+  auto copy = callback.clone();
+  return local.get() + borrowed() + view() + callback() + copy() - 35;
+}
+)gti");
+  expect(supported.canGenerateCode(),
+         "tracked borrowed classes, borrowing lambdas, function_ref and owned "
+         "erased targets retain valid MIR");
+}
+
 void checkConsumingWrapperSemantics() {
   const std::string prefix = "import std.functional;\nimport std.memory;\n";
   const auto positive =
@@ -75,6 +202,7 @@ int main() {
 } // namespace
 
 int main() {
+  checkBorrowedTargetRejection();
   checkConsumingWrapperSemantics();
   const auto nominalPath = std::filesystem::path(__FILE__).parent_path() /
                            "fixtures/nested_nominal_owned_callback.gti";

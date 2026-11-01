@@ -566,7 +566,7 @@ void checkDirectProjectedReturnOrigins() {
         "int main() { Table table{}; mut int32_t& held = plain(table); "
         "held = 7; return held; }",
         "mut int32_t& bad(mut Table& table) { "
-        "mut Record& record = table.record; "
+        "mut Table local{}; mut Record& record = local.record; "
         "mut int32_t& selected = record.selected; return selected; } "
         "int main() { return 0; }"}) {
     const auto invalid = analyzeWithStandardLibrary(
@@ -580,6 +580,23 @@ void checkDirectProjectedReturnOrigins() {
                         }),
            "invalid projected reference uses fail before MIR/backend");
   }
+  const auto reborrow = analyzeWithStandardLibrary(
+      "valid-direct-projected-reborrow-return.gti", declarations + R"(
+mut int32_t& projected_reborrow(mut Table& table) {
+  mut Record& record = table.record;
+  mut int32_t& selected = record.selected;
+  return selected;
+}
+int main() {
+  mut Table table{};
+  mut int32_t& selected = projected_reborrow(table);
+  selected = 7;
+  return table.record.selected - 7;
+}
+)");
+  expect(reborrow.canGenerateCode() &&
+             lang::verifyMirProgram(reborrow.mir).valid(),
+         "projected local reborrows return their caller-owned referent");
   std::cout << "Direct projected returns: " << changedAddresses
             << " alias mutations, " << changedSuffixes << " suffix mutations\n";
 }
