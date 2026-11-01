@@ -1564,6 +1564,7 @@ struct ResolvedTryablePropagationInfo {
 struct ProtocolConceptSpelling {
   std::string qualifiedName;
   std::vector<std::string> associatedTypes;
+  std::size_t parameterCount = 0;
 };
 
 // Contextual collection braces select ordinary static GTI functions. The
@@ -2044,6 +2045,7 @@ struct SemanticSourceUnitSeal {
   SourceUnitRole role = SourceUnitRole::Application;
   bool entry = false;
   bool prelude = false;
+  bool compiledScalarInterface = false;
 
   friend bool operator==(const SemanticSourceUnitSeal &,
                          const SemanticSourceUnitSeal &) = default;
@@ -2221,19 +2223,51 @@ public:
   }
   [[nodiscard]] std::uint64_t snapshot() const { return snapshot_; }
   [[nodiscard]] bool unsafeConstruction() const { return unsafeConstruction_; }
+  [[nodiscard]] bool immediateRequired() const { return immediateRequired_; }
+  [[nodiscard]] const std::optional<ConstantValue> &immediateValue() const {
+    return immediateValue_;
+  }
 
 private:
   friend class SemanticModel;
-  SemanticEmptyReturnConstructionProof(const ReturnStmt &source,
-                                       ResolvedConstructionInfo construction,
-                                       std::uint64_t snapshot,
-                                       bool unsafeConstruction)
+  SemanticEmptyReturnConstructionProof(
+      const ReturnStmt &source, ResolvedConstructionInfo construction,
+      std::uint64_t snapshot, bool unsafeConstruction, bool immediateRequired,
+      std::optional<ConstantValue> immediateValue)
       : source_(&source), construction_(std::move(construction)),
-        snapshot_(snapshot), unsafeConstruction_(unsafeConstruction) {}
+        snapshot_(snapshot), unsafeConstruction_(unsafeConstruction),
+        immediateRequired_(immediateRequired),
+        immediateValue_(std::move(immediateValue)) {}
   const ReturnStmt *source_;
   ResolvedConstructionInfo construction_;
   std::uint64_t snapshot_;
   bool unsafeConstruction_;
+  bool immediateRequired_;
+  std::optional<ConstantValue> immediateValue_;
+};
+
+// A successful immediate void expression statement has no ConstantValue and
+// no runtime expression. Bind its completion to the selected source call and
+// the semantic program snapshot before HIR erases it.
+class SemanticImmediateVoidCompletionProof {
+public:
+  [[nodiscard]] const ExpressionStmt *source() const { return source_; }
+  [[nodiscard]] const Expr *expression() const { return expression_; }
+  [[nodiscard]] FunctionId function() const { return function_; }
+  [[nodiscard]] std::uint64_t snapshot() const { return snapshot_; }
+
+private:
+  friend class SemanticModel;
+  SemanticImmediateVoidCompletionProof(const ExpressionStmt &source,
+                                       const Expr &expression,
+                                       FunctionId function,
+                                       std::uint64_t snapshot)
+      : source_(&source), expression_(&expression), function_(function),
+        snapshot_(snapshot) {}
+  const ExpressionStmt *source_;
+  const Expr *expression_;
+  FunctionId function_;
+  std::uint64_t snapshot_;
 };
 
 // Immutable, source-bound contextual constructor selection. Concrete models
@@ -2476,6 +2510,22 @@ public:
   [[nodiscard]] std::optional<ConstantValue>
   findConstant(const Expr &expression) const;
 
+  // A completed immediate invocation, including the conversion applied by a
+  // declaration. The source operand keeps its own type/constant facts.
+  struct ImmediateInvocationInfo {
+    ExpressionInfo info;
+    ConstantValue value;
+  };
+  [[nodiscard]] const ImmediateInvocationInfo *
+  findImmediateInvocation(const Expr &expression) const;
+  void recordImmediateInvocation(const Expr &expression,
+                                 ImmediateInvocationInfo value);
+  [[nodiscard]] std::optional<SemanticImmediateVoidCompletionProof>
+  immediateVoidCompletionProof(const ExpressionStmt &statement) const;
+  void recordImmediateVoidCompletion(const ExpressionStmt &statement,
+                                     const Expr &expression,
+                                     FunctionId function);
+
   [[nodiscard]] const CompileTimeValue *
   findArrayExtent(const ArrayExtentExpr &extent) const;
 
@@ -2557,6 +2607,10 @@ public:
   // Lowering and classification follow the alias; the original keeps its
   // own records for the passes that read the call shape.
   [[nodiscard]] const Expr *findExpressionAlias(const Expr &expression) const;
+  // An already checked source evaluation sequenced before the alias. It
+  // shares the original full-expression lifetime and is never reanalyzed.
+  [[nodiscard]] const Expr *
+  findExpressionAliasPrelude(const Expr &expression) const;
 
   [[nodiscard]] std::optional<StaticAssertResult>
   findStaticAssertResult(const StaticAssertDecl &declaration) const;
@@ -2770,9 +2824,10 @@ public:
 
   [[nodiscard]] std::optional<SemanticEmptyReturnConstructionProof>
   emptyReturnConstructionProof(const ReturnStmt &statement) const;
-  void recordEmptyReturnConstruction(const ReturnStmt &statement,
-                                     ResolvedConstructionInfo info,
-                                     bool unsafeConstruction);
+  void recordEmptyReturnConstruction(
+      const ReturnStmt &statement, ResolvedConstructionInfo info,
+      bool unsafeConstruction, bool immediateRequired,
+      std::optional<ConstantValue> immediateValue = std::nullopt);
 
   [[nodiscard]] const ResolvedConstructorInitializerInfo *
   findConstructorInitializer(const ConstructorInitializer &initializer) const;
@@ -3009,7 +3064,8 @@ private:
       std::vector<ResolvedDeclarationAttribute> attributes);
 
   const Expr &recordExpressionAlias(const Expr &expression,
-                                    std::shared_ptr<const Expr> alias);
+                                    std::shared_ptr<const Expr> alias,
+                                    const Expr *prelude = nullptr);
 
   void recordStaticAssertResult(const StaticAssertDecl &declaration,
                                 StaticAssertResult result);
@@ -3199,6 +3255,14 @@ private:
   std::vector<SemanticFullExpression> fullExpressionOrder;
   SemanticAnalysisSeal semanticAnalysisSeal;
   std::unordered_map<const Expr *, ConstantValue> constants;
+  std::unordered_map<const Expr *, ImmediateInvocationInfo>
+      immediateInvocations;
+  struct ImmediateVoidCompletion {
+    const Expr *expression = nullptr;
+    FunctionId function = 0;
+  };
+  std::unordered_map<const ExpressionStmt *, ImmediateVoidCompletion>
+      immediateVoidCompletions;
   std::unordered_map<const Expr *, UnsafeOperationKind> unsafeOperations;
   std::unordered_map<const Expr *, DefinedFailureOperation> definedFailures;
   std::unordered_map<const Expr *, CallerLocationOrigin> callerLocations;
@@ -3241,8 +3305,11 @@ private:
   std::unordered_map<const Expr *, Token> macroDefaults;
   std::unordered_map<const Stmt *, std::vector<ResolvedDeclarationAttribute>>
       declarationAttributes;
-  std::unordered_map<const Expr *, std::shared_ptr<const Expr>>
-      expressionAliases;
+  struct ExpressionAlias {
+    std::shared_ptr<const Expr> expression;
+    const Expr *prelude = nullptr;
+  };
+  std::unordered_map<const Expr *, ExpressionAlias> expressionAliases;
   std::vector<StmtPtr> expansionArena;
   std::vector<std::shared_ptr<const Expr>> expressionArena;
   std::unordered_map<const StaticAssertDecl *, StaticAssertResult>
@@ -3317,6 +3384,8 @@ private:
   struct EmptyReturnConstruction {
     ResolvedConstructionInfo construction;
     bool unsafeConstruction = false;
+    bool immediateRequired = false;
+    std::optional<ConstantValue> immediateValue;
   };
   std::unordered_map<const ReturnStmt *, EmptyReturnConstruction>
       emptyReturnConstructions;

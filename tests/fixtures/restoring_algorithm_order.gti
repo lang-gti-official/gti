@@ -65,8 +65,10 @@ int main() {
   for (mut int index = 0; index < 97; index++) {
     if (resources[std::size_t(index)].id() != 96 - index) { return 2; }
   }
-  std::sort(resources, Compare(1358));
-  std::sort(resources, Compare(1358));
+  // The reverse and already sorted move-only paths have a linear budget;
+  // no copied pivot, clone, or replacement allocation is permitted.
+  std::sort(resources, Compare(194));
+  std::sort(resources, Compare(194));
   for (mut int index = 0; index < 97; index++) {
     if (resources[std::size_t(index)].id() != index) { return 3; }
   }

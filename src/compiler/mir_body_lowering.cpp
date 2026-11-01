@@ -4462,8 +4462,11 @@ private:
     // copied out of the holder, leaves the compact single-origin loan.
     const auto solePath = solePathDesignation(lowered, loan, binding);
     const auto namedSolePath = [&] {
+      // A newly produced carrier may not be registered in the MIR group
+      // until after its identity is recorded. The binding being initialized
+      // still names its exact sole reference path at this point.
       if (lowered.carriers.empty())
-        return false;
+        return !solePath.empty() && solePath == lowered.designatedFields;
       const auto *carrier = findBinding(lowered.carriers.front());
       const auto path =
           carrier ? soleStoredReferencePath(carrier->info.type) : std::nullopt;
@@ -4782,6 +4785,28 @@ private:
                                 MirProjectionKind::RawIndex, index);
       } else if (value->operands.size() >= 2) {
         place = clonePlace(placeForValue(value->operands[0]), *value);
+        // A call, move, or joined expression can produce an array value
+        // without a source place. Its element is selected from the
+        // materialized value, after emitPlaceDependencies() has evaluated
+        // that producer and before the index is used.
+        if (place == 0) {
+          const HirValue *array = findValue(value->operands[0]);
+          if (array != nullptr &&
+              array->info.category == ValueCategory::Value &&
+              array->info.type.kind == SemanticType::Array) {
+            const auto copy = assignmentSnapshots.find(array->id);
+            const MirPlaceId arrayRoot =
+                appendPlace({.root = MirPlaceRootKind::Value,
+                             .value = copy == assignmentSnapshots.end()
+                                          ? mirValueFor(*array)
+                                          : copy->second,
+                             .type = array->info.type,
+                             .access = array->info.access,
+                             .traits = array->info.traits,
+                             .sourceValue = array->id});
+            place = clonePlace(arrayRoot, *value);
+          }
+        }
         if (place != 0) {
           output.places[place - 1].projections.push_back(
               {.kind = MirProjectionKind::Index,
@@ -5009,7 +5034,8 @@ private:
     }
     const std::optional<Literal> literal =
         programConstantLiteral(*value.constant);
-    if (!literal) {
+    if (!literal &&
+        !std::holds_alternative<ConstantAggregateValue>(*value.constant)) {
       valid = false;
       return;
     }
@@ -5018,7 +5044,11 @@ private:
     materializedInfo.access = AccessMode::ReadOnly;
     const auto *integer = std::get_if<ConstantInteger>(&*value.constant);
     const auto *enumerator = std::get_if<ConstantEnum>(&*value.constant);
-    const bool enumeration = value.info.type.kind == SemanticType::Enum;
+    // A payload enum is an aggregate with an exact active alternative, not an
+    // integral enumerator. Keep it on the ordinary aggregate literal path.
+    const bool enumeration =
+        value.info.type.kind == SemanticType::Enum &&
+        !std::holds_alternative<ConstantAggregateValue>(*value.constant);
     const bool negativeInteger = integer != nullptr && integer->negative;
     if (enumeration) {
       const ConstantInteger *enumValue =
@@ -6981,7 +7011,8 @@ private:
   }
 
   [[nodiscard]] bool storesCarrierReference(const HirValue &value) const {
-    if (value.intrinsic != IntrinsicKind::None || !value.functionTarget ||
+    if (value.intrinsic != IntrinsicKind::None ||
+        (!value.functionTarget && !value.constructorTarget) ||
         value.info.category != ValueCategory::Value ||
         value.info.type.kind != SemanticType::Class ||
         !value.info.traits.containsBorrowedState ||
@@ -15424,8 +15455,26 @@ private:
         retireConsumedSwitchSubject(statement, statement.switchArms[armIndex],
                                     *consumed);
       }
-      for (const HirSwitchArm::PayloadBinding &payload :
-           statement.switchArms[armIndex].payloadBindings) {
+      // Copy payloads before publishing any exclusive payload loan. A
+      // by-value extraction reads the enum subject, and that read would
+      // conflict with a mutable sibling binding if the source order placed
+      // the mutable binding first. Pattern bindings have no user evaluation
+      // order; their values are selected from the same guarded alternative.
+      std::vector<const HirSwitchArm::PayloadBinding *> orderedPayloads;
+      orderedPayloads.reserve(payloadBindings.size());
+      for (const auto &payload : payloadBindings)
+        if (const HirBinding *binding = findBinding(payload.binding);
+            binding != nullptr &&
+            binding->info.type.kind != SemanticType::Reference)
+          orderedPayloads.push_back(&payload);
+      for (const auto &payload : payloadBindings)
+        if (const HirBinding *binding = findBinding(payload.binding);
+            binding == nullptr ||
+            binding->info.type.kind == SemanticType::Reference)
+          orderedPayloads.push_back(&payload);
+      for (const HirSwitchArm::PayloadBinding *orderedPayload :
+           orderedPayloads) {
+        const HirSwitchArm::PayloadBinding &payload = *orderedPayload;
         if (consumed) {
           break;
         }
@@ -15862,12 +15911,22 @@ private:
           // A payload borrowed through the summarized reference parameter is
           // a local child of that parameter's entry loan, and its borrow
           // reads that entry loan.
-          const auto referenceParameterChild = [&](const MirLoan &candidate) {
+          const auto callerOwnedPayloadChild = [&](const MirLoan &candidate) {
             const std::optional<HirBindingId> summarized =
                 returnBorrowParameterBinding();
+            if (candidate.kind != MirLoanKind::Local)
+              return false;
+            std::unordered_set<MirLoanId> seen;
             const MirLoan *parent = output.findLoan(candidate.parent);
-            return summarized && candidate.kind == MirLoanKind::Local &&
-                   parent != nullptr &&
+            while (parent != nullptr && seen.insert(parent->id).second &&
+                   parent->kind == MirLoanKind::Local && !parent->entry &&
+                   !parent->escapes) {
+              parent = output.findLoan(parent->parent);
+            }
+            if (!seen.empty() && parent == nullptr &&
+                bodyReturnBorrowOrigin() == BorrowOriginKind::Receiver)
+              return true;
+            return summarized && parent != nullptr &&
                    parent->kind == MirLoanKind::Parameter && parent->entry &&
                    std::find(parent->carriers.begin(), parent->carriers.end(),
                              *summarized) != parent->carriers.end();
@@ -15875,7 +15934,7 @@ private:
           if ((output.loans[borrow.loan - 1].kind == MirLoanKind::CallResult ||
                output.loans[borrow.loan - 1].kind == MirLoanKind::Stored ||
                output.loans[borrow.loan - 1].referenceSelection ||
-               referenceParameterChild(output.loans[borrow.loan - 1])) &&
+               callerOwnedPayloadChild(output.loans[borrow.loan - 1])) &&
               output.loans[borrow.loan - 1].producedBy != 0) {
             // A returned reference binding may alias the producing call's
             // own result loan, or the Stored loan of the carrier it was
@@ -15890,9 +15949,26 @@ private:
             // its producing borrow reading a parent the Return loan lacks.
             const MirLoan source = output.loans[borrow.loan - 1];
             const HirValue *returned = findValue(*statement.value);
+            MirPlaceId publicationSource = source.source;
+            std::unordered_set<MirLoanId> seenParents;
+            const MirLoan *ancestor = output.findLoan(source.parent);
+            const bool nestedPayload =
+                source.kind == MirLoanKind::Local && source.parent != 0 &&
+                !source.referenceSelection && callerOwnedPayloadChild(source);
+            while (nestedPayload && ancestor != nullptr &&
+                   seenParents.insert(ancestor->id).second &&
+                   ancestor->kind == MirLoanKind::Local && !ancestor->entry &&
+                   !ancestor->escapes) {
+              // A nested payload borrow may be rooted in an arm-local
+              // reference alias. Its caller-visible owner is the outer
+              // selection's place, while the Loan operand below still names
+              // the inner selection's exact runtime address.
+              publicationSource = ancestor->source;
+              ancestor = output.findLoan(ancestor->parent);
+            }
             const MirLoanId published =
-                createLoan(MirLoanKind::Return, source.source, source.access,
-                           source.producedBy);
+                createLoan(MirLoanKind::Return, publicationSource,
+                           source.access, source.producedBy);
             output.loans[published - 1].storedDependency =
                 source.storedDependency;
             output.loans[published - 1].additionalDependencies =

@@ -1,0 +1,22 @@
+extern "C" {
+uint64_t bench_rounds();
+uint64_t bench_seed();
+void bench_begin();
+void bench_end(uint64_t digest);
+}
+
+int main() {
+  uint64_t rounds = bench_rounds();
+  uint64_t seed = bench_seed();
+  bench_begin();
+  mut uint64_t digest = 0;
+  mut double x = double(seed % 97) * 0.125d;
+  mut double total = 0.0d;
+  for (mut uint64_t i = 0; i < rounds * 200000; i++) {
+    x = x * 0.9999d + 0.0001d;
+    total += x;
+  }
+  digest = uint64_t(total * 1000.0d);
+  bench_end(digest);
+  return 0;
+}

@@ -24,7 +24,61 @@ int mul_limit(int value) {
   return std::wrapping_mul(value, 2) + 2;
 }
 
+// Observe cleanup on dynamic overflow, not only constant-foldable inputs.
+class ArithmeticCleanup {
+  int identity;
+public:
+  ArithmeticCleanup(int identity) : identity(identity) {}
+  ~ArithmeticCleanup() { std::println(this.identity); }
+};
+
+uint64_t runtime_unsigned_add(uint64_t amount) {
+  ArithmeticCleanup inner{2};
+  return uint64_t(18446744073709551615) + amount; // runtime-unsigned-add
+}
+uint64_t runtime_unsigned_subtract(uint64_t amount) {
+  ArithmeticCleanup inner{2};
+  return uint64_t(0) - amount; // runtime-unsigned-subtract
+}
+uint64_t runtime_unsigned_multiply(uint64_t amount) {
+  ArithmeticCleanup inner{2};
+  return uint64_t(9223372036854775808) * amount; // runtime-unsigned-multiply
+}
+
+class NarrowValue {
+  mut uint8_t value = uint8_t(254);
+public:
+  NarrowValue() {}
+  ~NarrowValue() { std::println(int(this.value)); }
+  void add(int amount) mut {
+    this.value += amount; // runtime-narrow-update
+  }
+  int get() { return int(this.value); }
+};
+int runtime_narrow_update(int amount) {
+  ArithmeticCleanup inner{2};
+  mut NarrowValue value{};
+  value.add(amount);
+  return value.get();
+}
+
 int main(int argc, std::vector<std::string> argv) {
+  // The first argument's length is an opaque runtime operand. The same branch
+  // runs both a successful boundary control and its failing neighbour.
+  if (argc >= 5 && argc <= 8) {
+    ArithmeticCleanup outer{1};
+    uint64_t amount = uint64_t(argv[std::size_t(1)].size());
+    if (argc == 5) {
+      return runtime_unsigned_add(amount) == uint64_t(18446744073709551615) ? 0 : 9;
+    }
+    if (argc == 6) {
+      return runtime_narrow_update(int(amount)) == 255 ? 0 : 10;
+    }
+    if (argc == 7) {
+      return runtime_unsigned_subtract(amount) == uint64_t(0) ? 0 : 11;
+    }
+    return runtime_unsigned_multiply(amount) == uint64_t(9223372036854775808) ? 0 : 12;
+  }
   if (argc == 2) return add_limit(1);
   if (argc == 3) return sub_limit(int32_t(-2147483648));
   if (argc == 4) return mul_limit(-1073741825);
@@ -32,5 +86,9 @@ int main(int argc, std::vector<std::string> argv) {
   if (std::wrapping_add(int32_t(2147483647), int32_t(1)) != int32_t(-2147483648)) return 2;
   if (std::wrapping_sub(int32_t(-2147483648), int32_t(1)) != 2147483647) return 3;
   if (std::wrapping_mul(int32_t(-1073741825), int32_t(2)) != 2147483646) return 4;
+  if (std::wrapping_add(uint32_t(4294967295), uint32_t(1)) != uint32_t(0)) return 5;
+  if (std::wrapping_sub(uint32_t(0), uint32_t(1)) != uint32_t(4294967295)) return 6;
+  if (std::wrapping_mul(uint32_t(2147483648), uint32_t(2)) != uint32_t(0)) return 7;
+  if (std::saturating_add(int32_t(2147483647), int32_t(1)) != int32_t(2147483647)) return 8;
   return 0;
 }

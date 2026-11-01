@@ -10,6 +10,27 @@ import tempfile
 from allocation_abort_runtime_test import ABORT_STATUS
 from native_fixture_build import build_fixture
 
+
+def build_llvm_fixture(command, output, *, native_sources=(), native_arguments=(),
+                       standard="c++23", optimization="O0", **options):
+    # The ordinary provider helper emits C++; LLVM fixtures instead compile
+    # providers to objects and let the production LLVM driver own linking.
+    environment = options.get("env", os.environ)
+    cxx = environment.get("GTI_CXX") or environment.get("CXX") or "c++"
+    objects = []
+    for index, source in enumerate(native_sources):
+        target = output.with_name(output.name + f"-provider-{index}.o")
+        compiled = subprocess.run(
+            [cxx, f"-std={standard}", f"-{optimization}", *native_arguments,
+             "-c", str(source), "-o", str(target)], **options)
+        if compiled.returncode != 0:
+            return compiled
+        objects.append(str(target))
+    return build_fixture(command, output,
+                         native_arguments=[*objects, *native_arguments],
+                         standard=standard, optimization=optimization, **options)
+
+
 def run(command, *, timeout=300):
     result = subprocess.run(command, text=True, capture_output=True,
                             timeout=timeout, env=dict(os.environ,
@@ -22,6 +43,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("compiler", type=Path)
     parser.add_argument("--quick", action="store_true")
+    parser.add_argument("--backend", choices=("cpp", "llvm"), default="cpp")
     parser.add_argument("--fixture", choices=("pipeline", "void", "example", "url", "url-failure", "transform", "transform-failure", "optional", "sort", "sort-failure", "sort-adversary"))
     args = parser.parse_args()
     repository = Path(__file__).resolve().parent.parent
@@ -61,10 +83,12 @@ def main():
         "sort-failure": (sort_source, [
             ((), (0, "call\n" * 6 + "comparator\n6\n1\n2\n3\n4\nouter\n", "")),
             (("comparison",), (70, "call\n" * 4 + "comparator\n4\nouter\n", sort_failure("mode - 2"))),
+            (("median", "selection", "comparison", "failure"), (70, "call\n" * 4 + "comparator\n4\nouter\n", sort_failure("mode - 5"))),
+            (("monotonic", "probe", "failure"), (70, "call\n" * 4 + "comparator\n4\nouter\n", sort_failure("mode - 4"))),
             (("destructor", "failure"), (70, "call\n" * 6 + "comparator\n6\nouter\n", sort_failure("mode - 3"))),
         ]),
-        "sort": (fixtures / "algorithm_comparator_sort.gti", [((), (0, "1252\n2754\n5998\n13012\n", ""))]),
-        "sort-adversary": (fixtures / "algorithm_sort_adversary.gti", [((), (0, "34274\n34274\n", ""))]),
+        "sort": (fixtures / "algorithm_comparator_sort.gti", [((), (0, "127\n255\n511\n1023\n", ""))]),
+        "sort-adversary": (fixtures / "algorithm_sort_adversary.gti", [((), (0, "1024\n1024\n34191\n34191\n", ""))]),
         "optional": (fixtures / "optional_value_or_contract.gti", [((), (0, "", ""))]),
         "transform": (fixtures / "algorithm_transform_owned.gti", [((), (0, "", ""))]),
         "transform-failure": (transform_source, [
@@ -90,6 +114,8 @@ def main():
              for level in ("O0", "O3")]
     modes += [("c++23", "O0", ["-fno-elide-constructors"]),
               ("c++23", "O1", ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])]
+    if args.backend == "llvm":
+        modes = [("c++23", level, []) for level in ("O0", "O3")]
     if args.quick:
         modes = modes[:1]
     with tempfile.TemporaryDirectory(prefix="gti-stdlib-adoption-") as directory:
@@ -98,12 +124,16 @@ def main():
                 if args.fixture and label != args.fixture:
                     continue
                 binary = Path(directory) / f"{label}-{number}"
-                command = [str(args.compiler.resolve()), str(source), "--std", standard,
-                           f"-{level}"]
+                command = [str(args.compiler.resolve()), str(source), f"-{level}"]
+                if args.backend == "llvm":
+                    command += ["--backend", "llvm"]
+                else:
+                    command += ["--std", standard]
                 native_sources = []
                 if label in ("url", "url-failure", "sort"):
                     native_sources.append(fixtures / "stdlib_adoption_allocation_counts.cpp")
-                compiled = build_fixture(
+                builder = build_llvm_fixture if args.backend == "llvm" else build_fixture
+                compiled = builder(
                     command, binary, native_sources=native_sources,
                     native_arguments=native, standard=standard, optimization=level,
                     text=True, capture_output=True, timeout=300,
@@ -114,7 +144,7 @@ def main():
                 for arguments, expected in outcomes:
                     actual = run([str(binary), *arguments], timeout=30)
                     assert actual == expected, (label, standard, level, arguments, expected, actual)
-                print(f"{label}: {standard} {level} {native or 'native'} passed", flush=True)
+                print(f"{label}: {args.backend} {standard} {level} {native or 'native'} passed", flush=True)
     return 0
 
 

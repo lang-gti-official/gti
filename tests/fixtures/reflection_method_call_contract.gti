@@ -1,0 +1,31 @@
+import std.meta;
+
+class Counter {
+  mut int32_t value;
+public:
+  Counter(int32_t value) : value(value) {}
+  int32_t update(int32_t amount) mut {
+    this.value = (this.value * 3 + amount) % 1000003;
+    return this.value;
+  }
+};
+
+int32_t direct(mut Counter& counter, int32_t amount) {
+  return counter.update(amount);
+}
+
+int32_t reflected(mut Counter& counter, int32_t amount) {
+  return std::meta::method<Counter, 0>().invoke(counter, amount);
+}
+
+int main() {
+  mut Counter ordinary{1};
+  mut Counter selected{1};
+  mut int32_t i = 0;
+  while (i < 1000) {
+    int32_t amount = i % 19;
+    if (direct(ordinary, amount) != reflected(selected, amount)) { return 1; }
+    i = i + 1;
+  }
+  return 0;
+}

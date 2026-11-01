@@ -1,4 +1,18 @@
+import std.utility;
+
 using SampleCount = std::size_t;
+
+int[3] fresh_values(int first) {
+  int[3] values = {first, 2, 3};
+  return values;
+}
+
+struct FreshRow {
+  int[2] cells;
+  FreshRow(int first) : cells({first, 2}) {}
+};
+
+FreshRow fresh_row(int first) { return FreshRow(first); }
 
 int sum(int values[4]) {
   mut int total = 0;
@@ -50,6 +64,13 @@ int main() {
   }
   Coordinates defaults{};
   if (defaults.first_x() != 0) { return 1; }
+  int moved_values[3] = {4, 5, 6};
+  FreshRow moved_row{7};
+  // A call or move owns its fresh result through this full-expression;
+  // selecting an element checks its bounds before reading it.
+  if (fresh_values(1)[0] != 1 || std::move(moved_values)[1] != 5 ||
+      fresh_row(8).cells[0] != 8 ||
+      std::move(moved_row).cells[1] != 2) { return 1; }
   NativeWord words[2] = {};
   // Unions are passive, but choosing and interpreting a member remains unsafe.
   unsafe {

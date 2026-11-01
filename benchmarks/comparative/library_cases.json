@@ -1,0 +1,167 @@
+[
+  {
+    "id": "lib-vector-growth",
+    "family": "containers",
+    "description": "Append 65,536 integers then traverse; geometric growth.",
+    "contract": "Same deterministic input, element counts and output digest. Allocation, initialization, work and destruction are timed. Unsigned arithmetic remains within range.",
+    "source_provenance": "Adapted benchmarks/probes/runtime-audit/vector-push/main.gti and idiomatic.cpp; new Rust counterpart.",
+    "limitations": "Single-threaded; optimizer-visible inputs. Measures these library implementations as well as code generation.",
+    "initial_rounds": 1
+  },
+  {
+    "id": "lib-vector-reserved",
+    "family": "containers",
+    "description": "Append 65,536 integers then traverse; pre-reserved capacity.",
+    "contract": "Same deterministic input, element counts and output digest. Allocation, initialization, work and destruction are timed. Unsigned arithmetic remains within range.",
+    "source_provenance": "Adapted benchmarks/probes/runtime-audit/vector-push/main.gti and idiomatic.cpp; new Rust counterpart.",
+    "limitations": "Single-threaded; optimizer-visible inputs. Measures these library implementations as well as code generation.",
+    "initial_rounds": 1
+  },
+  {
+    "id": "lib-vector-transform",
+    "family": "containers",
+    "description": "Repeated checked indexed vector updates and complete checksum.",
+    "contract": "Same deterministic input, element counts and output digest. Allocation, initialization, work and destruction are timed. Unsigned arithmetic remains within range.",
+    "source_provenance": "Adapted benchmarks/workloads/vector-checked-loop; runtime-seeded modular recurrence replaces overflow-prone scaling.",
+    "limitations": "GTI and Rust safe indexing retains semantic checks; idiomatic C++ operator[] is unchecked. Defined inputs stay in range; report this safety-policy difference.",
+    "initial_rounds": 1
+  },
+  {
+    "id": "lib-sort-random",
+    "family": "sorting",
+    "description": "Sort 32,768 random integers with each standard library unstable sort; checksum every sorted element.",
+    "contract": "Same deterministic input, element counts and output digest. Allocation, initialization, work and destruction are timed. Unsigned arithmetic remains within range.",
+    "source_provenance": "Adapted benchmarks/probes/runtime-audit/sort; adds sorted/reverse input and complete order-sensitive checksum.",
+    "limitations": "Standard library algorithms differ deliberately: compares delivered sort performance, not identical sorting algorithms. All construction/destruction remains timed.",
+    "initial_rounds": 1
+  },
+  {
+    "id": "lib-sort-sorted",
+    "family": "sorting",
+    "description": "Sort 32,768 sorted integers with each standard library unstable sort; checksum every sorted element.",
+    "contract": "Same deterministic input, element counts and output digest. Allocation, initialization, work and destruction are timed. Unsigned arithmetic remains within range.",
+    "source_provenance": "Adapted benchmarks/probes/runtime-audit/sort; adds sorted/reverse input and complete order-sensitive checksum.",
+    "limitations": "Standard library algorithms differ deliberately: compares delivered sort performance, not identical sorting algorithms. All construction/destruction remains timed.",
+    "initial_rounds": 1
+  },
+  {
+    "id": "lib-sort-reverse",
+    "family": "sorting",
+    "description": "Sort 32,768 reverse integers with each standard library unstable sort; checksum every sorted element.",
+    "contract": "Same deterministic input, element counts and output digest. Allocation, initialization, work and destruction are timed. Unsigned arithmetic remains within range.",
+    "source_provenance": "Adapted benchmarks/probes/runtime-audit/sort; adds sorted/reverse input and complete order-sensitive checksum.",
+    "limitations": "Standard library algorithms differ deliberately: compares delivered sort performance, not identical sorting algorithms. All construction/destruction remains timed.",
+    "initial_rounds": 1
+  },
+  {
+    "id": "lib-string-growth-search",
+    "family": "strings",
+    "description": "Build 65,536 ASCII characters without reserve then find every q.",
+    "contract": "Same deterministic input, element counts and output digest. Allocation, initialization, work and destruction are timed. Unsigned arithmetic remains within range.",
+    "source_provenance": "Adapted benchmarks/probes/runtime-audit/strings; new Rust String counterpart.",
+    "limitations": "ASCII only: UTF-8 and byte-string indexing agree on these inputs. Rust String.push performs character encoding; GTI/C++ push bytes.",
+    "initial_rounds": 1
+  },
+  {
+    "id": "lib-string-substrings",
+    "family": "strings",
+    "description": "Build ASCII text then allocate/copy/destroy 2,048 overlapping 32-byte substrings; position-weighted q checksum.",
+    "contract": "Same deterministic input, element counts and output digest. Allocation, initialization, work and destruction are timed. Unsigned arithmetic remains within range.",
+    "source_provenance": "New comparison workload using existing GTI library APIs.",
+    "limitations": "ASCII inputs; owned substring copies in all three languages. Measures allocator/string representation differences, not borrowed slicing.",
+    "initial_rounds": 1
+  },
+  {
+    "id": "lib-hashmap-growth",
+    "family": "hash-tables",
+    "description": "Insert 16,384 integer keys then probe 32,768 keys with growing table.",
+    "contract": "Same deterministic input, element counts and output digest. Allocation, initialization, work and destruction are timed. Unsigned arithmetic remains within range.",
+    "source_provenance": "Adapted benchmarks/probes/runtime-audit/hashmap; preserves two lookups per hit and adds reserved control.",
+    "limitations": "Rust default HashMap uses randomized hashing; GTI/C++ defaults differ. This is an idiomatic library comparison, not equivalent hashing/security contracts. Raw sample variance includes Rust hash seed changes.",
+    "initial_rounds": 1
+  },
+  {
+    "id": "lib-hashmap-reserved",
+    "family": "hash-tables",
+    "description": "Insert 16,384 integer keys then probe 32,768 keys with reserved table.",
+    "contract": "Same deterministic input, element counts and output digest. Allocation, initialization, work and destruction are timed. Unsigned arithmetic remains within range.",
+    "source_provenance": "Adapted benchmarks/probes/runtime-audit/hashmap; preserves two lookups per hit and adds reserved control.",
+    "limitations": "Rust default HashMap uses randomized hashing; GTI/C++ defaults differ. This is an idiomatic library comparison, not equivalent hashing/security contracts. Raw sample variance includes Rust hash seed changes.",
+    "initial_rounds": 1
+  },
+  {
+    "id": "lib-optional-int",
+    "family": "sum-types",
+    "description": "One million optional integer returns with 25% absence.",
+    "contract": "Same deterministic input, element counts and output digest. Allocation, initialization, work and destruction are timed. Unsigned arithmetic remains within range.",
+    "source_provenance": "Adapted benchmarks/workloads/payload-optional-int/source.gti with std::optional and Rust Option counterparts. Updated historical experimental optional spelling to current std.optional.",
+    "limitations": "Optimizer-visible optional producer; not opaque ABI or heap-owning payloads.",
+    "initial_rounds": 1
+  },
+  {
+    "id": "lib-result-propagation",
+    "family": "sum-types",
+    "description": "Parse two decimal digits through two fallible calls; some high digits invalid.",
+    "contract": "Same deterministic input, element counts and output digest. Allocation, initialization, work and destruction are timed. Unsigned arithmetic remains within range.",
+    "source_provenance": "Adapted benchmarks/probes/runtime-audit/expected.",
+    "limitations": "C++ uses a simple explicit tagged result to avoid requiring newer libc++ std::expected availability; it is not C++ exception throwing. Producers are optimizer-visible.",
+    "initial_rounds": 1
+  },
+  {
+    "id": "lib-capturing-predicate",
+    "family": "callbacks",
+    "description": "Count values above a captured threshold across 16 vector traversals.",
+    "contract": "Same deterministic input, element counts and output digest. Allocation, initialization, work and destruction are timed. Unsigned arithmetic remains within range.",
+    "source_provenance": "Adapted benchmarks/probes/runtime-audit/lambda.",
+    "limitations": "Exact optimizer-visible closures, not signature-erased callbacks or opaque cross-module dispatch.",
+    "initial_rounds": 1
+  },
+  {
+    "id": "lib-interface-dispatch",
+    "family": "dispatch",
+    "description": "Repeated calls through an interface reference with two concrete implementations.",
+    "contract": "Same deterministic input, element counts and output digest. Allocation, initialization, work and destruction are timed. Unsigned arithmetic remains within range.",
+    "source_provenance": "Adapted benchmarks/probes/runtime-audit/dispatch; integer areas avoid floating checksum ambiguity.",
+    "limitations": "Concrete targets remain visible within one compilation unit. Devirtualization is permitted and desirable; does not claim opaque dynamic-dispatch cost.",
+    "initial_rounds": 1
+  },
+  {
+    "id": "lib-atomic-relaxed",
+    "family": "atomics",
+    "description": "One million relaxed atomic fetch-add operations; consume every old value.",
+    "contract": "Same deterministic input, element counts and output digest. Allocation, initialization, work and destruction are timed. Unsigned arithmetic remains within range.",
+    "source_provenance": "Adapted std.atomic operations exercised in benchmarks/workloads/atomic-scalar-core.",
+    "limitations": "All use wrapping unsigned fetch-add with relaxed ordering, but chosen values do not overflow. Single-threaded nonescaping atomic: optimizer may remove/strength-reduce unobservable synchronization; does not measure contention.",
+    "initial_rounds": 1,
+    "execution_profile": "concurrent"
+  },
+  {
+    "id": "lib-mutex-uncontended",
+    "family": "synchronization",
+    "description": "One hundred thousand uncontended mutex lock/update/unlock operations.",
+    "contract": "Same deterministic input, element counts and output digest. Allocation, initialization, work and destruction are timed. Unsigned arithmetic remains within range.",
+    "source_provenance": "Adapted tests/fixtures/llvm_mutex_cost.gti.",
+    "limitations": "Uncontended, successful path only. Rust poisoning, GTI guard ownership and C++ lock_guard APIs differ; no panics/exceptions are triggered. Not scheduler/wake-latency evidence.",
+    "initial_rounds": 1,
+    "execution_profile": "concurrent"
+  },
+  {
+    "id": "lib-scoped-workers",
+    "family": "threads",
+    "description": "Create/join four scoped workers, each running 250,000 dependent modular updates; verify every result.",
+    "contract": "Same deterministic input, element counts and output digest. Allocation, initialization, work and destruction are timed. Unsigned arithmetic remains within range.",
+    "source_provenance": "Adapted benchmarks/workloads/managed-thread-parallelism/scoped.gti job/parallel_invoke pattern; deterministic modular work replaces Mandelbrot.",
+    "limitations": "Includes thread startup/join each round. Four workers, no shared hot state. This is not a persistent thread pool or scaling curve; worker results are summed deterministically.",
+    "initial_rounds": 1,
+    "execution_profile": "concurrent"
+  },
+  {
+    "id": "lib-owned-allocation",
+    "family": "allocation",
+    "description": "Allocate 8,192 independently owned integers, traverse them, then destroy every owner.",
+    "contract": "Same deterministic input, element counts and output digest. Allocation, initialization, work and destruction are timed. Unsigned arithmetic remains within range.",
+    "source_provenance": "New comparison workload using existing GTI library APIs.",
+    "limitations": "All owners coexist until the traversal completes; intended to retain allocation work. Uses each implementation\u2019s normal allocator, no custom arena. Timings include allocation and destruction, but actual allocator-call counts need separate instrumentation.",
+    "initial_rounds": 1
+  }
+]

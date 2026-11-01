@@ -1,0 +1,32 @@
+import std.vector;
+extern "C" {
+uint64_t bench_rounds();
+uint64_t bench_seed();
+void bench_begin();
+void bench_end(uint64_t digest);
+}
+
+int main() {
+  uint64_t rounds = bench_rounds();
+  uint64_t seed = bench_seed() % uint64_t(65536);
+  mut uint64_t digest = 0;
+  bench_begin();
+  for (mut uint64_t round = 0; round < rounds; round++) {
+    mut std::vector<uint64_t> values =
+        std::vector<uint64_t>(std::size_t(32768));
+    for (mut std::size_t i = 0; i < values.size(); i++) {
+      values[i] = (uint64_t(i) + seed + round) % uint64_t(65521);
+    }
+    for (mut int32_t pass = 0; pass < 16; pass++) {
+      for (mut std::size_t i = 0; i < values.size(); i++) {
+        values[i] =
+            (values[i] * uint64_t(17) + uint64_t(pass)) % uint64_t(65521);
+      }
+    }
+    for (uint64_t &value : values) {
+      digest += value;
+    }
+  }
+  bench_end(digest);
+  return 0;
+}

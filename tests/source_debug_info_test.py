@@ -41,7 +41,20 @@ def debugger(argv, cwd):
             if time.monotonic() > deadline:
                 process.kill()
                 process.wait()
-                raise AssertionError("LLDB launch timed out:\n" + b"".join(chunks).decode(errors="replace"))
+                output = b"".join(chunks).decode(errors="replace")
+                # Some hosts deny debugserver attachment without reporting the
+                # denial to an interactive LLDB session. Probe a system program
+                # before treating this timeout as a GTI debugging failure.
+                try:
+                    probe = subprocess.run(
+                        [argv[0], "--no-lldbinit", "--batch", "/bin/echo", "-o", "run"],
+                        cwd=cwd, capture_output=True, text=True, timeout=15)
+                except subprocess.TimeoutExpired:
+                    probe = None
+                if probe is not None and "Not allowed to attach" in probe.stdout + probe.stderr:
+                    return subprocess.CompletedProcess(
+                        argv, 1, output + probe.stdout + probe.stderr, "")
+                raise AssertionError("LLDB launch timed out:\n" + output)
             ready, _, _ = select.select([master], [], [], 0.1)
             if ready:
                 try:

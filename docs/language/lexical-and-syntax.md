@@ -78,7 +78,7 @@ See [thread-local storage](concurrency.md#thread-local-storage).
 ordinary source constructor's declaration, it lets a declaration construct the
 class from that constructor's argument type, as described in
 [static semantics](static-semantics.md#35-initialization-and-conversion).
-Written first in a conversion operator, before `virtual` or `constexpr`, it
+Written first in a conversion operator, before `virtual`, `constexpr`, or `consteval`, it
 lets a declaration convert through that operator
 ([conversion operators](static-semantics.md#392-conversion-operators)).
 Anywhere else it is an ordinary identifier.
@@ -228,7 +228,7 @@ unconditional and at source-unit top level.
 
 `export` begins the declaration it publishes. It precedes the declaration's
 attribute lists, `@` bindings and specifiers such as `unsafe`, `static` and
-`constexpr`:
+`constexpr` or `consteval`:
 
 ```gti
 export [[track_caller]] void check(bool condition) {}

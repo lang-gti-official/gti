@@ -364,3 +364,10 @@ concept sum_highlight<T> = requires(T& left, T& right) { { left + right } -> T; 
 
 T Box<T>::generic_owner_highlight() { return this.value; }
 U demo::Box<T>::generic_member_highlight<U>(U value) { return value; }
+
+consteval int immediate_highlight(int input) { return input; }
+struct ImmediatePortHighlight {
+  int value;
+  implicit consteval ImmediatePortHighlight(int input) : value(input) {}
+  consteval operator int() { return this.value; }
+};

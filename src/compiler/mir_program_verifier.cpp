@@ -3747,7 +3747,7 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
           if (instruction.unsafeOperation == UnsafeOperationKind::RawMember &&
               receiverType.kind == SemanticType::RawPointer &&
               receiverType.arguments.size() == 1)
-            receiverType = receiverType.arguments.front();
+            receiverType = SemanticType(receiverType.arguments.front());
           if (targetOwner == nullptr ||
               (receiverType != targetOwner->type &&
                !mirPublicBaseConversion(program, receiverType,
@@ -5754,21 +5754,79 @@ storedCarrierValueOrigin(const MirProgram &program, const MirBody &body,
     const Publication &publication = found->second;
     const MirValue *value =
         body.findValue(publication.initialize->operands.front().value);
-    if (value == nullptr || value->info.type != carrierType ||
-        value->definitionBlock != publication.block->id)
+    if (value == nullptr || value->info.type != carrierType)
       return false;
-    const auto producer =
-        std::find_if(publication.block->instructions.begin(),
-                     publication.block->instructions.end(),
-                     [&](const MirInstruction &instruction) {
-                       return instruction.id == value->definition;
-                     });
-    if (producer == publication.block->instructions.end() ||
-        static_cast<std::size_t>(producer -
-                                 publication.block->instructions.begin()) >=
-            publication.position ||
-        producer->result != value->id || producer->info.type != carrierType ||
-        producer->operands.size() != 1 ||
+    const MirBlock *producerBlock = body.findBlock(value->definitionBlock);
+    if (producerBlock == nullptr)
+      return false;
+    const auto producer = std::find_if(
+        producerBlock->instructions.begin(), producerBlock->instructions.end(),
+        [&](const MirInstruction &instruction) {
+          return instruction.id == value->definition;
+        });
+    if (producer == producerBlock->instructions.end() ||
+        (producerBlock == publication.block
+             ? static_cast<std::size_t>(producer -
+                                        producerBlock->instructions.begin()) >=
+                   publication.position
+             : !dominance->dominates(producerBlock->id,
+                                     publication.block->id)) ||
+        producer->result != value->id || producer->info.type != carrierType)
+      return false;
+    // A text relay may publish the exact owner of a reference formal through
+    // a checked call result. Its actual argument must be a direct load of that
+    // formal's referent; a matching type or declared borrow summary alone is
+    // not evidence that the local received the entry's text owner.
+    if (producer->kind == MirInstructionKind::Call &&
+        (carrierType.kind == SemanticType::StringView ||
+         carrierType.kind == SemanticType::CString)) {
+      const MirLoan *result =
+          producer->loan ? body.findLoan(*producer->loan) : nullptr;
+      const std::size_t argument = producer->borrowArgument;
+      const MirInstruction *stage =
+          producer->borrowOrigin == BorrowOriginKind::Argument &&
+                  argument < producer->operands.size() &&
+                  producer->operands[argument].kind == MirOperandKind::Value
+              ? definitionFor(body, producer->operands[argument].value)
+              : nullptr;
+      const MirInstruction *load =
+          stage != nullptr && stage->kind == MirInstructionKind::CallInput &&
+                  stage->operands.size() == 1 &&
+                  stage->operands.front().kind == MirOperandKind::Value
+              ? definitionFor(body, stage->operands.front().value)
+              : nullptr;
+      const MirPlace *source =
+          load != nullptr && load->kind == MirInstructionKind::Load &&
+                  load->operands.size() == 1
+              ? body.findPlace(load->operands.front().place)
+              : nullptr;
+      const auto origin = source != nullptr
+                              ? storedCarrierValueOrigin(program, body, entry,
+                                                         *source, carrierType)
+                              : std::nullopt;
+      if (result == nullptr || result->kind != MirLoanKind::Stored ||
+          result->entry || result->escapes || result->parent != 0 ||
+          result->source != entry.source ||
+          result->producedBy != producer->hirValue ||
+          !result->designatedFields.empty() ||
+          !result->additionalDependencies.empty() ||
+          !producer->borrowArguments.empty() ||
+          !producer->borrowFields.empty() ||
+          argument >= producer->parameterTypes.size() ||
+          producer->parameterTypes[argument] != carrierType ||
+          stage == nullptr || stage->callSite != producer->callSite ||
+          stage->callInputRole != MirCallInputRole::Argument ||
+          stage->callInputIndex != argument ||
+          stage->callInputKind != HirCallInputKind::Value || load == nullptr ||
+          source == nullptr ||
+          load->operands.front().kind != MirOperandKind::Copy ||
+          load->operands.front().type != carrierType || !origin || *origin != 0)
+        return false;
+      visiting.erase(carrier);
+      proven.insert(carrier);
+      return true;
+    }
+    if (producerBlock != publication.block || producer->operands.size() != 1 ||
         (producer->kind != MirInstructionKind::Load &&
          producer->kind != MirInstructionKind::Move))
       return false;
@@ -16672,11 +16730,25 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
           returnedValue = block.terminator.value->value;
         }
       }
+      // A compact Stored result may carry one owner without a field label.
+      // Its function summary names that same owner at an explicit field of
+      // the returned class. The source and returned loan differ only by this
+      // exact result path; the later return-publication proof checks the
+      // source origin and the complete mapping against the returned value.
+      const bool mappedResultField =
+          sourceLoan && !sourceLoan->entry &&
+          sourceLoan->designatedFields.empty() &&
+          sourceLoan->additionalDependencies.empty() && function &&
+          function->returnBorrowFields.size() == 1 &&
+          function->returnBorrowFields.front().resultFields ==
+              loan.designatedFields &&
+          function->returnBorrowFields.front().access == loan.access;
       if (!exactReturnProducer || sourceLoan == nullptr ||
           sourceLoan->kind != MirLoanKind::Stored ||
           !sourceLoan->lifecycleBound || sourceLoan->source != loan.source ||
           sourceLoan->access != loan.access ||
-          sourceLoan->designatedFields != loan.designatedFields ||
+          (sourceLoan->designatedFields != loan.designatedFields &&
+           !mappedResultField) ||
           sourceLoan->additionalDependencies != loan.additionalDependencies ||
           returns != 1) {
         return verificationFailure(
@@ -17647,7 +17719,7 @@ verifyMirProgramContracts(const MirProgram &program) {
           } else if (projection.kind == MirProjectionKind::Index &&
                      projectedType.kind == SemanticType::Array &&
                      projectedType.arguments.size() == 1) {
-            projectedType = projectedType.arguments.front();
+            projectedType = SemanticType(projectedType.arguments.front());
           }
         }
       }
@@ -21656,6 +21728,41 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
     }
   }
 
+  // A published constant is immutable data, never an executor-local owner or
+  // a loan. Validate every aggregate layer against the sealed type catalog;
+  // body-local verification alone cannot know a record's exact field layout.
+  const auto passiveConstantType = [&](const auto &self,
+                                       const SemanticType &type) -> bool {
+    if (type.kind == SemanticType::Array)
+      return type.arguments.size() == 1 && self(self, type.arguments.front());
+    if (type.kind == SemanticType::Class) {
+      const auto owner = std::find_if(
+          program.classInstances().begin(), program.classInstances().end(),
+          [&](const auto &candidate) { return candidate.type == type; });
+      if (owner == program.classInstances().end() ||
+          owner->requiresActiveCleanup || owner->traits.containsBorrowedState ||
+          owner->polymorphic || owner->kind == ClassKind::Union ||
+          owner->kind == ClassKind::Interface ||
+          !owner->structuralBases.empty())
+        return false;
+      return std::all_of(
+          owner->declaredFields.begin(), owner->declaredFields.end(),
+          [&](const auto &field) { return self(self, field.type); });
+    }
+    if (const auto *enumeration = program.findPayloadEnum(type)) {
+      if (enumeration->requiresActiveCleanup ||
+          enumeration->traits.containsBorrowedState)
+        return false;
+      for (const auto &variant : enumeration->variants)
+        for (const auto &field : variant.payloadTypes)
+          if (!self(self, field))
+            return false;
+    }
+    return type.kind != SemanticType::Reference &&
+           type.kind != SemanticType::RawPointer &&
+           type.kind != SemanticType::UniqueOwner;
+  };
+
   const auto validScalarIdentity = [&](const auto &self,
                                        const SemanticType &type) -> bool {
     if (type.nativeCScalar != NativeCScalarKind::None &&
@@ -21919,6 +22026,28 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
       continue;
     }
     appendVerification(result, verifyMirBody(*body, address.owner));
+    std::unordered_map<HirValueId, const ConstantValue *> publishedConstants;
+    for (const auto &entry : body->programConstantSubstitutions)
+      publishedConstants.emplace(entry.hirValue, &entry.constant);
+    for (const auto &block : body->blocks)
+      for (const auto &instruction : block.instructions) {
+        if (!instruction.programConstantSubstitution)
+          continue;
+        const auto constant = publishedConstants.find(instruction.hirValue);
+        if (constant == publishedConstants.end() ||
+            !finiteLayout(finiteLayout, instruction.info.type) ||
+            !passiveConstantType(passiveConstantType, instruction.info.type) ||
+            !constantMatchesType(*constant->second, instruction.info.type,
+                                 &program))
+          result.errors.push_back(
+              {.bodyKind = address.kind,
+               .owner = address.owner,
+               .block = block.id,
+               .instruction = instruction.id,
+               .message = "published constant differs from its exact passive "
+                          "type and field inventory"});
+      }
+
     const auto check = [&](const SemanticType &type,
                            MirInstructionId instruction = 0) {
       if (!validEnumIdentity(validEnumIdentity, type))

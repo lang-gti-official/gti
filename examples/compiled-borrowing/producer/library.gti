@@ -1,0 +1,14 @@
+export module borrowed_api;
+
+export struct Sample { mut int value = 0; };
+
+export [[borrowed_from(value)]] int& read(int& value) { return value; }
+export [[borrowed_from(value)]] mut int& edit(mut int& value) { return value; }
+export int load(int& value) { return value; }
+export void store(mut int& value, int next) { value = next; }
+export [[borrowed_from(second)]] int& choose(int& first, int& second) {
+    return second;
+}
+export [[borrowed_from(value)]] Sample& read_sample(Sample& value) { return value; }
+export [[borrowed_from(value)]] mut Sample& edit_sample(mut Sample& value) { return value; }
+export int load_sample(Sample& value) { return value.value; }

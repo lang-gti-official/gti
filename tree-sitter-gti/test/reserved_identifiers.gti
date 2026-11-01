@@ -9,7 +9,6 @@ int char16_t = 1;
 int char32_t = 1;
 int compl = 1;
 int const_cast = 1;
-int consteval = 1;
 int constinit = 1;
 int co_await = 1;
 int co_return = 1;

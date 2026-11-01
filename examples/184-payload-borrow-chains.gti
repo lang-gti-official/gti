@@ -1,0 +1,48 @@
+// Nested payload selections can return a reference into a caller-owned enum.
+enum Shade { plain(int32_t level), mixed(int32_t level, int32_t tint) };
+enum Paint { coat(Shade shade, int32_t layers) };
+
+int32_t& level_of(Paint& paint) {
+  switch (paint) {
+  case Paint::coat(auto& shade, layers):
+    switch (shade) {
+    case Shade::plain(auto& level): return level;
+    case Shade::mixed(auto& level, tint): return level;
+    }
+  }
+}
+
+class Can {
+  Paint paint;
+public:
+  Can(Paint paint) : paint(paint) {}
+  int32_t& level() {
+    switch (this.paint) {
+    case Paint::coat(auto& shade, layers):
+      switch (shade) {
+      case Shade::plain(auto& level): return level;
+      case Shade::mixed(auto& level, tint): return level;
+      }
+    }
+  }
+};
+
+enum Pairing { both(int32_t left, int32_t right) };
+
+void bump(mut Pairing& value) {
+  // Copy the by-value sibling before the mutable payload loan starts.
+  switch (value) {
+  case Pairing::both(mut auto& left, right): left += right; break;
+  }
+}
+
+int main() {
+  Paint paint = Paint::coat(Shade::plain(3), 2);
+  Can can = Can(Paint::coat(Shade::mixed(4, 8), 1));
+  if (level_of(paint) != 3 || can.level() != 4) { return 1; }
+  mut Pairing pair = Pairing::both(1, 2);
+  bump(pair);
+  switch (pair) {
+  case Pairing::both(left, right): return left == 3 && right == 2 ? 0 : 2;
+  }
+}

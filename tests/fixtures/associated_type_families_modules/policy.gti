@@ -1,0 +1,14 @@
+export module family_policy;
+
+namespace family_policy {
+  export concept storage<Policy> { typename buffer<Element>; };
+  export struct Heap {};
+
+  // A public family can name a reachable private implementation type without
+  // exporting that type's source name.
+  struct Cell<T> {
+    T value;
+    Cell(T input) : value(std::move(input)) {}
+  };
+  for concept storage<Heap> { using buffer<T> = Cell<T>; };
+}

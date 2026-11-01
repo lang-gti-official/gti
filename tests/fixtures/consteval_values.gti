@@ -1,0 +1,118 @@
+import std.memory;
+
+constexpr int sum_to(int last) {
+  mut int sum = 0;
+  for (mut int value = 1; value <= last; value++) { sum += value; }
+  return sum;
+}
+consteval int immediate_sum(int last) { return sum_to(last); }
+consteval T immediate_identity<T>(T value) { return value; }
+consteval int[3] immediate_table() { return {3, 5, 8}; }
+
+struct Point {
+  int x;
+  int y;
+  constexpr Point(int x, int y) : x(x), y(y) {}
+  constexpr int total() { return this.x + this.y; }
+};
+consteval Point immediate_point(int x, int y) { return Point(x, y); }
+
+enum Choice<T> { empty, value(T payload), error(int code) };
+consteval Choice<Point> immediate_choice(int kind) {
+  if (kind == 0) { return Choice<Point>::empty; }
+  if (kind == 1) { return Choice<Point>::value(Point(7, 11)); }
+  return Choice<Point>::error(9);
+}
+int choice_value(Choice<Point> choice) {
+  switch (choice) {
+  case Choice<Point>::empty: return 0;
+  case Choice<Point>::value(auto& point): return point.total();
+  case Choice<Point>::error(code): return code;
+  }
+}
+consteval Choice<int>[2] immediate_choices() {
+  return {Choice<int>::value(17), Choice<int>::empty};
+}
+int integer_choice_value(Choice<int> choice) {
+  switch (choice) {
+  case Choice<int>::empty: return 0;
+  case Choice<int>::value(value): return value;
+  case Choice<int>::error(code): return code;
+  }
+}
+
+struct Port {
+  uint16_t value;
+  implicit consteval Port(int value) : value(uint16_t(value)) {}
+};
+int use_port(Port port, int payload) { return int(port.value) + payload; }
+
+struct Cleanup {
+  mut int value;
+  constexpr Cleanup(int value) : value(value) {}
+  ~Cleanup() {
+    // Successful constant evaluation includes this destructor. A lost write
+    // before cleanup turns its arithmetic into a compile-time failure.
+    int proof = 1 / (this.value == 9 ? 1 : 0);
+    this.value = proof;
+  }
+};
+constexpr int cleanup_value() {
+  mut Cleanup value = Cleanup(7);
+  value.value += 2;
+  return value.value;
+}
+consteval int immediate_cleanup() { return cleanup_value(); }
+constexpr int allocation_value() {
+  auto value = std::make_unique<int>(13);
+  return *value;
+}
+consteval int immediate_allocation() { return allocation_value(); }
+
+mut int global = 7;
+constexpr int maybe_global(bool read) { return read ? global : 42; }
+consteval int immediate_global(bool read) { return maybe_global(read); }
+consteval void require_nonzero(int value) { int checked = 100 / value; }
+struct CheckedValue {
+  int value;
+  implicit consteval CheckedValue(int value)
+      : value(value < 0 ? global : value) {}
+};
+struct DefaultValue {
+  int value;
+  implicit consteval DefaultValue() : value(443) {}
+};
+DefaultValue implicit_default_value() { return; }
+int combine(mut int& value, int input) { return value + input; }
+int immediate_effects() {
+  mut int& held = global;
+  require_nonzero(5);
+  int direct = immediate_global(false);
+  int argument = immediate_identity(maybe_global(false));
+  CheckedValue contextual = 42;
+  int ordered = combine(held, immediate_global(false));
+  return held + direct + argument + contextual.value + ordered;
+}
+
+int check(int runtime_input) {
+  int values[3] = immediate_table();
+  Choice<int> choices[2] = immediate_choices();
+  Point point = immediate_point(7, 11);
+  Port port = 443;
+  return sum_to(runtime_input) == immediate_sum(8) &&
+         immediate_identity(17) == 17 &&
+         values[0] == 3 && values[1] == 5 && values[2] == 8 &&
+         point.total() == 18 &&
+         choice_value(immediate_choice(0)) == 0 &&
+         choice_value(immediate_choice(1)) == 18 &&
+         choice_value(immediate_choice(2)) == 9 &&
+         integer_choice_value(choices[0]) == 17 &&
+         integer_choice_value(choices[1]) == 0 &&
+         use_port(port, runtime_input) == 451 &&
+         use_port(Port(80), runtime_input) == 88 &&
+         cleanup_value() == immediate_cleanup() &&
+         allocation_value() == immediate_allocation() &&
+         immediate_effects() == 182 &&
+         implicit_default_value().value == 443 ? 0 : 1;
+}
+int main() { return check(8); }

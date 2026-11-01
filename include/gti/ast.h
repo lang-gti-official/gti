@@ -1900,6 +1900,9 @@ public:
   [[nodiscard]] bool isConstexpr() const {
     return constexprKeyword_.has_value();
   }
+  [[nodiscard]] bool isConsteval() const {
+    return constexprKeyword_ && constexprKeyword_->kind == TokenKind::CONSTEVAL;
+  }
   [[nodiscard]] const std::vector<GenericParameter> &genericParameters() const {
     return genericParameters_;
   }
@@ -2445,6 +2448,9 @@ public:
   [[nodiscard]] bool isConstexpr() const {
     return constexprKeyword_.has_value();
   }
+  [[nodiscard]] bool isConsteval() const {
+    return constexprKeyword_ && constexprKeyword_->kind == TokenKind::CONSTEVAL;
+  }
   [[nodiscard]] const std::optional<Token> &constexprKeyword() const {
     return constexprKeyword_;
   }
@@ -2711,9 +2717,11 @@ private:
 
 class TypeAliasDecl final : public StmtOfKind<StmtKind::TypeAliasDecl> {
 public:
-  TypeAliasDecl(Token keyword, Token name, TypeRef target)
+  TypeAliasDecl(Token keyword, Token name, TypeRef target,
+                std::vector<GenericParameter> genericParameters = {})
       : keyword_(std::move(keyword)), name_(std::move(name)),
-        target_(std::move(target)) {}
+        target_(std::move(target)),
+        genericParameters_(std::move(genericParameters)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitTypeAliasDecl(*this);
@@ -2722,17 +2730,22 @@ public:
   [[nodiscard]] const Token &keyword() const { return keyword_; }
   [[nodiscard]] const Token &name() const { return name_; }
   [[nodiscard]] const TypeRef &target() const { return target_; }
+  [[nodiscard]] const std::vector<GenericParameter> &genericParameters() const {
+    return genericParameters_;
+  }
 
 private:
   Token keyword_;
   Token name_;
   TypeRef target_;
+  std::vector<GenericParameter> genericParameters_;
 };
 
 /// One `typename name;` member of a protocol concept body.
 struct ProtocolAssociatedType {
   Token keyword;
   Token name;
+  std::vector<GenericParameter> genericParameters;
 };
 
 /// The braced body of a protocol concept: associated type names and operation

@@ -1,0 +1,8 @@
+manifest-version = 1
+[package]
+name = "compiled-geometry"
+version = "0.1.0"
+[targets.geometry]
+kind = "gti-library"
+root = "library.gti"
+functions = ["make_point", "echo_point", "shifted", "echo_box", "echo_status", "echo_secret", "echo_defaults", "sum"]

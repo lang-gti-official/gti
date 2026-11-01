@@ -31,6 +31,12 @@ makeMachine(const TargetInfo &target, LlvmBackendOptions options);
 // platform C++ compiler's default and the oldest Apple silicon macOS runs on.
 [[nodiscard]] std::string_view tuneCpu(const TargetInfo &target);
 
+// After LLVM has consumed no-wrap facts, share live checked arithmetic with
+// dominating overflow intrinsics, complete edge-wise PHI matches, or exactly
+// equivalent constant-range detectors. Never drops a failure or changes CFG.
+// Kept testable for operand, range-equivalence and dominance negatives.
+void reuseCheckedArithmeticResults(llvm::Module &module);
+
 class Session final {
 public:
   explicit Session(VerifiedLoweredProgram program, LlvmBackendOptions options);

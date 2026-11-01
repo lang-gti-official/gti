@@ -507,6 +507,9 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   // and HIR re-runs any concrete instance that consulted it. When late demand
   // cannot stay equivalent to analysing the body in the pass, discovery
   // requests a fresh, more complete analysis instead.
+  for (const auto &unit : result.sourceGraph.sourceUnits())
+    if (unit.compiledScalarInterface)
+      frontendCacheContext += "\ncompiled-scalar:" + std::to_string(unit.id);
   const std::size_t preSemanticDiagnostics = result.diagnostics.size();
   // Trusted prefix preamble: the leading compiler-trusted units of the
   // compilation order, analysed once per configuration and shared through
@@ -903,7 +906,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   }
   // Executable lowering needs only what the program roots reach. Lowering the
   // complete program above has already reported every diagnostic.
-  if (hir.reachable) {
+  if (hir.reachable && !options.retainApplicationBodies) {
     result.hir = std::move(*hir.reachable);
   }
 

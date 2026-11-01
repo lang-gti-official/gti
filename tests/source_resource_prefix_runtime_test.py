@@ -85,6 +85,20 @@ if __name__ == "__main__":
                     ],
                 }, native_inputs_by_name={"source_resource_prefix_exhaustion":
                     [str(fixture.parent / "unique_scalar_allocation_fault.cpp")]})
+            # The general initialized-prefix publication contract is also a
+            # native LLVM obligation; this case uses no foreign source shim.
+            for level in ("O0", "O3"):
+                binary = pathlib.Path(temporary) / f"prefix-policy-llvm-{level}"
+                built = subprocess.run(
+                    [sys.argv[1], str(entry), "--backend", "llvm", f"-{level}",
+                     "-o", str(binary)], capture_output=True, text=True, timeout=120)
+                assert built.returncode == 0, (level, built.stdout, built.stderr)
+                for arguments, expected in policy_cases:
+                    result = subprocess.run([str(binary), *arguments],
+                                            capture_output=True, text=True, timeout=30)
+                    assert (result.returncode, result.stdout, result.stderr) == expected, (
+                        level, arguments, result)
+                print(f"PASS initialized prefix LLVM {level}", flush=True)
         finally:
             if previous_stdlib is None:
                 os.environ.pop("GTI_STDLIB_PATH", None)
