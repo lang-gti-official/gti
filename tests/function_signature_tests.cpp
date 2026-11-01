@@ -893,12 +893,15 @@ int main() {
       }
       if (instance.source->name().lexeme == "Types" &&
           instance.typeArguments.size() == 2 &&
-          instance.typeArguments.front() == lang::SemanticType::referenceTo(
-              lang::SemanticType::arrayOf(lang::SemanticType::Int, 2))) {
+          instance.typeArguments.front() ==
+              lang::SemanticType::referenceTo(
+                  lang::SemanticType::arrayOf(lang::SemanticType::Int32, 2))) {
         ++arrayBorrowPacks;
-        expect(instance.typeArguments.back() == lang::SemanticType::referenceTo(
-                   lang::SemanticType::arrayOf(lang::SemanticType::Int, 2),
-                   lang::AccessMode::Mutable) &&
+        expect(instance.typeArguments.back() ==
+                       lang::SemanticType::referenceTo(
+                           lang::SemanticType::arrayOf(
+                               lang::SemanticType::Int32, 2),
+                           lang::AccessMode::Mutable) &&
                    !instance.traits.containsBorrowedState,
                "array reference pack metadata preserves extent and access "
                "without introducing a stored loan");
