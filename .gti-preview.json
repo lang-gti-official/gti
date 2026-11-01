@@ -61,10 +61,28 @@
         "48f6c8bb60cafdc22a6fdf237824cfd2be57cda6"
       ],
       "merge": "48f6c8bb60cafdc22a6fdf237824cfd2be57cda6"
+    },
+    {
+      "task": "inline-callback-exchange",
+      "pr": 113,
+      "head": "648a0fbd567fcbf43970aad7e469598c3b2c50f6",
+      "tests": [
+        "llvm_dispatch_layout",
+        "llvm_placement_execution",
+        "llvm_callable_execution",
+        "llvm_thread_execution",
+        "shared_ownership_threads",
+        "owned_inline_consumption_runtime",
+        "compiler_pipeline"
+      ],
+      "contributions": [
+        "836f0473c478240b826d5657cf3870e804d35d61"
+      ],
+      "merge": "836f0473c478240b826d5657cf3870e804d35d61"
     }
   ],
   "removed": [],
   "main": "bf57099f714547236b384572c82ecc12d7551ef9",
-  "previous": "d4ffb01967fcc57c2f82756f6b3c8e9676e58e7a",
-  "candidate": "21896c807e684fdcb6135fd82fdbf15e"
+  "previous": "1cb184543c06531360b47b503faa5f731a679feb",
+  "candidate": "be080e94ade249a59d9ed4caf4f4a1ef"
 }
