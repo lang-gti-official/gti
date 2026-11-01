@@ -255,7 +255,7 @@ is a teaching helper, not a production server.
 | `039-raw-pointers.gti` | one-level raw pointers, unsafe declaration/call contracts, lexical `unsafe`, and pointer arithmetic |
 | `040-loan-flow-edges.gti` | bounded switch-exit and immediate-`break` retained-loan endings |
 | `041-owner-dependencies.gti` | single-origin read-only and mutable owner dependencies through factories, generics, moves, and returns |
-| `042-exclusive-reborrows.gti` | nested mutable and read-only reborrows with parent reactivation after its final active child ends |
+| `042-exclusive-reborrows.gti` | nested reborrows, parent reactivation, and returning caller-owned reborrows through receiver and generic helpers |
 | `043-program-arguments.gti` | a hosted argument count and owned vector of owned command-line strings |
 | `044-bounded-requires.gti` | multi-parameter concepts, trailing requirements, and source-defined `std::accumulate` |
 | `045-layout-queries.gti` | frontend-owned type size and ABI-alignment constants |
@@ -491,7 +491,9 @@ expose a pointer or use a compiler-known public wrapper name.
 from a checked owner dereference and one of its fields. Each mutable parent is
 suspended while an overlapping child remains live, then fully reactivates
 after its final active child reaches a proven endpoint. Known-disjoint field
-projections may remain usable in the meantime. The example deliberately stays
+projections may remain usable in the meantime. Receiver and generic helpers
+also return local reborrow chains while preserving the caller's owner and
+access permission, using ordinary reference syntax. The example stays
 within stable root, field, and checked-dereference places; indexed, raw, and
 opaque sources are not part of this bounded slice.
 
