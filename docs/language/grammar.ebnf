@@ -183,9 +183,13 @@ namespace-body         = "{" { declaration } "}" ;
 
 namespace-alias        = "=" qualified-name ";" ;
 
-type-alias-declaration = "using" IDENTIFIER "=" [ "mut" ] type ";" ;
+type-alias-declaration = "using" IDENTIFIER [ generic-parameter-clause ]
+                         "=" [ "mut" ] type ";" ;
 (* A mutable associated type definition must name a checked reference.
-   Ordinary reference aliases remain outside the implemented alias surface. *)
+   Ordinary reference aliases remain outside the implemented alias surface.
+   A generic alias definition is admitted only in a conformance block; its
+   parameters are types with optional unary constraints, without packs,
+   defaults or value parameters. *)
 
 native-function-type   = "(" [ type { "," type } ] ")" "->" type ;
 
@@ -197,10 +201,12 @@ concept-explanation    = "[[" "unsatisfied" "(" STRING_LITERAL ")" "]]" ;
    Compiler-bound concepts take none. *)
 
 concept-body           = "{" { concept-member } "}" ;
-concept-member         = "typename" IDENTIFIER ";"
+concept-member         = "typename" IDENTIFIER [ generic-parameter-clause ] ";"
                        | function-declaration ;
 (* A concept with a body takes one or more type parameters. A member
-   function is a prototype ending in ';' with no generic parameters, requires
+   type family has its own ordinary type parameters and unary constraints.
+   Its implementation matches arity and constraint identities positionally.
+   A member function is a prototype ending in ';' with no generic parameters, requires
    clause, defaults, modifiers, attributes or receiver qualifier. *)
 
 conformance-declaration
@@ -342,8 +348,9 @@ signed-integer-literal = [ "+" | "-" ] INT_LITERAL ;
    this type-context syntax.
    Class aliases are direct members and are not inherited through base types.
 
-   Alias cycles and direct reference aliases are invalid; keeping `&` at each
-   binding use site preserves explicit borrow syntax. Reference components in
+   Alias cycles and aliases whose resolved target is a checked reference are
+   invalid, including targets obtained from type projections. Keeping `&` at
+   each binding use site preserves explicit borrow syntax. Reference components in
    generic or function-signature metadata do not create stored borrows. The standard
    prelude defines `std::size_t` as `uint64_t`, `std::ptrdiff_t` as `int64_t`,
    and `std::string_view` as the compiler-defined counted text-view type.
@@ -614,9 +621,10 @@ access-specifier       = ( "public" | "protected" | "private" ) ":" ;
    lifetime and escape contract is specified in ownership-and-lifetimes.md. *)
 
 (* `implicit` is contextual: it is a modifier only here, before an ordinary
-   constructor's name or `constexpr`, and an identifier everywhere else. *)
+   constructor's name, `constexpr`, or `consteval`, and an identifier everywhere
+   else. *)
 constructor-declaration
-                       = [ "implicit" | "unsafe" ] [ "constexpr" ] IDENTIFIER
+                       = [ "implicit" | "unsafe" ] [ "constexpr" | "consteval" ] IDENTIFIER
                          [ generic-parameter-clause ] parameter-clause
                          [ requires-clause ]
                          [ constructor-initializer-list ] block
@@ -645,18 +653,18 @@ destructor-declaration = "~" IDENTIFIER "(" ")"
                          ( block | default-member-specifier ) ;
 
 method-declaration     = [ unsafe-function-modifier ]
-                         [ "virtual" ] [ "static" ] [ "constexpr" ]
+                         [ "virtual" ] [ "static" ] [ "constexpr" | "consteval" ]
                          [ "mut" ] type IDENTIFIER
                          [ generic-parameter-clause ]
                          parameter-clause [ call-receiver-qualifier ] [ requires-clause ]
                          [ "override" ]
                          method-terminator ;
 
-operator-declaration   = [ "virtual" ] [ "constexpr" ] [ "mut" ] type "operator"
+operator-declaration   = [ "virtual" ] [ "constexpr" | "consteval" ] [ "mut" ] type "operator"
                          call-operator parameter-clause
                          [ call-receiver-qualifier ] [ requires-clause ]
                          [ "override" ] method-terminator
-                       | [ "virtual" ] [ "constexpr" ] [ "mut" ] type "operator"
+                       | [ "virtual" ] [ "constexpr" | "consteval" ] [ "mut" ] type "operator"
                          non-call-overloadable-operator parameter-clause
                          [ call-receiver-qualifier ] [ requires-clause ] [ "override" ]
                          method-terminator
@@ -665,10 +673,10 @@ operator-declaration   = [ "virtual" ] [ "constexpr" ] [ "mut" ] type "operator"
 (* A conversion operator is named by its target type, which is also its
    result; `Target()` here is the target and its empty parameter clause, not
    a function signature type. `implicit` is contextual: it is a modifier only
-   first in a conversion operator, before `virtual` or `constexpr`, and admits
-   the conversion in declaration initialization. *)
+   first in a conversion operator, before `virtual`, `constexpr`, or `consteval`,
+   and admits the conversion in declaration initialization. *)
 conversion-operator-declaration
-                       = [ "implicit" ] [ "virtual" | "constexpr" ] "operator"
+                       = [ "implicit" ] [ "virtual" | "constexpr" | "consteval" ] "operator"
                          conversion-target parameter-clause
                          [ call-receiver-qualifier ] [ requires-clause ]
                          [ "override" ] method-terminator ;
@@ -695,7 +703,7 @@ non-call-overloadable-operator
                        | "==" | "!=" | "<" | "<=" | ">" | ">=" ;
 
 function-declaration   = [ unsafe-function-modifier ] [ "static" ]
-                         [ "constexpr" ] [ "mut" ] type IDENTIFIER
+                         [ "constexpr" | "consteval" ] [ "mut" ] type IDENTIFIER
                          [ generic-parameter-clause ]
                          parameter-clause [ requires-clause ]
                          ( block | ";" ) ;
@@ -719,7 +727,7 @@ macro-declaration      = "#macro" [ type ] IDENTIFIER [ generic-parameter-clause
 requires-clause        = "requires" constraint-expression ;
 
 out-of-class-method-definition
-                       = [ unsafe-function-modifier ] [ "constexpr" ]
+                       = [ unsafe-function-modifier ] [ "constexpr" | "consteval" ]
                          [ "mut" ] type qualified-name "::" IDENTIFIER
                          parameter-clause [ "mut" | "&&" ] block ;
 (* An existing ordinary method of a non-generic class/struct, or a static

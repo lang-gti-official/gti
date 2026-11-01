@@ -1,0 +1,37 @@
+
+extern "C" {
+uint64_t bench_rounds();
+uint64_t bench_seed();
+void bench_begin();
+void bench_end(uint64_t digest);
+}
+enum class parse_error { invalid };
+expected<int32_t, parse_error> digit(int32_t code) {
+  if (code < 48 || code > 57)
+    return unexpected(parse_error::invalid);
+  return code - 48;
+}
+expected<int32_t, parse_error> two_digits(int32_t high, int32_t low) {
+  int32_t first =  ? digit(high);
+  int32_t second = ? digit(low);
+  return first * 10 + second;
+}
+int main() {
+  uint64_t rounds = bench_rounds();
+  uint64_t seed = bench_seed() % uint64_t(65536);
+  mut uint64_t digest = 0;
+  bench_begin();
+  for (mut uint64_t round = 0; round < rounds; round++) {
+    for (mut int32_t i = 0; i < 1000000; i++) {
+      int32_t input = int32_t((uint64_t(i) + seed + round) % uint64_t(1000003));
+      auto value = two_digits(48 + input % 11, 48 + (input / 11) % 10);
+      if (value.has_value()) {
+        digest += uint64_t(value.value());
+      } else {
+        digest += uint64_t(1);
+      }
+    }
+  }
+  bench_end(digest);
+  return 0;
+}

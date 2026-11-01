@@ -782,3 +782,19 @@ for (const method of ["generic_owner_highlight", "generic_member_highlight"]) {
     throw new Error(`method ${method} must not be classified as a constant`);
   }
 }
+
+const immediateFunctionRow = fixtureLines.findIndex((line) =>
+  line.includes("consteval int immediate_highlight("),
+);
+requireCapture(immediateFunctionRow, "consteval", "keyword.modifier");
+requireCapture(immediateFunctionRow, "immediate_highlight", "function");
+const immediateConstructorRow = fixtureLines.findIndex((line) =>
+  line.includes("implicit consteval ImmediatePortHighlight("),
+);
+requireCapture(immediateConstructorRow, "implicit", "keyword.modifier");
+requireCapture(immediateConstructorRow, "consteval", "keyword.modifier");
+requireCapture(immediateConstructorRow, "ImmediatePortHighlight", "constructor");
+const immediateConversionRow = fixtureLines.findIndex((line) =>
+  line.includes("consteval operator int()"),
+);
+requireCapture(immediateConversionRow, "consteval", "keyword.modifier");

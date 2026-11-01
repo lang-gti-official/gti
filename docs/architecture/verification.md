@@ -66,6 +66,105 @@ One-shot compile observations were 1.02 versus 0.68 seconds and peak RSS
 not a compiler-speed claim. This demonstrates the scalar registration/invocation
 cost model, not universal speedup or a cleanup-bearing inline-storage policy.
 
+## Generic associated type families (0.494.0)
+
+`protocol_concepts` covers positional family binding, alpha-renamed inputs,
+multiple concept and family parameters, nested projections, ordinary aliases,
+protocol operation signatures and dependent consumers with explicit result
+contracts. Negatives cover arity, missing and conflicting implementations,
+unbound/shadowed inputs, mismatched and unsatisfied constraints, unsupported
+parameter kinds, unproved result operations and bounded recursive expansion.
+Compiler query checks cover member/binder navigation, concrete hover,
+incomplete-type completion, and formatter stability. Tree-sitter's protocol
+corpus and query checks cover the corresponding syntax and binder scopes.
+`associated_type_families_lsp` checks those compiler facts through the protocol,
+including references, independent binder scopes, semantic tokens, the existing
+cross-file rename guard, exact diagnostic spans, and malformed-edit recovery.
+
+`associated_type_families_runtime` executes example 182, an owning carrier
+fixture with two unrelated generic mappings, concrete/generic class aliases,
+and an imported family whose implementation type remains private. LLVM O0/O2/O3 and the
+supported C++20/23 O2 controls assert exact output, exactly-once destruction on
+normal return and checked division failure, and the existing runtime error
+contract. Each run retains command, duration, compiler/source hashes and logs
+under its output directory. No MIR operation or backend execution path is added.
+The compiler pipeline, generic/alias, instance-reuse and LSP checks protect
+the affected shared consumers. Example census baselines retain the new source's
+concrete declaration/body/generated-item inventory for both target profiles.
+
+The 0.494.1 validation fixes normalize retained alias projections after
+conformance registration, before HIR consumes the class catalog. Regressions
+cover nongeneric classes, instantiated generic classes, constrained structural
+conformances, forward mappings and alias chains. Ordinary aliases also reject
+references revealed by projection or concrete class substitution (`GTI-S2030`),
+while explicit borrowed family results remain valid. The LSP checks a class
+alias's normalized hover; the native matrix checks both successful execution
+and rejection of a private implementation spelling (`GTI-S2024`).
+
+The production validation of compiler source `00079dc4` and integrated census
+metadata `bd873dac1` passes 39 selected cross-phase checks on macOS arm64 and all
+37 compiler/runtime/tooling checks in the Linux x86_64 selection. Linux's
+compiler-pipeline and instance-reuse checks run serially
+within their existing deadlines after the concurrent attempt exhausted host
+memory. The corrected target-specific census and both readiness checks pass on
+both platforms. On Linux, all five affected census examples also pass both
+endpoint configurations of both backend oracles. The pinned Tree-sitter
+generation, corpus, highlights and source-text checks pass without generated
+file drift. The native family matrix includes 25 build/run pairs per platform.
+
+ASan/UBSan checks pass for all ten selected semantic/module consumers on both
+platforms, and the complete 219-case compiler aggregate passes on macOS in
+5,164.49 seconds. Instrumented retries retain every test assertion,
+using a 9,000-second aggregate budget and Linux budgets of 900/600 seconds for
+requirements/discovery; the native deadlines remain unchanged. Linux's Clang 21
+validation build uses libstdc++ 14. Exact-source probes reproduce the
+libstdc++ 15 construction-trait failure in `semantic_model.cpp` on both the
+pre-feature baseline and feature source; both translation units pass with
+libstdc++ 14.
+
+The 2026-10-30 macOS arm64 LLVM 23.1.2 O3 comparison applies a family to the
+existing `vector-checked-loop` workload and compares it with a direct vector
+alias. Both complete the 2.4-billion-work-unit digest check, allocate one
+20,000-byte buffer, and produce 143,576-byte executables. Seven interleaved
+samples after two warmups give medians of 58.618 ms (family) and 58.621 ms
+(direct); these samples support parity, not a speedup claim. Build times are
+0.486/0.489 s and compiler peak RSS is 215.97/215.45 MiB respectively.
+An instruction audit compares 188 functions: only the 16 instructions loading
+the failure-artifact hash differ, and their decoded constants match each
+artifact's SHA256. Workload instructions are identical. Raw sources, MIR,
+disassembly, allocation logs, measurements and exact source/configuration
+records are retained locally under
+`build-family/test-artifacts/associated-family-production/`.
+## Reflected method invocation (0.494.0)
+
+`reflection_semantics` checks exact descriptor-to-overload binding, access,
+unsafe, consuming and invalid static shapes. `reflection_method_runtime` runs
+compile-time-selected generic calls on unrelated types plus inherited,
+virtual, generic, consuming and reference-result methods through native LLVM
+at O0/O3. Its effect-order fixture checks that an effectful descriptor,
+receiver and argument each run once in source order, including a moved,
+noncopyable descriptor input and its single cleanup. Overloaded arrow access
+and lazy thread-local descriptor initialization are retained, including a
+second invocation that must not repeat initialization. Owning results transfer
+normally, and the failure fixture compares reflected and direct calls for the
+same `GTI-R0002` report and exactly-once cleanup after that transfer. A retained
+mutable reference blocks a conflicting owner read with `GTI-S2017`; an inert
+selected method may run while program storage is borrowed, while a selected
+method accessing that storage is rejected with `GTI-S2045`. The LSP check
+retains the invocation's UTF-16 range and declaration relation for `GTI-S2125`,
+and clears it after editing to an admitted instance method. The direct/reflected
+call-contract fixture emits the same MIR call target and input roles for both
+spellings.
+
+A macOS arm64 LLVM O3 cost probe uses an opaque runtime seed and ten million
+stateful updates, with 21 alternating runtime samples and seven alternating
+builds per spelling. Median runtime was 64.878 ms direct and 64.922 ms reflected;
+no speedup is claimed. Both hot loops attempted zero allocations and emitted
+identical native instructions (304 bytes for the GTI body plus 88 for `main`),
+37,512 bytes of total native text and a 191,432-byte executable. Median build
+wall time was 0.15 s for both; median peak RSS was 99.1 MB direct and 104.0 MB
+reflected. These measurements cover this operation family and workload, not all
+reflection clients or compile-time selection costs.
 
 ## Explicit default construction (0.485.0)
 
@@ -2846,10 +2945,15 @@ operation. These probe observations do not replace full regression gates.
 The source-defined `stdlib/std.gti` inventory re-exports 44 portable public
 modules, leaving environment/process/TCP and experimental units explicit.
 `stdlib_modules` checks mixed imports/includes; frontend tests check Darwin,
-Linux and Windows target analysis. `trusted_body_analysis` compares complete and reachable
+Linux and Windows target analysis. `trusted_body_analysis_0` through
+`trusted_body_analysis_3` compare complete and reachable
 application diagnostics over the examples and library tests, exercises unused
 trusted errors, reached callees/function items, eager constant/virtual bodies,
 visitor reuse, and generic calls through an unrelated `Producer`.
+The four serial groups cover the sorted example/library corpus exactly once;
+each retains all fixture checks and the 600-second deadline. The throughput
+registration gate rejects omitted or duplicated corpus entries. This bounds
+the aggregate matrix without reducing each entry's semantic or cache checks.
 The body-order gate remains independent. Incomplete HIR cannot become an
 artifact: newly selected primary bodies trigger semantic closure first.
 The allocator audit-independence gate also compares the aggregate example and
@@ -8144,9 +8248,19 @@ assertions.
 
 ## Generic algorithm breadth
 
-`generic_algorithm_breadth` executes search/comparison/bounds, mutable
+`generic_algorithm_breadth_cpp20`, `generic_algorithm_breadth_cpp23`,
+`generic_algorithm_breadth_no_elide` and `generic_algorithm_breadth_sanitized`
+execute search/comparison/bounds, mutable
 traversal/replacement, filtered output, and independent user-defined cursor
 fixtures at C++20/C++23 O0/O1/O3, disabled copy elision, and ASan/UBSan. The
+four partitions retain all 32 fixture/mode pairs exactly once and reserve four
+workers each. They run serially, with outer limits of 900/900/600/1500 seconds;
+the harness retains its 120-second ordinary compile, 1200-second sanitized
+compile and 30-second execution limits. This replaces the former 600-second
+whole-matrix limit, which could expire before one permitted sanitized compile.
+The registration control rejects omitted or duplicated modes, fixture filtering,
+concurrent partitions and an outer deadline shorter than the sanitizer budget.
+The
 small-sequence oracle enumerates lengths zero through five and patterns zero
 through three, checking first-match, first-extremum, empty, duplicate, absent,
 and unequal-length behavior independently by indexed reference calculations.
@@ -9678,6 +9792,15 @@ syntax, or compiler semantics. The MIR census and cutover corpus oracle review
 the two additional ordinary GTI bodies wherever `<std/string>` enters the
 example graph.
 
+The 2026-10-31 optimization reconciliation adds 385 MIR bodies across 65 of
+the 183 examples. With the same optimized compiler, restoring only the earlier
+`algorithm.gti`, `detail/memory_storage.gti` and `string.gti` restores every
+previous count. The new helpers account for the inventory change; this check
+does not replace the execution oracle. The measured macOS MIR total is 28,067.
+LoweredProgram inventories on both target profiles contain 223,504 declarations;
+macOS has 28,187 bodies and 16,587 generated items, while Linux has 28,183 and
+16,583. The four existing target-specific differences remain explicit.
+
 ## Language coverage corpus
 
 `tests/coverage/` holds a breadth sweep of ordinary GTI programs chosen to
@@ -10796,6 +10919,10 @@ host target to the LoweredProgram helper. Refreshing one measured profile keeps
 the other profile's reviewed counts; incomplete observations cannot update it.
 `mir_census_profile_controls` checks target selection, both consumers, malformed
 profiles and update isolation without claiming native execution evidence.
+The C++ body-emitter corpus retains example 183, `immediate-functions.gti`,
+in its structural readiness sweep and asserts the explicit unsupported
+`aggregate constant publication` boundary in its emission sweep. The native
+corpus oracle independently executes that LLVM-only example at O0 and O3.
 
 The base-constructor stage gate retains the existing generated-base, owning
 payload-argument and field-after-base ordering mutations. Checked/effectful
@@ -10825,13 +10952,17 @@ Two complementary gates replace it:
 
 - `tests/mir_census_test.py` recompiles every `examples/*.gti` source and
   requires the exact per-example body-identity counts recorded in
-  `tests/mir_census_baseline.json`. Added, removed, failed, or changed examples
-  require review; a body-count increase is not accepted automatically.
+  `tests/mir_census_baseline.json` for the host target. The macOS arm64 base and
+  Linux x86_64 variant differ in four container examples by one
+  `std::layout_of<c_size_t>()` body: on Linux, `c_size_t` and `uint64_t` have
+  the same native C type identity and share an existing specialization; on
+  macOS they have distinct identities. Added, removed, failed, or changed
+  examples require review; a body-count increase is not accepted automatically.
 - `tests/mir_cutover_corpus_oracle_test.py` builds and runs every example at
   the two boundary configurations `-O0`/C++20 and `-O3`/C++23. It requires the
-  reviewed marker count, rejects unknown or retired marker forms, requires
-  identical body ownership at both endpoints, and compares exit status,
-  stdout, and stderr.
+  reviewed host-target marker count, rejects unknown or retired marker forms,
+  requires identical body ownership at both endpoints, and compares exit
+  status, stdout, and stderr.
 
 The reviewed corpus inventory is the checked-in
 `tests/mir_census_baseline.json`; documentation does not duplicate its changing
@@ -11078,22 +11209,39 @@ corpus census/oracle must still be run by the combined acceptance campaign.
 
 ### Bounded case workers and development selections
 
+`compiler_pipeline` validates the complete named-test manifest before execution.
+Configure `-DGTI_COMPILER_TEST_ISOLATE_CASES=ON` to run every listed compiler case
+in a fresh process through its existing `--test NAME` entry point. This limits
+allocator retention across cases in compiler-sanitizer runs on memory-limited
+hosts and prints the active case before execution. The default remains one
+process per owned suite. Both modes retain the exact manifest/runtime census,
+all assertions and failure propagation; isolation does not filter cases or
+disable sanitizer checks. The standalone aggregate accepts `--isolate-tests`
+before its manifest argument.
+
+CI suite sharding also supports per-case isolation. Every shard first validates
+the complete manifest/runtime census, then runs only its assigned suites; the
+isolation option gives each selected named case a fresh process. Protocol tests
+check both modes together and reject omissions in unassigned suites.
+
 The standard-library surface harness, generic payload enum matrix and all clients
 of the shared callable runtime matrix support bounded case workers.
 `GTI_TEST_CASE_JOBS` is a CMake cache setting (default `2`), not a compiler or
 installed CLI option. CTest
 reserves that many `PROCESSORS` for each participating suite and supplies the
-matching environment value. Increase the outer CTest budget independently;
-do not give each test the entire host's CPU count. Existing suite names,
-timeouts, fixture sets, optimization/standard/elision/sanitizer modes, expected
-diagnostics and native observations are unchanged. The full production native-CI
+matching environment value. Increase the outer CTest worker budget independently;
+do not give each test the entire host's CPU count. Fixture sets,
+optimization/standard/elision/sanitizer modes, expected diagnostics and native
+observations are unchanged. The generic-algorithm matrix uses the four bounded
+partitions documented above; its individual compile/execution limits are retained.
+The full production native-CI
 and release commands continue to run every
 registered test without filtering. The separately scoped compiler-sanitizer
 job retains the explicit selection documented above; it is not a full-suite
 coverage claim.
 
 The largest compound suites (`stdlib_surface`, `returned_field_address_runtime`,
-`generic_algorithm_breadth`, `complete_containers`) bound the
+the `generic_algorithm_breadth_*` partitions, `complete_containers`) bound the
 suite's critical path, so they reserve `GTI_TEST_HEAVY_CASE_JOBS` workers
 (default `4`) instead of the per-suite default; CTest charges them that many
 processors. Long single-process gates carry a measured `COST` ordering hint
@@ -11160,7 +11308,12 @@ the next standard bound at or above 1.5 times their slowest contended
 full-suite duration. `GTI_TEST_TIMEOUT_SCALE` multiplies every bound for
 instrumented or slow hosts; `ctest --timeout` cannot do this, because it only
 reaches tests without a declared timeout. `test_throughput_registration`
-rejects an unbounded registration.
+rejects an unbounded registration. Its trusted-body partition check requires
+exactly `600 * GTI_TEST_TIMEOUT_SCALE` seconds, serial execution, and each
+corpus entry exactly once. Missing, shorter or longer deadlines are rejected;
+the native and sanitizer CI scales change the expected budget, not coverage.
+The late-registered scheduling checks receive the same timeout-scale environment
+as the tests they inspect.
 
 ```sh
 python3 scripts/build_window.py --kind suite -- \
@@ -11740,3 +11893,534 @@ replayable generic crash-artifact check.
 
 A finding follows the standing rule: capture it as a bundle, reduce it, and
 land a minimal deterministic regression in the owning suite.
+
+
+## Compiled library bundle foundation (2026-10-30)
+
+The local-only F0 implementation is commit `1954abad2`; subsequent documentation
+clarifies evidence and follow-up design without changing compiled source. This
+is confined driver byte-container work, not a semantic, runtime ABI, backend,
+normal build-mode or separate-compilation change. Acceptance therefore uses the
+owning malformed-input gate and affected driver/project/direct-CLI boundaries,
+rather than a whole-compiler or platform ABI campaign. No runtime speedup is
+claimed. VERSION is unchanged under the reviewed internal-impact declaration.
+
+- Release build on macOS arm64, AppleClang 21 with LLVM 23.1.2: passed through
+  the shared build window. Targets include `gti`, bundle/driver/project tests
+  and compiler/driver library smoke executables.
+- Final shared-window CTest selection: **9/9 passed**, no skips, 212.36 seconds:
+  `library_bundle`, `driver_module_facts`, `compiler_library_boundary`,
+  `driver_library_boundary`, `driver_pipeline`, `project_model`,
+  `cmake_test_ownership`, `cli_workflow`, `project_cli_workflow`.
+- Bundle coverage includes an independently generated wire-format golden digest,
+  binary round trips, order independence, each compatibility field/dependency
+  mismatch, every truncation prefix, payload corruption, unsupported schemas,
+  well-checksummed malformed records, count/size limits, duplicates and unsafe
+  member names. The same codec/tests passed an optimized standalone build with
+  AddressSanitizer and UndefinedBehaviorSanitizer and warnings as errors.
+- Scoped clang-format, diff whitespace, CMake ownership and release-impact checks
+  passed. Repository-wide clang-format reports existing violations in unchanged
+  `src/compiler/mir_body_lowering.cpp`, `src/compiler/source_loader.cpp` and
+  `tests/fixtures/process_allocation_elision.cpp`; they are not silently repaired
+  or claimed as passing here.
+
+Raw local logs and the exact-source ledger are retained in the task checkout's
+ignored `build-release/task-evidence/`. No Linux/Windows execution or installed
+compiled-library consumer is claimed: the codec has no filesystem/platform
+adapter and the compiler cannot consume `.gtilib`. F1–F5 acceptance remains in
+[the build plan](../plans/build-system.md#compiled-library-and-separate-compilation-stages).
+
+
+## Persistent function identity increment (2026-10-30)
+
+Local checkpoint `cb7096314` adds an isolated compiler development API, with no
+frontend pipeline, code-generation or runtime changes. This is the first F1
+identity profile, not completed semantic interface import. The exact compiled
+source passed a Release build and shared-window selection of seven checks:
+`persistent_declaration_identity`, `persistent_declaration_process`,
+`module_semantic_identity`, `module_preamble_identity`,
+`compiler_library_boundary`, `library_bundle`, and `cmake_test_ownership`.
+All seven passed without skips (8.62 seconds). The tests exercise real semantic
+projection and independent processes, not only hand-built records.
+
+An optimized AddressSanitizer/UndefinedBehaviorSanitizer harness exercised every
+single-byte mutation of a canonical key: each accepted record re-encoded exactly,
+all other records rejected. Scoped formatting, whitespace and internal-release
+policy checks passed. No execution performance or cross-platform ABI claim is
+made: the new API does not enter normal compilation. Whole-compiler/runtime
+campaigns remain necessary when imported declarations affect those consumers;
+the current acceptance targets the new byte parser and owning module identities.
+Logs and the sanitizer harness are retained under the task checkout's ignored
+`build-release/identity-evidence/`. The remaining F1 gates are in the build plan.
+
+
+## Nominal metadata identity increment (2026-10-30)
+
+Local checkpoint `5077f1647` extends only the development identity codec, not
+normal semantic analysis or generated execution. The Release build and seven
+shared-window regressions passed (9.17 seconds, no skips):
+`persistent_declaration_identity`, `persistent_declaration_process`,
+`module_semantic_identity`, `module_preamble_identity`,
+`compiler_library_boundary`, `library_bundle`, `cmake_test_ownership`.
+Tests cover fresh-ID remapping, class/enum domain separation, real source
+classes/enums, source relocation/order across processes, same-spelled declarations
+in different modules, conflicting bindings with preserved prior state,
+unsupported owner profiles, unresolved references, type access/array facts,
+complexity bounds, truncation and canonical mutation rejection.
+
+An optimized AddressSanitizer/UndefinedBehaviorSanitizer build of the codec also
+passed all single-byte mutations of a nominal-reference recipe. Scoped formatting,
+whitespace and internal release policy passed. The exact implementation and its
+macOS arm64 logs/harness are retained in ignored `build-release/nominal-evidence/`.
+No full compiler, runtime ABI, Linux/Windows or installed-import acceptance is
+claimed for this isolated codec increment. Semantic import and the remaining F1
+acceptance obligations are still pending; a decoded recipe is not a verified
+imported declaration.
+
+
+## Primary generic metadata identities (2026-10-30)
+
+Local checkpoint `d4e415821` extends the isolated metadata codec to primary generic
+class/enum declaration shapes and concrete type/uint64 substitutions, including
+expanded final type packs. Nominal/type formats advance to version 2; version 1
+is rejected rather than ambiguously reinterpreted. Scalar function keys remain
+version 1. This changes no normal frontend, backend or runtime path.
+
+The Release build on macOS arm64 and eight shared-window checks passed without
+skips (9.74 seconds): `persistent_declaration_identity`,
+`persistent_declaration_process`, `generic_enum_declaration`,
+`module_semantic_identity`, `module_preamble_identity`,
+`compiler_library_boundary`, `library_bundle`, `cmake_test_ownership`.
+Evidence covers actual generic class/enum fields, independent processes and
+reordered declarations, fresh nominal/binder IDs, distinct value substitutions,
+empty final packs, wrong argument counts, unresolved arguments, transformed and
+specialized owner rejection, canonical schema bytes, truncation and bounds.
+An optimized AddressSanitizer/UndefinedBehaviorSanitizer harness passed all
+single-byte mutations of a generic recipe and excessive-depth preflight rejection.
+Scoped formatting, whitespace and internal release-impact checks also passed.
+
+Logs and the sanitizer harness are retained in ignored
+`build-release/generic-identity-evidence/`. No cross-platform ABI, runtime speedup
+or full separate-compilation acceptance is claimed. The still-unimplemented
+importer must validate constraints, defaults, complete contracts and body
+availability; resolving a generic identity does not establish any of them.
+
+## Scalar compiled-library development profile (2026-10-30)
+
+This T3 change establishes a real LLVM producer/consumer boundary through the
+C++ driver API. `compiled_scalar_library` compiles the two-module example,
+writes `.gtilib`, removes the producer directory, then invokes independent
+consumer processes. O0/O1/O3 executions and consumer-only rebuilds preserve the
+bundle. Checks cover private implementation visibility, ordinary missing
+function definitions, malformed metadata with valid integrity, corrupted/native
+objects, exact compiler/runtime/configuration/target compatibility, unsupported
+producer contracts, and mutated compiler linkage plans. The final extension
+also checks multiple exports, a zero-argument export, mixed package-target
+rejection and logical library identity across public-interface edits. A shipped-
+prelude regression exposed producer lowering retaining unrelated trusted
+declarations; producer MIR now retains the complete application closure while
+trusted bodies remain reachable-only. The corrected source-absent test passes
+with the real standard library as well as the isolated O0/O1/O3 fixtures.
+
+The local compiler is Release, AppleClang 21 with LLVM 23.1.2. The complete
+all-target build passed. Initial focused scalar and bundle checks passed. The
+first Linux run (`run-4267af276dab4c8d92948c57b2714544`, GCC 14 / LLVM 21,
+Release) passed all 12 selected compiler, driver, lowered-contract, native ABI,
+scalar execution and coverage-exhaustiveness checks; its compiler pipeline took
+817.09 seconds. The final driver and shipped-prelude source snapshot
+(`5be36f6e11d6614463ee8a3e2b39ef3b7a483e06cb6ec00edd312f11feb49e88`, run
+`run-76a2ff451100458786af01f667ecb72e`) passed 14 checks, including the compiler
+pipeline (592.63 seconds); `driver_library_boundary` was not run because its
+build target was omitted. The follow-up `run-19a8dcb3fbf1412491a6fe4663475703`
+(snapshot `65e9d9194f2d25952113ffb2f364963318920fbfaafef608a9cf696d00bf8ec5`)
+built that target and passed all eight selected driver, artifact, lowered-contract
+and boundary checks without skips. It includes the final correction from the
+frontend function-ID alias to the equivalent lowered-program alias (both
+`std::size_t`); this correction preserves type, layout and generated execution.
+The shipped-prelude scalar artifact check passed in 13.17 seconds. All earlier
+results retain their original snapshots.
+
+The final macOS optimized same-contract cost comparison passed: median ratio 0.99947
+against an external native function with the same status/result/failure-pointer
+ABI, a 464-byte library object, 1043-byte bundle, and equal 33720-byte executable
+sizes. The fixture has no heap operations or undefined native dependencies;
+host/loader allocations are outside this check. Maximum child RSS for the
+complete experiment was 120848384 bytes. This is not a whole-program-inlining
+comparison or a production-performance promotion receipt.
+
+The broad audit exposed two independently verifiable baseline failures:
+`package_registry_cli` still expects removed `GTI-I0013` despite its HEAD fixture
+already using `import libc.unit`; and `llvm_coverage_evidence` has a stale frozen
+stdlib-surface inventory hash. All 273 inputs to that provider are byte-identical
+to HEAD; the expected hash is
+`1328cdb4c3c529da46a397490800bbc0d7793867520fb4d1c3ea4a59a022a0a3`, while the
+unchanged inventory hashes to
+`8787b21a2a3d37834c3962a3e35da69f4720e9a2aa4ec2f5e600bee05076dca7`.
+The same frozen inventory also fails `llvm_readiness_collection_controls` and
+`llvm_canonical_host_controls`. Neither baseline is silently updated or credited
+as passing. The Linux coverage
+follow-up passed its other four checks and retained the provider failure.
+
+The new `CompiledScalarImport` ledger row records an explicit promotion evidence
+gap: the source-only provider cannot yet describe exact artifact inputs. The
+real artifact CTest remains mandatory. No general LLVM readiness, normal CLI
+library mode, generic/borrowed interface or initialization support is claimed.
+
+Logs, source snapshots, cost data and the evolving acceptance ledger are retained
+under `build-release/separate-compilation-evidence/`; remote runs are fetched and
+removed through the managed runner. The unfiltered macOS run completed all 987
+checks without skips: 978 passed and nine failed (11817.46 seconds, including
+load-throttled waits). Three v28 snapshot expectations and the lowered-contract
+function-ID alias were task-owned failures; all have focused passing evidence
+and are included in the final-source rerun. The five remaining failures are the
+registry expectation, the three frozen-inventory checks, and
+`cpp_mir_body_emitter_corpus`. The latter includes unchanged example
+`181-general-object-layout.gti` despite the unchanged C++ backend explicitly
+rejecting its native object-layout queries. Its dedicated LLVM execution check
+passed; `mir_cutover_corpus_oracle` also passed. The C++ source/fixture hashes
+are recorded against the pre-change base. No comparison is skipped or new C++
+feature support added to hide this mismatch. This broad audit is not reported
+as fully passing.
+
+The final local all-target Release rebuild passed (522 actions), followed by
+all 15 affected artifact, driver, native ABI, scalar execution, lowered-contract,
+snapshot and boundary checks in 56.56 seconds, without skips. The source-absent
+artifact test passed in 22.99 seconds, including the shipped prelude. The new
+coverage ledger row independently validates as an explicit promotion evidence
+gap. Example inventory, scoped formatting, Python compilation, whitespace and
+release-version checks pass. The broad sweep retains its initial-profile
+binary identity; the final producer root-selection, interface validation and
+identity refinements are covered by the final focused/platform runs, rather
+than being relabeled as part of that earlier sweep. Global formatting has pre-existing failures in untouched
+`mir_body_lowering.cpp`, `source_loader.cpp` and
+`tests/fixtures/process_allocation_elision.cpp`; scoped changed-file formatting
+passes.
+
+
+## Compiled-library project commands (2026-10-31)
+
+This T2 phase exposes the existing scalar artifact profile through immutable
+project/build requests and normal `gti build` / `gti run` commands. It changes
+root-module export selection and driver orchestration, not the scalar ABI,
+runtime, object verifier, import visibility, or general semantic contracts.
+`compiled_library_project` owns the project example and 28 CLI steps: producer
+selection/identity, `build --all`, deleted-producer builds and execution,
+consumer-only edits, bounded/corrupt inputs, explicit unsupported modes, early
+bindgen rejection, failed-link preservation and symlink-output containment.
+`project_model` verifies immutable selection and exact manifest diagnostic spans.
+
+The final macOS Release build (AppleClang 21, LLVM 23.1.2) and all 19 selected
+checks passed with no skips in 122.60 seconds: artifact/scalar/model tests,
+compiler and driver library boundaries, driver pipeline, direct/project CLI,
+install, LLVM cache round-trip/project/relocation, embedding, ordinary LSP
+configuration/facts and lowered-program boundaries. The relocated toolchain
+check runs the same 28-step project harness against a temporary installed and
+archived toolchain; it does not install into the user's toolchain. Evidence is
+retained under `build-release/compiled-library-project-evidence/`, with CLI
+records in `build-release/compiled-library-project/` and
+`build-release/compiled-library-project-installed/`.
+
+Linux Release validation (GCC 14, LLVM 21) also passed all 12 selected artifact,
+scalar, model, driver/library, CLI, LLVM cache and embedding checks without skips
+in 108.34 seconds after a 405.63-second clean build. Managed run
+`run-af14e673423244b2b79c1fdcd01b3175` tested source snapshot
+`e3b25d0eebd9436e34e2699dcfdd201f8056d25d408b9b7e2adb4cb6387640c2`, based on
+`bd2535732` plus this phase's changes. The retained logs are complete (no
+truncation), and the remote source/build trees were removed on retrieval. Only
+this verification record changed after that source snapshot. Scoped formatting,
+Python compilation, example registration and whitespace checks passed.
+
+A separate nine-sample same-ABI measurement passed: median artifact-call runtime
+was 0.045483 seconds versus 0.045738 seconds for the equivalent external-call
+baseline (ratio 0.9944). This is no speedup claim or whole-program-inlining
+comparison. Library object size remains 464 bytes, bundle size 1,043 bytes,
+and both executables 33,720 bytes. The fixture has no heap operations; loader
+allocations are excluded. Producer/consumer times were 0.608/1.029 seconds,
+with maximum child RSS 120,061,952 bytes. Exact samples and scope are in
+`measured-cost.json` beneath the evidence directory.
+
+The earlier T3 phase's full 987-test audit remains separately attributed above;
+its five remaining baseline failures are not relabeled as passes. This phase
+uses affected shared-driver/project coverage and both native platforms, without
+claiming a new full-suite result. General type metadata, artifact-aware analysis
+and automatic artifact caching remain named follow-on work in the build plan.
+
+
+## Artifact-aware project checking (2026-10-31)
+
+This T2 phase adds `gti check` for scalar library producers and source-absent
+consumers. Builds and checks share bounded artifact reads, compatibility/object
+admission, virtual-source preparation and the compiler's lowered scalar binding
+validation. No scalar ABI, source visibility, native emission or runtime rule
+changes. The query discards admitted native object bytes before frontend analysis
+because it never links them. Native production/link acceptance remains a build
+obligation; the query does not certify a native artifact that it never emitted.
+
+The owning `compiled_library_project` harness now covers 51 CLI steps, including
+checks before any build, source-deleted consumers, native tools absent from PATH,
+unchanged file contents/mtimes, invalid export selection and infallibility,
+corruption/oversize/configuration failures, and ordinary argument/private/missing-
+definition diagnostics. `compiled_scalar_library` adds direct query assertions
+for owned diagnostic sources, frontend versus lowered-profile classification,
+and missing compatibility inputs. Both owning tests passed locally with the
+Release compiler in 21.20 and 27.12 seconds respectively.
+
+Mac validation used AppleClang 21 / LLVM 23.1.2, Release. Managed run
+`run-64ac74df76ef44bd921c19e59ef6abde` built cleanly and passed 18 of the 19 selected
+artifact, driver, model, CLI, cache, embedding, LSP and lowered-boundary checks.
+The remaining installed-toolchain check stopped during staging because the
+selected remote build targets omitted the `gti.so` editor parser, not because
+its checker assertions failed. The same exact check passed against the complete
+local Release build in 137.11 seconds, including all 51 CLI steps against the
+archived/relocated toolchain. This is temporary test staging, not a user install.
+All 19 selected macOS acceptance checks therefore have passing evidence, with
+the initial remote setup failure retained rather than reported as a clean run.
+
+The initial Linux Release run (GCC 14 / LLVM 21),
+`run-b631e1fed2654eebafeb257f82219065`, passed all 12 selected artifact, model,
+driver, CLI, cache and embedding checks without skips in 168.81 seconds.
+
+Evidence resides in `build-release/compiled-library-check-evidence/`. These
+initial platform runs use snapshot
+`6f660359c7545367c9c02377d5f4dc1e0d63bb7e8f0a2925b665b84c96d084db`
+on base `b4dd48ddb`. A final review then found that the new result adapter could
+drop an internal MIR verifier's explanation. The correction preserves that
+explanation and adds an injected-verifier-failure regression; final-source
+validation is recorded separately below. Scoped
+formatting, Python compilation and whitespace checks pass. This does not claim
+a new full-suite audit; the earlier phase's five baseline failures remain
+separately documented above. Artifact-aware LSP snapshots, broader interface
+types and automatic cache/dependency management remain follow-on work.
+
+
+Final-source snapshot
+`23a6457bbd651db84bffff40db05e19179d60fab81d91070dae894708240bb9a`
+passed all six selected macOS checks in 111.15 seconds, including the installed
+and relocated toolchain with its parser target built. Run:
+`run-f958caf87fb9426ebd771f21639e4d4f`. All five final Linux checker/driver/library
+checks passed in 74.57 seconds under
+`run-8d598554f7824db6aae26913e7e1bc84`. The final correction is confined to
+preserving MIR failure detail and its regression; the earlier broader evidence
+remains separately attributed. Both final runs used clean Release builds,
+reported no skips, retained complete logs, and removed their remote source/build
+trees after retrieval. Only this evidence record changed after final validation.
+
+## Primitive and multiple compiled libraries (2026-10-31)
+
+This T3 batch extends the callable interface to bool, char, fixed-width signed
+and unsigned integers, float/double and void results; selects exported overload
+families; and accepts several independent bundles in one executable. Canonical
+result recipes enter v2 native symbols. Source-unit-scoped bindings prevent
+same-named declarations in different facades from capturing one another.
+Profile2 metadata, result/source binding mutations and legacy int32 adapters
+retain compiler-owned validation. No nominal layout, borrow/ownership, generic,
+constexpr or transitive compiled-dependency contract is claimed.
+
+Checked scalar failures cross the library boundary using the existing GTI
+status/result/failure ABI. Initial O0 emission exposed an unnecessary incoming
+cleanup-runtime check and an exact channel self-copy. After those were removed
+for proven propagation-only producer frames, O1 exposed libc lowering of record
+initialization. Guaranteed-inline cold memory operations close that dependency;
+strict native-object admission still rejects every undefined symbol. Producer
+frames requiring observable runtime cleanup remain rejected. Ordinary consumers
+retain their inherited-cleanup check and preserve primary/secondary provenance.
+The initial failures and their corrected native executions are retained under
+`build-release/compiled-library-capabilities-evidence/`.
+
+Owning coverage includes:
+
+- `compiled_scalar_library`: source-free separate processes, native execution,
+  malformed metadata, result-symbol mismatches, duplicate identities, wrong
+  producer root, forged result/source bindings and unsupported public shapes.
+- `compiled_library_project`: 47 legacy-singleton CLI steps and atomic failure
+  preservation; old infallibility/overload rejections are superseded by positive
+  acceptance in the primitive fixture.
+- `compiled_libraries_project`: 37 CLI steps, independent/reordered imports,
+  same-named functions bound to the selected facade, ambiguity rejection,
+  unused selections, corrupt second bundles, aggregate byte limits and retained
+  good executables. The shipped multi-library example is the fixture.
+- `compiled_primitive_library`: 24 recorded CLI steps plus private-overload
+  rejection at O0/O1/O3. Every primitive argument/result family and void result
+  executes after deleting producer sources. Ordinary failure drains consumer
+  cleanup once; secondary failure during a destructor retains exact producer
+  sites and GTI-R0014 behavior. Observable producer cleanup rejects without
+  replacing the good artifact. The shipped primitive example is the fixture.
+- `compiled_primitive_cost`: independently linked native status/result/channel
+  probes verify division-by-zero and overflow, unchanged result on failure and
+  successful signed division. Compiler-owned identities supply benchmark symbols.
+
+The combined macOS arm64 Release build passed all 27 selected tests without
+skips in 466.48 seconds (AppleClang21 / LLVM23.1.2). Coverage includes the compiler
+pipeline, source and project CLI, generic payload enums, lowered serialization,
+LLVM layout/ABI, cleanup context/composition, embedding, scalar execution,
+structural coverage, public library boundaries and installed/relocated toolchain.
+The relocated toolchain repeats all three project fixtures. Exact commands,
+selection and JUnit results reside in the evidence directory. Initial Linux run
+`run-8e2afabb883340158d69fdeed75aa690` failed after its core compiler/driver build
+at two unchanged enum/integer conditionals in `src/lsp/main.cpp`, which GCC14
+rejects under `-Werror=extra`. Snapshot:
+`2f15e783021a407119cfe5222dcac9ea37323679b584a06145cd706d5ea44207`.
+The correction explicitly converts the existing modifier value to `uint32_t`,
+without changing the token mask. Logs were fetched and the failed remote run
+was cleaned. Corrected Linux validation is pending in
+`run-b4fe2f7b414d46cc83568ee680e9c8ea`, snapshot
+`b6182d9cbeec942c476ea0a681aa0bac6255899dc6aabe979280d6200571b350`,
+on base `2de9970c3`; it is not yet passing evidence. The retry retains the 27
+gates and adds both LSP module tests. All three macOS rechecks passed without
+skips in 161.39 seconds: module-map LSP, module-navigation LSP and the installed
+toolchain. Its earlier 27 passes remain attributed to the pre-cast source, whose
+compiler/driver implementation is unchanged.
+
+Nine alternating optimized samples per operation on macOS passed the same-ABI
+25% regression bound. Median native/baseline ratios were int64 1.0029, double
+0.9999, void 0.9992 and checked division 0.8246; the retained int32 selector ratio
+was 1.0034. Each sample performs 50 million calls without LTO. Native medians were
+0.042951, 0.044832, 0.040755 and 0.048561 seconds respectively. These are successful
+external-call comparisons, not parity with whole-program inlining or a general
+speedup claim; baseline artifact descriptors and cold symbolization differ.
+Fixtures perform no heap operations and admitted objects have no undefined
+native dependencies; loader/host allocations are excluded. The four-operation
+object is 1,856 bytes versus 1,608 for the native baseline; its bundle is 2,864
+bytes, and linked executables are 34,712 versus 34,744 bytes. Producer wall time
+was 0.568 seconds; cumulative child peak RSS reached 123,518,976 bytes across
+production, host compilation and measurement. Full records are
+`primitive-measured-cost.json` and `scalar-measured-cost.json` in the evidence
+directory. The small cold-code increase preserves self-contained failure records.
+
+Changed C++ files pass scoped formatting, Python fixtures compile, and whitespace
+checks pass. Repository-wide formatting still reports three unchanged baseline
+files: `mir_body_lowering.cpp`, `source_loader.cpp` and
+`tests/fixtures/process_allocation_elision.cpp`; `final-format.log` preserves the
+failure. This batch does not claim a new full-suite audit. The separate local-main
+integration coordinator owns reconciliation and full combined coverage; earlier
+full-suite baseline failures remain attributed above. No publication, local-main
+modification or user installation occurs in this branch-local batch.
+
+
+At the owner's request, final full validation is deferred to the separate
+local-main consolidation campaign after all feature checkpoints are reconciled.
+This branch hands back its coherent local implementation with the completed
+macOS and performance evidence above. The existing focused Linux29-test run
+`run-b4fe2f7b414d46cc83568ee680e9c8ea` remains active and useful; the integration
+coordinator must retain/fetch its result and resolve any finding. No new full
+campaign is started here, and this handback is not a claim of completed Linux
+or combined-main acceptance. The final source hash ledger includes the isolated
+LSP portability correction; subsequent changes only record validation status.
+
+
+## Typed compiled interfaces and dependency builds (2026-10-31)
+
+This T3 component extends the preceding primitive profile with generated value
+records, nested/private layout dependencies, integral enums, checked references
+and same-manifest automatic dependency builds. It changes the native aggregate
+wrapper and the sealed lowered/interface contract, so it remains a component
+handoff: the coordinator owns full combined, Linux/macOS and installed-toolchain
+acceptance. No full integration campaign, installation or publication was started
+by this component. Local task branch: `codex/library-types-and-dependencies`,
+based on `7320364c97d0391a28f53891ca612c8d888a6246`.
+
+Nominal metadata is tested independently of executable reachability. Initial
+round-trip failures exposed pruned unused default constructors and methods;
+`LoweredClassDeclaration` now seals declaration-complete source-member facts
+before pruning. The importer preserves unused explicit defaults/access and
+rejects unsupported source members even when no executable instance reaches
+them. GTI records retain lexical lifetimes; admission proves generated structural
+cleanup through the complete field closure instead of misclassifying them as
+primitive `DropKind::Trivial` values. Scalar/enum defaults retain typed constants.
+Consumer-local designated construction does not alter the exported source API.
+
+Owning Release evidence on macOS arm64:
+
+- `compiled_interface_types`: canonical metadata/source round trips, fresh ID
+  remapping, nested and private declarations, unused member rejection, malformed
+  metadata and sealed field/default/export mutations.
+- `compiled_value_types`: O0/O1/O3 producer deletion followed by consumer check
+  and execution, nested and private nominal fields, enums, signed-minimum and
+  mixed scalar defaults, by-value mutation without modifying the original,
+  private type/field rejection and wrong nominal argument rejection.
+- `compiled_borrow_contract` and `compiled_borrow_library`: malformed origin,
+  index/access/type contracts, including forged access-enum ordinals; O0/O3
+  source-absent primitive/record reference execution, mutable writes and eight
+  exact GTI-S2017 escape/alias/access rejections at each level.
+- `project_model` and `compiled_dependency_project`: immutable DAG planning,
+  automatic diamond builds, timestamp reuse, dependency-body invalidation,
+  stale receipts/corrupt artifact recovery, failure preservation, graph/path
+  rejection and source-absent distributed dependency closure (22 CLI steps).
+
+All six owning gates passed on the final optimized compiler in 34.67 seconds
+without skips. Before the final two invalid-access-enum guards, all 14 affected
+regression gates passed in 104.81 seconds: scalar/single/multiple/primitive library
+fixtures, ordinary source/project CLI workflows, driver boundary/pipeline,
+embedding, generic payload enums, lowered contract/source boundary, LLVM dispatch
+and nominal interface contracts. The guards affect reference-result validation;
+final borrowing and nominal/dependency gates were rerun after rebuilding. Existing
+non-reference, driver and ABI regression evidence remains attributed to the
+preceding compiler rather than relabeled as a later exact-head run.
+
+Nine alternating O3 samples per operation passed the 25% same-ABI cost bound.
+Native/baseline median ratios were int64 1.0008, double 0.9950, void 0.9997,
+checked division 0.8441 and Point 0.9919. Point medians were 42.955/43.304 ms for
+50 million calls. These are external-call comparisons without LTO, not a speedup
+or whole-program-inlining claim. Fixtures perform no heap operations; host/loader
+allocations are excluded. The five-operation native object is 1,976 bytes versus
+1,768 for the baseline; the bundle is 4,358 bytes; executables are 34,904/34,936
+bytes. Producer generation and canonical interface decoding took 1.599 seconds;
+maximum cumulative child RSS was 123,224,064 bytes.
+
+Commands, original failures, final JUnit results, compiler identities and cost
+JSON are retained under `build-release/compiled-nominal-evidence/`. Example
+inventory/registration, Python syntax, scoped C++ formatting (32 files) and
+`git diff --check` pass. Repository-wide formatting reports two pre-existing
+failures in `src/compiler/source_loader.cpp` and
+`tests/fixtures/process_allocation_elision.cpp`; both are byte-identical to the
+base and also fail formatting when read directly from that base. They remain
+outside this component's diff.
+
+Remaining production prerequisites include custom copy/move/drop policies,
+borrowed record fields and projected/conditional origins, member APIs,
+cross-library nominal closure, generic/staged constexpr recipes,
+globals/TLS, package-qualified source edges, zero-source-read freshness and
+input-race publication proofs, provenance/LSP integration, broader performance
+workloads, installed and combined platform acceptance. The bounded executable
+interfaces and conservative dependency reuse do not mark F1–F5 complete.
+
+### Namespace-qualified compiled APIs (2026-10-31)
+
+This T2 component adds qualified declaration selection, nominal namespace identity,
+inherited namespace export facts and capture-free virtual interface projection.
+It preserves the existing native calling convention and generated-value lifecycle
+profile. Local branch `codex/compiled-namespaces` is stacked on typed-interface
+checkpoint `be9373c503ce7c62b167bedddaf32fad9ef4dac3`; it is a local handoff, with
+full combined, Linux/macOS and installed-toolchain acceptance still owned by the
+coordinator. Proposed surface version: 0.499.0, subject to integration reconciliation.
+
+Release compiler evidence on macOS arm64:
+
+- `compiled_namespaces`: 33 CLI steps at O0/O1/O3, including automatic builds of
+  two libraries with same-leaf type/function names, overloads, inherited exports,
+  namespace reopening, private layout, read/mutable borrowed results, consumer-only
+  reuse and source-absent check/execution after deleting both producers. Negative
+  cases reject private declarations, wrong nominal arguments and conflicting loans.
+  The shadowed record/enum fixture also reserves the first generated alias prefix.
+  Passed in 32.65 seconds.
+- `compiled_interface_types`: qualified source/metadata round trips, ID remapping,
+  64-component/1,024-byte name boundaries, malformed names and nested class-owner
+  rejection. A non-aliased projection reproduces relative namespace capture and
+  fails canonical metadata comparison; the complete facade preserves the original
+  types and defaults through collision-free private aliases.
+- Nineteen selected regressions passed without skips in 195.51 seconds: nominal,
+  borrowing, primitive, single/multiple-library and dependency project gates;
+  manifest diagnostic spans; module queries/identity; lowered contract/boundary;
+  compiler/driver library boundaries; driver pipeline and both CLI workflows.
+
+Example inventory/registration, Python syntax, scoped C++ formatting (10 files)
+and `git diff --check` pass. Commands, compiler/source hashes, JUnit results,
+original shadowing control and measurements are retained under
+`build-release/compiled-namespaces-evidence/`; namespace CLI details are under
+`build-release/tests/compiled-namespaces/`. At the coordinator-requested source
+handoff, the nine-sample O3 cost run remains queued in the shared suite window;
+performance acceptance is pending, and the existing run must be resumed rather
+than duplicated. No syntax, ordinary ownership rules,
+C++ feature coverage, LSP protocol or installed package layout changes are claimed.
+Cross-library nominal forwarding, custom lifecycles, generic/constexpr recipes and
+the remaining F1–F5 production prerequisites are still open.

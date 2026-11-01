@@ -134,6 +134,9 @@ struct SourceUnit {
   SourceUnitRole role = SourceUnitRole::Application;
   bool entry = false;
   bool prelude = false;
+  // Driver-supplied, validated scalar metadata projected into declarations.
+  // This admits no trusted capabilities and never comes from source syntax.
+  bool compiledScalarInterface = false;
 };
 
 // Loading provenance, not a dependency or visibility edge. An interface may
@@ -169,6 +172,8 @@ public:
   [[nodiscard]] bool isExported(SourceUnitId declaration,
                                 std::size_t nameOffset) const;
   [[nodiscard]] std::vector<SourceUnitId> compilationOrder() const;
+
+  void markCompiledScalarInterface(SourceUnitId id);
 
 private:
   friend class Frontend;

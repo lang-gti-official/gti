@@ -5077,6 +5077,9 @@ public:
           rawClassPlace ? std::optional(Shape::NativeClassRawAccess)
           : scalarRawAccess(mir, place)
               ? std::optional(Shape::PrimitiveRawAccess)
+          : place.root == MirPlaceRootKind::Value &&
+                  scalarArrayProjection(mir, place)
+              ? std::optional(Shape::CheckedArrayProjection)
           : place.root == MirPlaceRootKind::Loan && passiveReference(place.type)
               ? std::optional(Shape::PassiveReference)
               : placeClassShape(place));
@@ -6026,7 +6029,10 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
         : native_llvm::nativeCDeclarationContract(mir, input.target(), function)
             ? std::optional(Shape::NativeCSignature)
             : std::nullopt;
-    const auto declaration = dispatchProofs.declaration(function);
+    const auto *compiled = input.compiledScalarBinding(function.id);
+    const auto declaration = compiled && compiled->imported
+                                 ? std::optional(Shape::CompiledScalarImport)
+                                 : dispatchProofs.declaration(function);
     if (declaration && nativeImport)
       throw BackendUnsupportedError("LLVM native import conflicts "
                                     "with a GTI declaration witness");

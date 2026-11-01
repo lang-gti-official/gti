@@ -788,7 +788,16 @@ private:
       throw std::logic_error("LLVM failed operation lost its Invoke record");
     // An abandoned callee wrote no record; never read its channel.
     abandonIfRequested();
-    failures.checkIncomingCleanup(ir, channels.at(term.failureRecord));
+    // A compiled-library propagation-only body has no observable failure
+    // cleanup and writes directly into its caller's channel. Its GTI importer
+    // checks inherited cleanup before taking any cleanup action; intermediate
+    // propagation must not require the library to own that runtime context.
+    // Retain the check whenever this frame can observe cleanup or contain a
+    // worker emergency. The strict object gate still rejects such runtime
+    // dependencies in the self-contained compiled-library profile.
+    if (!(session.program().compiledScalarProducer() && failureDestination &&
+          !cleanupToken && !failures.workerContainment()))
+      failures.checkIncomingCleanup(ir, channels.at(term.failureRecord));
     abandonIfRequested();
     if (cleanupToken)
       ir.CreateStore(failures.enterCleanup(ir, channels.at(term.failureRecord)),
@@ -802,12 +811,17 @@ private:
   }
   void guard(llvm::Value *condition, DefinedFailureOutcome outcome) {
     bool authorized = false;
+    bool discharged = false;
     for (std::size_t index = 0;
          index < stage->definedFailure.localOrigins.size(); ++index) {
       const auto &origin = stage->definedFailure.localOrigins[index];
-      authorized |= std::find(origin.outcomes.begin(), origin.outcomes.end(),
-                              outcome) != origin.outcomes.end() &&
-                    !isMirFailureOutcomeDischarged(*stage, index, outcome);
+      if (std::find(origin.outcomes.begin(), origin.outcomes.end(), outcome) !=
+          origin.outcomes.end()) {
+        const bool proved =
+            isMirFailureOutcomeDischarged(*stage, index, outcome);
+        discharged |= proved;
+        authorized |= !proved;
+      }
     }
     // An absent outcome is either statically infallible or discharged by
     // verified MIR proof. It does not authorize originating a different record.
@@ -823,6 +837,21 @@ private:
               !isMirFailureOutcomeDischarged(*stage, index, recorded))
             throw std::logic_error(
                 "LLVM checked operation lost its recorded failure detail");
+      // A verified MIR discharge proves this exact detector false. Keep the
+      // fact available to LLVM after removing the runtime branch: otherwise,
+      // for example, checked arithmetic becomes wrapping arithmetic and loses
+      // the information needed by range and loop optimizations. An absent
+      // origin alone is not a proof and must not introduce an assumption.
+      if (discharged) {
+        if (const auto *constant =
+                llvm::dyn_cast<llvm::ConstantInt>(condition)) {
+          if (!constant->isZero())
+            throw std::logic_error(
+                "LLVM detector contradicts its verified MIR discharge");
+        } else {
+          ir.CreateAssumption(ir.CreateNot(condition));
+        }
+      }
       return;
     }
     if (const auto *constant = llvm::dyn_cast<llvm::ConstantInt>(condition);
@@ -1647,6 +1676,28 @@ private:
             : nullptr;
     switch (instruction.kind) {
     case MirInstructionKind::Compute: {
+      if (instruction.programConstantSubstitution &&
+          instruction.operation == MirOperation::Literal &&
+          !instruction.literal) {
+        const auto found = std::find_if(
+            input.programConstantSubstitutions.begin(),
+            input.programConstantSubstitutions.end(), [&](const auto &value) {
+              return value.hirValue == instruction.hirValue;
+            });
+        if (found == input.programConstantSubstitutions.end() ||
+            !instruction.result)
+          throw std::logic_error(
+              "LLVM constant publication lost its verified inventory");
+        auto *constant =
+            scalars.constant(found->constant, instruction.info.type);
+        if (addressValue(session.program().mir(), instruction.info.type)) {
+          result = destination(*instruction.result);
+          ir.CreateStore(constant, result);
+        } else {
+          result = constant;
+        }
+        break;
+      }
       if (instruction.operation == MirOperation::NativeCallback) {
         if (!nativeCCallbackStageContract(session.program().mir(),
                                           session.program().target(), input,
@@ -2702,8 +2753,9 @@ private:
 #if !defined(GTI_LLVM_C04_NATIVE_UNWIND)
       // A propagation-only body has no local cleanup that can observe or
       // retain distinct records. Write directly into the caller's failure
-      // destination; all successful paths ignore it, and failed paths retain
-      // the incoming-secondary-failure check before returning. Bodies with
+      // destination; all successful paths ignore it. Compiled-library
+      // propagation-only frames defer the incoming-secondary-failure check to
+      // their GTI caller; other frames check before returning. Bodies with
       // cleanup keep independent channels for primary/secondary failures.
       if (failureDestination && !cleanupToken) {
         channels.at(record.id) = failureDestination;
@@ -2971,6 +3023,44 @@ void Bodies::lower(const LlvmAdmissionPlan &admission) {
   emitNativeCCallbacks(session, failures, callbacks);
   for (auto address : admission.requiredBodies())
     body(address);
+  for (const auto &binding : session.program().compiledScalarBindings()) {
+    if (binding.imported)
+      continue;
+    const auto &target =
+        *session.program().mir().findFunctionInstance(binding.function);
+    const auto outer =
+        session.abi().gti(target.returnType, target.parameterTypes, true);
+    const auto inner =
+        session.abi().gti(target.returnType, target.parameterTypes,
+                          target.mayRaiseDefinedFailure);
+    if (session.module().getNamedValue(binding.symbol))
+      throw std::logic_error("compiled scalar symbol collision");
+    auto *wrapper =
+        llvm::Function::Create(outer.type, llvm::GlobalValue::ExternalLinkage,
+                               binding.symbol, session.module());
+    outer.applyTo(*wrapper);
+    session.requireDefinition(*wrapper);
+    llvm::IRBuilder<> ir(
+        llvm::BasicBlock::Create(session.context(), "entry", wrapper));
+    std::vector<llvm::Value *> arguments;
+    for (std::size_t index = 0; index < outer.parameters.size(); ++index)
+      if (target.mayRaiseDefinedFailure ||
+          (inner.resultDestination && outer.resultDestination == index) ||
+          outer.parameters[index].channel == AbiChannel::Argument)
+        arguments.push_back(wrapper->getArg(index));
+    auto *call = ir.CreateCall(
+        function({MirBodyKind::Function, binding.function}), arguments);
+    inner.applyTo(*call);
+    if (target.mayRaiseDefinedFailure) {
+      // Both contracts have the same scalar status/result/failure channels.
+      // Propagate the original failure record without rebuilding its origin.
+      ir.CreateRet(call);
+    } else {
+      if (outer.resultDestination && !inner.resultDestination)
+        ir.CreateStore(call, wrapper->getArg(*outer.resultDestination));
+      ir.CreateRet(ir.getTrue());
+    }
+  }
   if (session.program().embeddingPlan())
     emitEmbedding(session, failures, *function({MirBodyKind::Module, 0}));
 }

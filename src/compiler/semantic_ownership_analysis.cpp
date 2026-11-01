@@ -1897,6 +1897,10 @@ auto SemanticVisitor::Impl::referenceReturnPrefixes(const FunctionInfo &callee,
 auto SemanticVisitor::Impl::dependentReferenceResult(
     const Call &call, const ResolvedCallInfo &resolved) const
     -> std::optional<DependentReferenceResult> {
+  if (const Expr *alias = semanticModel.findExpressionAlias(call))
+    if (const auto *aliasedCall = exprAs<Call>(alias))
+      if (const auto *aliasedResolution = semanticModel.findCall(*aliasedCall))
+        return dependentReferenceResult(*aliasedCall, *aliasedResolution);
   // A callee's reference relay summary already designates its result
   // (`textReferenceRelay`, L-OWN-02 phase 3).
   if (resolved.returnedTextReference ||
@@ -6566,7 +6570,8 @@ auto SemanticVisitor::Impl::storedFieldSymbols(
       if (index >= types.size())
         return {};
       result.push_back(capture->bindingSymbol);
-      type = types[index];
+      // The capture view aliases type's payload; copy before replacing it.
+      type = SemanticType(types[index]);
       continue;
     }
     const auto *owner = classInfo(type);

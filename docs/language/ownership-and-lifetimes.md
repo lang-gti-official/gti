@@ -462,7 +462,11 @@ fields are destroyed before the carrier's external loans end.
 
 A direct ordinary constructor or by-value GTI call may also produce a fresh,
 self-contained class or struct value for one exact read-only `T&` argument of
-an ordinary GTI function or non-operator method. A payload enum's alternative,
+an ordinary GTI function or non-operator method. A built-in class assignment
+returns a fresh copy of its committed destination, and a class conditional
+joins the selected arm into a fresh value; both can supply that same call-only
+borrow. Each assignment result captures its value before the next argument
+runs. A payload enum's alternative,
 with or without fields, such as `state::engaged(1)` or `state::empty`, and a
 by-value GTI call returning a payload enum produce such a value too, so
 `observe(make_state())` borrows the fresh enum for that call. A scalar-backed
@@ -524,6 +528,11 @@ of that parameter and may be returned, just as a member accessor returns a
 pattern bound inside `this`. A `mut auto&` binding through a `mut T&`
 parameter may be returned as `mut T&`. A pattern over a local copy, a by-value
 parameter or a temporary does not outlive the call and remains rejected:
+
+Nested patterns may relay the same caller-owned referent: a reference binding
+to an outer payload is an alias of that payload, so an inner payload reference
+can be returned when the complete loan ancestry reaches the receiver or a
+reference parameter. An outer binding to a local copy still cannot escape.
 
 ```gti
 enum class Reading { exact(int32_t value), estimate(int32_t value) };
@@ -913,9 +922,10 @@ result stays borrowed until the carrier's last use, exactly as for
 `std::string_view& view = box.get(); view.begin()`. The carrier also retains
 the external owner of the text the returned view holds, if any; literal text
 has none. Changing that owner, or the accessor's receiver, while the carrier
-lives is rejected (`GTI-S2017`). Constructing a carrier class directly from
-such a result, as in `Cursor(box.get())`, is not yet implemented and stops in
-MIR construction; calling a function that constructs it works.
+lives is rejected (`GTI-S2017`). A carrier class can also be constructed
+directly from the returned reference, as in `Cursor(box.get())`; the
+constructor retains the same referent and external owner dependencies as a
+factory call that returns the carrier.
 
 Nesting uses the same rule, rather than an exception for a particular library
 type. For example, `std::pair<Iterator<int>, bool>` may carry one iterator and
@@ -2441,7 +2451,9 @@ and does not make either public class compiler-recognized.
   its elements.
   This includes taking an owner by value and moving that parameter through
   local bindings: the original provider dependency survives until the final
-  owner's cleanup, not merely until the parameter's last source use.
+  owner's cleanup, not merely until the parameter's last source use. A function
+  may also return a new owner constructed from a by-value resource binding;
+  the returned owner retains the same provider borrow through its cleanup.
 - **Borrowing objects in a region.** Element references and iterators borrow
   the owning storage, not merely the resource. They block growth, release,
   clearing and movement of that owner until their last use. Keeping the
@@ -3200,7 +3212,8 @@ does not copy or allocate the input text. JSON's private scanning adapters use
 this checked-reference form.
 
 A view read through such a reference, as in `this.text`, is dynamic: it keeps
-the external text owner. It may be inspected, indexed, copied into a local,
+the external text owner. It may be inspected, indexed, copied into a local
+(including through a relaying call from a reference formal),
 passed to a parameter, or returned from a method under that method's receiver
 dependency. A fresh adapter built over a local view borrows that exact view
 object as a bound adapter does. The view cannot be passed to a constructor that

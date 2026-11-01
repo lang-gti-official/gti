@@ -268,7 +268,8 @@ private:
         }
       } else if (kind == TokenKind::UNSAFE || kind == TokenKind::VIRTUAL ||
                  kind == TokenKind::STATIC || kind == TokenKind::THREAD_LOCAL ||
-                 kind == TokenKind::CONSTEXPR || kind == TokenKind::MUT) {
+                 kind == TokenKind::CONSTEXPR || kind == TokenKind::CONSTEVAL ||
+                 kind == TokenKind::MUT) {
         ++offset;
       } else {
         break;
@@ -463,6 +464,9 @@ private:
   StmtPtr typeAliasDeclaration(Token keyword) {
     Token name =
         consume(TokenKind::IDENTIFIER, "Expect type alias name after 'using'.");
+    std::vector<GenericParameter> parameters;
+    if (check(TokenKind::LESS))
+      parameters = genericParameterList();
     consume(TokenKind::EQUAL, "Expect '=' after type alias name.");
     std::optional<Token> access;
     if (match({TokenKind::MUT}))
@@ -471,7 +475,8 @@ private:
     target.referenceMutability = std::move(access);
     consume(TokenKind::SEMICOLON, "Expect ';' after type alias declaration.");
     return std::make_shared<TypeAliasDecl>(std::move(keyword), std::move(name),
-                                           std::move(target));
+                                           std::move(target),
+                                           std::move(parameters));
   }
 
   StmtPtr conceptDeclaration(
@@ -522,10 +527,15 @@ private:
           Token name =
               consume(TokenKind::IDENTIFIER,
                       "Expect an associated type name after 'typename'.");
+          std::vector<GenericParameter> parameters;
+          if (check(TokenKind::LESS))
+            parameters = genericParameterList();
           consume(TokenKind::SEMICOLON,
                   "Expect ';' after associated type declaration.");
           body.associatedTypes.push_back(
-              {.keyword = std::move(keyword), .name = std::move(name)});
+              {.keyword = std::move(keyword),
+               .name = std::move(name),
+               .genericParameters = std::move(parameters)});
           continue;
         }
         StmtPtr operation =
@@ -1324,7 +1334,7 @@ private:
                   "Runtime-bound functions cannot be declared static.");
     }
     std::optional<Token> constexprKeyword;
-    if (match({TokenKind::CONSTEXPR})) {
+    if (match({TokenKind::CONSTEXPR, TokenKind::CONSTEVAL})) {
       constexprKeyword = previous();
     }
     std::optional<Token> mutKeyword;
@@ -1452,6 +1462,10 @@ private:
       throw error(*virtualKeyword,
                   "Only member functions can be declared virtual.");
     }
+
+    if (constexprKeyword && constexprKeyword->kind == TokenKind::CONSTEVAL)
+      throw error(*constexprKeyword,
+                  "Only functions and constructors may be consteval.");
 
     parseArrayDeclaratorSuffix(type);
     return variableDeclaration(
@@ -1992,9 +2006,11 @@ private:
       bool *seen =
           token.kind == TokenKind::IDENTIFIER && token.lexeme == "implicit"
               ? &implicitSeen
-          : token.kind == TokenKind::UNSAFE    ? &unsafeSeen
-          : token.kind == TokenKind::CONSTEXPR ? &constexprSeen
-                                               : nullptr;
+          : token.kind == TokenKind::UNSAFE ? &unsafeSeen
+          : (token.kind == TokenKind::CONSTEXPR ||
+             token.kind == TokenKind::CONSTEVAL)
+              ? &constexprSeen
+              : nullptr;
       if (seen == nullptr) {
         return implicitSeen && isConstructorStart(offset)
                    ? std::optional<std::size_t>(offset)
@@ -2017,7 +2033,8 @@ private:
     std::optional<Token> constexprKeyword;
     for (std::size_t index = 0; index < modifiers; ++index) {
       Token modifier = advance();
-      if (modifier.kind == TokenKind::CONSTEXPR) {
+      if ((modifier.kind == TokenKind::CONSTEXPR ||
+           modifier.kind == TokenKind::CONSTEVAL)) {
         constexprKeyword = std::move(modifier);
       } else if (modifier.kind == TokenKind::UNSAFE) {
         unsafeKeyword = std::move(modifier);
@@ -2058,7 +2075,8 @@ private:
           token.kind == TokenKind::IDENTIFIER && token.lexeme == "implicit"
               ? &implicitSeen
           : token.kind == TokenKind::VIRTUAL ||
-                  token.kind == TokenKind::CONSTEXPR
+                  (token.kind == TokenKind::CONSTEXPR ||
+                   token.kind == TokenKind::CONSTEVAL)
               ? &otherSeen
               : nullptr;
       if (seen == nullptr || *seen) {
@@ -2079,7 +2097,8 @@ private:
       Token modifier = advance();
       if (modifier.kind == TokenKind::VIRTUAL) {
         virtualKeyword = std::move(modifier);
-      } else if (modifier.kind == TokenKind::CONSTEXPR) {
+      } else if ((modifier.kind == TokenKind::CONSTEXPR ||
+                  modifier.kind == TokenKind::CONSTEVAL)) {
         constexprKeyword = std::move(modifier);
       } else {
         if (virtualKeyword || constexprKeyword) {
@@ -2277,7 +2296,7 @@ private:
                   "A mutable field group can contain only direct instance "
                   "fields; move this storage declaration outside the group.");
     }
-    if (match({TokenKind::CONSTEXPR})) {
+    if (match({TokenKind::CONSTEXPR, TokenKind::CONSTEVAL})) {
       throw error(previous(),
                   "A mutable field group cannot contain constexpr fields; "
                   "move this field outside the group.");
@@ -2706,7 +2725,7 @@ private:
               implicitConversionOperatorModifiers()) {
         return implicitConversionOperatorDeclaration(*modifiers);
       }
-      if (check(TokenKind::CONSTEXPR) &&
+      if ((check(TokenKind::CONSTEXPR) || check(TokenKind::CONSTEVAL)) &&
           peekAt(1).kind == TokenKind::OPERATOR) {
         Token constant = advance();
         return conversionOperatorDeclaration(advance(), std::nullopt,
@@ -2723,16 +2742,18 @@ private:
         return implicitConstructorDeclaration(*modifiers);
       }
       if (check(TokenKind::UNSAFE) &&
-          (isConstructorStart(1) ||
-           (peekAt(1).kind == TokenKind::CONSTEXPR && isConstructorStart(2)))) {
+          (isConstructorStart(1) || ((peekAt(1).kind == TokenKind::CONSTEXPR ||
+                                      peekAt(1).kind == TokenKind::CONSTEVAL) &&
+                                     isConstructorStart(2)))) {
         Token unsafeKeyword = advance();
         std::optional<Token> constexprKeyword;
-        if (match({TokenKind::CONSTEXPR}))
+        if (match({TokenKind::CONSTEXPR, TokenKind::CONSTEVAL}))
           constexprKeyword = previous();
         return constructorDeclaration(advance(), std::move(constexprKeyword),
                                       std::move(unsafeKeyword));
       }
-      if (check(TokenKind::CONSTEXPR) && isConstructorStart(1)) {
+      if ((check(TokenKind::CONSTEXPR) || check(TokenKind::CONSTEVAL)) &&
+          isConstructorStart(1)) {
         Token constexprKeyword = advance();
         return constructorDeclaration(advance(), std::move(constexprKeyword));
       }
@@ -4149,7 +4170,8 @@ private:
            peekAt(offset).kind == TokenKind::THREAD_LOCAL) {
       ++offset;
     }
-    if (peekAt(offset).kind == TokenKind::CONSTEXPR) {
+    if (peekAt(offset).kind == TokenKind::CONSTEXPR ||
+        peekAt(offset).kind == TokenKind::CONSTEVAL) {
       ++offset;
     }
     if (peekAt(offset).kind == TokenKind::MUT) {

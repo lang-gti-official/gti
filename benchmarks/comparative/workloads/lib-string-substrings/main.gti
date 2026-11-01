@@ -1,0 +1,32 @@
+import std.string;
+extern "C" {
+uint64_t bench_rounds();
+uint64_t bench_seed();
+void bench_begin();
+void bench_end(uint64_t digest);
+}
+
+int main() {
+  uint64_t rounds = bench_rounds();
+  uint64_t seed = bench_seed() % uint64_t(65536);
+  mut uint64_t digest = 0;
+  bench_begin();
+  for (mut uint64_t round = 0; round < rounds; round++) {
+    std::string_view alphabet = "abcdefghijklmnopqrstuvwxyz";
+    mut std::string text{};
+    for (mut int32_t i = 0; i < 4096; i++) {
+      text.push_back(
+          alphabet[std::size_t((uint64_t(i) + seed + round) % uint64_t(26))]);
+    }
+    for (mut std::size_t i = 0; i < std::size_t(2048); i++) {
+      auto piece = text.substr(i, std::size_t(32));
+      for (mut std::size_t j = 0; j < piece.size(); j++) {
+        if (piece[j] == 'q') {
+          digest += uint64_t(j) + uint64_t(1);
+        }
+      }
+    }
+  }
+  bench_end(digest);
+  return 0;
+}

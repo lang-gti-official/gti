@@ -905,6 +905,12 @@ auto SemanticVisitor::Impl::registerTypeAlias(
     const std::vector<std::string> &namespaceScope, const ClassDecl *owner,
     AccessModifier access) -> void {
   currentSourceUnit = sourceUnitFor(alias.name());
+  if (!alias.genericParameters().empty()) {
+    reportConformanceError(
+        alias.name(),
+        "A generic associated type definition belongs in a conformance block.");
+    return;
+  }
   const std::string qualified = qualifiedName(lookupScope, alias.name().lexeme);
   const auto duplicate = std::find_if(
       typeAliases.begin(), typeAliases.end(),
@@ -1071,6 +1077,58 @@ auto SemanticVisitor::Impl::resolveTypeAliases() -> void {
     }
   }
   deferringTypeAliasConstraints = false;
+}
+
+auto SemanticVisitor::Impl::refreshTypeAliasProjections() -> void {
+  // Initial alias registration precedes the conformance catalog. Re-resolve
+  // retained projections in their declaration scopes before publishing class
+  // and callable types. HIR must receive the same normalized alias as lookup,
+  // including for nongeneric classes that need no concrete body reanalysis.
+  const auto projected = [&](const auto &self,
+                             const SemanticType &type) -> bool {
+    const auto any = [&](const auto &types) {
+      return std::any_of(types.begin(), types.end(), [&](const auto &argument) {
+        return self(self, argument);
+      });
+    };
+    return type.isAssociatedTypeProjection() || any(type.arguments) ||
+           any(type.lambdaEnclosingClassTypes) ||
+           any(type.lambdaEnclosingFunctionTypes);
+  };
+  const bool deferred = deferringTypeAliasConstraints;
+  deferringTypeAliasConstraints = true;
+  bool refreshed = false;
+  for (TypeAliasId id = 1; id <= typeAliases.size(); ++id) {
+    auto &alias = typeAliases[id - 1];
+    if (alias.resolution != TypeAliasResolution::Resolved ||
+        !projected(projected, alias.type))
+      continue;
+    alias.resolution = TypeAliasResolution::Unresolved;
+    (void)resolveTypeAlias(id, nullptr);
+    refreshed = true;
+    if (alias.ownerClass != 0) {
+      auto &members = classInfo(alias.ownerClass).typeAliases;
+      const auto member = members.find(alias.declaration->name().lexeme);
+      if (member != members.end()) {
+        if (alias.resolution == TypeAliasResolution::Resolved) {
+          member->second.type = alias.type;
+          member->second.compilerPrivate = alias.compilerPrivate;
+        } else {
+          members.erase(member);
+        }
+      }
+    }
+  }
+  deferringTypeAliasConstraints = deferred;
+  if (refreshed) {
+    visibleTypeAliasIds.clear();
+    for (TypeAliasId id = 1; id <= typeAliases.size(); ++id) {
+      const auto &alias = typeAliases[id - 1];
+      if (alias.ownerDeclaration == nullptr)
+        publishTypeAlias(alias.qualifiedName, id, alias.sourceUnit,
+                         alias.compilerPrivate);
+    }
+  }
 }
 
 auto SemanticVisitor::Impl::registerConcepts(const StmtList &statements,
@@ -1626,6 +1684,12 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
 auto SemanticVisitor::Impl::resolveTypeAliasDependencies(
     const TypeRef &type, const std::vector<std::string> &scope) -> void {
   if (type.qualifiedOwner) {
+    // An alias may project a protocol registered before its body is resolved.
+    // Resolve its declaration contract on demand; conformance validation is
+    // still deferred to the alias's lexical position with other constraints.
+    if (const auto id = resolveConceptPath(type.qualifiedOwner->name, scope);
+        id && concepts[*id - 1].declaration->isProtocol())
+      (void)resolveConcept(*id, &type.qualifiedOwner->name.last());
     resolveTypeAliasDependencies(*type.qualifiedOwner, scope);
   } else if (type.name.segments.size() > 1) {
     TypeRef qualifier = type;
@@ -1643,6 +1707,17 @@ auto SemanticVisitor::Impl::resolveTypeAliasDependencies(
   for (const TypeRef &argument : type.arguments) {
     resolveTypeAliasDependencies(argument, scope);
   }
+}
+
+auto SemanticVisitor::Impl::validateTypeAliasReference(
+    const TypeRef &target, const SemanticType &resolved) -> bool {
+  if (!target.reference && resolved.kind != SemanticType::Reference)
+    return true;
+  report(target.reference ? *target.reference : target.name.last(),
+         "Reference aliases are not supported; keep '&' explicit at each "
+         "borrow site.",
+         "GTI-S2030");
+  return false;
 }
 
 auto SemanticVisitor::Impl::resolveTypeAlias(TypeAliasId id, const Token *use)
@@ -1690,11 +1765,7 @@ auto SemanticVisitor::Impl::resolveTypeAlias(TypeAliasId id, const Token *use)
            "GTI-S2030");
     targetFormValid = false;
   }
-  if (target.reference) {
-    report(*target.reference,
-           "Reference aliases are not supported; keep '&' explicit at each "
-           "borrow site.",
-           "GTI-S2030");
+  if (!validateTypeAliasReference(target, SemanticType::Unknown)) {
     targetFormValid = false;
   }
   if (alias.ownerClass != 0 && target.isNativeFunction()) {
@@ -1708,6 +1779,8 @@ auto SemanticVisitor::Impl::resolveTypeAlias(TypeAliasId id, const Token *use)
     validateType(target, target.isNativeFunction());
   }
   const SemanticType resolved = typeOf(target, alias.lookupScope);
+  if (!target.reference && !validateTypeAliasReference(target, resolved))
+    targetFormValid = false;
   if (targetFormValid && !isCompilerTrustedUnit(alias.sourceUnit) &&
       semanticModel.isCompilerPrivateType(resolved)) {
     Diagnostic diagnostic = makeDiagnostic(
@@ -5327,6 +5400,7 @@ auto SemanticVisitor::Impl::bindOutOfClassDefinitions(
                            selected->record().genericParameters, result,
                            writtenGenerics) ||
         declaration.isConstexpr() != definition->isConstexpr() ||
+        declaration.isConsteval() != definition->isConsteval() ||
         declaration.unsafeKeyword().has_value() !=
             definition->unsafeKeyword().has_value()) {
       if (reportSignatureTypeErrors())
@@ -5410,6 +5484,7 @@ auto SemanticVisitor::Impl::bindNamespaceFunctionDefinition(
                            candidate.returnType,
                            candidate.record().genericParameters) ||
         declaration.isConstexpr() != definition.isConstexpr() ||
+        declaration.isConsteval() != definition.isConsteval() ||
         declaration.unsafeKeyword().has_value() !=
             definition.unsafeKeyword().has_value() ||
         declaration.isStatic() != definition.isStatic() ||

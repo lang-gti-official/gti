@@ -70,7 +70,7 @@ namespace {
 
 [[nodiscard]] bool
 materializableProgramConstant(const std::optional<ConstantValue> &constant) {
-  return constant && !std::holds_alternative<ConstantAggregateValue>(*constant);
+  return constant.has_value();
 }
 
 } // namespace
@@ -1987,6 +1987,51 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                              body.fullExpressions.end(), [&](const auto &item) {
                                return item.id == value->fullExpression;
                              });
+      if (proof && proof->immediateRequired()) {
+        const auto publishedOwner =
+            construction == nullptr
+                ? program.classInstances().end()
+                : std::find_if(program.classInstances().begin(),
+                               program.classInstances().end(),
+                               [&](const auto &candidate) {
+                                 return candidate.type ==
+                                        construction->constructedType;
+                               });
+        const bool valid =
+            entry.source != nullptr && !entry.source->value() &&
+            proof->source() == entry.source &&
+            proof->snapshot() == semantics.analysisSeal().programSnapshot &&
+            proof->immediateValue() && construction != nullptr &&
+            construction->declaration &&
+            construction->declaration->isConsteval() &&
+            publishedOwner != program.classInstances().end() &&
+            emptyReturns.insert(entry.source).second &&
+            listed.insert(entry.value).second && value != nullptr &&
+            statement != body.statements.end() &&
+            statement->kind == HirStatementKind::Return &&
+            statement->value == entry.value &&
+            fullExpression != body.fullExpressions.end() &&
+            fullExpression->statement == statement->id &&
+            fullExpression->roots == std::vector<HirValueId>{entry.value} &&
+            value->kind == HirValueKind::Literal && !value->source &&
+            !value->literal &&
+            value->info == ExpressionInfo{.type = construction->constructedType,
+                                          .category = ValueCategory::Value,
+                                          .access = AccessMode::ReadOnly,
+                                          .traits = publishedOwner->traits} &&
+            value->constant == proof->immediateValue() &&
+            value->programConstantSubstitution && value->operands.empty() &&
+            value->defaultArguments.empty() && !value->constructorTarget &&
+            !value->callPlan &&
+            value->unsafeOperation == UnsafeOperationKind::None &&
+            construction->borrowOrigin == BorrowOriginKind::None &&
+            construction->borrowFields.empty();
+        if (!valid)
+          result.errors.emplace_back(
+              "immediate empty return HIR differs from its statement-bound "
+              "constant construction proof");
+        continue;
+      }
       bool valid =
           entry.source != nullptr && !entry.source->value() && proof &&
           proof->source() == entry.source &&
@@ -2057,6 +2102,40 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         result.errors.emplace_back(
             "bare return HIR value has no source-bound construction proof");
     }
+    std::unordered_set<const ExpressionStmt *> voidCompletions;
+    for (const HirImmediateVoidCompletion &entry :
+         body.immediateVoidCompletions) {
+      const auto &proof = entry.completionProof;
+      const auto *function =
+          proof ? semantics.findFunction(proof->function()) : nullptr;
+      const auto statement = std::find_if(
+          body.statements.begin(), body.statements.end(),
+          [&](const auto &item) { return item.source == entry.source; });
+      if (entry.source == nullptr || !proof ||
+          proof->source() != entry.source ||
+          proof->expression() != entry.source->expression().get() ||
+          proof->snapshot() != semantics.analysisSeal().programSnapshot ||
+          !voidCompletions.insert(entry.source).second || function == nullptr ||
+          !function->bodyDeclaration() ||
+          !function->bodyDeclaration()->isConsteval() ||
+          function->returnType != SemanticType::Void ||
+          statement == body.statements.end() ||
+          statement->kind != HirStatementKind::Expression || statement->value ||
+          body.valueForSource(*entry.source->expression()) != nullptr ||
+          std::any_of(body.fullExpressions.begin(), body.fullExpressions.end(),
+                      [&](const auto &item) {
+                        return item.statement == statement->id;
+                      }))
+        result.errors.emplace_back(
+            "immediate void HIR statement differs from its source-bound "
+            "completion proof");
+    }
+    for (const HirStatement &statement : body.statements)
+      if (statement.kind == HirStatementKind::Expression && !statement.value &&
+          stmtAs<ExpressionStmt>(statement.source) != nullptr &&
+          !voidCompletions.contains(stmtAs<ExpressionStmt>(statement.source)))
+        result.errors.emplace_back(
+            "empty HIR expression has no immediate completion proof");
     for (const HirContextualConstruction &entry :
          body.contextualConstructions) {
       const HirValue *value = body.findValue(entry.value);
@@ -3540,12 +3619,14 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       }
       continue;
     }
+    const auto *immediate = semantics.findImmediateInvocation(*value.source);
     const ExpressionInfo *semanticInfo =
-        semantics.findExpression(*value.source);
+        immediate ? &immediate->info : semantics.findExpression(*value.source);
     const std::optional<ConstantValue> semanticConstant =
-        semantics.findConstant(*value.source);
+        immediate ? std::optional<ConstantValue>(immediate->value)
+                  : semantics.findConstant(*value.source);
     const bool semanticSubstitution =
-        semantics.isProgramConstantSubstitution(*value.source);
+        immediate || semantics.isProgramConstantSubstitution(*value.source);
     if (semanticInfo == nullptr || value.info != *semanticInfo ||
         value.constant != semanticConstant ||
         value.programConstantSubstitution != semanticSubstitution ||

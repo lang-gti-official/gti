@@ -285,10 +285,65 @@ int main() {
            "remain source errors");
   }
 }
+
+void checkFreshClassArgumentResults() {
+  const std::string declarations = R"(
+struct Point {
+  int32_t x;
+  int32_t y;
+  Point(int32_t x, int32_t y) : x(x), y(y) {}
+  int32_t digits() { return this.x * 10 + this.y; }
+};
+int32_t read(Point& value) { return value.digits(); }
+int32_t pair(Point& first, Point& second) {
+  return first.digits() * 100 + second.digits();
+}
+)";
+  const auto valid = lang::Frontend().analyze(
+      "fresh-class-argument-results.gti", declarations + R"(
+int main() {
+  mut Point target = Point(1, 2);
+  Point next = Point(3, 4);
+  Point last = Point(5, 6);
+  int32_t assigned = read(target = next);
+  int32_t joined = read(true ? next : last);
+  int32_t ordered = pair(target = next, target = last);
+  int32_t paired_join = pair(target = next, true ? last : target);
+  return assigned + joined + ordered + paired_join + target.digits() - 7014;
+}
+)");
+  if (!valid.canGenerateCode())
+    for (const auto &diagnostic : valid.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(valid.canGenerateCode() && lang::verifyMirProgram(valid.mir).valid(),
+         "built-in assignment and conditional class values supply exact "
+         "call-scoped read borrows");
+
+  for (const std::string &body :
+       {std::string("void change(mut Point& value) { value.x = 9; } "
+                    "int main() { mut Point target = Point(1, 2); "
+                    "Point next = Point(3, 4); change(target = next); "
+                    "return 0; }"),
+        std::string("int main() { mut Point target = Point(1, 2); "
+                    "Point next = Point(3, 4); "
+                    "Point& escaped = target = next; return 0; }")}) {
+    const auto rejected = lang::Frontend().analyze(
+        "invalid-fresh-class-argument.gti", declarations + body);
+    expect(rejected.syntaxValid && !rejected.canGenerateCode() &&
+               std::any_of(rejected.diagnostics.begin(),
+                           rejected.diagnostics.end(),
+                           [](const auto &diagnostic) {
+                             return diagnostic.code == "GTI-S2017";
+                           }),
+           "a fresh assignment result cannot acquire a mutable or escaping "
+           "reference");
+  }
+}
 } // namespace
 
 int main() {
   checkTemporaryOwnerBorrow();
   checkPayloadEnumTemporaryArguments();
+  checkFreshClassArgumentResults();
   return failures == 0 ? 0 : 1;
 }

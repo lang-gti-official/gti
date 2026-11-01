@@ -1,0 +1,10 @@
+import "policy.gti";
+
+struct Container {
+  using Value = family_policy::storage<family_policy::Heap>::buffer<int>;
+};
+
+int main() {
+  Container::Value value{42};
+  return value.value - 42;
+}

@@ -38,6 +38,7 @@ enum class Shape {
   EmbeddingExports,
   RuntimeBinding,
   LibraryDeclaration,
+  CompiledScalarImport,
   GeneratedDependencies,
   FixedArray,
   NativeScalar,

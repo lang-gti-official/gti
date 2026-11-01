@@ -1144,9 +1144,9 @@ The project system must not force premature language commitments:
 - native C++ output remains an implementation artifact;
 - C++ backend standard selection is not a GTI language edition.
 
-If GTI later gains a native or LLVM backend, the manifest should select a
-backend without changing package identity. Backend-specific options live in a
-namespaced table rather than becoming universal package fields.
+GTI now supports explicit LLVM backend selection without changing package
+identity. Backend-specific policy remains separate from language/package
+identity; compiled GTI library reuse is still the staged goal below.
 
 ## Implementation Plan
 
@@ -1694,3 +1694,139 @@ language is superseded by ADR 012; prerequisites and acceptance still apply.
 | Reuse builds without stale native inputs | Extend the existing exact native discovery with generated-unit SDK/header identity and concurrent-input publication checks. | Changing a discovered input invalidates reuse; unsupported opaque inputs still bypass; races cannot publish under an earlier identity. |
 | Install and authenticate across more package/host workflows | Reuse delivered registry/provider/credential seams and local install receipts; add one source-install or host-support profile at a time. | Explicit trust/acquisition, immutable identity, credential non-disclosure, receipt-safe replacement/removal and appropriate platform evidence. Registry governance remains distinct from compiler releases. |
 | Shorter build/edit cycles | Use the incremental/query and native-object goals in [performance tooling](performance-tooling.md) and [LSP roadmap](lsp-evolution.md); identify reused facts and invalidation boundaries first. | Current-head compile/edit latency and memory evidence with unchanged diagnostics, ownership and source-overlay publication. No pretend per-file GTI translation-unit model. |
+
+
+## Compiled library and separate-compilation stages
+
+The accepted direction is [ADR 032](../decisions/032-compiled-library-bundles.md).
+A library target, not each source module, is the reusable compilation boundary.
+These stages refine the existing shorter-build-cycle goal. Normal project
+commands consume the bounded typed `.gtilib` profile described below; the full
+semantic and production-promotion goals remain open.
+
+| Stage / owner | Prerequisite and deliverable | Required acceptance evidence |
+| --- | --- | --- |
+| F0 container / driver — implemented | Versioned `.gtilib` codec, compatibility envelope, deterministic object/dependency inventory; no CLI or semantic importer | Round trips, order independence, corruption/truncation/version/limit/path rejection and exact identity/dependency mismatch tests; affected driver regressions. |
+| F1 identity and interface / frontend + semantics — identity foundation in progress | Finalize declaration-key grammar and metadata schema; export/private closure, module ownership, complete type/lifetime/borrow/callable contracts, generic declaration recipes and diagnostic provenance; import into existing semantic domains | Export/re-export visibility equals source mode; unrelated user-defined borrowed type and private layout dependencies; ID remapping across separate processes and reordered inputs; malformed references, incomplete summaries and untrusted private-capability declarations rejected. |
+| F2 unit lowering/linkage / HIR + MIR + LLVM — typed vertical slice implemented | F1; imported declaration/body distinction, stable symbol plan, selected runtime closure, per-library initialization/retirement, object verification; immutable driver target request distinct from C embedding | Multiple modules in one library, independent consumer links/runs with no library implementation source; correct cleanup/failure and exactly-once globals/TLS; no duplicate main/symbols; retained exports; platform object/ABI and runtime mismatch gates. C++ receives no new feature work. |
+| F3 generics and early constants / semantics + staged HIR/MIR | F1/F2; generic recipe importer and instance inventory, shared consumer instantiation owner, query-driven completed constexpr closures | New consumer substitution, constraints/defaults/specializations, early array extent/value argument/static assertion/branch shaping, resource/cycle errors and compile-time/runtime parity; no requirement to seal whole-program MIR before these queries. Private generic dependencies and unrelated user types included. |
+| F4 reusable target graph / driver — same-manifest DAG implemented | F1–F3; explicit module-to-library-target mapping, DAG/diamond validation, complete configuration/toolchain/runtime/native fingerprints, bounded file adapters and atomic publication | Consumer-only edits reuse a library without reopening its implementation source; source/body/config/target/runtime/compiler/dependency changes invalidate it; conflicting diamonds and cycles reject; input-race and corrupt-cache recovery; direct/source project behavior preserved. |
+| F5 promotion / verification + tooling | All admitted semantic families, example project, build reports, LSP/import diagnostics, native platform coverage and documented unsupported families | End-to-end fixtures below, installed consumer checks, optimized runtime/allocation/code-size comparison and cold/warm build/memory/bundle-size evidence. Optional LTO/body indexing follows measured needs and retains semantic verification. |
+
+The end-to-end fixture must build a library target containing an exported API,
+a second module and private implementation files; a separate executable package
+then imports only its compiled artifact. Remove access to producer implementation
+sources to prove reuse. Exercise an ordinary function, user-defined nominal type,
+borrowed return with negative escape/mutation cases, a new generic substitution,
+and an early constexpr query. Edit only the consumer and verify the library is
+unchanged and not reanalyzed. Change the library body, public contract, dependency,
+configuration and compiler/runtime identity in separate cases and prove correct
+rebuild or explicit incompatibility. Include truncation, payload corruption,
+unknown versions, forged but well-checksummed invalid metadata, unsupported target,
+and duplicate/conflicting dependency cases. Check native execution and cleanup,
+not only successful linking. C embedding keeps its own existing ABI tests.
+
+F0 intentionally has no runnable GTI example: it changes no language/build surface.
+F2/F4 must ship a runnable multi-module library/consumer example and inventory
+updates with the first user-visible compiled-library mode. `.gtimeta` remains
+reserved until an analysis-only consumer justifies independent metadata use.
+
+
+F1 progress (persistent declaration identity): the compiler now projects and
+reads a bounded, canonical key for nongeneric scalar-parameter namespace functions.
+Tests use real semantic records, reordered/relocated source and independent
+processes. This completes only the first structural identity profile, not F1.
+Nongeneric nominal declaration keys and an explicit per-snapshot type registry
+now remap class/enum references to fresh local IDs. Scalar/nominal, reference,
+raw-pointer and fixed-array recipes retain their structural facts; tests include
+real source classes/enums, independent processes, conflicting bindings and malformed
+input. Primary generic class/enum owners now record ordered type/value/final-pack shapes,
+and concrete recipes preserve fully resolved type/uint64 substitutions with exact
+arity checks and fresh-ID remapping. Real generic source fixtures and cross-process
+checks cover this profile. Transformed families, exact specializations, nested
+class owners and dependent body recipes remain unsupported. Next extend those
+owner identities, then serialize export/private closure and complete callable
+contracts. Imported declarations must enter existing semantic lookup and staged
+query catalogs before F1 can pass its acceptance gates. No function key authorizes
+a call, substitutes for a borrow summary, or promises a native symbol ABI.
+
+
+F1/F2 executable progress (scalar vertical slice): an LLVM development API now
+builds a multi-module `.gtilib` and compiles/links independent consumers after
+all producer sources are deleted. Primitive/void interface metadata, overload-family selection, explicit
+semantic import admission, compiler-verified stable linkage, native-object
+checks and exact toolchain/runtime/configuration checks are implemented.
+The registered `compiled_scalar_library` example exercises separate processes,
+consumer-only edits, visibility and rejection at O0/O1/O3. This advances the
+user-visible workflow beyond codecs without marking general F1 or F2 complete.
+
+Project workflow progress: `gti-library` targets now select root-module exports
+through the compiler and publish `.gtilib`; executable targets resolve one
+`compiled-library` or several independent `compiled-libraries` artifacts and
+virtual interfaces through immutable project/build requests. The combined
+profile caps imports at 64 libraries and 256 declarations; typed result-aware
+symbols and source-scoped bindings preserve each artifact's callable contract. Logical identities come from the manifest and root module. Bounded
+reads, atomic publication and native staging preserve source-absent reuse.
+Same-manifest dependency graphs and conservative freshness now build on this path.
+`compiled_library_project` exercises the normal CLI and failure preservation.
+
+Read-only query progress: `gti check` now validates scalar producer exports and
+source-absent consumer imports through shared artifact preparation and the normal
+frontend/lowered binding pipeline, without native emission or output publication.
+Structured source diagnostics remain intact. This does not admit artifact-aware
+LSP snapshots or certify producer native emission/consumer linking.
+
+Primitive capability progress: bool/char/fixed integer/float/double arguments
+and results, void results, overloaded exports and checked scalar failure
+propagation are implemented. The primitive example covers O0/O1/O3 source-absent
+execution and consumer cleanup; the multi-library example covers independent
+imports, unused selections and overlapping-name rejection. These remain bounded
+F1/F2/F4 slices, not completion of the general stages.
+
+Typed-interface progress: concrete generated value records, nested record fields,
+private field layout, scalar defaults and integral enums cross the native boundary.
+Fresh-session type registries remap their IDs and validate canonical declaration
+closure against lowered facts. Checked read/mutable reference parameters and
+whole-parameter borrowed returns preserve semantic/MIR origin and access rules;
+consumer escape and overlapping-loan rejection use ordinary analysis. The
+`compiled_value_types` and `compiled_borrow_library` examples remove producer
+sources before consumer analysis and execution. Custom ownership/drop, borrowed
+record fields, projected/conditional returns, generic definitions and constexpr
+queries still require richer contracts. These bounded additions do not complete F1/F2.
+
+Namespace progress: qualified root-module functions and nominal declarations retain
+namespace identity, inherited namespace exports, overload visibility and private
+layout dependencies. Virtual interfaces use private root aliases to preserve
+resolved types through namespace shadowing. `compiled_namespaces` distributes two
+libraries with same-leaf types/functions and checks source-free execution and
+borrowing at O0/O1/O3. Nested class-owned declarations and dependency-owned nominal
+types exposed through another library still need richer ownership contracts.
+
+Dependency progress: same-manifest `compiled-dependencies` edges build targets in
+topological order, deduplicate diamonds and reject cycles. Bundles retain exact
+direct dependency receipts; consumers validate the complete transitive closure.
+A conservative source/configuration/compiler/runtime/dependency fingerprint reuses
+unchanged library outputs and rebuilds stale or corrupted ones. This still reads
+producer source inputs to establish freshness. `check` remains read-only and
+requires existing dependency artifacts. Explicit distributed artifact closures
+remain usable without sources. The `compiled_dependency_project` example covers
+these paths. Package-qualified source edges, zero-source-read freshness, input-race
+publication proofs and general cache/report integration remain F4 prerequisites.
+
+Next coherent outcomes: general ownership and lifecycle metadata, generic/staged
+constexpr recipes, cross-library nominal closure, composable exactly-once
+globals/TLS, and artifact-aware diagnostic provenance/LSP snapshots. Production
+acceptance still requires both native platforms, installed-toolchain evidence,
+representative performance/build-cost measurements and the full F1–F5 fixture.
+
+
+F5 evidence prerequisite exposed by the scalar slice: the existing LLVM
+promotion provider probes ordinary source and C-embedding requests. It cannot
+yet bind an artifact-input profile to a verified import-plan receipt. The
+`CompiledScalarImport` ledger row therefore records that explicit promotion
+evidence gap; it does not claim that a source-only probe exercised the new path.
+The mandatory `compiled_scalar_library` CTest already executes the real producer,
+source deletion, import and native link on macOS arm64 and Linux x86-64. Promotion
+must add exact bundle/runtime/compiler identities and import-plan receipts to
+the evidence provider, retaining those execution tests and malformed-input
+controls. This is not a waiver of the general F5 readiness gates.

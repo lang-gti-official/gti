@@ -7206,6 +7206,22 @@ auto SemanticVisitor::Impl::requireFunctionDefinition(
       function.record().pureVirtual) {
     return;
   }
+  // Scalar metadata has no borrow/lifetime/generic summaries to infer. Its
+  // generated declaration remains opaque and conservatively fallible; the
+  // compiler's compiled-unit verifier requires an exact native binding later.
+  const auto &record = function.record();
+  const auto *unit =
+      sourceGraph ? sourceGraph->findUnit(record.sourceUnit) : nullptr;
+  if (unit && unit->compiledScalarInterface &&
+      isCompiledScalarResultType(record.returnType) && record.ownerClass == 0 &&
+      record.genericParameters.empty() && !record.parameterPack &&
+      !record.constexprFunction && !record.requiresUnsafe &&
+      !record.compilerPrivate &&
+      record.requiredParameterCount == record.parameterTypes.size() &&
+      declaration->exportKeyword() &&
+      std::all_of(record.parameterTypes.begin(), record.parameterTypes.end(),
+                  isCompiledScalarValueType))
+    return;
   // A generic primary is a checked declaration, not yet an executable body.
   // Concrete reanalysis selects exact specializations and constexpr branches
   // before enforcing closure. Inspect the enclosing formal bindings, not the

@@ -364,7 +364,11 @@ jobs:
         # Instrumenting the whole tree took longer than the integration shards
         # while only these tests run; CTestTestfile.cmake names their targets.
         run: |
-          targets="$(python3 scripts/validation_checks.py test-targets --build build-sanitized --regex "${GTI_SANITIZER_TESTS}")"
+          pattern="${GTI_SANITIZER_TESTS}"
+          if [[ "${{ matrix.kind }}" == "compiler" ]]; then
+            pattern='^compiler_pipeline$'
+          fi
+          targets="$(python3 scripts/validation_checks.py test-targets --build build-sanitized --regex "${pattern}")"
           read -r -a target_list <<< "${targets}"
           cmake --build build-sanitized --parallel "${GTI_JOBS}" --target "${target_list[@]}"
       - name: Test compiler and driver libraries

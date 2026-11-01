@@ -1,0 +1,53 @@
+import std.meta;
+
+mut int32_t order = 0;
+mut int32_t cleanups = 0;
+
+class Probe {
+  int32_t value;
+public:
+  Probe(int32_t value) : value(value) {}
+  int32_t update(int32_t amount) mut {
+    order = order * 10 + 4;
+    return this.value + amount;
+  }
+};
+
+class Token {
+public:
+  Token() = default;
+  Token(Token& other) = delete;
+  Token(Token&& other) = default;
+  ~Token() { cleanups = cleanups + 1; }
+};
+
+std::meta::method<Probe, 0> select_consuming_method(Token token) {
+  order = order * 10 + 1;
+  return std::meta::method<Probe, 0>();
+}
+
+std::meta::method<Probe, 0> select_method() {
+  order = order * 10 + 1;
+  return std::meta::method<Probe, 0>();
+}
+
+mut Probe& select_receiver(mut Probe& receiver) {
+  order = order * 10 + 2;
+  return receiver;
+}
+
+int32_t select_argument() {
+  order = order * 10 + 3;
+  return 5;
+}
+
+int main() {
+  mut Probe probe{7};
+  int32_t result = select_method().invoke(select_receiver(probe), select_argument());
+  if (order != 1234 || result != 12) return 1;
+  order = 0;
+  Token token{};
+  int32_t consumed = select_consuming_method(std::move(token)).invoke(
+      select_receiver(probe), select_argument());
+  return order == 1234 && consumed == 12 && cleanups == 1 ? 0 : 2;
+}

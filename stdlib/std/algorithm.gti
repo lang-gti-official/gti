@@ -310,6 +310,51 @@ void sort_heap<std::relocatable T, Compare>(mut std::vector<T>& values,
   }
 }
 
+// Return a sampled index, never a copied pivot. A three-comparison decision
+// tree avoids allocating or sorting a temporary array of sample indices.
+// The caller checks storage access before lending these values. Keeping that
+// access outside this policy helper lets an infallible relation stay infallible.
+size_t sort_median_index<std::relocatable T, Compare>(T& first, T& middle, T& last,
+                                                       mut Compare& compare,
+                                                       size_t first_index,
+                                                       size_t middle_index,
+                                                       size_t last_index)
+  requires std::vector_element<T> && std::comparator<Compare, T> {
+  if (compare(first, middle)) {
+    if (compare(middle, last)) { return middle_index; }
+    if (compare(first, last)) { return last_index; }
+    return first_index;
+  }
+  if (compare(first, last)) { return first_index; }
+  if (compare(middle, last)) { return last_index; }
+  return middle_index;
+}
+
+// Probe the whole input for either monotonic direction before partitioning.
+// Equivalence prefixes do not choose a direction. Once a strict direction is
+// known, one comparison per adjacent pair suffices. Disorder returns early;
+// no element moves and a failed comparator leaves the input unchanged.
+// 1 means nondecreasing (including all equal), -1 nonincreasing, 0 neither.
+int sort_monotonic_direction<std::relocatable T, Compare>(std::vector<T>& values,
+                                                           mut Compare& compare)
+  requires std::vector_element<T> && std::comparator<Compare, T> {
+  mut int direction = 0;
+  for (mut size_t index = size_t(1); index < values.size(); index++) {
+    if (direction >= 0) {
+      if (compare(values[index], values[index - size_t(1)])) {
+        if (direction > 0) { return 0; }
+        direction = -1;
+      } else if (direction == 0 &&
+                 compare(values[index - size_t(1)], values[index])) {
+        direction = 1;
+      }
+    } else if (compare(values[index - size_t(1)], values[index])) {
+      return 0;
+    }
+  }
+  return direction < 0 ? -1 : 1;
+}
+
 // Partitions [low, high), which holds more than 16 elements, and returns the
 // pivot's final index: earlier elements are not after it and later elements
 // are not before it. The pivot is the median of the first, middle and last
@@ -326,55 +371,29 @@ size_t sort_partition<std::relocatable T, Compare>(mut std::vector<T>& values,
   size_t middle = low + count / size_t(2);
   size_t last = high - size_t(1);
   mut bool before = false;
-  mut size_t samples[9] = {};
-  mut size_t sampled = size_t(3);
-  samples[0] = low;
-  samples[1] = middle;
-  samples[2] = last;
-  if (count > size_t(40)) {
-    size_t step = count / size_t(8);
-    samples[1] = low + step;
-    samples[2] = low + step * size_t(2);
-    samples[3] = middle - step;
-    samples[4] = middle;
-    samples[5] = middle + step;
-    samples[6] = last - step * size_t(2);
-    samples[7] = last - step;
-    samples[8] = last;
-    sampled = size_t(9);
-  }
-  // Order each triple of sample indices by value; its middle entry is the
-  // triple's median. Nine samples then reduce to their three medians.
-  while (true) {
-    for (mut size_t group = size_t(0); group < sampled; group += size_t(3)) {
-      for (mut size_t next = group + size_t(1); next < group + size_t(3);
-           next++) {
-        mut size_t position = next;
-        while (position > group) {
-          {
-            std::vector<T>& readable = values;
-            before = compare(readable[samples[position]],
-                             readable[samples[position - size_t(1)]]);
-          }
-          if (!before) {
-            break;
-          }
-          size_t held = samples[position];
-          samples[position] = samples[position - size_t(1)];
-          samples[position - size_t(1)] = held;
-          position--;
-        }
-      }
+  mut size_t pivot = size_t(0);
+  {
+    std::vector<T>& readable = values;
+    if (count > size_t(40)) {
+      size_t step = count / size_t(8);
+      size_t first_sample = sort_median_index(
+          readable[low], readable[low + step], readable[low + step * size_t(2)],
+          compare, low, low + step, low + step * size_t(2));
+      size_t middle_sample = sort_median_index(
+          readable[middle - step], readable[middle], readable[middle + step],
+          compare, middle - step, middle, middle + step);
+      size_t last_sample = sort_median_index(
+          readable[last - step * size_t(2)], readable[last - step], readable[last],
+          compare, last - step * size_t(2), last - step, last);
+      pivot = sort_median_index(
+          readable[first_sample], readable[middle_sample], readable[last_sample],
+          compare, first_sample, middle_sample, last_sample);
+    } else {
+      pivot = sort_median_index(readable[low], readable[middle], readable[last],
+                                compare, low, middle, last);
     }
-    if (sampled == size_t(3)) {
-      break;
-    }
-    samples[0] = samples[1];
-    samples[1] = samples[4];
-    samples[2] = samples[7];
-    sampled = size_t(3);
   }
-  values.swap_elements(low, samples[1]);
+  values.swap_elements(low, pivot);
   mut size_t left = low + size_t(1);
   mut size_t right = last;
   while (true) {
@@ -409,7 +428,8 @@ size_t sort_partition<std::relocatable T, Compare>(mut std::vector<T>& values,
   return right;
 }
 
-// Introsort. A range longer than 16 elements is partitioned; shorter ranges
+// Adaptive introsort. Monotonic whole inputs finish in linear time; otherwise
+// a range longer than 16 elements is partitioned; shorter ranges
 // finish with insertion sort, and a range that exhausts sort_depth_limit
 // partition levels finishes with heapsort, so comparisons stay O(n log n) for
 // every input. Each split leaves the larger side on a fixed stack and
@@ -426,6 +446,21 @@ void introsort<std::relocatable T, Compare>(mut std::vector<T>& values,
   mut size_t waiting = size_t(0);
   mut size_t low = size_t(0);
   mut size_t high = values.size();
+  if (high > size_t(16)) {
+    mut int direction = 0;
+    {
+      std::vector<T>& readable = values;
+      direction = sort_monotonic_direction(readable, compare);
+    }
+    if (direction != 0) {
+      if (direction < 0) {
+        for (mut size_t left = size_t(0); left < high / size_t(2); left++) {
+          values.swap_elements(left, high - left - size_t(1));
+        }
+      }
+      return;
+    }
+  }
   mut size_t depth = sort_depth_limit(high);
   while (true) {
     if (high - low <= size_t(16)) {

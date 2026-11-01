@@ -1034,6 +1034,93 @@ adds_to<L, R>::sum_type total<L, R>(L& left, R& right)
 }
 ```
 
+### Generic associated type families
+
+An associated type can take its own type parameters. Parameters go beside the
+declared member name, just as on other GTI generic declarations:
+
+```gti
+concept storage_policy<Policy> {
+  typename buffer<Element>;
+  typename pair<Key, Value>;
+};
+struct LocalStorage {};
+struct Slot<T> { T value; };
+struct Pair<A, B> { A first; B second; };
+for concept storage_policy<LocalStorage> {
+  using buffer<Item> = Slot<Item>;
+  using pair<K, V> = Pair<K, V>;
+};
+using Numbers = storage_policy<LocalStorage>::buffer<int>;
+using Flags = storage_policy<LocalStorage>::buffer<bool>;
+```
+
+`Element` declares an input to `buffer`; `Item` declares the corresponding
+input in its implementation. Their names may differ: parameters match by
+position and arity. The implementation's right-hand side can use those inputs,
+the conformance block's parameters, visible types, and other associated types
+or families. Inputs belong only to their own declaration or definition. They
+cannot shadow an enclosing concept/block parameter, the concept name, or a
+member name. Duplicate and unbound inputs are errors. Existing associated
+types such as `typename tag;` still have zero inputs.
+
+A family may have several ordinary type parameters. Unary input constraints
+use existing syntax, for example `typename buffer<std::vector_element T>;`.
+The implementation must repeat the same resolved constraint concept at each
+position, with freely renamed parameters. It cannot add, remove, or substitute
+a different constraint. Every application checks those constraints, including
+dependent applications in generic bodies. The definition's target must be
+valid for every admitted input. In particular, mapping to `std::vector<T>`
+requires the family to declare `std::vector_element` on `T`; declaring an
+unconstrained input does not prove the container's element requirements.
+
+`C<P>::family<A, B>` first selects the conformance of `C<P>`, then substitutes
+the independently supplied `A, B`. Family inputs never select or specialize a
+conformance. Exact selection, package coherence, and overlap rejection remain
+unchanged. Nested applications are supported, as are projections in ordinary
+namespace/class aliases and nongeneric protocol operation signatures. Inside a
+concept signature or a conformance block, `family<A, B>` names that member
+directly. These applications need neither a `template` prefix nor a dependent
+`typename` disambiguator.
+
+In an abstract generic body, the enclosing declaration must prove the exact
+concept application. The opaque type's identity includes the concept, member,
+ordered concept arguments, and ordered family arguments. Equal input tuples
+name the same projection; different inputs are not assumed to give different
+concrete types, but cannot be treated as equal without a concrete reduction.
+An available structural conformance can reduce an open application under the
+same rules as an ordinary associated type. Concrete reanalysis substitutes and
+checks the selected ordinary type before HIR/MIR execution.
+
+For a class alias, the policy must currently be concrete or have an applicable
+structural conformance that reduces the projection. Retaining an opaque policy
+projection in a generic class requires class-level protocol proofs; that support
+and class-level trailing `requires` syntax are not implemented. Generic functions
+can state the exact protocol proof in their existing trailing requirements.
+
+Declaring a family promises a type, not construction, copying, movement, member
+operations, or an ownership/borrow contract. Consumers must state those
+contracts explicitly for the applied result. An application can be passed to an
+ordinary generic construction helper whose contract proves `C(arguments...)`.
+Reference results retain the existing explicit local reference declarator and
+borrow-origin requirements. The runnable
+[`182-associated-type-families.gti`](../../examples/182-associated-type-families.gti)
+selects one storage policy for integer and string buffers, and separately
+requires `size()` on both resulting types. It maps one policy to a source
+vector and another to an unrelated inline container.
+
+Families add no runtime representation, allocation, or dispatch. Their selected
+types retain ordinary layout, ownership, destruction, and failure behavior.
+Recursive aliases are rejected. Reduction is bounded to 64 active projections
+and 16,384 visited type nodes per outer reduction, including expanding cycles;
+an unresolved or over-budget definition is a source diagnostic.
+
+This slice does not introduce generic aliases outside conformance blocks,
+first-class type constructors/higher-kinded parameters, associated value or
+lifetime families, packs, defaults, per-family `requires` clauses, generic
+protocol operations, partial specialization, or overload ranking. Result bounds
+are explicit consumer contracts; they are not declared implicitly on a family.
+
 ### Conformance blocks
 
 The block applies the concept to one pattern per concept parameter. Each

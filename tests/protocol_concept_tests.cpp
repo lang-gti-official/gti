@@ -6,7 +6,9 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <string>
 
 namespace lang {
@@ -1613,6 +1615,377 @@ for <T> concept counted<T[3]> {
              "  unit_type measure(T& item);\n};\n",
          "protocol concepts and blocks should normalize to the canonical "
          "layout");
+
+  {
+    std::ifstream input(root /
+                        "tests/fixtures/associated_type_families_aliases.gti");
+    expect(static_cast<bool>(input), "family class-alias fixture is readable");
+    const std::string source{std::istreambuf_iterator<char>(input),
+                             std::istreambuf_iterator<char>()};
+    accepted(
+        source,
+        "class aliases preserve normalized family projections through HIR");
+  }
+  rejected(R"gti(
+concept C<P> { typename value<std::integral T>; };
+struct Policy {};
+for concept C<Policy> { using value<std::integral T> = T; };
+struct Invalid { using Value = C<Policy>::value<double>; };
+int main() { return 0; }
+)gti",
+           "GTI-S2029", "std::integral");
+  const std::string identityFamily = R"gti(
+concept identity_family<P> { typename value<T>; };
+struct Policy {};
+for concept identity_family<Policy> { using value<U> = U; };
+)gti";
+  rejected(identityFamily + R"gti(
+using Ref = identity_family<Policy>::value<int&>;
+int main() { return 0; }
+)gti",
+           "GTI-S2030", "Reference aliases are not supported");
+  rejected(identityFamily + R"gti(
+struct Holder<T> {
+  using Ref = identity_family<Policy>::value<T>;
+  Holder() = default;
+};
+int main() { Holder<int&> value{}; return 0; }
+)gti",
+           "GTI-S2030", "Reference aliases are not supported");
+  accepted(
+      identityFamily + R"gti(
+[[borrowed_from(value)]] identity_family<Policy>::value<int&> view(int& value) {
+  return value;
+}
+int main() { int owner = 7; int& result = view(owner); return result - 7; }
+)gti",
+      "reference family arguments retain explicit borrowed result contracts");
+  const std::string genericOperationFamily = R"gti(
+concept maker<P> { typename item<T>; item<int> make(P& policy); };
+struct Policy<T> { T value; Policy(T input) : value(std::move(input)) {} };
+struct Pair<A, B> {
+  A left; B right;
+  Pair(A a, B b) : left(std::move(a)), right(std::move(b)) {}
+};
+for<std::integral T> concept maker<Policy<T>> {
+  using item<U> = Pair<T, U>;
+  item<int> make(Policy<T>& policy) { return Pair<T, int>(policy.value, 7); }
+};
+int main() {
+  Policy<int> policy{3};
+  maker<Policy<int>>::item<int> value = maker<Policy<int>>::make(policy);
+  return value.left + value.right - 10;
+}
+)gti";
+  accepted(
+      genericOperationFamily,
+      "generic conformance operations share family and owner substitutions");
+  {
+    const auto result = analyze(genericOperationFamily);
+    const auto definition = lang::LanguageQueries().definition(
+        result, result.sourceGraph.entryUnit(),
+        genericOperationFamily.rfind("item<int> make"));
+    expect(definition && definition->target.start ==
+                             genericOperationFamily.find("item<T>"),
+           "bare family use inside a conformance navigates to its contract");
+  }
+  const std::string families = R"gti(
+concept storage<P> {
+  typename tag;
+  typename buffer<Element>;
+  typename pair<Left, Right>;
+};
+struct Heap {};
+struct Inline {};
+struct Cell<T> {
+  T value;
+  Cell(T input) : value(std::move(input)) {}
+  T get() requires std::copyable<T> { return this.value; }
+};
+struct Slots<T> {
+  T value;
+  Slots(T input) : value(std::move(input)) {}
+  T get() requires std::copyable<T> { return this.value; }
+};
+struct Duo<A, B> {
+  A first; B second;
+  Duo(A one, B two) : first(std::move(one)), second(std::move(two)) {}
+};
+for concept storage<Heap> {
+  using tag = int;
+  using buffer<Item> = Cell<Item>;
+  using pair<X, Y> = Duo<X, Y>;
+};
+for concept storage<Inline> {
+  using tag = bool;
+  using buffer<Value> = Slots<Value>;
+  using pair<X, Y> = Duo<Y, X>;
+};
+concept reads<C, E> = requires(C& item) { { item.get() } -> E; };
+)gti";
+  accepted(families + R"gti(
+E read<P, E>(storage<P>::buffer<E>& item)
+  requires storage<P> && reads<storage<P>::buffer<E>, E> {
+  return item.get();
+}
+using Nested = storage<Heap>::buffer<storage<Inline>::buffer<int>>;
+int main() {
+  storage<Heap>::buffer<int> first{19};
+  storage<Inline>::buffer<int> second{23};
+  Nested nested{Slots<int>(5)};
+  storage<Heap>::pair<int, bool> pair{1, true};
+  storage<Inline>::pair<int, bool> reversed{false, 2};
+  return read<Heap, int>(first) + read<Inline, int>(second) - 42;
+}
+)gti",
+           "type families select unrelated containers and support explicit "
+           "generic contracts");
+  const std::string constructionContract = R"gti(
+concept builds<C, E> = requires(E& value) { { C(value) } -> C; };
+C construct<C, E>(E& value) requires builds<C, E> { return C(value); }
+)gti";
+  accepted(
+      families + constructionContract + R"gti(
+storage<P>::buffer<E> build<P, E>(E& value)
+  requires storage<P> && builds<storage<P>::buffer<E>, E> {
+  return construct<storage<P>::buffer<E>, E>(value);
+}
+int main() {
+  int value = 7;
+  storage<Heap>::buffer<int> item = build<Heap, int>(value);
+  return item.value - 7;
+}
+)gti",
+      "a projected result uses an explicit ordinary construction contract");
+  rejected(families + constructionContract + R"gti(
+storage<P>::buffer<E> build<P, E>(E& value) requires storage<P> {
+  return construct<storage<P>::buffer<E>, E>(value);
+}
+)gti",
+           "GTI-S2029", "builds<storage<P>::buffer<E>, E>");
+  accepted(
+      R"gti(
+concept observed_family<P> {
+  typename element<E>;
+  [[borrowed_from(source)]] element<int> get(P source);
+};
+class Reading {
+public:
+  int& external;
+  Reading(int& owner) : external(owner) {}
+};
+for concept observed_family<Reading> {
+  using element<Value> = Value&;
+  [[borrowed_from(value)]] int& get(Reading value) { return value.external; }
+};
+[[borrowed_from(value)]] observed_family<P>::element<int> relay<P>(P value)
+  requires observed_family<P> { return observed_family<P>::get(std::move(value)); }
+int main() { int owner = 7; Reading view{owner}; int& result = relay(view); return result - 7; }
+)gti",
+      "family result references retain the explicit protocol borrow origin");
+  rejected(R"gti(
+concept reference_policy<P> { typename loan<E>; };
+struct Policy {};
+for concept reference_policy<Policy> { using loan<U> = mut U&; };
+int main() { mut int owner = 7; reference_policy<Policy>::loan<int> view = owner; return 0; }
+)gti",
+           "GTI-S2017", "explicit reference declarator");
+  accepted(
+      R"gti(
+concept relation<P, Q> { typename item<A, B>; };
+struct Owner<T> {};
+struct Pair<A, B> {
+  A first; B second;
+  Pair(A one, B two) : first(std::move(one)), second(std::move(two)) {}
+};
+for <T, U> concept relation<Owner<T>, Owner<U>> {
+  using item<X, Y> = Pair<Pair<T, X>, Pair<U, Y>>;
+};
+int main() {
+  Pair<int, char> first{3, 'x'};
+  Pair<bool, int> second{true, 4};
+  relation<Owner<int>, Owner<bool>>::item<char, int> value{first, second};
+  return value.first.first + value.second.second - 7;
+}
+)gti",
+      "concept and family binders substitute independently and positionally");
+  accepted(R"gti(
+concept numeric_family<P> { typename number<std::integral T>; };
+struct Policy {};
+for concept numeric_family<Policy> { using number<std::integral U> = U; };
+int main() { numeric_family<Policy>::number<int> value = 42; return value - 42; }
+)gti",
+           "family parameter constraints admit renamed implementation binders");
+  accepted(
+      R"gti(
+concept factory<P> { typename box<T>; box<int> make(int value); };
+struct Policy {};
+struct Box<T> { T value; Box(T item) : value(std::move(item)) {} };
+for concept factory<Policy> {
+  using box<X> = Box<X>;
+  box<int> make(int value) { box<int> result{value}; return result; }
+};
+factory<P>::box<int> produce<P>(int value) requires factory<P> {
+  return factory<P>::make(value);
+}
+int main() { Box<int> result = produce<Policy>(42); return result.value - 42; }
+)gti",
+      "family applications in operation signatures resolve in both scopes");
+  rejected(families + "using Bad = storage<Heap>::buffer;", "GTI-S2123",
+           "takes 1 type arguments");
+  rejected(families + "using Bad = storage<Heap>::buffer<int, bool>;",
+           "GTI-S2123", "takes 1 type arguments");
+  rejected(families + "using Bad = storage<Heap>::tag<int>;", "GTI-S2123",
+           "takes 0 type arguments");
+  reportedOnce(families + "using Bad = storage<Heap>::buffer<int, bool>;",
+               "GTI-S2123", "using Bad = storage<Heap>::", "buffer");
+  rejected(families + R"gti(
+void takes<P>(storage<P>::buffer<int>& item) requires storage<P> {}
+void wrong<P>(storage<P>::buffer<bool>& item) requires storage<P> { takes<P>(item); }
+)gti",
+           "GTI-S2003", "Argument 1 has type 'storage<P>::buffer<bool>'");
+  rejected(families + R"gti(
+int bad<P, E>(storage<P>::buffer<E>& item) requires storage<P> { return item.get(); }
+)gti",
+           "GTI-S2000", "class or struct value");
+  rejected(families + R"gti(
+int bad<P, E>(storage<P>::buffer<E>& item) { return 0; }
+)gti",
+           "GTI-S2123", "requires 'requires storage<P>'");
+  rejected(R"gti(
+concept C<P> { typename result<T>; };
+struct Policy {};
+for concept C<Policy> { using result = int; };
+)gti",
+           "GTI-S2123", "requires 1 type parameters");
+  rejected(R"gti(
+concept C<P> { typename result; };
+struct Policy {};
+for concept C<Policy> { using result<T> = T; };
+)gti",
+           "GTI-S2123", "requires 0 type parameters");
+  rejected(R"gti(
+concept C<P> { typename result<T>; };
+struct Policy {};
+for concept C<Policy> {};
+)gti",
+           "GTI-S2123", "does not define associated type 'result'");
+  rejected("concept C<P> { typename result<P>; };", "GTI-S2123",
+           "cannot shadow");
+  rejected("concept C<P> { typename result<T, T>; };", "GTI-S2000",
+           "Duplicate generic type parameter");
+  rejected("concept C<P> { typename result<T = int>; };", "GTI-S2123",
+           "without packs");
+  rejected("concept C<P> { typename result<uint64_t N>; };", "GTI-S2123",
+           "without packs");
+  rejected("concept C<P> { typename result<T...>; };", "GTI-S2123",
+           "without packs");
+  rejected("using Alias<T> = T;", "GTI-S2123",
+           "belongs in a conformance block");
+  rejected(R"gti(
+concept C<P> { typename result<T>; };
+struct Policy {};
+for concept C<Policy> { using result<T> = Missing; };
+)gti",
+           "GTI-S2000", "Missing");
+  rejected(R"gti(
+concept C<P> { typename result<T>; };
+struct Policy {};
+for concept C<Policy> { using result<U> = T; };
+)gti",
+           "GTI-S2000", "Unknown type 'T'");
+  rejected(R"gti(
+concept C<P> { typename result<T>; };
+struct Policy {};
+for concept C<Policy> { using result<T> = C<Policy>::result<T>; };
+)gti",
+           "GTI-S2123", "cyclic");
+  rejected(R"gti(
+concept C<P> { typename first<T>; typename second<U>; };
+struct Policy {};
+for concept C<Policy> { using first<X> = second<X>; using second<Y> = first<Y>; };
+)gti",
+           "GTI-S2123", "cyclic");
+  rejected(R"gti(
+concept C<P> { typename result<T>; };
+struct Policy {};
+for concept C<Policy> { using result<T> = T; };
+for concept C<Policy> { using result<U> = U; };
+)gti",
+           "GTI-S2123", "overlap");
+  rejected(R"gti(
+concept C<P> { typename result<std::integral T>; };
+struct Policy {};
+for concept C<Policy> { using result<U> = U; };
+)gti",
+           "GTI-S2123", "constraints must match");
+  rejected(R"gti(
+concept C<P> { typename result<std::integral T>; };
+struct Policy {};
+for concept C<Policy> { using result<std::integral U> = U; };
+using Invalid = C<Policy>::result<double>;
+)gti",
+           "GTI-S2029", "does not satisfy");
+  rejected(R"gti(
+concept C<P> { typename result<T>; };
+struct Policy<X> {};
+for <X> concept C<Policy<X>> { using result<X> = X; };
+)gti",
+           "GTI-S2123", "cannot shadow");
+  rejected(R"gti(
+concept C<P> { typename result<T>; };
+struct Policy {};
+struct Pair<A, B> {};
+for concept C<Policy> {
+  using result<T> = Pair<C<Policy>::result<Pair<T, T>>, C<Policy>::result<Pair<T, T>>>;
+};
+)gti",
+           "GTI-S2123", "cyclic");
+  {
+    const std::string source =
+        families +
+        "using Value = storage<Heap>::buffer<int>;\nint main() { return 0; }\n";
+    const auto result = analyze(source);
+    const auto unit = result.sourceGraph.entryUnit();
+    const auto at = source.rfind("buffer<int>");
+    const auto definition =
+        lang::LanguageQueries().definition(result, unit, at);
+    expect(definition &&
+               definition->target.start == source.find("buffer<Element>"),
+           "family application navigation targets the declared contract");
+    const auto binder = source.find("Cell<Item>") + 5;
+    const auto input = lang::LanguageQueries().definition(result, unit, binder);
+    expect(
+        input && input->target.start == source.find("buffer<Item>") + 7,
+        "implementation family inputs navigate to their own renamed binders");
+    const auto hover = lang::LanguageQueries().hover(result, unit, at);
+    expect(hover && hover->signature.find("Cell<int32_t>") != std::string::npos,
+           "family application hover exposes its concrete semantic type: " +
+               (hover ? hover->signature : "absent"));
+    const std::string incomplete =
+        families + "using Selected = storage<Heap>::buf;\n";
+    const auto completion = lang::LanguageQueries().complete(
+        {.entryPath = root / "tests" / "protocol-concepts.gti",
+         .source = incomplete,
+         .byteOffset = incomplete.rfind("::buf") + 5,
+         .preludePaths = {root / "stdlib" / "prelude.gti"},
+         .standardLibraryRoots = {root / "stdlib"}});
+    expect(std::any_of(completion.candidates.begin(),
+                       completion.candidates.end(),
+                       [](const auto &candidate) {
+                         return candidate.label == "buffer";
+                       }),
+           "incomplete projected type completion offers the family contract");
+    const std::string formattedFamily =
+        "concept C<P> {\n  typename result<T, U>;\n};\n"
+        "for concept C<int> {\n  using result<A, B> = Pair<A, B>;\n};\n";
+    const auto normalized = lang::Formatter().format(formattedFamily);
+    expect(normalized.find("typename result<T, U>;") != std::string::npos &&
+               normalized.find("using result<A, B> = Pair<A, B>;") !=
+                   std::string::npos &&
+               lang::Formatter().format(normalized) == normalized,
+           "family declarations and definitions format idempotently");
+  }
 
   if (failures != 0) {
     std::cerr << failures << " protocol concept checks failed\n";

@@ -1,0 +1,8 @@
+manifest-version = 1
+[package]
+name = "compiled-right"
+version = "0.1.0"
+[targets.right]
+kind = "gti-library"
+root = "library.gti"
+functions = ["right_value"]

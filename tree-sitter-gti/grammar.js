@@ -254,6 +254,7 @@ module.exports = grammar({
         seq(
           "using",
           field("name", $.identifier),
+          optional(field("type_parameters", $.generic_parameter_clause)),
           "=",
           optional("mut"),
           field("target", $.type),
@@ -356,7 +357,8 @@ module.exports = grammar({
       ),
 
     associated_type_declaration: ($) =>
-      seq("typename", field("name", $.identifier), ";"),
+      seq("typename", field("name", $.identifier),
+          optional(field("type_parameters", $.generic_parameter_clause)), ";"),
 
     conformance_declaration: ($) =>
       seq(
@@ -560,7 +562,7 @@ module.exports = grammar({
       seq(
         optional(field("implicit", "implicit")),
         optional(field("unsafe", "unsafe")),
-        optional("constexpr"),
+        optional(choice("constexpr", "consteval")),
         field("name", $.identifier),
         optional(field("type_parameters", $.generic_parameter_clause)),
         field("parameters", $.parameter_clause),
@@ -611,7 +613,7 @@ module.exports = grammar({
         optional(field("unsafe", "unsafe")),
         optional(field("virtual", "virtual")),
         optional(field("storage", "static")),
-        optional(field("constant", "constexpr")),
+        optional(field("constant", choice("constexpr", "consteval"))),
         optional(field("return_mutable", "mut")),
         $._method_declaration_body,
       ),
@@ -633,7 +635,7 @@ module.exports = grammar({
         seq(
           repeat(field("attribute", $.function_contract_attribute)),
           optional(field("virtual", "virtual")),
-          optional(field("constant", "constexpr")),
+          optional(field("constant", choice("constexpr", "consteval"))),
           optional(field("return_mutable", "mut")),
           $._operator_declaration_body,
         ),
@@ -642,7 +644,7 @@ module.exports = grammar({
         seq(
           optional(field("implicit", "implicit")),
           optional(field("virtual", "virtual")),
-          optional(field("constant", "constexpr")),
+          optional(field("constant", choice("constexpr", "consteval"))),
           "operator",
           // The parameter clause follows, so `bool()` is not a signature.
           field("conversion_type", $._non_function_type),
@@ -736,7 +738,7 @@ module.exports = grammar({
         optional(field("unsafe", "unsafe")),
         optional(field("virtual", "virtual")),
         optional(field("storage", "static")),
-        optional(field("constant", "constexpr")),
+        optional(field("constant", choice("constexpr", "consteval"))),
         optional(field("return_mutable", "mut")),
         $._function_declaration_body,
       ),
