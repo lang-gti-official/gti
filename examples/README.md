@@ -342,6 +342,7 @@ is a teaching helper, not a production server.
 | `129-generic-payload-enums.gti` | exact generic messages with default/value arguments, owning inbox transport, borrowed payload patterns and optional `class` spelling |
 | `130-fresh-result-initialization.gti` | fresh same-type factory results, redundant typed wrappers, immovable owning values and final-address identity |
 | `131-inferred-references.gti` | local shared/exclusive `auto&` references, last-use borrowing and a reference into a decoded JSON document kept alive by its owner |
+| `182-bounded-array-borrows.gti` | exact fixed-array borrows, inferred mutable references and generic sensor-buffer operations without copying storage |
 | `133-raw-text-owner-views.gti` | counted and zero-terminated text views derived from an unrelated inline byte owner, with the unsafe bridge's checked borrow tied to that owner |
 | `134-standard-library-modules.gti` | standard-library units imported as `std.name` modules instead of included, with each import exposing exactly its own unit |
 | `135-inline-polymorphic-values.gti` | application interfaces owned by `std::inline_polymorphic`, with inline sensors, boxed fallback, vector growth, replacement, and consuming inline invocation |

@@ -2927,12 +2927,28 @@
         "concrete_instance_adapter": 13,
         "thread_local_storage": 0
       }
+    },
+    "182-bounded-array-borrows.gti": {
+      "declarations": 1829,
+      "bodies": 156,
+      "generated_items": 80,
+      "generated_kinds": {
+        "program_initialization": 1,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 31,
+        "callable_adapter": 19,
+        "lifecycle_cleanup": 5,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 23,
+        "thread_local_storage": 0
+      }
     }
   },
   "totals": {
-    "declarations": 223159,
-    "bodies": 28209,
-    "generated_items": 16593
+    "declarations": 224988,
+    "bodies": 28365,
+    "generated_items": 16673
   },
   "target": "arm64-apple-macos",
   "variants": {
@@ -2972,9 +2988,9 @@
         }
       },
       "totals": {
-        "declarations": 223159,
-        "bodies": 28207,
-        "generated_items": 16591
+        "declarations": 224988,
+        "bodies": 28363,
+        "generated_items": 16671
       }
     }
   }

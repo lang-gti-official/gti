@@ -61,7 +61,8 @@ def equivalent(cases: tuple[CaseContext, ...], root: Path) -> None:
                 "output_required": True, "oracle": "reviewed MIR body census"}
             if native_only:
                 expected_observation["cpp_rejection"] = (
-                    "GTI-B0003: general sizeof/alignof" if source.name == "181-general-object-layout.gti"
+                    "GTI-B0003: generic fixed-array reference signatures" if source.name == "182-bounded-array-borrows.gti"
+                    else "GTI-B0003: general sizeof/alignof" if source.name == "181-general-object-layout.gti"
                     else "GTI-B0003: aggregate constant publication" if source.name == "183-immediate-functions.gti"
                     else "GTI-B0003: wrapping atomic read-modify-write")
             assert declared["compile_observation"] == expected_observation
@@ -139,7 +140,9 @@ def main() -> None:
                                *(["--execution-profile", "concurrent"]
                                  if source.name in PRE_EXTRACTION_CONCURRENT else []), "-o", str(output)]
             assert output.read_bytes() == b"preserved unsupported output"
-            rejection = ("GTI-B0003: general sizeof/alignof"
+            rejection = ("GTI-B0003: generic fixed-array reference signatures"
+                         if source.name == "182-bounded-array-borrows.gti"
+                         else "GTI-B0003: general sizeof/alignof"
                          if source.name == "181-general-object-layout.gti"
                          else "GTI-B0003: aggregate constant publication" if source.name == "183-immediate-functions.gti"
                          else "GTI-B0003: wrapping atomic read-modify-write")

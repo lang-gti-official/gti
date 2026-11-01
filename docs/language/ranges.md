@@ -274,10 +274,12 @@ analysis replaces them with the selected source declarations or fixed-array
 strategy before HIR; HIR/MIR never carry an unresolved public associated type
 or delegate range selection to C++.
 
-The fixed-array case applies to a written reference parameter whose bare
-generic type is substituted with the array, such as `Range&` or `mut Range&`.
-It does not enable explicitly spelled or aliased array-reference parameters,
-array-reference storage or returns, or array-reference callback signatures.
+Fixed-array substitution through `Range&` or `mut Range&` now uses the same
+general [fixed-array borrow contract](ownership-and-lifetimes.md#fixed-array-borrows)
+as explicit `T[N]&`, aliases, and inferred local references. Exact extents,
+read/exclusive access, checked return origins and ordinary stored/captured
+borrow lifetimes survive concrete range instantiation. A generic body still
+needs its range constraints to prove symbolic operations before instantiation.
 
 `std.functional` similarly provides `std::range_predicate<Predicate, Range>`
 and `std::range_operation<Operation, Range, Result>`. They derive the exact

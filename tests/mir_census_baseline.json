@@ -182,9 +182,10 @@
     "182-associated-type-families.gti": 281,
     "183-immediate-functions.gti": 11,
     "184-payload-borrow-chains.gti": 11,
-    "185-reflected-method-dispatch.gti": 47
+    "185-reflected-method-dispatch.gti": 47,
+    "182-bounded-array-borrows.gti": 156
   },
-  "total": 28087,
+  "total": 28243,
   "target": "arm64-apple-macos",
   "variants": {
     "x86_64-unknown-linux": {
@@ -192,7 +193,7 @@
         "087-associative-containers.gti": 451,
         "089-library-workflow.gti": 917
       },
-      "total": 28085
+      "total": 28241
     }
   }
 }

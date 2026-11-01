@@ -122,6 +122,19 @@ contracts. Concrete generic reanalysis records the concrete reference, not a
 second inference rule. HIR/MIR consume resolved binding/access and loan facts;
 the backend never asks C++ `auto&` to decide type or lifetime semantics.
 
+Fixed-array referents use this same path. `validateReferencePlacement` and
+`validateReferenceReferent` admit the resolved array type rather than making
+an exception for a generic range parameter. Exact binding checks retain all
+extents. Semantic places and loans carry origin, access, reborrow and endpoint
+facts into HIR/MIR; no array-specific lifetime system or nominal SIMD permission
+is introduced. Existing MIR reference carriers and checked array projections
+provide native execution without array copies or runtime extent metadata.
+LLVM admission resolves loan-rooted array projections from the verified loan's
+producer/referent type, including direct indexing of a returned borrow. MIR
+provenance queries resolve an exact dereferenced capture slot to its entry loan;
+selected fields/elements retain their separate identity. A same-typed captured
+array cannot substitute another capture's loan at a call boundary.
+
 ## Generic payload enum signatures
 
 Nominal registration inventories class and enum identities and their ordinary

@@ -245,6 +245,12 @@ endif()
 add_executable(gti_local_reference_inference_tests local_reference_inference_tests.cpp)
 target_link_libraries(gti_local_reference_inference_tests PRIVATE gti_cpp_backend)
 add_test(NAME local_reference_inference COMMAND gti_local_reference_inference_tests)
+add_executable(gti_bounded_array_borrows_tests bounded_array_borrows_tests.cpp)
+target_link_libraries(gti_bounded_array_borrows_tests PRIVATE gti_cpp_backend)
+add_test(NAME bounded_array_borrows COMMAND gti_bounded_array_borrows_tests)
+add_test(NAME bounded_array_borrows_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/bounded_array_borrows_runtime_test.py" $<TARGET_FILE:gti>)
+set_tests_properties(bounded_array_borrows_runtime PROPERTIES TIMEOUT 300)
 add_test(NAME local_reference_inference_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/local_reference_inference_runtime_test.py" $<TARGET_FILE:gti>)
 set_tests_properties(local_reference_inference_runtime PROPERTIES TIMEOUT 300)
