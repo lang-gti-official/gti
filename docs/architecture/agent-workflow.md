@@ -704,8 +704,14 @@ advisory-CI policy. `.github/workflows/ci.yml` reports one required check,
 `validation_checks.py ci-mode` classifies the candidate from its diff. A
 conservative automation-only diff (docs and the workflow scripts with their own
 tests) runs the inexpensive gates; CMake, compiler tests, runtime, packaged
-scripts, release packaging, CI workflow files and unknown paths select full
-coverage, so a change to an integration job is itself validated by it. The
+scripts, release packaging, integration/build workflows and unknown paths select full
+coverage, so a change to an integration job is itself validated by it. Only the
+explicit orchestration allowlist (`rollup.yml`, `train.yml`, `backport.yml`,
+`rollback.yml`) can use automation mode. Their lint and workflow regressions
+remain mandatory on both PRs and merge groups. Changes to validation routing,
+batch selection or named-test sharding always select full coverage, even when
+combined with an allowed workflow. Mixed candidates inherit full coverage from
+any non-automation path; adding a new workflow does not automatically exempt it. The
 classification step binds `github.event_path` to `GTI_EVENT_PATH` and rejects
 missing or non-file payloads before running the classifier.
 
