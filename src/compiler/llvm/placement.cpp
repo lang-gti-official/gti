@@ -114,6 +114,7 @@ freshConstructionDestination(const MirProgram &program, MirBodyAddress address,
       producer.info.category == ValueCategory::Value;
   if (findMirBody(program, address) != &body ||
       (address.kind != MirBodyKind::Function &&
+       address.kind != MirBodyKind::Lambda &&
        address.kind != MirBodyKind::Constructor &&
        address.kind != MirBodyKind::Destructor &&
        address.kind != MirBodyKind::FieldInitializers &&
@@ -190,6 +191,10 @@ freshConstructionDestination(const MirProgram &program, MirBodyAddress address,
   if (address.kind == MirBodyKind::Constructor)
     parameters =
         &program.findConstructorInstance(address.owner)->parameterBindings;
+  // Lambda locals have the same publication contract as function locals.
+  // Captures are excluded above, and incoming parameters already own objects.
+  if (address.kind == MirBodyKind::Lambda)
+    parameters = &program.findLambda(address.owner)->parameterBindings;
   if (parameters && std::find(parameters->begin(), parameters->end(),
                               place->binding) != parameters->end())
     return {};
@@ -1014,6 +1019,7 @@ public:
       unsupported("LLVM fresh hierarchy transfer excludes borrowed values");
     // A thread-local initializer returns into its thread's storage slot.
     if (identity.kind != MirBodyKind::Function &&
+        identity.kind != MirBodyKind::Lambda &&
         identity.kind != MirBodyKind::Constructor &&
         identity.kind != MirBodyKind::Destructor &&
         identity.kind != MirBodyKind::ThreadLocalInitializer)
@@ -1575,18 +1581,6 @@ private:
         malformed("LLVM payload relocation lost its exact drop obligation");
       return *found;
     };
-    const std::vector<HirBindingId> *parameters =
-        identity.kind == MirBodyKind::Function
-            ? &program.findFunctionInstance(identity.owner)->parameterBindings
-        : identity.kind == MirBodyKind::Constructor
-            ? &program.findConstructorInstance(identity.owner)
-                   ->parameterBindings
-            : nullptr;
-    const auto parameter = [&](const MirPlace &place) {
-      return parameters && place.root == MirPlaceRootKind::Binding &&
-             std::find(parameters->begin(), parameters->end(), place.binding) !=
-                 parameters->end();
-    };
     const auto bindingObligation =
         [&](const MirPlace &place) -> const MirDropObligation * {
       const MirDropObligation *found = nullptr;
@@ -1863,7 +1857,6 @@ private:
     const auto *destination = task || argument || element || returned
                                   ? nullptr
                                   : body.findPlace(*publication->destination);
-    const auto *formal = parameters;
     if (!task && !argument && !element && !returned &&
         (!destination || destination->root != MirPlaceRootKind::Binding ||
          !destination->binding || destination->capture ||
@@ -1871,8 +1864,7 @@ private:
          destination->type != type || destination->initiallyAvailable ||
          (place->root == MirPlaceRootKind::Binding &&
           destination->binding == place->binding) ||
-         (formal && std::find(formal->begin(), formal->end(),
-                              destination->binding) != formal->end())))
+         parameter(*destination)))
       unsupported("LLVM payload relocation destination is not a fresh whole "
                   "local");
     if (!task && !argument && !element && !returned &&
@@ -2231,6 +2223,8 @@ private:
     const std::vector<HirBindingId> *formal = nullptr;
     if (identity.kind == MirBodyKind::Function)
       formal = &program.findFunctionInstance(identity.owner)->parameterBindings;
+    else if (identity.kind == MirBodyKind::Lambda)
+      formal = &program.findLambda(identity.owner)->parameterBindings;
     else if (identity.kind == MirBodyKind::Constructor)
       formal =
           &program.findConstructorInstance(identity.owner)->parameterBindings;
@@ -2280,19 +2274,11 @@ private:
         place.capture || place.foreignStorage || !place.projections.empty() ||
         place.type.kind != SemanticType::Class)
       return false;
-    if (identity.kind == MirBodyKind::Function) {
-      const auto &formal =
-          program.findFunctionInstance(identity.owner)->parameterBindings;
-      return std::find(formal.begin(), formal.end(), place.binding) ==
-             formal.end();
-    }
-    if (identity.kind == MirBodyKind::Constructor) {
-      const auto &formal =
-          program.findConstructorInstance(identity.owner)->parameterBindings;
-      return std::find(formal.begin(), formal.end(), place.binding) ==
-             formal.end();
-    }
-    return identity.kind == MirBodyKind::Destructor;
+    return (identity.kind == MirBodyKind::Function ||
+            identity.kind == MirBodyKind::Lambda ||
+            identity.kind == MirBodyKind::Constructor ||
+            identity.kind == MirBodyKind::Destructor) &&
+           !parameter(place);
   }
   static bool simpleLoan(const MirLoan &loan) {
     return !loan.referenceSelection && !loan.storedDependency &&
