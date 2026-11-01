@@ -49,7 +49,8 @@ coherent checkpoints and a draft PR; retain live run IDs and exact evidence.
 Follow the current [wave assignments](../../../docs/plans/implementation-sequence.md#llvm-campaign-waves-and-validation).
 Workers edit only their agreed files. The coordinator owns shared registrations
 in `body.cpp`, admission/coverage inventories, root/test CMake lists, common plan
-status and VERSION unless a specific bounded ownership transfer is recorded.
+status and changelog-fragment coordination unless a specific bounded ownership
+transfer is recorded. Only the release train edits VERSION and CHANGELOG.md.
 Propose those patches with exact insertion points; do not independently rewrite
 shared dispatch/planning files. The coordinator may transfer a specific shared
 section or registration to its milestone owner, recording the boundary so other
@@ -120,7 +121,9 @@ For generated execution, preserve required optimization levels and cleanup/
 source-attribution assertions. Run representative optimized cost probes with
 noise controlled; do not make timing claims while other work saturates the
 measurement host. Inspect native C oracles on each targeted ABI. A macOS-only
-result is not Linux ABI evidence, and CI is not a substitute or completion gate.
+result is not Linux ABI evidence. CI does not substitute for the milestone's
+required targeted platform/performance evidence; the normal full integration
+CI gate still applies before merge.
 
 ## Checkpoints And Completion
 

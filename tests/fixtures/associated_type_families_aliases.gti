@@ -1,0 +1,39 @@
+concept mapping<Policy> { typename value<Element>; };
+struct Identity {};
+struct Wrapped {};
+struct Owner<T> {};
+struct Box<T> {
+  T value;
+  Box(T input) : value(std::move(input)) {}
+};
+
+// Both concrete and generic class aliases are normalized by semantics before
+// HIR. The mappings can be declared after the aliases that name them.
+struct Names {
+  using Scalar = mapping<Identity>::value<int>;
+  using Payload = mapping<Wrapped>::value<int>;
+};
+struct Generic<T> {
+  using Scalar = mapping<Identity>::value<T>;
+  Scalar value;
+  Generic(Scalar input) : value(std::move(input)) {}
+};
+struct Pattern<std::integral T> {
+  using Scalar = mapping<Owner<T>>::value<bool>;
+  Scalar value;
+  Pattern(Scalar input) : value(input) {}
+};
+
+for concept mapping<Identity> { using value<T> = T; };
+for concept mapping<Wrapped> { using value<T> = Box<T>; };
+for<std::integral T> concept mapping<Owner<T>> { using value<U> = T; };
+
+using Chained = mapping<Identity>::value<Names::Scalar>;
+
+int main() {
+  Chained scalar = 10;
+  Names::Payload boxed{11};
+  Generic<int> generic{10};
+  Pattern<int> pattern{11};
+  return scalar + boxed.value + generic.value + pattern.value - 42;
+}

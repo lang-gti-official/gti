@@ -1332,6 +1332,17 @@ identities, executable-edge retraction, or failure to converge fail closed.
 The safety regression suite and an independent FIFO oracle preserve the
 pre-migration fixed point; SCCP is the first new client.
 
+The FIFO stores a solver-private work-item wrapper rather than a bare block
+ID. This keeps its C++ container instantiation distinct from prebuilt LLVM
+libraries: otherwise the linker may coalesce annotated libc++ queue operations
+with uninstrumented operations for the same integer element type. The wrapper
+changes neither queue order nor update/widening cadence, and sanitizer container
+checks remain enabled. Capture-flow, capture-summary and persistent-storage
+effect queues use their own private wrappers for the same linkage boundary,
+without sharing phase-specific scheduling policy. A repeated-scheduling
+regression crosses queue storage boundaries while checking the exact fixed
+point and update counts.
+
 `analyzeMirLoops` derives natural loops from dominance backedges, merges
 multiple latches with one header, builds a deterministic strict-containment
 loop forest, and marks irreducible multi-entry SCCs. Within reducible loops it
@@ -1467,6 +1478,109 @@ Native callable and cleanup regressions exercise failing inputs as well as
 successful execution. Performance remains a measured acceptance obligation:
 this preference is not a claim about the frequency or speed of every
 application's failure path.
+LLVM lowering preserves two kinds of successful-execution facts for its normal
+optimization pipeline: explicit verified safety discharges become assumptions
+on their exact detector, and checked scalar arithmetic yields a no-wrap result
+only after the overflow guard or its verified discharge. These are representation
+choices over sealed MIR, not additional source-level proofs or new MIR passes.
+After LLVM optimization, matching dominating overflow-result lanes are reused
+to keep checked arithmetic from becoming duplicate machine operations. Recovery
+also handles complete edge-wise PHI matches and exactly equivalent full-domain
+constant-range detectors, retaining every failure predicate and CFG edge.
+Reconstruction stays in the same block or on an immediate guarded-success edge;
+cheap single-comparison guards remain unchanged unless needed for complete PHI
+reuse. Compound biased predicates remain eligible. These conservative frequency
+and profitability boundaries preserve conditional-counter scheduling.
+The backend contract and wrapping/poison boundary are documented under
+[LLVM scalar execution](backend.md#llvm-scalar-execution). Broader benefits must
+be measured per workload; neither mechanism establishes general bounds-check
+elimination, alias freedom, or vectorization by itself.
+
+### Guarded checked reductions
+
+At LLVM O2/O3, a bounded representation-level pass runs after inlining and
+before vectorization. It recognizes innermost equality-terminated traversals
+whose integer index starts at zero and advances by one. The independent
+iteration bound comes from modular unit-step traversal, not an overflow exit,
+`nsw`/`nuw` flags, or a circular scalar-evolution proof. Comparing the current
+index permits at most `bound` backedges; comparing the next index permits
+`bound - 1` in the index's unsigned width, including a full traversal for zero.
+
+A separate reduction starts at a nonnegative literal and carries only
+nonnegative constant additions, PHIs and selects back to its header. Its
+maximum addition per iteration bounds every intermediate in that update DAG.
+The initial profile optimizes one reduction per transformed loop.
+The pass uses the conservative nonnegative signed range even for unsigned
+values. If the traversal's whole domain does not fit, one preheader guard
+selects a fast loop or an unchanged checked fallback. Only exit comparisons
+proved constant for the admitted range are replaced. Other checks, calls,
+memory effects and cleanup edges retain their original order. This applies to
+ordinary counters and conditional weighted reductions without recognizing
+library declarations or type names. LLVM can then vectorize eligible loops;
+vectorization and a speedup are not guaranteed for every admitted shape.
+
+The guard and fast latch share one frozen bound so `undef` cannot select a
+small bound at entry and a different target each iteration. The first update
+must be safe independently of the bound, preserving paths that exit before a
+poison bound would originally be consumed. Cloning repairs every external PHI,
+and each edit invalidates and reacquires function analyses. The pass rejects
+nonduplicable/convergent operations, local allocas, EH/address-taken blocks,
+already-versioned/vectorized loops, and size-optimized functions. It admits at
+most 128 instructions/16 blocks per loop, 1,024 cloned body instructions per
+function, and 32 transformations. Decreasing or dynamic steps, reset recurrences,
+outer loops containing subloops and arbitrary relational bounds remain outside
+this profile.
+
+`llvm_checked_reductions` exhaustively compares small-width checked and
+transformed executions, including fallback, wraparound, effects and poison
+controls. `llvm_checked_reduction_runtime` checks native results, exact failure
+locations and destructor order at LLVM O0/O2/O3 against the existing C++ oracle.
+These are correctness gates; comparative performance workloads remain manual.
+
+### Guarded checked scans
+
+LLVM O2/O3 also specializes bounded unit-step scans after inlining. The proof
+uses integer recurrence structure, independent of overflow-check exits,
+`nsw`/`nuw`, scalar-evolution exit counts, source names, or container identities.
+The initial profiles are:
+
+- Increasing: `next = index + 1` and a latch continuing while `next != stop`,
+  or a header continuing while `index != stop`. The header success must dominate
+  both every removed check and the latch. A guard `start < stop && stop < length`
+  proves current/next indices fit every selected unsigned `index < length` check.
+- Decreasing: `next = index - 1` and an unsigned `next > stop` latch.
+  `start > 0 && start < length` proves current indices lie in `[1, start]` and
+  next indices in `[0, start - 1]`: the latch cannot continue from zero.
+
+Each specialization selects an unchanged checked fallback when its guard fails.
+Empty-loop behavior, other early exits, arithmetic checks, memory effects and
+cleanup retain their order. The same frozen start/stop/length values feed the
+selector and every corresponding fast-loop operand, so poison is not newly
+observed at entry and undef cannot vary the proof inputs across iterations.
+Loop-varying lengths, dynamic strides, signed/reversed latch families outside
+these profiles and noncanonical loop exits remain conservative.
+
+The reduction and scan passes share bounded cloning, version markers and exit
+PHI repair. Admission requires LoopSimplify and LCSSA; EH, address-taken blocks,
+nonduplicable operations, loops containing subloops, allocas, tokens and
+size-optimized functions are excluded. Each pass admits at most 128 instructions
+and 16 blocks per loop, 1,024 cloned instructions per function and 32
+transformations; a versioned
+loop is not cloned again by either pass. Analyses are invalidated after each edit.
+
+After a scan transformation, normal LLVM GVN load partial-redundancy elimination
+runs with backedge splitting permitted. This can expose a value carried through
+adjacent-element swaps instead of reloading it every iteration. LLVM's ordinary
+alias and memory analyses own that proof; GTI adds no alias promises and moves
+no memory operation in its scan proof. Unchanged functions do not receive this
+extra cleanup. Other loop-store transformations remain future work.
+
+`llvm_checked_ranges` compares small-width executions exhaustively, including
+shared exits, effects, first failing checks, wraparound, early/empty exits and
+poison/undef controls. `llvm_checked_range_runtime` compares user-defined element
+scans at LLVM O0/O2/O3 and C++ O3, including exact diagnostics and destruction
+order. Comparative benchmarks remain manual; specialization does not promise
+that a particular workload becomes faster or matches another language.
 
 ## Per-Instance Effects
 

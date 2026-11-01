@@ -322,7 +322,11 @@ The current implemented foundation includes:
   exact-value/default scalar initialization, and consuming
   `std::upcast_unique<Base, Derived>` functions. Swap exchanges the two owner
   tokens directly; it neither copies either pointee nor runs replacement
-  cleanup; and
+  cleanup. Allocated pointees must not retain checked borrowed state: the
+  unique owner does not carry external lifetime dependencies. This restriction
+  includes borrowing closure environments nested in user-defined payloads;
+  ordinary tracked local values and non-owning callable views remain supported;
+  and
 - `std.memory` `std::shared_ptr<T>` and `std::make_shared<T>` for explicit
   shared ownership: move-only handles with `clone()`, read-only dereference,
   null/default construction, null comparison, `use_count()`, reset, swap, and
@@ -360,7 +364,10 @@ The current implemented foundation includes:
   assignment from a counted view (`text = "Done";`) replaces the contents. Mutation retains capacity when
   sufficient and excludes any live view into the destination, including a
   replacement argument that aliases it. These operations count bytes, not
-  Unicode characters. This unit also provides
+  Unicode characters. Counted-view construction, append, clone and indexed
+  copies construct their complete character range before publishing one final
+  terminator and length; range checks and allocation precede that copy.
+  This unit also provides
   source-defined base-10 `std::to_string` conversion for every fixed-width
   integer, plus `print`/`println` traversal through either a read-only borrow
   of a named owner or direct ownership transfer from a fresh string result;
@@ -463,15 +470,15 @@ The current implemented foundation includes:
   explicit ownership transfer. `function` requires copy-constructible targets
   and exposes an explicit deep `clone()`; the wrapper itself is move-only, as
   with the other owning containers. `move_only_function` also accepts move-only
-  captures and has no clone. The four repeatable forms own their target in a
+  captures and has no clone. Repeatable and once-invoked forms own their target in a
   `std::inline_polymorphic<target, 32, 8>`: a target that is an
   `inline_polymorphic_payload` and fits the 32-byte slot (a vtable pointer plus
   up to 24 bytes of captures) is stored inline and moves with the wrapper, so
   constructing, replacing, cloning and moving it never allocate. Owning,
   cleanup-bearing or larger targets use `make_unique`; a boxed replacement is
   allocated before the current target is destroyed. The `R(Args...) &&` forms
-  keep a boxed target because consuming invocation projects ownership through
-  a unique-owner accessor. Invoking an empty wrapper follows checked
+  consume an inline or boxed target in place, retaining its remaining resources
+  through the outer receiver's full expression. Invoking an empty wrapper follows checked
   null-owner failure, not C++ exceptions.
   Borrowed captures/results, inferred fresh-lambda return types, global closure
   storage, and native callback conversion are outside this wrapper contract.
@@ -502,8 +509,8 @@ The current implemented foundation includes:
   `std::transfer_function<R(Args...)>`, `R(Args...) mut`, and `R(Args...) &&`
   owners whose target must be transferable at construction and replacement.
   Ordinary capability-qualified interfaces retain that proof through erasure;
-  no concurrent invocation or sharing is granted. The repeatable forms use
-  the existing inline/boxed policy, while consuming targets remain boxed; and
+  no concurrent invocation or sharing is granted. All three forms use the
+  inline/boxed policy, including consuming invocation; and
 - `std.numeric` public `std::accumulates_into<I, T>` and an ordinary
   source-defined default and operation-based `std::accumulate`, homogeneous
   default and operation-based `std::inner_product`, and unary
@@ -530,7 +537,8 @@ The current implemented foundation includes:
   a polymorphic `Interface`. `replace(value)` stores an
   `std::inline_polymorphic_payload<Model, Interface>` inline when its runtime
   layout fits `Bytes` and `Align`, and boxes any other model with
-  `make_unique`; `get()`, `has_value()`, `is_inline()` and `reset()` complete
+  `make_unique`; `get()`, `has_value()`, `is_inline()`, `reset()` and consuming
+  `invoke_once<R>(arguments...)` complete
   the surface. A payload is a concrete class publicly derived from
   `Interface` whose generated relocation cannot fail, whose cleanup runs no
   source code, that retains no checked borrow, and whose erasure grants no
@@ -540,8 +548,10 @@ The current implemented foundation includes:
   interface is recomputed from the new address. References from `get()`
   borrow the owner, so no checked reference observes a move. The private
   `gti_internal::polymorphic_storage` slot binds by declaration identity; its
-  preconditions are library invariants that trap if violated. Consuming
-  invocation of an inline payload is not yet provided;
+  preconditions are library invariants that trap if violated. `invoke_once<R>`
+  consumes the owner and invokes its interface's call operator; its result must
+  be an owning value or void. A live borrow from `get()` prevents consumption,
+  and the consumed owner cannot be invoked or inspected again;
 - `std.optional` source-defined move-only `std::optional<T>` for
   `std::move_constructible T`, including nested optionals whose payloads
   cannot be assigned. Payloads cannot contain borrowed state and cannot be
@@ -1053,8 +1063,14 @@ indices are checked against the initialized length before mutation. Equal
 uses ordinary defined-failure cleanup and leaves the sequence unchanged.
 
 Whole-vector `std::reverse` and both `std::sort` overloads accept relocatable
-move-only elements. Sort uses iterative introsort: median-of-three quicksort
-partitions, insertion sort for ranges of at most 16 elements, and heapsort for
+move-only elements. Sort uses adaptive iterative introsort. Whole inputs longer
+than 16 elements first receive a monotonic-order probe: a nondecreasing range
+is already finished, and a nonincreasing range is reversed with checked swaps.
+Equivalent prefixes and plateaus are supported. The probe stops at the first
+change in strict direction, without moving any element; ordered inputs need
+at most two comparisons per adjacent pair. Other inputs use median-of-three
+quicksort partitions (a median of three sampled medians for ranges longer
+than 40), insertion sort for ranges of at most 16 elements, and heapsort for
 any range that exhausts 2*floor(log2(n)) partition levels. Comparisons are
 O(n log n) in the worst case, auxiliary storage is a fixed-size stack, and
 elements move only by checked swaps, without copying a pivot or cloning
@@ -1250,11 +1266,11 @@ own binding. There is no implicit rebinding, shared ownership or reference count
 
 Resource owners compose like other borrowed carriers: a class may hold a
 `resource_vector` field constructed from a `resource_ref` parameter, and
-functions may fill a container through a `mut` reference. A free function
-cannot yet return a new owner built from a `resource_ref` parameter
-(`GTI-S2085`); that is the general rule for returning any borrowed carrier
-constructed from a by-value carrier parameter, not a resource-specific
-restriction. Construct the owner in the caller, or pass it by `mut` reference.
+functions may fill a container through a `mut` reference or return a new owner
+built from a `resource_ref` parameter. The return transfers the provider
+dependency into the returned owner; it remains live through that owner's
+cleanup. A by-value carrier parameter cannot free the provider while that
+returned owner is live.
 
 `process_resource` is a source wrapper over a narrow aligned raw allocation
 runtime interface, with distinct invalid-alignment, size-overflow and

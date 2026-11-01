@@ -1043,7 +1043,7 @@ private:
     return {.failure = ConstantEvaluationFailure::NonConstantReference};
   }
 
-  ConstantEvaluation compute(const MirInstruction &instruction,
+  ConstantEvaluation compute(Frame &frame, const MirInstruction &instruction,
                              const std::vector<ConstantValue> &values) {
     const auto &type = instruction.info.type;
     if (instruction.operation == MirOperation::PayloadConstruct &&
@@ -1076,6 +1076,14 @@ private:
     if (instruction.operation == MirOperation::Aggregate &&
         type.kind == SemanticType::Array)
       return arrayValue(type, values);
+    if (instruction.programConstantSubstitution &&
+        instruction.operation == MirOperation::Literal &&
+        !instruction.literal) {
+      for (const auto &value : frame.body.programConstantSubstitutions)
+        if (value.hirValue == instruction.hirValue)
+          return {.value = value.constant};
+      return {.failure = ConstantEvaluationFailure::InvalidOperands};
+    }
     if (instruction.operation == MirOperation::Literal && instruction.literal) {
       return evaluateConstantLiteral(*instruction.literal,
                                      constantIntegerDomain(type));
@@ -1451,7 +1459,7 @@ private:
       }
       break;
     case MirInstructionKind::Compute:
-      evaluated = compute(instruction, arguments);
+      evaluated = compute(frame, instruction, arguments);
       if (evaluated && instruction.operation == MirOperation::PayloadExtract &&
           instruction.payloadExtractionKind ==
               PayloadExtractionKind::BorrowValue) {

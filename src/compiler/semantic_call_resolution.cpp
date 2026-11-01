@@ -279,7 +279,8 @@ auto SemanticVisitor::Impl::callableSignatureRequirement(const Call &call) const
   if (contract == nullptr) {
     if (const DeferredCallableCallInfo *stored =
             semanticModel.findDeferredCallableCall(call);
-        stored != nullptr && stored->receiverBinding != 0) {
+        stored != nullptr &&
+        (stored->receiverBinding != 0 || stored->ownedReceiverProjection)) {
       CallableSignatureRequirement result{
           .source = &call,
           .returnType =
@@ -328,6 +329,13 @@ auto SemanticVisitor::Impl::analyzeDeferredCallableCall(
   const SymbolRecord *receiverSymbol = semanticModel.database().findSymbol(
       semanticModel.findResolvedSymbol(**receiver));
   const ExpressionInfo *receiverInfo = semanticModel.findExpression(**receiver);
+  const Call *move = directCall(call.callee());
+  const ResolvedCallInfo *moveInfo =
+      move == nullptr ? nullptr : semanticModel.findCall(*move);
+  const bool ownedReceiverProjection =
+      consuming && moveInfo != nullptr &&
+      moveInfo->retainedReceiverProjection &&
+      moveInfo->retainedReceiverOwner != nullptr;
   const bool storedReceiver =
       receiverSymbol != nullptr &&
       (receiverSymbol->kind == SymbolKind::Field ||
@@ -384,7 +392,7 @@ auto SemanticVisitor::Impl::analyzeDeferredCallableCall(
       valid = false;
     }
   }
-  if (!storedReceiver &&
+  if (!storedReceiver && !ownedReceiverProjection &&
       (variable == nullptr || parameter == nullptr || function == nullptr ||
        function->declaration == nullptr || parameter->pack ||
        calleeType.kind != SemanticType::TypeParameter)) {
@@ -424,7 +432,7 @@ auto SemanticVisitor::Impl::analyzeDeferredCallableCall(
     return;
   }
 
-  if (storedReceiver) {
+  if (storedReceiver || ownedReceiverProjection) {
     semanticModel.recordDeferredCallableCall(
         call,
         DeferredCallableCallInfo{
@@ -436,7 +444,8 @@ auto SemanticVisitor::Impl::analyzeDeferredCallableCall(
                 consuming ? CallableInvocationCapability::Once
                           : callableInvocationCapability(receiverInfo->access),
             .boundary = std::nullopt,
-            .receiverBinding = receiverSymbol->id,
+            .receiverBinding = storedReceiver ? receiverSymbol->id : 0,
+            .ownedReceiverProjection = ownedReceiverProjection,
             .inferResultFromInstantiation = inferResultFromInstantiation});
     currentType = callExpressionType(returnType);
     return;
@@ -531,13 +540,15 @@ auto SemanticVisitor::Impl::validateCallableReturn(
                                  : field->kind == SymbolKind::LambdaCapture
                                      ? "Callable capture '"
                                      : "Callable field '";
-  Diagnostic diagnostic =
-      makeDiagnostic("GTI-S2046", DiagnosticPhase::Semantics, location,
-                     storedKind + location.lexeme + "' must return '" +
-                         typeSpelling(requirement->returnType) +
-                         "' for this invocation, "
-                         "but the selected callable returns '" +
-                         typeSpelling(returnType) + "'.");
+  const std::string subject = deferred && deferred->ownedReceiverProjection
+                                  ? "Owned callable projection"
+                                  : storedKind + location.lexeme + "'";
+  Diagnostic diagnostic = makeDiagnostic(
+      "GTI-S2046", DiagnosticPhase::Semantics, location,
+      subject + " must return '" + typeSpelling(requirement->returnType) +
+          "' for this invocation, "
+          "but the selected callable returns '" +
+          typeSpelling(returnType) + "'.");
   if (field) {
     diagnostic.related.push_back(
         {field->nameSpan, field->kind == SymbolKind::LambdaCapture
@@ -5134,6 +5145,26 @@ auto SemanticVisitor::Impl::validateSelectedFunction(
     const CallableCandidate &function, const ExprPtr &callee,
     const Token &paren, std::span<const ExprPtr> arguments,
     CallReceiverMode receiverMode) -> bool {
+  const auto *consumedMember = exprAs<Get>(callee.get());
+  const auto *move = consumedMember == nullptr
+                         ? nullptr
+                         : directCall(consumedMember->object());
+  const auto *moved = move == nullptr ? nullptr : semanticModel.findCall(*move);
+  if (moved != nullptr && moved->retainedReceiverProjection &&
+      (function.returnType.kind == SemanticType::Reference ||
+       typeTraits(function.returnType).containsBorrowedState)) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2022", DiagnosticPhase::Semantics, paren,
+        "Consuming invocation of owned storage cannot return a reference or "
+        "borrowed state.");
+    if (function.declaration != nullptr)
+      diagnostic.related.push_back({tokenSpan(function.declaration->name()),
+                                    "Selected method declared here."});
+    diagnostic.hints.emplace_back(
+        "Return an owning value, or invoke the field without consuming it.");
+    diagnostics.emplace_back(std::move(diagnostic));
+    return false;
+  }
   if (consumingResultCarriesBorrow(function)) {
     reportConsumingBorrowedResult(function, paren);
     return false;
@@ -7175,6 +7206,22 @@ auto SemanticVisitor::Impl::requireFunctionDefinition(
       function.record().pureVirtual) {
     return;
   }
+  // Scalar metadata has no borrow/lifetime/generic summaries to infer. Its
+  // generated declaration remains opaque and conservatively fallible; the
+  // compiler's compiled-unit verifier requires an exact native binding later.
+  const auto &record = function.record();
+  const auto *unit =
+      sourceGraph ? sourceGraph->findUnit(record.sourceUnit) : nullptr;
+  if (unit && unit->compiledScalarInterface &&
+      isCompiledScalarResultType(record.returnType) && record.ownerClass == 0 &&
+      record.genericParameters.empty() && !record.parameterPack &&
+      !record.constexprFunction && !record.requiresUnsafe &&
+      !record.compilerPrivate &&
+      record.requiredParameterCount == record.parameterTypes.size() &&
+      declaration->exportKeyword() &&
+      std::all_of(record.parameterTypes.begin(), record.parameterTypes.end(),
+                  isCompiledScalarValueType))
+    return;
   // A generic primary is a checked declaration, not yet an executable body.
   // Concrete reanalysis selects exact specializations and constexpr branches
   // before enforcing closure. Inspect the enclosing formal bindings, not the

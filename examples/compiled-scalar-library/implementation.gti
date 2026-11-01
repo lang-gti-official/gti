@@ -1,0 +1,9 @@
+export module implementation;
+
+// Visible within the source library; not selected for the compiled interface.
+export int choose_impl(int value) {
+    if (value == 7) {
+        return 42;
+    }
+    return 0;
+}

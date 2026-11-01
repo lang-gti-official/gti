@@ -39,6 +39,24 @@ BackendArtifact CppBackend::generate(LoweredProgram program) {
   };
   std::unordered_map<std::string, RepresentationName> representationNames;
   for (const auto &declaration : verified->program().declarations()) {
+    // A written fixed-array reference in a generic signature is newly
+    // supported GTI, but has no C++ body representation contract. Existing
+    // Range& substitutions are distinct: their declared referent is a type
+    // parameter, not an array. Keep that supported comparison path intact.
+    if (const auto *function =
+            std::get_if<LoweredFunctionDeclaration>(&declaration.payload);
+        function && function->intrinsic == IntrinsicKind::None &&
+        !function->genericParameters.empty() &&
+        std::any_of(function->parameters.begin(), function->parameters.end(),
+                    [](const auto &parameter) {
+                      return parameter.type.kind == SemanticType::Reference &&
+                             parameter.type.arguments.size() == 1 &&
+                             parameter.type.arguments.front().kind ==
+                                 SemanticType::Array;
+                    }))
+      throw BackendUnsupportedError(
+          "generic fixed-array reference signatures require the LLVM backend",
+          declaration.source);
     std::string name;
     std::size_t identity = 0;
     if (declaration.kind == LoweredDeclarationKind::Namespace) {
@@ -134,6 +152,11 @@ BackendArtifact CppBackend::generate(LoweredProgram program) {
         findMirBody(verified->program().mir(), row.identity.address);
     if (!body)
       continue;
+    for (const auto &constant : body->programConstantSubstitutions)
+      if (std::holds_alternative<ConstantAggregateValue>(constant.constant))
+        throw BackendUnsupportedError(
+            "aggregate constant publication requires the LLVM backend",
+            row.identity.source);
     for (const auto &block : body->blocks)
       for (const auto &instruction : block.instructions)
         if (!instruction.tombstone &&

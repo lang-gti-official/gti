@@ -10,18 +10,26 @@ CONCURRENT_EXAMPLES = frozenset({
     "066-managed-threads.gti", "076-scalar-atomics.gti", "175-thread-local-storage.gti",
 })
 CENSUS_TIMEOUT = 180
-# Owner-approved LLVM-only wrapping operations are used by source shared owners.
+# Features with an explicit unsupported C++ backend diagnostic.
 LLVM_ONLY_EXAMPLES = frozenset({
     "066-managed-threads.gti", "098-shared-ownership.gti",
     "178-wrapping-atomic-counters.gti", "179-weak-ownership.gti",
     "180-compact-source-owners.gti",
     "181-general-object-layout.gti",
+    "182-bounded-array-borrows.gti",
+    "183-immediate-functions.gti",
 })
 
 
+def cpp_limitation(name):
+    return {"182-bounded-array-borrows.gti": "generic fixed-array reference signatures",
+            "181-general-object-layout.gti": "general sizeof/alignof",
+            "183-immediate-functions.gti": "aggregate constant publication"}.get(
+                name, "wrapping atomic read-modify-write")
+
+
 def require_cpp_limitation(gti, source, output, env, optimization="O1", standard="c++23"):
-    limitation = ("general sizeof/alignof" if source.name == "181-general-object-layout.gti"
-                  else "wrapping atomic read-modify-write")
+    limitation = cpp_limitation(source.name)
     output.write_bytes(b"preserved unsupported output")
     result = subprocess.run(
         [str(gti), str(source), "--std", standard, "-" + optimization,
@@ -69,9 +77,7 @@ def observation_context(case: CaseContext) -> dict:
                                "repository_default": "stdlib"},
         "compile_observation": ({"mode": "sealed-lowered-program-inventory", "returncode": 0,
                                  "output_required": True, "oracle": "reviewed MIR body census",
-                                 "cpp_rejection": ("GTI-B0003: general sizeof/alignof"
-                                                   if Path(case.source).name == "181-general-object-layout.gti"
-                                                   else "GTI-B0003: wrapping atomic read-modify-write")}
+                                 "cpp_rejection": "GTI-B0003: " + cpp_limitation(Path(case.source).name)}
                                 if native_only else
                                 {"mode": "--emit-cpp", "returncode": 0,
                                  "output_required": True, "oracle": "reviewed MIR body census"}),

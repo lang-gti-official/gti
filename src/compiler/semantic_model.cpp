@@ -306,7 +306,8 @@ SemanticAnalysisSeal makeSemanticAnalysisSeal(const Program &program,
          .packageRelativePath = unit.packageRelativePath,
          .role = unit.role,
          .entry = unit.entry,
-         .prelude = unit.prelude});
+         .prelude = unit.prelude,
+         .compiledScalarInterface = unit.compiledScalarInterface});
   }
   result.sourceGraph.dependencies.reserve(
       sourceGraph->dependencyEdges().size());
@@ -963,6 +964,40 @@ SemanticModel::findConstant(const Expr &expression) const {
   return base == nullptr ? std::nullopt : base->findConstant(expression);
 }
 
+const SemanticModel::ImmediateInvocationInfo *
+SemanticModel::findImmediateInvocation(const Expr &expression) const {
+  const auto found = immediateInvocations.find(&expression);
+  return found != immediateInvocations.end() ? &found->second
+         : base ? base->findImmediateInvocation(expression)
+                : nullptr;
+}
+
+void SemanticModel::recordImmediateInvocation(const Expr &expression,
+                                              ImmediateInvocationInfo value) {
+  immediateInvocations.insert_or_assign(&expression, std::move(value));
+}
+
+std::optional<SemanticImmediateVoidCompletionProof>
+SemanticModel::immediateVoidCompletionProof(
+    const ExpressionStmt &statement) const {
+  const auto found = immediateVoidCompletions.find(&statement);
+  if (found == immediateVoidCompletions.end())
+    return base == nullptr ? std::nullopt
+                           : base->immediateVoidCompletionProof(statement);
+  if (found->second.expression == nullptr || found->second.function == 0)
+    return std::nullopt;
+  return SemanticImmediateVoidCompletionProof(
+      statement, *found->second.expression, found->second.function,
+      analysisSeal().programSnapshot);
+}
+
+void SemanticModel::recordImmediateVoidCompletion(
+    const ExpressionStmt &statement, const Expr &expression,
+    FunctionId function) {
+  immediateVoidCompletions.insert_or_assign(
+      &statement, ImmediateVoidCompletion{&expression, function});
+}
+
 [[nodiscard]] const CompileTimeValue *
 SemanticModel::findArrayExtent(const ArrayExtentExpr &extent) const {
   const auto found = arrayExtents.find(&extent);
@@ -1273,10 +1308,22 @@ SemanticModel::findDeclarationAttributes(const Stmt &declaration) const {
 SemanticModel::findExpressionAlias(const Expr &expression) const {
   const auto found = expressionAliases.find(&expression);
   if (found != expressionAliases.end()) {
-    return found->second.get();
+    return found->second.expression.get();
   }
   const Expr *inherited =
       base == nullptr ? nullptr : base->findExpressionAlias(expression);
+  noteBaseSyntheticSyntax(inherited != nullptr &&
+                          !baseStableSyntheticSyntax(&expression));
+  return inherited;
+}
+
+[[nodiscard]] const Expr *
+SemanticModel::findExpressionAliasPrelude(const Expr &expression) const {
+  const auto found = expressionAliases.find(&expression);
+  if (found != expressionAliases.end())
+    return found->second.prelude;
+  const Expr *inherited =
+      base == nullptr ? nullptr : base->findExpressionAliasPrelude(expression);
   noteBaseSyntheticSyntax(inherited != nullptr &&
                           !baseStableSyntheticSyntax(&expression));
   return inherited;
@@ -2060,6 +2107,8 @@ void SemanticModel::clear() {
   fullExpressionOrder.clear();
   semanticAnalysisSeal = {};
   constants.clear();
+  immediateInvocations.clear();
+  immediateVoidCompletions.clear();
   unsafeOperations.clear();
   rawReferenceAssertions.clear();
   definedFailures.clear();
@@ -2580,7 +2629,9 @@ std::size_t SemanticModel::estimatedInstanceBytes() const {
           contextualConversions.size()) *
              768 +
          (variableBindings.size() + parameterBindings.size()) * 256 +
-         (places.size() + ownershipEvents.size() + constants.size()) * 160 +
+         (places.size() + ownershipEvents.size() + constants.size() +
+          immediateInvocations.size() + immediateVoidCompletions.size()) *
+             160 +
          (functions.size() + lambdas.size() + classLifecycles.size()) * 1024 +
          (statementFullExpressions.size() + constructorFullExpressions.size() +
           fullExpressionOrder.size()) *
@@ -2923,9 +2974,11 @@ void SemanticModel::recordDeclarationAttributes(
 
 const Expr &
 SemanticModel::recordExpressionAlias(const Expr &expression,
-                                     std::shared_ptr<const Expr> alias) {
+                                     std::shared_ptr<const Expr> alias,
+                                     const Expr *prelude) {
   const Expr &result = *alias;
-  expressionAliases.insert_or_assign(&expression, std::move(alias));
+  expressionAliases.insert_or_assign(
+      &expression, ExpressionAlias{std::move(alias), prelude});
   return result;
 }
 
@@ -3319,12 +3372,15 @@ void SemanticModel::forgetContextualConstruction(const Expr &initializer) {
   contextualConstructionSites.erase(&initializer);
 }
 
-void SemanticModel::recordEmptyReturnConstruction(const ReturnStmt &statement,
-                                                  ResolvedConstructionInfo info,
-                                                  bool unsafeConstruction) {
+void SemanticModel::recordEmptyReturnConstruction(
+    const ReturnStmt &statement, ResolvedConstructionInfo info,
+    bool unsafeConstruction, bool immediateRequired,
+    std::optional<ConstantValue> immediateValue) {
   noteConstruction(info.declaration);
   emptyReturnConstructions.insert_or_assign(
-      &statement, EmptyReturnConstruction{std::move(info), unsafeConstruction});
+      &statement,
+      EmptyReturnConstruction{std::move(info), unsafeConstruction,
+                              immediateRequired, std::move(immediateValue)});
   SemanticFullExpression expression{.order = fullExpressionOrder.size() + 1,
                                     .statement = &statement};
   auto &expressions = statementFullExpressions[&statement];
@@ -3342,7 +3398,8 @@ SemanticModel::emptyReturnConstructionProof(const ReturnStmt &statement) const {
                            : base->emptyReturnConstructionProof(statement);
   return SemanticEmptyReturnConstructionProof(
       statement, found->second.construction, analysisSeal().programSnapshot,
-      found->second.unsafeConstruction);
+      found->second.unsafeConstruction, found->second.immediateRequired,
+      found->second.immediateValue);
 }
 
 void SemanticModel::record(const ConstructorInitializer &initializer,

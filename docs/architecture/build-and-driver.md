@@ -62,8 +62,8 @@ choice enters a compilation request, manifest, executable or cache key.
   It depends on `gti_compiler`; the LSP never invokes it.
 - `gti_llvm_backend` is an independent `LoweredProgram` consumer. Its public
   interface is LLVM-free; its private implementation owns LLVM IR/native
-  code-generation libraries and host initialization. It currently reports a
-  classified unsupported-backend diagnostic before emitting any artifact.
+  code-generation libraries and host initialization. Its implemented native profile and fail-closed admission are documented in
+  [Backend](backend.md#llvm-coverage-and-admission).
 - `gti_driver` in `include/gti/driver/` and `src/driver/` owns immutable
   compilation/build requests, resources, manifests, project plans, artifacts,
   native command construction, and process execution.
@@ -198,8 +198,8 @@ version, or to a nightly build on its own, and has no beta channel: a beta's
 archives are downloaded from its prerelease.
 The plugin uses a full HTTPS Git URL, not owner/repository shorthand. Archive
 shapes exist for Linux x64, Linux arm64, and macOS arm64, but an archive is
-published only after native validation on its platform. The GitHub nightly
-packages `linux-x64` and `darwin-arm64`. `linux-arm64` is not packaged: the
+published only after native validation on its platform. Full integration produces the GitHub nightly
+packages for `linux-x64` and `darwin-arm64`. `linux-arm64` is not packaged: the
 runtime's raw atomic lanes (`runtime/src/atomic_lane.h`) have no reviewed
 linux-aarch64 compiler profile, so no admitted compiler exists for it. TODO:
 add the `ubuntu-24.04-arm` matrix entry once a runtime-safety review admits a
@@ -288,36 +288,40 @@ It publishes only the rolling `nightly` channel. Stable `v<VERSION>` releases
 come from the [release train](#github-release-train), which cuts the commit
 this workflow published.
 
-1. **Select.** The workflow runs only from main's own definition in
-   `lang-gti-official/gti`. It takes main head, or on dispatch an exact 40-hex
-   commit that must be on main. `scripts/resolve_release_source.py
-   select-nightly` requires merge-queue evidence for that exact commit: a
-   `merge_group` run of `.github/workflows/ci.yml` on a
-   `gh-readonly-queue/main/...` branch of this repository whose `head_sha` is
-   the commit and whose latest `CI gate` job concluded `success`. The queue
-   merges by fast-forwarding main to the candidate it tested, so every queued
-   main commit carries that run; CI has no push trigger, and pull-request or
-   dispatch runs are not evidence. A scheduled run skips building when main
-   head is not newer than the published nightly.
-2. **Package.** Each platform (`ubuntu-24.04` for `linux-x64`, `macos-26` for
-   `darwin-arm64`) uses the reviewed compiler from
-   `scripts/configure_ci_toolchain.sh`, configures one
-   `-DCMAKE_BUILD_TYPE=Release -DGTI_RELEASE_BUILD=ON` build with the pinned
-   bundled LLVM/Clang, builds, stages `gti_toolchain` into a fresh directory,
-   and runs the installed CLI/LSP/project, process-resource, managed-thread,
+1. **Build and validate in integration.** Full `ci.yml` integration builds
+   production archives on `ubuntu-24.04` (`linux-x64`) and `macos-26`
+   (`darwin-arm64`). Each uses the reviewed compiler from
+   `scripts/configure_ci_toolchain.sh`, configures
+   `-DCMAKE_BUILD_TYPE=Release -DGTI_RELEASE_BUILD=ON` with pinned bundled
+   LLVM/Clang, builds, stages `gti_toolchain` into a fresh directory, and runs
+   the installed CLI/LSP/project, process-resource, managed-thread,
    atomic-runtime and installed-library consumer checks against that stage.
    macOS installation generates and verifies `share/gti/host-runtime.json`;
-   `cmake/PackageRelease.cmake` refuses a macOS stage without it. The validated
-   stage becomes `gti-nightly-<platform>.tar.gz` with its `.sha256` sidecar
-   and a `share/gti/BUILD_ID` stamp naming the commit.
-3. **Release suite.** The complete CTest suite exceeds one hosted job's time
-   limit, so it runs on the identical release configuration in the merge
-   queue's cost-balanced shards (`scripts/validation_checks.py shard`), each
-   rebuilding from the packaging job's object cache. The release gate
-   (`validation_checks.py merge-shards`) fails unless every platform ran its
-   whole inventory exactly once on that commit. This is the same rebuilt-tree
-   equivalence the merge queue relies on; the packaged tree itself runs the
-   installed-toolchain checks.
+   `cmake/PackageRelease.cmake` refuses a macOS stage without it. The stage
+   becomes `gti-nightly-<platform>.tar.gz` with a `.sha256` sidecar and
+   `share/gti/BUILD_ID` naming the exact source commit. Full integration also
+   runs the complete suite in cost-balanced shards on the same bundled-release
+   configuration, reusing the packaging job's object cache, and retains the
+   separate sanitizer gates and system-LLVM fast checks, including the Linux
+   system-LLVM installed consumers. The coverage gate proves each platform's inventory
+   ran exactly once. Packaging is a required part of the full `CI gate`.
+2. **Select validated artifacts.** Nightly runs only from main's own definition
+   in `lang-gti-official/gti`. It takes main head, or a dispatched exact 40-hex
+   commit on main. `scripts/resolve_release_source.py select-nightly` requires
+   successful full CI for that exact commit and its retained production
+   artifacts. Normally this is the `merge_group` run of
+   `.github/workflows/ci.yml` on `gh-readonly-queue/main/...`; a full main-only
+   CI dispatch also qualifies for commissioning or artifact recovery. PR runs,
+   automation-only passes and merge exceptions alone are not release evidence.
+   Scheduled selection skips unchanged main. There is no fallback that stamps
+   an older compiler with a new commit when the selected source has no artifacts.
+3. **Download and verify.** Nightly downloads the artifacts from the selected
+   successful CI run and attempt. Their manifest binds source commit, platform,
+   bundled-release configuration, run/attempt and archive checksums. Missing,
+   expired, mixed or mismatched artifacts stop publication. Nightly neither
+   rebuilds the compiler nor reruns the full suite. A new full CI dispatch on
+   main can recover unavailable artifacts while preserving the same validation
+   obligations; a fixture-only rehearsal cannot produce publishable evidence.
 4. **Publish.** One serialized job (`gti-nightly-publication`, never
    cancelled in progress) holds the workflow's only write token. It verifies
    every archive's checksum and stamped `BUILD_ID`, writes the `BUILD_ID`
@@ -364,14 +368,14 @@ overwrites; no tag or branch is ever forced, moved or deleted.
 1. **Cut** (`train.yml`, job `cut`). The schedule fires daily at 04:00 UTC and
    the train admits every other UTC day (epoch-day parity), a 48-hour cadence
    without month-end drift; a dispatch always runs. The source is the commit
-   the `nightly` tag names. It must be on main, carry the same merge-queue
-   evidence nightly selection requires (`resolve_release_source.py
-   queue_evidence`), have the complete uploaded nightly asset set with GitHub's
+   the `nightly` tag names. It must be on main, carry the same successful full CI
+   evidence nightly selection requires (`release_artifacts.py
+   release_evidence`), have the complete uploaded nightly asset set with GitHub's
    digest of the final `BUILD_ID` matching that commit, and have been on main
    at least 24 hours, measured from its
    committer time, which the queue sets when it lands the commit. A dispatch's
    `min_age_hours` may lower the age for the owner's bootstrap; nothing lowers
-   the queue evidence. The train skips with a notice when a cut already landed
+   the full CI evidence requirement. The train skips with a notice when a cut already landed
    after that nightly, when no fragment is pending, or when only fixes are:
    a train cut opens the next minor line, and patch releases come only from
    backports. It runs `cut_release.py` on a worktree of the nightly commit,
@@ -395,14 +399,20 @@ overwrites; no tag or branch is ever forced, moved or deleted.
    commit among the commits it delivered. A `VERSION` change without one, such
    as imported history, is not a train cut. The beta is built from that cut
    commit, not from the queue's merge onto a newer main: the cut changes only
-   release metadata on top of its queue-verified parent, the soaked nightly,
-   so the beta is exactly the code nightly users ran. The cut's parent and the
-   landing merge both need queue evidence, and `beta/<major>.<minor>` must not
+   release metadata on top of its full-CI-verified parent, the soaked nightly,
+   so the beta is exactly the code nightly users ran. The cut's parent needs
+   full CI artifact evidence (queue or main recovery dispatch); the landing
+   merge separately needs ordinary merge-queue evidence. Retained source
+   artifacts are required for this admission too; expiry stops the train.
+   `beta/<major>.<minor>` must not
    already hold another commit. On a `beta/X.Y` push, selection verifies the
    backports since the line's newest beta, refuses pending user-visible
    fragments, publishes nothing when `VERSION` is already stable, and numbers
-   the next beta. Packaging, the installed-toolchain checks, the release-suite
-   shards and the merge-shards gate are the nightly's, on the beta commit. The
+   the next beta. Beta retains its own bundled production build, installed-
+   toolchain checks, complete release-suite shards and merge-shards gate on the
+   beta commit. The nightly artifact-reuse path does not relabel a nightly
+   package as a versioned beta: the release cut changes the embedded version
+   and archive identity. The
    serialized publish job (the only one that writes) re-verifies the asset set,
    admits the beta (the tag is absent or already at that commit, and a newer
    push did not supersede it), attests build provenance, pushes
@@ -421,7 +431,7 @@ overwrites; no tag or branch is ever forced, moved or deleted.
    CHANGELOG always describe its content: a user-visible backport becomes
    `vX.Y.(Z+1)-beta.1`, an internal one `vX.Y.Z-beta.(K+1)`, or nothing once
    `X.Y.Z` is stable. The complete suite then runs on the release configuration
-   in the nightly's shards, and `Backport gate` requires both. The main
+   in cost-balanced shards, and `Backport gate` requires both. The main
    ruleset and merge queue do not cover `beta/*`; the proposed `beta` ruleset
    requires a PR merged by rebase (picks keep their `-x` lines), linear
    history, an up-to-date branch, `CI gate` and `Backport gate`.
@@ -450,7 +460,7 @@ CMake project `VERSION` (`GTI_VERSION`). Nothing in it names a channel, and a
 beta is built from the release cut whose `VERSION` is the stable version, so
 the beta publishes the stable archive itself and promotion republishes the
 same files: nothing is re-stamped. `release_train.py same-bytes` proves it per
-file, and packaging refuses a stage that nightly packaging already stamped
+file, and packaging refuses a stage that nightly archive production already stamped
 with `BUILD_ID`. Only the release around the files differs: tag, title, notes
 and prerelease flag.
 
@@ -2632,3 +2642,359 @@ The LSP consumes the driver-published project facts for host-target analysis and
 supports a named editor profile, with source-based target inference. Explicit
 editor selection of another workspace package, target, or cross target is not
 implemented.
+
+
+## Compiled library bundle foundation
+
+The development API in `gti/driver/library_bundle.h` implements a bounded,
+deterministic `.gtilib` byte container, an identity envelope, inspection by
+validated decoding, and exact compatibility comparison. The container remains
+independent of project builds and caches. Its object bytes are opaque: successful
+decoding proves neither native-object validity nor GTI semantic consumability.
+The separate scalar driver API below supplies the first executable importer and
+performs additional compiler/backend validation.
+There is no new CLI flag or manifest mode. Ordinary source stays `.gti`;
+`.gtimeta` is reserved but not emitted because no independently usable semantic
+metadata artifact exists yet. The existing engine embedding library mode is a
+different C ABI contract and retains its current behavior.
+
+### Provisional wire format version 2
+
+All integers are unsigned 32-bit little endian. A blob is its byte length followed
+by exactly those bytes; there is no padding, compression, timestamp, platform
+permission, host-width integer or native structure dump. The complete layout is:
+
+1. Eight bytes `GTILIB\r\n`, container version `2`, envelope schema `1`.
+2. Six blobs: toolchain SHA-256, canonical target triple, configuration SHA-256,
+   runtime SHA-256, logical library SHA-256, complete source-input SHA-256.
+3. One interface-metadata blob, limited to 1 MiB; empty for opaque container-only use.
+4. Dependency count, then pairs of logical library SHA-256 and complete dependency
+   bundle SHA-256, sorted strictly by logical library identity.
+5. Object count, then name/data blob pairs sorted strictly by name.
+6. Exactly 64 lowercase ASCII hexadecimal bytes: SHA-256 of all preceding bytes.
+
+Hash fields are exactly 64 lowercase hexadecimal bytes. The target is a
+caller-normalized ASCII triple (at most 255 bytes); the codec checks its bounded
+lexical form, not target support or normalization. Callers must derive identities
+from independently resolved inputs; an artifact cannot authenticate its own
+compatibility. `requireLibraryBundleCompatibility` compares all six identities
+and the complete dependency set, independent of the caller's dependency order.
+A checksum detects damage, not malicious replacement or an untrusted producer.
+Registry/package trust and native object admission remain separate obligations.
+
+Each dependency and object list is limited to 4096 entries. At least one nonempty
+object is required. Objects are limited to 64 MiB each and the entire serialized
+bundle to 256 MiB. Names are lowercase ASCII letters/digits/underscore/hyphen
+followed by `.o`, at most 255 bytes, with reserved Windows device basenames
+rejected. They are logical keys, never filesystem paths. The writer sorts without
+copying object payloads; the reader rejects noncanonical ordering, duplicates,
+self-dependencies, trailing data, truncated lengths, excessive counts/bytes,
+unsupported versions and checksum mismatches. Errors have typed categories;
+there are no newly allocated compiler diagnostic codes at this development API.
+
+The API accepts/returns owned bytes and performs no I/O, extraction, subprocess
+execution, or publication. This deliberately avoids symlink/overwrite races.
+A future file adapter must bound the read before allocation, use private staging,
+validate objects with the selected backend, and atomically publish through the
+existing artifact layer. It must not reinterpret member names as output paths.
+The bounded reader may hold the input and decoded copy simultaneously; lazy
+validated views/indexing are a future measured improvement, not a present claim.
+
+`library_bundle` tests the codec and compatibility contract. The design decision
+and downstream proof obligations are in [ADR 032](../decisions/032-compiled-library-bundles.md)
+and the [separate-compilation stage plan](../plans/build-system.md#compiled-library-and-separate-compilation-stages).
+
+
+### Executable typed separate-compilation profile
+
+`gti/driver/compiled_scalar_library.h` provides an LLVM producer and consumer
+for compiled GTI targets. Its development API names retain “scalar” for source
+compatibility; project commands expose the typed profile through `gti-library`,
+explicit artifact imports and same-manifest `compiled-dependencies` edges.
+C embedding retains its separate request and ABI. Runnable examples cover
+[primitive APIs](../../examples/compiled-primitive-library/README.md),
+[value types](../../examples/compiled-value-types/README.md),
+[borrowing](../../examples/compiled-borrowing/README.md),
+[namespaced APIs](../../examples/compiled-namespaces/README.md), and
+[dependency builds](../../examples/compiled-dependencies/README.md).
+[Type forwarding](../../examples/compiled-type-forwarding/README.md) composes
+dependency-owned records and enums through multiple compiled libraries.
+
+The compiler-owned `CompiledScalarUnitBuilder::selectExports` projects selected
+root-module function names, including all exported overloads. Names may be
+namespace-qualified; explicit exports and exports inherited from enclosing
+namespace declarations are preserved. Reopening a namespace does not export its
+private siblings. Functions must be nongeneric, without default arguments. Parameters and
+results admit bool, char, fixed integers, float/double, concrete value records,
+integral enums and checked references to those values; void results remain valid.
+Constexpr functions, entry functions and unsafe/private capabilities reject.
+A target may contain multiple source modules. Its exposed nominal closure can
+belong to the root module or to verified compiled dependencies; ordinary non-root
+source modules still require a logical ownership mapping. There are at most 256
+exported overloads and 64 nominal declarations per interface.
+
+Qualified declaration names retain their complete namespace path, with at most
+1,024 bytes and 64 identifier components. Same-leaf declarations in different
+namespaces remain distinct. The virtual interface reconstructs namespace blocks
+and emits collision-free, module-private type aliases at root scope. Record fields,
+enum defaults and callable signatures use these aliases so relative lookup in a
+shadowing namespace cannot change a producer-resolved type. Aliases carry no new
+type identity or native wrapper; imported declarations still undergo canonical
+metadata comparison. Nested class-owned types require owner metadata and reject.
+
+Nominal metadata preserves each declaration's defining package, target and module,
+qualified name, export visibility,
+class/struct kind, field order/type/access/mutability, supported scalar constant
+field defaults, enum underlying types and enumerators. Nested plain value fields
+use the referenced record's generated default. Explicit defaulted constructors
+retain their access. A sealed declaration-complete class summary retains these
+constructors and the presence of other source members before executable
+reachability pruning. Consumer-local designated construction is regenerated from
+fields and does not become an exported source member. IDs are remapped into each fresh
+compiler session. The producer and reachable imported lowered declarations are
+independently projected and compared against the canonical metadata; source-session IDs are
+never an ABI. Records require generated structural value lifecycles. Bases, custom
+constructors/destructors, member functions, static members, stored references,
+payload enums and generic definitions require further contracts and reject.
+Field defaults are bounded resolved scalar constants or signed literals, not
+serialized expression bodies. This includes finite floating literals and source
+character literals; arbitrary runtime initializer expressions are not admitted.
+
+Checked reference parameters preserve read/mutable access. A reference result
+must identify exactly one whole reference parameter and its permitted access.
+The producer's semantic/MIR return summary must agree; projected/conditional,
+global and aggregate-carried origins reject. The virtual declaration publishes
+`[[borrowed_from(argN)]]`, and ordinary semantic/MIR loan rules check consumer
+escape, mutation and aliasing. This does not yet export custom ownership/drop
+recipes or a general lifetime dependency graph.
+
+Callable metadata profile `gti.callable-interface.3` contains key-sorted,
+length-framed records: persistent function key, result recipe, common nominal
+metadata, borrow origin, parameter ordinal and access. Duplicate overload keys
+reject even when results differ. `gti.nominal-interface.2` stores the bounded
+declaration closure. Development codec entry points expose the same canonical
+validation used by the importer. Unknown profiles, malformed/noncanonical records,
+unresolved recipes and incomplete borrow contracts reject. No AST pointers,
+numerical instance IDs or arbitrary source bodies enter the interface.
+
+Dependency-owned declarations retain their original identity when used as function
+parameters/results or nested fields. The consumer requires the defining artifact
+in the verified transitive dependency receipts and imports its virtual interface;
+it does not duplicate that type in the forwarding library. Missing or inconsistent
+owners, receipts or reachable layouts reject. Type dependencies receive private
+virtual paths when the project graph supplied only a transitive artifact. Relative
+imports preserve source-owner boundaries and quote relocated paths safely. These
+ordinary imports do not re-export dependency names: consumers explicitly import
+the defining interface when naming those declarations. Whole-module re-export
+contracts and colliding fully qualified nominal names remain separate work.
+
+`LoweredProgram` retains logical owner/source-unit bindings independently of
+callable reachability, including a library used only for its types. Serialization
+profile `lowered-program-v31` records these bindings. Wire metadata is validated
+completely; concrete declaration comparison follows HIR reachability. An unused
+import may lack an instantiated type or function, but every reached GTI declaration
+must still bind to its exact validated callable contract. No new runtime adapter,
+ownership rule or allocation is introduced by forwarding a nominal type.
+
+The consumer validates envelope compatibility, dependency receipts and native
+objects, then projects metadata into a virtual source interface for the ordinary
+loader/parser/type checker. The loader's compiled-interface marker is part of
+semantic cache context and analysis seals and cannot be authored in source.
+Ordinary unresolved declarations still diagnose. Interface paths must be absent,
+absolute and normalized. No facade or producer implementation source is written
+or reopened by explicit artifact imports; unused imported declarations are valid.
+
+After lowering, `CompiledScalarUnitBuilder` binds concrete exported and imported
+instances together. The complete plan is sealed in `LoweredProgram` serialization
+v30, including source-unit identity, nominal metadata, result recipe and borrow
+contract. LLVM uses v3 SHA-256 symbols derived from the complete callable contract.
+An external wrapper preserves GTI's status/result/failure ABI; aggregate results
+forward the caller's destination, and fallible bodies forward the original failure
+record. Consumers do not infer purity, failure freedom or ownership from object
+code. These symbols do not promise cross-version ABI stability.
+
+Each bundle contains one `unit.o` and exact direct-dependency digest receipts.
+Object validation checks relocatable format, target/layout, exact exported
+symbols and unresolved symbols limited to declared imported GTI callables.
+Transitive imports contribute their objects without requiring a source facade.
+Program initialization, TLS and hosted producer entry remain unsupported;
+producer cleanup needing external runtime services still requires a broader
+runtime-closure contract. Consumer cleanup and checked failure propagation retain
+their normal behavior. The driver owns bounded reads, native staging and atomic
+publication. Unsupported producer shapes use existing backend-limit diagnostics;
+malformed artifacts use existing driver validation diagnostics.
+
+Compatibility binds compiler executable, runtime archive, LLVM/backend ABI,
+target/layout/CPU/features, optimization, execution profile and configuration.
+Logical package/target labels identify a library independently of interface edits.
+Checksums establish integrity, not producer authentication. Explicit artifacts
+need no producer sources; automatic source-target builds additionally compare a
+source-graph fingerprint and exact dependency digests before reuse. The following
+subsection describes that conservative freshness boundary.
+
+`compiled_scalar_library_cost` and `compiled_primitive_cost` compare imported
+calls with an equivalent external ABI baseline and record runtime, child peak
+RSS, build latency and object/bundle/executable size. The latter includes a
+by-value Point record. These allocation-free operations do not claim parity with
+whole-program inlining or complete F5 performance acceptance.
+
+
+### Compiled-library project requests
+
+A producer declares a reusable target and explicitly selects its public API:
+
+```toml
+[targets.numbers]
+kind = "gti-library"
+root = "library.gti"
+functions = ["choose"]
+```
+
+`gti build numbers --release` publishes `numbers.gtilib` beneath the ordinary
+profile/target output directory. `functions` contains 1–256 unique identifiers,
+optionally qualified by namespaces with `::`, such as `geometry::choose`.
+The root must declare a module interface. This profile automatically
+selects LLVM when no backend override is supplied, retains all application
+bodies for verified export binding, and rejects unsupported source signatures.
+The target is not runnable or installable as an executable. Self-contained
+producers cannot declare native inputs, build scripts or bindgen imports.
+
+An executable or another compiled library can explicitly select a distributed artifact:
+
+```toml
+[targets.app]
+kind = "executable"
+root = "main.gti"
+
+[targets.app.compiled-library]
+package = "compiled-numbers"
+target = "numbers"
+path = "dependencies/numbers.gtilib"
+interface = "api.gti"
+```
+
+The consumer source imports `"api.gti"`. The artifact path is relative to its
+manifest and must name a regular `.gtilib` file; explicitly selected artifacts
+may live outside the consumer package. The virtual interface must be an absent
+`.gti` path inside the package after canonical resolution. The artifact's
+package/target identity must match the manifest selection. Neither the virtual
+interface nor the producer source is written to disk by import.
+
+Several independent bundles use repeated tables instead:
+
+```toml
+[[targets.app.compiled-libraries]]
+package = "left-package"
+target = "left"
+path = "dependencies/left.gtilib"
+interface = "left.gti"
+
+[[targets.app.compiled-libraries]]
+package = "right-package"
+target = "right"
+path = "dependencies/right.gtilib"
+interface = "right.gti"
+```
+
+The singular and plural forms are mutually exclusive. A plural list contains
+1–64 libraries, with distinct package/target owners and canonical facade paths.
+The combined interface contains at most 256 declarations. Every bundle is
+validated even when its facade is unused; unused selections are allowed. Each
+virtual module has a distinct logical-library-derived identity. Ordinary source
+visibility and overload ambiguity still apply when several facades are imported.
+The immutable `compiledImports()` list is canonical; legacy singleton accessors
+reject multi-import requests instead of silently losing inputs. Metadata emits
+`compiledLibraries` and retains `compiledLibrary` for singleton compatibility.
+A producer records each direct dependency by logical library identity and SHA-256
+digest of the complete bundle. Consumers must select the complete artifact
+closure, with exact receipt matches and one bundle per logical owner. Missing
+dependencies, conflicting digests and dependency cycles reject before frontend
+entry. Runnable independent-library coverage is in
+[`compiled-libraries`](../../examples/compiled-libraries/README.md) and
+[`compiled-primitive-library`](../../examples/compiled-primitive-library/README.md).
+
+`ProjectBuildPlan` carries resolved identities, function selection and bounded
+artifact inputs into immutable `ExecutableBuildRequest` values. CLI code only
+constructs the request and presents the result. The driver reads at most the
+256 MiB aggregate bundle limit, rejects incomplete/growing reads, uses the
+scalar compiler path once for all imported facades, and links validated object bytes from the private output staging
+directory. Producer publication and consumer linking retain the managed-output
+and atomic-replacement rules: a failure preserves the prior good artifact,
+outputs cannot overwrite any selected bundle/interface, and staged imported
+objects are removed on success or failure.
+
+Source dependencies can instead name library targets in the same manifest:
+
+```toml
+[[targets.app.compiled-dependencies]]
+target = "numbers"
+interface = "api/numbers.gti"
+```
+
+Both executables and compiled library targets accept these tables alongside
+explicit artifact selections. The reusable project resolver constructs a bounded,
+immutable dependency DAG, rejects cycles, non-library targets and conflicting
+owners/facades, and returns each dependency once in topological order. Build and
+run commands execute those plans through the ordinary driver before the selected
+target. Shared transitive objects link once; only directly selected interfaces
+enter the source graph. Metadata exposes the declared source edges as
+`compiledDependencies`. Workspace/package-qualified source target edges remain
+future work; existing source package resolution is unchanged.
+
+Successful library outputs are reused when their compiler/runtime/configuration,
+complete loaded source graph, export selection and direct dependency digests still
+match. Reuse reads and hashes source inputs, validates the existing bundle and
+native object, and avoids semantic analysis and native emission. A dependency
+change rebuilds its parents; missing or corrupt generated artifacts rebuild from
+available source. A failed dependency stops the application build and preserves
+the failing target and application outputs; previously completed prerequisites
+remain published. Explicit artifacts still require no producer source.
+The [`compiled-dependencies`](../../examples/compiled-dependencies/README.md)
+example and `compiled_dependency_project` gate cover a diamond graph, freshness,
+receipt mismatches, failures and source-free distribution of the complete closure.
+
+Consumer requests retain whole-program cache bypass; compiled library output reuse
+is reported as a cache hit only after those complete checks. Build reports,
+`--emit-mir`, debug/instrumented builds and artifact-aware LSP
+analysis need follow-on query/provenance support; unsupported CLI requests
+reject explicitly. Ordinary source projects and direct compilation retain their
+existing paths. The `compiled_library_project` gate owns the runnable project
+example, deleted-producer execution, consumer-only edits, manifest identities,
+bounded inputs and failure/publication controls on both native platforms.
+
+
+### Read-only compiled-library checking
+
+`gti check numbers --release` validates a scalar producer's selected exports,
+source semantics and lowered binding contract without producing
+a bundle. `gti check app --release` validates a consumer against its explicitly
+selected artifact closure, including when the complete producer source tree is absent.
+For source target edges, check requires previously built artifacts and diagnoses a
+missing bundle with a request to build it. Checking never builds dependencies.
+Use the same profile and configuration as the distributed artifact: compatibility
+remains exact, including optimization. Ordinary check's CLI option rules remain
+unchanged; select profiles rather than adding optimization override flags.
+
+`checkCompiledScalarProject` consumes the immutable `ProjectBuildPlan` and
+resolved `ToolchainLayout`. It shares bounded file reads, metadata decoding,
+compiler/runtime/configuration checks, native object admission and virtual-source
+preparation with the build path. The imported graph marker reaches the same
+frontend, and both producer and consumer reuse the compiler-owned scalar binding
+projection. A validation-only backend verifies the bound lowered program and
+returns no public artifact. Checking neither constructs the LLVM emission backend
+nor invokes a native compiler/linker, writes a facade, publishes an object or
+bundle, creates a build/cache directory, or replaces an existing output.
+
+Checking returns `CheckResult` with owned diagnostic sources. Frontend failures
+retain their ordinary structured diagnostics; lowered profile failures retain
+the existing backend limitation diagnostic and use `ValidationFailure`.
+Artifact/configuration failures use `ArtifactFailure` with a driver message.
+The ordinary source-only checker still uses its existing frontend path.
+
+This is source and artifact-contract validation, not certification of successful
+native emission or linking. Producer native-object admission still runs when a
+bundle is built, and consumer native dependencies are linked only by build.
+Checking does not execute build scripts. Producer native inputs/scripts remain
+unsupported; compiled-library checks with bindgen imports reject before any
+binding generation. LSP snapshot ingestion, provenance reports, emitted MIR and
+automatic dependency/cache orchestration retain their separate prerequisites.

@@ -1051,6 +1051,14 @@ void testCppReservedIdentifiers() {
              !lang::isCppReservedIdentifier("protected"),
          "protected should be an implemented GTI access keyword");
 
+  const std::vector<lang::Token> constevalTokens =
+      lexer.scan("consteval", "consteval-token.gti");
+  expect(constevalTokens.size() == 2 &&
+             constevalTokens.front().kind == lang::TokenKind::CONSTEVAL &&
+             lang::isKeywordToken(constevalTokens.front().kind) &&
+             !lang::isCppReservedIdentifier("consteval"),
+         "consteval should be an implemented GTI function keyword");
+
   const std::vector<lang::Token> deleteTokens =
       lexer.scan("delete", "delete-token.gti");
   expect(deleteTokens.size() == 2 &&
@@ -3180,7 +3188,7 @@ int main() {
   const auto pack = lang::Frontend().analyze(
       "duplicate-semantic.gti",
       "class Pack<Args...> { public: Pack() = default; }; int main() { "
-      "Pack<int[2]&> value{}; return 0; }");
+      "Pack<void&> value{}; return 0; }");
   expect(!pack.canGenerateCode() && count(pack, "GTI-S2017") == 1,
          "a type checked twice reports its error once");
 }

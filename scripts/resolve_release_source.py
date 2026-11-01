@@ -215,8 +215,8 @@ def github_request(token: str) -> ApiRequest:
 
 
 def select_nightly(repository: str, event: str, ref: str, requested: str,
-                   evidence: Callable[[str, str], int]) -> dict[str, str]:
-    """Choose the commit to package: main head, or a dispatched main commit."""
+                   evidence: Callable[[str, str], int | dict[str, str]]) -> dict[str, str]:
+    """Choose retained packages for main head, or a dispatched main commit."""
     if ref != "refs/heads/main":
         raise ValueError("the nightly workflow runs only from main's own definition")
     head = remote_main()
@@ -234,16 +234,16 @@ def select_nightly(repository: str, event: str, ref: str, requested: str,
     run = evidence(repository, sha)
     _, published = published_nightly()
     relation = nightly_relation(sha, published)
-    # A scheduled run packages only what would publish. A dispatch always
-    # builds; publication still requires current main and a newer commit.
+    # A scheduled run retrieves only what would publish. A dispatch retries
+    # retrieval; publication still requires current main.
     build = event == "workflow_dispatch" or (sha == head and relation in ("first", "newer"))
     version = git("show", f"{sha}:VERSION")
     if VERSION.fullmatch(version) is None:
         raise ValueError("VERSION must contain a semantic version")
-    print(f"Nightly candidate {sha} (merge-queue CI run {run}); main {head}; "
+    print(f"Nightly candidate {sha} (full CI evidence {run}); main {head}; "
           f"published nightly {published or 'none'} ({relation}); build={str(build).lower()}")
     return {"sha": sha, "version": version, "build": str(build).lower(),
-            "head": str(sha == head).lower()}
+            "head": str(sha == head).lower(), **(run if isinstance(run, dict) else {})}
 
 
 def main() -> int:
@@ -264,10 +264,11 @@ def main() -> int:
         elif arguments.mode == "admit-nightly":
             values = admit_nightly(arguments.sha)
         else:
+            from release_artifacts import release_evidence
             request = github_request(os.environ.get("GTI_GITHUB_TOKEN", ""))
             values = select_nightly(
                 arguments.repository, arguments.event, arguments.ref, arguments.requested,
-                lambda repository, sha: queue_evidence(repository, sha, request))
+                lambda repository, sha: release_evidence(repository, sha, request))
         # Write runner state only after every identity and immutable-tag check.
         with arguments.output.open("a", encoding="utf-8") as output:
             output.write("".join(f"{name}={value}\n" for name, value in values.items()))

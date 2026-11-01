@@ -72,6 +72,11 @@ Reachability reachableProgram(const LoweredProgram &program) {
   Reachability result;
   const auto &mir = program.mir();
   auto body = [&](MirBodyAddress address) {
+    if (address.kind == MirBodyKind::Function) {
+      const auto *binding = program.compiledScalarBinding(address.owner);
+      if (binding && binding->imported)
+        return;
+    }
     if (program.findBody(address) && !result.contains(address))
       result.bodies.push_back(address);
   };
@@ -141,6 +146,9 @@ Reachability reachableProgram(const LoweredProgram &program) {
     }
   };
   body({MirBodyKind::Module, 0});
+  for (const auto &binding : program.compiledScalarBindings())
+    if (!binding.imported)
+      body({MirBodyKind::Function, binding.function});
   if (mir.hostedStartupPlan())
     body({MirBodyKind::HostedStartup, mir.hostedStartupPlan()->entry});
   if (program.embeddingPlan())

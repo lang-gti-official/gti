@@ -1,0 +1,13 @@
+export module drawing;
+import "api/geometry.gti";
+export namespace drawing {
+    struct Packet {
+        mut geometry::Point point;
+        geometry::Status status = geometry::Status::ready;
+        Packet() = default;
+    };
+    Packet echo(Packet value) { return value; }
+    geometry::Point point(geometry::Point value) { return value; }
+    geometry::Status status(geometry::Status value) { return value; }
+    [[borrowed_from(value)]] mut geometry::Point& edit(mut geometry::Point& value) { return value; }
+}

@@ -1446,6 +1446,14 @@ same exact materialization, the value-rooted lifetime slot or the CFG-promoted
 hidden slot of a call in a conditional arm or `&&`/`||` operand, and passes
 that slot to the selected reference parameter. The hidden slot's MIR drop
 after the merge is emitted as its conditional `destroy_if_engaged()`. A
+class assignment's copied result and a class conditional's joined result use
+their own hidden full-expression slots as well. A later assignment argument
+may update the original binding while an earlier argument's read loan remains
+live: the earlier loan names its distinct snapshot slot. The C++ emitter
+replays the later store and snapshot at their MIR positions only after proving
+their destinations are disjoint from every staged borrowed slot. A later
+read-borrowed conditional argument may join two passive binding copies into
+its own temporary slot; the exact two-arm join preserves the earlier slot. A
 payload-enum temporary in such a slot, cleanup-free or owning, is constructed
 there as well. Its `PayloadConstruct`, retargeted to the slot by the merge,
 constructs the alternative in place. An owning enum returned by a call
@@ -5146,6 +5154,14 @@ fields retain their separate transfer prerequisites. Cleanup identity is checked
 against the canonical MIR recipe, including nested fields, rather than a second
 backend reconstruction of destructor order.
 
+A whole-binding move used by one consuming receiver can also publish into
+MIR's exact branch temporary. The planner verifies the moved-temporary
+producer identity, initially unavailable destination, source/value drop
+transition, and single receiver publication. Emission relocates into that
+named temporary, so cleanup after a conditional merge observes the object
+that was actually invoked. Other destinations and consumers gain no transfer
+permission from this case.
+
 The program-aware placement query binds only those proven hierarchy producers.
 Body-only placement and ordinary nonhierarchy Copy/Move retain their existing
 snapshot behavior. Typed copy walks logical fields and installs each complete
@@ -5682,7 +5698,63 @@ authorized, nondischarged MIR outcome and branch to its selected Invoke failure
 edge. Signed and unsigned overflow are checked; division/conversion/shift guards
 dominate potentially undefined LLVM operations. Signed minimum modulo -1 selects
 a safe divisor and produces zero. Wrapping, saturation and overflow predicates
-use separate intrinsic modes. No `nsw`/`nuw` or fast-math promises are invented.
+use separate intrinsic modes.
+
+Checked add, subtract, multiply and negate retain their non-poisoning LLVM
+overflow detector. A separate arithmetic result carries `nsw` for a signed
+computation or `nuw` for an unsigned computation. It is computed alongside the
+detector to permit shared machine arithmetic, but only the successful
+continuation may consume it. Overflow can make that unused result poison on the
+failure edge; it cannot poison the independent detector or failure cleanup.
+This relies on LLVM's [deferred poison semantics](https://llvm.org/docs/LangRef.html#poison-values),
+not speculative permission for trapping division or memory operations.
+The flags apply at the computation width, before any separate checked narrowing.
+They express GTI's successful-execution invariant; they do not replace the
+detector, change failure routing, or apply to explicit wrapping, saturation or
+overflow-predicate operations. This preserves facts for LLVM's ordinary range,
+induction-variable and loop optimizations instead of feeding them the overflow
+intrinsic's wrapping result lane.
+
+After the normal LLVM optimization pipeline has used those facts, a final
+arithmetic canonicalization reuses an existing overflow intrinsic's result lane
+for an identical flagged add/subtract/multiply. The intrinsic must dominate the
+replaced instruction; operand identities and integer widths must match.
+Add/multiply may commute, subtraction may not. The transformation preserves the
+overflow predicate and failure control flow. When SimplifyCFG merges checked
+results, it can instead form a result PHI from matching checks on **every**
+incoming edge; an incomplete match changes nothing. If InstCombine replaces a
+constant arithmetic detector with an integer-range comparison, the pass may
+reconstruct the overflow intrinsic only when LLVM `ConstantRange` proves the
+comparison exactly equivalent over the full integer domain. Both success and
+failure predicates are supported. A wrapping constant bias may be translated;
+a bias with no-wrap flags, an approximate range, a different operand or a
+non-dominating comparison is rejected. New detectors are restricted to the
+result's block or its immediate, uniquely entered successful successor. For a
+merged result, the comparison must guard that incoming edge directly. Checks
+before intervening conditionals or loop traversals are left unchanged, avoiding
+speculation from a rare arithmetic path onto a frequent guard.
+
+Direct reconstruction additionally requires a nonzero wrapping bias in the
+comparison; an already-cheap single comparison is preserved unless reconstructing
+it enables complete PHI-edge result reuse. On the measured AArch64 target,
+fusing simple conditional increments changed dependency scheduling and slowed
+a counting workload despite reducing instruction count. This conservative
+structural boundary is independent of types, public names and workloads; it
+is not a universal target profitability model.
+
+This avoids duplicate machine arithmetic after LLVM's result merging and range
+canonicalization. Operand matches are rechecked after replacements, and cached
+LLVM analyses are invalidated before sanitizer instrumentation. Reconstruction
+only speculates non-trapping integer arithmetic; it neither adds failure edges
+nor permits removing them. Signedness, wrapping behavior and source cleanup
+remain unchanged.
+
+When verified MIR has discharged an exact local failure outcome, the backend
+also preserves that detector's falsehood with `llvm.assume(!detector)`. Only an
+explicit discharge consumed through the verified lowering boundary permits the
+assumption. Merely finding no origin is insufficient, live checks remain, and a
+constant true detector contradicting its proof is rejected. No alias, memory,
+fast-math or speculative safety guarantee follows from either mechanism.
 Floating operations use ordinary IEEE LLVM operations under GTI's fixed nearest-
 ties-even/gradual-underflow environment, with no reassociation or contraction;
 NaN comparisons and truncation-before-range-check conversion are explicit.

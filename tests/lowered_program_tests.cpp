@@ -400,6 +400,10 @@ export T cached<T>(T input) { T local = input; return local; }
                (expectWarm ? metrics.semanticPreambleBuilds == 0
                            : metrics.semanticPreambleBuilds != 0),
            "preamble reuse is isolated by the exact source-debug capability");
+    if (expectWarm && profile == lang::SourceDebugProfile::LexicalV1)
+      expect(metrics.semanticInstanceReuseHits > 0,
+             "a later snapshot reuses a source-debug instance after the "
+             "previous semantic request has been destroyed");
     if (!result.canGenerateCode())
       return;
     expect(lang::verifyHirSourceDebug(result.semantics, result.hir).valid(),
@@ -1411,7 +1415,7 @@ void testDetachedDeterministicProgram() {
   const std::string secondText = lang::LoweredProgramPrinter().print(*second);
   expect(firstText == secondText,
          "independent frontend snapshots should lower deterministically");
-  expect(firstText.find("lowered-program-v27") == 0 &&
+  expect(firstText.find("lowered-program-v31") == 0 &&
              firstText.find("\nmir\n") != std::string::npos,
          "the deterministic printer should serialize the complete contract");
   const gti_test::LoweredProgramInventory inventory =

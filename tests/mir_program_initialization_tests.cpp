@@ -1201,9 +1201,156 @@ void testOptimizationCoherence(const lang::FrontendResult &frontend) {
          "optimizer coherence should reject a changed block-step tag");
 }
 
+void testImmediateConstantInventories() {
+  const auto frontend = lang::Frontend().analyze("immediate-inventory.gti", R"(
+struct Leaf { int value; constexpr Leaf(int x) : value(x) {} };
+struct Box { Leaf leaf; constexpr Box(int x) : leaf(Leaf(x)) {} };
+enum class Mode { Zero, One };
+enum Choice<T> { empty, value(T payload), error(int code) };
+consteval Box make_box() { return Box(3); }
+consteval int[2] numbers() { return {1, 2}; }
+consteval Mode selected() { return Mode::One; }
+consteval Choice<Leaf> choice() { return Choice<Leaf>::value(Leaf(3)); }
+int inspect(Choice<Leaf> value) {
+  switch (value) {
+  case Choice<Leaf>::empty: return 0;
+  case Choice<Leaf>::value(auto& leaf): return leaf.value;
+  case Choice<Leaf>::error(code): return code;
+  }
+}
+int main() {
+  Box box = make_box();
+  int values[2] = numbers();
+  Mode mode = selected();
+  return box.leaf.value + values[0] + (mode == Mode::One ? 1 : 0) +
+         inspect(choice()) - 8;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "immediate record, array, scalar-enum and payload-enum publication "
+         "verifies");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.message << '\n';
+    return;
+  }
+  const auto mutateConstant = [&](lang::ConstantAggregateKind kind,
+                                  const auto &mutation,
+                                  std::string_view description) {
+    auto forged = frontend.mir;
+    bool changed = false;
+    for (auto &function : const_cast<std::vector<lang::MirFunctionInstance> &>(
+             forged.functionInstances())) {
+      for (auto &entry : function.body.programConstantSubstitutions) {
+        const auto *aggregate =
+            std::get_if<lang::ConstantAggregateValue>(&entry.constant);
+        if (!aggregate || !aggregate->value || aggregate->value->kind != kind)
+          continue;
+        auto node = *aggregate->value;
+        mutation(node);
+        entry.constant = lang::makeConstantAggregate(std::move(node));
+        changed = true;
+        break;
+      }
+      if (changed)
+        break;
+    }
+    const auto verification = lang::verifyMirProgram(forged);
+    expect(changed && !verification.valid(), description);
+  };
+  mutateConstant(
+      lang::ConstantAggregateKind::Object,
+      [](auto &node) { node.fields.front().symbol = 0; },
+      "constant publication rejects a forged field identity");
+  mutateConstant(
+      lang::ConstantAggregateKind::Object,
+      [](auto &node) { node.fields.front().value = std::string("wrong"); },
+      "constant publication rejects a field of the wrong type");
+  mutateConstant(
+      lang::ConstantAggregateKind::Object,
+      [](auto &node) { node.fields.clear(); },
+      "constant publication rejects missing record fields");
+  mutateConstant(
+      lang::ConstantAggregateKind::Object,
+      [](auto &node) { node.elements.push_back(true); },
+      "constant publication rejects unrelated aggregate elements");
+  mutateConstant(
+      lang::ConstantAggregateKind::Object,
+      [](auto &node) {
+        auto nested =
+            *std::get<lang::ConstantAggregateValue>(node.fields.front().value)
+                 .value;
+        auto &integer =
+            std::get<lang::ConstantInteger>(nested.fields.front().value);
+        integer.magnitude = std::uint64_t{1} << 63;
+        node.fields.front().value =
+            lang::makeConstantAggregate(std::move(nested));
+      },
+      "constant publication range-checks nested integer values");
+  mutateConstant(
+      lang::ConstantAggregateKind::Array,
+      [](auto &node) { node.elements.pop_back(); },
+      "constant publication rejects a mismatched array extent");
+  mutateConstant(
+      lang::ConstantAggregateKind::Array,
+      [](auto &node) { node.fields.push_back({.symbol = 1, .value = true}); },
+      "constant publication rejects fields attached to an array");
+  mutateConstant(
+      lang::ConstantAggregateKind::PayloadEnum,
+      [](auto &node) { node.identity = 0; },
+      "constant publication rejects a forged payload-enum identity");
+  mutateConstant(
+      lang::ConstantAggregateKind::PayloadEnum,
+      [](auto &node) { node.variant = 1000; },
+      "constant publication rejects an unknown active alternative");
+  mutateConstant(
+      lang::ConstantAggregateKind::PayloadEnum,
+      [](auto &node) { node.variant = 0; },
+      "constant publication rejects payloads from a different alternative");
+  mutateConstant(
+      lang::ConstantAggregateKind::PayloadEnum,
+      [](auto &node) { node.elements.clear(); },
+      "constant publication rejects missing active payloads");
+  mutateConstant(
+      lang::ConstantAggregateKind::PayloadEnum,
+      [](auto &node) { node.elements.front() = std::string("wrong"); },
+      "constant publication rejects an active payload of the wrong type");
+  mutateConstant(
+      lang::ConstantAggregateKind::PayloadEnum,
+      [](auto &node) { node.fields.push_back({.symbol = 1, .value = true}); },
+      "constant publication rejects fields attached to a payload enum");
+
+  for (bool borrowed : {false, true}) {
+    auto forged = frontend.mir;
+    const auto leaf = classFor(frontend, "Leaf");
+    bool changed = false;
+    for (auto &instance : const_cast<std::vector<lang::MirClassInstance> &>(
+             forged.classInstances())) {
+      if (leaf && instance.id == *leaf) {
+        if (borrowed)
+          instance.traits.containsBorrowedState = true;
+        else
+          instance.requiresActiveCleanup = true;
+        changed = true;
+      }
+    }
+    const auto verification = lang::verifyMirProgram(forged);
+    expect(changed &&
+               std::any_of(verification.errors.begin(),
+                           verification.errors.end(),
+                           [](const auto &error) {
+                             return error.message.find("exact passive") !=
+                                    std::string::npos;
+                           }),
+           borrowed ? "constant publication rejects nested borrowed state"
+                    : "constant publication rejects nested active cleanup");
+  }
+}
+
 } // namespace
 
 int main() {
+  testImmediateConstantInventories();
   const lang::FrontendResult frontend = analyzeFixture();
   testExactLoweringAndPrinting(frontend);
   if (!frontend.mirValid) {

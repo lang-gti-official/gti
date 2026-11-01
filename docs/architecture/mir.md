@@ -111,6 +111,25 @@ tracking through native function pointers, or implement a call stack.
 
 ### Constant-execution foundation
 
+Immediate invocation results extend the existing constant-substitution inventory
+with passive aggregate constants. A `Compute/Literal` stage marked as a
+constant substitution has no scalar `literal` payload for an aggregate: its
+unique HIR value identity selects the exact inventory value. It has no operands
+or call/constructor target. Verification checks the publication schedule and
+validates aggregate fields, element types, active sum alternatives and passive
+lifetime against the complete program catalog. Native emission materializes the
+proved value using target layout; scalar arrays remain SSA values, while records
+and record-containing arrays use their ordinary object storage representation.
+The C++ backend fails closed for aggregate body-constant publication.
+
+Statement-level immediate completion leaves no MIR runtime call: HIR retains
+the source-bound proof for a successful standalone `consteval void` statement
+and lowers only the completed statement. A bare return selecting an immediate
+constructor enters the same constant-substitution inventory as other passive
+aggregate results. Its literal is bound to the return full expression; MIR
+verification checks the typed constant, and LLVM materializes the proved value.
+
+
 `mir_constant_evaluator` provides a bounded execution service over
 canonical unoptimized MIR. It first runs ordinary whole-program verification,
 then applies a bounded constant-execution profile at the selected function and
@@ -371,9 +390,23 @@ profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
 The combined deterministic serialization is currently `mir-v119`/`mir-body-v93`,
-with `lowered-program-v27` declaration metadata. These distinct combined
+with `lowered-program-v29` declaration metadata. These distinct combined
 identities retain both macro result-region/local-initializer authority and
 thread-local initialization, cleanup and reference-pack proof facts.
+Compiled scalar linkage records also seal each callable's result type and
+compilation-local source unit alongside its persistent declaration key. Imports
+bind against their exact virtual facade unit; exported overloads bind against
+the selected root module. Scalar wrappers retain the GTI failure channel and
+forward a fallible implementation's original result, status and failure record.
+When the existing MIR cleanup analysis proves a compiled producer body only
+propagates failure, its LLVM code forwards the caller's failure destination and
+defers the inherited-cleanup check to the importing GTI call site. It performs
+no observable cleanup before that check. Bodies with observable cleanup or
+managed-worker containment retain their runtime checks; the self-contained
+object profile continues to reject unresolved runtime dependencies.
+The producer's cold failure-origin helper uses guaranteed inline memory
+operations to initialize the existing fixed-size record without a libc call;
+exact failure-channel self-copies erase before native code generation.
 Class records also preserve semantic-selected virtual root/target declarations.
 HIR binds each selection to exact concrete function and owner identities plus
 successive direct-base paths; MIR verifies complete root coverage, signatures,
@@ -2035,6 +2068,14 @@ parameter such as `std::unique_ptr<Dir>&`. A Local loan on the projected
 place would leave the call's owner unborrowed, and one on the semantic origin
 could not name the address; `referenceAddressRetainsLoan` rejects both.
 
+A carrier construction that stores such a returned reference also retains
+the exact call-result loan as its parent, whether its input is the direct
+accessor result or a reference binding initialized from it. Its Stored loan
+keeps the accessor result's external dependency separately from the physical
+referent address. This applies to `Construct` as well as function calls;
+verification checks the exact constructor input and dependency before either
+backend can use the carrier.
+
 A read-only binding through a mutable owner's smart pointer retains a
 read-only call-result loan: semantics selects the read-only `operator->` or
 `operator*` step from the binding's use (static semantics, accessor pairs), so
@@ -2093,6 +2134,12 @@ producer must be a `Call` with an Argument origin and no field mapping, and the
 returned value must be that call's result. `verifyMirBorrowProducers` already
 proves that such a call's result loan names its selected input, so the formal
 is the only owner either way.
+A local copy of a text value relayed from a reference formal uses the same
+entry authority. The abstract stored-entry publication proof checks the
+call-result loan, its exact value input load from the formal's dereference,
+and dominance of the call over the local initialization, including an `Invoke`
+success edge. A matching declared return dependency alone cannot publish the
+entry into an unrelated local.
 The success loan always uses read-only access, including when the enclosing
 method has a mutable receiver. A by-value nominal carrier parameter can provide
 that success through its one exact designated reference path; the Return
@@ -3992,7 +4039,7 @@ destination, or lifecycle transfer. Availability is consumed independently of
 physical cleanup: the enclosing receiver keeps its fields. Body verification
 checks exact place/event identity and subsequent availability; program
 verification requires an enclosing consuming method and a non-borrowing
-nominal or exact stored-lambda callable target. A retained lambda's complete
+nominal method or exact stored-lambda callable target. A retained lambda's complete
 closure type must match its selected lambda instance, not just its signature.
 The staged capability has one exact invocation use.
 The backend emits the selected receiver-qualified call against that retained
@@ -4000,9 +4047,11 @@ place, leaving outer full-expression cleanup unchanged.
 
 `MirFunctionInstance::ownedPointeeProjection` describes a transparent source
 accessor, not a consuming call. The bounded proof requires one direct declared
-`UniqueOwner<T>` receiver field and the matching checked read/mutable borrow,
-followed by its exact returned loan. The only permitted control-flow split is
-the intrinsic's empty-owner failure edge. Calls to other functions, writes,
+`UniqueOwner<T>` or compiler-bound polymorphic-slot receiver field and its
+matching private read/mutable borrow, followed by the exact returned loan.
+Unique-owner access has the intrinsic's empty-owner failure edge; inline-slot
+access is one block with no defined-failure edge. The function-level failure
+summary may remain conservative. Calls to other functions, writes,
 alternate return origins, extra effects, and virtual dispatch do not satisfy
 this proof. The verifier checks the concrete owner field/type, access, intrinsic
 operand lineage, returned loan, failure path, and full-expression boundary;
@@ -4010,7 +4059,8 @@ ordinary receiver-derived borrow metadata is insufficient. This is the
 accessor-side proof for retained pointee consumption.
 
 For that caller, a `RetainedReceiver` stage has `retainedOwnerPlace` naming the
-mutable field-only This owner anchor, while its executable operand is the
+mutable field-only This owner anchor (including the unprojected consuming
+receiver itself), while its executable operand is the
 accessor's actual unprojected mutable CallResult loan. The semantic ownership
 event consumes the anchor, not the borrowed referent. Body verification checks
 anchor/loan identity and preserves every other live-loan conflict. Program

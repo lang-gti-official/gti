@@ -266,8 +266,39 @@ int reject_descriptor(std::string_view mode) {
   return 99;
 }
 
+mut int published_drops = 0;
+class PublishedValue {
+  int value;
+public:
+  PublishedValue(int value) : value(value) {}
+  int read() { return this.value; }
+  ~PublishedValue() { published_drops = published_drops * 10 + this.value; }
+};
+
+bool published_prefix() {
+  {
+    mut std::detail::prefix_owner<PublishedValue> values{uint64_t(3)};
+    unsafe {
+      PublishedValue* first = values.address();
+      std::construct_at(first, 1);
+      std::construct_at(first + uint64_t(1), 2);
+      values.set_initialized_length_unchecked(uint64_t(2));
+    }
+    if (values.length() != uint64_t(2) || values.read(uint64_t(1)).read() != 2 ||
+        published_drops != 0) { return false; }
+    values.clear();
+    if (published_drops != 21) { return false; }
+    unsafe {
+      std::construct_at(values.address(), 3);
+      values.set_initialized_length_unchecked(uint64_t(1));
+    }
+  }
+  return published_drops == 213;
+}
+
 int main(int argc, std::vector<std::string> argv) {
   if (argc > 1) { return reject_descriptor(argv[std::size_t(1)].view()); }
+  if (!published_prefix()) { return 80; }
   {
     RecordingResource resource{uint64_t(0), uint64_t(7)};
     unsafe {

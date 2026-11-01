@@ -3,7 +3,7 @@
   "source_fingerprints": {
     "stdlib/prelude.gti": "ff426a31d12405cd7a6f09ad46cf76c14f7d3b0a1fadef595c6ad7a4d4d3f831",
     "stdlib/std.gti": "6bf76540ce1d32024871a3fce4b9512fd6fd494511f919db63450e2b4796a0f7",
-    "stdlib/std/algorithm.gti": "826401e08ec574c7d8c441d579223f2fd0b1ad348bd6fbd4f512c289f1dda74f",
+    "stdlib/std/algorithm.gti": "0b11f6332b1aa9cb3f0b5be90680a81e5f5e7fcd6cc38322f65263e87d6f7f2b",
     "stdlib/std/array.gti": "affed4f1d587a71a098ef7c9b381e6c255d8b639492abbe9a46b31e00115adde",
     "stdlib/std/assert.gti": "c34ddabb3ce77983232aa13452cf036dba6202cdbd8d2bb7e1c0d9f0a8b6d78d",
     "stdlib/std/atomic.gti": "d51045256225848941363200bff10a2fe1bf30b66915a06b89e1fce546d1aed1",
@@ -22,7 +22,7 @@
     "stdlib/std/detail/map_iterators.gti": "1865894665173a692f71381a1190056f1c6f8f1d868590c8a84de887045f5047",
     "stdlib/std/detail/memory_capabilities.gti": "f4add458d438acc7f60ab55c981fd046db11d3fb51b8d81f371892f86243702f",
     "stdlib/std/detail/memory_core.gti": "4fbde597a84587a8108230d8ee58d8b62d7e4cd6c0791a4b22a3ea16b3ed4e37",
-    "stdlib/std/detail/memory_storage.gti": "18f1377bc1972da20eab16a141500c5995919a97b46e2f379706603301f76c71",
+    "stdlib/std/detail/memory_storage.gti": "e548b028aa64ee6b36fa66fbf87f731eb284cdc88cd4c4fa00c0ae95d6e8b3ca",
     "stdlib/std/detail/panic.gti": "c78f8a45be7af44e0379ff3c9c77448f5271538859789f252b658abb4b950154",
     "stdlib/std/detail/resource_core.gti": "3af137631b16e0c323850cafa4e43bcbb25eb168cb332d95fbecdd4301e53135",
     "stdlib/std/detail/resource_lease.gti": "f1a66da927f3a040de99b66c55cf2af1bb76779cb75f541c719d06a45c2443f4",
@@ -33,7 +33,7 @@
     "stdlib/std/filesystem.gti": "a579044390fadec9e7854eccd4d5901f13ab85288bf71a19ee97cadad2693de6",
     "stdlib/std/format.gti": "6bb96b2a640689505878eeafc4ed2b75989c5821638e12114d5661ecdbe0ea67",
     "stdlib/std/forward_list.gti": "8d39227073b9f98eb6bc83a7a7103bc630497345830bc7e618dcc01fccb917ef",
-    "stdlib/std/functional.gti": "ac30b788f1bfcc1c91091f162bbbb47d89ba8da7c3a4579564b83a6a523f80f1",
+    "stdlib/std/functional.gti": "094c1baa47c93162e8ad139c30e5bd0070cff7c5e2343fb3fd32ca880f8437ac",
     "stdlib/std/http.gti": "7810cf7acaee803670f346e0103fa6c0cdfca62aca8edda538cfa880e8ae3521",
     "stdlib/std/io.gti": "8c28bff6f539a82e47f507db2cff429e74307b0dbe6128de48c0b47fd329c0b3",
     "stdlib/std/iterator.gti": "586855579c50031612b0136d001e21dd31c4387dcf115c9fe4485bd12d2577e3",
@@ -41,13 +41,13 @@
     "stdlib/std/list.gti": "d8c0a951c3ef5a9fefb8fd69882c8d2b313c9b502d32df906e8e38da809f7923",
     "stdlib/std/map.gti": "73bbf9e8c529c923f3391b94b83e330b90c02b933a7b2cfd9f3c171ee01a6955",
     "stdlib/std/memory.gti": "cf4a99569c5e3d3ddd352ae4a6019586a64ff5fe27e2d637a6bf1c91e4bd62c1",
-    "stdlib/std/meta.gti": "02145583fabe6e6e5598ea9bf3762d27b5d18b4a2c42cd706d42ac14f51c438c",
+    "stdlib/std/meta.gti": "a551c06adbe68e4d6240146db6259483dc95899feee10aa3bfdf7f8de93732fa",
     "stdlib/std/mutex.gti": "d761ef5ca158c5da39f60c2c6c2d66004f6a02a9ea5903bbf4db015e9a77eb11",
     "stdlib/std/numeric.gti": "fa0d3a929076f3f614ebef4c10c897c513e91712332d00b24fc58e78af5bd0cf",
     "stdlib/std/optional.gti": "a67d746ef0f8f5eb14c256b5595725febe56425cfec76fea484f5717fd1ca0d1",
     "stdlib/std/paired_span.gti": "06244b15782f49e35b229fa20238489c578305d8b09a70e9b22ba77f7d5dfffa",
     "stdlib/std/panic.gti": "3d57fe9c9292a04c6671534abaa3fd9b9287c47247f5c2d40e686344c25cd222",
-    "stdlib/std/polymorphic.gti": "af7011cfbe7c6977b0be78787f762f26191e61b0c9632439cdfa94794e398cb3",
+    "stdlib/std/polymorphic.gti": "009f2fe6faec263700c6d734d8db3448b25cde6cca9c9adfea2e8807ed3a594a",
     "stdlib/std/process.gti": "632b0c183f363b66872ae2c17a00516ac9b103bfd580527fc639fd0996e1324b",
     "stdlib/std/queue.gti": "38c9d92a49aa37fcd56dadaa3c2639e5c963b79efa5286f30b407016bc909eed",
     "stdlib/std/random.gti": "41d83ba6833118988fcc0559abde9042cd423a201b468c77b6f33da3cd2eabec",
@@ -57,7 +57,7 @@
     "stdlib/std/simd.gti": "c525bc03c27ff0f3921aaaa7ff03931dacad40578895dac142b0863f1b5fb9ce",
     "stdlib/std/source_location.gti": "c748203afe96c27c06465ffd6b38728becb85bcceca6e8097f75a8460eb74f95",
     "stdlib/std/span.gti": "effe13ba9bd0beeb1f04c84f17b5bd4458686ff713e3eb6756a65a8b0e8a7409",
-    "stdlib/std/string.gti": "9f59d0df17dc0fc737395e41851d56f5d264063129f96a5f8986e3ffe8be4082",
+    "stdlib/std/string.gti": "0beeddb811310b50821c9df0d71f50258ceec61a761ddffa909f33a53ae79cfb",
     "stdlib/std/string_view.gti": "3a96eeaa90719fdc5c2202f5cbd4ee81ef215f702a848767d2a4c2cf82a94cd6",
     "stdlib/std/tcp.gti": "23022069c0f430cf86fa3c0bd567aa44cde7ef638d7bcb821148a0ac77959c04",
     "stdlib/std/testing.gti": "03e0324d888081b1ee77a626f73c45170a94aa337a214732ba829880204af618",
@@ -1582,6 +1582,21 @@
       }
     },
     {
+      "id": "meta-method-invoke",
+      "mode": "run",
+      "source": "tests/fixtures/reflection_method_invoke.gti",
+      "backend": "llvm",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
       "id": "meta-type-facts",
       "mode": "run",
       "source": "tests/fixtures/reflection_type_facts.gti",
@@ -1815,6 +1830,21 @@
       "id": "owned-error-pipelines",
       "mode": "run",
       "source": "tests/fixtures/stdlib_owned_error_pipelines.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "owned-inline-consumption",
+      "mode": "run",
+      "backend": "llvm",
+      "source": "tests/fixtures/owned_inline_consumption.gti",
       "optimizations": [
         "O0",
         "O3"
@@ -4188,7 +4218,9 @@
         "tests/owning_function_runtime_test.py",
         "tests/owning_function_policy_failure_test.py",
         "tests/inline_polymorphic_runtime_test.py",
-        "stdlib/std/functional.gti"
+        "stdlib/std/functional.gti",
+        "tests/fixtures/owned_inline_callbacks.gti",
+        "tests/owned_inline_consumption_test.py"
       ]
     },
     {
@@ -4215,7 +4247,9 @@
         "stdlib/std/functional.gti",
         "tests/fixtures/transfer_function_threads.gti",
         "tests/managed_thread_tests.cpp",
-        "tests/shared_ownership_threads_test.py"
+        "tests/shared_ownership_threads_test.py",
+        "tests/fixtures/owned_inline_callbacks.gti",
+        "tests/owned_inline_consumption_test.py"
       ]
     },
     {
@@ -5253,6 +5287,7 @@
         "std::meta::lookup_methods_of",
         "std::meta::lookup_operators_of",
         "std::meta::method::index",
+        "std::meta::method::invoke",
         "std::meta::method::is_constexpr",
         "std::meta::method::is_constrained",
         "std::meta::method::is_consuming",
@@ -5340,7 +5375,8 @@
         "meta",
         "meta-type-facts",
         "callable-result-types",
-        "source-result-combinators"
+        "source-result-combinators",
+        "meta-method-invoke"
       ],
       "required_instantiations": [
         "field enumeration in declaration order",
@@ -5354,7 +5390,8 @@
         "callable metadata",
         "exact construction, assignment and structural relocation facts",
         "transfer/share denial for raw and thread-affine state",
-        "exact nominal type identity and enum representation"
+        "exact nominal type identity and enum representation",
+        "compile-time-selected instance invocation for unrelated user-defined types"
       ],
       "evidence": [
         "tests/fixtures/stdlib_surface_meta.gti",
@@ -5366,7 +5403,10 @@
         "tests/fixtures/reflection_construct.gti",
         "tests/fixtures/reflection_callables.gti",
         "tests/fixtures/reflection_deferred_range.gti",
-        "tests/fixtures/reflection_defaults.gti"
+        "tests/fixtures/reflection_defaults.gti",
+        "tests/fixtures/reflection_method_invoke.gti",
+        "tests/reflection_method_runtime_test.py",
+        "examples/185-reflected-method-dispatch.gti"
       ]
     },
     {
@@ -5665,15 +5705,18 @@
         "std::inline_polymorphic::get",
         "std::inline_polymorphic::has_value",
         "std::inline_polymorphic::inline_polymorphic",
+        "std::inline_polymorphic::invoke_once",
         "std::inline_polymorphic::is_inline",
         "std::inline_polymorphic::replace",
         "std::inline_polymorphic::reset"
       ],
       "case_ids": [
+        "owned-inline-consumption",
         "polymorphic"
       ],
       "required_instantiations": [
-        "application interface with inline scalar models, boxed owning and oversized models, move, move assignment, replacement, vector growth and exactly-once cleanup"
+        "application interface with inline scalar models, boxed owning and oversized models, move, move assignment, replacement, vector growth and exactly-once cleanup",
+        "inline consuming invocation with exact owner retention, named consuming methods, and rejection of borrowed escape or owner reuse"
       ],
       "evidence": [
         "tests/fixtures/stdlib_surface_polymorphic.gti",
@@ -5682,7 +5725,10 @@
         "tests/inline_polymorphic_runtime_test.py",
         "tests/polymorphic_storage_compiler_tests.cpp",
         "tests/inline_closure_owner_runtime_test.py",
-        "stdlib/std/polymorphic.gti"
+        "stdlib/std/polymorphic.gti",
+        "tests/fixtures/owned_inline_consumption.gti",
+        "tests/owned_inline_consumption_test.py",
+        "examples/135-inline-polymorphic-values.gti"
       ]
     },
     {

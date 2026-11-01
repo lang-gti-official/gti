@@ -1030,10 +1030,11 @@ int main() {
     auto member = source;
     member.replace(firstUse, std::string("std::move(this.first)()").size(),
                    "std::move(this.first).read()");
-    const auto extracted =
-        analyzeTrustedPreludeFixture("non-retained-member-field.gti", member);
-    expect(extracted.canGenerateCode() && retainedStages(extracted) == 1,
-           "a move inside member access is not an immediate callable receiver");
+    const auto retained =
+        analyzeTrustedPreludeFixture("retained-member-field.gti", member);
+    expect(retained.canGenerateCode() && retainedStages(retained) == 2,
+           "an immediate named method retains its consumed field like a call "
+           "operator");
   }
 
   for (const std::string &qualifier : {std::string{}, std::string{"mut"}}) {

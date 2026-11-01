@@ -86,6 +86,12 @@ struct FrontendOptions {
   // nothing reaches are not concretely analyzed. Artifact builds set this; `gti
   // check` does not, so its diagnostics remain complete.
   bool lowerLibraryReachableOnly = false;
+  // Keep the complete application HIR closure when lowering to MIR, rather
+  // than selecting only the executable-root prefix. Compiled-library
+  // producers use this with both reachability options above: exports need
+  // not be reachable from main, but unrelated trusted declarations must not
+  // become imports or native dependencies.
+  bool retainApplicationBodies = false;
   // Lower HIR only for the program roots and the entry source unit's own
   // declarations, discovering everything they reach. Concrete-instance
   // diagnostics are then reported for the entry unit's code and the library

@@ -177,6 +177,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Initialize a string or class from one value of another type with an implicit constructor | [154: declaration construction](154-declaration-construction.gti) |
 | Convert a value to another type with an explicit or `implicit` conversion operator | [155: conversion operators](155-conversion-operators.gti) |
 | Give types associated types and operations from outside them, and use them from generic code | [157: protocol concepts](157-protocol-concepts.gti) |
+| Select one policy and obtain containers for independent element types | [182: associated type families](182-associated-type-families.gti) |
 | Relate several types through one concept, with a result type that depends on all of them | [158: multi-parameter concepts](158-multi-parameter-concepts.gti) |
 | Propagate a failure from your own result type with `?` | [159: tryable propagation](159-tryable-propagation.gti) |
 | Return a reference through a callback, a generic relay, an invocation pointer or a callable view | [160: borrowed callback results](160-borrowed-callback-results.gti) |
@@ -186,6 +187,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Consume a fallible view while retaining its external success borrow | [165: borrowed payload results](165-borrowed-payload-results.gti) |
 | Use optional, one-step implicit returns, consuming access, move assignment and `?` | [166: source optional](166-source-optional.gti) |
 | Name a mapper's result in an ordinary source wrapper | [167: callable result types](167-callable-result-types.gti) |
+| Select an instance method from metadata and call it with runtime data | [182: reflected method dispatch](185-reflected-method-dispatch.gti) |
 | Give a source class owned, void and borrowed profiles | [168: source value profiles](168-source-value-profiles.gti) |
 | Use global source-defined results with constexpr, callbacks and checked borrows | [169: source expected](169-source-expected.gti) |
 | Keep independent per-thread state with lazy initialization and deterministic cleanup | [175: thread-local storage](175-thread-local-storage.gti) |
@@ -223,7 +225,7 @@ is a teaching helper, not a production server.
 | `module-only/main.gti` | relative module imports, explicit exports, and a private implementation helper |
 | `module-system/` | hierarchical package modules, registered implementation bodies, isolated private names, and inferred private return types |
 | `011-overloads.gti` | exact overloads and explicit numeric conversions |
-| `012-fixed-arrays.gti` | bounded arrays, signed literals, passive records/unions, checked raw record array fields and receiver element-field projections |
+| `012-fixed-arrays.gti` | bounded arrays, signed literals, passive records/unions, checked raw record array fields, receiver element-field projections, and indexing fresh call and move results |
 | `013-ownership.gti` | non-null borrows, unique allocation, moves, and cleanup |
 | `014-operators.gti` | restricted member operators; self-read dereference stores, named mutable-reference assignment, nested subscripts and once-formed compound targets |
 | `015-variadic-generics.gti` | confined type packs, explicit forwarding, and exact passive fixed-array arguments |
@@ -253,7 +255,7 @@ is a teaching helper, not a production server.
 | `039-raw-pointers.gti` | one-level raw pointers, unsafe declaration/call contracts, lexical `unsafe`, and pointer arithmetic |
 | `040-loan-flow-edges.gti` | bounded switch-exit and immediate-`break` retained-loan endings |
 | `041-owner-dependencies.gti` | single-origin read-only and mutable owner dependencies through factories, generics, moves, and returns |
-| `042-exclusive-reborrows.gti` | nested mutable and read-only reborrows with parent reactivation after its final active child ends |
+| `042-exclusive-reborrows.gti` | nested reborrows, parent reactivation, and returning caller-owned reborrows through receiver and generic helpers |
 | `043-program-arguments.gti` | a hosted argument count and owned vector of owned command-line strings |
 | `044-bounded-requires.gti` | multi-parameter concepts, trailing requirements, and source-defined `std::accumulate` |
 | `045-layout-queries.gti` | frontend-owned type size and ABI-alignment constants |
@@ -331,7 +333,7 @@ is a teaching helper, not a production server.
 | `118-cleanup-bound-guards.gti` | resource dependencies retained through guard destruction, simultaneous shared guards, by-value parameter/local movement and explicit nested child construction |
 | `119-runtime-object-layout.gti` | runtime size/alignment descriptors for owning, immovable, nested, payload-enum, result and text types without constructing an object |
 | `120-immovable-storage.gti` | fixed-address owning objects, moving their storage handle, checked access and destruction without element movement |
-| `121-programmable-allocators.gti` | an application-defined arena choosing aligned placement in one backing region, one unsafe resource binding, and safe allocator-aware `resource_vector` and fixed-slot containers sharing it |
+| `121-programmable-allocators.gti` | an application-defined arena choosing aligned placement in one backing region, one unsafe resource binding, and safe allocator-aware `resource_vector` and fixed-slot containers sharing it; a returned vector retains the binding from its by-value parameter |
 | `122-native-function-invocation.gti` | exact native function-pointer invocation from locals, fields and returned factories under lexical unsafe, with nullable transport |
 | `125-manual-object-lifetimes.gti` | source-defined inline ownership, immovable final-address construction, checked access and explicit owning relocation |
 | `126-conditional-thread-capabilities.gti` | audited source cleanup with payload-conditional transfer/share assertions, retaining thread-affine payload restrictions |
@@ -340,9 +342,10 @@ is a teaching helper, not a production server.
 | `129-generic-payload-enums.gti` | exact generic messages with default/value arguments, owning inbox transport, borrowed payload patterns and optional `class` spelling |
 | `130-fresh-result-initialization.gti` | fresh same-type factory results, redundant typed wrappers, immovable owning values and final-address identity |
 | `131-inferred-references.gti` | local shared/exclusive `auto&` references, last-use borrowing and a reference into a decoded JSON document kept alive by its owner |
+| `182-bounded-array-borrows.gti` | exact fixed-array borrows, inferred mutable references and generic sensor-buffer operations without copying storage |
 | `133-raw-text-owner-views.gti` | counted and zero-terminated text views derived from an unrelated inline byte owner, with the unsafe bridge's checked borrow tied to that owner |
 | `134-standard-library-modules.gti` | standard-library units imported as `std.name` modules instead of included, with each import exposing exactly its own unit |
-| `135-inline-polymorphic-values.gti` | an application interface owned by `std::inline_polymorphic`, with small sensors inline, an owning sensor boxed, state preserved across vector growth, and replacement |
+| `135-inline-polymorphic-values.gti` | application interfaces owned by `std::inline_polymorphic`, with inline sensors, boxed fallback, vector growth, replacement, and consuming inline invocation |
 | `136-inline-closure-cells.gti` | an application-defined inline cell holding a bitwise-relocatable closure through raw-address lifetime helpers and `std::layout_of`, moved by its bytes |
 | `137-declared-attributes.gti` | `[[attribute]]` structs applied to fields and types with constant arguments, read through `std.meta` by a text encoder and a binary writer, with enumerator metaobjects and the `std::meta::reflectable` constraint |
 | `138-structural-construction.gti` | `std::meta::construct` building structs field by field from a byte reader and a text reader, with `expected` failures stopping production before construction |
@@ -355,6 +358,7 @@ is a teaching helper, not a production server.
 | `155-conversion-operators.gti` | an explicit conversion operator to a strongly typed identifier, an `implicit` one that a declaration may use, and a consuming conversion from a temporary and an explicitly moved builder |
 | `156-borrowing-callbacks.gti` | shared/exclusive captures, call-scoped fresh callable borrows, direct signature-erased callable views, generic stored callbacks, and stateless GTI invocation pointers |
 | `157-protocol-concepts.gti` | a concept with an associated unit type and two operations, a conformance block for one class and a generic one for every instance of a class template, and a generic function that returns the associated type through `requires` |
+| `182-associated-type-families.gti` | constrained type families map a selected storage policy to vector or inline containers for integers and strings; generic consumers state separate size-operation contracts |
 | `158-multi-parameter-concepts.gti` | a two-parameter concept whose sum type depends on both operands, a block for one pair of unit types and a generic block whose repeated parameter requires matching kinds, and a generic function that requires the pair |
 | `159-tryable-propagation.gti` | a validator's generic result type joining `?` through a `std::tryable` block, and a return type that receives the residual through an `implicit` constructor |
 | `160-borrowed-callback-results.gti` | a lambda, a generic relay with `borrowed_from`, a `std::function_ptr` and a `std::function_ref` each returning a read-only reference that borrows one reference argument, including a field of a class argument |
@@ -379,6 +383,9 @@ is a teaching helper, not a production server.
 | `179-weak-ownership.gti` | source-defined weak observation, checked promotion, expiry, and local owning callbacks with thread-affine payloads |
 | `180-compact-source-owners.gti` | general null-guarded pointer owners, compact shared/weak handles and exactly-once moved cleanup; LLVM only |
 | [181-general-object-layout.gti](181-general-object-layout.gti) | General `sizeof(T)` and `alignof(T)` constants, generic storage extents, and native runtime layout agreement (LLVM). |
+| [183-immediate-functions.gti](183-immediate-functions.gti) | Immediate functions, standalone void validation, and implicit bare-return construction composed with runtime arguments (LLVM). |
+| [184-payload-borrow-chains.gti](184-payload-borrow-chains.gti) | Return nested payload references through a parameter and receiver, and copy a sibling before a mutable payload borrow. |
+| `185-reflected-method-dispatch.gti` | a generic compile-time metadata binder calling overload-selected methods on two unrelated runtime values; LLVM execution |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |
@@ -485,7 +492,9 @@ expose a pointer or use a compiler-known public wrapper name.
 from a checked owner dereference and one of its fields. Each mutable parent is
 suspended while an overlapping child remains live, then fully reactivates
 after its final active child reaches a proven endpoint. Known-disjoint field
-projections may remain usable in the meantime. The example deliberately stays
+projections may remain usable in the meantime. Receiver and generic helpers
+also return local reborrow chains while preserving the caller's owner and
+access permission, using ordinary reference syntax. The example stays
 within stable root, field, and checked-dereference places; indexed, raw, and
 opaque sources are not part of this bounded slice.
 
@@ -578,9 +587,11 @@ for an unrelated builtin or foreign type.
 `071-fresh-temporary-borrows.gti` keeps both temporary capabilities bounded to
 one full expression. A fresh receiver can call a mutable method, including a
 virtual member or interface implementation whose override is still selected
-dynamically, while an exact read-only reference parameter can observe a fresh
-self-contained result only for the duration of one call; neither rule creates
-a storable reference.
+dynamically. An exact read-only reference parameter can observe a fresh
+self-contained constructor, call, built-in assignment or conditional result
+only for the duration of one call. Two assignment arguments retain distinct
+value snapshots at their written positions, including when a later argument
+selects a class value through a conditional; none creates a storable reference.
 
 `072-filesystem-paths.gti` performs pathname manipulation only. Assigning or
 observing a `std::filesystem::path` does not access the host filesystem, and
@@ -722,7 +733,9 @@ generation-checked handle: after erasure and reuse it names the replacement.
 application sensors through `std::inline_polymorphic<sensor, 32, 8>`. Sensors
 with scalar state live inside their owner, so vector growth relocates them with
 their counters; a sensor that owns a string is boxed. Replacing the boxed sensor
-with a small one frees its allocation. No compiler rule names the sensor types.
+with a small one frees its allocation. A command is consumed through
+`std::move(operation).invoke_once<int>(35)` while its payload stays inline.
+No compiler rule names the sensor or command types.
 
 [`136-inline-closure-cells.gti`](136-inline-closure-cells.gti) keeps a closure in
 an erased inline cell. Raw addresses of the closure-bearing holder pass through
@@ -755,6 +768,19 @@ bridge retains the owner relationship through an ordinary source helper; the
 resulting checked borrow prevents mutation, movement or escape past that owner.
 Address validity, extent and termination remain the caller's unsafe obligations.
 
+## Checked references through owning chains
+
+[`ownership/owner-chain-references.gti`](ownership/owner-chain-references.gti)
+uses ordinary reference-returning functions to borrow and modify a descendant
+through a chain of exclusive owners, without raw pointers or unsafe assertions.
+It shows shared observations after the mutable borrow's last use and exact
+destruction after all observations finish. Supplying an extra command-line
+argument demonstrates checked empty-owner failure and cleanup during traversal.
+The `owner_chain_runtime` gate runs
+this nested example on LLVM and the existing C++ backend; it is outside the
+numbered full-language census. This demonstrates existing general semantics,
+not automatic verification of raw-pointer container internals.
+
 ## General requirements and reflection
 
 [`173-general-requires.gti`](173-general-requires.gti) defines source concepts
@@ -777,6 +803,13 @@ using the same general mechanism as source-defined iterator movement policy.
 
 ## Complete projects
 
+[`compiled-scalar-library/`](compiled-scalar-library/README.md) demonstrates the
+scalar separate-compilation workflow: a two-module `.gtilib` produced by
+`gti build`, then a separate consumer project that needs only the artifact.
+`compiled_library_project` verifies normal build/run/check commands after deleting the
+producer; `compiled_scalar_library` retains the lower-level execution and
+rejection checks.
+
 [`infallible-embedding/`](infallible-embedding/README.md) builds an LLVM shared
 library and its matching C header through `gti build`. Its C host creates a
 context, calls scalar and passive-record exports, destroys the context and
@@ -798,3 +831,31 @@ resource owners, deterministic OpenGL cleanup, keyboard-driven camera movement,
 scene updates, CPU-side perspective projection, Assimp model import, shader
 compilation, interleaved vertex streaming, and an interactive ImGui debug panel,
 with headless math/model tests alongside the graphical executable.
+
+[`compiled-libraries/`](compiled-libraries/README.md) demonstrates two independent
+compiled libraries selected through the plural project manifest, with source-free
+consumer builds and checks. The `compiled_libraries_project` gate owns it.
+
+[`compiled-primitive-library/`](compiled-primitive-library/README.md) demonstrates
+all primitive interface types, overloaded exports, void results and checked
+arithmetic across a library boundary. `compiled_primitive_library` owns its
+O0/O1/O3 execution and failure/cleanup checks.
+
+[`compiled-value-types/`](compiled-value-types/README.md) demonstrates source-free
+record, nested-record and integral-enum interfaces, with normal field access and
+generated value operations. `compiled_value_types` owns its execution matrix.
+
+[`compiled-borrowing/`](compiled-borrowing/README.md) demonstrates reference
+parameters and borrowed results through library metadata, with normal caller
+loan checking. `compiled_borrow_library` owns its positive and negative matrix.
+
+[`compiled-dependencies/`](compiled-dependencies/README.md) demonstrates automatic
+library builds through a diamond dependency graph, exact dependency receipts and
+reuse of unchanged libraries. `compiled_dependency_project` owns its execution,
+failure, freshness and source-free distribution checks.
+
+The [compiled namespace example](compiled-namespaces/README.md) composes distinct
+namespace-qualified types, overloads and borrowed APIs from two compiled libraries.
+
+The [compiled type forwarding example](compiled-type-forwarding/README.md) shares
+dependency-owned records and enums through a chain and diamond of compiled libraries.

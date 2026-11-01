@@ -1,0 +1,27 @@
+import std.meta;
+mut int32_t steps = 0;
+class Probe {
+public:
+  Probe() = default;
+  int32_t read() { return 7; }
+};
+class Holder {
+public:
+  std::meta::method<Probe, 0> descriptor;
+  Holder() : descriptor(std::meta::method<Probe, 0>()) {}
+};
+class Proxy {
+  Holder value;
+public:
+  Proxy() : value(Holder()) {}
+  Holder& operator->() {
+    steps = steps + 1;
+    return this.value;
+  }
+};
+int main() {
+  Proxy proxy{};
+  Probe probe{};
+  int32_t result = proxy->descriptor.invoke(probe);
+  return result == 7 && steps == 1 ? 0 : 1;
+}

@@ -98,6 +98,7 @@ enum class TokenKind : std::uint8_t {
   CONCEPT,
   CONST,
   CONSTEXPR,
+  CONSTEVAL,
   CONTINUE,
   CPP_RESERVED,
   DEFAULT,
@@ -281,49 +282,20 @@ extern const std::unordered_map<std::string_view, TokenKind> keywords;
 // declaration. Spellings that are already GTI keywords live in `keywords`;
 // this list owns the remaining C++20/C++23 core keywords.
 inline constexpr std::string_view cppReservedIdentifiers[]{
-    "alignas",
-    "and_eq",
-    "asm",
-    "bitand",
-    "bitor",
-    "catch",
-    "char8_t",
-    "char16_t",
-    "char32_t",
-    "compl",
-    "const_cast",
-    "consteval",
-    "constinit",
-    "co_await",
-    "co_return",
-    "co_yield",
-    "decltype",
-    "dynamic_cast",
-    "explicit",
-    "friend",
-    "goto",
-    "inline",
-    "long",
-    "mutable",
-    "new",
-    "noexcept",
-    "not",
-    "not_eq",
-    "or_eq",
-    "register",
-    "reinterpret_cast",
-    "short",
-    "signed",
-    "static_cast",
-    "template",
-    "throw",
-    "try",
-    "typedef",
-    "typeid",
-    "unsigned",
-    "volatile",
-    "wchar_t",
-    "xor",
+    "alignas",  "and_eq",       "asm",
+    "bitand",   "bitor",        "catch",
+    "char8_t",  "char16_t",     "char32_t",
+    "compl",    "const_cast",   "constinit",
+    "co_await", "co_return",    "co_yield",
+    "decltype", "dynamic_cast", "explicit",
+    "friend",   "goto",         "inline",
+    "long",     "mutable",      "new",
+    "noexcept", "not",          "not_eq",
+    "or_eq",    "register",     "reinterpret_cast",
+    "short",    "signed",       "static_cast",
+    "template", "throw",        "try",
+    "typedef",  "typeid",       "unsigned",
+    "volatile", "wchar_t",      "xor",
     "xor_eq",
 };
 
@@ -480,6 +452,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "CONCEPT";
   case TokenKind::CONST:
     return "CONST";
+  case TokenKind::CONSTEVAL:
+    return "CONSTEVAL";
   case TokenKind::CONSTEXPR:
     return "CONSTEXPR";
   case TokenKind::CONTINUE:

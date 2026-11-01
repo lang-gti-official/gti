@@ -1,0 +1,44 @@
+import std.polymorphic;
+
+interface command {
+  int operator()(int amount) &&;
+};
+
+class increment : public command {
+  int base;
+public:
+  increment(int base) : base(base) {}
+  int operator()(int amount) && override { return this.base + amount; }
+};
+
+// Named consuming methods use the same ownership rule as operator().
+class ticket {
+  int value;
+public:
+  ticket(int value) : value(value) {}
+  int redeem(int bonus) && { return this.value + bonus; }
+  int inspect() { return this.value + 5; }
+  int inspect_mut() mut { return this.value + 5; }
+};
+
+class envelope {
+  mut ticket pending;
+public:
+  envelope() : pending(ticket(37)) {}
+  int finish() && { return std::move(this.pending).redeem(5); }
+  int peek() && { return std::move(this.pending).inspect(); }
+  int peek_mut() && { return std::move(this.pending).inspect_mut(); }
+};
+
+int main() {
+  envelope delivery{};
+  if (std::move(delivery).finish() != 42) return 3;
+  envelope observed{};
+  if (std::move(observed).peek() != 42) return 4;
+  envelope changed{};
+  if (std::move(changed).peek_mut() != 42) return 5;
+  std::inline_polymorphic<command, 32, 8> operation{increment(37)};
+  if (!operation.is_inline()) return 1;
+  int result = std::move(operation).invoke_once<int>(5);
+  return result == 42 ? 0 : 2;
+}

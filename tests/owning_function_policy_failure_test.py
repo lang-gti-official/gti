@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Empty invocation and allocation failure obey ordinary owning-wrapper policy.
 
-Small repeatable targets live inline, so cloning or replacing them succeeds
+Small repeatable and once-invoked targets live inline, so cloning or replacing them succeeds
 even while every allocation fails.
 """
 
@@ -45,6 +45,7 @@ def main():
                            "empty_owner_access in dereference\n"),
              (ABORT_STATUS, "", allocation),
              (ABORT_STATUS, "", allocation),
+             (42, "9\n", ""),
              (42, "9\n", ""),
              (42, "9\n", "")]
     modes = [(f"{std}-{opt}", ["--std", std, f"-{opt}"], [])

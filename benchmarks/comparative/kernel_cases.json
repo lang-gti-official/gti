@@ -1,0 +1,146 @@
+[
+  {
+    "id": "kernel-integer-recurrence",
+    "family": "integer",
+    "description": "Dependent bounded integer multiply/add/modulo",
+    "initial_rounds": 1,
+    "contract": "Same algorithm, data, work count and digest. All integer arithmetic bounded; safe array access in GTI/Rust versus ordinary native C++ indexing. Includes setup and local teardown in timed region.",
+    "source_provenance": "New matched kernel",
+    "limitations": "A focused kernel, not an application. Compiler may inline or vectorize legal operations."
+  },
+  {
+    "id": "kernel-integer-division",
+    "family": "integer",
+    "description": "Runtime-divisor integer division and remainder",
+    "initial_rounds": 1,
+    "contract": "Same algorithm, data, work count and digest. All integer arithmetic bounded; safe array access in GTI/Rust versus ordinary native C++ indexing. Includes setup and local teardown in timed region.",
+    "source_provenance": "New matched kernel",
+    "limitations": "A focused kernel, not an application. Compiler may inline or vectorize legal operations."
+  },
+  {
+    "id": "kernel-bit-mixing",
+    "family": "integer",
+    "description": "Masked shifts and XOR recurrence without overflow",
+    "initial_rounds": 1,
+    "contract": "Same algorithm, data, work count and digest. All integer arithmetic bounded; safe array access in GTI/Rust versus ordinary native C++ indexing. Includes setup and local teardown in timed region.",
+    "source_provenance": "New matched kernel",
+    "limitations": "A focused kernel, not an application. Compiler may inline or vectorize legal operations."
+  },
+  {
+    "id": "kernel-branch-predictable",
+    "family": "branches",
+    "description": "Predictable branch distribution",
+    "initial_rounds": 1,
+    "contract": "Same algorithm, data, work count and digest. All integer arithmetic bounded; safe array access in GTI/Rust versus ordinary native C++ indexing. Includes setup and local teardown in timed region.",
+    "source_provenance": "New matched kernel",
+    "limitations": "A focused kernel, not an application. Compiler may inline or vectorize legal operations."
+  },
+  {
+    "id": "kernel-branch-irregular",
+    "family": "branches",
+    "description": "Data-dependent irregular branches",
+    "initial_rounds": 1,
+    "contract": "Same algorithm, data, work count and digest. All integer arithmetic bounded; safe array access in GTI/Rust versus ordinary native C++ indexing. Includes setup and local teardown in timed region.",
+    "source_provenance": "New matched kernel",
+    "limitations": "A focused kernel, not an application. Compiler may inline or vectorize legal operations."
+  },
+  {
+    "id": "kernel-fixed-array-update",
+    "family": "arrays",
+    "description": "In-place fixed-array recurrence and reduction",
+    "initial_rounds": 1,
+    "contract": "Same algorithm, data, work count and digest. All integer arithmetic bounded; safe array access in GTI/Rust versus ordinary native C++ indexing. Includes setup and local teardown in timed region.",
+    "source_provenance": "Adapted operation family from benchmarks/workloads/fixed-array-loop-proof/main.gti",
+    "limitations": "A focused kernel, not an application. Compiler may inline or vectorize legal operations."
+  },
+  {
+    "id": "kernel-histogram",
+    "family": "arrays",
+    "description": "Indexed histogram updates from deterministic runtime input",
+    "initial_rounds": 1,
+    "contract": "Same algorithm, data, work count and digest. All integer arithmetic bounded; safe array access in GTI/Rust versus ordinary native C++ indexing. Includes setup and local teardown in timed region.",
+    "source_provenance": "New matched kernel",
+    "limitations": "A focused kernel, not an application. Compiler may inline or vectorize legal operations."
+  },
+  {
+    "id": "kernel-binary-search",
+    "family": "search",
+    "description": "Binary search over a sorted fixed array",
+    "initial_rounds": 1,
+    "contract": "Same algorithm, data, work count and digest. All integer arithmetic bounded; safe array access in GTI/Rust versus ordinary native C++ indexing. Includes setup and local teardown in timed region.",
+    "source_provenance": "New matched kernel",
+    "limitations": "A focused kernel, not an application. Compiler may inline or vectorize legal operations."
+  },
+  {
+    "id": "kernel-sieve",
+    "family": "algorithms",
+    "description": "Sieve of Eratosthenes with runtime upper bound",
+    "initial_rounds": 1,
+    "contract": "Same algorithm, data, work count and digest. All integer arithmetic bounded; safe array access in GTI/Rust versus ordinary native C++ indexing. Includes setup and local teardown in timed region.",
+    "source_provenance": "New matched kernel",
+    "limitations": "A focused kernel, not an application. Compiler may inline or vectorize legal operations."
+  },
+  {
+    "id": "kernel-fp-recurrence",
+    "family": "floating-point",
+    "description": "Strict floating-point dependent update",
+    "initial_rounds": 1,
+    "contract": "Same algorithm, data, work count and digest. All integer arithmetic bounded; safe array access in GTI/Rust versus ordinary native C++ indexing. Includes setup and local teardown in timed region.",
+    "source_provenance": "Adapted recurrence from benchmarks/workloads/scalar-fp-update/main.gti; final floating result quantized to integer",
+    "limitations": "A focused kernel, not an application. Compiler may inline or vectorize legal operations."
+  },
+  {
+    "id": "kernel-dot-product",
+    "family": "floating-point",
+    "description": "Fixed-array floating-point dot product with changing input",
+    "initial_rounds": 1,
+    "contract": "Same algorithm, data, work count and digest. All integer arithmetic bounded; safe array access in GTI/Rust versus ordinary native C++ indexing. Includes setup and local teardown in timed region.",
+    "source_provenance": "New matched kernel",
+    "limitations": "A focused kernel, not an application. Compiler may inline or vectorize legal operations."
+  },
+  {
+    "id": "kernel-matrix-multiply",
+    "family": "floating-point",
+    "description": "Row-major 48x48 i-k-j matrix multiplication",
+    "initial_rounds": 1,
+    "contract": "Same algorithm, data, work count and digest. All integer arithmetic bounded; safe array access in GTI/Rust versus ordinary native C++ indexing. Includes setup and local teardown in timed region.",
+    "source_provenance": "Adapted i-k-j algorithm from benchmarks/probes/runtime-audit/matrix/main.gti; fixed-array storage and smaller matrix",
+    "limitations": "A focused kernel, not an application. Compiler may inline or vectorize legal operations."
+  },
+  {
+    "id": "kernel-stencil",
+    "family": "arrays",
+    "description": "Double-buffered one-dimensional integer stencil",
+    "initial_rounds": 1,
+    "contract": "Same algorithm, data, work count and digest. All integer arithmetic bounded; safe array access in GTI/Rust versus ordinary native C++ indexing. Includes setup and local teardown in timed region.",
+    "source_provenance": "New matched kernel",
+    "limitations": "A focused kernel, not an application. Compiler may inline or vectorize legal operations."
+  },
+  {
+    "id": "kernel-state-machine",
+    "family": "branches",
+    "description": "Switch-based parser-like state transitions",
+    "initial_rounds": 1,
+    "contract": "Same algorithm, data, work count and digest. All integer arithmetic bounded; safe array access in GTI/Rust versus ordinary native C++ indexing. Includes setup and local teardown in timed region.",
+    "source_provenance": "New matched kernel",
+    "limitations": "A focused kernel, not an application. Compiler may inline or vectorize legal operations."
+  },
+  {
+    "id": "kernel-recursive-tree",
+    "family": "calls",
+    "description": "Recursive branching traversal with runtime depth",
+    "initial_rounds": 1,
+    "contract": "Same algorithm, data, work count and digest. All integer arithmetic bounded; safe array access in GTI/Rust versus ordinary native C++ indexing. Includes setup and local teardown in timed region.",
+    "source_provenance": "New matched kernel",
+    "limitations": "A focused kernel, not an application. Compiler may inline or vectorize legal operations."
+  },
+  {
+    "id": "kernel-function-composition",
+    "family": "calls",
+    "description": "Small function composition eligible for inlining",
+    "initial_rounds": 1,
+    "contract": "Same algorithm, data, work count and digest. All integer arithmetic bounded; safe array access in GTI/Rust versus ordinary native C++ indexing. Includes setup and local teardown in timed region.",
+    "source_provenance": "New matched kernel",
+    "limitations": "A focused kernel, not an application. Compiler may inline or vectorize legal operations."
+  }
+]

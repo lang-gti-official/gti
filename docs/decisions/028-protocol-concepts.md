@@ -4,6 +4,9 @@ Status: Accepted (2026-10-14). Phase 1 is implemented, and concepts with
 several parameters followed in 0.435.0 (see the revision below). Later phases
 are listed under Consequences.
 
+Generic associated type families extend the decision on 2026-10-30; see the
+revision below and the current language contract.
+
 ## Context
 
 GTI concepts are structural predicates
@@ -159,3 +162,35 @@ through a requirement:
 - a concrete associated type `C<X>::name` checks the selected block's
   parameter constraints, as `requires C<X>` and a concrete operation call
   already did.
+
+## Revision: generic associated type families (2026-10-30)
+
+A member can declare `typename family<T, U>;`, implemented by
+`using family<A, B> = Result<A, B>;` in its conformance block. Parameters stay
+beside the declared name. `C<P>::family<X, Y>` selects one conformance from
+`P`, then applies that member to independently supplied types. Multiple concept
+parameters and zero-input associated types retain their existing meaning.
+
+This lets a library select a storage, representation, or serialization policy
+once and obtain related types for several independent element types. The rule
+does not name any standard-library container. Unrelated user-defined mappings
+exercise the same mechanism.
+
+Inputs match positionally and may be renamed. Unary constraints use the existing
+generic parameter syntax and must have identical resolved concept identities
+in declaration and implementation. No specialization or constraint ranking is
+added. A conformance must supply a target valid for every admitted input; a
+family does not grant capabilities to an opaque result. Generic consumers need
+explicit construction/operation/ownership contracts on each applied result.
+
+The implementation extends existing semantic projections and substitutions.
+HIR receives concrete ordinary types and MIR/backend execution is unchanged;
+no witness object, allocation, runtime dispatch, or separate type system is
+needed. Declaration identity plus both ordered argument lists preserves exact
+abstract type identity. Bounded recursive reduction diagnoses cyclic and
+expanding definitions before execution.
+
+The remaining structural boundaries are generic aliases outside conformances,
+first-class higher-kinded parameters, value/lifetime families, packs/defaults,
+per-family requires clauses, declared result bounds and generic operations.
+Those need their own binding/contract rules; this revision does not imply them.

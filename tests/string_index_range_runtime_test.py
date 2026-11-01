@@ -65,6 +65,14 @@ def main():
                 raise AssertionError("missing verified-MIR emission witness")
             check_execution(binary)
             print(f"string index range: {name} passed", flush=True)
+        for optimization in ("O0", "O3"):
+            binary = root / f"llvm-{optimization}"
+            built = run([str(compiler), str(source), "--backend", "llvm",
+                         f"-{optimization}", "-o", str(binary)])
+            if built.returncode != 0:
+                raise AssertionError(f"LLVM {optimization} build failed:\n{built.stdout}{built.stderr}")
+            check_execution(binary)
+            print(f"string index range: llvm-{optimization} passed", flush=True)
 
 
 if __name__ == "__main__":

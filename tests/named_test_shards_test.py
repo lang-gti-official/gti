@@ -90,6 +90,11 @@ class NamedShards(unittest.TestCase):
         self.assertIn("-E '^(compiler_pipeline|cpp_mir_body_emitter_lifecycle)$'", workflow)
         self.assertIn('--executable build-sanitized/gti_cpp_mir_body_emitter_lifecycle_tests', workflow)
         self.assertIn('--count 2 --timeout 5400', workflow)
+        build = workflow.split('- name: Build the targets the sanitizer subset runs', 1)[1].split('- name: Test compiler and driver libraries', 1)[0]
+        self.assertIn('pattern="${GTI_SANITIZER_TESTS}"', build)
+        self.assertIn('if [[ "${{ matrix.kind }}" == "compiler" ]]; then', build)
+        self.assertIn("pattern='^compiler_pipeline$'", build)
+        self.assertIn('--regex "${pattern}"', build)
         self.assertIn('named_test_shards.py verify', workflow)
         self.assertIn('pattern: sanitizers-libraries-*', workflow)
         self.assertIn('NAME cpp_mir_body_emitter_lifecycle\n', (ROOT / 'tests/CMakeLists.txt').read_text())

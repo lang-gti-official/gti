@@ -28,7 +28,12 @@ SHARED = ("include/gti/semantic", "include/gti/hir", "include/gti/mir",
           "src/compiler/semantic_generic", "src/compiler/mir_", "src/compiler/hir_",
           "src/compiler/cpp_", "src/compiler/optimization/", "runtime/")
 AUTOMATION = ("docs/", ".codex/", ".claude/", ".agents/")
-# CI workflow edits select full coverage, so the queue validates the jobs it changes.
+# Only orchestration workflows with workflow-regression coverage can skip native CI.
+# Build, packaging and integration workflows (including unknown additions) stay full.
+AUTOMATION_WORKFLOWS = {".github/workflows/rollup.yml", ".github/workflows/train.yml",
+                        ".github/workflows/backport.yml", ".github/workflows/rollback.yml"}
+FULL_VALIDATION_FILES = {"scripts/validation_checks.py", "scripts/validation_batch.py",
+                         "scripts/named_test_shards.py", "tests/ci_release_test.py"}
 AUTOMATION_FILES = {"AGENTS.md", "CLAUDE.md", "README.md"}
 AUTOMATION_SCRIPTS = {"agent_workflow.py", "validation_batch.py", "validation_checks.py",
                       "preview_workflow.py", "preview_submit.py", "build_window.py", "bounded_log.py",
@@ -39,7 +44,7 @@ AUTOMATION_TESTS = {"agent_workflow_test.py", "preview_workflow_test.py", "build
                     "bounded_log_test.py", "release_version_test.py", "ci_resources_test.py",
                     "repository_hosting_test.py", "cut_release_test.py",
                     "ownership_map_test.py", "plan_checks_test.py", "rollup_test.py",
-                    "release_train_test.py", "named_test_shards_test.py"}
+                    "release_train_test.py", "named_test_shards_test.py", "ci_release_test.py"}
 # A rollup's membership record lists queue-validated members; unlike a degraded-
 # mode batch manifest it adds no admission obligation, so it leaves the
 # classification of the members' own paths unchanged.
@@ -211,7 +216,9 @@ def ci_mode(event, paths):
     # Compiler tests, CMake and packaged scripts are deliberately not inferred
     # safe just because their filename includes 'test' or 'workflow'.
     own = [path for path in paths if not ROLLUP_MANIFEST.fullmatch(path)]
-    if own and all(path in AUTOMATION_FILES or path.startswith(AUTOMATION) or
+    if any(path in FULL_VALIDATION_FILES for path in own):
+        return "full"
+    if own and all(path in AUTOMATION_FILES or path in AUTOMATION_WORKFLOWS or path.startswith(AUTOMATION) or
                    path in {"scripts/" + name for name in AUTOMATION_SCRIPTS} or
                    path in {"tests/" + name for name in AUTOMATION_TESTS} for path in own):
         return "automation"
@@ -231,8 +238,8 @@ def admission(mode, results, event="pull_request"):
         raise ValueError("Awaiting integration: a batch component cannot merge directly; finish its validated batch or withdraw admission")
     required = set(LINT_JOBS)
     if mode == "full":
-        # Installed-toolchain and docgen checks run inside the first Linux shard.
-        required |= {"fast"} if event == "pull_request" else {"integration", "sanitizers"}
+        # System-LLVM checks run in fast; production package and full shards gate integration.
+        required |= {"fast"} if event == "pull_request" else {"fast", "package", "integration", "sanitizers"}
     elif mode == "draft":
         if event != "pull_request":
             raise ValueError("A draft cannot enter the merge queue")

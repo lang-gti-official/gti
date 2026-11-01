@@ -1,4 +1,5 @@
 #include "gti/source_graph.h"
+#include <stdexcept>
 
 #include <algorithm>
 #include <functional>
@@ -6,6 +7,12 @@
 #include <utility>
 
 namespace lang {
+void SourceGraph::markCompiledScalarInterface(SourceUnitId id) {
+  auto *unit = findUnit(id);
+  if (!unit || unit->entry || unit->prelude || isCompilerTrusted(id))
+    throw std::invalid_argument("invalid compiled scalar interface unit");
+  unit->compiledScalarInterface = true;
+}
 
 std::uint64_t sourceTextDigest(std::string_view source) {
   std::uint64_t result = 14695981039346656037ULL;

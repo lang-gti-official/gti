@@ -181,6 +181,10 @@ void Failures::branchOnSuccess(llvm::IRBuilder<> &ir, llvm::Value *status,
 
 void Failures::copyChannel(llvm::IRBuilder<> &ir, llvm::Value *destination,
                            llvm::Value *source) {
+  // Propagation-only bodies can write directly into their caller's channel.
+  // Do not introduce a native memory service for an exact self-copy at O0.
+  if (destination == source)
+    return;
   // Failure channels are plain ABI storage, not source-language owners. Keep
   // their inline message buffer out of aggregate SSA scalarization; memmove
   // also preserves the prior load-before-store behavior for aliased channels.
@@ -214,17 +218,41 @@ llvm::Function *Failures::originator() {
   auto *channel = function->getArg(0);
   auto *origin = function->getArg(4);
   auto *type = session.abi().failureRecord();
-  llvm::Value *value = llvm::Constant::getNullValue(type);
-  value = ir.CreateInsertValue(value, ir.getInt32(2), 0);
-  value = ir.CreateInsertValue(value, function->getArg(1), 1);
-  value = ir.CreateInsertValue(value, function->getArg(2), 2);
-  value = ir.CreateInsertValue(value, function->getArg(3), 3);
-  auto *identityType = type->getElementType(5);
-  auto *identity = ir.CreateLoad(
-      identityType,
-      ir.CreateStructGEP(session.abi().failureArtifact(), origin, 2));
-  value = ir.CreateInsertValue(value, identity, 5);
-  ir.CreateStore(value, record(ir, channel));
+  auto *destination = record(ir, channel);
+  auto *identityAddress =
+      ir.CreateStructGEP(session.abi().failureArtifact(), origin, 2);
+  if (session.program().compiledScalarProducer()) {
+    // This cold helper belongs to a self-contained object. Inline memory
+    // intrinsics preserve the full fixed-size record without allowing target
+    // optimization to introduce an unresolved memset/bzero/memcpy dependency.
+    const auto alignment = session.dataLayout().getABITypeAlign(type);
+    ir.CreateMemSetInline(
+        destination, alignment, ir.getInt8(0),
+        ir.getInt64(
+            session.dataLayout().getTypeAllocSize(type).getFixedValue()));
+    ir.CreateStore(ir.getInt32(2), ir.CreateStructGEP(type, destination, 0));
+    ir.CreateStore(function->getArg(1),
+                   ir.CreateStructGEP(type, destination, 1));
+    ir.CreateStore(function->getArg(2),
+                   ir.CreateStructGEP(type, destination, 2));
+    ir.CreateStore(function->getArg(3),
+                   ir.CreateStructGEP(type, destination, 3));
+    ir.CreateMemCpyInline(
+        ir.CreateStructGEP(type, destination, 5), llvm::Align(1),
+        identityAddress, llvm::Align(1),
+        ir.getInt64(session.dataLayout()
+                        .getTypeAllocSize(type->getElementType(5))
+                        .getFixedValue()));
+  } else {
+    llvm::Value *value = llvm::Constant::getNullValue(type);
+    value = ir.CreateInsertValue(value, ir.getInt32(2), 0);
+    value = ir.CreateInsertValue(value, function->getArg(1), 1);
+    value = ir.CreateInsertValue(value, function->getArg(2), 2);
+    value = ir.CreateInsertValue(value, function->getArg(3), 3);
+    auto *identity = ir.CreateLoad(type->getElementType(5), identityAddress);
+    value = ir.CreateInsertValue(value, identity, 5);
+    ir.CreateStore(value, destination);
+  }
   ir.CreateStore(
       origin, ir.CreateStructGEP(session.abi().failureChannel(), channel, 1));
   ir.CreateRetVoid();
