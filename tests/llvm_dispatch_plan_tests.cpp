@@ -256,7 +256,7 @@ void testPlans(const FrontendResult &frontend) {
 
   auto lowered = gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
   const auto text = LoweredProgramPrinter().print(lowered);
-  expect(text.starts_with("lowered-program-v30\n") &&
+  expect(text.starts_with("lowered-program-v31\n") &&
              text.find("virtual-dispatch=[{root=") != std::string::npos &&
              text == LoweredProgramPrinter().print(lowered) &&
              MirPrinter().print(frontend.mir).starts_with("mir-v119 "),

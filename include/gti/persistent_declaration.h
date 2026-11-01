@@ -14,6 +14,8 @@ struct PersistentDeclarationOwner {
   std::string module;
   // Required only for source-local declarations; relative logical source key.
   std::string unit;
+  friend bool operator==(const PersistentDeclarationOwner &,
+                         const PersistentDeclarationOwner &) = default;
 };
 
 // First structural profile: nongeneric namespace functions with fixed scalar

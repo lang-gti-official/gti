@@ -64,6 +64,27 @@ std::string resultRecipe(const CompiledScalarSignature &signature) {
 void appendContract(std::string &out, std::string_view value) {
   out += std::to_string(value.size()) + ":" + std::string(value);
 }
+void retainInterfaceUnit(std::vector<CompiledInterfaceUnit> &units,
+                         SourceUnitId sourceUnit,
+                         const PersistentDeclarationOwner &owner) {
+  for (const auto &unit : units)
+    if (unit.sourceUnit == sourceUnit && unit.owner == owner)
+      return;
+  units.push_back({sourceUnit, owner});
+  validateCompiledInterfaceUnits(units);
+}
+std::vector<CompiledInterfaceUnit>
+interfaceUnits(std::span<const CompiledScalarImport> inputs) {
+  std::vector<CompiledInterfaceUnit> units;
+  for (const auto &input : inputs) {
+    const auto registry =
+        compiledInterfaceSyntheticRegistry(input.signature.typeMetadata);
+    retainInterfaceUnit(
+        units, input.sourceUnit,
+        readPersistentFunctionKey(input.signature.key, registry).owner);
+  }
+  return units;
+}
 } // namespace
 void validateCompiledBorrowContract(const SemanticType &result,
                                     std::span<const SemanticType> parameters,
@@ -251,7 +272,10 @@ bool scalarFunction(const LoweredProgram &program,
 std::vector<CompiledScalarSignature> CompiledScalarUnitBuilder::selectExports(
     const LoweredProgram &program, SourceUnitId entry,
     const PersistentDeclarationOwner &owner,
-    std::span<const std::string> functions) const {
+    std::span<const std::string> functions,
+    std::span<const CompiledScalarImport> imports) const {
+  auto units = interfaceUnits(imports);
+  retainInterfaceUnit(units, entry, owner);
   if (functions.empty() || functions.size() > 256)
     throw std::invalid_argument(
         "compiled library requires 1 to 256 selected functions");
@@ -287,8 +311,9 @@ std::vector<CompiledScalarSignature> CompiledScalarUnitBuilder::selectExports(
                                   name);
   }
   const auto metadata =
-      projectCompiledInterfaceTypes(program, entry, owner, roots);
-  const auto registry = compiledInterfaceTypeRegistry(program, entry, metadata);
+      projectCompiledInterfaceTypes(program, entry, owner, roots, units);
+  const auto registry =
+      compiledInterfaceTypeRegistry(program, entry, metadata, units);
   std::vector<CompiledScalarSignature> signatures;
   for (const auto *function : selected) {
     const auto *declaration =
@@ -308,7 +333,13 @@ std::vector<CompiledScalarSignature> CompiledScalarUnitBuilder::selectExports(
 std::vector<std::string>
 verifyCompiledScalarUnit(const LoweredProgram &program) {
   std::vector<std::string> errors;
-  if (program.compiledScalarBindings().empty()) {
+  try {
+    validateCompiledInterfaceUnits(program.compiledInterfaceUnits());
+  } catch (const std::exception &) {
+    errors.push_back("invalid compiled interface unit ownership");
+  }
+  if (program.compiledScalarBindings().empty() &&
+      program.compiledInterfaceUnits().empty()) {
     if (program.compiledScalarProducer())
       errors.push_back("compiled library has no exports");
     return errors;
@@ -342,8 +373,16 @@ verifyCompiledScalarUnit(const LoweredProgram &program) {
                        "lost failure channel");
     try {
       const auto registry = compiledInterfaceTypeRegistry(
-          program, binding.sourceUnit, binding.typeMetadata);
+          program, binding.sourceUnit, binding.typeMetadata,
+          program.compiledInterfaceUnits(), binding.imported);
       const auto decoded = readPersistentFunctionKey(binding.key, registry);
+      if (std::none_of(program.compiledInterfaceUnits().begin(),
+                       program.compiledInterfaceUnits().end(),
+                       [&](const auto &unit) {
+                         return unit.sourceUnit == binding.sourceUnit &&
+                                unit.owner == decoded.owner;
+                       }))
+        errors.push_back("compiled callable has no matching library owner");
       const auto decodedResult =
           readPersistentType(binding.resultRecipe, registry);
       const auto *d = program.findFunctionDeclaration(f->declaration);
@@ -380,20 +419,37 @@ LoweredProgram CompiledScalarUnitBuilder::bindScoped(
     throw std::invalid_argument(
         "compiled unit requires verified lowered program");
   if (!program.compiledScalarBindings_.empty() ||
+      !program.compiledInterfaceUnits_.empty() ||
       exports.size() + imports.size() > 256)
     throw std::invalid_argument("invalid compiled unit binding request");
   program.compiledScalarProducer_ = !exports.empty();
+  program.compiledInterfaceUnits_ = interfaceUnits(imports);
+  for (const auto &unit : interfaceUnits(exports))
+    retainInterfaceUnit(program.compiledInterfaceUnits_, unit.sourceUnit,
+                        unit.owner);
   std::set<std::string> keys;
   const auto bindOne = [&](const CompiledScalarImport &input, bool imported) {
     auto signature = input.signature;
     if (!input.sourceUnit || !keys.insert(signature.key).second)
       throw std::invalid_argument("invalid compiled scalar signature request");
+    // Validate the complete wire contract even when reachability eliminated
+    // its concrete types and callable. Only fresh-session ID lookup may skip.
+    (void)compiledScalarSymbol(signature);
     const auto registry = compiledInterfaceTypeRegistry(
-        program, input.sourceUnit, signature.typeMetadata);
-    const auto record = readPersistentFunctionKey(signature.key, registry);
+        program, input.sourceUnit, signature.typeMetadata,
+        program.compiledInterfaceUnits_, imported);
     if (signature.resultRecipe.empty())
       signature.resultRecipe = writePersistentType(signature.result, registry);
-    const auto result = readPersistentType(signature.resultRecipe, registry);
+    PersistentFunctionKey record;
+    SemanticType result;
+    try {
+      record = readPersistentFunctionKey(signature.key, registry);
+      result = readPersistentType(signature.resultRecipe, registry);
+    } catch (const std::invalid_argument &) {
+      if (imported)
+        return;
+      throw;
+    }
     validateCompiledBorrowContract(result, record.parameters, signature.borrow);
     const MirFunctionInstance *selected = nullptr;
     for (const auto &f : program.mir().functionInstances()) {

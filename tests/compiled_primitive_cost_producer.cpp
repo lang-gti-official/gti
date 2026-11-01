@@ -25,14 +25,33 @@ int main(int argc, char **argv) {
     const auto root = std::filesystem::canonical(argv[2]);
     std::filesystem::create_directories(root / "stdlib");
     write(root / "stdlib/prelude.gti", "");
-    write(root / "library.gti", R"(export module primitive_cost;
-export namespace costs {
+    write(root / "model.gti", R"(export module cost_model;
+export namespace cost_model {
 struct Point { mut int x = 0; mut int y = 0; };
+Point echo(Point value) { return value; }
+}
+)");
+    const auto modelRequest =
+        CompilationRequest(
+            root / "model.gti", standardLibraryLayout(root / "stdlib"),
+            TargetInfo::host(), OptimizationLevel::O3, CppStandard::Cpp23)
+            .withBackend(BackendKind::Llvm);
+    const auto model = buildCompiledScalarLibraryTarget(
+        modelRequest, {"primitive-cost", "model", {"cost_model::echo"}},
+        argv[1]);
+    if (!model.compilation.succeeded())
+      throw std::runtime_error(model.compilation.backendFailureDetails.value_or(
+          "cost model producer failed"));
+    write(root / "model.gtilib", model.bundle);
+    std::filesystem::remove(root / "model.gti");
+    write(root / "library.gti", R"(export module primitive_cost;
+import "model-api.gti";
+export namespace costs {
 int64_t identity_i64(int64_t value) { return value; }
 double identity_double(double value) { return value; }
 void do_nothing() {}
 int checked_divide(int value, int divisor) { return value / divisor; }
-Point identity_point(Point value) { return value; }
+cost_model::Point identity_point(cost_model::Point value) { return value; }
 }
 )");
     const auto request =
@@ -45,8 +64,11 @@ Point identity_point(Point value) { return value; }
         "primitive-cost",
         {"costs::identity_i64", "costs::identity_double", "costs::do_nothing",
          "costs::checked_divide", "costs::identity_point"}};
+    const std::vector<CompiledLibraryImport> imports{{"primitive-cost", "model",
+                                                      root / "model.gtilib",
+                                                      root / "model-api.gti"}};
     const auto built =
-        buildCompiledScalarLibraryTarget(request, target, argv[1]);
+        buildCompiledScalarLibraryTarget(request, target, argv[1], imports);
     if (!built.compilation.succeeded()) {
       for (const auto &diagnostic : built.compilation.diagnostics)
         std::cerr << diagnostic.message << '\n';

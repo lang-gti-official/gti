@@ -15,7 +15,8 @@ public:
   [[nodiscard]] std::vector<CompiledScalarSignature>
   selectExports(const LoweredProgram &, SourceUnitId,
                 const PersistentDeclarationOwner &,
-                std::span<const std::string> functions) const;
+                std::span<const std::string> functions,
+                std::span<const CompiledScalarImport> imports = {}) const;
   [[nodiscard]] LoweredProgram
   bindExports(LoweredProgram, SourceUnitId root,
               std::span<const CompiledScalarSignature>) const;

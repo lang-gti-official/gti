@@ -838,3 +838,6 @@ failure, freshness and source-free distribution checks.
 
 The [compiled namespace example](compiled-namespaces/README.md) composes distinct
 namespace-qualified types, overloads and borrowed APIs from two compiled libraries.
+
+The [compiled type forwarding example](compiled-type-forwarding/README.md) shares
+dependency-owned records and enums through a chain and diamond of compiled libraries.

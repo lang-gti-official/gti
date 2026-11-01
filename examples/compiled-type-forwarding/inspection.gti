@@ -1,0 +1,5 @@
+export module inspection;
+import "api/geometry.gti";
+export namespace inspection {
+    int sum(geometry::Point value) { return value.x + value.y; }
+}

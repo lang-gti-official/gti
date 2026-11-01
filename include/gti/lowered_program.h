@@ -1,5 +1,6 @@
 #pragma once
 
+#include "gti/compiled_interface_types.h"
 #include "gti/compiled_scalar_signature.h"
 #include "gti/diagnostic.h"
 #include "gti/mir.h"
@@ -865,6 +866,10 @@ public:
   compiledScalarBindings() const {
     return compiledScalarBindings_;
   }
+  [[nodiscard]] const std::vector<CompiledInterfaceUnit> &
+  compiledInterfaceUnits() const {
+    return compiledInterfaceUnits_;
+  }
   [[nodiscard]] bool compiledScalarProducer() const {
     return compiledScalarProducer_;
   }
@@ -959,6 +964,7 @@ private:
   LoweredProgram() = default;
   bool compiledScalarProducer_ = false;
   std::vector<CompiledScalarBinding> compiledScalarBindings_;
+  std::vector<CompiledInterfaceUnit> compiledInterfaceUnits_;
   friend class CompiledScalarUnitBuilder;
 
   // Rebuilds the lookup hints from the completed declaration and symbol rows.

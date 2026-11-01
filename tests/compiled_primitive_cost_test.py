@@ -135,7 +135,7 @@ def main():
         'contract': 'int64/double and two-int32 record identity, infallible void, successful checked int32 division; external GTI status/result/failure-channel ABI without LTO',
         'comparison_limit': 'successful calls and guards; baseline failure records retain code/detail/site/origin channels, but artifact source descriptors differ and symbolization cost is not compared',
         'allocation_scope': 'fixtures have no heap operations; host/loader allocations excluded',
-        'producer_scope': 'producer timing includes native bundle generation and decoding its canonical interface to retrieve compiler-owned signature identities',
+        'producer_scope': 'producer timing includes two native bundle generations, source-free dependency-owned Point import, and decoding the final canonical interface to retrieve compiler-owned signature identities',
         'producer_sha256': hashlib.sha256(args.tool.read_bytes()).hexdigest(),
         'timing_acceptance': args.measure, 'iterations_per_sample': 50000000,
         'steps': [],
@@ -157,6 +157,7 @@ def main():
 
         run([args.tool.resolve(), args.runtime.resolve(), root], 'produce-O3')
         assert not (root / 'library.gti').exists(), 'producer source was retained'
+        assert not (root / 'model.gti').exists(), 'defining type source was retained'
         symbols = json.loads((root / 'symbols.json').read_text())
         assert set(symbols) == {'int64', 'double', 'void', 'division', 'point'}
         assert len(set(symbols.values())) == 5
@@ -187,7 +188,7 @@ def main():
                   for operation, values in samples.items()}
         report.update(samples_seconds=samples, ratios=ratios,
                       bytes={name: (root / name).stat().st_size for name in
-                             ['library.o', 'baseline.o', 'host.o', 'primitive.gtilib', 'native', 'baseline']},
+                             ['library.o', 'baseline.o', 'host.o', 'primitive.gtilib', 'model.gtilib', 'native', 'baseline']},
                       maximum_child_rss_bytes=resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss *
                       (1 if sys.platform == 'darwin' else 1024))
         args.output.write_text(json.dumps(report, indent=2) + '\n')

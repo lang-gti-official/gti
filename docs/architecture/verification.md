@@ -12344,7 +12344,72 @@ original shadowing control and measurements are retained under
 `build-release/tests/compiled-namespaces/`. At the coordinator-requested source
 handoff, the nine-sample O3 cost run remains queued in the shared suite window;
 performance acceptance is pending, and the existing run must be resumed rather
-than duplicated. No syntax, ordinary ownership rules,
+than duplicated. That original run subsequently completed successfully: all five
+nine-sample O3 ratios were below 1.012, including Point at 0.9986; its original
+`cost.json` retains the compiler and measurement identities. No syntax, ordinary ownership rules,
 C++ feature coverage, LSP protocol or installed package layout changes are claimed.
 Cross-library nominal forwarding, custom lifecycles, generic/constexpr recipes and
 the remaining F1–F5 production prerequisites are still open.
+
+### Dependency-owned compiled types (2026-10-31)
+
+This T3 component extends the wire and sealed ownership contracts so a library
+can expose a dependency's generated value record or integral enum. Local branch
+`codex/compiled-type-forwarding` starts at the reconciled
+`2905d5be1172d84a4d783c1e3fd64d1015ae60ea` snapshot and belongs to a separate
+integration batch. Proposed version: 0.500.0. No native calling convention,
+source-language ownership rule or C++ backend capability changed. Full combined
+native/sanitizer, Linux/macOS and relocated staged-toolchain validation remains
+with the coordinator; this component did not modify the frozen earlier campaign.
+
+Release compiler evidence on macOS arm64:
+
+- `compiled_type_forwarding`: 45 recorded steps at O0/O1/O3. Four libraries form
+  a chain and diamond sharing one defining type; no dependency function calls are
+  needed to retain that identity. Tests cover nested/private fields, enum defaults,
+  copies and whole-reference borrowing; consumer-only reuse; a private layout
+  change rebuilding every dependent bundle; reordered artifacts and escaped,
+  relocated interface paths; and checking/running after deleting every producer.
+  A types-only consumer calls no imported function. Partial API use, private
+  names/fields, wrong nominal arguments, conflicting loans, missing owners and
+  stale receipts are checked. The expanded enum parameter/result and field-default matrix passed in 91.21 seconds.
+- `compiled_interface_types` verifies multi-owner source/metadata round trips,
+  fresh ID mapping, missing/wrong owner rejection and conflicting unit mappings.
+  `compiled_scalar_library` mutates the sealed ownership bindings and proves that
+  deleting every binding cannot reopen a called import. The latter also checks
+  ownership serialization in `lowered-program-v31`.
+- Twenty-three affected regressions passed without skips in 219.14 seconds before
+  the final empty-binding verifier guard. That guard changes only a compiled
+  context with interface units and no callable bindings; paths with bindings or
+  no interface context are unchanged. After rebuilding, all six owning gates
+  passed without skips in 90.31 seconds, including the new types-only case and
+  the closed-import mutation, borrowing and lowered-contract checks.
+
+The original compiler rejected the valid drawing API with `GTI-B0003`. Integration
+testing also exposed a moved-signature lookup in diamond admission and validation
+that incorrectly required unreachable nominal declarations; both are corrected.
+Complete wire validation remains mandatory, concrete comparison follows HIR
+reachability, and every reached imported callable must have its verified binding.
+Missing/stale artifact checks retain the existing driver error presentation;
+artifact diagnostic provenance remains future work.
+
+Nine alternating O3 samples per operation passed the 25% same-ABI cost bound.
+Native/baseline median ratios were int64 1.0011, double 0.9993, void 0.9993,
+checked division 0.8443 and dependency-owned Point 0.9936. Point medians were
+42.154/42.426 ms for 50 million calls. These are successful external-call
+comparisons without LTO, not speedup or whole-program-inlining claims. Fixtures
+perform no heap operations; host/loader allocations are excluded. The native
+object is 1,976 bytes versus 1,768 for the baseline; native/baseline executables
+are 34,904/34,936 bytes. The forwarding and defining bundles are 4,778 and 1,513
+bytes. Producer time is 3.263 seconds, now including two bundle generations,
+source-free type import and canonical signature decoding; it is not directly
+comparable to the earlier single-library producer time. Maximum cumulative child
+RSS for the measurement run was 123,584,512 bytes.
+
+Original failures, source/compiler hashes, JUnit results and measurements are
+retained in `build-release/compiled-type-forwarding-evidence/`; native CLI logs
+are in `build-release/compiled-type-forwarding/`. Scoped C++ formatting (15 files),
+Python syntax, example inventory/registration and `git diff --check` pass. Remaining
+production work includes custom lifecycles, generic/constexpr recipes, complete
+source-module/re-export ownership, colliding qualified names, globals/TLS and
+artifact-aware LSP/provenance, alongside combined platform acceptance.
