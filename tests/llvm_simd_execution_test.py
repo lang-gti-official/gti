@@ -40,7 +40,10 @@ def main():
         log = output / f"command-{len(commands):03}.log"
         log.write_text(result.stdout + result.stderr)
         commands.append({"argv": [str(x) for x in argv], "exit": result.returncode, "log": log.name})
-        assert result.returncode == 0, str(log)
+        assert result.returncode == 0, (
+            f"{log}: command {argv!r} exited {result.returncode}\n"
+            f"{result.stdout[-3000:]}\n{result.stderr[-5000:]}"
+        )
         return result
 
     count = 0
