@@ -61,10 +61,27 @@
         "48f6c8bb60cafdc22a6fdf237824cfd2be57cda6"
       ],
       "merge": "48f6c8bb60cafdc22a6fdf237824cfd2be57cda6"
+    },
+    {
+      "task": "release-artifact-reuse",
+      "pr": 111,
+      "head": "602bcabc5aad38c1e53d48d40082751f3beec83a",
+      "tests": [
+        "ci_release",
+        "release_train",
+        "agent_workflow",
+        "repository_hosting",
+        "ci_cache",
+        "plan_checks"
+      ],
+      "contributions": [
+        "9a8a7e92b6c1b5d021f0c1bf3d2c641eedb1fec7"
+      ],
+      "merge": "9a8a7e92b6c1b5d021f0c1bf3d2c641eedb1fec7"
     }
   ],
   "removed": [],
-  "main": "cfb28948a26a14e58ffb720c3474cbbed8d3f2ff",
-  "previous": "5a22de83762fdbe4145c62108a0fd3d17a026ad3",
-  "candidate": "c9c55fbdb89d4102b891d568ee1ede88"
+  "main": "c9c61ea60a3cf8baa9af0a87b749b076a52a39d4",
+  "previous": "d4ffb01967fcc57c2f82756f6b3c8e9676e58e7a",
+  "candidate": "bd82cd58e52a4d0faaca222bce4972e8"
 }
