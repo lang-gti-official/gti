@@ -5,6 +5,7 @@
 #include "gti/frontend.h"
 #include "gti/language_queries.h"
 #include "gti/lexer.h"
+#include "gti/module_name.h"
 #include "gti/standard_library.h"
 #include "gti/support.h"
 #include "gti/token.h"
@@ -1899,6 +1900,27 @@ struct ProjectAnalysisInputs {
   std::vector<lang::IncludeSearchRoot> includeSearchRoots;
 };
 
+// A save can change project membership without a filesystem-watcher event.
+// Observe only the compiler's leading declaration, so body-only saves retain
+// the existing no-reanalysis behavior. No project resolution or build occurs.
+std::optional<std::uint64_t>
+savedModuleHeaderDigest(const std::filesystem::path &path) {
+  std::error_code error;
+  if (!std::filesystem::is_regular_file(path, error))
+    return std::nullopt;
+  std::ifstream input(path, std::ios::binary);
+  if (!input)
+    return std::nullopt;
+  lang::Lexer lexer;
+  const auto tokens = lexer.scanModuleHeader(input, path.string());
+  if (input.bad())
+    return std::nullopt;
+  if (!lang::startsModuleDeclaration(tokens))
+    return 0;
+  return lang::sourceTextDigest(
+      std::string_view(lexer.sourceText()).substr(0, tokens.back().position));
+}
+
 ProjectAnalysisInputs resolveProjectAnalysisInputs(
     const std::filesystem::path &entryPath,
     const std::optional<std::string> &requestedProfile,
@@ -2231,12 +2253,17 @@ private:
       return;
     }
     const std::string uri = documentKeyFromUri(clientUri);
+    const auto openedPath = filePathFromUri(uri);
+    const auto savedHeader =
+        openedPath ? savedModuleHeaderDigest(*openedPath) : std::nullopt;
     std::vector<AnalysisRequest> requests;
     {
       const std::lock_guard lock(stateMutex);
       clientUris[uri] = clientUri;
       openClientUris[uri].insert(clientUri);
       const bool alreadyOpen = documents.contains(uri);
+      if (!alreadyOpen && openedPath && openedPath->extension() == ".gti")
+        savedModuleHeaders.emplace(uri, savedHeader);
       documents[uri] = stringMember(document, "text");
       if (const std::optional<std::filesystem::path> path =
               filePathFromUri(uri)) {
@@ -2318,7 +2345,11 @@ private:
     // skips the rest of its quiet period.
     const std::string uri =
         documentKeyFromUri(stringMember(member(params, "textDocument"), "uri"));
+    const auto path = filePathFromUri(uri);
+    const auto savedHeader =
+        path ? savedModuleHeaderDigest(*path) : std::nullopt;
     bool woken = false;
+    std::vector<AnalysisRequest> requests;
     {
       const std::lock_guard lock(stateMutex);
       if (const auto pending = pendingAudits.find(uri);
@@ -2326,7 +2357,14 @@ private:
         pending->second.readyAt = SteadyClock::now();
         woken = true;
       }
+      if (const auto found = savedModuleHeaders.find(uri);
+          found != savedModuleHeaders.end() && found->second != savedHeader) {
+        found->second = savedHeader;
+        invalidateProjectSnapshotsLocked(requests);
+      }
     }
+    rejectPendingSemanticRequests(requests, -32801, "Content modified");
+    scheduleAnalyses(std::move(requests));
     if (woken) {
       auditCondition.notify_all();
     }
@@ -2373,6 +2411,7 @@ private:
       }
       pendingAudits.erase(uri);
       documents.erase(uri);
+      savedModuleHeaders.erase(uri);
       if (const std::optional<std::filesystem::path> path =
               filePathFromUri(uri)) {
         const std::string canonical = canonicalPath(*path).string();
@@ -4945,6 +4984,8 @@ private:
   std::unordered_map<std::string, std::unordered_set<std::string>>
       openClientUris;
   std::unordered_map<std::string, std::string> documents;
+  std::unordered_map<std::string, std::optional<std::uint64_t>>
+      savedModuleHeaders;
   std::unordered_map<std::string, std::int64_t> documentVersions;
   std::unordered_map<std::string, std::vector<LspDiagnostic>> diagnosticsByRoot;
   std::unordered_map<std::string,

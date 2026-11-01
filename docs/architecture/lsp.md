@@ -160,7 +160,11 @@ generation machinery, and closing an overlay restores the on-disk surface.
 Registered implementation files are retained source dependencies as well.
 Project resolution also supplies the default discovered module map. Saved `.gti`
 creation, removal and header changes refresh project snapshots even when no
-previous import edge named that file. Membership is discovered from saved files;
+previous import edge named that file. A normal `textDocument/didSave` also
+refreshes membership when the compiler's saved leading module declaration has
+changed, including a newly saved file; this does not require watcher support.
+Body-only saves retain their existing analysis instead of scheduling it again.
+Membership is discovered from saved files;
 unsaved contents of existing members still use ordinary frontend overlays and
 dependency generations. An unsaved new/renamed module identity becomes available
 to named imports after saving. Discovery performs no builds or dependency fetches.

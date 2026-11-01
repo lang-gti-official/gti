@@ -93,6 +93,7 @@ paths = [
   "include/gti/parser.h",
   "include/gti/token.h",
   "include/gti/configuration_flags.h",
+  "tests/source_text_tests.cpp",
 ]
 owners = [
   "parser_conditional_recovery",

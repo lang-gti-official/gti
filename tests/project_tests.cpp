@@ -4049,7 +4049,14 @@ void testModuleDiscovery() {
       !loaded.succeeded() && duplicate && !duplicate->related.empty() &&
           duplicate->primary.source ==
               std::filesystem::canonical(root / "src/duplicate.gti").string() &&
-          duplicate->primary.start == 14 && duplicate->primary.end == 22,
+          duplicate->primary.start == 14 && duplicate->primary.end == 22 &&
+          duplicate->related[0].span.source ==
+              std::filesystem::canonical(root / "src/api.gti").string() &&
+          duplicate->related[0].span.start ==
+              readFile(root / "src/api.gti").find("demo.api") &&
+          duplicate->related[0].span.end ==
+              duplicate->related[0].span.start + 8 &&
+          !duplicate->hints.empty(),
       "duplicate interfaces have a precise declaration span and related "
       "interface");
   loaded = load("\n[modules]\n\"demo.api\" = \"src/api.gti\"\n");
@@ -4133,6 +4140,117 @@ void testModuleDiscovery() {
          "default discovery follows the package source-root");
 }
 
+void testModuleDiscoveryPathBoundaries() {
+  TemporaryDirectory temporary, outside;
+  const auto root = temporary.root();
+  const auto manifest = root / "gti.toml";
+  const auto load = [&](std::string extra = "") {
+    expect(writeFile(manifest, validManifest() + extra), "boundary manifest");
+    return lang::driver::loadProjectManifest(manifest);
+  };
+  expect(
+      writeFile(root / "src/main.gti", "int main() { return 0; }") &&
+          writeFile(root / "src/api.gti", "export module demo;") &&
+          writeFile(root / "src/body.gti", "module demo;") &&
+          writeFile(outside.root() / "outside.gti", "export module outside;") &&
+          writeFile(root / "src/nested/gti.toml", "manifest-version = 1") &&
+          writeFile(root / "src/nested/private.gti", "export module foreign;"),
+      "path boundary fixtures");
+  expect(writeFile(root / "src/broken-package/private.gti", "module missing;"),
+         "broken nested package fixture");
+  std::error_code markerError;
+  std::filesystem::create_symlink(
+      root / "missing.toml", root / "src/broken-package/gti.toml", markerError);
+  expect(!markerError, "broken package marker fixture can be created");
+  auto loaded = load("\n[module-implementations]\ndemo = []\n");
+  expect(
+      loaded.succeeded() &&
+          loaded.manifest->package().moduleImplementations.size() == 1 &&
+          loaded.manifest->package().moduleImplementations[0].second.empty(),
+      "an explicit empty list suppresses automatic implementation membership");
+  loaded = load("\n[module-discovery]\nroots = [\"src\", \"src\", \".\"]\n");
+  expect(loaded.succeeded() && loaded.manifest->package().modules.size() == 1,
+         "overlapping and repeated roots do not repeat module interfaces");
+
+  const auto link = root / "src/link.gti";
+  const auto symlink = [&](const std::filesystem::path &target) {
+    std::error_code error;
+    std::filesystem::create_symlink(target, link, error);
+    expect(!error, "source symlink fixture can be created");
+    return !error;
+  };
+  for (const auto &target :
+       {outside.root() / "outside.gti", root / "missing.gti",
+        root / "src/nested/private.gti"}) {
+    if (!symlink(target))
+      continue;
+    loaded = load();
+    expect(!loaded.succeeded(),
+           "unexcluded escaping, missing and nested-package source links fail");
+    loaded = load("\n[module-discovery]\nexclude = [\"src/link.gti\"]\n");
+    expect(loaded.succeeded() && loaded.manifest->package().modules.size() == 1,
+           "an excluded source link never requires admitting its target");
+    std::filesystem::remove(link);
+  }
+  if (symlink(root / "src/api.gti")) {
+    loaded = load();
+    expect(
+        !loaded.succeeded() && findDiagnostic(loaded.diagnostics, "GTI-B1005"),
+        "two authored paths cannot silently register the same physical source");
+    loaded = load("\n[module-discovery]\nexclude = [\"src/link.gti\"]\n");
+    expect(
+        loaded.succeeded() && loaded.manifest->package().modules.size() == 1,
+        "excluding an alias retains its independently discovered real source");
+    std::filesystem::remove(link);
+  }
+  // A directory named *.gti is still a directory, and links never create
+  // recursive scans or a back door into another package.
+  if (symlink(root / "src")) {
+    loaded = load();
+    expect(loaded.succeeded(), "directory symlink cycles are not traversed");
+    std::filesystem::remove(link);
+  }
+  std::error_code error;
+  std::filesystem::create_directory_symlink(root / "src", root / "alias",
+                                            error);
+  if (!error) {
+    loaded = load("\n[module-discovery]\nroots = [\"alias\"]\n"
+                  "exclude = [\"alias/body.gti\"]\n");
+    expect(loaded.succeeded() &&
+               loaded.manifest->package().modules.size() == 1 &&
+               loaded.manifest->package().moduleImplementations.empty(),
+           "exclusions preserve meaning through an explicitly selected root "
+           "alias");
+    loaded = load("\n[module-discovery]\nroots = [\"alias\"]\n"
+                  "exclude = [\"alias\"]\n");
+    expect(loaded.succeeded() && loaded.manifest->package().modules.empty(),
+           "an excluded root alias contributes no modules");
+  }
+  for (const auto extra :
+       {"\n[module-discovery]\nroots = [\"src/api.gti\"]\n",
+        "\n[module-discovery]\nexclude = [\"../outside.gti\"]\n",
+        "\n[module-discovery]\nexclude = [\"C:\\\\outside.gti\"]\n",
+        "\n[module-discovery]\nroots = [\"src/broken-package\"]\n",
+        "\n[module-discovery]\nroots = [\"src/nested/private.gti\"]\n"}) {
+    loaded = load(extra);
+    expect(!loaded.succeeded(),
+           "invalid roots and escaping exclusions fail closed");
+  }
+
+  TemporaryDirectory explicitOnly;
+  expect(
+      writeFile(explicitOnly.root() / "main.gti", "int main(){return 0;}") &&
+          writeFile(explicitOnly.root() / "api.gti", "export module demo;") &&
+          writeFile(explicitOnly.root() / "gti.toml",
+                    validManifest("[targets.game]\nkind = \"executable\"\n"
+                                  "root = \"main.gti\"\n") +
+                        "\n[modules]\ndemo = \"api.gti\"\n"),
+      "explicit project without a src directory");
+  loaded = lang::driver::loadProjectManifest(explicitOnly.root() / "gti.toml");
+  expect(loaded.succeeded() && loaded.manifest->package().modules.size() == 1,
+         "legacy explicit layouts need no placeholder src directory");
+}
+
 int main(int argc, char *argv[]) {
   if (argc == 5 && std::string_view(argv[1]) == "-C" &&
       std::string_view(argv[3]) == "init" &&
@@ -4186,6 +4304,7 @@ int main(int argc, char *argv[]) {
   testPackageBuildScripts();
   testModuleManifest();
   testModuleDiscovery();
+  testModuleDiscoveryPathBoundaries();
 
   if (failures != 0) {
     std::cerr << failures << " project test(s) failed\n";

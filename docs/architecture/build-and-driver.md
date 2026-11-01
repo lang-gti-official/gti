@@ -1540,13 +1540,20 @@ Filenames do not determine logical names or namespaces. This discovery applies
 to the root package and declared dependency packages alike; direct single-file
 compilation remains manifest-independent.
 
-The compiler lexer reads only the leading declaration for discovery, using the
-same header parser as source loading. An unused module body is not parsed,
+The compiler lexer reads a small prefix through the leading declaration for
+discovery, using the same header parser as source loading. It extends that
+prefix when a comment, token or UTF-8 sequence crosses a read boundary; it does
+not read a large unused body into memory. An unused module body is not parsed,
 checked or lowered. Directory traversal and implementation order are sorted,
-and overlapping roots do not duplicate files. Hidden entries, `build`
-directories, directory symlinks and nested packages are not traversed. Source
+and overlapping roots do not duplicate files. Within each selected root, hidden
+entries, `build` directories, directory symlinks and nested packages are not
+traversed. Explicit roots can select contained hidden/generated directories or
+directory aliases, but cannot cross a nested package boundary. Source
 file symlinks must stay inside their owning package. A missing default `src`
 directory is allowed for projects using explicit paths elsewhere.
+A nested `gti.toml` remains a package boundary even when it is a broken
+symlink; a damaged child manifest never makes its private sources part of the
+parent package.
 
 Optional settings customize discovery; they do not enable it:
 
@@ -1559,7 +1566,11 @@ exclude = ["src/core/windows", "src/experimental.gti"]
 Roots replace the default and must be existing package-contained directories.
 Exclusions are package-relative file or directory paths, not glob patterns;
 they apply before module membership is collected. `roots = []` selects fully
-explicit registration. Platform/backend folder names have no implicit meaning:
+explicit registration. Excluding a file symlink excludes that entry, without
+excluding its independently discovered target or requiring that target to exist
+or belong to the package. Exclusions also work through contained directory
+aliases used as explicit roots. Unexcluded file links still undergo all package
+and duplicate-file checks. Platform/backend folder names have no implicit meaning:
 select the desired roots/exclusions or explicit implementation lists before
 building. This first implementation does not add conditional discovery tables.
 

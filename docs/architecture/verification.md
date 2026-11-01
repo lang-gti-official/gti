@@ -1,5 +1,31 @@
 # Compiler Verification
 
+## Default module discovery (draft)
+
+`project_model` owns declaration-driven registration, explicit interface and
+implementation precedence (including empty lists), overlapping/custom roots,
+exclusions, malformed settings, reserved/portable names, exact collision spans,
+missing defaults, symlink aliases/escapes/cycles and nested package boundaries.
+`source_text_pipeline` compares streamed and in-memory header lexing across
+UTF-8, CRLF, nested comments and token read boundaries, including exact error
+codes/ranges. A large unused body must consume only the initial header buffer.
+
+`module_discovery_runtime` builds the runnable no-table example and covers
+cache hits, interface/implementation path and name changes, content changes,
+removal/recovery, duplicate interfaces, unused versus imported cycles, explicit
+platform alternatives, private visibility, dependency aliases, short `main`
+imports, re-exports and workspace selection. It executes LLVM dev and release
+artifacts, and retains the manifest-independent direct compilation boundary.
+`module_discovery_lsp` covers watched additions/removals, duplicate recovery,
+overlays/close, definition navigation, new/renamed/removed headers saved without
+a watcher, and a trace assertion that body-only saves do not repeat analysis.
+
+The affected source-module, driver, cache and LSP consumers, `compiler_pipeline`
+and native O0/O3 smoke remain focused acceptance obligations. Linux portability
+checks complement macOS evidence. Complete integration is still the merge
+queue's responsibility; the owner's draft-only/no-CI instruction does not
+authorize describing this branch as release-validated.
+
 ## Owned inline consumption (unreleased)
 
 The user-facing slice is allocation-free small once-invoked callbacks and

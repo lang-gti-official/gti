@@ -2356,7 +2356,34 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
                 "paths, without wildcard patterns."));
             continue;
           }
+          const auto authored = (packageRoot / relative).lexically_normal();
+          if (!pathIsWithin(packageRoot, authored)) {
+            result.diagnostics.push_back(buildDiagnostic(
+                "GTI-B1104", where,
+                "Module discovery path escapes its owning package."));
+            continue;
+          }
           std::error_code pathError;
+          if (std::string_view(field) == "exclude") {
+            // Excluding an entry must not require opening its target. Keep
+            // the authored path so broken and out-of-package links can be
+            // excluded safely. Resolve parent aliases, but do not exclude a
+            // real source merely because a file symlink to it was excluded.
+            destination.push_back(authored);
+            auto resolved = std::filesystem::weakly_canonical(
+                                authored.parent_path(), pathError) /
+                            authored.filename();
+            if (!pathError && pathIsWithin(packageRoot, resolved) &&
+                resolved != authored)
+              destination.push_back(resolved);
+            if (std::filesystem::is_directory(authored, pathError)) {
+              resolved = std::filesystem::canonical(authored, pathError);
+              if (!pathError && pathIsWithin(packageRoot, resolved) &&
+                  resolved != authored)
+                destination.push_back(resolved);
+            }
+            continue;
+          }
           const auto resolved = std::filesystem::weakly_canonical(
               packageRoot / relative, pathError);
           if (pathError || !pathIsWithin(packageRoot, resolved)) {

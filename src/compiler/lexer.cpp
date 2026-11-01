@@ -60,6 +60,28 @@ std::vector<Token> Lexer::scan(std::string sourceText, std::string sourceName) {
   return std::move(tokens);
 }
 
+std::vector<Token> Lexer::scanModuleHeader(std::istream &input,
+                                           std::string sourceName) {
+  std::string text;
+  std::size_t chunk = 4096;
+  for (;;) {
+    const auto offset = text.size();
+    text.resize(offset + chunk);
+    input.read(text.data() + offset, static_cast<std::streamsize>(chunk));
+    text.resize(offset + static_cast<std::size_t>(input.gcount()));
+    auto result = scanModuleHeader(std::move(text), sourceName);
+    // A token/comment/UTF-8 sequence may straddle a read boundary. Retry an
+    // exhausted prefix with more input before interpreting its diagnostics.
+    // Geometric growth keeps arbitrarily long leading trivia linear in size.
+    if (!input || current < source.size() ||
+        (result.size() > 1 &&
+         result[result.size() - 2].kind == TokenKind::SEMICOLON))
+      return result;
+    text = std::move(source);
+    chunk = text.size();
+  }
+}
+
 std::vector<Token> Lexer::scanModuleHeader(std::string sourceText,
                                            std::string sourceName) {
   reset(std::move(sourceName));

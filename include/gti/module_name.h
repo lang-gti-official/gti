@@ -41,16 +41,21 @@ struct ModuleHeader {
   std::size_t tokenEnd = 0;
 };
 
+[[nodiscard]] inline bool
+startsModuleDeclaration(std::span<const Token> tokens) {
+  return !tokens.empty() &&
+         (tokens[0].kind == TokenKind::MODULE ||
+          (tokens.size() > 1 && tokens[0].kind == TokenKind::EXPORT &&
+           tokens[1].kind == TokenKind::MODULE));
+}
+
 // Shared by source loading and project discovery; neither invents a second
 // interpretation of a module's spelling or leading declaration.
 [[nodiscard]] inline std::optional<ModuleHeader>
 parseModuleHeader(std::span<const Token> tokens) {
-  if (tokens.size() < 3)
+  if (tokens.size() < 3 || !startsModuleDeclaration(tokens))
     return std::nullopt;
   const bool interface = tokens[0].kind == TokenKind::EXPORT;
-  if ((!interface && tokens[0].kind != TokenKind::MODULE) ||
-      (interface && tokens[1].kind != TokenKind::MODULE))
-    return std::nullopt;
   const std::size_t first = interface ? 2 : 1;
   std::size_t at = first;
   std::string name;

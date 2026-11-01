@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <fstream>
 #include <functional>
-#include <iterator>
 #include <map>
 #include <set>
 
@@ -27,18 +26,18 @@ bool nestedPackage(const std::filesystem::path &packageRoot,
   for (; directory != packageRoot && within(packageRoot, directory);
        directory = directory.parent_path()) {
     std::error_code error;
-    if (std::filesystem::exists(directory / "gti.toml", error))
+    if (std::filesystem::exists(
+            std::filesystem::symlink_status(directory / "gti.toml", error)))
       return true;
   }
   return false;
 }
 
 void conflict(std::vector<Diagnostic> &diagnostics, const SourceSpan &span,
-              std::string message, const std::filesystem::path &other) {
+              std::string message, const SourceSpan &other) {
   auto diagnostic = makeDiagnostic("GTI-B1005", DiagnosticPhase::Driver, span,
                                    std::move(message));
-  diagnostic.related.push_back(
-      {{other.string(), 0, 1, 1}, "The other module interface is here."});
+  diagnostic.related.push_back({other, "The other module interface is here."});
   diagnostic.hints.push_back(
       "Select an interface explicitly in [modules], or exclude the unwanted "
       "file in [module-discovery].");
@@ -98,6 +97,10 @@ discoverModules(const std::filesystem::path &packageRoot,
       } else if (path.extension() == ".gti" &&
                  (std::filesystem::is_regular_file(status) ||
                   std::filesystem::is_symlink(status))) {
+        // A directory link is never a source candidate, even if its name
+        // happens to end in .gti. Broken/file links are checked below.
+        if (std::filesystem::is_symlink(status) && entry.is_directory(error))
+          continue;
         files.insert(path);
       }
       // Directory symlinks are not traversed: no cycles or implicit extra
@@ -155,23 +158,22 @@ discoverModules(const std::filesystem::path &packageRoot,
     }
     physicalFiles.emplace(canonical, path);
     std::ifstream input(canonical, std::ios::binary);
-    std::string text{std::istreambuf_iterator<char>(input), {}};
-    if (!input || input.bad()) {
+    if (!input) {
       report("GTI-B1102",
              "Failed to read module candidate: " + path.string() + ".");
       continue;
     }
     Lexer lexer;
-    const auto tokens = lexer.scanModuleHeader(text, canonical.string());
-    const bool beginsModule =
-        !tokens.empty() &&
-        (tokens[0].kind == TokenKind::MODULE ||
-         (tokens.size() > 1 && tokens[0].kind == TokenKind::EXPORT &&
-          tokens[1].kind == TokenKind::MODULE));
-    if (!beginsModule)
+    const auto tokens = lexer.scanModuleHeader(input, canonical.string());
+    if (input.bad()) {
+      report("GTI-B1102",
+             "Failed to read module candidate: " + path.string() + ".");
+      continue;
+    }
+    if (!startsModuleDeclaration(tokens))
       continue;
     const auto prefixEnd = tokens.back().position;
-    sources.set(canonical.string(), text.substr(0, prefixEnd));
+    sources.set(canonical.string(), lexer.sourceText().substr(0, prefixEnd));
     const auto header = parseModuleHeader(tokens);
     if (lexer.hadError()) {
       diagnostics.insert(diagnostics.end(), lexer.errors().begin(),
@@ -196,22 +198,30 @@ discoverModules(const std::filesystem::path &packageRoot,
 void addDiscoveredInterfaces(ProjectPackage &package,
                              const std::vector<DiscoveredModule> &discovered,
                              std::vector<Diagnostic> &diagnostics) {
-  const auto explicitModules = package.modules;
+  std::set<std::string> explicitNames;
+  std::set<std::filesystem::path> explicitFiles;
+  std::map<std::filesystem::path, SourceSpan> declarations;
+  for (const auto &unit : discovered)
+    declarations.emplace(unit.path, unit.header.span);
+  std::map<std::string, SourceSpan> portableNames;
+  for (const auto &[name, file] : package.modules) {
+    explicitNames.insert(name);
+    explicitFiles.insert(file);
+    const auto declaration = declarations.find(file);
+    portableNames.emplace(portableProjectNameKey(name),
+                          declaration == declarations.end()
+                              ? SourceSpan{file.string(), 0, 1, 1}
+                              : declaration->second);
+  }
   for (const auto &unit : discovered) {
     if (!unit.header.interface)
       continue;
     const auto &name = unit.header.declaration.lexeme;
-    if (std::any_of(explicitModules.begin(), explicitModules.end(),
-                    [&](const auto &entry) {
-                      return entry.first == name || entry.second == unit.path;
-                    }))
+    if (explicitNames.contains(name) || explicitFiles.contains(unit.path))
       continue;
-    const auto collision = std::find_if(
-        package.modules.begin(), package.modules.end(), [&](const auto &entry) {
-          return portableProjectNameKey(entry.first) ==
-                 portableProjectNameKey(name);
-        });
-    if (collision != package.modules.end()) {
+    const auto [collision, inserted] =
+        portableNames.emplace(portableProjectNameKey(name), unit.header.span);
+    if (!inserted) {
       conflict(
           diagnostics, unit.header.span,
           "Discovered module interfaces must have distinct portable names: '" +
@@ -229,6 +239,13 @@ void addDiscoveredImplementations(
     std::vector<Diagnostic> &diagnostics) {
   std::set<std::string> explicitNames;
   std::set<std::filesystem::path> explicitFiles;
+  std::set<std::string> interfaceNames;
+  std::set<std::filesystem::path> interfaceFiles;
+  std::map<std::string, std::size_t> implementations;
+  for (const auto &[name, file] : package.modules) {
+    interfaceNames.insert(name);
+    interfaceFiles.insert(file);
+  }
   for (const auto &[name, files] : package.moduleImplementations) {
     explicitNames.insert(name);
     explicitFiles.insert(files.begin(), files.end());
@@ -236,27 +253,22 @@ void addDiscoveredImplementations(
   for (const auto &unit : discovered) {
     const auto &name = unit.header.declaration.lexeme;
     if (unit.header.interface || explicitNames.contains(name) ||
-        explicitFiles.contains(unit.path) ||
-        std::any_of(
-            package.modules.begin(), package.modules.end(),
-            [&](const auto &entry) { return entry.second == unit.path; }))
+        explicitFiles.contains(unit.path) || interfaceFiles.contains(unit.path))
       continue;
-    if (std::none_of(package.modules.begin(), package.modules.end(),
-                     [&](const auto &entry) { return entry.first == name; })) {
+    if (!interfaceNames.contains(name)) {
       diagnostics.push_back(makeDiagnostic(
           "GTI-B1005", DiagnosticPhase::Driver, unit.header.span,
           "Discovered implementation has no interface for module '" + name +
               "'."));
       continue;
     }
-    auto implementation =
-        std::find_if(package.moduleImplementations.begin(),
-                     package.moduleImplementations.end(),
-                     [&](const auto &entry) { return entry.first == name; });
-    if (implementation == package.moduleImplementations.end())
+    const auto [implementation, inserted] =
+        implementations.emplace(name, package.moduleImplementations.size());
+    if (inserted)
       package.moduleImplementations.emplace_back(name, std::vector{unit.path});
     else
-      implementation->second.push_back(unit.path);
+      package.moduleImplementations[implementation->second].second.push_back(
+          unit.path);
   }
 }
 
