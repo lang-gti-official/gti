@@ -1,0 +1,22 @@
+import "api.gti";
+int main() {
+    Point point = make_point(19, 23);
+    Point copied = echo_point(point);
+    if (sum(copied) != 42) { return 1; }
+    Point shifted_copy = shifted(copied);
+    if (shifted_copy.x != 20 || copied.x != 19) { return 6; }
+    Box box = {.point = copied, .weight = 5000000000};
+    Box returned = echo_box(box);
+    if (returned.weight != 5000000000 || returned.point.y != 23) { return 2; }
+    if (echo_status(Status::ready) != Status::ready) { return 3; }
+    Secret secret{};
+    Secret other = echo_secret(secret);
+    if (other.visible != 0) { return 4; }
+    Defaults defaults{};
+    Defaults preserved = echo_defaults(defaults);
+    if (preserved.smallest != -128 || preserved.largest != 18446744073709551615 ||
+        preserved.fraction != 0.125d || preserved.ratio != 1.5 ||
+        !preserved.enabled || preserved.marker != 'Q' ||
+        preserved.state != Status::ready) { return 5; }
+    return 0;
+}

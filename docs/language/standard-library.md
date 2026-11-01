@@ -360,7 +360,10 @@ The current implemented foundation includes:
   assignment from a counted view (`text = "Done";`) replaces the contents. Mutation retains capacity when
   sufficient and excludes any live view into the destination, including a
   replacement argument that aliases it. These operations count bytes, not
-  Unicode characters. This unit also provides
+  Unicode characters. Counted-view construction, append, clone and indexed
+  copies construct their complete character range before publishing one final
+  terminator and length; range checks and allocation precede that copy.
+  This unit also provides
   source-defined base-10 `std::to_string` conversion for every fixed-width
   integer, plus `print`/`println` traversal through either a read-only borrow
   of a named owner or direct ownership transfer from a fresh string result;
@@ -1053,8 +1056,14 @@ indices are checked against the initialized length before mutation. Equal
 uses ordinary defined-failure cleanup and leaves the sequence unchanged.
 
 Whole-vector `std::reverse` and both `std::sort` overloads accept relocatable
-move-only elements. Sort uses iterative introsort: median-of-three quicksort
-partitions, insertion sort for ranges of at most 16 elements, and heapsort for
+move-only elements. Sort uses adaptive iterative introsort. Whole inputs longer
+than 16 elements first receive a monotonic-order probe: a nondecreasing range
+is already finished, and a nonincreasing range is reversed with checked swaps.
+Equivalent prefixes and plateaus are supported. The probe stops at the first
+change in strict direction, without moving any element; ordered inputs need
+at most two comparisons per adjacent pair. Other inputs use median-of-three
+quicksort partitions (a median of three sampled medians for ranges longer
+than 40), insertion sort for ranges of at most 16 elements, and heapsort for
 any range that exhausts 2*floor(log2(n)) partition levels. Comparisons are
 O(n log n) in the worst case, auxiliary storage is a fixed-size stack, and
 elements move only by checked swaps, without copying a pivot or cloning
@@ -1250,11 +1259,11 @@ own binding. There is no implicit rebinding, shared ownership or reference count
 
 Resource owners compose like other borrowed carriers: a class may hold a
 `resource_vector` field constructed from a `resource_ref` parameter, and
-functions may fill a container through a `mut` reference. A free function
-cannot yet return a new owner built from a `resource_ref` parameter
-(`GTI-S2085`); that is the general rule for returning any borrowed carrier
-constructed from a by-value carrier parameter, not a resource-specific
-restriction. Construct the owner in the caller, or pass it by `mut` reference.
+functions may fill a container through a `mut` reference or return a new owner
+built from a `resource_ref` parameter. The return transfers the provider
+dependency into the returned owner; it remains live through that owner's
+cleanup. A by-value carrier parameter cannot free the provider while that
+returned owner is live.
 
 `process_resource` is a source wrapper over a narrow aligned raw allocation
 runtime interface, with distinct invalid-alignment, size-overflow and

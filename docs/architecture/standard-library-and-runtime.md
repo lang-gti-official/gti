@@ -1657,6 +1657,27 @@ calls. The integrated source cutover has passed its general source-container
 proof/replay and optimized workload acceptance; that is not a claim that every
 future accessor or workload is already optimized.
 
+The source prefix owner also permits explicit unsafe publication of an
+initialized length. This operation only changes the count: the caller must own
+the exclusive lease, stay within capacity, construct every newly included
+object, and destroy every removed object first. A fallible construction loop
+must publish each completed element before another fallible operation, or keep
+an independent rollback guard. The contract applies equally to unrelated
+user-defined elements; it is not a character or container compiler exception.
+
+The terminated character owner uses this mechanism for counted-view
+construction, append, indexed-range copies, substring copies and clone. It
+validates the source interval and reserves the complete destination before
+mutation, retires the old terminator, constructs the character range, then
+constructs one trailing NUL and publishes the complete physical prefix once.
+The copy uses an absolute induction variable bounded by the checked source
+endpoint, allowing ordinary bounds-check elimination and vectorization without
+repeated prefix updates. The validated character-copy phase has no user callback
+or fallible character constructor. Empty ranges do not touch storage. Embedded NULs remain counted
+characters, and exclusive-receiver borrowing continues to exclude aliased
+source views. Fixed-array and general input-iterator constructors retain their
+existing per-element path.
+
 Sparse and prefix relocation consume semantic `RelocationKind` facts verified
 against concrete MIR type tables. Raw-buffer growth selects general
 `relocate_range_at` for structurally bitwise-relocatable elements, transferring

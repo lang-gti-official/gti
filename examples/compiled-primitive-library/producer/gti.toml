@@ -1,0 +1,8 @@
+manifest-version = 1
+[package]
+name = "compiled-primitives"
+version = "0.1.0"
+[targets.primitives]
+kind = "gti-library"
+root = "library.gti"
+functions = ["identity", "touch", "positive", "divide", "divide_and_discard"]

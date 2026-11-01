@@ -4,6 +4,7 @@
 #include "gti/configuration_flags.h"
 #include "gti/cpp_standard.h"
 #include "gti/diagnostic.h"
+#include "gti/driver/compiled_library.h"
 #include "gti/driver/native_toolchain.h"
 #include "gti/optimizer.h"
 #include "gti/target.h"
@@ -187,6 +188,7 @@ enum class ProjectTargetKind {
   Executable,
   Test,
   Library,
+  CompiledLibrary,
 };
 
 [[nodiscard]] std::string_view projectTargetKindName(ProjectTargetKind kind);
@@ -207,6 +209,12 @@ struct ProjectExport {
   SourceSpan symbolDeclaration;
 };
 
+struct CompiledSourceDependency {
+  std::string target;
+  std::filesystem::path interfacePath;
+  SourceSpan declaration;
+};
+
 struct ProjectTarget {
   std::string name;
   ProjectTargetKind kind = ProjectTargetKind::Executable;
@@ -214,6 +222,10 @@ struct ProjectTarget {
   std::filesystem::path root;
   SourceSpan declaration;
   std::vector<ProjectExport> exports;
+  std::vector<std::string> compiledFunctions;
+  std::optional<CompiledLibraryImport> compiledImport;
+  std::vector<CompiledLibraryImport> compiledImports;
+  std::vector<CompiledSourceDependency> compiledDependencies;
   ConfigurationFlags defines;
   std::vector<SourceSpan> defineDeclarations;
   ProjectNativeSettings native;

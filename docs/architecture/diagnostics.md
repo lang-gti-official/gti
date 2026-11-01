@@ -9,6 +9,18 @@ LSP consume the same policy and source spans.
 
 Status: Current infrastructure and conventions.
 
+`GTI-S2057` also diagnoses failed immediate invocations. The invocation is the
+primary span; related information names the selected immediate declaration and
+the failing operation, with the staged call trace when available. Runtime-value
+inputs, checked arithmetic/conversion failure and evaluator resource limits
+retain distinct explanations. No automatic edit changes an ordinary API into
+an immediate one or replaces a runtime argument. These records are shared by
+CLI and LSP publication, including unsaved-buffer recovery.
+The same diagnostic covers a failed standalone immediate `void` completion or
+immediate constructor selected by bare `return;`. A `void` call outside the
+standalone statement shape explains that structural limit at its call site.
+
+
 Staged MIR constant-evaluation failures retain executed caller identities,
 which semantic staging maps to source spans before its HIR/MIR snapshot expires.
 `GTI-S2057` in constexpr bindings, `if constexpr` and `static_assert` appends
@@ -130,6 +142,11 @@ that is not eligible for designated construction. `GTI-S2119` rejects
 reports an owner argument of another type as an ordinary argument mismatch
 (`GTI-S2003`), naming the described owner and the field's declaration. Diagnostics produced inside an expanded copy carry related
 information naming the element and are deduplicated across identical copies.
+`GTI-S2125` rejects an invalid reflected method invocation shape, including
+static and operator descriptors in the current instance-call profile. It points
+at the invocation; static and operator errors relate the selected declaration.
+Argument, access, unsafe and ownership failures retain the ordinary call's
+diagnostic codes; the descriptor does not authorize bypassing those rules.
 
 `GTI-S2106` rejects a selected ordinary GTI call without a source definition
 in a closed executable/library or C++ representation request, before backend

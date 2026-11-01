@@ -630,6 +630,14 @@
       "suite": "ownership"
     },
     {
+      "name": "testConsteval",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testConstevalStatementCompletion",
+      "suite": "constexpr"
+    },
+    {
       "name": "testFixedWidthIntegers",
       "suite": "constexpr"
     },

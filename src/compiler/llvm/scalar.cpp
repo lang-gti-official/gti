@@ -429,9 +429,35 @@ llvm::Value *Scalars::arithmetic(MirOperation operation,
                             DefinedFailureDetail detail) -> llvm::Value * {
     auto *pair = ir.CreateBinaryIntrinsic(signedValue ? signedId : unsignedId,
                                           left, right);
+    // Ordinary GTI arithmetic cannot wrap on its successful continuation.
+    // Keep the overflow detector non-poisoning. Compute its flagged result
+    // alongside the detector so instruction selection can share arithmetic,
+    // but expose it only after the guard (or verified discharge). The result
+    // can be poison on failure; no failure-path operation consumes it.
+    // Extracting the intrinsic's
+    // wrapping lane instead loses this invariant before LLVM loop/range
+    // optimization. Explicit wrapping/saturating intrinsics use compute()'s
+    // separate path and must never receive these flags.
+    llvm::Value *result = nullptr;
+    switch (signedId) {
+    case llvm::Intrinsic::sadd_with_overflow:
+      result =
+          ir.CreateAdd(left, right, "checked.add", !signedValue, signedValue);
+      break;
+    case llvm::Intrinsic::ssub_with_overflow:
+      result =
+          ir.CreateSub(left, right, "checked.sub", !signedValue, signedValue);
+      break;
+    case llvm::Intrinsic::smul_with_overflow:
+      result =
+          ir.CreateMul(left, right, "checked.mul", !signedValue, signedValue);
+      break;
+    default:
+      throw std::logic_error("LLVM checked arithmetic lost its operation");
+    }
     guard(ir.CreateExtractValue(pair, 1),
           {DefinedFailureCode::IntegerOverflow, detail});
-    return ir.CreateExtractValue(pair, 0);
+    return result;
   };
   switch (operation) {
   case MirOperation::Positive:

@@ -1002,7 +1002,10 @@ programConstantMatchesType(const ConstantValue &constant,
     }
     const std::optional<CheckedIntegerDomain> domain =
         constantIntegerDomain(type);
-    return domain && *domain == integer->domain;
+    return domain && *domain == integer->domain &&
+           checkedIntegerFits(
+               {.negative = integer->negative, .magnitude = integer->magnitude},
+               *domain);
   }
   if (const auto *floating = std::get_if<BinaryFloat>(&constant)) {
     return semanticFloatFormat(type) == floating->format;
@@ -1031,7 +1034,8 @@ programConstantMatchesType(const ConstantValue &constant,
     if (type.kind == SemanticType::Array && type.arguments.size() == 1 &&
         type.arrayLengthParameterId == 0 &&
         aggregate->value->kind == ConstantAggregateKind::Array &&
-        aggregate->value->elements.size() == type.arrayLength) {
+        aggregate->value->elements.size() == type.arrayLength &&
+        aggregate->value->fields.empty()) {
       return std::all_of(aggregate->value->elements.begin(),
                          aggregate->value->elements.end(),
                          [&](const ConstantValue &element) {
@@ -1062,7 +1066,8 @@ programConstantMatchesType(const ConstantValue &constant,
     }
     if (type.kind != SemanticType::Class || type.classId == 0 ||
         aggregate->value->kind != ConstantAggregateKind::Object ||
-        aggregate->value->identity != type.classId) {
+        aggregate->value->identity != type.classId ||
+        !aggregate->value->elements.empty()) {
       return false;
     }
     if (program == nullptr) {
@@ -10899,6 +10904,15 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
              instruction.operands.empty() &&
              resultType.kind == SemanticType::NativeFunction;
     case MirOperation::Literal: {
+      if (instruction.programConstantSubstitution && !instruction.literal) {
+        const auto found = expectedProgramConstants.find(instruction.hirValue);
+        return found != expectedProgramConstants.end() &&
+               std::holds_alternative<ConstantAggregateValue>(*found->second) &&
+               programConstantMatchesType(*found->second, resultType) &&
+               instruction.operands.empty() &&
+               instruction.literalProvenance.kind ==
+                   MirLiteralProvenanceKind::Source;
+      }
       const MirLiteralProvenance &provenance = instruction.literalProvenance;
       const MirValue *source = provenance.sourceValue == 0
                                    ? nullptr
@@ -14128,8 +14142,18 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           // A payload borrowed through a reference parameter is a local child
           // of that parameter's caller-owned entry loan. It keeps its own
           // tag-checked activation until publication, as a selection does.
+          std::unordered_set<MirLoanId> seenParents;
           const MirLoan *entry =
               retained == nullptr ? nullptr : body.findLoan(retained->parent);
+          MirPlaceId publicationSource =
+              retained == nullptr ? 0 : retained->source;
+          while (retained != nullptr && !retained->referenceSelection &&
+                 entry != nullptr && seenParents.insert(entry->id).second &&
+                 entry->kind == MirLoanKind::Local && !entry->entry &&
+                 !entry->escapes) {
+            publicationSource = entry->source;
+            entry = body.findLoan(entry->parent);
+          }
           const MirPlace *formal =
               entry == nullptr ? nullptr : body.findPlace(entry->source);
           const bool parameterChild =
@@ -14140,13 +14164,26 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
               formal->type.kind == SemanticType::Reference &&
               std::find(entry->carriers.begin(), entry->carriers.end(),
                         formal->binding) != entry->carriers.end();
+          const bool receiverChild = [&] {
+            if (seenParents.empty() || entry != nullptr)
+              return false;
+            std::unordered_map<HirBindingId, std::vector<MirLoanId>> carriers;
+            for (const MirLoan &loan : body.loans)
+              for (const HirBindingId carrier : loan.carriers)
+                carriers[carrier].push_back(loan.id);
+            const MirCanonicalPlace physical = canonicalBorrowOriginPlace(
+                body, publicationSource, carriers, true);
+            return !physical.ambiguous &&
+                   physical.root == MirPlaceRootKind::This;
+          }();
           if (retained == nullptr || retained->id == produced.id ||
               retained->kind != MirLoanKind::Local ||
-              (!retained->referenceSelection && !parameterChild) ||
+              (!retained->referenceSelection && !parameterChild &&
+               !receiverChild) ||
               retained->entry || retained->escapes ||
               retained->producedBy == 0 ||
               retained->producedBy != instruction.hirValue ||
-              retained->source != produced.source ||
+              publicationSource != produced.source ||
               retained->storedDependency != produced.storedDependency ||
               retained->additionalDependencies !=
                   produced.additionalDependencies ||
@@ -15310,7 +15347,8 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
         const auto *enumerator = std::get_if<ConstantEnum>(&constant);
         const std::optional<Literal> literal = programConstantLiteral(constant);
         bool exact = false;
-        if (instruction.info.type.kind == SemanticType::Enum) {
+        if (instruction.info.type.kind == SemanticType::Enum &&
+            !std::holds_alternative<ConstantAggregateValue>(constant)) {
           const ConstantInteger *enumValue =
               enumerator == nullptr ? integer : &enumerator->value;
           exact = enumValue != nullptr &&
@@ -15356,6 +15394,11 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                 magnitudeValue);
             programConstantMagnitudeInstructions.insert(magnitude->id);
           }
+        } else if (std::holds_alternative<ConstantAggregateValue>(constant)) {
+          exact = instruction.operation == MirOperation::Literal &&
+                  instruction.operands.empty() && !instruction.literal &&
+                  instruction.literalProvenance.kind ==
+                      MirLiteralProvenanceKind::Source;
         } else {
           exact = literal && instruction.operation == MirOperation::Literal &&
                   instruction.operands.empty() &&

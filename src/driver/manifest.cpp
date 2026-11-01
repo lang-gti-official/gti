@@ -1,4 +1,5 @@
 #include "gti/driver/manifest.h"
+#include "gti/compiled_interface_names.h"
 #include "gti/driver/registry.h"
 #include "gti/driver/semver.h"
 #include "gti/module_name.h"
@@ -1795,6 +1796,8 @@ std::string_view projectTargetKindName(ProjectTargetKind kind) {
     return "test";
   case ProjectTargetKind::Library:
     return "library";
+  case ProjectTargetKind::CompiledLibrary:
+    return "gti-library";
   }
   return "executable";
 }
@@ -2478,10 +2481,11 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
               "Target '" + targetName + "' must be a table."));
           continue;
         }
-        validateFields(
-            *targetTable,
-            {"kind", "linkage", "root", "exports", "native", "defines"},
-            "target", sourceName, source, result.diagnostics);
+        validateFields(*targetTable,
+                       {"kind", "linkage", "root", "exports", "native",
+                        "defines", "functions", "compiled-library",
+                        "compiled-libraries", "compiled-dependencies"},
+                       "target", sourceName, source, result.diagnostics);
         const std::optional<std::string> kind =
             requiredString(*targetTable, "kind", "target", sourceName, source,
                            result.diagnostics);
@@ -2492,6 +2496,8 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
         if (kind) {
           if (*kind == "test") {
             targetKind = ProjectTargetKind::Test;
+          } else if (*kind == "gti-library") {
+            targetKind = ProjectTargetKind::CompiledLibrary;
           } else if (*kind == "library") {
             targetKind = ProjectTargetKind::Library;
             if (!features.dormantLibraryTargets) {
@@ -2509,7 +2515,8 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
             result.diagnostics.push_back(buildDiagnostic(
                 "GTI-B1005",
                 sourceSpan(sourceName, source, *targetTable->get("kind")),
-                "Target kind must be 'executable' or 'test' in manifest "
+                "Target kind must be 'executable', 'test', 'library', or "
+                "'gti-library' in manifest "
                 "version 1."));
           }
         }
@@ -2644,6 +2651,185 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
                  parseOptionalNative(*targetTable, packageRoot, "Target",
                                      sourceName, source, result.diagnostics)});
         ProjectTarget &parsedTarget = targets.back();
+        const auto targetError = [&](const toml::node &node,
+                                     std::string message) {
+          result.diagnostics.push_back(
+              buildDiagnostic("GTI-B1005", sourceSpan(sourceName, source, node),
+                              std::move(message)));
+        };
+        if (targetKind == ProjectTargetKind::CompiledLibrary) {
+          const auto *functions =
+              requiredField(*targetTable, "functions", "gti-library target",
+                            sourceName, source, result.diagnostics);
+          parsedTarget.compiledFunctions =
+              stringArray(*targetTable, "functions", "GTI library target",
+                          sourceName, source, result.diagnostics);
+          if (functions) {
+            std::set<std::string> names;
+            if (parsedTarget.compiledFunctions.empty() ||
+                parsedTarget.compiledFunctions.size() > 256)
+              targetError(
+                  *functions,
+                  "A gti-library target requires 1 to 256 selected functions.");
+            for (const auto &name : parsedTarget.compiledFunctions)
+              if (!isCompiledInterfaceName(name) || !names.insert(name).second)
+                targetError(*functions, "GTI library functions must be unique "
+                                        "identifiers, optionally qualified by "
+                                        "namespaces with '::'.");
+          }
+        } else if (const auto *functions = targetTable->get("functions")) {
+          targetError(*functions,
+                      "Only a gti-library target may select 'functions'.");
+        }
+        const auto *singularImport = targetTable->get("compiled-library");
+        const auto *pluralImports = targetTable->get("compiled-libraries");
+        std::set<std::pair<std::string, std::string>> importOwners;
+        std::set<std::filesystem::path> importFacades;
+        const auto parseImport = [&](const toml::node &node)
+            -> std::optional<CompiledLibraryImport> {
+          const auto *table = node.as_table();
+          if (!table) {
+            targetError(node, "A compiled library import must be a table.");
+            return std::nullopt;
+          }
+          validateFields(*table, {"package", "target", "path", "interface"},
+                         "compiled-library", sourceName, source,
+                         result.diagnostics);
+          const auto package =
+              requiredString(*table, "package", "compiled-library", sourceName,
+                             source, result.diagnostics);
+          const auto target =
+              requiredString(*table, "target", "compiled-library", sourceName,
+                             source, result.diagnostics);
+          const auto artifact =
+              requiredString(*table, "path", "compiled-library", sourceName,
+                             source, result.diagnostics);
+          const auto interface =
+              requiredString(*table, "interface", "compiled-library",
+                             sourceName, source, result.diagnostics);
+          if (!package || !target || !artifact || !interface)
+            return std::nullopt;
+          std::error_code error;
+          const auto bundle =
+              std::filesystem::canonical(packageRoot / *artifact, error);
+          const bool validBundle =
+              !error &&
+              !isAbsoluteOnSupportedHost(*artifact,
+                                         std::filesystem::path(*artifact)) &&
+              std::filesystem::path(*artifact).extension() == ".gtilib" &&
+              std::filesystem::is_regular_file(bundle, error) && !error;
+          const auto facade = std::filesystem::weakly_canonical(
+              packageRoot / *interface, error);
+          const bool validFacade =
+              !error &&
+              !isAbsoluteOnSupportedHost(*interface,
+                                         std::filesystem::path(*interface)) &&
+              facade.extension() == ".gti" &&
+              pathIsWithin(packageRoot, facade) &&
+              !std::filesystem::exists(facade, error) && !error;
+          if (!isPortableProjectName(*package) ||
+              !isPortableProjectName(*target))
+            targetError(node, "Compiled library package and target must "
+                              "be portable project names.");
+          else if (!validBundle)
+            targetError(*table->get("path"),
+                        "Compiled library path must name an existing "
+                        "regular .gtilib file relative to gti.toml.");
+          else if (!validFacade)
+            targetError(*table->get("interface"),
+                        "Compiled library interface must be an absent .gti "
+                        "path inside the package.");
+          else if (!importOwners.emplace(*package, *target).second)
+            targetError(
+                *table->get("target"),
+                "Compiled library package and target owners must be unique.");
+          else if (!importFacades.insert(facade).second)
+            targetError(*table->get("interface"),
+                        "Compiled library interface paths must be unique.");
+          else
+            return CompiledLibraryImport{*package, *target, bundle, facade};
+          return std::nullopt;
+        };
+        if (singularImport && pluralImports) {
+          targetError(*pluralImports, "Use either 'compiled-library' or "
+                                      "'compiled-libraries', not both.");
+        } else if (singularImport || pluralImports) {
+          if (targetKind != ProjectTargetKind::Executable &&
+              targetKind != ProjectTargetKind::CompiledLibrary) {
+            targetError(
+                singularImport ? *singularImport : *pluralImports,
+                "Only an executable or gti-library target may import compiled "
+                "libraries in this profile.");
+          } else if (singularImport) {
+            parsedTarget.compiledImport = parseImport(*singularImport);
+          } else if (const auto *array = pluralImports->as_array()) {
+            if (array->empty() || array->size() > 64) {
+              targetError(*pluralImports, "A target requires 1 to 64 selected "
+                                          "compiled libraries.");
+            } else {
+              for (const auto &node : *array)
+                if (auto input = parseImport(node))
+                  parsedTarget.compiledImports.push_back(std::move(*input));
+            }
+          } else {
+            targetError(*pluralImports, "Target field 'compiled-libraries' "
+                                        "must be an array of tables.");
+          }
+        }
+
+        if (const auto *node = targetTable->get("compiled-dependencies")) {
+          const auto *array = node->as_array();
+          if (targetKind != ProjectTargetKind::Executable &&
+              targetKind != ProjectTargetKind::CompiledLibrary) {
+            targetError(*node, "Only executable and gti-library targets may "
+                               "build compiled dependencies.");
+          } else if (!array || array->empty() || array->size() > 64) {
+            targetError(*node, "Target field 'compiled-dependencies' requires "
+                               "1 to 64 dependency tables.");
+          } else {
+            std::set<std::string> names;
+            for (const auto &entry : *array) {
+              const auto *table = entry.as_table();
+              if (!table) {
+                targetError(entry, "A compiled dependency must be a table.");
+                continue;
+              }
+              validateFields(*table, {"target", "interface"},
+                             "compiled-dependency", sourceName, source,
+                             result.diagnostics);
+              const auto name =
+                  requiredString(*table, "target", "compiled-dependency",
+                                 sourceName, source, result.diagnostics);
+              const auto interface =
+                  requiredString(*table, "interface", "compiled-dependency",
+                                 sourceName, source, result.diagnostics);
+              if (!name || !interface)
+                continue;
+              std::error_code error;
+              const auto facade = std::filesystem::weakly_canonical(
+                  packageRoot / *interface, error);
+              if (!isPortableProjectName(*name) ||
+                  !names.insert(*name).second) {
+                targetError(*table->get("target"),
+                            "Compiled dependency targets must be unique "
+                            "portable names.");
+              } else if (error ||
+                         isAbsoluteOnSupportedHost(
+                             *interface, std::filesystem::path(*interface)) ||
+                         facade.extension() != ".gti" ||
+                         !pathIsWithin(packageRoot, facade) ||
+                         std::filesystem::exists(facade, error) || error) {
+                targetError(*table->get("interface"),
+                            "Compiled dependency interface must be an absent "
+                            ".gti path inside the package.");
+              } else {
+                parsedTarget.compiledDependencies.push_back(
+                    {*name, facade, sourceSpan(sourceName, source, entry)});
+              }
+            }
+          }
+        }
+
         parsedTarget.defines = parseConfigurationDefines(
             *targetTable, "Target", sourceName, source, result.diagnostics,
             parsedTarget.defineDeclarations);

@@ -1,5 +1,6 @@
 import std.string;
 import std.vector;
+import std.memory;
 
 class CleanupTrace {
 public:
@@ -66,5 +67,26 @@ int main(int argc, std::vector<std::string> argv) {
   mut std::string moved = std::move(middle);
   moved.push_back('!');
   if (moved != "zcd!") { return 9; }
+
+  // Batch copies retain counted bytes, independent ownership, and exactly one
+  // hidden terminator. Empty appends do not manufacture an allocation.
+  mut std::string appended{};
+  appended.append("");
+  if (!appended.empty() || appended.capacity() != std::size_t(0)) { return 10; }
+  appended.reserve(std::size_t(32));
+  appended.append("start");
+  appended.append(binary.view());
+  if (appended.size() != std::size_t(8) || appended[std::size_t(6)] != '\0' ||
+      appended[std::size_t(7)] != 'b') { return 11; }
+  std::string from_view{binary.view()};
+  mut std::string clone = appended.clone();
+  appended = "changed";
+  if (from_view.size() != std::size_t(3) || from_view[std::size_t(1)] != '\0' ||
+      clone.size() != std::size_t(8) || clone[std::size_t(7)] != 'b') { return 12; }
+  clone.push_back('!');
+  unsafe {
+    if (std::c_string_bytes(clone.c_string())[std::size_t(9)] != uint8_t(0) ||
+        std::c_string_bytes(from_view.c_string())[std::size_t(3)] != uint8_t(0)) { return 13; }
+  }
   return 0;
 }

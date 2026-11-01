@@ -1,0 +1,25 @@
+export module primitives;
+
+// A selected name exports every explicitly exported overload.
+export bool identity(bool value) { return value; }
+export char identity(char value) { return value; }
+export int8_t identity(int8_t value) { return value; }
+export int16_t identity(int16_t value) { return value; }
+export int32_t identity(int32_t value) { return value; }
+export int64_t identity(int64_t value) { return value; }
+export uint8_t identity(uint8_t value) { return value; }
+export uint16_t identity(uint16_t value) { return value; }
+export uint32_t identity(uint32_t value) { return value; }
+export uint64_t identity(uint64_t value) { return value; }
+export float identity(float value) { return value; }
+export double identity(double value) { return value; }
+
+// This private overload is deliberately absent from the exported family.
+int identity(int first, int second) { return first; }
+
+export void touch() {}
+export bool positive(int64_t value) { return value > 0; }
+export int divide(int value, int divisor) { return value / divisor; }
+export void divide_and_discard(int value, int divisor) {
+    int result = value / divisor;
+}

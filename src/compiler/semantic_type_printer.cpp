@@ -1,5 +1,7 @@
 #include "gti/semantic_model.h"
 
+#include <algorithm>
+
 namespace lang {
 
 class SemanticTypePrinterImpl {
@@ -240,10 +242,19 @@ private:
       return "associated type";
     }
     std::string result = spelling->qualifiedName + "<";
-    for (std::size_t index = 0; index < type.arguments.size(); ++index) {
+    const std::size_t count =
+        std::min(spelling->parameterCount, type.arguments.size());
+    for (std::size_t index = 0; index < count; ++index) {
       result += (index == 0 ? "" : ", ") + print(type.arguments[index]);
     }
-    return result + ">::" + spelling->associatedTypes[type.projectionMember];
+    result += ">::" + spelling->associatedTypes[type.projectionMember];
+    if (type.arguments.size() > count) {
+      result += "<";
+      for (std::size_t index = count; index < type.arguments.size(); ++index)
+        result += (index == count ? "" : ", ") + print(type.arguments[index]);
+      result += ">";
+    }
+    return result;
   }
 
   [[nodiscard]] std::string genericParameter(GenericParameterId id,
@@ -253,6 +264,10 @@ private:
       parameter = lookup(id);
     }
     if (parameter == nullptr) {
+      for (const auto &symbol : semantics.database().symbols())
+        if (symbol.kind == SymbolKind::TypeParameter &&
+            symbol.type.genericParameterId == id)
+          return symbol.name + (pack ? "..." : "");
       return pack ? "type pack" : "type parameter";
     }
     return parameter->name.lexeme + (pack ? "..." : "");

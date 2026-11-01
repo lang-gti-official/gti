@@ -56,13 +56,24 @@ public:
   bool operator>=(Item& other) { return !adversary_less(this.id, other.id); }
 };
 
-void reset(int count) {
+void reset(int count, bool nonmonotonic) {
   gas = count;
   solid = 0;
   candidate = 0;
   comparisons = uint64_t(0);
   for (mut int i = 0; i < count; i++) {
     values[std::size_t(i)] = count;
+  }
+  // A fixed low/high/middle prefix prevents the whole-range monotonic probe
+  // from satisfying the adversary by assigning every successive key in order.
+  // Remaining gas keys receive values starting at three, above the
+  // fixed keys, so no later assignment reverses an observed comparison.
+  if (nonmonotonic) {
+    solid = 3;
+    candidate = 3;
+    values[0] = 0;
+    values[1] = 2;
+    values[2] = 1;
   }
 }
 
@@ -100,26 +111,28 @@ int check(std::vector<int>& ids, int count) {
 
 int main() {
   int sizes[6] = {17, 64, 100, 257, 1000, 1024};
-  for (auto& count : sizes) {
-    mut std::vector<int> ids{};
-    for (mut int i = 0; i < count; i++) { ids.push_back(i); }
-    reset(count);
-    std::sort(ids, Adversary());
-    if (!within_bound(count)) { return 10; }
-    int ordered = check(ids, count);
-    if (ordered != 0) { return 10 + ordered; }
-    if (count == 1024) { std::println(comparisons); }
+  for (mut int mode = 0; mode < 2; mode++) {
+    for (auto& count : sizes) {
+      mut std::vector<int> ids{};
+      for (mut int i = 0; i < count; i++) { ids.push_back(i); }
+      reset(count, mode == 1);
+      std::sort(ids, Adversary());
+      if (!within_bound(count)) { return 10; }
+      int ordered = check(ids, count);
+      if (ordered != 0) { return 10 + ordered; }
+      if (count == 1024) { std::println(comparisons); }
 
-    mut std::vector<Item> items{};
-    for (mut int i = 0; i < count; i++) { items.push_back(Item(i)); }
-    reset(count);
-    std::sort(items);
-    if (!within_bound(count)) { return 20; }
-    mut std::vector<int> sorted{};
-    for (auto& item : items) { sorted.push_back(item.identity()); }
-    int item_order = check(sorted, count);
-    if (item_order != 0) { return 20 + item_order; }
-    if (count == 1024) { std::println(comparisons); }
+      mut std::vector<Item> items{};
+      for (mut int i = 0; i < count; i++) { items.push_back(Item(i)); }
+      reset(count, mode == 1);
+      std::sort(items);
+      if (!within_bound(count)) { return 20; }
+      mut std::vector<int> sorted{};
+      for (auto& item : items) { sorted.push_back(item.identity()); }
+      int item_order = check(sorted, count);
+      if (item_order != 0) { return 20 + item_order; }
+      if (count == 1024) { std::println(comparisons); }
+    }
   }
   return 0;
 }

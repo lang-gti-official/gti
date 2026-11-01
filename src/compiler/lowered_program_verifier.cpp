@@ -1,3 +1,4 @@
+#include "gti/compiled_scalar_unit.h"
 #include "gti/lowered_program.h"
 #include "gti/mir_verifier.h"
 
@@ -1920,6 +1921,8 @@ std::vector<LoweredProgramIssue>
 verifyLoweredProgram(const LoweredProgram &program) {
   std::vector<LoweredProgramIssue> issues =
       lowered_detail::verifyLoweredProgramContents(program);
+  for (const auto &error : verifyCompiledScalarUnit(program))
+    addIssue(issues, LoweredProgramIssueKind::FrontendMismatch, error);
   if (!loweredProgramSealValidation()) {
     return issues;
   }

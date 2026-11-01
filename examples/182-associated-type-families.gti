@@ -1,0 +1,57 @@
+// Select a storage policy once, then use it for independent element types.
+// A family supplies a type; operations still require their own contracts.
+import std.string;
+import std.vector;
+
+concept storage_policy<Policy> {
+  typename buffer<std::vector_element Element>;
+};
+
+struct HeapStorage {};
+struct InlineStorage {};
+
+struct InlinePair<T> {
+  T first;
+  T second;
+  InlinePair(T one, T two) : first(std::move(one)), second(std::move(two)) {}
+  uint64_t size() { return uint64_t(2); }
+};
+
+for concept storage_policy<HeapStorage> {
+  using buffer<std::vector_element Item> = std::vector<Item>;
+};
+for concept storage_policy<InlineStorage> {
+  using buffer<std::vector_element Value> = InlinePair<Value>;
+};
+
+concept sized<C> = requires(C& collection) {
+  { collection.size() } -> uint64_t;
+};
+
+uint64_t catalogue_size<Policy>(storage_policy<Policy>::buffer<int>& numbers,
+                               storage_policy<Policy>::buffer<std::string>& names)
+  requires storage_policy<Policy> &&
+           sized<storage_policy<Policy>::buffer<int>> &&
+           sized<storage_policy<Policy>::buffer<std::string>> {
+  return numbers.size() + names.size();
+}
+
+using Numbers = storage_policy<HeapStorage>::buffer<int>;
+using Names = storage_policy<HeapStorage>::buffer<std::string>;
+using InlineNumbers = storage_policy<InlineStorage>::buffer<int>;
+using InlineNames = storage_policy<InlineStorage>::buffer<std::string>;
+
+int main() {
+  mut Numbers numbers{};
+  numbers.push_back(10);
+  numbers.push_back(20);
+  numbers.push_back(30);
+  mut Names names{};
+  names.push_back(std::string("Ada"));
+  names.push_back(std::string("Grace"));
+  InlineNumbers small_numbers{10, 20};
+  InlineNames small_names{std::string("Ada"), std::string("Grace")};
+  std::println(std::to_string(catalogue_size<HeapStorage>(numbers, names)));
+  std::println(std::to_string(catalogue_size<InlineStorage>(small_numbers, small_names)));
+  return 0;
+}

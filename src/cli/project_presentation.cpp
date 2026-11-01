@@ -379,6 +379,58 @@ void writeProjectMetadata(std::ostream &stream,
     writeJsonString(stream, driver::projectTargetKindName(projectTarget.kind));
     stream << ",\n      \"root\": ";
     writeJsonString(stream, projectTarget.root.string());
+    if (projectTarget.kind == driver::ProjectTargetKind::CompiledLibrary) {
+      stream << ",\n      \"functions\": [";
+      for (std::size_t index = 0;
+           index < projectTarget.compiledFunctions.size(); ++index) {
+        if (index)
+          stream << ", ";
+        writeJsonString(stream, projectTarget.compiledFunctions[index]);
+      }
+      stream << "]";
+    }
+    if (!projectTarget.compiledDependencies.empty()) {
+      stream << ",\n      \"compiledDependencies\": [";
+      for (std::size_t index = 0;
+           index < projectTarget.compiledDependencies.size(); ++index) {
+        if (index)
+          stream << ", ";
+        const auto &dependency = projectTarget.compiledDependencies[index];
+        stream << "{\"target\": ";
+        writeJsonString(stream, dependency.target);
+        stream << ", \"interface\": ";
+        writeJsonString(stream, dependency.interfacePath.string());
+        stream << "}";
+      }
+      stream << "]";
+    }
+    const auto compiledImports = driver::normalizeCompiledLibraryImports(
+        projectTarget.compiledImport, projectTarget.compiledImports);
+    const auto writeCompiledImport = [&](const auto &input) {
+      stream << "{\"package\": ";
+      writeJsonString(stream, input.package);
+      stream << ", \"target\": ";
+      writeJsonString(stream, input.target);
+      stream << ", \"path\": ";
+      writeJsonString(stream, input.artifact.string());
+      stream << ", \"interface\": ";
+      writeJsonString(stream, input.interfacePath.string());
+      stream << "}";
+    };
+    if (!compiledImports.empty()) {
+      if (compiledImports.size() == 1) {
+        stream << ",\n      \"compiledLibrary\": ";
+        writeCompiledImport(compiledImports.front());
+      }
+      stream << ",\n      \"compiledLibraries\": [";
+      for (std::size_t index = 0; index < compiledImports.size(); ++index) {
+        if (index != 0)
+          stream << ", ";
+        writeCompiledImport(compiledImports[index]);
+      }
+      stream << "]";
+    }
+
     stream << ",\n      \"outputs\": [";
     for (std::size_t profileIndex = 0;
          profileIndex < manifest.profiles().size(); ++profileIndex) {

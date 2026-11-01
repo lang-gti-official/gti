@@ -245,6 +245,34 @@ namespace std {
           this.data.append_unchecked('\0');
         }
       }
+      // Capacity includes the final NUL. The caller has reserved the complete
+      // result and excluded an aliased view before entering this operation.
+      // The source interval [source_first, source_first + count) is in value.
+      // Code-unit reads and char construction cannot fail for these bounds;
+      // publish the constructed prefix and its terminator once, after copying.
+      unsafe void append(string_view value, size_t source_first, size_t count) mut {
+        if (count == size_t(0)) { return; }
+        size_t source_end = source_first + count;
+        if (source_end > value.size()) {
+          gti_internal::index_bounds_check(source_end, value.size());
+        }
+        size_t first = this.length();
+        size_t end = gti_internal::integer_wrapping_add(first, count);
+        unsafe {
+          this.data.pop_unchecked();
+          char* output = this.data.address();
+          for (mut size_t index = source_first; index < source_end; index++) {
+            size_t destination = gti_internal::integer_wrapping_add(first, index - source_first);
+            std::construct_at(output + destination, value[index]);
+          }
+          std::construct_at(output + end, '\0');
+          this.data.set_initialized_length_unchecked(
+              gti_internal::integer_wrapping_add(end, size_t(1)));
+        }
+      }
+      unsafe void append(string_view value) mut {
+        unsafe { this.append(value, size_t(0), value.size()); }
+      }
       unsafe void pop() mut {
         unsafe {
           this.data.pop_unchecked();
@@ -553,9 +581,7 @@ namespace std {
 
     /// `std::string text = "literal";` constructs through this constructor.
     implicit string(string_view value) : data(detail::terminated_prefix_owner(value.size())) {
-      for (mut size_t index = 0; index < value.size(); index++) {
-        unsafe { this.data.append(value[index]); }
-      }
+      unsafe { this.data.append(value); }
     }
 
     /// Copies through the first NUL. The caller guarantees stable readable
@@ -619,9 +645,7 @@ namespace std {
         gti_internal::index_bounds_check(end, other.size());
       }
       this.reserve(end - begin);
-      for (mut size_t index = begin; index < end; index++) {
-        unsafe { this.data.append(other.get_unchecked(index)); }
-      }
+      unsafe { this.data.append(other.view(), begin, end - begin); }
     }
 
     string(string& other) = delete;
@@ -919,9 +943,7 @@ namespace std {
 
     void append(string_view value) mut {
       this.reserve(this.data.length() + value.size());
-      for (mut size_t index = 0; index < value.size(); index++) {
-        unsafe { this.data.append(value[index]); }
-      }
+      unsafe { this.data.append(value); }
     }
 
     /// Replaces the contents with a copy of `value`, retaining capacity.
@@ -990,9 +1012,7 @@ namespace std {
     string clone() {
       mut string result = string();
       result.reserve(this.data.length());
-      for (mut size_t index = 0; index < this.data.length(); index++) {
-        unsafe { result.data.append(this.data.read_unchecked(index)); }
-      }
+      unsafe { result.data.append(this.view()); }
       return std::move(result);
     }
 

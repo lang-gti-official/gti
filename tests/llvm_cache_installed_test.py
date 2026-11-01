@@ -95,6 +95,12 @@ def main():
                 packet.extractall(relocated_root, filter="data")
         gti = prefix / "bin/gti"
         run([gti, "--version"], root, environment)
+        run([sys.executable, source / "tests/compiled_library_project_test.py", gti,
+             "--output-dir", build / "compiled-library-project-installed"], root, environment)
+        for fixture in ("compiled_libraries_project", "compiled_primitive_library"):
+            run([sys.executable, source / "tests" / (fixture + "_test.py"), gti,
+                 "--output-dir", build / (fixture.replace("_", "-") + "-installed")],
+                root, environment)
         if bundled:
             inspector = ["otool", "-L"] if sys.platform == "darwin" else ["ldd"]
             for binary in (gti, prefix / "bin/gti_lsp"):

@@ -30,7 +30,10 @@
   parameter: (identifier) @local.definition.type) @local.scope
 
 (associated_type_declaration
-  name: (identifier) @local.definition.type)
+  name: (identifier) @local.definition.type) @local.scope
+
+(type_alias_declaration
+  type_parameters: (generic_parameter_clause)) @local.scope
 
 (conformance_declaration) @local.scope
 
