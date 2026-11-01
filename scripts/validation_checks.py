@@ -28,7 +28,12 @@ SHARED = ("include/gti/semantic", "include/gti/hir", "include/gti/mir",
           "src/compiler/semantic_generic", "src/compiler/mir_", "src/compiler/hir_",
           "src/compiler/cpp_", "src/compiler/optimization/", "runtime/")
 AUTOMATION = ("docs/", ".codex/", ".claude/", ".agents/")
-# CI workflow edits select full coverage, so the queue validates the jobs it changes.
+# Only orchestration workflows with workflow-regression coverage can skip native CI.
+# Build, packaging and integration workflows (including unknown additions) stay full.
+AUTOMATION_WORKFLOWS = {".github/workflows/rollup.yml", ".github/workflows/train.yml",
+                        ".github/workflows/backport.yml", ".github/workflows/rollback.yml"}
+FULL_VALIDATION_FILES = {"scripts/validation_checks.py", "scripts/validation_batch.py",
+                         "scripts/named_test_shards.py"}
 AUTOMATION_FILES = {"AGENTS.md", "CLAUDE.md", "README.md"}
 AUTOMATION_SCRIPTS = {"agent_workflow.py", "validation_batch.py", "validation_checks.py",
                       "preview_workflow.py", "preview_submit.py", "build_window.py", "bounded_log.py",
@@ -211,7 +216,9 @@ def ci_mode(event, paths):
     # Compiler tests, CMake and packaged scripts are deliberately not inferred
     # safe just because their filename includes 'test' or 'workflow'.
     own = [path for path in paths if not ROLLUP_MANIFEST.fullmatch(path)]
-    if own and all(path in AUTOMATION_FILES or path.startswith(AUTOMATION) or
+    if any(path in FULL_VALIDATION_FILES for path in own):
+        return "full"
+    if own and all(path in AUTOMATION_FILES or path in AUTOMATION_WORKFLOWS or path.startswith(AUTOMATION) or
                    path in {"scripts/" + name for name in AUTOMATION_SCRIPTS} or
                    path in {"tests/" + name for name in AUTOMATION_TESTS} for path in own):
         return "automation"
