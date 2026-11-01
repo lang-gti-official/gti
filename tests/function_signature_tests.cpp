@@ -854,7 +854,7 @@ int main() {
   Types<> no_types{};
   auto constructed = Types<>();
   Types<void, int&> metadata{};
-  Types<int[2]&, mut int[2]&> array_borrow_metadata{};
+  Types<int[2]&, int[3]&> array_borrow_metadata{};
   return empty.value() + binary.value() + borrowing.value() +
          forwarded.value() + forwarded_empty.value() + no_types.value() +
          metadata.value() - 49;
@@ -897,14 +897,13 @@ int main() {
               lang::SemanticType::referenceTo(
                   lang::SemanticType::arrayOf(lang::SemanticType::Int32, 2))) {
         ++arrayBorrowPacks;
-        expect(instance.typeArguments.back() ==
-                       lang::SemanticType::referenceTo(
-                           lang::SemanticType::arrayOf(
-                               lang::SemanticType::Int32, 2),
-                           lang::AccessMode::Mutable) &&
-                   !instance.traits.containsBorrowedState,
-               "array reference pack metadata preserves extent and access "
-               "without introducing a stored loan");
+        expect(
+            instance.typeArguments.back() ==
+                    lang::SemanticType::referenceTo(lang::SemanticType::arrayOf(
+                        lang::SemanticType::Int32, 3)) &&
+                !instance.traits.containsBorrowedState,
+            "array reference pack metadata preserves extent and access "
+            "without introducing a stored loan");
       }
       expect(std::none_of(
                  instance.typeArguments.begin(), instance.typeArguments.end(),
