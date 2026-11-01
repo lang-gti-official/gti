@@ -18,14 +18,14 @@ struct DiscoveredModule {
   std::filesystem::path lookupPath;
 };
 
-std::vector<DiscoveredModule> discoverModules(
-    const std::filesystem::path &packageRoot,
-    const ModuleDiscoverySettings &settings, SourceManager &sources,
-    std::vector<Diagnostic> &diagnostics);
+std::vector<DiscoveredModule>
+discoverModules(const std::filesystem::path &packageRoot,
+                const ModuleDiscoverySettings &settings, SourceManager &sources,
+                std::vector<Diagnostic> &diagnostics);
 
 void addDiscoveredInterfaces(ProjectPackage &package,
-                            const std::vector<DiscoveredModule> &discovered,
-                            std::vector<Diagnostic> &diagnostics);
+                             const std::vector<DiscoveredModule> &discovered,
+                             std::vector<Diagnostic> &diagnostics);
 void addDiscoveredImplementations(
     ProjectPackage &package, const std::vector<DiscoveredModule> &discovered,
     std::vector<Diagnostic> &diagnostics);

@@ -2306,9 +2306,9 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
     }
   }
 
-  detail::ModuleDiscoverySettings discovery{
-      .roots = {package.sourceRoot},
-      .declaration = package.sourceRootDeclaration};
+  detail::ModuleDiscoverySettings discovery{.roots = {package.sourceRoot},
+                                            .declaration =
+                                                package.sourceRootDeclaration};
   if (const auto *node = document.get("module-discovery")) {
     discovery.declaration = sourceSpan(sourceName, source, *node);
     const auto *table = node->as_table();
@@ -2341,8 +2341,9 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
           const auto spelling = pathNode.value<std::string>();
           const auto where = sourceSpan(sourceName, source, pathNode);
           if (!spelling) {
-            result.diagnostics.push_back(buildDiagnostic(
-                "GTI-B1004", where, "A module discovery path must be a string."));
+            result.diagnostics.push_back(
+                buildDiagnostic("GTI-B1004", where,
+                                "A module discovery path must be a string."));
             continue;
           }
           const std::filesystem::path relative(*spelling);

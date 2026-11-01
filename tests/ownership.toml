@@ -53,6 +53,7 @@ tests = [
   "raw_pointer_audit_policy",
   "resource_protocol_lsp",
   "source_modules_lsp",
+  "module_discovery_lsp",
   "source_text_lsp",
 
   "compact_owner_layout_instrumented",
@@ -187,6 +188,9 @@ consumers = [
   "module_map_lsp",
   "module_navigation_lsp",
   "source_modules_lsp",
+  "source_modules_runtime",
+  "module_discovery_runtime",
+  "module_discovery_lsp",
   "include_removal_lsp",
   "lsp_protocol",
   "lsp_project_facts",
@@ -1277,6 +1281,8 @@ paths = [
   "src/driver/",
   "include/gti/driver/",
   "vendor/tomlplusplus/",
+  "tests/project_tests.cpp",
+  "tests/module_discovery_runtime_test.py",
 ]
 owners = [
   "driver_pipeline",
@@ -1285,12 +1291,14 @@ owners = [
   "project_model",
   "cli_workflow",
   "project_cli_workflow",
+  "module_discovery_runtime",
 ]
 consumers = [
   "lsp_project_facts",
   "lsp_configuration",
   "llvm_cache_project_workflows",
   "native_packages",
+  "module_discovery_lsp",
 ]
 
 [[area]]
@@ -1434,6 +1442,7 @@ consumers = []
 area = "lsp"
 paths = [
   "src/lsp/",
+  "tests/module_discovery_lsp_test.py",
 ]
 owners = [
   "^(lsp_.*|.*_lsp)$",

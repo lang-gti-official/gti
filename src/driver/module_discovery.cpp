@@ -35,8 +35,8 @@ bool nestedPackage(const std::filesystem::path &packageRoot,
 
 void conflict(std::vector<Diagnostic> &diagnostics, const SourceSpan &span,
               std::string message, const std::filesystem::path &other) {
-  auto diagnostic = makeDiagnostic("GTI-B1005", DiagnosticPhase::Driver,
-                                   span, std::move(message));
+  auto diagnostic = makeDiagnostic("GTI-B1005", DiagnosticPhase::Driver, span,
+                                   std::move(message));
   diagnostic.related.push_back(
       {{other.string(), 0, 1, 1}, "The other module interface is here."});
   diagnostic.hints.push_back(
@@ -47,20 +47,21 @@ void conflict(std::vector<Diagnostic> &diagnostics, const SourceSpan &span,
 
 } // namespace
 
-std::vector<DiscoveredModule> discoverModules(
-    const std::filesystem::path &packageRoot,
-    const ModuleDiscoverySettings &settings, SourceManager &sources,
-    std::vector<Diagnostic> &diagnostics) {
+std::vector<DiscoveredModule>
+discoverModules(const std::filesystem::path &packageRoot,
+                const ModuleDiscoverySettings &settings, SourceManager &sources,
+                std::vector<Diagnostic> &diagnostics) {
   std::set<std::filesystem::path> files;
   std::set<std::filesystem::path> visited;
   const auto report = [&](std::string code, std::string message) {
-    diagnostics.push_back(makeDiagnostic(std::move(code), DiagnosticPhase::Driver,
-                                         settings.declaration,
-                                         std::move(message)));
+    diagnostics.push_back(
+        makeDiagnostic(std::move(code), DiagnosticPhase::Driver,
+                       settings.declaration, std::move(message)));
   };
   const auto excluded = [&](const std::filesystem::path &path) {
-    return std::any_of(settings.exclusions.begin(), settings.exclusions.end(),
-                       [&](const auto &exclude) { return within(exclude, path); });
+    return std::any_of(
+        settings.exclusions.begin(), settings.exclusions.end(),
+        [&](const auto &exclude) { return within(exclude, path); });
   };
   std::function<void(const std::filesystem::path &)> visit;
   visit = [&](const std::filesystem::path &directory) {
@@ -74,7 +75,8 @@ std::vector<DiscoveredModule> discoverModules(
       entries.push_back(*cursor);
     if (error) {
       report("GTI-B1102", "Failed to discover modules in '" +
-                              directory.string() + "': " + error.message() + ".");
+                              directory.string() + "': " + error.message() +
+                              ".");
       return;
     }
     std::sort(entries.begin(), entries.end(), [](const auto &a, const auto &b) {
@@ -98,7 +100,8 @@ std::vector<DiscoveredModule> discoverModules(
                   std::filesystem::is_symlink(status))) {
         files.insert(path);
       }
-      // Directory symlinks are not traversed: no cycles or implicit extra roots.
+      // Directory symlinks are not traversed: no cycles or implicit extra
+      // roots.
     }
   };
   for (const auto &root : settings.roots) {
@@ -109,13 +112,15 @@ std::vector<DiscoveredModule> discoverModules(
     const auto canonical = std::filesystem::canonical(root, error);
     if (error || !std::filesystem::is_directory(canonical, error)) {
       report("GTI-B1103", "A module discovery root must name an existing "
-                              "directory: " + root.string() + ".");
+                          "directory: " +
+                              root.string() + ".");
     } else if (!within(packageRoot, canonical)) {
       report("GTI-B1104", "Module discovery root escapes its owning package: " +
                               root.string() + ".");
     } else if (nestedPackage(packageRoot, canonical)) {
-      report("GTI-B1104", "Module discovery root belongs to a nested package: " +
-                              root.string() + ".");
+      report("GTI-B1104",
+             "Module discovery root belongs to a nested package: " +
+                 root.string() + ".");
     } else {
       visit(canonical);
     }
@@ -134,7 +139,8 @@ std::vector<DiscoveredModule> discoverModules(
     if (!within(packageRoot, canonical) ||
         nestedPackage(packageRoot, canonical.parent_path())) {
       report("GTI-B1104", "Module discovery candidate escapes its owning "
-                              "package: " + path.string() + ".");
+                          "package: " +
+                              path.string() + ".");
       continue;
     }
     if (excluded(canonical))
@@ -142,15 +148,17 @@ std::vector<DiscoveredModule> discoverModules(
     if (const auto found = physicalFiles.find(canonical);
         found != physicalFiles.end()) {
       report("GTI-B1005", "Module discovery reaches one file through multiple "
-                              "paths: " + found->second.string() + " and " +
-                              path.string() + ".");
+                          "paths: " +
+                              found->second.string() + " and " + path.string() +
+                              ".");
       continue;
     }
     physicalFiles.emplace(canonical, path);
     std::ifstream input(canonical, std::ios::binary);
     std::string text{std::istreambuf_iterator<char>(input), {}};
     if (!input || input.bad()) {
-      report("GTI-B1102", "Failed to read module candidate: " + path.string() + ".");
+      report("GTI-B1102",
+             "Failed to read module candidate: " + path.string() + ".");
       continue;
     }
     Lexer lexer;
@@ -166,7 +174,8 @@ std::vector<DiscoveredModule> discoverModules(
     sources.set(canonical.string(), text.substr(0, prefixEnd));
     const auto header = parseModuleHeader(tokens);
     if (lexer.hadError()) {
-      diagnostics.insert(diagnostics.end(), lexer.errors().begin(), lexer.errors().end());
+      diagnostics.insert(diagnostics.end(), lexer.errors().begin(),
+                         lexer.errors().end());
     } else if (!header) {
       diagnostics.push_back(makeDiagnostic(
           "GTI-B1005", DiagnosticPhase::Driver, tokenSpan(tokens.front()),
@@ -185,8 +194,8 @@ std::vector<DiscoveredModule> discoverModules(
 }
 
 void addDiscoveredInterfaces(ProjectPackage &package,
-                            const std::vector<DiscoveredModule> &discovered,
-                            std::vector<Diagnostic> &diagnostics) {
+                             const std::vector<DiscoveredModule> &discovered,
+                             std::vector<Diagnostic> &diagnostics) {
   const auto explicitModules = package.modules;
   for (const auto &unit : discovered) {
     if (!unit.header.interface)
@@ -199,12 +208,15 @@ void addDiscoveredInterfaces(ProjectPackage &package,
       continue;
     const auto collision = std::find_if(
         package.modules.begin(), package.modules.end(), [&](const auto &entry) {
-          return portableProjectNameKey(entry.first) == portableProjectNameKey(name);
+          return portableProjectNameKey(entry.first) ==
+                 portableProjectNameKey(name);
         });
     if (collision != package.modules.end()) {
-      conflict(diagnostics, unit.header.span,
-               "Discovered module interfaces must have distinct portable names: '" +
-                   name + "'.", collision->second);
+      conflict(
+          diagnostics, unit.header.span,
+          "Discovered module interfaces must have distinct portable names: '" +
+              name + "'.",
+          collision->second);
       continue;
     }
     package.modules.emplace_back(name, unit.path);
@@ -225,19 +237,22 @@ void addDiscoveredImplementations(
     const auto &name = unit.header.declaration.lexeme;
     if (unit.header.interface || explicitNames.contains(name) ||
         explicitFiles.contains(unit.path) ||
-        std::any_of(package.modules.begin(), package.modules.end(),
-                    [&](const auto &entry) { return entry.second == unit.path; }))
+        std::any_of(
+            package.modules.begin(), package.modules.end(),
+            [&](const auto &entry) { return entry.second == unit.path; }))
       continue;
     if (std::none_of(package.modules.begin(), package.modules.end(),
                      [&](const auto &entry) { return entry.first == name; })) {
       diagnostics.push_back(makeDiagnostic(
           "GTI-B1005", DiagnosticPhase::Driver, unit.header.span,
-          "Discovered implementation has no interface for module '" + name + "'."));
+          "Discovered implementation has no interface for module '" + name +
+              "'."));
       continue;
     }
-    auto implementation = std::find_if(
-        package.moduleImplementations.begin(), package.moduleImplementations.end(),
-        [&](const auto &entry) { return entry.first == name; });
+    auto implementation =
+        std::find_if(package.moduleImplementations.begin(),
+                     package.moduleImplementations.end(),
+                     [&](const auto &entry) { return entry.first == name; });
     if (implementation == package.moduleImplementations.end())
       package.moduleImplementations.emplace_back(name, std::vector{unit.path});
     else

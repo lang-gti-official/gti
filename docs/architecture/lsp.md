@@ -158,6 +158,12 @@ public members without exposing that type's name as a namespace candidate.
 Dirty interface overlays invalidate consumers through the existing dependency
 generation machinery, and closing an overlay restores the on-disk surface.
 Registered implementation files are retained source dependencies as well.
+Project resolution also supplies the default discovered module map. Saved `.gti`
+creation, removal and header changes refresh project snapshots even when no
+previous import edge named that file. Membership is discovered from saved files;
+unsaved contents of existing members still use ordinary frontend overlays and
+dependency generations. An unsaved new/renamed module identity becomes available
+to named imports after saving. Discovery performs no builds or dependency fetches.
 Out-of-class bodies, in-class declarations and calls share one semantic method
 symbol; definition navigation points at the body, while references include
 both declaration and definition. Body parameter names belong to that body and

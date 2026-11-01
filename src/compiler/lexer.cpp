@@ -61,7 +61,7 @@ std::vector<Token> Lexer::scan(std::string sourceText, std::string sourceName) {
 }
 
 std::vector<Token> Lexer::scanModuleHeader(std::string sourceText,
-                                          std::string sourceName) {
+                                           std::string sourceName) {
   reset(std::move(sourceName));
   source = std::move(sourceText);
   if (source_text::hasUtf8Bom(source))
@@ -99,7 +99,8 @@ std::vector<Token> Lexer::scanModuleHeader(std::string sourceText,
   if (const auto carriage = source_text::firstLoneCarriageReturn(prefix))
     report("GTI-L0014",
            "A carriage return must be followed by a line feed; use LF or "
-           "CRLF line endings.", *carriage, *carriage + 1);
+           "CRLF line endings.",
+           *carriage, *carriage + 1);
   start = current;
   addToken(TokenKind::END_OF_FILE);
   return std::move(tokens);

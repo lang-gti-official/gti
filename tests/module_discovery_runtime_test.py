@@ -52,6 +52,24 @@ def main():
         run(command, cwd=root)
         run([str(binary)])
 
+        # Explicit selection can exclude a platform alternative with the same
+        # private definition, without manually registering the interface.
+        alternative = root / "src/implementation/other_platform.gti"
+        alternative.write_text(original.replace("return 2", "return 3"))
+        manifest = root / "gti.toml"
+        manifest_text = manifest.read_text()
+        manifest.write_text(manifest_text + '\n[module-implementations]\n'
+                            '"demo.counter" = ["src/implementation/answer.gti", '
+                            '"src/implementation/renamed.gti"]\n')
+        run(command, cwd=root)
+        run([str(binary)])
+        manifest.write_text(manifest_text + '\n[module-discovery]\n'
+                            'exclude = ["src/implementation/other_platform.gti"]\n')
+        run(command, cwd=root)
+        run([str(binary)])
+        alternative.unlink()
+        manifest.write_text(manifest_text)
+
         # Module discovery does not publish private declarations.
         entry = root / "src/main.gti"
         main_text = entry.read_text()

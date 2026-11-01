@@ -1,7 +1,7 @@
 #pragma once
 
-#include "gti/token.h"
 #include "gti/diagnostic.h"
+#include "gti/token.h"
 #include <span>
 #include <string_view>
 
@@ -66,11 +66,12 @@ parseModuleHeader(std::span<const Token> tokens) {
     return std::nullopt;
   Token declaration = tokens[first];
   declaration.lexeme = std::move(name);
-  return ModuleHeader{
-      std::move(declaration),
-      {tokens[first].source, tokens[first].position,
-       tokens[at - 1].position + tokens[at - 1].lexeme.size(), tokens[first].line},
-      interface, at + 1};
+  return ModuleHeader{std::move(declaration),
+                      {tokens[first].source, tokens[first].position,
+                       tokens[at - 1].position + tokens[at - 1].lexeme.size(),
+                       tokens[first].line},
+                      interface,
+                      at + 1};
 }
 
 } // namespace lang

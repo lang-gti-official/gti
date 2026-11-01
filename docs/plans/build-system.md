@@ -30,6 +30,15 @@ backend's ordinary object ABI. Aggregate `import std` and read-only LSP
 
 ## Current Implementation
 
+The experimental module-discovery implementation derives project interface and
+private implementation maps from saved leading module declarations under the
+package source root by default. Optional roots/exclusions and explicit selections
+preserve control over unconventional layouts and platform alternatives. Named
+imports, package containment and frontend module semantics remain unchanged.
+The draft is for local experimentation: it is not a release/merge candidate.
+Conditional discovery tables and unsaved module-identity discovery are future
+extensions; the current prototype uses saved files and explicit path selection.
+
 Integrated test targets now support name filtering/exclusion, discovery listing,
 explicit empty-selection policy, bounded parallel isolated children, configurable
 per-test deadlines, and versioned JSON Lines lifecycle reporting. Runner-owned

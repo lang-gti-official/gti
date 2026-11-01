@@ -53,6 +53,15 @@ separate facility; it does not gate source-module ownership.
 
 ## Outcome
 
+The module-discovery draft revises the original explicit-only registration
+policy. The owning package's source roots now authorize discovery of interfaces
+and their private implementation files from existing module headers. Explicit
+interface selections and implementation lists retain precedence; a file outside
+those roots or selected paths cannot acquire membership merely by claiming a
+header. No language syntax, namespace hierarchy, binary module format or separate
+compilation contract is added. Discovery and manifest policy belong to the driver;
+the frontend retains authority for headers, module identities and visibility.
+
 A source package can publish a deliberate API without exposing implementation
 helpers or requiring consumers to reproduce its internal include list. The
 first clients are source-defined libraries such as UUID and application SDKs.
