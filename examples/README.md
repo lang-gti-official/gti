@@ -342,7 +342,7 @@ is a teaching helper, not a production server.
 | `131-inferred-references.gti` | local shared/exclusive `auto&` references, last-use borrowing and a reference into a decoded JSON document kept alive by its owner |
 | `133-raw-text-owner-views.gti` | counted and zero-terminated text views derived from an unrelated inline byte owner, with the unsafe bridge's checked borrow tied to that owner |
 | `134-standard-library-modules.gti` | standard-library units imported as `std.name` modules instead of included, with each import exposing exactly its own unit |
-| `135-inline-polymorphic-values.gti` | an application interface owned by `std::inline_polymorphic`, with small sensors inline, an owning sensor boxed, state preserved across vector growth, and replacement |
+| `135-inline-polymorphic-values.gti` | application interfaces owned by `std::inline_polymorphic`, with inline sensors, boxed fallback, vector growth, replacement, and consuming inline invocation |
 | `136-inline-closure-cells.gti` | an application-defined inline cell holding a bitwise-relocatable closure through raw-address lifetime helpers and `std::layout_of`, moved by its bytes |
 | `137-declared-attributes.gti` | `[[attribute]]` structs applied to fields and types with constant arguments, read through `std.meta` by a text encoder and a binary writer, with enumerator metaobjects and the `std::meta::reflectable` constraint |
 | `138-structural-construction.gti` | `std::meta::construct` building structs field by field from a byte reader and a text reader, with `expected` failures stopping production before construction |
@@ -722,7 +722,9 @@ generation-checked handle: after erasure and reuse it names the replacement.
 application sensors through `std::inline_polymorphic<sensor, 32, 8>`. Sensors
 with scalar state live inside their owner, so vector growth relocates them with
 their counters; a sensor that owns a string is boxed. Replacing the boxed sensor
-with a small one frees its allocation. No compiler rule names the sensor types.
+with a small one frees its allocation. A command is consumed through
+`std::move(operation).invoke_once<int>(35)` while its payload stays inline.
+No compiler rule names the sensor or command types.
 
 [`136-inline-closure-cells.gti`](136-inline-closure-cells.gti) keeps a closure in
 an erased inline cell. Raw addresses of the closure-bearing holder pass through

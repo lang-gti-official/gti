@@ -82,7 +82,7 @@
     "083-complete-ranges.gti": 171,
     "084-optional-values.gti": 29,
     "085-payload-enum-fields.gti": 16,
-    "086-owning-callbacks.gti": 279,
+    "086-owning-callbacks.gti": 285,
     "087-associative-containers.gti": 448,
     "088-consuming-builders.gti": 176,
     "089-library-workflow.gti": 913,
@@ -131,7 +131,7 @@
     "132-qualified-type-members.gti": 174,
     "133-raw-text-owner-views.gti": 71,
     "134-standard-library-modules.gti": 302,
-    "135-inline-polymorphic-values.gti": 332,
+    "135-inline-polymorphic-values.gti": 362,
     "136-inline-closure-cells.gti": 156,
     "137-declared-attributes.gti": 240,
     "138-structural-construction.gti": 301,
@@ -180,7 +180,7 @@
     "180-compact-source-owners.gti": 193,
     "181-general-object-layout.gti": 170
   },
-  "total": 27163,
+  "total": 27199,
   "target": "arm64-apple-macos",
   "variants": {
     "x86_64-unknown-linux": {
@@ -188,7 +188,7 @@
         "087-associative-containers.gti": 447,
         "089-library-workflow.gti": 912
       },
-      "total": 27161
+      "total": 27197
     }
   }
 }

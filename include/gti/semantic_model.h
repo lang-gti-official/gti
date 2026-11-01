@@ -817,7 +817,7 @@ struct BorrowOriginPlace {
                          const BorrowOriginPlace &) = default;
 };
 
-// A receiver-relative path to private unique-owner storage returned through
+// A receiver-relative path to private owning storage returned through
 // its checked borrow operation. This describes an accessor, not permission to
 // consume an arbitrary reference. MIR independently verifies the source body.
 struct OwnedPointeeProjection {
@@ -1635,6 +1635,8 @@ struct DeferredCallableCallInfo {
   // A field or local receiver is checked again against its concrete type.
   // It is not a confined parameter or an ownership-transfer boundary.
   SymbolId receiverBinding = 0;
+  // A checked owned-storage projection is re-proved during instantiation.
+  bool ownedReceiverProjection = false;
   bool inferResultFromInstantiation = false;
 };
 

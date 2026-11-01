@@ -5066,6 +5066,15 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(inline_polymorphic_runtime PROPERTIES TIMEOUT 900)
+  if(UNIX)
+    add_test(
+      NAME owned_inline_consumption_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/owned_inline_consumption_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(owned_inline_consumption_runtime PROPERTIES TIMEOUT 600)
+  endif()
   add_test(
     NAME inline_closure_owner_runtime
     COMMAND "${Python3_EXECUTABLE}"

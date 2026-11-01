@@ -34,7 +34,8 @@ public:
   T release() && { return std::move(this.first); }
 };
 
-// A consumed receiver moves one of its own fields inside one arm.
+// A consumed receiver invokes one field in place inside one arm; both fields
+// retain their cleanup in the outer receiver.
 class Both {
   mut Single first;
   mut Single second;

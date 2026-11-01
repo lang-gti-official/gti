@@ -2529,6 +2529,17 @@ method: semantics records the exact receiver place and rejects overlapping
 live loans, partial moves, and subsequent reads, writes, or implicit calls.
 Implicit return movement does not infer this transfer from `return this;`.
 
+Immediate moved-field calls retain storage in the consuming receiver for both
+call operators and named methods. An owning-pointee accessor must directly
+return one trusted unique-owner borrow or inline-polymorphic-slot read. Its
+summary records the exact storage field and intrinsic, not the public wrapper
+name. The retained anchor may be the consuming receiver itself or its writable
+field-only path. Generic callable analysis defers an accessor result only when
+this owning projection has already been proved, and concrete instantiation
+rechecks the signature. Ordinary references gain no consuming authority.
+MIR independently verifies the accessor body, anchor and one invocation use;
+named retained calls reject reference and tracked-borrow results in semantics.
+
 `ResolvedCallInfo::ephemeralBorrowArguments` separately records the exact
 written argument indices that use the bounded call-only read-borrow fallback.
 Candidate selection first resolves the ordinary exact tier and admits this

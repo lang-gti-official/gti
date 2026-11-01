@@ -633,7 +633,9 @@ private:
       if (target || transfer.source != instruction.operands.front())
         throw BackendUnsupportedError("LLVM consumed receiver lost its exact "
                                       "source/publication placement");
-      auto *address = memory.temporary(instruction.info.type);
+      auto *address = instruction.destination
+                          ? memory.address(*instruction.destination)
+                          : memory.temporary(instruction.info.type);
       lifetimes.freshTransfer(ir, address, memory.selected(transfer.source),
                               input, instruction);
       return address;
