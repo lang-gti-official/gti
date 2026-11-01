@@ -1216,7 +1216,7 @@ class ValidationChecks(unittest.TestCase):
     def test_ci_gate_requires_fast_checks_on_prs_and_the_suite_in_the_queue(self):
         lint = {name: {"result": "success"} for name in validation.LINT_JOBS}
         pr = {**lint, "fast": {"result": "success"}}
-        queue = {**lint, "integration": {"result": "success"}, "sanitizers": {"result": "success"}}
+        queue = {**lint, "fast": {"result": "success"}, "package": {"result": "success"}, "integration": {"result": "success"}, "sanitizers": {"result": "success"}}
         validation.admission("full", pr, "pull_request")
         validation.admission("full", queue, "merge_group")
         with self.assertRaises(ValueError):

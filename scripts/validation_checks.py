@@ -238,8 +238,8 @@ def admission(mode, results, event="pull_request"):
         raise ValueError("Awaiting integration: a batch component cannot merge directly; finish its validated batch or withdraw admission")
     required = set(LINT_JOBS)
     if mode == "full":
-        # Installed-toolchain and docgen checks run inside the first Linux shard.
-        required |= {"fast"} if event == "pull_request" else {"integration", "sanitizers"}
+        # System-LLVM checks run in fast; production package and full shards gate integration.
+        required |= {"fast"} if event == "pull_request" else {"fast", "package", "integration", "sanitizers"}
     elif mode == "draft":
         if event != "pull_request":
             raise ValueError("A draft cannot enter the merge queue")

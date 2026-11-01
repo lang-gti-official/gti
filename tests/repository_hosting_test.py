@@ -126,7 +126,7 @@ def main():
         "if: github.event_name == 'pull_request'" in step for step in declared_steps),
         "PR declarations must only run on pull_request; manual CI has no PR body")
     # Every native job takes the one reviewed toolchain; none installs its own.
-    expect(ci.count("bash scripts/configure_ci_toolchain.sh") == 3 and "llvm-18" not in ci
+    expect(ci.count("bash scripts/configure_ci_toolchain.sh") == 4 and "llvm-18" not in ci
            and "brew install" not in ci and "macos-26" in ci and "macos-15" not in ci,
            "native CI jobs must use the reviewed compiler from configure_ci_toolchain.sh")
     expect("-DCMAKE_BUILD_TYPE=Debug" not in ci and "-DCMAKE_BUILD_TYPE=RelWithDebInfo" in ci
@@ -139,9 +139,10 @@ def main():
     expect("macos-15" not in release and "macOS-ARM64)" not in release
            and "Linux-X64) platform=linux-x64" in release,
            "the frozen Gitea workflow must stay the Linux-only record it was")
-    expect("macos-26, platform: darwin-arm64" in nightly and "ubuntu-24.04, platform: linux-x64" in nightly
-           and "ubuntu-24.04-arm" not in nightly and nightly.count("bash scripts/configure_ci_toolchain.sh") == 2,
-           "nightly packages linux-x64 and darwin-arm64 with the reviewed compiler; linux-arm64 has none")
+    expect("macos-26, platform: darwin-arm64" in ci and "ubuntu-24.04, platform: linux-x64" in ci
+           and "ubuntu-24.04-arm" not in ci and "configure_ci_toolchain.sh" not in nightly
+           and "release_artifacts.py verify" in nightly,
+           "integration produces reviewed packages; nightly only verifies and publishes them")
     expect("pull_request_target" not in nightly and "\npermissions:\n  contents: read\n" in nightly
            and set(re.findall(r"secrets\.([A-Za-z0-9_]+)", nightly)) <= {"GITHUB_TOKEN"}
            and nightly.count("contents: write") == 1,
@@ -167,11 +168,12 @@ def main():
                                (BACKPORT, backport), (CACHE, cache)):
         parallel = '--jobs "${GTI_TEST_JOBS}"' if workflow == BACKPORT else (
             '--parallel "${GTI_JOBS}"' if workflow == CACHE else '--parallel "${GTI_TEST_JOBS}"')
-        expect("bash scripts/configure_ci_resources.sh" in contents and "vars.GTI_TEST_JOBS" in contents
-               and parallel in contents and "_NPROCESSORS_ONLN" not in contents,
-               f"resource budgets lost: {workflow}")
-        expect("-DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF" in contents,
-               f"sanitizer capability policy lost: {workflow}")
+        if workflow != NIGHTLY:  # Publication does not compile or run CTest.
+            expect("bash scripts/configure_ci_resources.sh" in contents and "vars.GTI_TEST_JOBS" in contents
+                   and parallel in contents and "_NPROCESSORS_ONLN" not in contents,
+                   f"resource budgets lost: {workflow}")
+            expect("-DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF" in contents,
+                   f"sanitizer capability policy lost: {workflow}")
         actions = ACTION_USE.findall(contents)
         expect(actions, f"workflow has no auditable actions: {workflow}")
         trusted = "https://gitea.com/actions/" if workflow == RELEASE else "actions/"
