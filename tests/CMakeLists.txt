@@ -6168,6 +6168,10 @@ if(Python3_Interpreter_FOUND)
 endif()
 
 
+add_test(NAME compiled_type_forwarding
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/compiled_type_forwarding_test.py"
+  "$<TARGET_FILE:gti>" --output-dir "${CMAKE_BINARY_DIR}/compiled-type-forwarding")
+set_tests_properties(compiled_type_forwarding PROPERTIES TIMEOUT 600)
 add_test(NAME compiled_namespaces
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/compiled_namespaces_test.py"
   "$<TARGET_FILE:gti>" --output-dir "${CMAKE_CURRENT_BINARY_DIR}/compiled-namespaces")

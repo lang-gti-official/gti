@@ -204,9 +204,9 @@ libraryIdentity(const std::vector<CompiledScalarSignature> &signatures) {
   const auto owner = decodedKey(signatures.front()).owner;
   for (const auto &signature : signatures) {
     const auto candidate = decodedKey(signature).owner;
-    if (candidate.package != owner.package || candidate.target != owner.target)
+    if (candidate != owner)
       throw std::invalid_argument(
-          "compiled library keys must belong to one package target");
+          "compiled library keys must belong to one package target module");
   }
   std::string identity = "gti.scalar-library.1";
   field(identity, owner.package);
@@ -278,8 +278,8 @@ public:
       if (producer) {
         if (selection)
           signatures = CompiledScalarUnitBuilder().selectExports(
-              program, selection->entry, selection->owner,
-              selection->functions);
+              program, selection->entry, selection->owner, selection->functions,
+              imports);
         (void)interface(signatures);
         (void)libraryIdentity(signatures);
         bound = CompiledScalarUnitBuilder().bindCombined(
@@ -453,6 +453,34 @@ struct ScalarBundleInput {
   std::optional<CompiledLibraryImport> selected;
   std::string digest;
 };
+std::string quotedInterfacePath(const std::filesystem::path &path) {
+  std::string result = "\"";
+  for (unsigned char c : path.generic_string()) {
+    switch (c) {
+    case '\\':
+      result += "\\\\";
+      break;
+    case '"':
+      result += "\\\"";
+      break;
+    case '\n':
+      result += "\\n";
+      break;
+    case '\r':
+      result += "\\r";
+      break;
+    case '\t':
+      result += "\\t";
+      break;
+    default:
+      if (c < 32 || c == 127)
+        throw std::invalid_argument("compiled interface path contains an "
+                                    "unsupported control character");
+      result += static_cast<char>(c);
+    }
+  }
+  return result + "\"";
+}
 ScalarConsumerInputs
 prepareScalarConsumer(const CompilationRequest &request,
                       std::vector<ScalarBundleInput> bundles,
@@ -466,6 +494,7 @@ prepareScalarConsumer(const CompilationRequest &request,
     std::vector<CompiledScalarSignature> signatures;
     std::vector<std::string> symbols;
     std::string library;
+    PersistentDeclarationOwner owner;
   };
   std::vector<Admission> admitted;
   std::map<std::string, std::size_t> libraries;
@@ -489,10 +518,12 @@ prepareScalarConsumer(const CompilationRequest &request,
     std::vector<std::string> symbols;
     for (const auto &signature : signatures)
       symbols.push_back(compiledScalarSymbol(signature));
-    admitted.push_back(
-        {std::move(signatures), std::move(symbols), std::move(identity)});
+    const auto owner = decodedKey(signatures.front()).owner;
+    admitted.push_back({std::move(signatures), std::move(symbols),
+                        std::move(identity), owner});
   }
   std::vector<unsigned> state(bundles.size());
+  std::vector<std::set<std::size_t>> dependencyClosure(bundles.size());
   std::function<void(std::size_t)> visit = [&](std::size_t index) {
     if (state[index] == 1)
       throw std::invalid_argument("compiled artifact dependency cycle");
@@ -507,11 +538,31 @@ prepareScalarConsumer(const CompilationRequest &request,
         throw std::invalid_argument(
             "conflicting compiled dependency artifact digest");
       visit(found->second);
+      dependencyClosure[index].insert(found->second);
+      dependencyClosure[index].insert(dependencyClosure[found->second].begin(),
+                                      dependencyClosure[found->second].end());
     }
     state[index] = 2;
   };
   for (std::size_t i = 0; i < bundles.size(); ++i)
     visit(i);
+  std::vector<std::filesystem::path> interfacePaths;
+  std::set<std::string> distinctPaths;
+  for (std::size_t i = 0; i < bundles.size(); ++i) {
+    const auto &input = bundles[i];
+    auto path = input.selected && !input.selected->interfaceRequired
+                    ? std::filesystem::absolute(request.entry()).parent_path() /
+                          (".gti-compiled-" + admitted[i].library + ".gti")
+                    : input.path;
+    if (!path.is_absolute() || path.extension() != ".gti" ||
+        std::filesystem::exists(path) || path.lexically_normal() != path)
+      throw std::invalid_argument("compiled interface requires an absent "
+                                  "normalized absolute .gti path");
+    path = std::filesystem::weakly_canonical(path);
+    if (!distinctPaths.insert(path.string()).second)
+      throw std::invalid_argument("duplicate compiled library interface path");
+    interfacePaths.push_back(std::move(path));
+  }
   struct Facade {
     std::string path;
     std::vector<CompiledScalarSignature> signatures;
@@ -549,16 +600,28 @@ prepareScalarConsumer(const CompilationRequest &request,
       directSymbols.insert(directSymbols.end(), metadata.symbols.begin(),
                            metadata.symbols.end());
     }
-    if (input.selected && !input.selected->interfaceRequired)
-      continue;
-    const auto &path = input.path;
-    if (!path.is_absolute() || path.extension() != ".gti" ||
-        std::filesystem::exists(path) || path.lexically_normal() != path)
-      throw std::invalid_argument("compiled interface requires an absent "
-                                  "normalized absolute .gti path");
-    const auto canonical = std::filesystem::weakly_canonical(path).string();
+    const auto canonical = interfacePaths[index].string();
     std::string source =
         "export module compiled_scalar_" + metadata.library + ";\n";
+    std::set<std::size_t> typeDependencies;
+    for (const auto &signature : metadata.signatures)
+      for (const auto &owner :
+           compiledInterfaceDependencies(signature.typeMetadata)) {
+        std::optional<std::size_t> defining;
+        for (const auto candidate : dependencyClosure[index])
+          if (admitted[candidate].owner == owner)
+            defining = candidate;
+        if (!defining)
+          throw std::invalid_argument("nominal interface owner is absent from "
+                                      "the compiled dependency closure");
+        typeDependencies.insert(*defining);
+      }
+    for (const auto dependency : typeDependencies)
+      source +=
+          "import " +
+          quotedInterfacePath(interfacePaths[dependency].lexically_relative(
+              interfacePaths[index].parent_path())) +
+          ";\n";
     source += compiledInterfaceSource(metadata.signatures);
     if (!overlays.emplace(canonical, std::move(source)).second)
       throw std::invalid_argument("duplicate compiled library interface path");
