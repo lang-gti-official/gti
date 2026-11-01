@@ -122,7 +122,11 @@ not a C++ wrapper, and neither backend defines its semantics.
   `compiler_pipeline`); the queue's `CI gate` runs the complete suite in
   cost-balanced shards on both platforms, the sanitizer subset and the
   installed-toolchain checks, and proves the shards covered every registered
-  test. A failure in the queue belongs to the change that introduced it: its
+  test. Explicitly allowlisted orchestration-only changes run lint and workflow
+  regressions instead; compiler/runtime, build/packaging, validation selection,
+  mixed and unknown changes retain full integration coverage. See the CI
+  classification contract in `docs/architecture/agent-workflow.md`.
+  A failure in the queue belongs to the change that introduced it: its
   owner repairs it, and other agents never weaken unrelated expectations to
   accommodate it. Do not start a local suite to duplicate a queue run.
 - Degraded mode: if GitHub Actions is unavailable for more than four hours, a
