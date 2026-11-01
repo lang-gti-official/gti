@@ -1,0 +1,18 @@
+import std.meta;
+
+mut int32_t storage = 0;
+mut int32_t& storage_slot() { return storage; }
+
+class Reader {
+public:
+  Reader() = default;
+  int32_t read() { return storage; }
+};
+
+int main() {
+  Reader reader{};
+  mut int32_t& retained = storage_slot();
+  int32_t conflict = std::meta::method<Reader, 0>().invoke(reader);
+  retained = conflict;
+  return 0;
+}

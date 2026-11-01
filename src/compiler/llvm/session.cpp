@@ -1,16 +1,25 @@
 #include "session.h"
 #include "abi.h"
+#include "checked_ranges.h"
+#include "checked_reductions.h"
 #include "debug_info.h"
 #include "instrumentation.h"
 
+#include <llvm/ADT/DenseMap.h>
 #include <llvm/CodeGen/TargetLowering.h>
 #include <llvm/CodeGen/TargetSubtargetInfo.h>
 #include <llvm/Config/llvm-config.h>
+#include <llvm/IR/CFG.h>
+#include <llvm/IR/ConstantRange.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DiagnosticInfo.h>
 #include <llvm/IR/DiagnosticPrinter.h>
+#include <llvm/IR/Dominators.h>
 #include <llvm/IR/GlobalVariable.h>
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/IntrinsicInst.h>
 #include <llvm/IR/LegacyPassManager.h>
+#include <llvm/IR/Operator.h>
 #include <llvm/IR/Verifier.h>
 #include <llvm/MC/TargetRegistry.h>
 #include <llvm/Passes/PassBuilder.h>
@@ -19,8 +28,11 @@
 #include <llvm/TargetParser/Host.h>
 #include <llvm/TargetParser/Triple.h>
 
+#include <array>
 #include <bit>
+#include <functional>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <stdexcept>
 
@@ -285,6 +297,309 @@ bool Session::hasSourceDefinition(HirFunctionInstanceId id,
                      });
 }
 
+void reuseCheckedArithmeticResults(llvm::Module &module) {
+  // Keeping the separate NSW/NUW result through LLVM's normal optimization
+  // pipeline exposes induction/range facts. At instruction selection, however,
+  // it can duplicate a live detector (e.g. CMN + ADD instead of ADDS). Reuse
+  // the already computed wrapping lane only here, after those facts were
+  // consumed. Replacing a poison result with a defined value is a valid
+  // refinement; the original non-poisoning detector and all its uses remain
+  // unchanged.
+  using Operands = std::pair<llvm::Value *, llvm::Value *>;
+  using Checks =
+      llvm::DenseMap<Operands, llvm::SmallVector<llvm::IntrinsicInst *, 2>>;
+  const auto family = [](unsigned opcode) -> std::optional<unsigned> {
+    switch (opcode) {
+    case llvm::Instruction::Add:
+      return 0;
+    case llvm::Instruction::Sub:
+      return 1;
+    case llvm::Instruction::Mul:
+      return 2;
+    default:
+      return std::nullopt;
+    }
+  };
+  const auto operands = [](unsigned group, llvm::Value *left,
+                           llvm::Value *right) {
+    if (group != 1 && std::less<llvm::Value *>{}(right, left))
+      std::swap(left, right);
+    return Operands{left, right};
+  };
+  for (auto &function : module) {
+    std::array<Checks, 3> checks;
+    llvm::SmallVector<llvm::BinaryOperator *, 16> results;
+    llvm::DenseMap<llvm::Value *, llvm::SmallVector<llvm::ICmpInst *, 2>>
+        comparisons;
+    for (auto &block : function)
+      for (auto &instruction : block) {
+        if (auto *binary = llvm::dyn_cast<llvm::BinaryOperator>(&instruction);
+            binary && family(binary->getOpcode()) &&
+            (binary->hasNoSignedWrap() || binary->hasNoUnsignedWrap()))
+          results.push_back(binary);
+        if (auto *comparison = llvm::dyn_cast<llvm::ICmpInst>(&instruction)) {
+          llvm::Value *tested = comparison->getOperand(0);
+          if (llvm::isa<llvm::ConstantInt>(tested))
+            tested = comparison->getOperand(1);
+          comparisons[tested].push_back(comparison);
+          if (auto *bias = llvm::dyn_cast<llvm::BinaryOperator>(tested);
+              bias && bias->getOpcode() == llvm::Instruction::Add &&
+              !bias->hasNoSignedWrap() && !bias->hasNoUnsignedWrap()) {
+            if (llvm::isa<llvm::ConstantInt>(bias->getOperand(1)))
+              comparisons[bias->getOperand(0)].push_back(comparison);
+            else if (llvm::isa<llvm::ConstantInt>(bias->getOperand(0)))
+              comparisons[bias->getOperand(1)].push_back(comparison);
+          }
+        }
+        auto *check = llvm::dyn_cast<llvm::IntrinsicInst>(&instruction);
+        if (!check)
+          continue;
+        unsigned group;
+        switch (check->getIntrinsicID()) {
+        case llvm::Intrinsic::sadd_with_overflow:
+        case llvm::Intrinsic::uadd_with_overflow:
+          group = 0;
+          break;
+        case llvm::Intrinsic::ssub_with_overflow:
+        case llvm::Intrinsic::usub_with_overflow:
+          group = 1;
+          break;
+        case llvm::Intrinsic::smul_with_overflow:
+        case llvm::Intrinsic::umul_with_overflow:
+          group = 2;
+          break;
+        default:
+          continue;
+        }
+        checks[group][operands(group, check->getArgOperand(0),
+                               check->getArgOperand(1))]
+            .push_back(check);
+      }
+    if (results.empty())
+      continue;
+    const llvm::DominatorTree dominators(function);
+    llvm::DenseMap<llvm::IntrinsicInst *, llvm::Value *> lanes;
+    // Range checks may replace a constant overflow intrinsic during
+    // InstCombine. Reconstruct only an exactly equivalent full-domain
+    // predicate; a merely sufficient range, speculative fact, or flagged bias
+    // is not enough. Index by tested SSA value to avoid comparing every
+    // arithmetic instruction with every condition in large functions. Recheck
+    // current operands below because earlier result replacements can invalidate
+    // cached keys.
+    struct Recovery {
+      llvm::IntrinsicInst *check = nullptr;
+      llvm::ICmpInst *comparison = nullptr;
+      llvm::Value *left = nullptr, *right = nullptr;
+      unsigned group = 0;
+      bool isSigned = false, meansSuccess = false;
+    };
+    // Existing detector lanes are reused wherever dominance permits. Creating
+    // a detector is more restrictive: do not move arithmetic out of a rare
+    // conditional region or into a frequently executed loop condition. Admit
+    // only the same straight-line block, or the immediate success edge of the
+    // equivalent comparison. A merged result must be guarded on that very
+    // incoming edge. This is a structural frequency bound, not a target-cost
+    // claim for every constant; target-specific profitability still needs
+    // representative optimized measurements.
+    const auto nearbyExecution = [](llvm::ICmpInst *comparison,
+                                    llvm::Instruction *point,
+                                    llvm::BinaryOperator *result,
+                                    bool meansSuccess) {
+      auto *checkedBlock = comparison->getParent();
+      auto *resultBlock = result->getParent();
+      const bool mergedEdge = point != result;
+      if (!mergedEdge && checkedBlock == resultBlock)
+        return true;
+#if LLVM_VERSION_MAJOR >= 23
+      const auto *branch =
+          llvm::dyn_cast<llvm::CondBrInst>(checkedBlock->getTerminator());
+      if (!branch)
+        return false;
+#else
+      const auto *branch =
+          llvm::dyn_cast<llvm::BranchInst>(checkedBlock->getTerminator());
+      if (!branch || !branch->isConditional())
+        return false;
+#endif
+      if (branch->getCondition() != comparison ||
+          branch->getSuccessor(meansSuccess ? 0 : 1) != resultBlock ||
+          branch->getSuccessor(meansSuccess ? 1 : 0) == resultBlock)
+        return false;
+      return mergedEdge ? point == checkedBlock->getTerminator()
+                        : resultBlock->getSinglePredecessor() == checkedBlock;
+    };
+    const auto findRecovery =
+        [&](unsigned group, llvm::Value *left, llvm::Value *right,
+            llvm::Instruction *point,
+            llvm::BinaryOperator *result) -> std::optional<Recovery> {
+      const auto key = operands(group, left, right);
+      const auto candidates = checks[group].find(key);
+      if (candidates != checks[group].end())
+        for (auto *check : candidates->second)
+          if (operands(group, check->getArgOperand(0),
+                       check->getArgOperand(1)) == key &&
+              dominators.dominates(check, point))
+            return Recovery{check};
+      auto *constant = llvm::dyn_cast<llvm::ConstantInt>(right);
+      if (!constant && group != 1) {
+        constant = llvm::dyn_cast<llvm::ConstantInt>(left);
+        if (constant)
+          std::swap(left, right);
+      }
+      if (!constant || !left->getType()->isIntegerTy())
+        return std::nullopt;
+      const auto rangeCandidates = comparisons.find(left);
+      if (rangeCandidates == comparisons.end())
+        return std::nullopt;
+      for (auto *comparison : rangeCandidates->second) {
+        if (!dominators.dominates(comparison, point))
+          continue;
+        auto *bound =
+            llvm::dyn_cast<llvm::ConstantInt>(comparison->getOperand(1));
+        auto *tested = comparison->getOperand(0);
+        auto predicate = comparison->getPredicate();
+        if (!bound) {
+          bound = llvm::dyn_cast<llvm::ConstantInt>(comparison->getOperand(0));
+          tested = comparison->getOperand(1);
+          predicate = llvm::CmpInst::getSwappedPredicate(predicate);
+        }
+        if (!bound || tested->getType() != left->getType())
+          continue;
+        auto region = llvm::ConstantRange::makeExactICmpRegion(
+            predicate, bound->getValue());
+        bool compoundPredicate = false;
+        if (tested != left) {
+          auto *bias = llvm::dyn_cast<llvm::BinaryOperator>(tested);
+          if (!bias || bias->getOpcode() != llvm::Instruction::Add ||
+              bias->hasNoSignedWrap() || bias->hasNoUnsignedWrap())
+            continue;
+          llvm::Value *base = bias->getOperand(0);
+          auto *offset = llvm::dyn_cast<llvm::ConstantInt>(bias->getOperand(1));
+          if (!offset) {
+            offset = llvm::dyn_cast<llvm::ConstantInt>(bias->getOperand(0));
+            base = bias->getOperand(1);
+          }
+          if (!offset || base != left)
+            continue;
+          region = region.subtract(offset->getValue());
+          compoundPredicate = !offset->isZero();
+        }
+        // A bare comparison plus direct arithmetic is already a cheap target
+        // idiom. Fusing it can worsen recurrence/branch scheduling despite
+        // reducing instruction count (observed on AArch64 conditional counts).
+        // Bound reconstruction to compound biased predicates, or to enabling
+        // complete incoming-edge reuse of a merged result. Do not impose this
+        // profitability boundary on reuse of an already existing intrinsic.
+        if (point == result && !compoundPredicate)
+          continue;
+        for (bool isSigned : {true, false}) {
+          if (isSigned ? !result->hasNoSignedWrap()
+                       : !result->hasNoUnsignedWrap())
+            continue;
+          const auto valid = llvm::ConstantRange::makeExactNoWrapRegion(
+              static_cast<llvm::Instruction::BinaryOps>(result->getOpcode()),
+              constant->getValue(),
+              isSigned ? llvm::OverflowingBinaryOperator::NoSignedWrap
+                       : llvm::OverflowingBinaryOperator::NoUnsignedWrap);
+          if (valid.isFullSet() || valid.isEmptySet())
+            continue;
+          const bool meansSuccess = region == valid;
+          if (!meansSuccess && region != valid.inverse())
+            continue;
+          if (!nearbyExecution(comparison, point, result, meansSuccess))
+            continue;
+          return Recovery{nullptr, comparison, left,        right,
+                          group,   isSigned,   meansSuccess};
+        }
+      }
+      return std::nullopt;
+    };
+    const auto materialize = [&](const Recovery &recovery) {
+      if (recovery.check)
+        return recovery.check;
+      const llvm::Intrinsic::ID ids[3][2] = {
+          {llvm::Intrinsic::uadd_with_overflow,
+           llvm::Intrinsic::sadd_with_overflow},
+          {llvm::Intrinsic::usub_with_overflow,
+           llvm::Intrinsic::ssub_with_overflow},
+          {llvm::Intrinsic::umul_with_overflow,
+           llvm::Intrinsic::smul_with_overflow}};
+      llvm::IRBuilder<> builder(recovery.comparison);
+      builder.SetCurrentDebugLocation(recovery.comparison->getDebugLoc());
+      auto *check = llvm::cast<llvm::IntrinsicInst>(
+          builder.CreateBinaryIntrinsic(ids[recovery.group][recovery.isSigned],
+                                        recovery.left, recovery.right));
+      auto *overflow = builder.CreateExtractValue(check, 1, "checked.overflow");
+      recovery.comparison->replaceAllUsesWith(
+          recovery.meansSuccess ? builder.CreateNot(overflow) : overflow);
+      checks[recovery.group]
+            [operands(recovery.group, recovery.left, recovery.right)]
+                .push_back(check);
+      return check;
+    };
+    const auto laneFor = [&](llvm::IntrinsicInst *check) {
+      auto *&lane = lanes[check];
+      if (!lane) {
+        llvm::IRBuilder<> builder(check->getParent(),
+                                  std::next(check->getIterator()));
+        builder.SetCurrentDebugLocation(check->getDebugLoc());
+        lane = builder.CreateExtractValue(check, 0, "checked.result");
+      }
+      return lane;
+    };
+    // Visit later consumers first to retain keys in ordinary arithmetic chains.
+    for (auto iterator = results.rbegin(); iterator != results.rend();
+         ++iterator) {
+      auto *result = *iterator;
+      const auto group = *family(result->getOpcode());
+      if (auto recovery = findRecovery(group, result->getOperand(0),
+                                       result->getOperand(1), result, result)) {
+        result->replaceAllUsesWith(laneFor(materialize(*recovery)));
+        result->eraseFromParent();
+        continue;
+      }
+      // SimplifyCFG may sink equivalent checked arithmetic into a merge block.
+      // Recover an edge-wise result only when every incoming edge already has
+      // an identical dominating detector or exactly equivalent range guard.
+      // The CFG and all source failure outcomes remain unchanged.
+      auto *leftPhi = llvm::dyn_cast<llvm::PHINode>(result->getOperand(0));
+      auto *rightPhi = llvm::dyn_cast<llvm::PHINode>(result->getOperand(1));
+      auto *block = result->getParent();
+      if ((!leftPhi || leftPhi->getParent() != block) &&
+          (!rightPhi || rightPhi->getParent() != block))
+        continue;
+      llvm::SmallVector<std::pair<llvm::BasicBlock *, Recovery>, 4> incoming;
+      bool complete = true;
+      for (auto *predecessor : llvm::predecessors(block)) {
+        const auto onEdge = [&](llvm::Value *value) {
+          auto *phi = llvm::dyn_cast<llvm::PHINode>(value);
+          return phi && phi->getParent() == block
+                     ? phi->getIncomingValueForBlock(predecessor)
+                     : value;
+        };
+        auto recovery = findRecovery(group, onEdge(result->getOperand(0)),
+                                     onEdge(result->getOperand(1)),
+                                     predecessor->getTerminator(), result);
+        if (!recovery) {
+          complete = false;
+          break;
+        }
+        incoming.emplace_back(predecessor, *recovery);
+      }
+      if (!complete || incoming.empty())
+        continue;
+      // Materialize only after every edge has a valid plan. An incomplete
+      // merge must not introduce checks or rewrite any existing guard.
+      auto *merged = llvm::PHINode::Create(result->getType(), incoming.size(),
+                                           "checked.merge", block->begin());
+      for (const auto &[predecessor, recovery] : incoming)
+        merged->addIncoming(laneFor(materialize(recovery)), predecessor);
+      result->replaceAllUsesWith(merged);
+      result->eraseFromParent();
+    }
+  }
+}
+
 BackendArtifact Session::emitObject() {
   if (emissionStarted_)
     throw std::logic_error("LLVM emission sessions are single-use");
@@ -303,7 +618,8 @@ BackendArtifact Session::emitObject() {
   // no escape summary, external linkage promise or function attribute is
   // invented.
   const auto &mir = program().mir();
-  if (mir.hostedStartupPlan() && !program().embeddingPlan()) {
+  if ((mir.hostedStartupPlan() || program().compiledScalarProducer()) &&
+      !program().embeddingPlan()) {
     std::set<HirFunctionInstanceId> retained;
     for (const auto &callback : mir.nativeCallbackAdapters())
       retained.insert(callback.target);
@@ -324,7 +640,7 @@ BackendArtifact Session::emitObject() {
       if (source.linkage != LanguageLinkage::Gti ||
           !source.externalSymbol.empty() || source.virtualMethod ||
           retained.contains(id) || source.entryKind != ProgramEntryKind::None ||
-          id == mir.hostedStartupPlan()->entry ||
+          (mir.hostedStartupPlan() && id == mir.hostedStartupPlan()->entry) ||
           function->hasAddressTaken(nullptr, false, false, false, false,
                                     false) ||
           function->hasDLLExportStorageClass() ||
@@ -351,6 +667,8 @@ BackendArtifact Session::emitObject() {
   llvm::CGSCCAnalysisManager cgscc;
   llvm::ModuleAnalysisManager modules;
   llvm::PassBuilder builder(machine_.get());
+  registerCheckedReductionPass(builder);
+  registerCheckedRangePass(builder);
   builder.registerModuleAnalyses(modules);
   builder.registerCGSCCAnalyses(cgscc);
   builder.registerFunctionAnalyses(functions);
@@ -361,6 +679,8 @@ BackendArtifact Session::emitObject() {
                       ? builder.buildO0DefaultPipeline(level)
                       : builder.buildPerModuleDefaultPipeline(level);
   pipeline.run(module_, modules);
+  reuseCheckedArithmeticResults(module_);
+  modules.invalidate(module_, llvm::PreservedAnalyses::none());
   if (instrumentsAddress(mode))
     instrumentAddress(module_, modules);
   if (instrumentsThread(mode))

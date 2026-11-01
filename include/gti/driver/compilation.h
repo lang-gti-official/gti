@@ -17,6 +17,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace lang::driver {
@@ -116,6 +117,14 @@ public:
   [[nodiscard]] const ProgramRequest &program() const;
   [[nodiscard]] const WarningPolicy &warnings() const;
   [[nodiscard]] const PackageWarningPolicy &packageWarnings() const;
+  // Retain concrete application bodies for compiled-library export binding;
+  // compiler-trusted bodies are still discovered only when reached.
+  [[nodiscard]] bool applicationBodies() const { return applicationBodies_; }
+  [[nodiscard]] CompilationRequest withApplicationBodies() const {
+    auto result = *this;
+    result.applicationBodies_ = true;
+    return result;
+  }
   [[nodiscard]] bool requiresEntryPoint() const;
   [[nodiscard]] CompilationRequest forExecutable() const;
   [[nodiscard]] bool requiresFunctionDefinitions() const;
@@ -141,6 +150,7 @@ private:
   WarningPolicy warningPolicy;
   PackageWarningPolicy packageWarningPolicy;
   bool entryPointRequired = false;
+  bool applicationBodies_ = false;
   bool functionDefinitionsRequired = false;
   bool sourceDebugInfo = false;
   RawPointerAuditMode rawPointerAuditMode = RawPointerAuditMode::Off;
@@ -194,12 +204,15 @@ struct CompilationResult {
 enum class CheckStatus {
   Success,
   FrontendFailure,
+  ValidationFailure,
+  ArtifactFailure,
 };
 
 struct CheckResult {
   CheckStatus status = CheckStatus::FrontendFailure;
   SourceManager sources;
   std::vector<Diagnostic> diagnostics;
+  std::optional<std::string> driverDiagnostic;
 
   [[nodiscard]] bool succeeded() const {
     return status == CheckStatus::Success;
@@ -210,9 +223,9 @@ struct CheckResult {
 checkCompilation(const CompilationRequest &request,
                  ProgressObserver *progress = nullptr);
 
-[[nodiscard]] CompilationInputs
-loadCompilationInputs(const CompilationRequest &request,
-                      ProgressObserver *progress = nullptr);
+[[nodiscard]] CompilationInputs loadCompilationInputs(
+    const CompilationRequest &request, ProgressObserver *progress = nullptr,
+    const std::unordered_map<std::string, std::string> &overrides = {});
 
 // Run the canonical whole-program pipeline with a caller-provided backend.
 // Backend exceptions are translated into structured compilation failures at
@@ -221,6 +234,10 @@ loadCompilationInputs(const CompilationRequest &request,
 [[nodiscard]] CompilationResult
 compileWithBackend(const CompilationRequest &request, Backend &backend,
                    ProgressObserver *progress = nullptr);
+
+[[nodiscard]] CompilationResult
+compileWithBackend(const CompilationRequest &request, CompilationInputs inputs,
+                   Backend &backend, ProgressObserver *progress = nullptr);
 
 [[nodiscard]] CompilationResult
 compileToCpp(const CompilationRequest &request,

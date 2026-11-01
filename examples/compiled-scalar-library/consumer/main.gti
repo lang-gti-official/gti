@@ -1,0 +1,12 @@
+import "api.gti";
+
+int consumer_private(int value) {
+    return value;
+}
+
+int main() {
+    if (choose(7) != 42) {
+        return 1;
+    }
+    return consumer_private(choose(0));
+}

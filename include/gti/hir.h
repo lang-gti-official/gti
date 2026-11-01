@@ -448,6 +448,11 @@ struct HirEmptyReturnConstruction {
   std::optional<SemanticEmptyReturnConstructionProof> constructionProof;
 };
 
+struct HirImmediateVoidCompletion {
+  const ExpressionStmt *source = nullptr;
+  std::optional<SemanticImmediateVoidCompletionProof> completionProof;
+};
+
 struct HirSourceLocal {
   SourceLocalId id = 0;
   SourceScopeId scope = 0;
@@ -511,6 +516,7 @@ struct HirBody {
   std::vector<HirDirectInitialization> directInitializations;
   std::vector<HirContextualConstruction> contextualConstructions;
   std::vector<HirEmptyReturnConstruction> emptyReturnConstructions;
+  std::vector<HirImmediateVoidCompletion> immediateVoidCompletions;
   // Source expressions that semantics aliased to another expression (a
   // reflected field access and the projection it denotes): the source shares
   // the aliased expression's value without a value of its own.

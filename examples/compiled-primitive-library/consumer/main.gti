@@ -1,0 +1,33 @@
+import "api.gti";
+
+int main() {
+    bool value0 = true;
+    if (identity(value0) != value0) { return 1; }
+    char value1 = 'Q';
+    if (identity(value1) != value1) { return 2; }
+    int8_t value2 = -7;
+    if (identity(value2) != value2) { return 3; }
+    int16_t value3 = -300;
+    if (identity(value3) != value3) { return 4; }
+    int32_t value4 = -70000;
+    if (identity(value4) != value4) { return 5; }
+    int64_t value5 = -5000000000;
+    if (identity(value5) != value5) { return 6; }
+    uint8_t value6 = 250;
+    if (identity(value6) != value6) { return 7; }
+    uint16_t value7 = 60000;
+    if (identity(value7) != value7) { return 8; }
+    uint32_t value8 = 4000000000;
+    if (identity(value8) != value8) { return 9; }
+    uint64_t value9 = 10000000000000;
+    if (identity(value9) != value9) { return 10; }
+    float value10 = 1.25;
+    if (identity(value10) != value10) { return 11; }
+    double value11 = -2.5;
+    if (identity(value11) != value11) { return 12; }
+    touch();
+    if (!positive(5000000000)) { return 20; }
+    if (divide(84, 2) != 42) { return 21; }
+    divide_and_discard(84, 2);
+    return 0;
+}

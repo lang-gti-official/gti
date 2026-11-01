@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <optional>
 #include <string_view>
+#include <vector>
 
 namespace lang {
 
@@ -61,6 +62,13 @@ struct LlvmBackendIdentity {
 [[nodiscard]] std::optional<LlvmBackendIdentity>
 queryLlvmBackendIdentity(const TargetInfo &target, LlvmBackendOptions options,
                          std::string &error);
+
+// Development scalar-library profile: a host relocatable object with exactly
+// the declared external definitions and only explicitly selected GTI imports.
+void verifyCompiledScalarObject(std::string_view bytes,
+                                const TargetInfo &target,
+                                const std::vector<std::string> &symbols,
+                                const std::vector<std::string> &imports = {});
 
 class LlvmBackend final : public Backend {
 public:

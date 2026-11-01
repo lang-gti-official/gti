@@ -2,6 +2,7 @@
 
 #include "gti/driver/artifact.h"
 #include "gti/driver/compilation.h"
+#include "gti/driver/compiled_library.h"
 #include "gti/driver/native_toolchain.h"
 
 #include <cstdint>
@@ -271,7 +272,10 @@ public:
       std::optional<ManagedOutputPolicy> managedOutput = std::nullopt,
       std::optional<std::string> cCompiler = std::nullopt,
       std::optional<BuildCachePolicy> cache = std::nullopt,
-      std::optional<BuildReportRequest> buildReport = std::nullopt);
+      std::optional<BuildReportRequest> buildReport = std::nullopt,
+      std::optional<CompiledLibraryTarget> compiledLibrary = {},
+      std::optional<CompiledLibraryImport> compiledImport = {},
+      std::vector<CompiledLibraryImport> compiledImports = {});
 
   [[nodiscard]] const CompilationRequest &compilation() const;
   [[nodiscard]] const ToolchainLayout &toolchain() const;
@@ -286,6 +290,16 @@ public:
   [[nodiscard]] const std::optional<ManagedOutputPolicy> &managedOutput() const;
   [[nodiscard]] const std::optional<BuildCachePolicy> &cache() const;
   [[nodiscard]] const std::optional<BuildReportRequest> &buildReport() const;
+  [[nodiscard]] const std::optional<CompiledLibraryTarget> &
+  compiledLibrary() const {
+    return libraryTarget;
+  }
+  [[nodiscard]] const std::optional<CompiledLibraryImport> &
+  compiledImport() const;
+  [[nodiscard]] const std::vector<CompiledLibraryImport> &
+  compiledImports() const {
+    return libraryImports;
+  }
 
 private:
   friend ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &,
@@ -303,6 +317,9 @@ private:
   std::optional<ManagedOutputPolicy> managedOutputPolicy;
   std::optional<BuildCachePolicy> buildCachePolicy;
   std::optional<BuildReportRequest> requestedBuildReport;
+  std::optional<CompiledLibraryTarget> libraryTarget;
+  std::vector<CompiledLibraryImport> libraryImports;
+  std::optional<CompiledLibraryImport> libraryImport;
 };
 
 enum class ExecutableBuildStatus {

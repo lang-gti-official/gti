@@ -280,6 +280,14 @@ public:
   prefix_slots(prefix_slots<T, Lease>&& other) = default;
   uint64_t capacity() { return this.buffer.capacity(); }
   uint64_t length() { return this.live; }
+  // Publishes a caller-constructed contiguous prefix without touching objects.
+  // The caller owns the exclusive lease, count <= capacity(), every newly
+  // included slot is initialized, and every removed slot is already destroyed.
+  // A fallible construction loop must publish each completed element (or use
+  // its own rollback guard) before another operation can fail.
+  unsafe void set_initialized_length_unchecked(uint64_t count) mut {
+    this.live = count;
+  }
   expected<void, std::alloc_errc> try_allocate(uint64_t count) mut {
     return this.try_allocate(count, std::layout_of<T>().alignment);
   }
@@ -695,6 +703,9 @@ public:
   }
   uint64_t capacity() { return this.data.capacity(); }
   uint64_t length() { return this.data.length(); }
+  unsafe void set_initialized_length_unchecked(uint64_t count) mut {
+    unsafe { this.data.set_initialized_length_unchecked(count); }
+  }
   unsafe const T* address() { unsafe { return this.data.address(); } }
   unsafe T* address() mut { unsafe { return this.data.address(); } }
   T& read(uint64_t index) { return this.data.read(index); }

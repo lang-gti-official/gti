@@ -815,6 +815,7 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
             for (const auto &[source, _] : instanceEffects)
               (void)exportOwner(exportOwner, source);
             const auto exportCheck = [&](ProgramStorageBorrowCheck check) {
+              check.owner = exportOwner(exportOwner, check.owner);
               for (auto &target : check.targets)
                 target = exportOwner(exportOwner, target);
               if (check.failureCondition) {
@@ -1456,7 +1457,10 @@ auto SemanticVisitor::Impl::appendProgramStorageBorrowInput(
 
 auto SemanticVisitor::Impl::recordProgramCallEffects(const Expr &expression)
     -> void {
-  if (!currentProgramEffectOwner.valid())
+  // An expression alias denotes the operation already checked for its target.
+  // Its source spelling must not publish a second invocation or unknown edge.
+  if (!currentProgramEffectOwner.valid() ||
+      semanticModel.findExpressionAlias(expression) != nullptr)
     return;
   SymbolId threadStorage = semanticModel.findResolvedSymbol(expression);
   if (!isThreadLocalStorage(threadStorage)) {
@@ -1645,6 +1649,7 @@ auto SemanticVisitor::Impl::publishProgramStorageBorrowCheck(
     std::size_t edges, std::size_t unknown) -> void {
   if (check.protections.empty())
     return;
+  check.owner = owner;
   const auto &summary = programEffects[owner];
   for (std::size_t index = edges; index < summary.edges.size(); ++index)
     check.targets.push_back(summary.edges[index].target);
@@ -1710,6 +1715,63 @@ auto SemanticVisitor::Impl::recordProgramOrderedInputEffects(
   publishProgramStorageBorrowCheck(std::move(check), slice.owner,
                                    summary.edges.size(),
                                    summary.unknown.size());
+}
+
+auto SemanticVisitor::Impl::discardImmediateProgramEffects(
+    const Expr &expression) -> void {
+  auto &cache = requestSession.programExpressionCache;
+  const auto found = cache.programExpressionEffects.find(&expression);
+  if (found == cache.programExpressionEffects.end() ||
+      !found->second.owner.valid() ||
+      found->second.owner != currentProgramEffectOwner)
+    return;
+  auto evaluation = found->second;
+  auto &summary = programEffects[evaluation.owner];
+  // Publication replaces the complete invocation, including its inputs, with
+  // immutable data. Resolution, loan validation and constant execution have
+  // already succeeded; only runtime effect obligations are withdrawn here.
+  // This is the current expression's suffix, including a later contextual
+  // conversion/constructor selected for that same expression.
+  summary.edges.resize(evaluation.edgeStart);
+  summary.unknown.resize(evaluation.unknownStart);
+  summary.borrowUses.resize(evaluation.useStart);
+  summary.uses.resize(evaluation.storageUseStart);
+  summary.directFailure = evaluation.directFailureBefore;
+  // Loan-flow conflicts retain indices into this vector. Keep those indices
+  // stable while making the now nonexistent runtime checks vacuous.
+  for (std::size_t index = evaluation.borrowCheckStart;
+       index < requestSession.programStorageBorrowChecks.size(); ++index)
+    if (requestSession.programStorageBorrowChecks[index].owner ==
+        evaluation.owner)
+      requestSession.programStorageBorrowChecks[index].protections.clear();
+  std::unordered_set<const Expr *> erased;
+  for (std::size_t index = evaluation.order;
+       index < cache.evaluationOrder.size(); ++index) {
+    const auto *node = cache.evaluationOrder[index];
+    const auto entry = cache.programExpressionEffects.find(node);
+    if (entry == cache.programExpressionEffects.end() ||
+        entry->second.order != index || entry->second.owner != evaluation.owner)
+      continue;
+    erased.insert(node);
+    cache.programExpressionEffects.erase(entry);
+    cache.programOperationFailures.erase(node);
+    cache.evaluationOrder[index] = nullptr;
+  }
+  // Nested body analysis may have recorded a different owner's expressions.
+  // Retain their indices and use tombstones for only this invocation's nodes.
+  cache.evaluationOrder[evaluation.order] = &expression;
+  while (!cache.evaluationOrder.empty() && !cache.evaluationOrder.back())
+    cache.evaluationOrder.pop_back();
+  for (auto &frame : requestSession.fullExpressionStates)
+    if (frame.owner == evaluation.owner)
+      std::erase_if(frame.temporaries, [&](const auto &temporary) {
+        return erased.contains(temporary.producer);
+      });
+  // An enclosing call still queries this input's ordered evaluation slice.
+  evaluation.edgeEnd = evaluation.edgeStart;
+  evaluation.unknownEnd = evaluation.unknownStart;
+  evaluation.useEnd = evaluation.useStart;
+  cache.programExpressionEffects.emplace(&expression, evaluation);
 }
 
 auto SemanticVisitor::Impl::recordStorageBorrowCleanup(const Symbol &symbol)
@@ -1854,7 +1916,9 @@ auto SemanticVisitor::Impl::consumeProgramTemporary(const ExprPtr &value)
     return;
   const Expr *producer = value.get();
   while (true) {
-    if (const auto *group = exprAs<Grouping>(producer))
+    if (const Expr *alias = semanticModel.findExpressionAlias(*producer))
+      producer = alias;
+    else if (const auto *group = exprAs<Grouping>(producer))
       producer = group->expression().get();
     else if (const auto *comma = exprAs<Binary>(producer);
              comma && comma->oper().kind == TokenKind::COMMA)
@@ -1872,7 +1936,8 @@ auto SemanticVisitor::Impl::recordProgramTemporary(const Expr &producer,
     -> void {
   if (requestSession.fullExpressionStates.empty() ||
       info.category != ValueCategory::Value ||
-      !requiresActiveCleanupFor(info.type) || exprAs<Grouping>(&producer))
+      !requiresActiveCleanupFor(info.type) || exprAs<Grouping>(&producer) ||
+      semanticModel.findExpressionAlias(producer) != nullptr)
     return;
   if (const auto *comma = exprAs<Binary>(&producer);
       comma && comma->oper().kind == TokenKind::COMMA)
@@ -3855,6 +3920,9 @@ auto SemanticVisitor::Impl::uniqueOwnerAccessDetail() const
 auto SemanticVisitor::Impl::classifyDefinedFailure(
     const Expr &expr, const ExpressionInfo &info) const
     -> DefinedFailureOperation {
+  if (const Expr *alias = semanticModel.findExpressionAlias(expr))
+    if (const auto *failure = semanticModel.findDefinedFailure(*alias))
+      return *failure;
   DefinedFailureOperation operation;
   const ExprKind kind = expr.exprKind();
   const auto *callExpression =
@@ -4397,12 +4465,19 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
   std::optional<MacroLookupScope> deferredScope;
   if (const auto *context = macroContext(expressionToken(expr)))
     deferredScope.emplace(*this, *context);
-  ProgramExpressionEffects evaluation{.owner = currentProgramEffectOwner};
+  ProgramExpressionEffects evaluation{
+      .owner = currentProgramEffectOwner,
+      .order = requestSession.programExpressionCache.evaluationOrder.size()};
+  requestSession.programExpressionCache.evaluationOrder.push_back(&expr);
   if (evaluation.owner.valid()) {
     const auto &summary = programEffects[evaluation.owner];
     evaluation.edgeStart = summary.edges.size();
     evaluation.unknownStart = summary.unknown.size();
     evaluation.useStart = summary.borrowUses.size();
+    evaluation.storageUseStart = summary.uses.size();
+    evaluation.borrowCheckStart =
+        requestSession.programStorageBorrowChecks.size();
+    evaluation.directFailureBefore = summary.directFailure;
   }
   const auto fullExpression = beginProgramFullExpression(expr);
   if (instanceAnalysisActive) {
@@ -4420,13 +4495,19 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
   const auto *construction = semanticModel.findConstruction(expr);
   const bool directInitialization =
       construction != nullptr && construction->directInitialization;
-  if (!directInitialization && (exprAs<Call>(&expr) || construction))
+  const bool expressionAlias =
+      semanticModel.findExpressionAlias(expr) != nullptr;
+  if (!expressionAlias && !directInitialization &&
+      (exprAs<Call>(&expr) || construction))
     validateRawCallAccesses(expr);
-  if (const auto *call = exprAs<Call>(&expr); call && !directInitialization)
+  if (const auto *call = exprAs<Call>(&expr);
+      call && !expressionAlias && !directInitialization)
     preserveRawCallWrites(*call);
-  if (const auto *call = exprAs<Call>(&expr); call && !directInitialization)
+  if (const auto *call = exprAs<Call>(&expr);
+      call && !expressionAlias && !directInitialization)
     invalidateRawCallOrigins(call);
-  if (!directInitialization && (exprAs<Call>(&expr) || construction))
+  if (!expressionAlias && !directInitialization &&
+      (exprAs<Call>(&expr) || construction))
     applyRawCallWrites(expr);
   ExpressionInfo info = classifyExpression(expr, result);
   // A field read, a grouping and a move keep a dependent text value inside
@@ -4510,7 +4591,7 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
   }
   semanticModel.record(expr, info);
   semanticModel.recordDefinedFailure(expr, classifyDefinedFailure(expr, info));
-  if (expr.exprKind() == ExprKind::Call &&
+  if (!expressionAlias && expr.exprKind() == ExprKind::Call &&
       info.type.kind == SemanticType::RawPointer &&
       info.type.arguments.size() == 1 &&
       info.type.arguments.front() != SemanticType::Void &&
@@ -4783,7 +4864,8 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
       operationOwner.valid() ? programEffects[operationOwner].unknown.size()
                              : 0;
   recordProgramCallEffects(expr);
-  if (operationOwner.valid() && failure && failure->mayUnwind()) {
+  if (!expressionAlias && operationOwner.valid() && failure &&
+      failure->mayUnwind()) {
     auto condition = std::make_shared<ProgramFailureCondition>();
     auto local = *failure;
     local.propagation = FailurePropagationKind::None;
@@ -4823,7 +4905,8 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
   // owning values with all of their lifetime and destructor effects.
   const bool payloadDesignator = designatedEnum && designatedEnum->payload &&
                                  designatedEnumerator->type == info.type;
-  if (!payloadDesignator && info.category == ValueCategory::Value &&
+  if (!expressionAlias && !payloadDesignator &&
+      info.category == ValueCategory::Value &&
       requiresActiveCleanupFor(info.type)) {
     recordProgramCleanupEffects(info.type, tokenSpan(expressionToken(expr)));
     applyRawCleanupWrites(info.type, tokenSpan(expressionToken(expr)),
@@ -4869,6 +4952,8 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
     requestSession.programExpressionCache.programExpressionEffects
         .insert_or_assign(&expr, evaluation);
   }
+  if (diagnostics.size() == diagnosticsBefore)
+    enforceImmediateInvocation(expr);
   currentType = result;
   return result;
 }
@@ -5018,6 +5103,7 @@ auto SemanticVisitor::Impl::analyzeInitializer(
   if (allowExactNullConstruction && expr &&
       expectedType.kind == SemanticType::Class &&
       result == SemanticType::NullPtr) {
+    const std::size_t diagnosticStart = diagnostics.size();
     std::vector<AnalyzedCallArgument> arguments = {
         {.type = result, .expression = &expr}};
     analyzeConstructorCallArguments(
@@ -5029,6 +5115,8 @@ auto SemanticVisitor::Impl::analyzeInitializer(
     semanticModel.record(*expr, info);
     semanticModel.recordDefinedFailure(*expr,
                                        classifyDefinedFailure(*expr, info));
+    if (diagnostics.size() == diagnosticStart)
+      enforceImmediateInvocation(*expr);
   } else if (allowDeclarationConstruction) {
     const bool construction =
         declarationConstructionApplies(expr, expectedType, result);
@@ -5141,6 +5229,8 @@ auto SemanticVisitor::Impl::analyzeDeclarationConstruction(
         construction.constructedType, site,
         contextualConstructionRawFields(*expr, construction.constructedType));
   }
+  if (diagnostics.size() == diagnosticStart)
+    enforceImmediateInvocation(*expr, true);
   return construction.constructedType;
 }
 
@@ -5206,6 +5296,7 @@ auto SemanticVisitor::Impl::analyzeDeclarationConversion(
     applyRawCleanupWrites(declaredType, span,
                           contextualConstructionRawFields(*expr, declaredType));
   }
+  enforceImmediateInvocation(*expr, true);
   return declaredType;
 }
 
@@ -5746,8 +5837,33 @@ auto SemanticVisitor::Impl::recordTypeUse(const TypeRef &type) -> void {
 
   SymbolId symbol = 0;
   SemanticType resolvedType = typeOf(type);
-  if (const std::optional<SemanticType> parameter =
-          resolveTypeParameter(type.name)) {
+  const auto projectedConcept =
+      type.qualifiedOwner
+          ? protocolConceptOwner(*type.qualifiedOwner, currentNamespace)
+          : std::nullopt;
+  const SymbolId blockSymbol = [&]() -> SymbolId {
+    const auto *block = enclosingConformance(currentNamespace);
+    if (!block || type.qualifiedOwner || type.name.segments.size() != 1)
+      return 0;
+    const auto &names = concepts[block->conceptId - 1].associatedTypes;
+    const auto member =
+        std::find(names.begin(), names.end(), type.name.last().lexeme);
+    return member == names.end()
+               ? 0
+               : associatedTypeSymbol(
+                     block->conceptId,
+                     static_cast<std::uint32_t>(member - names.begin()));
+  }();
+  if (projectedConcept) {
+    const auto &names = concepts[*projectedConcept - 1].associatedTypes;
+    const auto member =
+        std::find(names.begin(), names.end(), type.name.last().lexeme);
+    if (member != names.end())
+      symbol = associatedTypeSymbol(
+          *projectedConcept,
+          static_cast<std::uint32_t>(member - names.begin()));
+  } else if (const std::optional<SemanticType> parameter =
+                 resolveTypeParameter(type.name)) {
     // A substitution can itself still be symbolic, such as a callable-result
     // query over an open parameter; the condition then stays dependent.
     if (analyzingDependentConstantCondition &&
@@ -5756,7 +5872,10 @@ auto SemanticVisitor::Impl::recordTypeUse(const TypeRef &type) -> void {
     }
     const GenericParameterInfo *info =
         genericParameterInfo(parameter->genericParameterId);
-    if (info != nullptr) {
+    if (parameter->isAssociatedTypeProjection()) {
+      symbol = associatedTypeSymbol(parameter->projectionConcept,
+                                    parameter->projectionMember);
+    } else if (info != nullptr) {
       symbol = symbolForDeclaration(info->name);
     } else {
       // Declaration attributes are resolved before the enclosing class enters
@@ -5769,6 +5888,8 @@ auto SemanticVisitor::Impl::recordTypeUse(const TypeRef &type) -> void {
         }
       }
     }
+  } else if (blockSymbol != 0) {
+    symbol = blockSymbol;
   } else if (const std::optional<ResolvedTypeAlias> alias =
                  resolveTypeAliasPath(type, currentNamespace)) {
     if (alias->id != 0 && alias->id <= typeAliases.size()) {
@@ -6808,6 +6929,33 @@ auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path,
   }
   const NamePath ownerPath(
       std::vector<Token>(path.segments.begin(), path.segments.end() - 1));
+  if (ownerType && typeOnly) {
+    if (const auto id = protocolConceptOwner(*ownerType, currentNamespace)) {
+      const auto &protocol = concepts[*id - 1];
+      for (std::size_t member = 0; member < protocol.associatedTypes.size();
+           ++member) {
+        const auto &name = protocol.associatedTypes[member];
+        std::string detail = "typename " + name;
+        const auto &parameters = protocol.associatedTypeParameters[member];
+        if (!parameters.empty()) {
+          detail += "<";
+          for (std::size_t index = 0; index < parameters.size(); ++index)
+            detail += (index ? ", " : "") + parameters[index].name.lexeme;
+          detail += ">";
+        }
+        context.candidates.push_back(
+            {.kind = SemanticCompletionCandidateKind::TypeAlias,
+             .name = name,
+             .qualifiedName = protocol.qualifiedName + "::" + name,
+             .detail = std::move(detail),
+             .scopeDistance = 0,
+             .symbol = associatedTypeSymbol(
+                 *id, static_cast<std::uint32_t>(member))});
+      }
+      semanticModel.recordCompletion(std::move(context));
+      return;
+    }
+  }
   std::optional<ClassId> completionOwner =
       resolveClassPath(ownerPath, currentNamespace);
   std::optional<SemanticType> specializedOwner;
@@ -8338,7 +8486,17 @@ auto SemanticVisitor::Impl::resolveExpressionSymbol(
     if (memberObjectType != SemanticType::Unknown) {
       if (const MemberInfo *member =
               findMember(memberObjectType, get->name())) {
-        return substituteSymbol(member->symbol, memberObjectType);
+        Symbol symbol = substituteSymbol(member->symbol, memberObjectType);
+        if (const auto selected = reflectedMethodTargets.find(get);
+            selected != reflectedMethodTargets.end()) {
+          std::erase_if(symbol.overloads,
+                        [&](const CallableCandidate &candidate) {
+                          return candidate.declaration != selected->second;
+                        });
+          if (symbol.overloads.empty())
+            return std::nullopt;
+        }
+        return symbol;
       }
     }
   }
@@ -8846,6 +9004,20 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
       result.failure = FreshTemporaryValueFailure::None;
       return result;
     }
+  }
+  // Built-in assignment publishes a value copy after committing the target;
+  // a conditional publishes one joined value. Both are self-contained class
+  // temporaries with the same full-expression lifetime as a call result.
+  // An overloaded assignment is a call and retains its separate call proof.
+  const auto *assignment = exprAs<Assign>(producer);
+  const bool freshAssignment =
+      assignment != nullptr && assignment->oper().kind == TokenKind::EQUAL &&
+      semanticModel.findOperator(*producer) == nullptr &&
+      info->traits.copyable && !requiresActiveCleanupFor(info->type);
+  if (freshAssignment || exprAs<ConditionalExpr>(producer) != nullptr) {
+    result.eligible = true;
+    result.failure = FreshTemporaryValueFailure::None;
+    return result;
   }
   if (const ResolvedOperatorInfo *resolved =
           semanticModel.findOperator(*producer);
@@ -10439,6 +10611,8 @@ auto SemanticVisitor::Impl::rawPointerFields(const Expr *expression)
     return {};
   if (!expression)
     return {};
+  if (const Expr *alias = semanticModel.findExpressionAlias(*expression))
+    return rawPointerFields(alias);
   if (const auto found = valueFlow.rawOperatorResults.find(expression);
       found != valueFlow.rawOperatorResults.end())
     return found->second;
@@ -11352,6 +11526,9 @@ auto SemanticVisitor::Impl::rawProducedFields(
     -> std::vector<ProjectedRawPointerOrigins> {
   if (!rawAuditEnabled())
     return {};
+  if (!invocation && !contextual)
+    if (const Expr *alias = semanticModel.findExpressionAlias(expression))
+      return rawProducedFields(*alias, suppliedFields);
   // A contextual construction's only written argument is the expression
   // itself; it is never a call or direct initializer of the constructed type.
   const auto *call = contextual ? nullptr : exprAs<Call>(&expression);
@@ -12536,6 +12713,8 @@ auto SemanticVisitor::Impl::rawPointerOrigins(const Expr *expression)
     return {};
   if (!expression)
     return {};
+  if (const Expr *alias = semanticModel.findExpressionAlias(*expression))
+    return rawPointerOrigins(alias);
   if (const auto found = valueFlow.rawOperatorResults.find(expression);
       found != valueFlow.rawOperatorResults.end()) {
     std::vector<RawPointerOrigin> origins;
@@ -13546,7 +13725,8 @@ auto SemanticVisitor::Impl::requireBool(const ExprPtr &expression,
     const std::optional<CallableCandidate> selected =
         resolveOperator(*expression, OverloadedOperator::ContextualBool,
                         expression, type, token, {}, {}, true);
-    (void)selected;
+    if (selected)
+      enforceImmediateInvocation(*expression, true);
     return;
   }
   if (type != SemanticType::Unknown && !isContextuallyBool(type)) {
@@ -14452,22 +14632,28 @@ auto SemanticVisitor::Impl::baseTypeOf(
                     conceptInfo.associatedTypes.end(), type.name.last().lexeme);
       if (member == conceptInfo.associatedTypes.end() ||
           type.qualifiedOwner->arguments.size() !=
-              conceptInfo.parameterIds.size() ||
-          !type.arguments.empty()) {
+              conceptInfo.parameterIds.size()) {
         return SemanticType::Unknown;
       }
       const auto index = static_cast<std::uint32_t>(
           member - conceptInfo.associatedTypes.begin());
+      if (type.arguments.size() !=
+          conceptInfo.associatedTypeParameters[index].size())
+        return SemanticType::Unknown;
       std::vector<SemanticType> arguments;
       for (const TypeRef &argument : type.qualifiedOwner->arguments) {
         arguments.push_back(typeOf(argument, fromScope));
       }
-      if (const std::optional<SemanticType> own =
-              ownBlockProjection(*protocol, index, arguments, fromScope)) {
+      std::vector<SemanticType> familyArguments;
+      for (const TypeRef &argument : type.arguments)
+        familyArguments.push_back(typeOf(argument, fromScope));
+      if (const std::optional<SemanticType> own = ownBlockProjection(
+              *protocol, index, arguments, fromScope, familyArguments)) {
         return *own;
       }
       return substituteType(
-          associatedTypeProjection(*protocol, index, std::move(arguments)),
+          associatedTypeProjection(*protocol, index, std::move(arguments),
+                                   std::move(familyArguments)),
           GenericSubstitution{.types = instanceTypeSubstitution,
                               .values = instanceValueSubstitution});
     }
@@ -14542,12 +14728,28 @@ auto SemanticVisitor::Impl::baseTypeOf(
   default:
     if (const std::optional<SemanticType> parameter =
             resolveTypeParameter(type.name)) {
+      if (parameter->isAssociatedTypeProjection()) {
+        const auto &parameters =
+            concepts[parameter->projectionConcept - 1]
+                .associatedTypeParameters[parameter->projectionMember];
+        if (parameters.size() != type.arguments.size())
+          return SemanticType::Unknown;
+        std::vector<SemanticType> arguments;
+        for (const auto &argument : type.arguments)
+          arguments.push_back(typeOf(argument, fromScope));
+        return associatedTypeProjection(
+            parameter->projectionConcept, parameter->projectionMember,
+            parameter->arguments, std::move(arguments));
+      }
       return type.arguments.empty() ? *parameter : SemanticType::Unknown;
     }
     if (type.name.segments.size() == 1) {
-      if (const std::optional<SemanticType> associated =
-              blockAssociatedType(type.name.last().lexeme, fromScope)) {
-        return type.arguments.empty() ? *associated : SemanticType::Unknown;
+      std::vector<SemanticType> arguments;
+      for (const auto &argument : type.arguments)
+        arguments.push_back(typeOf(argument, fromScope));
+      if (const std::optional<SemanticType> associated = blockAssociatedType(
+              type.name.last().lexeme, fromScope, arguments)) {
+        return *associated;
       }
     }
     if (const std::optional<ResolvedTypeAlias> alias =

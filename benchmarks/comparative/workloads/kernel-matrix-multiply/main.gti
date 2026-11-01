@@ -1,0 +1,37 @@
+extern "C" {
+uint64_t bench_rounds();
+uint64_t bench_seed();
+void bench_begin();
+void bench_end(uint64_t digest);
+}
+
+int main() {
+  uint64_t rounds = bench_rounds();
+  uint64_t seed = bench_seed();
+  bench_begin();
+  mut uint64_t digest = 0;
+  mut double a[2304] = {};
+  mut double b[2304] = {};
+  mut double c[2304] = {};
+  for (mut int i = 0; i < 2304; i++) {
+    a[i] = double((uint64_t(i) + seed) % 17) * 0.125d;
+    b[i] = double(i % 13) * 0.25d;
+  }
+  for (mut uint64_t r = 0; r < rounds; r++) {
+    for (mut int i = 0; i < 48; i++) {
+      for (mut int k = 0; k < 48; k++) {
+        double v = a[i * 48 + k];
+        for (mut int j = 0; j < 48; j++) {
+          c[i * 48 + j] += v * b[k * 48 + j];
+        }
+      }
+    }
+  }
+  mut double total = 0.0d;
+  for (mut int i = 0; i < 2304; i++) {
+    total += c[i];
+  }
+  digest = uint64_t(total);
+  bench_end(digest);
+  return 0;
+}

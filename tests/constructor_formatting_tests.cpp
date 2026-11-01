@@ -143,6 +143,18 @@ int main() {
         "class Box {\n  implicit Box(int x) :\n      a(x) {}\n"
         "  implicit constexpr Box(bool y) :\n      a(1) {}\n};\n",
         options);
+  check("class Port{implicit consteval Port(int number):value(number){}"
+        "static consteval int checked(int number){return number;}};",
+        "class Port {\n  implicit consteval Port(int number) :\n"
+        "      value(number) {}\n  static consteval int checked(int number) {\n"
+        "    return number;\n  }\n};\n",
+        options);
+  check("consteval T identity<T>(T value){return value;}"
+        "struct Port{consteval operator int(){return this.value;}};",
+        "consteval T identity<T>(T value) {\n  return value;\n}\n"
+        "struct Port {\n  consteval operator int() {\n"
+        "    return this.value;\n  }\n};\n",
+        {});
   check("class Box:ns::Base<int>{Box():ns::Base<int>(1),field(2){};};",
         "class Box : ns::Base<int> {\n  Box() :\n    "
         "  ns::Base<int>(1),\n      field(2) {};\n};\n",

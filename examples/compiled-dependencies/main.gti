@@ -1,0 +1,9 @@
+import "api/left.gti";
+import "api/right.gti";
+
+int main() {
+    if (left_value() + right_value() != 42) {
+        return 1;
+    }
+    return 0;
+}

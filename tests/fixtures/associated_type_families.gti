@@ -1,0 +1,35 @@
+import std.string;
+
+concept carrier<Policy> { typename item<T>; };
+struct First {};
+struct Second {};
+struct Parcel<T> {
+  T payload;
+  Parcel(T value) : payload(std::move(value)) {}
+};
+struct Packet<T> {
+  T payload;
+  Packet(T value) : payload(std::move(value)) {}
+};
+class Tracked {
+  int id;
+public:
+  Tracked(int value) : id(value) {}
+  ~Tracked() { std::println(std::to_string(this.id)); }
+};
+for concept carrier<First> { using item<Value> = Parcel<Value>; };
+for concept carrier<Second> { using item<Element> = Packet<Element>; };
+
+int consume<Policy>(carrier<Policy>::item<Tracked> value, int divisor)
+  requires carrier<Policy> {
+  return 12 / divisor;
+}
+using FirstItem = carrier<First>::item<Tracked>;
+using SecondItem = carrier<Second>::item<Tracked>;
+int main() {
+  FirstItem first{Tracked(1)};
+  int a = consume<First>(std::move(first), 3);
+  SecondItem second{Tracked(2)};
+  int b = consume<Second>(std::move(second), 2);
+  return a + b - 10;
+}

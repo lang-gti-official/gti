@@ -333,3 +333,108 @@ concept gauge<T> {
                 (identifier))
               (reference_declarator))
             (identifier)))))))
+
+==================
+Associated type families
+==================
+concept storage<Policy> {
+  typename buffer<Element>;
+  typename pair<Key, Value>;
+};
+for concept storage<Heap> {
+  using buffer<Item> = Box<Item>;
+  using pair<K, V> = Pair<K, V>;
+};
+using Numbers = storage<Heap>::buffer<int>;
+using Nested = storage<Heap>::buffer<storage<Heap>::buffer<int>>;
+
+---
+
+(source_file
+  (concept_declaration
+    (identifier)
+    (identifier)
+    (concept_body
+      (associated_type_declaration
+        (identifier)
+        (generic_parameter_clause
+          (generic_parameter
+            (identifier))))
+      (associated_type_declaration
+        (identifier)
+        (generic_parameter_clause
+          (generic_parameter
+            (identifier))
+          (generic_parameter
+            (identifier))))))
+  (conformance_declaration
+    (concept_application
+      (identifier)
+      (type
+        (user_type
+          (identifier))))
+    (conformance_body
+      (type_alias_declaration
+        (identifier)
+        (generic_parameter_clause
+          (generic_parameter
+            (identifier)))
+        (type
+          (user_type
+            (identifier)
+            (type_argument_clause
+              (type
+                (user_type
+                  (identifier)))))))
+      (type_alias_declaration
+        (identifier)
+        (generic_parameter_clause
+          (generic_parameter
+            (identifier))
+          (generic_parameter
+            (identifier)))
+        (type
+          (user_type
+            (identifier)
+            (type_argument_clause
+              (type
+                (user_type
+                  (identifier)))
+              (type
+                (user_type
+                  (identifier)))))))))
+  (type_alias_declaration
+    (identifier)
+    (type
+      (user_type
+        (identifier)
+        (type_argument_clause
+          (type
+            (user_type
+              (identifier))))
+        (identifier)
+        (type_argument_clause
+          (type
+            (primitive_type))))))
+  (type_alias_declaration
+    (identifier)
+    (type
+      (user_type
+        (identifier)
+        (type_argument_clause
+          (type
+            (user_type
+              (identifier))))
+        (identifier)
+        (type_argument_clause
+          (type
+            (user_type
+              (identifier)
+              (type_argument_clause
+                (type
+                  (user_type
+                    (identifier))))
+              (identifier)
+              (type_argument_clause
+                (type
+                  (primitive_type))))))))))

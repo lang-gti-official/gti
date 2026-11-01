@@ -1,0 +1,52 @@
+constexpr int triangle(int count) {
+  mut int total = 0;
+  for (mut int next = 1; next <= count; next++) {
+    total += next;
+  }
+  return total;
+}
+
+// The same checked arithmetic and loops run through MIR at compile time.
+consteval int immediate_triangle(int count) { return triangle(count); }
+
+// A standalone void call completes at compile time and leaves no runtime call.
+consteval void require_application_port(int number) {
+  int valid = 1 / (number >= 1024 && number <= 49151 ? 1 : 0);
+}
+
+struct Port {
+  uint16_t value;
+
+  // The checked conversion validates the entire [0, 65535] port domain.
+  // Port zero denotes automatic assignment; negative/out-of-range input fails.
+  implicit consteval Port(int number) : value(uint16_t(number)) {}
+
+  implicit consteval Port() : value(443) {}
+};
+
+// Bare return publishes the selected immediate default constructor's value.
+Port default_port() { return; }
+
+// An ordinary API can combine an immediate validated value with runtime data.
+int transmit(Port endpoint, int runtime_payload) {
+  return int(endpoint.value) + runtime_payload;
+}
+
+int exercise(int runtime_payload) {
+  require_application_port(8080);
+  Port secure = 443;
+  int sum = immediate_triangle(8);
+  return transmit(secure, runtime_payload) +
+         transmit(Port(80), runtime_payload) +
+         transmit(default_port(), runtime_payload) + sum;
+}
+
+int main() {
+  return exercise(7) == 1023 && triangle(8) == immediate_triangle(8) ? 0 : 1;
+}
+
+// Port(-1), Port(65536), and Port(runtime_payload) fail during compilation.
+// require_application_port(443) and require_application_port(runtime_payload)
+// also fail during compilation.
+// Function arguments keep GTI's explicit conversion rule: write Port(80),
+// not transmit(80, runtime_payload). `implicit` applies to declarations.

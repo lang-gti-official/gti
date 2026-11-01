@@ -269,25 +269,33 @@ void testGeneralTextStepMatchesProductionEmission() {
         lang::OptimizationPipeline().run(frontend.hir,
                                          lang::OptimizationLevel::O0);
     progress.checkpoint("optimization");
-    // These source examples intentionally use LLVM-only wrapping atomics.
-    // Keep a positive unsupported-operation assertion rather than silently
-    // dropping them; the native corpus oracle executes both LLVM endpoints.
+    // These source examples intentionally use LLVM-only operations. Keep a
+    // positive unsupported-operation assertion rather than silently dropping
+    // them; the native corpus oracle executes both LLVM endpoints.
+    const bool generalLayout =
+        source.filename() == "181-general-object-layout.gti";
+    const bool aggregateConstant =
+        source.filename() == "183-immediate-functions.gti";
     if (source.filename() == "066-managed-threads.gti" ||
         source.filename() == "098-shared-ownership.gti" ||
         source.filename() == "178-wrapping-atomic-counters.gti" ||
         source.filename() == "179-weak-ownership.gti" ||
-        source.filename() == "180-compact-source-owners.gti") {
+        source.filename() == "180-compact-source-owners.gti" || generalLayout ||
+        aggregateConstant) {
       bool unsupported = false;
       try {
         static_cast<void>(gti_test::emitCpp(frontend, frontend.mir,
                                             frontend.mir, optimizations));
       } catch (const lang::BackendUnsupportedError &error) {
+        const std::string limitation =
+            generalLayout       ? "general sizeof/alignof"
+            : aggregateConstant ? "aggregate constant publication"
+                                : "wrapping atomic read-modify-write";
         unsupported =
-            std::string(error.what())
-                .find("wrapping atomic read-modify-write") != std::string::npos;
+            std::string(error.what()).find(limitation) != std::string::npos;
       }
-      expect(unsupported, "LLVM-only corpus source must report wrapping atomic "
-                          "support boundary");
+      expect(unsupported,
+             "LLVM-only corpus source must report its C++ support boundary");
       continue;
     }
     const lang::BackendArtifact artifact =

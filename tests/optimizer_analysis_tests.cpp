@@ -162,6 +162,51 @@ LegacyDataflowResult legacySchedulingSolve(const lang::MirBody &body) {
   return result;
 }
 
+void testForwardDataflowRepeatedScheduling() {
+  // Cross several deque blocks while repeatedly requeuing a loop and its
+  // exit. This also runs in the optimized sanitizer configuration: LLVM's
+  // prebuilt libraries must not supply uninstrumented queue operations.
+  const lang::MirBody body = schedulingBody();
+  constexpr int limit = 1024;
+  unsigned loopVisits = 0, exitVisits = 0;
+  const auto result = lang::runMirForwardDataflow(
+      body, DataflowTestState{},
+      [&](const lang::MirBlock &block, const DataflowTestState &incoming) {
+        std::vector<lang::MirForwardDataflowEdge<DataflowTestState>> edges;
+        if (block.id == 1) {
+          edges.push_back({.target = 2, .ordinal = 0, .state = incoming});
+        } else if (block.id == 2) {
+          ++loopVisits;
+          edges.push_back(
+              {.target = 2,
+               .ordinal = 0,
+               .state = {.upper = std::min(limit, incoming.upper + 1)}});
+          edges.push_back({.target = 3, .ordinal = 1, .state = incoming});
+        } else {
+          ++exitVisits;
+        }
+        return edges;
+      },
+      [](DataflowTestState &target, const DataflowTestState &incoming,
+         lang::MirDataflowMergeContext) {
+        if (incoming.upper <= target.upper)
+          return false;
+        target = incoming;
+        return true;
+      },
+      {.iterationLimit = 4096});
+  expect(
+      result.converged() && result.iterations == 3 * limit / 2 + 3 &&
+          loopVisits == limit + 1 && exitVisits == limit / 2 + 1 &&
+          result.incoming[1] && result.incoming[2] &&
+          result.incoming[1]->upper == limit &&
+          result.incoming[2]->upper == limit &&
+          result.updateCounts[1] == limit + 1 &&
+          result.updateCounts[2] == limit + 1,
+      "repeated FIFO scheduling preserves exact updates and converges across "
+      "queue storage boundaries");
+}
+
 void testForwardDataflowScheduling() {
   const lang::MirBody body = schedulingBody();
   bool widened = false;
@@ -1303,6 +1348,7 @@ int32_t main() { return selected(true) == 1 ? 0 : 1; }
 
 int main() {
   testForwardDataflowScheduling();
+  testForwardDataflowRepeatedScheduling();
   testCanonicalEvidenceSets();
   testNaturalLoopAndInduction();
   testLoopForestAndIrreducibleControl();

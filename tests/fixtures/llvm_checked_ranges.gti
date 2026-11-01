@@ -1,0 +1,62 @@
+import std.string;
+import std.vector;
+
+class ScanCleanup {
+  int identity;
+public:
+  ScanCleanup(int identity) : identity(identity) {}
+  ~ScanCleanup() { std::println(this.identity); }
+};
+
+// Ordinary user-defined elements and callbacks; no nominal optimizer hooks.
+class ScanCell {
+  int value;
+public:
+  ScanCell(int value) : value(value) {}
+  int read() { return this.value; }
+};
+
+int forward(std::vector<ScanCell> &values, std::size_t start,
+            std::size_t stop, std::size_t early) {
+  ScanCleanup cleanup{22};
+  mut std::size_t index = start;
+  mut int total = 0;
+  while (true) {
+    index++;
+    std::println(int(index));
+    total += values[index].read();
+    if (index == early || index == stop) break;
+  }
+  return total;
+}
+
+int reverse(std::vector<ScanCell> &values, std::size_t start,
+            std::size_t stop, std::size_t early) {
+  ScanCleanup cleanup{22};
+  mut std::size_t index = start;
+  mut int total = 0;
+  while (true) {
+    std::println(int(index));
+    total += values[index].read();
+    total += values[index - std::size_t(1)].read();
+    index--;
+    if (index == early || index <= stop) break;
+  }
+  return total;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc != 6) return 10;
+  std::size_t mode = argv[std::size_t(1)].size();
+  std::size_t start = argv[std::size_t(2)].size();
+  std::size_t stop = argv[std::size_t(3)].size();
+  std::size_t length = argv[std::size_t(4)].size();
+  std::size_t early = argv[std::size_t(5)].size();
+  ScanCleanup outer{11};
+  mut std::vector<ScanCell> values{};
+  for (mut std::size_t index = 0; index < length; index++)
+    values.push_back(ScanCell(int(index) + 1));
+  if (mode == 0) std::println(forward(values, start, stop, early));
+  else std::println(reverse(values, start, stop, early));
+  return 0;
+}
