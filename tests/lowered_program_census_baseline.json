@@ -625,7 +625,7 @@
       }
     },
     "041-owner-dependencies.gti": {
-      "declarations": 1705,
+      "declarations": 1701,
       "bodies": 187,
       "generated_items": 105,
       "generated_kinds": {
@@ -2865,7 +2865,7 @@
       }
     },
     "182-associated-type-families.gti": {
-      "declarations": 1812,
+      "declarations": 1808,
       "bodies": 282,
       "generated_items": 191,
       "generated_kinds": {
@@ -2929,7 +2929,7 @@
       }
     },
     "182-bounded-array-borrows.gti": {
-      "declarations": 1829,
+      "declarations": 1828,
       "bodies": 156,
       "generated_items": 80,
       "generated_kinds": {
@@ -2946,7 +2946,7 @@
     }
   },
   "totals": {
-    "declarations": 224991,
+    "declarations": 224982,
     "bodies": 28368,
     "generated_items": 16674
   },
@@ -2988,7 +2988,7 @@
         }
       },
       "totals": {
-        "declarations": 224991,
+        "declarations": 224982,
         "bodies": 28366,
         "generated_items": 16672
       }
