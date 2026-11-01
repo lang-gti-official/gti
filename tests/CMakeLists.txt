@@ -5557,6 +5557,11 @@ if(Python3_Interpreter_FOUND)
               "${PROJECT_SOURCE_DIR}/tests/borrow_origin_runtime_test.py"
               "$<TARGET_FILE:gti>")
     set_tests_properties(borrow_origin_runtime PROPERTIES TIMEOUT 600)
+    add_test(NAME owner_chain_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/owner_chain_runtime_test.py"
+              "$<TARGET_FILE:gti>")
+    set_tests_properties(owner_chain_runtime PROPERTIES TIMEOUT 300)
     add_test(
       NAME mut_reference_retained_chain_runtime
       COMMAND "${Python3_EXECUTABLE}"
