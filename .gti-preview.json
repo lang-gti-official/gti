@@ -79,10 +79,25 @@
         "836f0473c478240b826d5657cf3870e804d35d61"
       ],
       "merge": "836f0473c478240b826d5657cf3870e804d35d61"
+    },
+    {
+      "task": "module-discovery",
+      "pr": 110,
+      "head": "b35b461549403ef0e698db2d815cb555d9a805d0",
+      "tests": [
+        "project_model",
+        "source_text_pipeline",
+        "module_discovery_runtime",
+        "module_discovery_lsp"
+      ],
+      "contributions": [
+        "77766a6f9f8560c3ae7bbaab00df6bf71e6ff7a1"
+      ],
+      "merge": "77766a6f9f8560c3ae7bbaab00df6bf71e6ff7a1"
     }
   ],
   "removed": [],
-  "main": "bf57099f714547236b384572c82ecc12d7551ef9",
-  "previous": "1cb184543c06531360b47b503faa5f731a679feb",
-  "candidate": "be080e94ade249a59d9ed4caf4f4a1ef"
+  "main": "9a74ff17f7c6ab11b31d0e87cec4b6583ffb8c4b",
+  "previous": "acdc97c55b3149aeb277b9714910b3c5ee447142",
+  "candidate": "0e0c968402c9402083cdd68f3ee4c8e1"
 }
