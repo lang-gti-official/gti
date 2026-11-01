@@ -28,7 +28,7 @@ def main():
         entry = source_dir / "main.gti"
         helper = source_dir / "helper.gti"
         standalone = root / "standalone.gti"
-        helper.write_text(SOURCE)
+        helper.write_text(SOURCE.replace("module helper;", "module auxiliary;"))
         standalone.write_text(SOURCE)
         entry.write_text(SOURCE)
         (project / "gti.toml").write_text(
@@ -38,7 +38,7 @@ def main():
             '[targets.checks]\nkind = "test"\nroot = "src/checks.gti"\n'
         )
         test_root = source_dir / "checks.gti"
-        test_root.write_text(SOURCE)
+        test_root.write_text(SOURCE.replace("module helper;", "module checks;"))
         library_dir = root / "library"
         library_dir.mkdir()
         (library_dir / "gti.toml").write_text(
