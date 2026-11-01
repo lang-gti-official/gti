@@ -1,5 +1,7 @@
 #pragma once
 
+#include "gti/compiled_interface_types.h"
+#include "gti/compiled_scalar_signature.h"
 #include "gti/diagnostic.h"
 #include "gti/mir.h"
 #include "gti/target.h"
@@ -301,6 +303,13 @@ struct LoweredClassBase {
 };
 
 struct LoweredClassDeclaration {
+  bool explicitlyExported = false;
+  // Declaration-complete source facts survive executable member pruning.
+  std::optional<AccessModifier> defaultedDefaultAccess;
+  bool declaresOtherConstructors = false;
+  bool declaresMemberFunctions = false;
+  bool declaresDestructor = false;
+  bool declaresNestedTypes = false;
   ClassId id = 0;
   SourceUnitId sourceUnit = 0;
   std::string qualifiedName;
@@ -361,6 +370,7 @@ struct LoweredEnumerator {
 };
 
 struct LoweredEnumDeclaration {
+  bool explicitlyExported = false;
   EnumId id = 0;
   SemanticType type = SemanticType::Unknown;
   SourceUnitId sourceUnit = 0;
@@ -422,6 +432,7 @@ struct LoweredFunctionDeclaration {
   bool overrideMethod = false;
   bool hasRequiresClause = false;
   bool compilerPrivate = false;
+  bool explicitlyExported = false;
 
   friend bool operator==(const LoweredFunctionDeclaration &,
                          const LoweredFunctionDeclaration &) = default;
@@ -467,6 +478,9 @@ struct LoweredStorageDeclaration {
   AccessMode access = AccessMode::ReadOnly;
   SemanticTypeTraits traits;
   std::optional<ConstantValue> constant;
+  // A declaration default known without executing a body. This does not
+  // make mutable storage constexpr; it preserves the interface's default.
+  std::optional<ConstantValue> initializerConstant;
   Mutability mutability = Mutability::Immutable;
   bool staticStorage = false;
   bool threadLocalStorage = false;
@@ -827,6 +841,20 @@ namespace lowered_detail {
 verifyLoweredProgramContents(const LoweredProgram &program);
 } // namespace lowered_detail
 
+// Compiler-validated linkage for the development scalar separate-unit profile.
+struct CompiledScalarBinding {
+  LoweredFunctionInstanceId function = 0;
+  std::string key;
+  std::string symbol;
+  bool imported = false;
+  SemanticType result = SemanticType::Unknown;
+  SourceUnitId sourceUnit = 0;
+  std::string typeMetadata;
+  std::string resultRecipe;
+  CompiledBorrowContract borrow;
+};
+class CompiledScalarUnitBuilder;
+
 class LoweredProgram final {
 public:
   LoweredProgram(const LoweredProgram &) = default;
@@ -834,6 +862,24 @@ public:
   LoweredProgram &operator=(const LoweredProgram &) = default;
   LoweredProgram &operator=(LoweredProgram &&) noexcept = default;
 
+  [[nodiscard]] const std::vector<CompiledScalarBinding> &
+  compiledScalarBindings() const {
+    return compiledScalarBindings_;
+  }
+  [[nodiscard]] const std::vector<CompiledInterfaceUnit> &
+  compiledInterfaceUnits() const {
+    return compiledInterfaceUnits_;
+  }
+  [[nodiscard]] bool compiledScalarProducer() const {
+    return compiledScalarProducer_;
+  }
+  [[nodiscard]] const CompiledScalarBinding *
+  compiledScalarBinding(LoweredFunctionInstanceId id) const {
+    for (const auto &binding : compiledScalarBindings_)
+      if (binding.function == id)
+        return &binding;
+    return nullptr;
+  }
   [[nodiscard]] const TargetInfo &target() const { return target_; }
   [[nodiscard]] const MirProgram &mir() const { return mir_; }
   [[nodiscard]] SourceDebugProfile sourceDebugProfile() const {
@@ -916,6 +962,10 @@ public:
 
 private:
   LoweredProgram() = default;
+  bool compiledScalarProducer_ = false;
+  std::vector<CompiledScalarBinding> compiledScalarBindings_;
+  std::vector<CompiledInterfaceUnit> compiledInterfaceUnits_;
+  friend class CompiledScalarUnitBuilder;
 
   // Rebuilds the lookup hints from the completed declaration and symbol rows.
   void indexDeclarations();

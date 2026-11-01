@@ -1,0 +1,35 @@
+manifest-version = 1
+[package]
+name = "compiled-dependencies"
+version = "0.1.0"
+
+[targets.base]
+kind = "gti-library"
+root = "base.gti"
+functions = ["base_value"]
+
+[targets.left]
+kind = "gti-library"
+root = "left.gti"
+functions = ["left_value"]
+[[targets.left.compiled-dependencies]]
+target = "base"
+interface = "api/base.gti"
+
+[targets.right]
+kind = "gti-library"
+root = "right.gti"
+functions = ["right_value"]
+[[targets.right.compiled-dependencies]]
+target = "base"
+interface = "api/base.gti"
+
+[targets.app]
+kind = "executable"
+root = "main.gti"
+[[targets.app.compiled-dependencies]]
+target = "left"
+interface = "api/left.gti"
+[[targets.app.compiled-dependencies]]
+target = "right"
+interface = "api/right.gti"

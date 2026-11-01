@@ -1,0 +1,26 @@
+// A user-defined sensor buffer borrows fixed storage: no copy or allocation.
+import std.io;
+
+struct Sensor { mut int reading = 0; public: Sensor() = default; };
+
+void calibrate<uint64_t N>(mut Sensor[N]& sensors, int adjustment) {
+  for (mut uint64_t i = 0; i < sensors.size(); ++i) {
+    sensors[i].reading += adjustment;
+  }
+}
+int total<uint64_t N>(Sensor[N]& sensors) {
+  mut int result = 0;
+  for (mut uint64_t i = 0; i < sensors.size(); ++i) {
+    result += sensors[i].reading;
+  }
+  return result;
+}
+int main() {
+  mut Sensor sensors[3] = {Sensor(), Sensor(), Sensor()};
+  mut auto& writable = sensors;
+  calibrate(writable, 7);
+  // The mutable borrow's last use is above, so a read borrow may now begin.
+  Sensor[3]& readings = sensors;
+  std::println(total(readings));
+  return 0;
+}

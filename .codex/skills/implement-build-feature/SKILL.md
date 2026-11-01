@@ -34,12 +34,13 @@ compiler path.
    Test malformed manifests, unknown fields, precedence, target selection,
    path safety, native failures, and installed resource discovery as relevant.
 8. Update current architecture when behavior lands and update the plan's
-   implementation status. Keep README commands user-focused. Advance `VERSION`
-   when shipped CLI/driver/project behavior changes.
+   implementation status. Keep README commands user-focused. Add a changelog
+   fragment when shipped CLI/driver/project behavior changes; only the release
+   train edits `VERSION` and `CHANGELOG.md`.
 
 After local validation, use `$agent-workflow` and `$finish-release` for PR
 integration, local-main sync and version policy. Respect required PR checks;
-post-merge packaging does not block completion. Explicit PR-only/local-only
+post-merge release publication does not block completion. Explicit PR-only/local-only
 instructions override integration.
 
 Use `$implement-language-feature` as well only when the build change modifies

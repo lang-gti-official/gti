@@ -7,6 +7,7 @@
 #include "gti/driver/build_report.h"
 #include "gti/driver/build_script.h"
 #include "gti/driver/compilation.h"
+#include "gti/driver/compiled_scalar_library.h"
 #include "gti/driver/dependencies.h"
 #include "gti/driver/install.h"
 #include "gti/driver/native_toolchain.h"
@@ -2817,6 +2818,18 @@ int buildProjectPlan(
     std::optional<lang::driver::BuildProvenance> *capturedProvenance = nullptr,
     DiagnosticSummary *capturedDiagnostics = nullptr,
     std::vector<std::string> *capturedTestCases = nullptr) {
+  for (const auto &dependency : plan.compiledBuildDependencies()) {
+    const int status = buildProjectPlan(dependency, options, toolchain,
+                                        diagnosticSources, driver);
+    if (status != exitCode(ExitStatus::Success))
+      return status;
+  }
+  if (plan.compiledLibrary() &&
+      (!plan.buildScripts().empty() || !plan.bindgenImports().empty())) {
+    std::cerr << "gti: compiled library producers do not support native build "
+                 "scripts or bindgen imports in this profile\n";
+    return exitCode(ExitStatus::Usage);
+  }
   lang::cli::BuildProgress progress(
       terminalStyle, progressMode, plan.targetName(),
       plan.profileName() + ", " + lang::driver::targetTriple(plan.target()),
@@ -2943,7 +2956,8 @@ int buildProjectPlan(
               lang::driver::ManagedOutputPolicy{
                   .trustedRoot = plan.workspaceRoot(),
                   .outputRoot = plan.workspaceRoot() / "build" / "gti"},
-              std::move(cCompiler), std::move(cache), std::move(buildReport)),
+              std::move(cCompiler), std::move(cache), std::move(buildReport),
+              plan.compiledLibrary(), std::nullopt, plan.compiledImports()),
           progress.observer());
   progress.suspend();
   const int status = reportBuildResult(
@@ -3164,6 +3178,12 @@ int runProjectBuildAll(const ProjectOptions &options, const char *driver) {
 int generateProjectBindgenImports(const lang::driver::ProjectBuildPlan &plan,
                                   const lang::SourceManager &sources,
                                   bool verbose, std::ostream &statusStream) {
+  if (plan.compiledLibrary() && !plan.bindgenImports().empty()) {
+    std::cerr
+        << "gti: compiled library producers do not support bindgen imports "
+           "in this profile\n";
+    return exitCode(ExitStatus::Usage);
+  }
   if (plan.bindgenImports().empty()) {
     return exitCode(ExitStatus::Success);
   }
@@ -3297,11 +3317,22 @@ int runProject(const ProjectOptions &options, const char *driver) {
   }
 
   const lang::driver::ProjectBuildPlan &plan = *resolution.plan;
+  if ((plan.compiledLibrary() || !plan.compiledImports().empty()) &&
+      options.emitMir) {
+    std::cerr
+        << "gti: compiled-library targets do not support --emit-mir "
+           "in this profile; use gti check for artifact-aware validation\n";
+    return exitCode(ExitStatus::Usage);
+  }
   if (options.command == ProjectCommand::Run &&
       plan.targetKind() != lang::driver::ProjectTargetKind::Executable) {
-    std::cerr << "gti: target '" << plan.targetName()
-              << "' is a test target; use gti test " << plan.targetName()
-              << "\n";
+    if (plan.targetKind() == lang::driver::ProjectTargetKind::Test)
+      std::cerr << "gti: target '" << plan.targetName()
+                << "' is a test target; use gti test " << plan.targetName()
+                << "\n";
+    else
+      std::cerr << "gti: target '" << plan.targetName()
+                << "' is not an executable target\n";
     return exitCode(ExitStatus::Usage);
   }
   std::optional<lang::driver::InstallRequest> install;
@@ -3339,7 +3370,8 @@ int runProject(const ProjectOptions &options, const char *driver) {
     }
     return invokeProjectProgram(plan, options, true);
   }
-  {
+  if (!(options.command == ProjectCommand::Check &&
+        (plan.compiledLibrary() || !plan.compiledImports().empty()))) {
     std::ostream &bindgenStream =
         options.command == ProjectCommand::Run ? std::cerr : std::cout;
     const int bindgenStatus = generateProjectBindgenImports(
@@ -3403,18 +3435,25 @@ int runProject(const ProjectOptions &options, const char *driver) {
         plan.profileName() + ", " + lang::driver::targetTriple(plan.target()),
         lang::cli::optimizationNumber(plan.optimization()), options.verbose,
         true, lang::cli::ProgressOperation::Check);
-    const lang::driver::CheckResult result = lang::driver::checkCompilation(
-        lang::driver::CompilationRequest(
-            plan.entry(), toolchain.standardLibrary, plan.target(),
-            plan.optimization(), plan.cppStandard(), plan.packageSources(),
-            plan.configurationFlags(), {}, plan.warnings(), false,
-            plan.packageWarnings(), plan.rawPointerAudit(),
-            plan.programRequest(), plan.declaredConfigurationFlags(),
-            plan.rawPointerAuditLibraryFindings())
-            .forExecutable(),
-        progress.observer());
+    const lang::driver::CheckResult result =
+        plan.compiledLibrary() || !plan.compiledImports().empty()
+            ? lang::driver::checkCompiledScalarProject(plan, toolchain,
+                                                       progress.observer())
+            : lang::driver::checkCompilation(
+                  lang::driver::CompilationRequest(
+                      plan.entry(), toolchain.standardLibrary, plan.target(),
+                      plan.optimization(), plan.cppStandard(),
+                      plan.packageSources(), plan.configurationFlags(), {},
+                      plan.warnings(), false, plan.packageWarnings(),
+                      plan.rawPointerAudit(), plan.programRequest(),
+                      plan.declaredConfigurationFlags(),
+                      plan.rawPointerAuditLibraryFindings())
+                      .forExecutable(),
+                  progress.observer());
     progress.suspend();
     if (!result.succeeded()) {
+      if (result.driverDiagnostic)
+        std::cerr << *result.driverDiagnostic << '\n';
       reportDiagnostics(result.diagnostics, result.sources);
       DiagnosticSummary summary = summarizeDiagnostics(result.diagnostics);
       summary.errors = std::max<std::size_t>(summary.errors, 1);

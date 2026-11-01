@@ -116,6 +116,21 @@ def main():
                             "options": {"tabSize": 2, "insertSpaces": True}})
             assert edits and edits[0]["newText"] == SOURCE, edits
             clean(change(9, edits[0]["newText"]))
+            arrays = """int main() {
+  mut int values[3] = {1, 2, 3};
+  mut auto& borrowed = values;
+  borrowed[1] = 7;
+  return borrowed[1] - 7;
+}
+"""
+            clean(change(10, arrays))
+            array_hover = request("textDocument/hover", {
+                "textDocument": {"uri": uri},
+                "position": lsp_position(arrays, arrays.index("auto&"))})
+            assert "mut int32_t[3]&" in array_hover["contents"]["value"], array_hover
+            array_conflict = arrays.replace("  return borrowed", "  values[0] = 4;\n  return borrowed")
+            assert any(item.get("code") == "GTI-S2017" for item in change(11, array_conflict))
+            clean(change(12, arrays))
         finally:
             session.close()
     print("Inferred reference LSP checks passed")

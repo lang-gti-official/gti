@@ -42,9 +42,11 @@ FrontendResult analyze(const CompilationRequest &request,
   options.sourceDebugProfile = request.debugInfo()
                                    ? SourceDebugProfile::LexicalV1
                                    : SourceDebugProfile::None;
-  // Artifacts contain only code the program roots reach.
+  // Artifact analysis retains complete application diagnostics while
+  // discovering compiler-trusted bodies only through application use.
   options.lowerReachableOnly = true;
   options.lowerLibraryReachableOnly = artifact;
+  options.retainApplicationBodies = artifact && request.applicationBodies();
   const auto finish = [&](FrontendResult result) {
     addIncludeSuggestions(
         result, options, request.entry(), {request.standardLibrary().prelude},
@@ -432,8 +434,9 @@ CompilationRequest CompilationRequest::withLlvmInstrumentation(
   return result;
 }
 
-CompilationInputs loadCompilationInputs(const CompilationRequest &request,
-                                        ProgressObserver *progress) {
+CompilationInputs loadCompilationInputs(
+    const CompilationRequest &request, ProgressObserver *progress,
+    const std::unordered_map<std::string, std::string> &overrides) {
   SourceLoader sourceLoader;
   CompilationInputs inputs;
   std::vector<std::filesystem::path> preludes{
@@ -446,7 +449,7 @@ CompilationInputs loadCompilationInputs(const CompilationRequest &request,
     const PhaseTimeScope timeScope("gti-source-load");
     const ProgressScope loadProgress(progress, ProgressPhase::Loading);
     inputs.sourceGraph = sourceLoader.load(
-        request.entry(), std::nullopt, preludes, {},
+        request.entry(), std::nullopt, preludes, overrides,
         {request.standardLibrary().root}, std::nullopt,
         request.packageSources(), request.target(),
         request.configurationFlags(), request.declaredConfigurationFlags());
@@ -468,6 +471,12 @@ CompilationResult compileWithBackend(const CompilationRequest &request,
                                      ProgressObserver *progress) {
   return compileWithLoadedInputs(
       request, loadCompilationInputs(request, progress), backend, progress);
+}
+
+CompilationResult compileWithBackend(const CompilationRequest &request,
+                                     CompilationInputs inputs, Backend &backend,
+                                     ProgressObserver *progress) {
+  return compileWithLoadedInputs(request, std::move(inputs), backend, progress);
 }
 
 CheckResult checkCompilation(const CompilationRequest &request,

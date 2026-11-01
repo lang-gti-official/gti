@@ -11,6 +11,21 @@
 
 namespace lang {
 namespace {
+// A selected signature may have a concrete outer kind while its layout or
+// specialization still depends on a generic value. Keep this broader query
+// separate from the type-parameter-only predicate used by type resolution.
+bool hasUnresolvedImmediateInput(const SemanticType &type) {
+  return type.kind == SemanticType::TypeParameter ||
+         (type.kind == SemanticType::TypePack && !type.concretePack) ||
+         type.arrayLengthParameterId != 0 ||
+         std::any_of(type.valueArguments.begin(), type.valueArguments.end(),
+                     [](const CompileTimeValue &value) {
+                       return value.kind == CompileTimeValue::Parameter;
+                     }) ||
+         std::any_of(type.arguments.begin(), type.arguments.end(),
+                     hasUnresolvedImmediateInput);
+}
+
 // A staging request borrows its already-owned arguments. Failed effect
 // journals are uncommon; do not allocate an owning key merely to check an
 // empty journal on every ordinary constant-evaluation call.
@@ -152,6 +167,203 @@ private:
   ValidateResult validate;
 };
 } // namespace
+
+auto SemanticVisitor::Impl::insideImmediateFunction() const -> bool {
+  if (currentProgramEffectOwner.kind == ProgramEffectOwnerKind::Function) {
+    const auto *enclosing =
+        semanticModel.findFunction(currentProgramEffectOwner.id);
+    return enclosing && enclosing->bodyDeclaration()->isConsteval();
+  }
+  if (currentProgramEffectOwner.kind == ProgramEffectOwnerKind::Constructor) {
+    const auto *enclosing = programConstructor(currentProgramEffectOwner.id);
+    return enclosing && enclosing->declaration &&
+           enclosing->declaration->isConsteval();
+  }
+  return false;
+}
+
+auto SemanticVisitor::Impl::immediateConstructionDependent(
+    const ResolvedConstructionInfo &construction) const -> bool {
+  bool dependent = hasUnresolvedImmediateInput(construction.constructedType);
+  for (const auto &type : construction.parameterTypes)
+    dependent |= hasUnresolvedImmediateInput(type);
+  for (const auto &type : construction.typeArguments)
+    dependent |= hasUnresolvedImmediateInput(type);
+  for (const auto &value : construction.valueArguments)
+    dependent |= value.kind == CompileTimeValue::Parameter;
+  return dependent;
+}
+
+auto SemanticVisitor::Impl::reportImmediateEvaluationFailure(
+    const Token &site, const Token &declaration,
+    const ConstexprEvaluation &result) -> void {
+  report(site, "Consteval invocation must be evaluated during compilation.",
+         "GTI-S2057");
+  auto &diagnostic = diagnostics.back();
+  if (!result.detail.empty())
+    diagnostic.hints.push_back(result.detail);
+  switch (result.failure) {
+  case ConstantEvaluationFailure::ResourceLimit:
+    diagnostic.hints.emplace_back(
+        "Immediate evaluation exceeded the shared step or call-depth limit.");
+    break;
+  case ConstantEvaluationFailure::DivisionByZero:
+  case ConstantEvaluationFailure::ModuloByZero:
+    diagnostic.hints.emplace_back(
+        "Constant evaluation encountered a zero divisor.");
+    break;
+  case ConstantEvaluationFailure::IntegerOverflow:
+    diagnostic.hints.emplace_back(
+        "Constant evaluation overflowed the checked integer domain.");
+    break;
+  case ConstantEvaluationFailure::ConversionOutOfRange:
+    diagnostic.hints.emplace_back(
+        "The constant conversion is outside the target type's range.");
+    break;
+  default:
+    break;
+  }
+  diagnostic.related.push_back(
+      {tokenSpan(result.location),
+       result.failure == ConstantEvaluationFailure::NonConstantReference
+           ? "This expression depends on a runtime value."
+           : "Constant evaluation failed at this operation."});
+  diagnostic.related.push_back(
+      {tokenSpan(declaration), "Immediate declaration is here."});
+  result.trace.appendTo(diagnostic);
+}
+
+// Immediate invocations are a semantic requirement. The existing staged
+// executor owns execution; only its persistable result crosses into runtime IR.
+auto SemanticVisitor::Impl::enforceImmediateInvocation(const Expr &expression,
+                                                       bool contextual)
+    -> void {
+  const FunctionDecl *function = nullptr;
+  const ConstructorDecl *constructor = nullptr;
+  FunctionId selectedFunction = 0;
+  bool dependent = false;
+  SemanticType invocationType = SemanticType::Unknown;
+  if (const auto *call = exprAs<Call>(&expression)) {
+    if (const auto *resolved = semanticModel.findCall(*call)) {
+      const auto *info = semanticModel.findFunction(resolved->function);
+      function = info ? info->bodyDeclaration() : resolved->declaration;
+      selectedFunction = resolved->function;
+      invocationType = resolved->returnType;
+      dependent = hasUnresolvedImmediateInput(resolved->returnType) ||
+                  hasUnresolvedImmediateInput(resolved->dispatchOwner);
+      for (const auto &type : resolved->parameterTypes)
+        dependent |= hasUnresolvedImmediateInput(type);
+      for (const auto &type : resolved->typeArguments)
+        dependent |= hasUnresolvedImmediateInput(type);
+      for (const auto &value : resolved->valueArguments)
+        dependent |= value.kind == CompileTimeValue::Parameter;
+    }
+  }
+  if (const auto *resolved = semanticModel.findOperator(expression)) {
+    const auto *info = semanticModel.findFunction(resolved->function);
+    function = info ? info->bodyDeclaration() : resolved->declaration;
+    selectedFunction = resolved->function;
+    invocationType = resolved->returnType;
+    dependent |= hasUnresolvedImmediateInput(resolved->returnType) ||
+                 hasUnresolvedImmediateInput(resolved->dispatchOwner);
+    for (const auto &type : resolved->parameterTypes)
+      dependent |= hasUnresolvedImmediateInput(type);
+  }
+  const auto *construction =
+      contextual ? semanticModel.findContextualConstruction(expression)
+                 : semanticModel.findConstruction(expression);
+  if (const auto *resolved = construction) {
+    constructor = resolved->declaration;
+    dependent |= immediateConstructionDependent(*resolved);
+  }
+  const auto *conversion =
+      contextual ? semanticModel.findContextualConversion(expression) : nullptr;
+  if (conversion) {
+    const auto *info = semanticModel.findFunction(conversion->function);
+    function = info ? info->bodyDeclaration() : conversion->declaration;
+    selectedFunction = conversion->function;
+    invocationType = conversion->returnType;
+    dependent |= hasUnresolvedImmediateInput(conversion->returnType) ||
+                 hasUnresolvedImmediateInput(conversion->dispatchOwner);
+    for (const auto &type : conversion->parameterTypes)
+      dependent |= hasUnresolvedImmediateInput(type);
+  }
+  if (!(function && function->isConsteval()) &&
+      !(constructor && constructor->isConsteval()))
+    return;
+
+  if (insideImmediateFunction())
+    return;
+  if (dependent)
+    return; // Concrete semantic reanalysis owns dependent invocation checks.
+
+  const auto type = conversion ? conversion->returnType
+                    : contextual && construction
+                        ? construction->constructedType
+                        : semanticModel.typeOf(expression);
+  const bool voidStatement =
+      type == SemanticType::Void && function != nullptr &&
+      constructor == nullptr && !contextual && selectedFunction != 0 &&
+      macroStatementContext != nullptr &&
+      macroStatementContext->expression().get() == &expression;
+  const Token site = expressionToken(expression);
+  ConstexprInterpreter context = makeConstexprInterpreter();
+  context.requireMir = true;
+  context.recordValues = false;
+  context.allowVoidCompletion = voidStatement;
+  context.immediateRoot = &expression;
+  ConstexprEvaluation result;
+  if (type == SemanticType::Void && !voidStatement) {
+    result = constexprFailure(
+        site, ConstantEvaluationFailure::UnsupportedType,
+        "An immediate void call must be a standalone expression statement.");
+  } else if (invocationType.kind == SemanticType::Reference ||
+             (type != SemanticType::Void && !isSupportedConstexprType(type))) {
+    result = constexprFailure(
+        site, ConstantEvaluationFailure::UnsupportedType,
+        "An immediate invocation must publish a supported value, without "
+        "stored references or active cleanup.");
+  } else if (conversion) {
+    const ResolvedCallInfo call{.function = conversion->function,
+                                .declaration = conversion->declaration,
+                                .returnType = conversion->returnType,
+                                .parameterTypes = conversion->parameterTypes,
+                                .dispatch = conversion->dispatch,
+                                .dispatchOwner = conversion->dispatchOwner,
+                                .receiverMode = conversion->receiverMode};
+    result =
+        evaluateConstexprCall(expression, call, &expression, {}, site, context);
+  } else if (construction &&
+             (contextual || (!exprAs<Call>(&expression) &&
+                             !exprAs<DirectInitializer>(&expression)))) {
+    // A contextual initializer, including exact nullptr construction, is the
+    // constructor's sole explicit argument as well as its result source node.
+    // Evaluate that underlying operand once rather than treating the node as
+    // an ordinary constructor-call syntax with its own argument list.
+    result = evaluateConstexprConstruction(&expression, *construction, {}, site,
+                                           context, &expression);
+  } else {
+    result = evaluateConstexprExpression(expression, context);
+  }
+  if (result.genericDependency)
+    return; // Argument values can depend on generics with concrete signatures.
+  if (!result.value && !result.voidCompletion) {
+    reportImmediateEvaluationFailure(
+        site, constructor ? constructor->name() : function->name(), result);
+    return;
+  }
+  if (result.voidCompletion) {
+    semanticModel.recordImmediateVoidCompletion(*macroStatementContext,
+                                                expression, selectedFunction);
+    semanticModel.recordDefinedFailure(expression, {});
+    discardImmediateProgramEffects(expression);
+    return;
+  }
+  semanticModel.recordImmediateInvocation(
+      expression, {.info = expressionInfo(type), .value = *result.value});
+  semanticModel.recordDefinedFailure(expression, {});
+  discardImmediateProgramEffects(expression);
+}
 
 SemanticVisitor::Impl::SemanticCatalog::SemanticCatalog(
     const SemanticCatalog &other) {
@@ -815,6 +1027,7 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
                [&](const auto &value) { return payload(value.info.type); });
   };
   const bool requiresMir =
+      context.requireMir ||
       std::any_of(
           mir.program.functionInstances().begin(),
           mir.program.functionInstances().end(),
@@ -894,9 +1107,13 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
     ++workMetrics->constexprMirExecutions;
   }
   if (result.voidResult)
-    return constexprFailure(
-        callSite, ConstantEvaluationFailure::UnsupportedType,
-        "A void constexpr call does not produce a constant value.");
+    return context.allowVoidCompletion
+               ? ConstexprEvaluation{.voidCompletion = true,
+                                     .location = callSite}
+               : constexprFailure(callSite,
+                                  ConstantEvaluationFailure::UnsupportedType,
+                                  "A void constexpr call does not produce a "
+                                  "constant value.");
   const auto sourceLocation =
       [&](MirBodyAddress address, MirBlockId blockId,
           MirInstructionId instructionId) -> std::optional<Token> {

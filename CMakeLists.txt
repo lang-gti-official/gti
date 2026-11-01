@@ -539,6 +539,9 @@ add_library(
   "src/compiler/parser.cpp"
   "src/compiler/process_memory_runtime.cpp"
   "src/compiler/semantic_model.cpp"
+  "src/compiler/persistent_declaration.cpp"
+  "src/compiler/compiled_scalar_unit.cpp"
+  "src/compiler/compiled_interface_types.cpp"
   "src/compiler/semantic_instance_reuse.cpp"
   "src/compiler/semantic_preamble.cpp"
   "src/compiler/semantic_diagnostics.cpp"
@@ -608,6 +611,8 @@ add_library(
   "src/compiler/llvm/admission.cpp"
   "src/compiler/llvm/coverage.cpp"
   "src/compiler/llvm/session.cpp"
+  "src/compiler/llvm/checked_reductions.cpp"
+  "src/compiler/llvm/checked_ranges.cpp"
   "src/compiler/llvm/debug_info.cpp"
   "src/compiler/llvm/instrumentation.cpp"
   "src/compiler/llvm/layout.cpp"
@@ -733,6 +738,8 @@ endif()
 add_library(
   "gti_driver" STATIC
   "src/driver/artifact.cpp"
+  "src/driver/library_bundle.cpp"
+  "src/driver/compiled_scalar_library.cpp"
   "src/driver/embedding_library.cpp"
   "src/driver/bindgen_import.cpp"
   "src/driver/build_script.cpp"

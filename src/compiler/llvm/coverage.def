@@ -952,6 +952,7 @@ LLVM_COVERAGE_ENTRY(ProgramInitialization, 4, LLVM_COVERAGE_IMPLEMENTED("llvm_sc
 LLVM_COVERAGE_ENTRY(EmbeddingExports, 11, Pending, None, "versioned export, initialization and containment adapters")
 LLVM_COVERAGE_ENTRY(InfallibleEmbedding, 11, LLVM_COVERAGE_IMPLEMENTED("llvm_embedding_execution", "infallible"), None, "sealed export roots and infallible native-unwind-free closure; module-local context, C wrappers and descriptor; no fallible transport admission")
 LLVM_COVERAGE_ENTRY(RuntimeBinding, 12, Pending, None, "exact source runtime declaration needs an explicit native binding")
+LLVM_COVERAGE_ENTRY(CompiledScalarImport, 11, LLVM_COVERAGE_IMPLEMENTED_GAP("compiled_scalar_library executes source-absent imports; promotion provider still needs an exact artifact-input profile"), None, "compiler-verified source-bound fixed-scalar GTI compiled-library declaration with typed scalar/void result and conservative failure channel")
 LLVM_COVERAGE_ENTRY(LibraryDeclaration, 11, Pending, None, "ABI-only declaration is not an executable definition")
 LLVM_COVERAGE_ENTRY(GeneratedDependencies, 4, LLVM_COVERAGE_IMPLEMENTED("llvm_scalar_execution", "globals"), None, "scalar native execution; unsupported storage, ownership and dispatch remain separately gated")
 LLVM_COVERAGE_ENTRY(FixedArray, 5, Pending, None, "concrete array element type, dimensions and extent")

@@ -1246,7 +1246,8 @@ private:
           seedConcreteDeclarationType(parameter);
         }
       }
-      if (info == nullptr || !info->genericParameters.empty()) {
+      if (info == nullptr || function->isConsteval() ||
+          !info->genericParameters.empty()) {
         return;
       }
       std::vector<SemanticType> classArguments;
@@ -3513,10 +3514,9 @@ private:
     }
   }
 
-  [[nodiscard]] std::vector<HirValueId>
-  mapFullExpressionRoots(const HirBody &body,
-                         const FullExpressionLookup &lookup,
-                         const SemanticFullExpression &expression) {
+  [[nodiscard]] std::vector<HirValueId> mapFullExpressionRoots(
+      const HirBody &body, const FullExpressionLookup &lookup,
+      const SemanticFullExpression &expression, const SemanticModel &model) {
     std::vector<HirValueId> roots;
     if (expression.roots.empty() && expression.statement != nullptr) {
       for (const auto &construction : body.emptyReturnConstructions)
@@ -3526,6 +3526,10 @@ private:
     }
     roots.reserve(expression.roots.size());
     for (const Expr *source : expression.roots) {
+      if (const auto *statement = stmtAs<ExpressionStmt>(expression.statement))
+        if (const auto proof = model.immediateVoidCompletionProof(*statement);
+            proof && proof->expression() == source)
+          continue;
       const HirValue *found =
           source == nullptr ? nullptr : lookup.forRoot(body, *source);
       if (found == nullptr) {
@@ -3647,7 +3651,8 @@ private:
           pending.constructorInitializer != 0 &&
                   pending.constructorInitializer <= initializers.size()
               ? initializers[pending.constructorInitializer - 1].arguments
-              : mapFullExpressionRoots(body, lookup, *pending.expression);
+              : mapFullExpressionRoots(body, lookup, *pending.expression,
+                                       model);
       appendFullExpression(body, lookup, roots, pending.statement,
                            pending.constructorInitializer);
     }
@@ -3894,6 +3899,14 @@ private:
       return std::nullopt;
     }
     if (const auto *expression = stmtAs<ExpressionStmt>(statement)) {
+      if (const auto proof = model.immediateVoidCompletionProof(*expression)) {
+        if (proof->expression() != expression->expression().get())
+          lifecycleValid = false;
+        body.immediateVoidCompletions.push_back(
+            {.source = expression, .completionProof = proof});
+        return appendStatement(
+            {.kind = HirStatementKind::Expression, .source = statement}, body);
+      }
       if (auto expansion = model.shareMacroExpansion(*expression)) {
         // A void template with no local return needs no result join. Preserve
         // the existing statement-only lowering and its exact loan endpoints.
@@ -4094,9 +4107,33 @@ private:
       std::optional<HirValueId> returned;
       if (const auto proof =
               model.emptyReturnConstructionProof(*returnStatement)) {
-        returned = lowerContextualConstructionAt(
-            nullptr, returnStatement, proof->construction(), model,
-            classArguments, classValueArguments, body);
+        if (proof->immediateRequired()) {
+          if (!proof->immediateValue()) {
+            lifecycleValid = false;
+          } else {
+            const SemanticType &type = proof->construction().constructedType;
+            (void)enqueueClass(type);
+            const HirValueId id = nextValueId++;
+            body.values.push_back(
+                {.id = id,
+                 .kind = HirValueKind::Literal,
+                 .info = {.type = type,
+                          .category = ValueCategory::Value,
+                          .access = AccessMode::ReadOnly,
+                          .traits = instanceProvider->traitsFor(type)},
+                 .constant = *proof->immediateValue(),
+                 .programConstantSubstitution = true});
+            body.emptyReturnConstructions.push_back(
+                {.source = returnStatement,
+                 .value = id,
+                 .constructionProof = proof});
+            returned = id;
+          }
+        } else {
+          returned = lowerContextualConstructionAt(
+              nullptr, returnStatement, proof->construction(), model,
+              classArguments, classValueArguments, body);
+        }
       } else {
         returned =
             lowerReturnExpression(returnStatement->value(), model,
@@ -5731,6 +5768,18 @@ private:
       return lowerDefaultArgument(&expression, model, classArguments,
                                   classValueArguments, body,
                                   sourceLocationAt(*caller));
+    if (const auto *immediate = model.findImmediateInvocation(expression)) {
+      (void)enqueueClass(immediate->info.type);
+      const HirValueId id = nextValueId++;
+      body.values.push_back({.id = id,
+                             .kind = HirValueKind::Literal,
+                             .source = &expression,
+                             .info = immediate->info,
+                             .constant = immediate->value,
+                             .programConstantSubstitution = true});
+      output.program.sourceValueIds[&expression].push_back(id);
+      return id;
+    }
     if (contextualConstructionInner != &expression) {
       if (const ResolvedConstructionInfo *construction =
               model.findContextualConstruction(expression)) {
@@ -5776,9 +5825,30 @@ private:
       }
     }
     if (const Expr *alias = model.findExpressionAlias(expression)) {
-      // A reflected field access lowers as the field projection it denotes.
+      // A checked alias may retain an already analyzed source evaluation.
+      // Its temporaries share the enclosing full expression, as for comma.
+      std::optional<HirValueId> prelude;
+      if (const Expr *source = model.findExpressionAliasPrelude(expression)) {
+        prelude = lowerExpression(*source, model, classArguments,
+                                  classValueArguments, body);
+        if (!prelude) {
+          lifecycleValid = false;
+          return std::nullopt;
+        }
+      }
       const auto id = lowerExpression(*alias, model, classArguments,
                                       classValueArguments, body);
+      if (id && prelude) {
+        const auto produced = std::find_if(
+            body.values.begin(), body.values.end(),
+            [&](const HirValue &value) { return value.id == *id; });
+        if (produced == body.values.end()) {
+          lifecycleValid = false;
+          return std::nullopt;
+        }
+        produced->sequencedInputs.insert(produced->sequencedInputs.begin(),
+                                         *prelude);
+      }
       if (id) {
         body.sourceAliases.push_back({.source = &expression, .value = *id});
         output.program.sourceValueIds[&expression].push_back(*id);

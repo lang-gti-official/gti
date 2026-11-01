@@ -1,0 +1,8 @@
+export module right;
+
+export int right_value(int value) {
+    if (value == 0) {
+        return 35;
+    }
+    return 0;
+}

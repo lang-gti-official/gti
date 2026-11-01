@@ -227,6 +227,8 @@ def cut_contract(base):
     with inside(repo.work):
         selected = quiet(select, train.REPOSITORY, "refs/heads/main", 24, NOW, verified)
         assert selected == {"cut": "true", "sha": nightly, "version": "0.10.3"}
+        assert quiet(select, train.REPOSITORY, "refs/heads/main", 24, NOW,
+                     lambda repository, sha: {"run_id": "23", "run_attempt": "2"}) == selected
         # A tag alone is not publication: uploads may have stopped before BUILD_ID.
         publication["assets"][0]["digest"] = "sha256:" + "0" * 64
         assert quiet(select, train.REPOSITORY, "refs/heads/main", 24, NOW, verified)["cut"] == "false"
@@ -383,6 +385,21 @@ def beta_contract(base):
                 contains="merge-queue")
         refused(train.select_beta, train.REPOSITORY, "refs/heads/main", evidence_for({nightly}),
                 contains="merge-queue")
+        # A nightly commissioned by full main CI can seed the train, but its
+        # evidence must never replace queue acceptance of the release-cut merge.
+        called = []
+        def full_nightly(repository, sha):
+            assert repository == train.REPOSITORY and sha == nightly
+            called.append(sha)
+            return {"run_id": "23", "run_attempt": "2"}
+        assert quiet(train.select_beta, train.REPOSITORY, "refs/heads/main",
+                     evidence_for({merge}), full_nightly) == selected
+        assert called == [nightly]
+        refused(train.select_beta, train.REPOSITORY, "refs/heads/main",
+                evidence_for(set()), full_nightly, contains="merge-queue")
+        assert called == [nightly], "failed cut merge must stop before nightly evidence"
+        refused(train.select_beta, train.REPOSITORY, "refs/heads/main",
+                evidence_for({merge}), evidence_for(set()), contains="merge-queue")
         refused(train.select_beta, train.REPOSITORY, "refs/heads/feature", verified)
         repo.push(f"{later}:refs/heads/beta/0.11")
         refused(train.select_beta, train.REPOSITORY, "refs/heads/main", verified, contains="new line")

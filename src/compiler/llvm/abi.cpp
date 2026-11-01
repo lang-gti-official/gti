@@ -278,7 +278,9 @@ llvm::Function *Abi::declareFunction(HirFunctionInstanceId id) {
 #else
       "__gti_native_v";
 #endif
-  const auto name = native
+  const auto *compiled = session.program().compiledScalarBinding(id);
+  const auto name = compiled && compiled->imported ? compiled->symbol
+                    : native
                         ? function->externalSymbol
                         : privatePrefix + std::to_string(executionAbiVersion) +
                               "_f" + std::to_string(id);

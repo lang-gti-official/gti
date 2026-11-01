@@ -1,0 +1,1 @@
+Add consuming invocation through owned inline storage, including `inline_polymorphic::invoke_once<R>`. Eligible small once-invoked callbacks avoid heap allocation; larger or cleanup-bearing targets remain boxed. Immediate named-method calls on consumed fields now retain cleanup in their enclosing owner, matching call operators.

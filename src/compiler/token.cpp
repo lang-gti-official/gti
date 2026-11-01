@@ -11,6 +11,7 @@ const std::unordered_map<std::string_view, TokenKind> keywords{
     {"concept", TokenKind::CONCEPT},
     {"const", TokenKind::CONST},
     {"constexpr", TokenKind::CONSTEXPR},
+    {"consteval", TokenKind::CONSTEVAL},
     {"continue", TokenKind::CONTINUE},
     {"default", TokenKind::DEFAULT},
     {"delete", TokenKind::DELETE},

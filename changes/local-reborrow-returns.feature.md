@@ -1,0 +1,1 @@
+Return caller-owned references through local reborrow chains without lifetime annotations. Receiver and reference-parameter origins, access permissions, and cleanup boundaries remain checked, including chains through generic helpers and accessor results.

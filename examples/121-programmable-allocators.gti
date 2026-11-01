@@ -37,12 +37,18 @@ public:
 };
 }
 
+std::resource_vector<std::string, engine::Arena>
+make_names(std::resource_ref<engine::Arena> resource) {
+  // The returned owner retains the provider borrow after this parameter ends.
+  return std::resource_vector<std::string, engine::Arena>(resource);
+}
+
 int use_arena(std::resource_ref<engine::Arena> resource) {
   // Two independent owners coexist. Only the allocation handles move, never
   // the FixedObject, and vector growth does not affect the fixed allocation.
   mut engine::Slots<engine::FixedObject, engine::Arena> objects{resource, std::size_t(2)};
   objects.emplace(std::size_t(1), std::string("stationary"), 42);
-  mut std::resource_vector<std::string, engine::Arena> names{resource};
+  mut std::resource_vector<std::string, engine::Arena> names = make_names(resource);
   names.emplace_back("one");
   names.emplace_back("two");
   names.emplace_back("three");

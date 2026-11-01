@@ -20,9 +20,9 @@ auto SemanticVisitor::Impl::nativeFunctionCandidateIsEligible(
     return false;
   }
   const FunctionDecl &declaration = *candidate.declaration;
-  return declaration.body() != nullptr && !declaration.runtimeBinding() &&
-         !declaration.hasCLinkage() && !declaration.operatorName() &&
-         !candidate.record().macroExpansion;
+  return declaration.body() != nullptr && !declaration.isConsteval() &&
+         !declaration.runtimeBinding() && !declaration.hasCLinkage() &&
+         !declaration.operatorName() && !candidate.record().macroExpansion;
 }
 
 auto SemanticVisitor::Impl::functionItemCandidateIsEligible(
@@ -37,9 +37,10 @@ auto SemanticVisitor::Impl::functionItemCandidateIsEligible(
     return false;
   }
   const FunctionDecl &declaration = *candidate.declaration;
-  return declaration.body() != nullptr && !declaration.runtimeBinding() &&
-         !declaration.hasCLinkage() && !declaration.operatorName() &&
-         !candidate.record().macroExpansion && !candidate.record().entryPoint;
+  return declaration.body() != nullptr && !declaration.isConsteval() &&
+         !declaration.runtimeBinding() && !declaration.hasCLinkage() &&
+         !declaration.operatorName() && !candidate.record().macroExpansion &&
+         !candidate.record().entryPoint;
 }
 
 auto SemanticVisitor::Impl::nativeFunctionCandidateMatches(
@@ -2703,13 +2704,32 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
     resolved.dependentTextPublication = true;
   }
   if (emptyReturn != nullptr) {
-    if (currentProgramEffectOwner.valid())
+    std::optional<ConstantValue> immediateValue;
+    const bool immediate = resolved.declaration &&
+                           resolved.declaration->isConsteval() &&
+                           !insideImmediateFunction();
+    if (immediate && !immediateConstructionDependent(resolved)) {
+      ConstexprInterpreter context = makeConstexprInterpreter();
+      context.requireMir = true;
+      context.recordValues = false;
+      ConstexprEvaluation result =
+          evaluateConstexprConstruction(nullptr, resolved, {}, paren, context);
+      if (!result.genericDependency) {
+        if (!result.value) {
+          reportImmediateEvaluationFailure(paren, resolved.declaration->name(),
+                                           result);
+          return;
+        }
+        immediateValue = std::move(result.value);
+      }
+    }
+    if (!immediate && currentProgramEffectOwner.valid())
       static_cast<void>(
           recordProgramConstructionEffects(tokenSpan(paren), resolved, 0));
     semanticModel.recordEmptyReturnConstruction(
         *emptyReturn, std::move(resolved),
-        selected.constructor != nullptr &&
-            selected.constructor->requiresUnsafe);
+        selected.constructor != nullptr && selected.constructor->requiresUnsafe,
+        immediate, std::move(immediateValue));
   } else if (contextualConstruction) {
     // The initializer keeps its own construction, call and occurrence records.
     // A converted value that holds its argument's owner is a dependent value
@@ -3571,6 +3591,8 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
   if (type.qualifiedOwner) {
     if (const std::optional<ConceptId> protocol =
             protocolConceptOwner(*type.qualifiedOwner, currentNamespace)) {
+      if (!deferringTypeAliasConstraints)
+        recordTypeUse(type);
       validateAssociatedTypePath(type, *protocol);
       return;
     }
@@ -4081,7 +4103,12 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
   if (type.name.last().kind != TokenKind::IDENTIFIER) {
     return;
   }
-  if (resolveTypeParameter(type.name)) {
+  if (const auto parameter = resolveTypeParameter(type.name)) {
+    if (parameter->isAssociatedTypeProjection()) {
+      validateAssociatedTypeArguments(type, parameter->projectionConcept,
+                                      parameter->projectionMember);
+      return;
+    }
     if (!type.arguments.empty()) {
       report(type.name.last(),
              "Generic type parameters cannot take generic arguments.");
@@ -4090,10 +4117,13 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
   }
   if (type.name.segments.size() == 1 &&
       blockAssociatedType(type.name.last().lexeme, currentNamespace)) {
-    if (!type.arguments.empty()) {
-      report(type.name.last(), "An associated type takes no generic arguments.",
-             "GTI-S2123");
-    }
+    const auto *block = enclosingConformance(currentNamespace);
+    const auto &names = concepts[block->conceptId - 1].associatedTypes;
+    const auto member =
+        std::find(names.begin(), names.end(), type.name.last().lexeme);
+    validateAssociatedTypeArguments(
+        type, block->conceptId,
+        static_cast<std::uint32_t>(member - names.begin()));
     return;
   }
 
@@ -4407,7 +4437,7 @@ auto SemanticVisitor::Impl::activeTypePackIdentity(const TypeRef &type) const
 
 auto SemanticVisitor::Impl::validateReferencePlacement(
     const TypeRef &type, bool allowTopLevel, std::string_view context,
-    bool allowRvalueReference, bool typeMetadata, bool genericFunctionParameter,
+    bool allowRvalueReference, bool typeMetadata,
     bool contractedReferenceResult) -> void {
   const SemanticType resolved = typeOf(type);
   if (resolved.kind == SemanticType::FunctionSignature) {
@@ -4437,26 +4467,12 @@ auto SemanticVisitor::Impl::validateReferencePlacement(
              "References cannot be used as a " + std::string(context) + " yet.",
              "GTI-S2017");
     }
-    if (!type.arrayExtents.empty()) {
-      report(*type.reference,
-             "References to fixed arrays are not supported yet.", "GTI-S2017");
-    }
   }
-  // Range& parameters already support concrete fixed-array range instances.
-  // This is a declaration-bound generic substitution, not permission to spell
-  // array references as storage, aliases, returns, or signature metadata.
-  const auto genericReferent =
-      genericFunctionParameter ? resolveTypeParameter(type.name) : std::nullopt;
-  const bool substitutedArrayParameter =
-      !typeMetadata && allowTopLevel && type.reference &&
-      type.arrayExtents.empty() && genericReferent &&
-      genericReferent->kind == SemanticType::Array &&
-      resolved.kind == SemanticType::Reference &&
-      resolved.arguments.size() == 1 &&
-      resolved.arguments.front() == *genericReferent;
-  if (!substitutedArrayParameter)
-    validateReferenceReferent(resolved, type.reference ? *type.reference
-                                                       : type.name.last());
+  // Fixed arrays retain their complete element type and extents when borrowed.
+  // Explicit, inferred and generic references share the same place/loan rules;
+  // generic range parameters do not need a separate admission exception.
+  validateReferenceReferent(resolved, type.reference ? *type.reference
+                                                     : type.name.last());
   const auto nominalKind = baseTypeOf(type, currentNamespace).kind;
   // A checked projected reference result is the resolved referent, not a
   // container for the syntactic projection operands. A callable operand may
@@ -4488,10 +4504,6 @@ auto SemanticVisitor::Impl::validateReferenceReferent(const SemanticType &type,
   const SemanticType &referencedType = type.arguments.front();
   if (referencedType == SemanticType::Void) {
     report(site, "References cannot refer to void.", "GTI-S2017");
-  }
-  if (referencedType.kind == SemanticType::Array) {
-    report(site, "References to fixed arrays are not supported yet.",
-           "GTI-S2017");
   }
   if (referencedType.kind == SemanticType::Reference) {
     report(site, "References cannot refer to another reference.", "GTI-S2017");
@@ -4783,68 +4795,12 @@ auto SemanticVisitor::Impl::rejectEscapingLocalChildLoan(
       loan == nullptr || (loan->parent == 0 && !loan->lifecycleBound)) {
     return false;
   }
-  // Returning a restored alias publishes the caller-owned referent, not the
-  // local reference slot. Retain the exact incoming witness: neither unsafe
-  // restoration nor the helper's signature permits another child to escape.
-  const auto callerOwnedRestoration = [&]() {
-    const auto *function = currentFunctionInfo();
-    const auto *parent = semanticModel.findLoan(loan->parent);
-    if (returned != source->carrier || source->transfer || source->dependency ||
-        symbol->type.kind != SemanticType::Reference ||
-        symbol->type != currentReturnType ||
-        symbol->variableDeclaration == nullptr ||
-        !symbol->variableDeclaration->initializer() ||
-        loan->kind != SemanticLoanKind::Reference || loan->entry ||
-        loan->lifecycleBound || !loan->additionalDependencies.empty() ||
-        !loan->designatedFields.empty() || parent == nullptr ||
-        parent->kind != SemanticLoanKind::Reference || !parent->entry ||
-        parent->parent != 0 || parent->storedDependency != 0 ||
-        parent->lifecycleBound || !parent->additionalDependencies.empty() ||
-        !parent->designatedFields.empty() ||
-        loan->storedDependency != parent->id || loan->place != parent->place ||
-        loan->access != currentReturnType.referenceAccess ||
-        loan->access != parent->access || function == nullptr ||
-        function->bodyDeclaration() == nullptr ||
-        function->returnBorrowOrigin != BorrowOriginKind::Argument ||
-        !function->returnBorrowParameters.empty() ||
-        !function->returnBorrowFields.empty() || function->returnBorrowPlace ||
-        function->returnBorrowParameter >= function->parameterTypes.size() ||
-        function->returnBorrowParameter >=
-            function->bodyDeclaration()->parameters().size())
-      return false;
-    const auto index = function->returnBorrowParameter;
-    const auto *parameter = semanticModel.findBinding(
-        function->bodyDeclaration()->parameters()[index]);
-    if (function->parameterTypes[index].kind != SemanticType::Reference ||
-        parameter == nullptr || parent->place.receiver ||
-        !parent->place.projections.empty() ||
-        parent->place.root != parameter->symbol)
-      return false;
-    const Expr *initializer = symbol->variableDeclaration->initializer().get();
-    while (const auto *group = exprAs<Grouping>(initializer))
-      initializer = group->expression().get();
-    const auto *call = exprAs<Call>(initializer);
-    const auto *resolved =
-        call == nullptr ? nullptr : semanticModel.findCall(*call);
-    if (resolved == nullptr || !resolved->restoresReferenceResult ||
-        resolved->returnType != currentReturnType ||
-        resolved->borrowOrigin != BorrowOriginKind::Argument ||
-        !resolved->borrowArguments.empty() || !resolved->borrowFields.empty() ||
-        resolved->borrowPlace)
-      return false;
-    const auto *argument =
-        resolvedCallArgument(*call, resolved, resolved->borrowArgument);
-    const Expr *witness = argument == nullptr ? nullptr : argument->get();
-    while (const auto *group = exprAs<Grouping>(witness))
-      witness = group->expression().get();
-    return exprAs<Variable>(witness) != nullptr &&
-           semanticModel.findResolvedSymbol(*witness) == parameter->symbol;
-  };
-  // A loan whose ancestry runs only through carrier-less transients (an
-  // accessor's call result, a constructed temporary) up to an entry loan is
-  // caller-owned authority relayed through this value, not a reborrow of a
-  // local object: the referent outlives the body. A local carrier or a
-  // cleanup-bound ancestor anywhere on that chain still blocks the escape.
+  // Local references are aliases, not owners of their referents. Follow their
+  // checked loan ancestry just like accessor temporaries and stored references.
+  // Only an incoming loan or receiver storage can establish that the referent
+  // outlives this body; a local object's storage or cleanup obligation cannot.
+  // The independent return-origin check still proves the exact declared owner,
+  // projection and access permission after this escape check.
   const auto callerOwnedAncestry = [&]() {
     std::unordered_set<SemanticLoanId> seen;
     for (SemanticLoanId current = loan->parent;
@@ -4854,24 +4810,31 @@ auto SemanticVisitor::Impl::rejectEscapingLocalChildLoan(
         return false;
       if (ancestor->entry)
         return true;
-      // A local carrier's stored-value loan names the external referent its
-      // stored reference designates, not the carrier's own storage. A
-      // reborrow through it relays that authority; the chain must still
-      // reach caller-owned entry authority above.
+      // A stored-value dependency names its external referent. An ordinary
+      // reference (including a payload pattern) likewise names the referenced
+      // place rather than the local slot holding its address. Neither may
+      // disguise storage physically owned by that local binding.
       for (const auto &scope : scopes)
         for (const auto &[_, candidate] : scope)
           if (candidate.bindingKind == SemanticBindingKind::LocalVariable &&
               std::find(ancestor->carriers.begin(), ancestor->carriers.end(),
                         toolingSymbolFor(candidate)) !=
                   ancestor->carriers.end() &&
-              !(ancestor->kind == SemanticLoanKind::StoredValue &&
-                ancestor->place.root != toolingSymbolFor(candidate)))
+              !(ancestor->place.root != toolingSymbolFor(candidate) &&
+                (ancestor->kind == SemanticLoanKind::StoredValue ||
+                 (ancestor->kind == SemanticLoanKind::Reference &&
+                  candidate.type.kind == SemanticType::Reference))))
             return false;
+      // A receiver payload's first checked selection is itself a local loan,
+      // but its place still names storage inside `this`. It has no separate
+      // entry loan to reach, unlike a reference parameter.
+      if (ancestor->parent == 0 && ancestor->place.receiver)
+        return true;
       current = ancestor->parent;
     }
     return false;
   };
-  if (callerOwnedRestoration() || callerOwnedAncestry())
+  if (callerOwnedAncestry())
     return false;
   report(expressionToken(value),
          "A local child reborrow cannot escape through " +

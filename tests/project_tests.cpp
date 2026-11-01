@@ -396,12 +396,15 @@ void testManifestDiagnostics() {
   const lang::Diagnostic *targetKind =
       findDiagnostic(loaded.diagnostics, "GTI-B1005");
   expect(targetKind != nullptr &&
-             targetKind->message.find("'executable' or 'test'") !=
-                 std::string::npos &&
+             targetKind->message.find("'executable'") != std::string::npos &&
+             targetKind->message.find("'test'") != std::string::npos &&
+             targetKind->message.find("'library'") != std::string::npos &&
+             targetKind->message.find("'gti-library'") != std::string::npos &&
              targetKind->primary.source ==
                  std::filesystem::canonical(manifest).string() &&
              targetKind->primary.start < targetKind->primary.end,
-         "manifest target kinds should accept only executable and test");
+         "manifest target kinds should reject unknown kinds and list the "
+         "supported target families");
 
   const std::string collidingTargets =
       "manifest-version = 1\n"
@@ -3577,6 +3580,215 @@ void testModuleManifest() {
   }
 }
 
+void testCompiledLibraryProjectModel() {
+  TemporaryDirectory temporary;
+  const auto root = std::filesystem::canonical(temporary.root());
+  const auto manifest = root / "gti.toml";
+  const std::string source = "manifest-version = 1\n[package]\nname = "
+                             "\"numbers\"\nversion = \"0.1.0\"\n"
+                             "[targets.numbers]\nkind = \"gti-library\"\nroot "
+                             "= \"library.gti\"\nfunctions = [\"choose\"]\n";
+  expect(writeFile(
+             root / "library.gti",
+             "export module numbers; export int choose(int x) { return x; }"),
+         "compiled library source is writable");
+  expect(writeFile(manifest, source), "compiled library manifest is writable");
+  auto resolution =
+      lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+          root, "numbers", "release", lang::TargetInfo::host()));
+  expect(resolution.succeeded() && resolution.plan &&
+             resolution.plan->compiledLibrary() &&
+             resolution.plan->compiledLibrary()->package == "numbers" &&
+             resolution.plan->compiledLibrary()->target == "numbers" &&
+             resolution.plan->compiledLibrary()->functions ==
+                 std::vector<std::string>{"choose"} &&
+             resolution.plan->backend() == lang::BackendKind::Llvm &&
+             resolution.plan->output().extension() == ".gtilib" &&
+             resolution.plan->programRequest().kind ==
+                 lang::ProgramKind::Executable,
+         "a reusable GTI target has immutable manifest identities and no C "
+         "embedding request");
+  expect(!std::filesystem::exists(root / "build"),
+         "project resolution remains read-only");
+  std::string invalid = source;
+  invalid.replace(invalid.find("[\"choose\"]"),
+                  std::string("[\"choose\"]").size(),
+                  "[\"choose\", \"choose\"]");
+  expect(writeFile(manifest, invalid),
+         "invalid compiled function selection is writable");
+  auto loaded = lang::driver::loadProjectManifest(manifest);
+  const auto *diagnostic = findDiagnostic(loaded.diagnostics, "GTI-B1005");
+  expect(
+      !loaded.succeeded() && diagnostic &&
+          diagnostic->phase == lang::DiagnosticPhase::Driver &&
+          diagnostic->primary.source == manifest.string() &&
+          invalid.substr(diagnostic->primary.start,
+                         diagnostic->primary.end - diagnostic->primary.start) ==
+              "[\"choose\", \"choose\"]" &&
+          diagnostic->fixes.empty(),
+      "duplicate export selection points to the exact manifest array without a "
+      "speculative fix");
+  for (const auto &name : {"api::choose", "outer::inner::choose"}) {
+    auto qualified = source;
+    qualified.replace(qualified.find("[\"choose\"]"), 10,
+                      "[\"" + std::string(name) + "\"]");
+    expect(writeFile(manifest, qualified), "qualified selection is writable");
+    expect(lang::driver::loadProjectManifest(manifest).succeeded(),
+           "namespace-qualified exports must be selectable");
+  }
+  for (const auto &name :
+       {"::choose", "api::", "api:::choose", "api.choose", "api::2bad"}) {
+    auto malformed = source;
+    const auto selection = "[\"" + std::string(name) + "\"]";
+    malformed.replace(malformed.find("[\"choose\"]"), 10, selection);
+    expect(writeFile(manifest, malformed), "malformed selection is writable");
+    const auto parsed = lang::driver::loadProjectManifest(manifest);
+    const auto *issue = findDiagnostic(parsed.diagnostics, "GTI-B1005");
+    expect(
+        !parsed.succeeded() && issue &&
+            issue->phase == lang::DiagnosticPhase::Driver &&
+            issue->primary.source == manifest.string() &&
+            malformed.substr(issue->primary.start,
+                             issue->primary.end - issue->primary.start) ==
+                selection &&
+            issue->message.find("qualified by namespaces") !=
+                std::string::npos &&
+            issue->fixes.empty(),
+        "malformed qualification must retain the manifest diagnostic contract");
+  }
+  const auto bundle = root / "numbers.gtilib";
+  expect(writeFile(bundle, "bundle validated later by the artifact reader"),
+         "artifact path fixture is writable");
+  const std::string consumer =
+      "manifest-version = 1\n[package]\nname = \"client\"\nversion = "
+      "\"0.1.0\"\n"
+      "[targets.app]\nkind = \"executable\"\nroot = \"library.gti\"\n"
+      "[targets.app.compiled-library]\npackage = \"numbers\"\ntarget = "
+      "\"numbers\"\n"
+      "path = \"numbers.gtilib\"\ninterface = \"api.gti\"\n";
+  expect(writeFile(manifest, consumer),
+         "compiled consumer manifest is writable");
+  resolution =
+      lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+          root, "app", "release", lang::TargetInfo::host()));
+  expect(resolution.succeeded() && resolution.plan &&
+             resolution.plan->compiledImport() &&
+             resolution.plan->compiledImport()->artifact == bundle &&
+             resolution.plan->compiledImport()->interfacePath ==
+                 root / "api.gti" &&
+             resolution.plan->compiledImport()->package == "numbers" &&
+             resolution.plan->backend() == lang::BackendKind::Llvm,
+         "artifact selection and its virtual interface are resolved before "
+         "frontend entry");
+  std::string escape = consumer;
+  escape.replace(escape.find("\"api.gti\""), std::string("\"api.gti\"").size(),
+                 "\"../escape.gti\"");
+  expect(writeFile(manifest, escape),
+         "escaping virtual interface fixture is writable");
+  loaded = lang::driver::loadProjectManifest(manifest);
+  diagnostic = findDiagnostic(loaded.diagnostics, "GTI-B1005");
+  expect(
+      !loaded.succeeded() && diagnostic &&
+          diagnostic->primary.source == manifest.string() &&
+          escape.substr(diagnostic->primary.start,
+                        diagnostic->primary.end - diagnostic->primary.start) ==
+              "\"../escape.gti\"",
+      "virtual interface containment failures identify the exact path value");
+}
+
+void testMultipleCompiledLibraryProjectModel() {
+  TemporaryDirectory temporary;
+  const auto root = std::filesystem::canonical(temporary.root());
+  const auto manifest = root / "gti.toml";
+  expect(writeFile(root / "main.gti", "int main() { return 0; }"),
+         "multiple library consumer source is writable");
+  expect(writeFile(root / "one.gtilib", "validated by artifact admission"),
+         "multiple library artifact fixture is writable");
+  const std::string prefix =
+      "manifest-version = 1\n[package]\nname = \"client\"\nversion = "
+      "\"0.1.0\"\n"
+      "[targets.app]\nkind = \"executable\"\nroot = \"main.gti\"\n";
+  const auto entry = [](std::string package, std::string facade) {
+    return "[[targets.app.compiled-libraries]]\npackage = \"" + package +
+           "\"\ntarget = \"api\"\npath = \"one.gtilib\"\ninterface = \"" +
+           facade + "\"\n";
+  };
+  const auto first = entry("one", "one.gti");
+  const auto second = entry("two", "two.gti");
+  const auto resolve = [&] {
+    return lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+        root, "app", "release", lang::TargetInfo::host()));
+  };
+  expect(writeFile(manifest, prefix + first + second),
+         "multiple library manifest is writable");
+  auto resolved = resolve();
+  expect(resolved.succeeded() && resolved.plan &&
+             resolved.plan->compiledImports().size() == 2 &&
+             resolved.plan->compiledImports()[0].package == "one" &&
+             resolved.plan->compiledImports()[1].interfacePath ==
+                 root / "two.gti" &&
+             resolved.plan->backend() == lang::BackendKind::Llvm,
+         "multiple selected libraries survive immutable project resolution");
+  bool rejectsLegacyAccess = false;
+  if (resolved.plan) {
+    try {
+      static_cast<void>(resolved.plan->compiledImport());
+    } catch (const std::logic_error &) {
+      rejectsLegacyAccess = true;
+    }
+  }
+  expect(
+      rejectsLegacyAccess,
+      "singular compatibility accessor cannot silently hide extra libraries");
+  expect(!std::filesystem::exists(root / "build") &&
+             !std::filesystem::exists(root / "one.gti") &&
+             !std::filesystem::exists(root / "two.gti"),
+         "multiple library resolution neither builds nor writes virtual "
+         "interfaces");
+  expect(writeFile(manifest, prefix + first),
+         "singleton plural manifest is writable");
+  resolved = resolve();
+  expect(resolved.succeeded() && resolved.plan &&
+             resolved.plan->compiledImports().size() == 1 &&
+             resolved.plan->compiledImport()->package == "one",
+         "singleton plural selection preserves the singular compatibility "
+         "accessor");
+  const auto reject = [&](const std::string &source, const std::string &message,
+                          const std::string &span = "") {
+    expect(writeFile(manifest, source), "invalid plural manifest is writable");
+    const auto loaded = lang::driver::loadProjectManifest(manifest);
+    const auto *diagnostic = findDiagnostic(loaded.diagnostics, "GTI-B1005");
+    expect(!loaded.succeeded() && diagnostic &&
+               diagnostic->message.find(message) != std::string::npos &&
+               diagnostic->primary.source == manifest.string() &&
+               diagnostic->phase == lang::DiagnosticPhase::Driver &&
+               diagnostic->fixes.empty() &&
+               (span.empty() ||
+                source.substr(diagnostic->primary.start,
+                              diagnostic->primary.end -
+                                  diagnostic->primary.start) == span),
+           "invalid multiple library selection has an actionable driver "
+           "diagnostic");
+  };
+  reject(prefix + first + entry("one", "two.gti"), "owners must be unique",
+         "\"api\"");
+  reject(prefix + first + entry("two", "sub/../one.gti"),
+         "paths must be unique", "\"sub/../one.gti\"");
+  reject(prefix + "compiled-libraries = []\n", "1 to 64", "[]");
+  reject(prefix + "compiled-libraries = 1\n", "array of tables", "1");
+  reject(prefix + "compiled-libraries = [1]\n", "must be a table", "1");
+  reject(prefix + first +
+             "[targets.app.compiled-library]\npackage = \"one\"\ntarget = "
+             "\"api\"\n"
+             "path = \"one.gtilib\"\ninterface = \"other.gti\"\n",
+         "not both");
+  std::string excessive = prefix;
+  for (int index = 0; index < 65; ++index)
+    excessive +=
+        entry("p" + std::to_string(index), std::to_string(index) + ".gti");
+  reject(excessive, "1 to 64");
+}
+
 void testBackendProfileAuthority() {
   using namespace lang;
   using namespace lang::driver;
@@ -3662,6 +3874,96 @@ void testBackendProfileAuthority() {
   }
 }
 
+void testCompiledDependencyProjectModel() {
+  TemporaryDirectory temporary;
+  const auto root = std::filesystem::canonical(temporary.root());
+  const auto manifest = root / "gti.toml";
+  const std::string prefix = "manifest-version = 1\n[package]\nname = "
+                             "\"graph\"\nversion = \"0.1.0\"\n";
+  const std::string base = "[targets.base]\nkind = \"gti-library\"\nroot = "
+                           "\"base.gti\"\nfunctions = [\"value\"]\n";
+  const auto edge = [](std::string_view owner, std::string_view target,
+                       std::string_view facade) {
+    return "[[targets." + std::string(owner) +
+           ".compiled-dependencies]]\ntarget = \"" + std::string(target) +
+           "\"\ninterface = \"" + std::string(facade) + "\"\n";
+  };
+  std::string source = prefix + base;
+  for (const auto name : {"left", "right"}) {
+    expect(writeFile(root / (std::string(name) + ".gti"),
+                     "export int value() { return 1; }"),
+           "graph producer is writable");
+    source += "[targets." + std::string(name) +
+              "]\nkind = \"gti-library\"\nroot = \"" + name +
+              ".gti\"\nfunctions = [\"value\"]\n" +
+              edge(name, "base", "api/base.gti");
+  }
+  source += "[targets.app]\nkind = \"executable\"\nroot = \"main.gti\"\n" +
+            edge("app", "left", "api/left.gti") +
+            edge("app", "right", "api/right.gti");
+  expect(writeFile(root / "base.gti", "export int value() { return 1; }") &&
+             writeFile(root / "main.gti", "int main() { return 0; }") &&
+             writeFile(manifest, source),
+         "graph source and manifest are writable");
+  auto resolve = [&] {
+    return lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+        root, "app", "release", lang::TargetInfo::host()));
+  };
+  auto resolved = resolve();
+  expect(resolved.succeeded() && resolved.plan,
+         "source dependencies resolve without previously built artifacts");
+  if (resolved.plan) {
+    const auto &plans = resolved.plan->compiledBuildDependencies();
+    expect(plans.size() == 3 && plans[0].targetName() == "base" &&
+               plans[1].targetName() == "left" &&
+               plans[2].targetName() == "right",
+           "diamond dependency plans are unique and topologically ordered");
+    expect(
+        std::all_of(plans.begin(), plans.end(),
+                    [](const auto &p) {
+                      return p.compiledBuildDependencies().empty();
+                    }),
+        "flattened dependency plans never duplicate recursive orchestration");
+    const auto &imports = resolved.plan->compiledImports();
+    const auto transitive =
+        std::find_if(imports.begin(), imports.end(),
+                     [](const auto &i) { return i.target == "base"; });
+    expect(imports.size() == 3 && transitive != imports.end() &&
+               !transitive->interfaceRequired &&
+               !transitive->directDependency &&
+               transitive->interfacePath.empty(),
+           "transitive artifacts link once without creating accidental source "
+           "visibility");
+  }
+  expect(!std::filesystem::exists(root / "build"),
+         "dependency planning remains read-only");
+  expect(writeFile(manifest, source + edge("base", "left", "api/left.gti")),
+         "cycle fixture is writable");
+  resolved = resolve();
+  const auto *diagnostic = findDiagnostic(resolved.diagnostics, "GTI-B1005");
+  expect(!resolved.succeeded() && diagnostic &&
+             diagnostic->message.find("cycle:") != std::string::npos &&
+             diagnostic->primary.source == manifest.string() &&
+             diagnostic->fixes.empty(),
+         "dependency cycles fail with a source-owned diagnostic and no guessed "
+         "fix");
+  expect(writeFile(manifest, source + edge("base", "app", "api/app.gti")),
+         "wrong target fixture is writable");
+  resolved = resolve();
+  diagnostic = findDiagnostic(resolved.diagnostics, "GTI-B1005");
+  expect(!resolved.succeeded() && diagnostic &&
+             diagnostic->message.find("must name a gti-library") !=
+                 std::string::npos,
+         "source dependencies cannot name executable targets");
+  expect(
+      writeFile(manifest, source + edge("base", "missing", "api/missing.gti")),
+      "missing target fixture is writable");
+  resolved = resolve();
+  expect(
+      !resolved.succeeded(),
+      "source dependencies cannot silently become stale artifact selections");
+}
+
 int main(int argc, char *argv[]) {
   if (argc == 5 && std::string_view(argv[1]) == "-C" &&
       std::string_view(argv[3]) == "init" &&
@@ -3683,6 +3985,9 @@ int main(int argc, char *argv[]) {
   }
   lang::installCrashHandlers("gti_project_tests");
   testDiscoveryParsingAndResolution();
+  testCompiledLibraryProjectModel();
+  testCompiledDependencyProjectModel();
+  testMultipleCompiledLibraryProjectModel();
   testBackendProfileAuthority();
   testManifestDiagnostics();
   testConfigurationFlagManifest();

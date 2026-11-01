@@ -100,8 +100,13 @@ the owning subsystem's tests and the affected cross-phase and tooling
 consumers, plus `compiler_pipeline` and the native smoke. Never run the
 complete suite to finish a task: the queue runs it on the exact candidate that
 becomes `main`, sharded across macOS arm64 and Linux x64, and its `CI gate`
-proves every registered test ran. Deferring it is complete work; report it as
-deferred, never as passed.
+proves every registered test ran. Full integration also builds the bundled
+production archives and validates their installed consumers. Nightly publishes
+those exact CI artifacts after checking source and run provenance; it does not
+rebuild or repeat the complete suite. Automation-only CI does not produce
+release artifacts. See the [nightly contract](../../../docs/architecture/build-and-driver.md#github-nightly-publication)
+for full main-dispatch recovery when no publishable artifacts exist. Deferring
+integration is complete contributor work; report it as deferred, never as passed.
 
 1. Reconcile only to resolve a conflict (`reconcile <task>` merges current
    `origin/main` and pushes; resolve conflicts in this worktree, never

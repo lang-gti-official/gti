@@ -4,6 +4,7 @@
 
 #include "diagnostic_registry.h"
 #include "gti/ast_clone.h"
+#include "gti/compiled_scalar_signature.h"
 #include "gti/frontend_work.h"
 #include "gti/generic_instantiation_limits.h"
 #include "gti/instance_analysis_cache.h"
@@ -129,6 +130,7 @@ public:
   };
 
   struct ProgramStorageBorrowCheck {
+    ProgramEffectOwner owner;
     SourceSpan site;
     ProgramStorageBorrowSite siteKind = ProgramStorageBorrowSite::Invocation;
     std::vector<ProgramStorageBorrowProtection> protections;
@@ -143,12 +145,16 @@ public:
 
   struct ProgramExpressionEffects {
     ProgramEffectOwner owner;
+    std::size_t order = 0;
     std::size_t edgeStart = 0;
     std::size_t edgeEnd = 0;
     std::size_t unknownStart = 0;
     std::size_t unknownEnd = 0;
     std::size_t useStart = 0;
     std::size_t useEnd = 0;
+    std::size_t storageUseStart = 0;
+    std::size_t borrowCheckStart = 0;
+    bool directFailureBefore = false;
   };
 
   struct ProgramTemporaryCleanup {
@@ -168,6 +174,7 @@ public:
   // restoring only that model without this cache would mix specializations.
   struct ProgramExpressionCache {
     std::size_t indexedFullExpressions = 0;
+    std::vector<const Expr *> evaluationOrder;
     std::unordered_map<const Expr *, SemanticFullExpression>
         fullExpressionRoots;
     std::unordered_map<const Expr *, ProgramExpressionEffects>
@@ -1902,6 +1909,7 @@ private:
     };
     bool protocol = false;
     std::vector<std::string> associatedTypes;
+    std::vector<std::vector<GenericParameterInfo>> associatedTypeParameters;
     std::vector<ProtocolOperation> operations;
 
     // `[[unsatisfied("...")]]`: what satisfies the concept, in its author's
@@ -1929,6 +1937,7 @@ private:
     // or enum template applied to block parameters (an open pattern).
     std::vector<SemanticType> patterns;
     std::vector<SemanticType> associatedTypes;
+    std::vector<std::vector<GenericParameterInfo>> associatedTypeParameters;
     std::vector<Symbol> operations;
     bool operationsBound = false;
   };
@@ -1942,6 +1951,13 @@ private:
     std::vector<std::string> namespaceScope;
     std::vector<GenericParameterInfo> genericParameters;
     std::vector<const TypeRef *> types;
+    ConceptId conceptId = 0;
+    std::vector<SemanticType> patterns;
+    struct AssociatedType {
+      const TypeAliasDecl *declaration = nullptr;
+      std::vector<GenericParameterInfo> parameters;
+    };
+    std::vector<AssociatedType> associatedTypes;
   };
 
   struct ConformanceMatch {
@@ -1963,7 +1979,12 @@ private:
 
   struct ConstexprEvaluation {
     std::optional<ConstantValue> value;
+    bool voidCompletion = false;
     ConstantEvaluationFailure failure = ConstantEvaluationFailure::None;
+    // Evaluation stopped at an unresolved generic input. Immediate calls
+    // defer this obligation to concrete reanalysis, without publishing a
+    // value or relaxing independent nonconstant-input failures.
+    bool genericDependency = false;
     Token location;
     std::string detail;
     // A failure inside a compiler-trusted library body is anchored at the
@@ -2040,6 +2061,10 @@ private:
   struct ConstexprInterpreter {
     std::shared_ptr<ConstexprWorkBudget> work;
     std::size_t callDepth = 0;
+    bool requireMir = false;
+    bool recordValues = true;
+    bool allowVoidCompletion = false;
+    const Expr *immediateRoot = nullptr;
     std::vector<std::unordered_map<SymbolId, ConstexprLocalValue>> scopes;
     std::vector<GenericSubstitution> substitutions;
     std::vector<ConstantValue> receivers;
@@ -2095,6 +2120,16 @@ private:
                            std::vector<SemanticType> *visiting = nullptr,
                            bool transient = false) const;
 
+  bool insideImmediateFunction() const;
+  bool immediateConstructionDependent(
+      const ResolvedConstructionInfo &construction) const;
+  void reportImmediateEvaluationFailure(const Token &site,
+                                        const Token &declaration,
+                                        const ConstexprEvaluation &result);
+  void enforceImmediateInvocation(const Expr &expression,
+                                  bool contextual = false);
+  void discardImmediateProgramEffects(const Expr &expression);
+
   bool validateConstexprFunction(const FunctionDecl &function,
                                  bool methodDeclaration,
                                  bool intrinsicDeclaration,
@@ -2140,9 +2175,9 @@ private:
       std::unordered_map<SymbolId, ConstexprLocalValue> &scope);
 
   [[nodiscard]] ConstexprEvaluation evaluateConstexprConstruction(
-      const Expr &source, const ResolvedConstructionInfo &resolved,
+      const Expr *source, const ResolvedConstructionInfo &resolved,
       const ExprList &explicitArguments, const Token &callSite,
-      ConstexprInterpreter &context);
+      ConstexprInterpreter &context, const Expr *contextualArgument = nullptr);
 
   [[nodiscard]] ConstexprEvaluation
   evaluateConstexprExpression(const ExprPtr &expression,
@@ -4198,7 +4233,6 @@ private:
                                   std::string_view context,
                                   bool allowRvalueReference = false,
                                   bool typeMetadata = false,
-                                  bool genericFunctionParameter = false,
                                   bool contractedReferenceResult = false);
 
   void validateReferenceReferent(const SemanticType &type, const Token &site);
@@ -4630,6 +4664,11 @@ private:
 
   void resolveTypeAliases();
 
+  void refreshTypeAliasProjections();
+
+  bool validateTypeAliasReference(const TypeRef &target,
+                                  const SemanticType &resolved);
+
   void registerConcepts(const StmtList &statements,
                         std::vector<std::string> scope);
 
@@ -4763,9 +4802,20 @@ private:
   [[nodiscard]] std::optional<ConceptId>
   protocolConceptOwner(const TypeRef &owner,
                        const std::vector<std::string> &fromScope) const;
-  [[nodiscard]] SemanticType
-  associatedTypeProjection(ConceptId id, std::uint32_t member,
-                           std::vector<SemanticType> arguments) const;
+  [[nodiscard]] SemanticType associatedTypeProjection(
+      ConceptId id, std::uint32_t member, std::vector<SemanticType> arguments,
+      std::vector<SemanticType> familyArguments = {}) const;
+  [[nodiscard]] std::vector<GenericParameterInfo>
+  makeAssociatedTypeParameters(const std::vector<GenericParameter> &parameters,
+                               const Token &name,
+                               const std::vector<std::string> &fromScope,
+                               const std::vector<std::string> &enclosingNames);
+  void bindAssociatedTypeNames(ConceptId id,
+                               const std::vector<SemanticType> &arguments);
+  [[nodiscard]] SymbolId associatedTypeSymbol(ConceptId id,
+                                              std::uint32_t member) const;
+  bool validateAssociatedTypeArguments(const TypeRef &type, ConceptId id,
+                                       std::uint32_t member);
   [[nodiscard]] SemanticType
   reduceAssociatedTypeProjection(SemanticType projection) const;
   [[nodiscard]] SemanticType
@@ -4776,13 +4826,14 @@ private:
   [[nodiscard]] SemanticType
   blockScopeType(const RegisteredConformance &conformance,
                  const SemanticType &type) const;
-  [[nodiscard]] std::optional<SemanticType>
-  blockAssociatedType(std::string_view name,
-                      const std::vector<std::string> &fromScope) const;
-  [[nodiscard]] std::optional<SemanticType>
-  ownBlockProjection(ConceptId id, std::uint32_t member,
-                     const std::vector<SemanticType> &arguments,
-                     const std::vector<std::string> &fromScope) const;
+  [[nodiscard]] std::optional<SemanticType> blockAssociatedType(
+      std::string_view name, const std::vector<std::string> &fromScope,
+      const std::vector<SemanticType> &familyArguments = {}) const;
+  [[nodiscard]] std::optional<SemanticType> ownBlockProjection(
+      ConceptId id, std::uint32_t member,
+      const std::vector<SemanticType> &arguments,
+      const std::vector<std::string> &fromScope,
+      const std::vector<SemanticType> &familyArguments = {}) const;
   [[nodiscard]] std::optional<ConstraintFailure> protocolConformanceFailure(
       const AppliedConceptRequirement &requirement) const;
   [[nodiscard]] std::optional<std::size_t>
@@ -5612,6 +5663,11 @@ private:
   void analyzeMetaFieldAccess(const Call &expr, const Get &member,
                               const SemanticType &fieldObject,
                               bool mutableAccess);
+  void analyzeMetaMethodInvoke(const Call &expr, const Get &member,
+                               const SemanticType &methodObject);
+  // An aliased reflected call enters ordinary call resolution with exactly
+  // the declaration named by its metaobject, never a fresh overload search.
+  std::unordered_map<const Get *, const FunctionDecl *> reflectedMethodTargets;
   // Set while the synthesized projection of a reflected field access is
   // analysed: a `[[reflect_private]]` owner then admits its private fields.
   bool analyzingReflectedFieldAccess = false;

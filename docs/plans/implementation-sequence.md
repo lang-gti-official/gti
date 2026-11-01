@@ -566,7 +566,7 @@ every composition, target, installed package or performance gate.
 | Family previously described as missing | Current implementation evidence | What remains |
 | --- | --- | --- |
 | Scoped borrowing and scalar waiting | `std::parallel_invoke` in [`thread.gti`](../../stdlib/std/thread.gti); `scoped_thread_semantic_tests.cpp`, `runtime_scoped_thread_tests.cpp`, `atomic_wait_runtime_test.py` and the [concurrency contract](../language/concurrency.md). | Guard-aware condition variables, timed/cancellable waiting, pools, foreign-thread entry and broader lifecycle profiles; retain each campaign's exact acceptance record. |
-| Borrowing callbacks and result origins | `semantic_ownership_analysis.cpp`, `borrowing_capture_tests.cpp`, checked erasure/transport tests; L-CALL-03/04 and [ownership](../language/ownership-and-lifetimes.md). | General borrowed escape/storage graphs, owning results through `function_ptr`, inferred API results and inline consuming projection. |
+| Borrowing callbacks and result origins | `semantic_ownership_analysis.cpp`, `borrowing_capture_tests.cpp`, checked erasure/transport tests; L-CALL-03/04 and [ownership](../language/ownership-and-lifetimes.md). | General borrowed escape/storage graphs, owning results through `function_ptr`, inferred API results and cleanup-bearing inline relocation. |
 | Reference payload enums | `reference_payload_semantic_tests.cpp`, `fixtures/reference_payload_tryable.gti`, complete-borrow-summary tests and [payload semantics](../language/static-semantics.md). | Borrowed-value consuming handoffs, additional carrier containment, direct captures/polymorphic/native transport and richer patterns. Do not classify all stored reference alternatives as absent. |
 | Owner-dependent text fields | `view_field_tests.cpp`, nested-value and dependent-reference fixtures; L-OWN-02 phases 1/2 and **3a** are delivered. | Phase 3b's nested reference-carrier payload/results, additional nested copies/field contracts and phase 4 unification; arbitrary borrowed collections remain incomplete. |
 | Constexpr mutation and allocation | `mir_constant_evaluator.cpp`, `compiler_constexpr_tests.cpp`, `constexpr_results.gti`, `constexpr_allocation.gti`; [constant semantics](../language/static-semantics.md#transient-allocation-and-destruction). | Persistent allocation, stored-reference/raw/provider/shared/payload-enum/polymorphic profiles outside the stated evaluator contract, and retirement of remaining AST execution schedules. |
@@ -587,7 +587,7 @@ compiler-bug-finding redirect is not another active campaign.
 | Plan | Audit disposition / remaining owner |
 | --- | --- |
 | [1.0 roadmap](roadmap-to-1.0.md), this sequence, [restriction ledger](language-alignment.md) | Correct stale absence claims; distinguish delivered profiles, partial features, planned work and release acceptance. The roadmap is the durable overview, this sequence the sole work queue. |
-| [Callable ownership](callable-ownership-and-escape.md) | L-CALL-01/02/03/04 delivered profiles; broader escape and inline consuming projection open. |
+| [Callable ownership](callable-ownership-and-escape.md) | L-CALL-01/02/03/04 delivered profiles; broader escape and cleanup-bearing inline relocation open. |
 | [Place/state](place-and-ownership-state.md) | Place/lifecycle/aggregate foundations delivered; projection/epoch/reseating and further provenance profiles remain. |
 | [Concurrency](concurrency-memory-model.md) | Owned/scoped threads, scalar waiting and TLS implemented; broader synchronization/entry profiles open. |
 | [Ranges](iterators-and-ranges.md) | Container traversal/proxies and bounded value yields delivered; adaptors, subrange rewriting and dependency replacement remain. |
@@ -628,7 +628,7 @@ workflow determine task scope and integration.
 | `T-LSP` latency client | trusted-body/preamble/instance reuse delivered; edit cancellation/debounce, library concept/storage-effect reuse, staged constant-call memoization and unchanged-source replay delivered through 0.486.1 | Re-measure current workloads before selecting reuse/adoption costs. The 0.423.0 timing is historical, not today's bottleneck ranking. [LSP evolution](lsp-evolution.md#per-keystroke-analysis-cost) records remaining identity/invalidation and completion work. |
 | `RT-2` through `RT-12` | independent goals with technical prerequisites | Use the [current optimization disposition](optimization.md#pr-166-audit-disposition-2026-10-09), not retired minimum-speedup admission rules. RT-12 recovers the optimizer proofs and exit sharing that the source-defined `expected` (0.449.0) gave up by owner decision; its tests mark the lost controls as recovery-pending. Its closed-call proofs and failure closure are delivered in 0.468.0 ([RT-12](optimization.md)); exit sharing for exits that construct the result remains. Select one proof/transform/representation family with correctness replay and performance acceptance. RT-9's sort slice (introsort) is delivered in 0.410.1. RT-1's cold failure-edge slice is delivered (2026-10-12); `hashmap` lookups are the remaining inlining headroom. RT-5's body-local slice is delivered (2026-10-13) and changes no program on its own; crossing an accessor is the remaining work, with a measured ceiling of about 20% on one loop shape ([RT-5](optimization.md#rt-5-no-relational-facts-between-indices-and-lengths)). RT-4's refresh currently reaches four probe helpers, so it should follow discharge improvements (RT-2, RT-3, RT-5); see [its measured reach](optimization.md#rt-4-infallibility-is-not-refreshed-after-discharge). |
 | Shared failure-cleanup tails (`M-FAIL-01`) | function and lambda bodies delivered in 0.402.2; their scalar normal exits in 0.421.1 | Continuation records entered by `ContinueFailure` share identical failure-cleanup suffixes, and normal exits returning nothing, a scalar or a scalar error share exit ladders; see the M-FAIL-01 entry below. Remaining: constructor, field-initializer, destructor, module and hosted-startup bodies; exits returning owning, class or borrowed results; path-dependent steps stay private. |
-| Protocol concepts (`L-CONCEPT-02`) | phase 1 delivered in 0.434.0; several parameters in 0.435.0 | Concepts with a body and `for concept` blocks are implemented ([ADR 028](../decisions/028-protocol-concepts.md)), including concepts over several types. Prefix `?` propagates every non-`expected` type through the prelude's `std::tryable` in 0.436.0 ([ADR 029](../decisions/029-tryable-propagation.md)). `std::experimental::optional`, source-defined over a payload enum, propagates through `?` without a copy in 0.439.0. General payload-enum destination construction, tagged representation and observation/retirement improvements replace the historical 1.6-times scalar / 1.13-times string result. Singleton cleanup forwarding removes the preceding robust GCC/Linux string residual in fresh paired evidence at `560cafa9` (median 1.0035, interval spanning parity); fresh macOS measurements remain pending ([RT-11](optimization.md#pr-166-audit-disposition-2026-10-09)). Promotion to `std::optional` still requires surface, failure-behaviour and platform performance acceptance, not merely the representation change. `expected` is a source class on the same `std::tryable` protocol since 0.449.0, and conformance-block patterns over raw pointers and fixed-length arrays are delivered in 0.450.0. Signature-level borrow-origin contracts on concept operations are implemented. Further goals include moving remaining member-name protocols (collection hooks, iterator value types) onto protocol concepts where coherent. |
+| Protocol concepts (`L-CONCEPT-02`) | phase 1 delivered in 0.434.0; several parameters in 0.435.0 | Concepts with a body and `for concept` blocks are implemented ([ADR 028](../decisions/028-protocol-concepts.md)), including concepts over several types. Prefix `?` propagates every non-`expected` type through the prelude's `std::tryable` in 0.436.0 ([ADR 029](../decisions/029-tryable-propagation.md)). `std::experimental::optional`, source-defined over a payload enum, propagates through `?` without a copy in 0.439.0. General payload-enum destination construction, tagged representation and observation/retirement improvements replace the historical 1.6-times scalar / 1.13-times string result. Singleton cleanup forwarding removes the preceding robust GCC/Linux string residual in fresh paired evidence at `560cafa9` (median 1.0035, interval spanning parity); fresh macOS measurements remain pending ([RT-11](optimization.md#pr-166-audit-disposition-2026-10-09)). Promotion to `std::optional` still requires surface, failure-behaviour and platform performance acceptance, not merely the representation change. `expected` is a source class on the same `std::tryable` protocol since 0.449.0, and conformance-block patterns over raw pointers and fixed-length arrays are delivered in 0.450.0. Signature-level borrow-origin contracts on concept operations and generic associated type families are implemented. Families have independent positional type inputs, exact unary input constraints, nested projections and explicit generic consumer contracts; the storage-policy example exercises vector and inline mappings. First-class type constructors, value/lifetime families, result bounds and generic operations remain separate goals. Further goals include moving remaining member-name protocols (collection hooks, iterator value types) onto protocol concepts where coherent. |
 | Library/host completion | independent clients where their exact prerequisites hold | Weak ownership and fallible shared allocation; unfinished iteration/invalidation; process capture and environment mutation/enumeration or child-local overrides; required text/range/service breadth. Owned read-only environment lookup is delivered in 0.402.0. Reconcile the [library gaps](../language/standard-library.md#77-library-specification-gaps) with source before choosing a slice. |
 
 This is priority/readiness information, not an artificial dependency chain.
@@ -1536,7 +1536,7 @@ proxy iteration. Its original heading is retained for stable links.
 
 | Candidate | Current evidence and acceptance needs | Hard semantic boundary |
 | --- | --- | --- |
-| Broader callback inline storage / borrowed `function_ref` | Repeatable read/mut wrappers already use source `inline_polymorphic` policy: small cleanup-inert relocatable models inline, others boxed; consuming wrappers remain unique-owned. Measure allocation, registration, clone/reset and invocation separately when extending these profiles. | Inline consuming projection and cleanup-bearing relocation need general lifetime/ownership proofs. Borrowed erasure additionally needs exact origin/escape proof. Existing exact-receiver optimization does not automatically devirtualize owning models. |
+| Broader callback inline storage / borrowed `function_ref` | Read/mut/once wrappers use source `inline_polymorphic` policy: small cleanup-inert relocatable models inline, others boxed. The owned-inline-consumption slice adds exact inline owning projection and named retained calls. Measure allocation, registration, clone/reset and invocation separately when extending these profiles. | Cleanup-bearing inline relocation still needs general lifetime/ownership proofs. Broader borrowed erasure needs exact origin/escape proof. Existing exact-receiver optimization does not automatically devirtualize owning models. |
 | Bulk byte I/O / response filling | Allocation/copied-byte and throughput evidence for [`cstdio.gti`](../../stdlib/std/cstdio.gti)'s bounded stack-buffer/per-byte append path and real HTTP clients. | Writable capacity, initialized length, native write bounds and success-only prefix publication must be represented; no exposing untracked storage or losing TLS/error policy. |
 | Flat/pool container representations | Allocation/cache/lookup measurements against current AVL/bucket implementations. Source shared-owner co-allocation is implemented by the L-OWN-01 source replacement. | Stable entry addresses, immovable elements, borrow invalidation, last-owner cleanup and weak-owner lifetime remain authoritative. Indexed links are not inherently a language workaround. |
 | Cached/preparsed formatting and lower-cost source locations | Measure repeated pattern parsing/argument scans and owned location construction; separate runtime cost from compiler latency. | One parser, bounded CTFE profile and source-owned representation; literal descriptor lifetime/pinning is not interchangeable with owned `source_location` or hidden caller tokens. |
@@ -2108,6 +2108,14 @@ namespace/global declarations, function parameters, returns, structured
 bindings, `auto&&`, untyped braces, or explicit `auto` array declarators.
 Reference inference from an existing fixed-array place must follow explicit
 array-reference support and preserve extents rather than decay to a pointer.
+
+The general fixed-array borrow slice now supplies that prerequisite (unreleased):
+explicit/aliased and inferred references, exact type/value-generic calls,
+checked results, and ordinary stored/captured borrows share the reference
+place/loan contract. The runnable sensor-buffer example is
+`182-bounded-array-borrows.gti`. This does not claim that SIMD arithmetic has
+moved out of compiler intrinsics; that assessment still requires alignment,
+aliasing, instruction-quality and performance evidence for each operation.
 
 Prove the general rule with an unrelated application type as well as JSON:
 
@@ -7669,7 +7677,8 @@ consumer, and release refreshes remain outstanding for the full campaign.
   The recorded 0.346.0 combined production suite passed all 294 tests. That
   historical publication included other tasks' shared-checkout work with
   explicit user approval and used Gitea's then-current release workflow.
-  Current publication follows the Gitea PR/nightly/stable lifecycle.
+  Current publication follows the GitHub PR/merge-queue and nightly/beta/stable
+  lifecycle in `docs/architecture/build-and-driver.md`.
   The earlier owning-wrapper deferral in L-CALL-01 is superseded.
 - **Unlocks:** a command schema with an owned handler and an object API such as
   `set_auth_login_callback(lambda)` that retains and invokes the callback later.
@@ -7724,7 +7733,8 @@ consumer, and release refreshes remain outstanding for the full campaign.
   signature conversions, or C++ API parity such as allocator customization and
   unrestricted inline storage. The later repeatable-wrapper slice uses
   `std::inline_polymorphic` for small cleanup-inert relocatable models and boxes
-  other targets; consuming wrappers remain unique-owned. General typed brace expressions remain a separate
+  other targets; the owned-inline-consumption slice extends that policy to consuming wrappers.
+  Cleanup-bearing inline relocation remains separate. General typed brace expressions remain a separate
   language limitation; named brace declarations and parenthesized construction
   support the approved wrapper surface. These are not unfinished requirements
   of the agreed callback API. A newly demonstrated valid-source composition
@@ -9897,6 +9907,18 @@ follow-ups:
   per-check independence once the source class's bodies allow it.
 
 ### L-CONST-01: Remaining Bounded Compile-Time Programming
+
+- **Immediate declarations:** General `consteval` functions and ordinary
+  constructors use the staged MIR evaluator and publish passive values before
+  runtime lowering. This supplies a general required-call facility for source
+  libraries, independent of format-string APIs. Standalone root `void` calls
+  now complete through a statement-bound proof; bare `return;` can publish the
+  passive value of a selected implicit immediate constructor. Both preserve
+  semantic timing, concrete generic checks, source diagnostics, and the shared
+  deterministic budget. Remaining publication goals include other root `void`
+  expression shapes and reference or owning results. The latter need a sound
+  persistent lifetime contract, not snapshotting or escaped executor storage.
+
 
 - **State/role:** the staged MIR constexpr foundation is delivered; the original
   publication hold is historical. It enables source-defined numeric helpers,
@@ -12976,7 +12998,7 @@ owned by the rows and domain plans above.
 | Mutable iteration/views | **mutable spans/buffers and nested/multi-owner carriers delivered within their profiles** | Precise projection shortening (`L-UP-16`), reseatable views and proxy yields remain; existing mutable views do not wait for a new ownership representation. |
 | Ranges over `expected` payloads | **general range and borrow rules** since the source-defined `expected` (0.449.0) | `M-OWN-04` delivered the bounded byte-input client; its compiler route is retired |
 | Native C records/handles/callbacks | bounded records, generated adapter header, pointer-only opaque identity, strings, returned arrays, and exact same-thread callback adapters complete; captures, userdata ownership, foreign-thread entry, and ownership transfer remain systems-readiness breadth | `S-ABI-01/02/03`, `S-FFI-02` F1/F2/F3, and `S-CALL-01` done; complete GLFW 3.4 oracle is the acceptance evidence |
-| Owned callables and capture | **owning read/mut/once wrappers, retained invocation, exact items and bounded inline/boxed storage delivered** | `L-CALL-01/02` admitted contracts exist. Checked shared/exclusive captures, borrowed callable views and signature-origin reference results are delivered by L-CALL-03/04. Broader borrowed escape, owning invocation-pointer results and inline consuming projection remain, not the original one-field-only transport boundary. |
+| Owned callables and capture | **owning read/mut/once wrappers, retained invocation, exact items and bounded inline/boxed storage delivered** | `L-CALL-01/02` admitted contracts exist. Checked shared/exclusive captures, borrowed callable views and signature-origin reference results are delivered by L-CALL-03/04. Broader borrowed escape, owning invocation-pointer results and cleanup-bearing inline relocation remain, not the original one-field-only transport boundary. |
 | Allocator/provenance model | **general raw/lifetime, programmable allocation and source storage delivered** | `S-ALLOC-01` through `S-ALLOC-09` admitted contracts and arena/pool/resource clients exist. Remaining allocator-aware variants, fallible owners and source-policy candidates have separate acceptance. |
 | Freestanding profile | **later breadth until a target workload requires it** | `S-FREE-01` |
 | Payload enums/matching | **generic owning, stored-reference and borrowed-pattern profiles delivered within their contracts** | `L-SUM-01` and ADR 014 cover substituted alternative identity, finite nested payload enums, owning fixed arrays and representable owning wrappers, storage/source-wrapper transport and read/mut arm-scoped bindings. Consuming matches move payloads out of prvalue and explicitly moved subjects. Direct shared/exclusive and nested reference-enum alternatives retain conditional dependency and declared result-summary proofs. Borrowed-value consuming handoffs, further carrier containment, polymorphic transport and direct capture remain distinct goals. |
