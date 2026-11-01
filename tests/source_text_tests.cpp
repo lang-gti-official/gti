@@ -2,9 +2,11 @@
 #include "gti/formatter.h"
 #include "gti/frontend.h"
 #include "gti/lexer.h"
+#include "gti/module_name.h"
 
 #include <algorithm>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -176,6 +178,75 @@ void testFormattingPreservesAcceptedText() {
          "the formatter should not rewrite rejected non-ASCII syntax");
 }
 
+void testModuleHeaderStreaming() {
+  const std::vector<std::string> headers = {
+      "export module demo.api;",
+      "module demo.api;",
+      "\xef\xbb\xbf// café 😀\r\nexport /* comment ; */ module demo.api;",
+      "/* outer /* nested */ */ module demo.api;",
+      "module bad..name;",
+      "export module class;",
+      "module demo.api",
+      "export int answer();",
+      "int main() { return 0; }",
+      "",
+      "export module demo.\x80;",
+      "module\rdemo.api;"};
+  const auto compare = [](const std::string &text) {
+    lang::Lexer complete, streamed;
+    const auto expected = complete.scanModuleHeader(text, "header.gti");
+    std::istringstream input(text);
+    const auto actual = streamed.scanModuleHeader(input, "header.gti");
+    expect(actual.size() == expected.size(),
+           "streamed and in-memory header token counts agree");
+    for (std::size_t i = 0; i < std::min(actual.size(), expected.size()); ++i)
+      expect(actual[i].kind == expected[i].kind &&
+                 actual[i].lexeme == expected[i].lexeme &&
+                 actual[i].position == expected[i].position &&
+                 actual[i].line == expected[i].line,
+             "streaming preserves header token kinds, spelling and positions");
+    expect(streamed.errors().size() == complete.errors().size(),
+           "streaming preserves lexical header diagnostics");
+    for (std::size_t i = 0;
+         i < std::min(streamed.errors().size(), complete.errors().size()); ++i)
+      expect(streamed.errors()[i].code == complete.errors()[i].code &&
+                 streamed.errors()[i].primary.start ==
+                     complete.errors()[i].primary.start &&
+                 streamed.errors()[i].primary.end ==
+                     complete.errors()[i].primary.end,
+             "streaming preserves diagnostic codes and byte ranges");
+  };
+  for (const auto &header : headers)
+    compare(header);
+  // Split UTF-8, CRLF, comment delimiters and identifiers across read edges.
+  for (const std::size_t boundary : {4096U, 8192U, 16384U}) {
+    for (std::size_t padding = boundary - 30; padding < boundary + 2;
+         ++padding) {
+      compare("/*" + std::string(padding, ' ') +
+              "😀*/\r\nexport module demo.api;\n");
+      compare(std::string(padding, ' ') + "export module demo.api;\n");
+    }
+  }
+  const std::string header = "export module demo.api;";
+  std::istringstream large(header + std::string(1024 * 1024, '\x80'));
+  lang::Lexer lexer;
+  const auto tokens = lexer.scanModuleHeader(large, "large-body.gti");
+  const auto parsed = lang::parseModuleHeader(tokens);
+  expect(parsed && parsed->interface &&
+             parsed->declaration.lexeme == "demo.api" &&
+             parsed->span.start == 14 && parsed->span.end == 22 &&
+             !lexer.hadError() && large.tellg() == 4096,
+         "discovery reads a small prefix and never validates an unused body");
+  lang::Lexer fullLexer;
+  const auto full =
+      fullLexer.scan(header + " export int answer();", "full.gti");
+  const auto fullHeader = lang::parseModuleHeader(full);
+  expect(fullHeader && parsed && fullHeader->tokenEnd == parsed->tokenEnd &&
+             fullHeader->span.start == parsed->span.start &&
+             fullHeader->span.end == parsed->span.end,
+         "discovery and full source loading share the same header grammar");
+}
+
 } // namespace
 
 int main() {
@@ -184,6 +255,7 @@ int main() {
   testAsciiTokenBoundary();
   testNewlineContractAndLocations();
   testFormattingPreservesAcceptedText();
+  testModuleHeaderStreaming();
 
   if (failures != 0) {
     std::cerr << failures << " test(s) failed\n";

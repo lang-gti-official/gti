@@ -1543,7 +1543,56 @@ containment and public-map rules; compiler trust remains a separate provenance f
 
 ### Source Module Registration
 
-Source packages can declare a public module map independently of file layout:
+Project resolution discovers source modules under `[package].source-root`
+(`src` by default). Leading `export module name;` declarations supply interfaces;
+leading `module name;` declarations supply private implementation membership.
+Filenames do not determine logical names or namespaces. This discovery applies
+to the root package and declared dependency packages alike; direct single-file
+compilation remains manifest-independent.
+
+The compiler lexer reads a small prefix through the leading declaration for
+discovery, using the same header parser as source loading. It extends that
+prefix when a comment, token or UTF-8 sequence crosses a read boundary; it does
+not read a large unused body into memory. An unused module body is not parsed,
+checked or lowered. Directory traversal and implementation order are sorted,
+and overlapping roots do not duplicate files. Within each selected root, hidden
+entries, `build` directories, directory symlinks and nested packages are not
+traversed. Explicit roots can select contained hidden/generated directories or
+directory aliases, but cannot cross a nested package boundary. Source
+file symlinks must stay inside their owning package. A missing default `src`
+directory is allowed for projects using explicit paths elsewhere.
+A nested `gti.toml` remains a package boundary even when it is a broken
+symlink; a damaged child manifest never makes its private sources part of the
+parent package.
+
+Optional settings customize discovery; they do not enable it:
+
+```toml
+[module-discovery]
+roots = ["src", "generated"]
+exclude = ["src/core/windows", "src/experimental.gti"]
+```
+
+Roots replace the default and must be existing package-contained directories.
+Exclusions are package-relative file or directory paths, not glob patterns;
+they apply before module membership is collected. `roots = []` selects fully
+explicit registration. Excluding a file symlink excludes that entry, without
+excluding its independently discovered target or requiring that target to exist
+or belong to the package. Exclusions also work through contained directory
+aliases used as explicit roots. Unexcluded file links still undergo all package
+and duplicate-file checks. Platform/backend folder names have no implicit meaning:
+select the desired roots/exclusions or explicit implementation lists before
+building. This first implementation does not add conditional discovery tables.
+
+All discovered interfaces enter the package's public module map; only their
+explicitly exported declarations become visible to consumers. Private
+implementation files never become independently importable public interfaces.
+Discovery cannot cross a nested package boundary or grant a dependency new
+aliases. Saved header changes, file creation/removal and implementation
+membership changes are reflected on the next project resolution and in its
+model/cache identity. Loaded source bytes retain their existing cache checks.
+
+Source packages can also declare explicit selections independently of file layout:
 
 ```toml
 [modules]
@@ -1559,8 +1608,11 @@ the package, including through symlinks. Duplicate physical files, portable
 case-fold name collisions, invalid names/types and missing paths are rejected
 by manifest loading. The frontend additionally requires the file to begin with
 `export module` using the registered name. Paths need not be under `source-root`;
-public module resolution uses these explicit registrations rather than deriving
-paths from that field. For example, the registered geometry interface is:
+an explicit selection wins over discovered interfaces with that exact name.
+Without an explicit selection, duplicate interfaces and portable case-fold name
+collisions are errors. An explicitly registered file is not also discovered
+under another name; the frontend still checks that its header matches its
+registration. For example, the selected geometry interface is:
 
 ```gti
 // src/geometry_api.gti
@@ -1580,18 +1632,19 @@ dependency aliases resolve; re-exporting declarations never leaks aliases.
 Direct compilation remains manifest-independent and can write a relative
 quoted import instead.
 
-An optional table registers bodies separately from interfaces:
+An optional table selects bodies separately from interfaces:
 
 ```toml
 [module-implementations]
 geometry = ["src/geometry_impl.gti"]
 ```
 
-Each key must already occur in `[modules]`. Values are arrays of existing,
+Each key must name a discovered or explicitly selected interface. Values are arrays of existing,
 package-contained, relative `.gti` file paths. Duplicate physical registration,
 interface/implementation overlap, non-files and symlink escapes are rejected.
 An implementation begins with `module geometry;`, matching its registered
-interface name. Its interface is implicitly available through shared module
+interface name. An explicit list replaces automatic implementation discovery
+for that module, including when the list is empty. Its interface is implicitly available through shared module
 identity; imports are still required for other dependencies used by its bodies.
 Importing the registered interface automatically loads these files, including
 when it is reached through a dependency package. Unused module registrations
@@ -1602,12 +1655,15 @@ loaded implementation bytes participate in source keys, reports and editor
 snapshot invalidation. Private implementation roots are traversed before the
 entry root in deterministic registration/discovery order, with their own
 ordinary source dependencies first. Existing initialization/lifetime rules
-still apply. No source directories are scanned, no implementation file needs
+still apply. No implementation file needs
 to be imported directly by a consumer, and no independently linked GTI object is added.
 Direct mode still does not discover a manifest: use explicit source edges or
 project mode for registered implementations. `examples/window-factory` is a
 runnable project illustrating this arrangement: its factory and private concrete
 types share the `window` module across three registered implementation files.
+`examples/module-discovery` demonstrates the same shared module identity with
+one interface and two implementation files discovered without either table;
+`module_discovery_runtime` owns its runnable and cache-invalidation coverage.
 
 `ProjectPackage` and immutable `PackageSourceRoot` values carry these maps;
 `SourceLoader` owns language resolution. Registrations are part of project

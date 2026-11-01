@@ -87,6 +87,7 @@ def main():
             manifest_path.write_text(manifest.replace(registration, replacement))
             failed = subprocess.run([compiler, "check"], cwd=project, capture_output=True, text=True)
             assert failed.returncode != 0 and code in failed.stderr, failed.stderr
+        escape.unlink()
         manifest_path.write_text(manifest.replace(registration, "window = []"))
         missing = subprocess.run([compiler, "build"], cwd=project, capture_output=True, text=True)
         assert missing.returncode != 0 and "GTI-S2106" in missing.stderr, missing.stderr

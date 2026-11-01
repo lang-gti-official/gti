@@ -826,6 +826,9 @@ if(TARGET gti_lsp)
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/member_requirement_lsp_test.py" $<TARGET_FILE:gti_lsp>)
   add_test(NAME source_modules_lsp
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_modules_lsp_test.py" $<TARGET_FILE:gti_lsp>)
+  add_test(NAME module_discovery_lsp
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/module_discovery_lsp_test.py" $<TARGET_FILE:gti_lsp>)
+  set_tests_properties(module_discovery_lsp PROPERTIES TIMEOUT 120)
   add_test(NAME out_of_class_lsp
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/out_of_class_lsp_test.py" $<TARGET_FILE:gti_lsp>)
   set_tests_properties(out_of_class_lsp PROPERTIES TIMEOUT 120)
@@ -838,6 +841,9 @@ if(TARGET gti_lsp)
 endif()
 add_test(NAME source_modules_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_modules_runtime_test.py" $<TARGET_FILE:gti>)
+add_test(NAME module_discovery_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/module_discovery_runtime_test.py" $<TARGET_FILE:gti>)
+set_tests_properties(module_discovery_runtime PROPERTIES TIMEOUT 180)
 add_test(NAME out_of_class_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/out_of_class_runtime_test.py" $<TARGET_FILE:gti>)
 set_tests_properties(out_of_class_runtime PROPERTIES TIMEOUT 600)
