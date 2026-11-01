@@ -1,0 +1,15 @@
+export module geometry;
+namespace geometry {
+    struct Stamp { int value = 91; Stamp() = default; };
+    export enum class Status : uint8_t { ready = 7 };
+    export struct Point {
+        mut int x = 3;
+        mut int y = 4;
+    private:
+        Stamp stamp;
+    public:
+        Point() = default;
+    };
+    export Point echo(Point value) { return value; }
+    export Status status(Status value) { return value; }
+}

@@ -322,7 +322,11 @@ The current implemented foundation includes:
   exact-value/default scalar initialization, and consuming
   `std::upcast_unique<Base, Derived>` functions. Swap exchanges the two owner
   tokens directly; it neither copies either pointee nor runs replacement
-  cleanup; and
+  cleanup. Allocated pointees must not retain checked borrowed state: the
+  unique owner does not carry external lifetime dependencies. This restriction
+  includes borrowing closure environments nested in user-defined payloads;
+  ordinary tracked local values and non-owning callable views remain supported;
+  and
 - `std.memory` `std::shared_ptr<T>` and `std::make_shared<T>` for explicit
   shared ownership: move-only handles with `clone()`, read-only dereference,
   null/default construction, null comparison, `use_count()`, reset, swap, and
@@ -466,15 +470,15 @@ The current implemented foundation includes:
   explicit ownership transfer. `function` requires copy-constructible targets
   and exposes an explicit deep `clone()`; the wrapper itself is move-only, as
   with the other owning containers. `move_only_function` also accepts move-only
-  captures and has no clone. The four repeatable forms own their target in a
+  captures and has no clone. Repeatable and once-invoked forms own their target in a
   `std::inline_polymorphic<target, 32, 8>`: a target that is an
   `inline_polymorphic_payload` and fits the 32-byte slot (a vtable pointer plus
   up to 24 bytes of captures) is stored inline and moves with the wrapper, so
   constructing, replacing, cloning and moving it never allocate. Owning,
   cleanup-bearing or larger targets use `make_unique`; a boxed replacement is
   allocated before the current target is destroyed. The `R(Args...) &&` forms
-  keep a boxed target because consuming invocation projects ownership through
-  a unique-owner accessor. Invoking an empty wrapper follows checked
+  consume an inline or boxed target in place, retaining its remaining resources
+  through the outer receiver's full expression. Invoking an empty wrapper follows checked
   null-owner failure, not C++ exceptions.
   Borrowed captures/results, inferred fresh-lambda return types, global closure
   storage, and native callback conversion are outside this wrapper contract.
@@ -505,8 +509,8 @@ The current implemented foundation includes:
   `std::transfer_function<R(Args...)>`, `R(Args...) mut`, and `R(Args...) &&`
   owners whose target must be transferable at construction and replacement.
   Ordinary capability-qualified interfaces retain that proof through erasure;
-  no concurrent invocation or sharing is granted. The repeatable forms use
-  the existing inline/boxed policy, while consuming targets remain boxed; and
+  no concurrent invocation or sharing is granted. All three forms use the
+  inline/boxed policy, including consuming invocation; and
 - `std.numeric` public `std::accumulates_into<I, T>` and an ordinary
   source-defined default and operation-based `std::accumulate`, homogeneous
   default and operation-based `std::inner_product`, and unary
@@ -533,7 +537,8 @@ The current implemented foundation includes:
   a polymorphic `Interface`. `replace(value)` stores an
   `std::inline_polymorphic_payload<Model, Interface>` inline when its runtime
   layout fits `Bytes` and `Align`, and boxes any other model with
-  `make_unique`; `get()`, `has_value()`, `is_inline()` and `reset()` complete
+  `make_unique`; `get()`, `has_value()`, `is_inline()`, `reset()` and consuming
+  `invoke_once<R>(arguments...)` complete
   the surface. A payload is a concrete class publicly derived from
   `Interface` whose generated relocation cannot fail, whose cleanup runs no
   source code, that retains no checked borrow, and whose erasure grants no
@@ -543,8 +548,10 @@ The current implemented foundation includes:
   interface is recomputed from the new address. References from `get()`
   borrow the owner, so no checked reference observes a move. The private
   `gti_internal::polymorphic_storage` slot binds by declaration identity; its
-  preconditions are library invariants that trap if violated. Consuming
-  invocation of an inline payload is not yet provided;
+  preconditions are library invariants that trap if violated. `invoke_once<R>`
+  consumes the owner and invokes its interface's call operator; its result must
+  be an owning value or void. A live borrow from `get()` prevents consumption,
+  and the consumed owner cannot be invoked or inspected again;
 - `std.optional` source-defined move-only `std::optional<T>` for
   `std::move_constructible T`, including nested optionals whose payloads
   cannot be assigned. Payloads cannot contain borrowed state and cannot be

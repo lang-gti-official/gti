@@ -245,6 +245,12 @@ endif()
 add_executable(gti_local_reference_inference_tests local_reference_inference_tests.cpp)
 target_link_libraries(gti_local_reference_inference_tests PRIVATE gti_cpp_backend)
 add_test(NAME local_reference_inference COMMAND gti_local_reference_inference_tests)
+add_executable(gti_bounded_array_borrows_tests bounded_array_borrows_tests.cpp)
+target_link_libraries(gti_bounded_array_borrows_tests PRIVATE gti_cpp_backend)
+add_test(NAME bounded_array_borrows COMMAND gti_bounded_array_borrows_tests)
+add_test(NAME bounded_array_borrows_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/bounded_array_borrows_runtime_test.py" $<TARGET_FILE:gti>)
+set_tests_properties(bounded_array_borrows_runtime PROPERTIES TIMEOUT 300)
 add_test(NAME local_reference_inference_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/local_reference_inference_runtime_test.py" $<TARGET_FILE:gti>)
 set_tests_properties(local_reference_inference_runtime PROPERTIES TIMEOUT 300)
@@ -1054,6 +1060,10 @@ add_test(NAME polymorphic_storage_compiler_contract
 add_executable(gti_prefix_constructor_tests prefix_constructor_tests.cpp)
 target_link_libraries(gti_prefix_constructor_tests PRIVATE gti_cpp_backend)
 add_test(NAME prefix_constructor_contract COMMAND gti_prefix_constructor_tests)
+add_test(NAME vector_empty_constructor_runtime
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/vector_empty_constructor_runtime_test.py" $<TARGET_FILE:gti>)
+set_tests_properties(vector_empty_constructor_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME vector_prepared_constructor_runtime
   COMMAND "${Python3_EXECUTABLE}"
           "${PROJECT_SOURCE_DIR}/tests/vector_prepared_constructor_runtime_test.py" $<TARGET_FILE:gti>)
@@ -3558,6 +3568,11 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/scripts/sync_release_assets.py"
   )
   add_test(
+    NAME mir_census_profile_controls
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/mir_census_profile_test.py"
+  )
+  add_test(
     NAME mir_census_regression
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/mir_census_test.py"
@@ -5219,6 +5234,15 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(inline_polymorphic_runtime PROPERTIES TIMEOUT 900)
+  if(UNIX)
+    add_test(
+      NAME owned_inline_consumption_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/owned_inline_consumption_test.py"
+              "$<TARGET_FILE:gti>"
+    )
+    set_tests_properties(owned_inline_consumption_runtime PROPERTIES TIMEOUT 600)
+  endif()
   add_test(
     NAME inline_closure_owner_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -5533,6 +5557,11 @@ if(Python3_Interpreter_FOUND)
               "${PROJECT_SOURCE_DIR}/tests/borrow_origin_runtime_test.py"
               "$<TARGET_FILE:gti>")
     set_tests_properties(borrow_origin_runtime PROPERTIES TIMEOUT 600)
+    add_test(NAME owner_chain_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/owner_chain_runtime_test.py"
+              "$<TARGET_FILE:gti>")
+    set_tests_properties(owner_chain_runtime PROPERTIES TIMEOUT 300)
     add_test(
       NAME mut_reference_retained_chain_runtime
       COMMAND "${Python3_EXECUTABLE}"
@@ -6139,6 +6168,10 @@ if(Python3_Interpreter_FOUND)
 endif()
 
 
+add_test(NAME compiled_type_forwarding
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/compiled_type_forwarding_test.py"
+  "$<TARGET_FILE:gti>" --output-dir "${CMAKE_BINARY_DIR}/compiled-type-forwarding")
+set_tests_properties(compiled_type_forwarding PROPERTIES TIMEOUT 600)
 add_test(NAME compiled_namespaces
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/compiled_namespaces_test.py"
   "$<TARGET_FILE:gti>" --output-dir "${CMAKE_CURRENT_BINARY_DIR}/compiled-namespaces")

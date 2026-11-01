@@ -15316,8 +15316,10 @@ auto SemanticVisitor::Impl::analyzeMoveCall(
       }
     }
     if (function != nullptr && function->ownedPointeeProjection &&
-        function->ownedPointeeProjection->borrowIntrinsic ==
-            IntrinsicKind::UniqueOwnerBorrowMut &&
+        (function->ownedPointeeProjection->borrowIntrinsic ==
+             IntrinsicKind::UniqueOwnerBorrowMut ||
+         function->ownedPointeeProjection->borrowIntrinsic ==
+             IntrinsicKind::PolymorphicStorageReadMut) &&
         ownerExpression != nullptr) {
       const ExpressionInfo *owner =
           semanticModel.findExpression(*ownerExpression);
@@ -15326,7 +15328,7 @@ auto SemanticVisitor::Impl::analyzeMoveCall(
           owner->access == AccessMode::Mutable &&
           owner->type.kind == SemanticType::Class &&
           !owner->traits.containsBorrowedState && anchor.root != nullptr &&
-          anchor.receiver && !anchor.projections.empty() &&
+          anchor.receiver &&
           std::all_of(anchor.projections.begin(), anchor.projections.end(),
                       [](const auto &projection) {
                         return projection.kind == PlaceProjectionKind::Field;
@@ -15356,7 +15358,8 @@ auto SemanticVisitor::Impl::analyzeMoveCall(
     currentType = SemanticType::Unknown;
     return;
   }
-  if (place.root != nullptr && !place.projections.empty()) {
+  if (place.root != nullptr &&
+      (retainedOwner != nullptr || !place.projections.empty())) {
     const ExpressionInfo *info = semanticModel.findExpression(*argument);
     if (place.root->type.kind == SemanticType::Reference) {
       report(expressionToken(argument),
@@ -15370,7 +15373,9 @@ auto SemanticVisitor::Impl::analyzeMoveCall(
       currentType = SemanticType::Unknown;
       return;
     }
-    const PlaceProjectionKind projectionKind = place.projections.back().kind;
+    const PlaceProjectionKind projectionKind =
+        place.projections.empty() ? PlaceProjectionKind::Field
+                                  : place.projections.back().kind;
     if (info == nullptr || info->category != ValueCategory::Place ||
         info->access != AccessMode::Mutable ||
         (projectionKind != PlaceProjectionKind::Field &&
@@ -15776,6 +15781,19 @@ auto SemanticVisitor::Impl::analyzeUniqueOwnerIntrinsicCall(
     validateType(pointeeRef);
     validateReferencePlacement(pointeeRef, false, "allocated type");
     const SemanticType pointeeType = typeOf(pointeeRef);
+    if (!containsOpenTypeParameter(pointeeType) &&
+        typeTraits(pointeeType).containsBorrowedState) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2018", DiagnosticPhase::Semantics, expr.paren(),
+          "Unique allocation cannot retain checked borrowed state because "
+          "the owner does not track external borrow dependencies.");
+      diagnostic.hints.emplace_back(
+          "Keep the borrowing value in tracked local storage, or store owned "
+          "state instead.");
+      diagnostics.push_back(std::move(diagnostic));
+      currentType = SemanticType::Unknown;
+      return;
+    }
     const bool scalar = isAllocatedScalarType(pointeeType);
     if (scalar) {
       if (const auto arguments =

@@ -485,7 +485,10 @@ public:
                     (initialization || declaration ||
                      closureCopySource(body, stage))) &&
                   !publishedArgument(address, body, placement, stage) &&
-                  !copiedArgument(body, stage) && !replaced)
+                  !copiedArgument(body, stage) && !replaced &&
+                  !(transfer && stage.kind == MirInstructionKind::Move &&
+                    plannedTransfer(body, stage) ==
+                        native_llvm::FreshHierarchyPublication::Receiver))
                 proof.transfer = true;
           const auto transferred = [&](const MirOperand &operand) {
             return contains(operand.type) &&
@@ -3091,8 +3094,8 @@ public:
             place.projections.front().kind ==
                 MirProjectionKind::RawDereference);
   }
-  // An index path through a local array of passive elements or of a sealed
-  // integral enum, whose elements are stored as their underlying integers.
+  // An index path through fixed array storage, including a checked returned
+  // borrow whose loan is the storage root (no unprojected place is required).
   bool scalarArrayProjection(const MirBody &body, const MirPlace &place) const {
     if (arrayProjection(body, place))
       return true;
@@ -3100,14 +3103,19 @@ public:
                                    [&](const auto &candidate) {
                                      return sameStorageRoot(candidate, place);
                                    });
-    if (root == body.places.end())
+    const auto rootType = root != body.places.end() ? std::optional(root->type)
+                          : place.root == MirPlaceRootKind::Loan
+                              ? loanRootType(body, place.loan)
+                              : std::nullopt;
+    if (!rootType)
       return false;
-    auto type = root->type;
+    auto type = *rootType;
     const auto &array =
         type.kind == SemanticType::Reference && type.arguments.size() == 1
             ? type.arguments.front()
             : type;
-    if (!integralEnumArray(array) && !textViewArray(array))
+    if (!(array.kind == SemanticType::Array && passiveArrayElement(array)) &&
+        !integralEnumArray(array) && !textViewArray(array))
       return false;
     for (const auto &projection : place.projections) {
       if (!((projection.kind == MirProjectionKind::Index &&

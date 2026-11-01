@@ -255,7 +255,7 @@ is a teaching helper, not a production server.
 | `039-raw-pointers.gti` | one-level raw pointers, unsafe declaration/call contracts, lexical `unsafe`, and pointer arithmetic |
 | `040-loan-flow-edges.gti` | bounded switch-exit and immediate-`break` retained-loan endings |
 | `041-owner-dependencies.gti` | single-origin read-only and mutable owner dependencies through factories, generics, moves, and returns |
-| `042-exclusive-reborrows.gti` | nested mutable and read-only reborrows with parent reactivation after its final active child ends |
+| `042-exclusive-reborrows.gti` | nested reborrows, parent reactivation, and returning caller-owned reborrows through receiver and generic helpers |
 | `043-program-arguments.gti` | a hosted argument count and owned vector of owned command-line strings |
 | `044-bounded-requires.gti` | multi-parameter concepts, trailing requirements, and source-defined `std::accumulate` |
 | `045-layout-queries.gti` | frontend-owned type size and ABI-alignment constants |
@@ -342,9 +342,10 @@ is a teaching helper, not a production server.
 | `129-generic-payload-enums.gti` | exact generic messages with default/value arguments, owning inbox transport, borrowed payload patterns and optional `class` spelling |
 | `130-fresh-result-initialization.gti` | fresh same-type factory results, redundant typed wrappers, immovable owning values and final-address identity |
 | `131-inferred-references.gti` | local shared/exclusive `auto&` references, last-use borrowing and a reference into a decoded JSON document kept alive by its owner |
+| `182-bounded-array-borrows.gti` | exact fixed-array borrows, inferred mutable references and generic sensor-buffer operations without copying storage |
 | `133-raw-text-owner-views.gti` | counted and zero-terminated text views derived from an unrelated inline byte owner, with the unsafe bridge's checked borrow tied to that owner |
 | `134-standard-library-modules.gti` | standard-library units imported as `std.name` modules instead of included, with each import exposing exactly its own unit |
-| `135-inline-polymorphic-values.gti` | an application interface owned by `std::inline_polymorphic`, with small sensors inline, an owning sensor boxed, state preserved across vector growth, and replacement |
+| `135-inline-polymorphic-values.gti` | application interfaces owned by `std::inline_polymorphic`, with inline sensors, boxed fallback, vector growth, replacement, and consuming inline invocation |
 | `136-inline-closure-cells.gti` | an application-defined inline cell holding a bitwise-relocatable closure through raw-address lifetime helpers and `std::layout_of`, moved by its bytes |
 | `137-declared-attributes.gti` | `[[attribute]]` structs applied to fields and types with constant arguments, read through `std.meta` by a text encoder and a binary writer, with enumerator metaobjects and the `std::meta::reflectable` constraint |
 | `138-structural-construction.gti` | `std::meta::construct` building structs field by field from a byte reader and a text reader, with `expected` failures stopping production before construction |
@@ -491,7 +492,9 @@ expose a pointer or use a compiler-known public wrapper name.
 from a checked owner dereference and one of its fields. Each mutable parent is
 suspended while an overlapping child remains live, then fully reactivates
 after its final active child reaches a proven endpoint. Known-disjoint field
-projections may remain usable in the meantime. The example deliberately stays
+projections may remain usable in the meantime. Receiver and generic helpers
+also return local reborrow chains while preserving the caller's owner and
+access permission, using ordinary reference syntax. The example stays
 within stable root, field, and checked-dereference places; indexed, raw, and
 opaque sources are not part of this bounded slice.
 
@@ -730,7 +733,9 @@ generation-checked handle: after erasure and reuse it names the replacement.
 application sensors through `std::inline_polymorphic<sensor, 32, 8>`. Sensors
 with scalar state live inside their owner, so vector growth relocates them with
 their counters; a sensor that owns a string is boxed. Replacing the boxed sensor
-with a small one frees its allocation. No compiler rule names the sensor types.
+with a small one frees its allocation. A command is consumed through
+`std::move(operation).invoke_once<int>(35)` while its payload stays inline.
+No compiler rule names the sensor or command types.
 
 [`136-inline-closure-cells.gti`](136-inline-closure-cells.gti) keeps a closure in
 an erased inline cell. Raw addresses of the closure-bearing holder pass through
@@ -762,6 +767,19 @@ text and zero-terminated views from an unrelated inline byte owner. The unsafe
 bridge retains the owner relationship through an ordinary source helper; the
 resulting checked borrow prevents mutation, movement or escape past that owner.
 Address validity, extent and termination remain the caller's unsafe obligations.
+
+## Checked references through owning chains
+
+[`ownership/owner-chain-references.gti`](ownership/owner-chain-references.gti)
+uses ordinary reference-returning functions to borrow and modify a descendant
+through a chain of exclusive owners, without raw pointers or unsafe assertions.
+It shows shared observations after the mutable borrow's last use and exact
+destruction after all observations finish. Supplying an extra command-line
+argument demonstrates checked empty-owner failure and cleanup during traversal.
+The `owner_chain_runtime` gate runs
+this nested example on LLVM and the existing C++ backend; it is outside the
+numbered full-language census. This demonstrates existing general semantics,
+not automatic verification of raw-pointer container internals.
 
 ## General requirements and reflection
 
@@ -838,3 +856,6 @@ failure, freshness and source-free distribution checks.
 
 The [compiled namespace example](compiled-namespaces/README.md) composes distinct
 namespace-qualified types, overloads and borrowed APIs from two compiled libraries.
+
+The [compiled type forwarding example](compiled-type-forwarding/README.md) shares
+dependency-owned records and enums through a chain and diamond of compiled libraries.

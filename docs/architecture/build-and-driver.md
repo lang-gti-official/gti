@@ -2707,6 +2707,8 @@ C embedding retains its separate request and ABI. Runnable examples cover
 [borrowing](../../examples/compiled-borrowing/README.md),
 [namespaced APIs](../../examples/compiled-namespaces/README.md), and
 [dependency builds](../../examples/compiled-dependencies/README.md).
+[Type forwarding](../../examples/compiled-type-forwarding/README.md) composes
+dependency-owned records and enums through multiple compiled libraries.
 
 The compiler-owned `CompiledScalarUnitBuilder::selectExports` projects selected
 root-module function names, including all exported overloads. Names may be
@@ -2716,8 +2718,9 @@ private siblings. Functions must be nongeneric, without default arguments. Param
 results admit bool, char, fixed integers, float/double, concrete value records,
 integral enums and checked references to those values; void results remain valid.
 Constexpr functions, entry functions and unsafe/private capabilities reject.
-A target may contain multiple source modules, but this nominal profile requires
-its exposed type closure to belong to the root module. There are at most 256
+A target may contain multiple source modules. Its exposed nominal closure can
+belong to the root module or to verified compiled dependencies; ordinary non-root
+source modules still require a logical ownership mapping. There are at most 256
 exported overloads and 64 nominal declarations per interface.
 
 Qualified declaration names retain their complete namespace path, with at most
@@ -2729,7 +2732,8 @@ shadowing namespace cannot change a producer-resolved type. Aliases carry no new
 type identity or native wrapper; imported declarations still undergo canonical
 metadata comparison. Nested class-owned types require owner metadata and reject.
 
-Nominal metadata preserves logical declaration identity, export visibility,
+Nominal metadata preserves each declaration's defining package, target and module,
+qualified name, export visibility,
 class/struct kind, field order/type/access/mutability, supported scalar constant
 field defaults, enum underlying types and enumerators. Nested plain value fields
 use the referenced record's generated default. Explicit defaulted constructors
@@ -2737,8 +2741,8 @@ retain their access. A sealed declaration-complete class summary retains these
 constructors and the presence of other source members before executable
 reachability pruning. Consumer-local designated construction is regenerated from
 fields and does not become an exported source member. IDs are remapped into each fresh
-compiler session. The producer and imported lowered declarations are independently
-projected and compared against the canonical metadata; source-session IDs are
+compiler session. The producer and reachable imported lowered declarations are
+independently projected and compared against the canonical metadata; source-session IDs are
 never an ABI. Records require generated structural value lifecycles. Bases, custom
 constructors/destructors, member functions, static members, stored references,
 payload enums and generic definitions require further contracts and reject.
@@ -2757,11 +2761,30 @@ recipes or a general lifetime dependency graph.
 Callable metadata profile `gti.callable-interface.3` contains key-sorted,
 length-framed records: persistent function key, result recipe, common nominal
 metadata, borrow origin, parameter ordinal and access. Duplicate overload keys
-reject even when results differ. `gti.nominal-interface.1` stores the bounded
+reject even when results differ. `gti.nominal-interface.2` stores the bounded
 declaration closure. Development codec entry points expose the same canonical
 validation used by the importer. Unknown profiles, malformed/noncanonical records,
 unresolved recipes and incomplete borrow contracts reject. No AST pointers,
 numerical instance IDs or arbitrary source bodies enter the interface.
+
+Dependency-owned declarations retain their original identity when used as function
+parameters/results or nested fields. The consumer requires the defining artifact
+in the verified transitive dependency receipts and imports its virtual interface;
+it does not duplicate that type in the forwarding library. Missing or inconsistent
+owners, receipts or reachable layouts reject. Type dependencies receive private
+virtual paths when the project graph supplied only a transitive artifact. Relative
+imports preserve source-owner boundaries and quote relocated paths safely. These
+ordinary imports do not re-export dependency names: consumers explicitly import
+the defining interface when naming those declarations. Whole-module re-export
+contracts and colliding fully qualified nominal names remain separate work.
+
+`LoweredProgram` retains logical owner/source-unit bindings independently of
+callable reachability, including a library used only for its types. Serialization
+profile `lowered-program-v31` records these bindings. Wire metadata is validated
+completely; concrete declaration comparison follows HIR reachability. An unused
+import may lack an instantiated type or function, but every reached GTI declaration
+must still bind to its exact validated callable contract. No new runtime adapter,
+ownership rule or allocation is introduced by forwarding a nominal type.
 
 The consumer validates envelope compatibility, dependency receipts and native
 objects, then projects metadata into a virtual source interface for the ordinary

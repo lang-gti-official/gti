@@ -607,7 +607,12 @@ capacity. Successful initial prefix allocation then publishes zero live elements
 after its own allocation-result temporary is retired; the one-argument entry
 delegates to this same alignment-aware path. Rejected allocation on a nonempty
 buffer and provider failure leave its prior count, capacity and elements intact.
-An empty reservation makes no provider call. Descriptor copies remain passive
+An empty reservation makes no provider call. Default `std::vector<T>`
+construction directly creates an empty prefix owner; it does not enter the
+fallible count-based allocation path with a zero request. Pointer, capacity and
+live count start empty, no `T` is constructed, and later reserve/append use the
+same allocation and publication rules. This also applies to nested vectors and
+vectors of non-default-constructible elements. Descriptor copies remain passive
 and never gain release authority.
 
 Capabilities expose only irreducible representation invariants. Public logical
@@ -828,6 +833,15 @@ failure-free and cleanup-inert, so the slot needs no failure-aware cleanup
 recipe; it is movable and move-assignable while optional's slot is not. The
 library chooses inline placement with an `if constexpr` over that concept and
 a runtime `std::layout_of` comparison, which the native compiler folds.
+
+The source-defined consuming `invoke_once<R>` selects its inline or boxed
+target. Semantics derives an owned-pointee projection from its transparent
+mutable accessor; MIR independently checks the exact capability, field,
+intrinsic, returned loan and single invocation use. The root may be consuming
+`this` or an owned field path. Remaining cleanup stays with that owner. The
+once-invoked function wrappers use this same owner and allocation policy, so
+small eligible captures avoid a heap allocation without new callback-specific
+compiler behavior. Cleanup-bearing captures remain boxed.
 
 MIR verification re-proves each of the five operations: the exact capability
 class and staged storage place, the interface result and owner-tied loan for

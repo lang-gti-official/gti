@@ -2155,7 +2155,7 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
                                constructorInfo != nullptr &&
                                    constructorInfo->kind ==
                                        ConstructorKind::Move,
-                               false, true);
+                               false);
     const bool trustedGuardSpecialMember =
         isDefaultLibraryMutexGuardCarrier(owner) &&
         constructorInfo != nullptr &&
@@ -3509,7 +3509,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
       methodDeclaration || intrinsicDeclaration || hasReturnBorrowSummary ||
           isBorrowReturningType(declaredReturnType),
       methodDeclaration ? "method return type" : "function return type", false,
-      false, false,
+      false,
       hasReturnBorrowSummary && stmt.hasFunctionAttribute("borrowed_from"));
   if (nestsBorrowedState(declaredReturnType) &&
       !isBorrowedCarrierReference(declaredReturnType)) {
@@ -3549,8 +3549,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
     validateType(parameter.type);
     allowPackTypeReference = enclosingParameterPackTypeReference;
     if (!intrinsicDeclaration) {
-      validateReferencePlacement(parameter.type, true, "function parameter",
-                                 false, false, true);
+      validateReferencePlacement(parameter.type, true, "function parameter");
     }
     const SemanticType declaredType = typeOf(parameter);
     const SemanticType parameterType =
@@ -7437,6 +7436,9 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     ~RestoreImmediateReceiver() { slot = previous; }
   } restoreImmediate{immediateCallReceiver, immediateCallReceiver};
   immediateCallReceiver = directCall(expr.callee());
+  if (const auto *member = exprAs<Get>(expr.callee().get());
+      member != nullptr && member->access().kind == TokenKind::DOT)
+    immediateCallReceiver = directCall(member->object());
   // In factory(callback)(args), only each call's own callee is a callee-name
   // context. Its arguments remain values, including exact function items.
   struct RestoreCalleeContext {

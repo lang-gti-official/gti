@@ -3057,7 +3057,18 @@ int main() { return 0; }
                  "child reborrow"),
          "mutable reference parameters should enter with a parent loan that "
          "can be suspended by a local child");
-  expect(rejects(R"(
+  const auto accepts = [&](std::string source) {
+    const auto result = lang::Frontend().analyze("returned-local-reborrow.gti",
+                                                 std::move(source));
+    if (!result.canGenerateCode())
+      for (const auto &diagnostic : result.diagnostics)
+        std::cerr << "Unexpected returned-reborrow diagnostic: "
+                  << diagnostic.message << '\n';
+    return result.canGenerateCode() &&
+           lang::verifyMirProgram(result.mir).valid();
+  };
+  expect(
+      accepts(R"(
 class Cell {
   mut int value = 0;
 
@@ -3071,11 +3082,9 @@ public:
   Cell() = default;
 };
 int main() { return 0; }
-)",
-                 "local child reborrow cannot escape"),
-         "local mutable child loans should not escape through a receiver-tied "
-         "mutable return");
-  expect(rejects(R"(
+)"),
+      "local mutable child loans should relay caller-owned receiver storage");
+  expect(accepts(R"(
 class GroupedCell {
   mut int value = 0;
 
@@ -3102,11 +3111,10 @@ public:
   CommaCell() = default;
 };
 int main() { return 0; }
-)",
-                 "local child reborrow cannot escape"),
-         "grouping and comma wrappers should not let a local mutable child "
-         "escape reference-return validation");
-  expect(rejects(R"(
+)"),
+         "grouping and comma wrappers should preserve a returned child loan's "
+         "caller-owned origin");
+  expect(accepts(R"(
 class Cell {
   mut int value = 0;
 
@@ -3120,11 +3128,10 @@ public:
   Cell() = default;
 };
 int main() { return 0; }
-)",
-                 "local child reborrow cannot escape"),
-         "a read-only child of a mutable local parent should not escape "
-         "through a reference return");
-  expect(rejects(R"(
+)"),
+         "a read-only child of a mutable local parent should return its "
+         "receiver-owned referent without upgrading access");
+  expect(accepts(R"(
 class View {
   int& value;
 
@@ -3146,10 +3153,163 @@ public:
   Cell() = default;
 };
 int main() { return 0; }
+)"),
+         "a child loan may return in a carrier with the same proven owner");
+  const auto returnedChains =
+      lang::Frontend().analyze("returned-reborrow-chains.gti", R"(
+class Pair {
+public:
+  mut int left = 1;
+  mut int right = 2;
+  Pair() = default;
+};
+mut T& relay<T>(mut T& value) {
+  mut T& parent = value;
+  mut T& child = parent;
+  mut T& grandchild = child;
+  return grandchild;
+}
+int& read_relay(int& value) {
+  int& parent = value;
+  int& child = parent;
+  return child;
+}
+mut int& projected(mut Pair& pair) {
+  mut Pair& parent = pair;
+  mut int& child = parent.left;
+  return child;
+}
+mut int& call_relay(mut Pair& pair) {
+  mut int& parent = projected(pair);
+  mut int& child = parent;
+  return child;
+}
+int main() {
+  mut Pair pair = Pair();
+  mut int& slot = relay(call_relay(pair));
+  slot += 3;
+  int& observed = read_relay(pair.left);
+  return observed - 4;
+}
+)");
+  expect(returnedChains.canGenerateCode() &&
+             lang::verifyMirProgram(returnedChains.mir).valid(),
+         "generic, projected, and accessor-result reborrow chains should "
+         "preserve an incoming reference's owner through verified MIR");
+  bool checkedPublication = false;
+  for (const auto &function : returnedChains.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        const auto *published = instruction.loan
+                                    ? function.body.findLoan(*instruction.loan)
+                                    : nullptr;
+        if (instruction.kind != lang::MirInstructionKind::Borrow ||
+            !published || published->kind != lang::MirLoanKind::Return ||
+            instruction.operands.size() != 1 ||
+            instruction.operands.front().kind != lang::MirOperandKind::Loan)
+          continue;
+        const auto *child =
+            function.body.findLoan(instruction.operands.front().loan);
+        const auto *parent =
+            child ? function.body.findLoan(child->parent) : nullptr;
+        if (!child || !parent || parent->kind != lang::MirLoanKind::CallResult)
+          continue;
+        checkedPublication = true;
+        auto missingParent = returnedChains.mir;
+        auto *body = &const_cast<lang::MirFunctionInstance *>(
+                          missingParent.findFunctionInstance(function.id))
+                          ->body;
+        body->loans[child->id - 1].parent = 0;
+        expect(hasMirVerificationError(
+                   lang::verifyMirProgram(missingParent),
+                   "borrow instruction does not match the loan's parent"),
+               "a returned reborrow cannot lose its accessor-result parent");
+        auto missingRetirement = returnedChains.mir;
+        auto *retiredBody =
+            &const_cast<lang::MirFunctionInstance *>(
+                 missingRetirement.findFunctionInstance(function.id))
+                 ->body;
+        for (auto &retiredBlock : retiredBody->blocks)
+          std::erase_if(retiredBlock.instructions, [&](const auto &candidate) {
+            return candidate.kind == lang::MirInstructionKind::EndBorrow &&
+                   candidate.loan == child->id;
+          });
+        expect(hasMirVerificationError(
+                   lang::verifyMirProgram(missingRetirement),
+                   "borrow instruction does not match the loan's parent"),
+               "return publication must retire the exact body-local child");
+      }
+    }
+  }
+  expect(
+      checkedPublication,
+      "accessor-chain return should publish a fresh capability from its child");
+  expect(rejects(R"(
+class Cell {
+public:
+  Cell() = default;
+  mut int& invalid() mut {
+    mut int local = 1;
+    mut int& parent = local;
+    mut int& child = parent;
+    return child;
+  }
+};
+int main() { return 0; }
 )",
                  "local child reborrow cannot escape"),
-         "a child loan should not escape by being stored in an owner-tied "
-         "carrier return");
+         "a reborrow chain ending in a local object must not escape");
+  expect(rejects(R"(
+class Cell {
+public:
+  Cell() = default;
+  mut int& invalid(mut int& other) mut {
+    mut int& parent = other;
+    mut int& child = parent;
+    return child;
+  }
+};
+int main() { return 0; }
+)",
+                 "must derive from this method's receiver"),
+         "caller-owned ancestry must not replace the declared return owner");
+  expect(rejects(R"(
+class Cell {
+public:
+  mut int value = 1;
+  Cell() = default;
+  mut int& expose() mut {
+    mut int& parent = this.value;
+    mut int& child = parent;
+    return child;
+  }
+};
+int main() {
+  mut Cell cell = Cell();
+  mut int& result = cell.expose();
+  cell.value += 1;
+  return result;
+}
+)",
+                 "Cannot assign to a field"),
+         "a returned reborrow must retain the caller's mutable exclusion");
+  expect(rejects(R"(
+class View {
+public:
+  int& borrowed;
+  mut int owned = 1;
+  View(int& source) : borrowed(source) {}
+  mut int& invalid() mut {
+    mut View local{this.borrowed};
+    mut int& parent = local.owned;
+    mut int& child = parent;
+    return child;
+  }
+};
+int main() { return 0; }
+)",
+                 "local child reborrow cannot escape"),
+         "a local carrier's external dependency cannot extend its owned field");
   const lang::FrontendResult disjointIndexes =
       lang::Frontend().analyze("disjoint-index-borrows.gti", R"(
 int main() {
@@ -3402,7 +3562,6 @@ int main() {
                         "mutable reference requires a mutable initializer") &&
           hasDiagnostic(invalid.diagnostics,
                         "Reference bindings require an initializer") &&
-          hasDiagnostic(invalid.diagnostics, "References to fixed arrays") &&
           hasDiagnostic(invalid.diagnostics,
                         "complete checked dependency contract") &&
           hasDiagnostic(invalid.diagnostics, "derived from temporary storage"),
@@ -9288,16 +9447,15 @@ int main() {
 }
 
 void testCompleteRangeConceptsAndAlgorithms() {
-  for (const std::string &rejected :
+  for (const std::string &supported :
        {std::string("void invalid(int[3]& values) {}"),
         std::string("using Triple = int[3]; void invalid(Triple& values) {}"),
         std::string("using Callback = void(int[3]&);")}) {
-    const auto invalid =
-        lang::Frontend().analyze("array-reference-boundary.gti", rejected);
-    expect(!invalid.canGenerateCode() &&
-               hasDiagnostic(invalid.diagnostics, "References to fixed arrays"),
-           "generic range substitution does not enable explicit or aliased "
-           "array-reference parameters or callback signature metadata");
+    const auto valid =
+        lang::Frontend().analyze("array-reference-boundary.gti", supported);
+    expect(valid.canGenerateCode(),
+           "explicit, aliased and signature array references use the same "
+           "complete array type as generic range substitution");
   }
   const lang::FrontendResult valid = lang::Frontend().analyze(
       "complete-range-concepts.gti", R"(

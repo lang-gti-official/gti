@@ -24,8 +24,14 @@ template <class F> void rejects(F action) {
   }
   throw std::runtime_error("accepted malformed nominal contract");
 }
-LoweredProgram lower(std::string source) {
-  auto frontend = Frontend().analyze("interface-types.gti", source);
+LoweredProgram lower(std::string source, std::string dependency = {}) {
+  const auto root = std::filesystem::current_path();
+  std::unordered_map<std::string, std::string> overlays;
+  if (!dependency.empty())
+    overlays.emplace((root / "type-dependency.gti").string(),
+                     std::move(dependency));
+  auto frontend =
+      Frontend().analyze(root / "interface-types.gti", source, {}, overlays);
   if (!frontend.canGenerateCode()) {
     for (const auto &d : frontend.diagnostics)
       std::cerr << d.message << '\n';
@@ -158,11 +164,77 @@ export struct Outer { struct Value { int number = 7; }; };
                                         std::span(&nestedType, 1));
   });
 }
+void dependencyOwnedTypes() {
+  const std::string dependency = R"(export module dependency;
+namespace model {
+  struct Hidden { int secret = 11; Hidden() = default; };
+  export enum class Tag : uint8_t { ready = 7 };
+  export struct Point { mut int x = 3; private: Hidden hidden; public: Point() = default; };
+  export Point echo(Point value) { return value; }
+  export Tag tag(Tag value) { return value; }
+}
+)";
+  const PersistentDeclarationOwner baseOwner{"test", "model", "dependency", {}};
+  const PersistentDeclarationOwner derivedOwner{
+      "test", "derived", "derived", {}};
+  auto base = lower(dependency);
+  const auto [baseType, baseUnit] = valueType(base, "model::Point");
+  const auto baseSignatures = CompiledScalarUnitBuilder().selectExports(
+      base, baseUnit, baseOwner,
+      std::vector<std::string>{"model::echo", "model::tag"});
+  auto derived = lower(R"(export module derived;
+import "type-dependency.gti";
+namespace derived {
+  export struct Packet { model::Point point; model::Tag tag = model::Tag::ready; Packet() = default; };
+  export Packet echo(Packet value) { return value; }
+  export model::Point forward(model::Point value) { return value; }
+}
+)",
+                       dependency);
+  const auto [packet, unit] = valueType(derived, "derived::Packet");
+  const auto importedUnit = valueType(derived, "model::Point").second;
+  std::vector<CompiledScalarImport> imports;
+  for (const auto &signature : baseSignatures)
+    imports.push_back({signature, importedUnit});
+  const std::vector<std::string> names{"derived::echo", "derived::forward"};
+  rejects([&] {
+    (void)CompiledScalarUnitBuilder().selectExports(derived, unit, derivedOwner,
+                                                    names);
+  });
+  const auto signatures = CompiledScalarUnitBuilder().selectExports(
+      derived, unit, derivedOwner, names, imports);
+  const auto metadata = signatures.front().typeMetadata;
+  expect(compiledInterfaceDependencies(metadata) == std::vector{baseOwner},
+         "dependency nominal ownership was lost");
+  auto projected = lower(
+      "export module derived; import \"type-dependency.gti\";\n" +
+          compiledInterfaceSource(signatures),
+      "export module dependency;\n" + compiledInterfaceSource(baseSignatures));
+  const auto [other, otherUnit] = valueType(projected, "derived::Packet");
+  const auto modelUnit = valueType(projected, "model::Point").second;
+  std::vector<CompiledInterfaceUnit> units{{otherUnit, derivedOwner},
+                                           {modelUnit, baseOwner}};
+  const auto registry =
+      compiledInterfaceTypeRegistry(projected, otherUnit, metadata, units);
+  expect(projectCompiledInterfaceTypes(projected, otherUnit, derivedOwner,
+                                       std::span(&other, 1), units) == metadata,
+         "forwarded layout or owner changed during import");
+  rejects([&] {
+    (void)compiledInterfaceTypeRegistry(projected, otherUnit, metadata);
+  });
+  units.back().owner.target = "impostor";
+  rejects([&] {
+    (void)compiledInterfaceTypeRegistry(projected, otherUnit, metadata, units);
+  });
+  units.back() = units.front();
+  rejects([&] { validateCompiledInterfaceUnits(units); });
+}
 } // namespace
 int main() {
   try {
     namespacedTypes();
     shadowedNamespaceTypes();
+    dependencyOwnedTypes();
     const std::string source = R"(export module types;
 export enum class Tag : uint8_t { idle = 0, ready = 7 };
 export struct Inner { mut int number = 0; Inner() = default; };

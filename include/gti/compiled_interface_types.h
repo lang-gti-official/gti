@@ -4,15 +4,29 @@
 namespace lang {
 class LoweredProgram;
 struct CompiledScalarSignature;
+// Snapshot-local binding of a logical library/module to its imported source
+// unit. Retained independently of which callable bodies survive reachability
+// pruning.
+struct CompiledInterfaceUnit {
+  SourceUnitId sourceUnit = 0;
+  PersistentDeclarationOwner owner;
+};
+void validateCompiledInterfaceUnits(std::span<const CompiledInterfaceUnit>);
 // Canonical nominal declarations, independent of compiler-session IDs. The
 // initial executable profile retains ordinary generated value lifecycles.
-std::string projectCompiledInterfaceTypes(const LoweredProgram &, SourceUnitId,
-                                          const PersistentDeclarationOwner &,
-                                          std::span<const SemanticType> roots);
+std::string
+projectCompiledInterfaceTypes(const LoweredProgram &, SourceUnitId,
+                              const PersistentDeclarationOwner &,
+                              std::span<const SemanticType> roots,
+                              std::span<const CompiledInterfaceUnit> = {});
 PersistentTypeRegistry compiledInterfaceSyntheticRegistry(std::string_view);
-PersistentTypeRegistry compiledInterfaceTypeRegistry(const LoweredProgram &,
-                                                     SourceUnitId,
-                                                     std::string_view);
+PersistentTypeRegistry
+compiledInterfaceTypeRegistry(const LoweredProgram &, SourceUnitId,
+                              std::string_view,
+                              std::span<const CompiledInterfaceUnit> = {},
+                              bool allowUnreachedDeclarations = false);
+std::vector<PersistentDeclarationOwner>
+    compiledInterfaceDependencies(std::string_view);
 std::vector<std::string> compiledInterfaceDeclarationNames(std::string_view);
 std::string compiledInterfaceTypeSource(std::string_view,
                                         std::string_view aliasPrefix = {});

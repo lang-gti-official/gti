@@ -122,6 +122,19 @@ contracts. Concrete generic reanalysis records the concrete reference, not a
 second inference rule. HIR/MIR consume resolved binding/access and loan facts;
 the backend never asks C++ `auto&` to decide type or lifetime semantics.
 
+Fixed-array referents use this same path. `validateReferencePlacement` and
+`validateReferenceReferent` admit the resolved array type rather than making
+an exception for a generic range parameter. Exact binding checks retain all
+extents. Semantic places and loans carry origin, access, reborrow and endpoint
+facts into HIR/MIR; no array-specific lifetime system or nominal SIMD permission
+is introduced. Existing MIR reference carriers and checked array projections
+provide native execution without array copies or runtime extent metadata.
+LLVM admission resolves loan-rooted array projections from the verified loan's
+producer/referent type, including direct indexing of a returned borrow. MIR
+provenance queries resolve an exact dereferenced capture slot to its entry loan;
+selected fields/elements retain their separate identity. A same-typed captured
+array cannot substitute another capture's loan at a call boundary.
+
 ## Generic payload enum signatures
 
 Nominal registration inventories class and enum identities and their ordinary
@@ -2550,6 +2563,17 @@ method: semantics records the exact receiver place and rejects overlapping
 live loans, partial moves, and subsequent reads, writes, or implicit calls.
 Implicit return movement does not infer this transfer from `return this;`.
 
+Immediate moved-field calls retain storage in the consuming receiver for both
+call operators and named methods. An owning-pointee accessor must directly
+return one trusted unique-owner borrow or inline-polymorphic-slot read. Its
+summary records the exact storage field and intrinsic, not the public wrapper
+name. The retained anchor may be the consuming receiver itself or its writable
+field-only path. Generic callable analysis defers an accessor result only when
+this owning projection has already been proved, and concrete instantiation
+rechecks the signature. Ordinary references gain no consuming authority.
+MIR independently verifies the accessor body, anchor and one invocation use;
+named retained calls reject reference and tracked-borrow results in semantics.
+
 `ResolvedCallInfo::ephemeralBorrowArguments` separately records the exact
 written argument indices that use the bounded call-only read-borrow fallback.
 Candidate selection first resolves the ordinary exact tier and admits this
@@ -3071,6 +3095,16 @@ uses the selected stored dependency, not the alias's separate physical-shell
 loan. A projected referent retains its exact suffix instead of becoming an
 alias of the whole external owner. Dynamic, ambiguous and recursive declaration
 provenance remain conservative.
+Ordinary recursive reference-returning functions can still relay their one
+declared parameter origin through safe owning accessors. This needs no
+recursive allocation-path summary: each call protects its checked origin,
+and body analysis validates the returned reference against that contract.
+The selected referent and protecting root remain distinct in MIR. Owner
+reset, movement and unlinking conflict with the retained root loan; arbitrary
+raw-pointer reachability does not establish an owner dependency. The
+`borrow_origin` owner-chain regressions and `owner_chain_runtime` example cover
+both shared and mutable recursion, invalidation and escaping-reference
+rejections, return-loan verifier mutations and native cleanup.
 Synthesized range dereference retains the selected physical range-storage loan
 before composing field mappings. Its transitive resource dependency remains
 separate; borrowing an element cannot be substituted with borrowing the resource
@@ -3470,6 +3504,16 @@ disjoint parent projection remains valid. The same relation composes into
 nested chains; read-only-to-mutable upgrades are rejected. Dynamic indexed,
 raw, and opaque sources do not receive precise conflict treatment in this
 slice.
+
+Reference-return escape checking follows ordinary reference aliases through
+`SemanticLoanInfo::parent`, as it already follows accessor transients and stored
+reference dependencies. A local reference slot is not an owner of its referent.
+The ancestry must reach an entry loan or receiver storage; local physical
+storage and cleanup-bound ancestors remain invalid. The separate return-origin
+check still proves the exact selected owner, projection and access permission.
+This general rule also covers restored-reference locals, replacing their former
+special-case escape exemption. HIR/MIR retain the existing loan graph and return
+metadata; no runtime lifetime state, allocation or backend inference is added.
 
 Semantics chooses all proven endpoints and reports invalidation conflicts. HIR
 and MIR preserve those choices; they do not recompute liveness from emitted

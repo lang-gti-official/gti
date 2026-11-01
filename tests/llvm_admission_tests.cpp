@@ -314,6 +314,72 @@ lang::VerifiedLoweredProgram lower(std::string_view source,
   return *verified;
 }
 
+void testConditionalConsumingTemporary() {
+  using namespace lang;
+  const auto verified = lower(R"gti(
+import std.polymorphic;
+interface Action { int operator()() &&; };
+class Value : public Action {
+public:
+  Value() = default;
+  int operator()() && override { return 42; }
+};
+int main() {
+  std::inline_polymorphic<Action, 32, 8> first{Value()};
+  std::inline_polymorphic<Action, 32, 8> second{Value()};
+  if (std::move(first).invoke_once<int>() != 42 ||
+      std::move(second).invoke_once<int>() != 42) return 1;
+  return 0;
+}
+)gti",
+                              true);
+  const auto &mir = verified.program().mir();
+  int checked = 0;
+  for (const auto &function : mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &stage : block.instructions) {
+        if (stage.kind != MirInstructionKind::Move || !stage.destination)
+          continue;
+        ++checked;
+        const auto transfer =
+            native_llvm::planFreshHierarchyTransfer(mir, function.body, stage);
+        expect(transfer.publishes ==
+                   native_llvm::FreshHierarchyPublication::Receiver,
+               "conditional moved receiver keeps one exact invocation");
+        for (int mutation = 0; mutation != 3; ++mutation) {
+          auto forged = mir;
+          auto &body = const_cast<MirFunctionInstance *>(
+                           forged.findFunctionInstance(function.id))
+                           ->body;
+          auto *destination =
+              const_cast<MirPlace *>(body.findPlace(*stage.destination));
+          if (mutation == 0)
+            destination->sourceValue = 0;
+          else if (mutation == 1)
+            destination->initiallyAvailable = true;
+          else
+            destination->root = MirPlaceRootKind::Binding;
+          const MirInstruction *producer = nullptr;
+          for (const auto &candidateBlock : body.blocks)
+            for (const auto &candidate : candidateBlock.instructions)
+              if (candidate.id == stage.id)
+                producer = &candidate;
+          bool refused = false;
+          try {
+            static_cast<void>(native_llvm::planFreshHierarchyTransfer(
+                forged, body, *producer));
+          } catch (const BackendUnsupportedError &) {
+            refused = true;
+          }
+          expect(refused, "conditional move cannot forge its cleanup storage");
+        }
+      }
+  expect(checked != 0, "fixture exercises a conditional receiver temporary");
+  const auto admission = planLlvmAdmission(verified);
+  expect(admission.admitted(), "conditional consuming storage is admitted: " +
+                                   admission.limitation());
+}
+
 void testVerifiedConcretePackOwners() {
   using namespace lang;
   const auto verified = lower(R"(
@@ -3943,6 +4009,7 @@ void testDispatchPerUseWitnesses() {
 int main() {
   try {
     testConcreteParameterPackPlan();
+    testConditionalConsumingTemporary();
     testConcreteParameterAliases();
     testVerifiedConcretePackOwners();
     testClosureEnvironmentPlan();

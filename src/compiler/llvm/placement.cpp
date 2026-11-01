@@ -884,8 +884,9 @@ bool isFreshHierarchyTransferProducer(const MirInstruction &stage) {
       (stage.intrinsic != IntrinsicKind::None &&
        !(stage.kind == MirInstructionKind::Move &&
          stage.intrinsic == IntrinsicKind::Move)) ||
-      stage.destination || stage.receiver || stage.loan ||
-      stage.functionTarget || stage.bodyTarget)
+      (stage.destination && (stage.kind != MirInstructionKind::Move ||
+                             stage.info.type.kind != SemanticType::Class)) ||
+      stage.receiver || stage.loan || stage.functionTarget || stage.bodyTarget)
     return false;
   const auto &source = stage.operands.front();
   if (source.value || source.literal)
@@ -1017,9 +1018,21 @@ public:
         identity.kind != MirBodyKind::Destructor &&
         identity.kind != MirBodyKind::ThreadLocalInitializer)
       unsupported("LLVM fresh hierarchy transfer requires a local body");
-    if (producer.destination || producer.receiver || producer.loan ||
-        producer.functionTarget || producer.bodyTarget ||
-        producer.functionPointerFunctionTarget ||
+    const MirPlace *receiverTemporary =
+        producer.destination ? body.findPlace(*producer.destination) : nullptr;
+    if (producer.destination &&
+        (producer.kind != MirInstructionKind::Move || !receiverTemporary ||
+         receiverTemporary->root != MirPlaceRootKind::Temporary ||
+         receiverTemporary->type != producer.info.type ||
+         receiverTemporary->initiallyAvailable ||
+         receiverTemporary->foreignStorage || receiverTemporary->capture ||
+         !receiverTemporary->projections.empty() ||
+         findMirMovedTemporaryMaterialization(body, *receiverTemporary,
+                                              producer.hirValue)
+                 .producer != &producer))
+      unsupported("LLVM moved receiver requires its exact fresh temporary");
+    if (producer.receiver || producer.loan || producer.functionTarget ||
+        producer.bodyTarget || producer.functionPointerFunctionTarget ||
         producer.functionPointerLambdaTarget || producer.nativeCalleeType ||
         producer.nativeCallbackAdapter || producer.threadTaskAdapter ||
         !producer.scopedThreadTasks.empty() || producer.lambdaTarget ||
@@ -1261,6 +1274,9 @@ public:
       }
     if (!consumed)
       unsupported("LLVM transfer has no fresh local publication");
+    if (receiverTemporary &&
+        result.publishes != FreshHierarchyPublication::Receiver)
+      unsupported("LLVM moved temporary requires one consuming receiver use");
     const bool local = result.publishes == FreshHierarchyPublication::Local;
     const bool argument =
         result.publishes == FreshHierarchyPublication::Argument;
@@ -1343,8 +1359,9 @@ public:
         if (from.kind != MirDropObligationKind::Binding ||
             from.place != place->id || from.binding != place->binding ||
             to.kind != MirDropObligationKind::Value || !temporary ||
-            temporary->root != MirPlaceRootKind::Value ||
-            temporary->value != *producer.result ||
+            (receiverTemporary ? temporary != receiverTemporary
+                               : temporary->root != MirPlaceRootKind::Value ||
+                                     temporary->value != *producer.result) ||
             !temporary->projections.empty() || to.dropType != from.dropType)
           malformed("LLVM move drop identities do not match its exact storage");
       } else if (owner.requiresActiveCleanup && !bindingMove) {

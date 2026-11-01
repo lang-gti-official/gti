@@ -1,6 +1,123 @@
 #include "cpp_mir_body_emitter_test_fixture.h"
 
 namespace {
+void checkNamedBorrowRejection() {
+  const std::string text = R"gti(
+class Ticket {
+  int value = 42;
+public:
+  Ticket() = default;
+  int& view() { return this.value; }
+};
+class Envelope {
+  mut Ticket ticket{};
+public:
+  Envelope() = default;
+  int finish() && { return std::move(this.ticket).view(); }
+};
+int main() { Envelope value{}; return std::move(value).finish(); }
+)gti";
+  const auto frontend =
+      analyzeWithStandardLibrary("owned-named-borrow.gti", text);
+  const auto diagnostic =
+      std::find_if(frontend.diagnostics.begin(), frontend.diagnostics.end(),
+                   [](const auto &item) { return item.code == "GTI-S2022"; });
+  expect(!frontend.canGenerateCode() &&
+             diagnostic != frontend.diagnostics.end(),
+         "named retained invocation rejects even immediately copied borrowed "
+         "results");
+  if (diagnostic == frontend.diagnostics.end())
+    return;
+  const auto callOffset = text.find(".view()") + 6;
+  const auto declarationOffset = text.find("view()");
+  expect(diagnostic->primary.start == callOffset &&
+             diagnostic->primary.end == callOffset + 1 &&
+             diagnostic->related.size() == 1 &&
+             diagnostic->related.front().span.source ==
+                 diagnostic->primary.source &&
+             diagnostic->related.front().span.start == declarationOffset &&
+             diagnostic->related.front().span.end == declarationOffset + 4 &&
+             diagnostic->message.find("cannot return a reference") !=
+                 std::string::npos &&
+             !diagnostic->hints.empty() && diagnostic->fixes.empty(),
+         "named borrowed-result rejection retains source spans, declaration, "
+         "and ownership advice");
+}
+
+void checkInlineProjection() {
+  const auto frontend = analyzeWithStandardLibrary("owned-inline.gti", R"gti(
+import std.polymorphic;
+interface Command { int operator()(int value) &&; };
+class Increment : public Command {
+public:
+  Increment() = default;
+  int operator()(int value) && override { return value + 1; }
+};
+int main() {
+  std::inline_polymorphic<Command, 32, 8> value{Increment()};
+  return std::move(value).invoke_once<int>(41);
+}
+)gti");
+  expect(frontend.canGenerateCode(),
+         "inline owning projection passes frontend");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.message << '\n';
+    return;
+  }
+  std::size_t checked = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    if (!function.ownedPointeeProjection ||
+        function.ownedPointeeProjection->borrowIntrinsic !=
+            lang::IntrinsicKind::PolymorphicStorageReadMut)
+      continue;
+    ++checked;
+    for (int mutation = 0; mutation != 4; ++mutation) {
+      auto forged = frontend.mir;
+      auto *accessor = const_cast<lang::MirFunctionInstance *>(
+          forged.findFunctionInstance(function.id));
+      if (mutation == 0)
+        accessor->ownedPointeeProjection->borrowIntrinsic =
+            lang::IntrinsicKind::UniqueOwnerBorrowMut;
+      else if (mutation == 1)
+        accessor->ownedPointeeProjection->fields.clear();
+      else if (mutation == 2)
+        accessor->receiverMutability = lang::ReceiverMutability::ReadOnly;
+      else
+        accessor->body.blocks.front().terminator.returnLoan.reset();
+      expect(
+          !lang::verifyMirProgram(forged).valid(),
+          "inline projection must prove storage identity, access, and return");
+    }
+  }
+  expect(checked == 1, "one inline owning accessor is concretely verified");
+  std::size_t roots = 0;
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &input : block.instructions) {
+        const auto *owner =
+            input.retainedOwnerPlace
+                ? function.body.findPlace(*input.retainedOwnerPlace)
+                : nullptr;
+        if (owner == nullptr || !owner->projections.empty())
+          continue;
+        ++roots;
+        for (int mutation = 0; mutation != 2; ++mutation) {
+          auto forged = frontend.mir;
+          auto *caller = const_cast<lang::MirFunctionInstance *>(
+              forged.findFunctionInstance(function.id));
+          if (mutation == 0)
+            caller->receiverMutability = lang::ReceiverMutability::ReadOnly;
+          else
+            const_cast<lang::MirPlace *>(caller->body.findPlace(owner->id))
+                ->key->receiver = false;
+          expect(!lang::verifyMirProgram(forged).valid(),
+                 "root consumption requires exact consuming-this authority");
+        }
+      }
+  expect(roots == 1, "inline invocation consumes exactly one root owner");
+}
+
 const std::string source = R"gti(
 import std.memory;
 interface Operation { int operator()(int value) &&; };
@@ -251,8 +368,9 @@ int main() {
 )gti");
   expect(frontend.canGenerateCode(),
          "fresh passive callback constructors pass frontend");
-  if (!frontend.canGenerateCode())
+  if (!frontend.canGenerateCode()) {
     return;
+  }
   std::size_t staged = 0;
   for (const auto &function : frontend.mir.functionInstances()) {
     for (const auto &block : function.body.blocks) {
@@ -453,6 +571,8 @@ void checkMaterializedPackReceiver() {
 } // namespace
 
 int main() {
+  checkNamedBorrowRejection();
+  checkInlineProjection();
   checkMutations();
   checkRejectedSource();
   checkPassiveFreshClosureStaging();

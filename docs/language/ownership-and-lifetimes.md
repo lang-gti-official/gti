@@ -19,8 +19,42 @@ written type is inferred; ownership is not. Fresh owned temporaries cannot
 initialize a retained reference, while a temporary `expected<T&, E>` may
 publish a borrow of its stable external owner through `?` or `.expect()`.
 Plain `auto` remains a value binding and can therefore reject a move-only
-copy that `auto&` would validly borrow. Whole-array and raw-pointer referents
-remain outside ordinary local reference support in either spelling.
+copy that `auto&` would validly borrow. Fixed arrays preserve their complete
+element type and extents in either spelling.
+
+### Fixed-array borrows
+
+`T[N]&` borrows an existing fixed array for reading; `mut T[N]&` requests
+exclusive mutable access. Aliases, inferred local `auto&` bindings, concrete
+generic parameters, and checked reference returns use the same rule. Nested
+arrays preserve every extent. This revises the former restriction that only
+generic range parameters could borrow a whole fixed array.
+
+```gti
+void clear<uint64_t N>(mut int[N]& values) {
+  for (mut uint64_t i = 0; i < values.size(); ++i) { values[i] = 0; }
+}
+```
+
+The initializer must be an addressable place of the exact array type. No
+element conversion, extent conversion, pointer decay, array copy, or allocation
+occurs. A borrow neither owns nor drops its elements. It tracks the original
+array place, access mode, parent reborrow, and ordinary last-use endpoint.
+Existing owner/element accesses must respect that loan; a mutable reborrow
+cannot upgrade a read-only parent. A result must satisfy the ordinary checked
+return-origin contract and cannot expose a local or temporary array.
+
+Indexing retains the existing fixed-array bounds rules, including defined
+runtime failure for an out-of-range dynamic index. The extent is part of the
+type, not an additional runtime length field. Borrowing establishes no stronger
+alignment than the array already has. This facility does not introduce dynamic
+slices, raw-pointer-to-array conversion, or a vectorization guarantee.
+
+LLVM implements this capability. The comparison C++ backend reports
+`GTI-B0003` for explicit fixed-array reference parameters in generic signatures;
+its existing `Range&` substitution support is unchanged.
+
+See [the sensor-buffer example](../../examples/182-bounded-array-borrows.gti).
 
 The implemented unique ownership surface is:
 
@@ -529,6 +563,22 @@ pattern bound inside `this`. A `mut auto&` binding through a `mut T&`
 parameter may be returned as `mut T&`. A pattern over a local copy, a by-value
 parameter or a temporary does not outlive the call and remains rejected:
 
+Local reference aliases may relay that same caller-owned referent through
+arbitrarily nested reborrow chains. For example, a method may bind
+`mut int& parent = this.value; mut int& child = parent;` and return `child`.
+The local reference slots do not own the referenced field. A chain rooted in
+a reference parameter works the same way, including concrete generic calls,
+field projections, and accessor results. Shared children retain read-only
+access. Returning a borrowed carrier constructed from the child remains
+subject to that carrier's existing return contract.
+
+The compiler follows the checked loan ancestry to incoming reference authority
+or receiver storage and independently verifies the result's declared owner,
+projection and access. Local/by-value storage, temporaries and cleanup-bound
+carrier dependencies still cannot escape. Returning a child keeps the borrow
+attached to the caller's owner; it does not reactivate that owner's conflicting
+access while the returned borrow remains live. No lifetime syntax is added.
+
 Nested patterns may relay the same caller-owned referent: a reference binding
 to an outer payload is an alias of that payload, so an inner payload reference
 can be returned when the complete loan ancestry reaches the receiver or a
@@ -551,6 +601,31 @@ returned borrow may not choose between owners or combine dependencies.
 Explicit complete dependency contracts for reference-bearing payload enums,
 described below, extend this beyond the implicit single-origin form; they do
 not infer an unspecified lifetime relation from an ambiguous signature.
+
+**References through owning chains.** The single-origin rule also applies when
+safe accessors traverse several exclusive owners before returning an element.
+For example, a node may contain an owning link to another node, and a recursive
+function taking `Node&` may return an `int&` from a descendant. The mutable form
+uses `mut Node&` and `mut int&`. Each recursive call preserves the parameter's
+checked origin; the returned reference denotes the selected element, while its
+loan protects the original owner. This uses the existing reference and owner
+capabilities, not a new annotation or a raw-pointer ownership inference.
+
+While the result is live, the owner cannot be reset, moved, or used to unlink
+the chain or obtain conflicting mutable access. Retaining the root object alone
+would not suffice: the intervening owning links must remain protected too.
+The ordinary whole-origin call contract conservatively protects the root, even
+if another element would be disjoint. Last use permits subsequent owner
+operations under the existing loan-endpoint rules. Returning a reference into
+a local or by-value owner, or retaining one from a temporary owner, is rejected.
+
+This does not prove ownership of arbitrary raw pointers, add shared ownership,
+pin storage, or promise a reference-reseating cursor. A raw-pointer container
+still needs an audited `unsafe` implementation and, where appropriate,
+`std::assume_ref`/`std::assume_mut` to assert the relationship to its retained
+owner. The caller's resulting checked borrow does not discharge that unsafe
+implementation obligation. See the runnable
+[owner-chain example](../../examples/ownership/owner-chain-references.gti).
 
 `expected<T&, E>` applies this same inference to a checked read-only borrow.
 The success path publishes the referent together with the receiver, argument,
@@ -1091,9 +1166,10 @@ the complete origin, access, field-path and alternative-tag set is unchanged.
 It preserves every external owner, including additional owners, after the
 original carrier's last use; it does not permit assignment or copying an
 exclusive or cleanup-bound capability.
-This does not remove child-loan ancestry: an enum carrying a class constructed
-from a local child reborrow still cannot return that dependency under a
-conditional borrowed-result contract, with or without an intervening copy.
+This does not remove child-loan ancestry: every returned dependency must
+still reach its declared external owner, with or without an intervening copy.
+Local references may relay incoming authority; a local object's storage or a
+separate cleanup-bound carrier cannot provide an escaping dependency.
 Direct reference alternatives can retain an eligible caller-owned reference
 through a copied return under their verified result contract.
 HIR carries
@@ -1267,7 +1343,8 @@ fields. Read-only and mutable fallback overloads selected for an explicit move
 operate on this same materialized value.
 
 Inside a consuming method, immediate invocation of an owned nominal
-or stored-lambda field, `std::move(this.field)(arguments)`, instead operates in
+or stored-lambda field, `std::move(this.field)(arguments)`, or a named method
+`std::move(this.field).method(arguments)`, instead operates in
 place. Its
 remaining resources stay in the outer receiver through that receiver's full
 expression, including later arguments and failure cleanup. Grouping the moved
@@ -1276,19 +1353,31 @@ use; retaining its storage does not permit another invocation. The selected
 call must return an owned value or void, not a reference or tracked borrow.
 This rule covers writable, ordinary field-only paths rooted in consuming
 `this`, not reference fields. It also permits immediate invocation through a
-transparent mutable unique-owner accessor, as in
+transparent mutable owning-storage accessor, as in
 `std::move(*this.target)(arguments)`. The compiler must prove that the exact
-nonvirtual, zero-argument accessor returns the checked private unique-owner
-borrow of one direct field. The owner wrapper must itself be a writable field
-of consuming `this`. Its availability is consumed while its physical cleanup
+nonvirtual, zero-argument accessor has one return of the checked private
+unique-owner borrow or inline-polymorphic-storage mutable read of one direct
+field. The owner wrapper is consuming `this` itself or a writable field-only
+path beneath it. Its availability is consumed while its physical cleanup
 stays with the outer receiver. Only the accessor's temporary result loan is
 used for invocation; an unrelated live alias still conflicts. Ordinary
 references, raw-pointer dereferences, local owners, and extraction of the
 pointee do not gain an ownership-transfer capability from this rule.
+`std::inline_polymorphic::invoke_once<R>` uses this proof to invoke an inline
+payload, and the same unique-owner proof for its boxed fallback. Neither the
+public owner type nor the method name is compiler-recognized. The inline
+payload policy still requires inert cleanup and failure-free relocation;
+consuming access does not grant eligibility to cleanup-bearing payloads.
 Stored lambdas keep their exact closure identity and read-invocation policy;
 fixed arguments and expanded argument packs use the same retained checkpoint.
 Explicit extraction into a local remains an actual ownership transfer and
 retains that local's ordinary cleanup scope.
+The owned-inline-consumption named-method extension revises the earlier materialization rule for
+an immediate moved field: its cleanup now follows the enclosing receiver's
+reverse field order, as an immediate call operator already did. For example,
+consuming `first` in an owner with fields `first, second` leaves destruction in
+the order `second, first`. Extracting `first` into a separate local still
+transfers its cleanup to that local.
 
 A destructor does not acquire consuming-receiver permission. It may observe
 or mutate its available fields, but cannot move a receiver field into a local
@@ -1634,8 +1723,9 @@ Two general facilities support this ordinary source wrapper:
   alone does not grant restoration authority.
   A named restored-reference local may be returned only while retaining the
   exact selected reference-parameter witness and access permission, without
-  another local-owned or cleanup-bound dependency. This does not authorize
-  general local child-reborrow escapes or returning a local object's storage.
+  another local-owned or cleanup-bound dependency. Ordinary local reborrows
+  may relay that same witness under the general ancestry rule above; they
+  cannot return a local object's storage or change its access permission.
 - `std::function_ptr<R(Args...)>` is a non-null, typed GTI invocation pointer
   constructed from an exact namespace-function item or captureless lambda.
   It preserves GTI's failure and argument/result ownership convention. It is

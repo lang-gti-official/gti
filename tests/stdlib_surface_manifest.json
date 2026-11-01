@@ -33,7 +33,7 @@
     "stdlib/std/filesystem.gti": "a579044390fadec9e7854eccd4d5901f13ab85288bf71a19ee97cadad2693de6",
     "stdlib/std/format.gti": "6bb96b2a640689505878eeafc4ed2b75989c5821638e12114d5661ecdbe0ea67",
     "stdlib/std/forward_list.gti": "8d39227073b9f98eb6bc83a7a7103bc630497345830bc7e618dcc01fccb917ef",
-    "stdlib/std/functional.gti": "ac30b788f1bfcc1c91091f162bbbb47d89ba8da7c3a4579564b83a6a523f80f1",
+    "stdlib/std/functional.gti": "094c1baa47c93162e8ad139c30e5bd0070cff7c5e2343fb3fd32ca880f8437ac",
     "stdlib/std/http.gti": "7810cf7acaee803670f346e0103fa6c0cdfca62aca8edda538cfa880e8ae3521",
     "stdlib/std/io.gti": "8c28bff6f539a82e47f507db2cff429e74307b0dbe6128de48c0b47fd329c0b3",
     "stdlib/std/iterator.gti": "586855579c50031612b0136d001e21dd31c4387dcf115c9fe4485bd12d2577e3",
@@ -47,7 +47,7 @@
     "stdlib/std/optional.gti": "a67d746ef0f8f5eb14c256b5595725febe56425cfec76fea484f5717fd1ca0d1",
     "stdlib/std/paired_span.gti": "06244b15782f49e35b229fa20238489c578305d8b09a70e9b22ba77f7d5dfffa",
     "stdlib/std/panic.gti": "3d57fe9c9292a04c6671534abaa3fd9b9287c47247f5c2d40e686344c25cd222",
-    "stdlib/std/polymorphic.gti": "af7011cfbe7c6977b0be78787f762f26191e61b0c9632439cdfa94794e398cb3",
+    "stdlib/std/polymorphic.gti": "009f2fe6faec263700c6d734d8db3448b25cde6cca9c9adfea2e8807ed3a594a",
     "stdlib/std/process.gti": "632b0c183f363b66872ae2c17a00516ac9b103bfd580527fc639fd0996e1324b",
     "stdlib/std/queue.gti": "38c9d92a49aa37fcd56dadaa3c2639e5c963b79efa5286f30b407016bc909eed",
     "stdlib/std/random.gti": "41d83ba6833118988fcc0559abde9042cd423a201b468c77b6f33da3cd2eabec",
@@ -65,7 +65,7 @@
     "stdlib/std/unordered_map.gti": "7e1066725b42affa19324597126a44fb608416b63bfc778d38526ed9b795e1ed",
     "stdlib/std/unordered_set.gti": "beefd607c3c90ac64cae71baec51e9808919b7fe6a5f362ec7c2e29351138da0",
     "stdlib/std/utility.gti": "983e0584b5bf5c1850f0f648ebc579a53586e1e0f5f5d28c23d4fc88155343b5",
-    "stdlib/std/vector.gti": "f3ae234c51396beff612177dcb5b907c543abc6502fe57744fe14d7f2518a3e5"
+    "stdlib/std/vector.gti": "65d48f1d767a11f2d44606f4748485e0cfb430529db8c8b54d79040b75eeb24c"
   },
   "cases": [
     {
@@ -1830,6 +1830,21 @@
       "id": "owned-error-pipelines",
       "mode": "run",
       "source": "tests/fixtures/stdlib_owned_error_pipelines.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "owned-inline-consumption",
+      "mode": "run",
+      "backend": "llvm",
+      "source": "tests/fixtures/owned_inline_consumption.gti",
       "optimizations": [
         "O0",
         "O3"
@@ -4203,7 +4218,9 @@
         "tests/owning_function_runtime_test.py",
         "tests/owning_function_policy_failure_test.py",
         "tests/inline_polymorphic_runtime_test.py",
-        "stdlib/std/functional.gti"
+        "stdlib/std/functional.gti",
+        "tests/fixtures/owned_inline_callbacks.gti",
+        "tests/owned_inline_consumption_test.py"
       ]
     },
     {
@@ -4230,7 +4247,9 @@
         "stdlib/std/functional.gti",
         "tests/fixtures/transfer_function_threads.gti",
         "tests/managed_thread_tests.cpp",
-        "tests/shared_ownership_threads_test.py"
+        "tests/shared_ownership_threads_test.py",
+        "tests/fixtures/owned_inline_callbacks.gti",
+        "tests/owned_inline_consumption_test.py"
       ]
     },
     {
@@ -5686,15 +5705,18 @@
         "std::inline_polymorphic::get",
         "std::inline_polymorphic::has_value",
         "std::inline_polymorphic::inline_polymorphic",
+        "std::inline_polymorphic::invoke_once",
         "std::inline_polymorphic::is_inline",
         "std::inline_polymorphic::replace",
         "std::inline_polymorphic::reset"
       ],
       "case_ids": [
+        "owned-inline-consumption",
         "polymorphic"
       ],
       "required_instantiations": [
-        "application interface with inline scalar models, boxed owning and oversized models, move, move assignment, replacement, vector growth and exactly-once cleanup"
+        "application interface with inline scalar models, boxed owning and oversized models, move, move assignment, replacement, vector growth and exactly-once cleanup",
+        "inline consuming invocation with exact owner retention, named consuming methods, and rejection of borrowed escape or owner reuse"
       ],
       "evidence": [
         "tests/fixtures/stdlib_surface_polymorphic.gti",
@@ -5703,7 +5725,10 @@
         "tests/inline_polymorphic_runtime_test.py",
         "tests/polymorphic_storage_compiler_tests.cpp",
         "tests/inline_closure_owner_runtime_test.py",
-        "stdlib/std/polymorphic.gti"
+        "stdlib/std/polymorphic.gti",
+        "tests/fixtures/owned_inline_consumption.gti",
+        "tests/owned_inline_consumption_test.py",
+        "examples/135-inline-polymorphic-values.gti"
       ]
     },
     {

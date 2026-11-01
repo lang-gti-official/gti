@@ -4039,7 +4039,7 @@ destination, or lifecycle transfer. Availability is consumed independently of
 physical cleanup: the enclosing receiver keeps its fields. Body verification
 checks exact place/event identity and subsequent availability; program
 verification requires an enclosing consuming method and a non-borrowing
-nominal or exact stored-lambda callable target. A retained lambda's complete
+nominal method or exact stored-lambda callable target. A retained lambda's complete
 closure type must match its selected lambda instance, not just its signature.
 The staged capability has one exact invocation use.
 The backend emits the selected receiver-qualified call against that retained
@@ -4047,9 +4047,11 @@ place, leaving outer full-expression cleanup unchanged.
 
 `MirFunctionInstance::ownedPointeeProjection` describes a transparent source
 accessor, not a consuming call. The bounded proof requires one direct declared
-`UniqueOwner<T>` receiver field and the matching checked read/mutable borrow,
-followed by its exact returned loan. The only permitted control-flow split is
-the intrinsic's empty-owner failure edge. Calls to other functions, writes,
+`UniqueOwner<T>` or compiler-bound polymorphic-slot receiver field and its
+matching private read/mutable borrow, followed by the exact returned loan.
+Unique-owner access has the intrinsic's empty-owner failure edge; inline-slot
+access is one block with no defined-failure edge. The function-level failure
+summary may remain conservative. Calls to other functions, writes,
 alternate return origins, extra effects, and virtual dispatch do not satisfy
 this proof. The verifier checks the concrete owner field/type, access, intrinsic
 operand lineage, returned loan, failure path, and full-expression boundary;
@@ -4057,7 +4059,8 @@ ordinary receiver-derived borrow metadata is insufficient. This is the
 accessor-side proof for retained pointee consumption.
 
 For that caller, a `RetainedReceiver` stage has `retainedOwnerPlace` naming the
-mutable field-only This owner anchor, while its executable operand is the
+mutable field-only This owner anchor (including the unprojected consuming
+receiver itself), while its executable operand is the
 accessor's actual unprojected mutable CallResult loan. The semantic ownership
 event consumes the anchor, not the borrowed referent. Body verification checks
 anchor/loan identity and preserves every other live-loan conflict. Program

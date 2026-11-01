@@ -1,0 +1,49 @@
+import std.memory;
+import std.format;
+import std.string;
+import std.vector;
+
+// Each node owns its successor. No raw pointer establishes this relationship.
+struct Node {
+  mut int value;
+  mut std::unique_ptr<Node> next;
+
+  Node(int value, std::unique_ptr<Node> next)
+      : value(value), next(std::move(next)) {}
+
+  ~Node() { std::println("destroy {}", this.value); }
+};
+
+// Both return paths borrow the same parameter, even across recursive calls.
+// A position past the end reaches a null owner and fails its checked dereference.
+int& element(Node& node, int position) {
+  if (position == 0) { return node.value; }
+  return element(*node.next, position - 1);
+}
+
+mut int& element_mut(mut Node& node, int position) {
+  if (position == 0) { return node.value; }
+  return element_mut(*node.next, position - 1);
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  mut auto root = std::make_unique<Node>(1,
+      std::make_unique<Node>(2,
+          std::make_unique<Node>(3, std::unique_ptr<Node>())));
+
+  // The selected value lives in the third allocation. The whole root remains
+  // borrowed: resetting root or unlinking next here would be rejected.
+  // An extra command-line argument exercises checked failure past the end.
+  mut auto& selected = element_mut(*root, argc == 1 ? 2 : 3);
+  selected = 42;
+  std::println("selected {}", selected);
+
+  // Last use ends the exclusive borrow; shared observations can follow.
+  auto& first = element(*root, 0);
+  auto& last = element(*root, 2);
+  std::println("ends {} {}", first, last);
+
+  // Both observations are finished. Deterministic cleanup can now proceed.
+  root.reset();
+  return 0;
+}

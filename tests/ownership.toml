@@ -273,6 +273,8 @@ owners = [
   "tryable_propagation",
   "borrow_origin",
   "local_reference_inference",
+  "bounded_array_borrows",
+  "bounded_array_borrows_runtime",
   "unsafe_function_contract",
   "unsafe_expression_contract",
   "discardable_result",
@@ -1129,6 +1131,8 @@ paths = [
   "stdlib/std/resource.gti",
   "stdlib/std/resource_vector.gti",
   "stdlib/std/polymorphic.gti",
+  "tests/owned_inline_consumption_test.py",
+  "tests/fixtures/owned_inline_*",
   "stdlib/std/detail/memory_*",
   "stdlib/std/detail/resource_*",
   "stdlib/std/detail/function_pointer.gti",
@@ -1146,6 +1150,7 @@ owners = [
   "programmable_allocators_runtime",
   "resource_protocol_lsp",
   "inline_polymorphic_runtime",
+  "owned_inline_consumption_runtime",
   "polymorphic_owner_cleanup_runtime",
 ]
 consumers = [

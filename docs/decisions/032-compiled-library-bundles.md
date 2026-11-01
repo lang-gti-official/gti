@@ -236,3 +236,21 @@ mechanism adds no runtime adapter or new language rule. The `compiled_namespaces
 fixture proves two independent bundles, namespace shadowing, private layout and
 borrow checking with producer sources removed. Exposing dependency-owned nominal
 types through another library's interface remains a separate prerequisite.
+
+## Dependency-owned nominal closure (2026-10-31)
+
+The nominal interface now records a defining package, target and module for every
+type. A forwarding library preserves those identities in callable recipes and
+field layouts. Consumers load the defining artifact's interface through verified
+dependency receipts, rather than redeclaring the type in the forwarding module.
+Internal virtual interfaces make transitive type dependencies available without
+publishing their names through an implicit re-export.
+
+The sealed lowered program keeps owner/source-unit bindings even when no function
+from the defining library is called. Metadata remains fully validated while
+concrete imported declaration comparison follows HIR reachability. This preserves
+ordinary type checking, generated value lifecycles and borrowed-result rules with
+no new runtime wrapper. The `compiled_type_forwarding` example exercises a chain
+and diamond, a dependency's private layout change, source removal and relocation.
+General ownership/drop recipes, generics and complete source-module/re-export
+ownership remain prerequisites for the full separate-compilation model.
