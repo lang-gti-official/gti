@@ -61,10 +61,171 @@
         "48f6c8bb60cafdc22a6fdf237824cfd2be57cda6"
       ],
       "merge": "48f6c8bb60cafdc22a6fdf237824cfd2be57cda6"
+    },
+    {
+      "task": "owned-inline-publication",
+      "pr": 100,
+      "head": "df7dea9f61ef700f3130039f5c2ee32a9acbc43d",
+      "tests": [
+        "associated_type_families_lsp",
+        "associated_type_families_runtime",
+        "ci_release",
+        "cmake_test_ownership",
+        "compiled_borrow_contract",
+        "compiled_borrow_library",
+        "compiled_dependency_project",
+        "compiled_interface_types",
+        "compiled_libraries_project",
+        "compiled_namespaces",
+        "compiled_value_types",
+        "compiler_pipeline",
+        "consteval_lsp",
+        "consteval_runtime",
+        "consuming_owned_pointee",
+        "consuming_receiver_types",
+        "documentation_index",
+        "inline_polymorphic_runtime",
+        "llvm_admission",
+        "llvm_case_context_controls",
+        "llvm_coverage_evidence",
+        "llvm_optimization_pipeline",
+        "lowered_program_contract",
+        "lowered_program_corpus_census",
+        "mir_census_profile_controls",
+        "mir_census_regression",
+        "module_map_lsp",
+        "module_navigation_lsp",
+        "optimized_test_compiler_policy",
+        "optimizer_analyses",
+        "owned_inline_consumption_runtime",
+        "owning_function_policy_failure_runtime",
+        "partitioned_test_protocol",
+        "persistent_declaration_identity",
+        "persistent_declaration_process",
+        "plan_checks",
+        "protocol_concepts",
+        "reflection_method_lsp",
+        "reflection_method_runtime",
+        "repository_hosting",
+        "source_modules_lsp",
+        "source_modules_runtime",
+        "test_case_jobs",
+        "test_ownership_map",
+        "test_throughput_registration"
+      ],
+      "contributions": [
+        "1a1075978ef9fc5eb5391d91e73a2465b8c55dc6"
+      ],
+      "merge": "1a1075978ef9fc5eb5391d91e73a2465b8c55dc6"
+    },
+    {
+      "task": "bounded-array-borrows",
+      "pr": 103,
+      "head": "48381e77c2919197dc6fcd6dc4f90b386d6f1eb4",
+      "tests": [
+        "bounded_array_borrows",
+        "bounded_array_borrows_runtime",
+        "local_reference_inference",
+        "local_reference_inference_runtime",
+        "local_reference_inference_lsp",
+        "borrowing_capture_semantics",
+        "llvm_admission",
+        "llvm_case_context_controls"
+      ],
+      "contributions": [
+        "6447501427ca7f501c47d2ba48dc852f018b1c44"
+      ],
+      "focused_evidence": "48381e77c2919197dc6fcd6dc4f90b386d6f1eb4",
+      "merge": "6447501427ca7f501c47d2ba48dc852f018b1c44"
+    },
+    {
+      "task": "checked-owner-chains",
+      "pr": 104,
+      "head": "232fb4c146be996c40021ce40dccdcc5b0489ed3",
+      "tests": [
+        "borrow_origin",
+        "owner_chain_runtime"
+      ],
+      "contributions": [
+        "57ca2ac7824262f17e6dd3296c2a6067026278d4"
+      ],
+      "focused_evidence": "232fb4c146be996c40021ce40dccdcc5b0489ed3",
+      "merge": "57ca2ac7824262f17e6dd3296c2a6067026278d4"
+    },
+    {
+      "task": "compiled-type-forwarding-publication",
+      "pr": 107,
+      "head": "85f6c964df1678cbbb23fa1326b1a00d3e70fe9d",
+      "tests": [
+        "compiled_type_forwarding",
+        "compiled_namespaces",
+        "compiled_value_types",
+        "compiled_borrow_library",
+        "compiled_borrow_contract",
+        "compiled_interface_types",
+        "compiled_dependency_project",
+        "compiled_primitive_cost"
+      ],
+      "contributions": [
+        "648da5ce7cd6a1213bab340a2d0035e3fb7314fd"
+      ],
+      "focused_evidence": {
+        "directory": "/Users/lucas/Documents/gti/.git/gti-agent-workflow/remote-results/compiled-type-forwarding-publication/171167c21b474287be3949f38cd10f70",
+        "id": "run-c4209f2f65e04e069fe67d9cdba6bcf6",
+        "snapshot_sha256": "e5acb9be7469cded1d4f4734c96608379d0893b1ae66e02756bc7039ef8edb79"
+      },
+      "merge": "648da5ce7cd6a1213bab340a2d0035e3fb7314fd"
+    },
+    {
+      "task": "local-reborrow-publication",
+      "pr": 108,
+      "head": "08c993c1cf33012a548c11e22888f585eac6d547",
+      "tests": [
+        "borrow_origin",
+        "owning_function_types",
+        "owning_function_runtime",
+        "local_reference_inference",
+        "local_reference_inference_runtime",
+        "local_reference_inference_lsp",
+        "mir_full_expression",
+        "borrowing_capture_semantics",
+        "borrow_carrier_receivers",
+        "llvm_coverage_evidence"
+      ],
+      "contributions": [
+        "76d87068a5b9838515535e8a77bc1f925ad8ec36"
+      ],
+      "focused_evidence": "050f1215c6c2d3ed6c2d13221cdd7c45d155b361",
+      "merge": "76d87068a5b9838515535e8a77bc1f925ad8ec36"
+    },
+    {
+      "task": "workflow-ci-scope",
+      "pr": 106,
+      "head": "9dbe80483d47bb1d3da94c22e991b9fe611e5e93",
+      "tests": [
+        "agent_workflow",
+        "ci_release",
+        "ci_resources",
+        "ci_cache",
+        "ci_sanitizer_capability",
+        "repository_hosting",
+        "preview_workflow",
+        "release_version_policy",
+        "cmake_test_ownership",
+        "plan_checks",
+        "optimized_test_compiler_policy",
+        "partitioned_test_protocol",
+        "test_case_jobs"
+      ],
+      "contributions": [
+        "43fc772c9ae8112bce848156acf364920c19c817"
+      ],
+      "focused_evidence": "9dbe80483d47bb1d3da94c22e991b9fe611e5e93",
+      "merge": "43fc772c9ae8112bce848156acf364920c19c817"
     }
   ],
   "removed": [],
-  "main": "cfb28948a26a14e58ffb720c3474cbbed8d3f2ff",
-  "previous": "5a22de83762fdbe4145c62108a0fd3d17a026ad3",
-  "candidate": "c9c55fbdb89d4102b891d568ee1ede88"
+  "main": "afafec577bf23fb29bb4d04d4c834693568eca71",
+  "previous": "d4ffb01967fcc57c2f82756f6b3c8e9676e58e7a",
+  "candidate": "723971e555a743d7a4685cdc9f8af847"
 }
