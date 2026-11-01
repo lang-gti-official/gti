@@ -1799,8 +1799,19 @@ namespace identity, inherited namespace exports, overload visibility and private
 layout dependencies. Virtual interfaces use private root aliases to preserve
 resolved types through namespace shadowing. `compiled_namespaces` distributes two
 libraries with same-leaf types/functions and checks source-free execution and
-borrowing at O0/O1/O3. Nested class-owned declarations and dependency-owned nominal
-types exposed through another library still need richer ownership contracts.
+borrowing at O0/O1/O3. Nested class-owned declarations and nominal
+types from ordinary non-root source modules still need richer ownership contracts.
+
+Cross-library nominal progress: the interface records each type's defining
+package/target/module and imports that dependency's virtual declarations. Records,
+private layout dependencies, enums, scalar defaults and whole-reference contracts
+compose across chains and diamonds without copying nominal identities. Logical
+owner bindings survive unused-callable pruning, and stale or missing defining
+artifact receipts reject. `compiled_type_forwarding` covers O0/O1/O3, consumer-only
+reuse, private-layout invalidation, relocated paths and source-free execution.
+This does not complete whole-module re-export semantics, ordinary multi-module
+source ownership, colliding qualified names or the remaining lifecycle/generic
+contracts.
 
 Dependency progress: same-manifest `compiled-dependencies` edges build targets in
 topological order, deduplicate diamonds and reject cycles. Bundles retain exact
@@ -1814,7 +1825,7 @@ these paths. Package-qualified source edges, zero-source-read freshness, input-r
 publication proofs and general cache/report integration remain F4 prerequisites.
 
 Next coherent outcomes: general ownership and lifecycle metadata, generic/staged
-constexpr recipes, cross-library nominal closure, composable exactly-once
+constexpr recipes, complete multi-module ownership/re-export contracts, composable exactly-once
 globals/TLS, and artifact-aware diagnostic provenance/LSP snapshots. Production
 acceptance still requires both native platforms, installed-toolchain evidence,
 representative performance/build-cost measurements and the full F1–F5 fixture.

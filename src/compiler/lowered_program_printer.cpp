@@ -896,7 +896,12 @@ std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
 
 void LoweredProgramPrinter::print(const LoweredProgram &program,
                                   std::ostream &output) const {
-  output << "lowered-program-v30\n";
+  output << "lowered-program-v31\n";
+  for (const auto &unit : program.compiledInterfaceUnits())
+    output << "compiled-interface-unit " << unit.sourceUnit
+           << " package=" << std::quoted(unit.owner.package)
+           << " target=" << std::quoted(unit.owner.target)
+           << " module=" << std::quoted(unit.owner.module) << '\n';
   if (!program.compiledScalarBindings().empty()) {
     output << "compiled-scalar producer=" << program.compiledScalarProducer()
            << '\n';

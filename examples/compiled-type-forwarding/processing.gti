@@ -1,0 +1,10 @@
+export module processing;
+import "api/drawing.gti";
+export namespace processing {
+    struct Envelope {
+        mut drawing::Packet packet;
+        Envelope() = default;
+    };
+    Envelope echo(Envelope value) { return value; }
+    [[borrowed_from(value)]] mut Envelope& edit(mut Envelope& value) { return value; }
+}

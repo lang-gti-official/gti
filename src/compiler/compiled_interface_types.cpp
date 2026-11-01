@@ -12,7 +12,7 @@
 #include <stdexcept>
 namespace lang {
 namespace {
-constexpr std::string_view magic = "gti.nominal-interface.1:";
+constexpr std::string_view magic = "gti.nominal-interface.2:";
 constexpr std::size_t limit = 1024 * 1024;
 struct Field {
   std::string name, type, initial;
@@ -21,6 +21,7 @@ struct Field {
 };
 struct Nominal {
   std::string name;
+  PersistentDeclarationOwner owner;
   bool enumeration = false, exported = false;
   ClassKind kind = ClassKind::Struct;
   bool defaultDeclared = false;
@@ -88,6 +89,9 @@ std::string encode(const Interface &value) {
   put(out, std::to_string(value.types.size()));
   for (const auto &type : value.types) {
     put(out, type.name);
+    put(out, type.owner.package);
+    put(out, type.owner.target);
+    put(out, type.owner.module);
     put(out, type.enumeration ? "enum" : "class");
     put(out, type.exported ? "1" : "0");
     put(out, std::to_string(static_cast<unsigned>(type.kind)));
@@ -124,6 +128,7 @@ Interface decode(std::string_view bytes) {
   for (std::size_t i = 0; i < count; ++i) {
     Nominal t;
     t.name = reader.get();
+    t.owner = {reader.get(), reader.get(), reader.get(), {}};
     if (!isCompiledInterfaceName(t.name))
       invalid("invalid qualified declaration name");
     if (!result.types.empty() && result.types.back().name >= t.name)
@@ -199,7 +204,7 @@ void bind(PersistentTypeRegistry &registry, const Nominal &n,
 PersistentTypeRegistry synthetic(const Interface &value) {
   PersistentTypeRegistry registry;
   for (std::size_t i = 0; i < value.types.size(); ++i)
-    bind(registry, value.types[i], value.owner, i + 1);
+    bind(registry, value.types[i], value.types[i].owner, i + 1);
   return registry;
 }
 SemanticType nominalType(const Nominal &n, std::size_t id) {
@@ -234,6 +239,34 @@ const LoweredDeclaration &declaration(const LoweredProgram &program,
   }
   invalid("missing nominal declaration");
 }
+SourceUnitId sourceUnit(const LoweredProgram &program,
+                        const SemanticType &type) {
+  const auto &d = declaration(program, type);
+  if (const auto *c = std::get_if<LoweredClassDeclaration>(&d.payload))
+    return c->sourceUnit;
+  return std::get<LoweredEnumDeclaration>(d.payload).sourceUnit;
+}
+PersistentDeclarationOwner
+ownerFor(SourceUnitId unit, SourceUnitId root,
+         const PersistentDeclarationOwner &owner,
+         std::span<const CompiledInterfaceUnit> units) {
+  if (unit == root)
+    return owner;
+  for (const auto &binding : units)
+    if (binding.sourceUnit == unit)
+      return binding.owner;
+  invalid("nominal declaration has no compiled library owner");
+}
+SourceUnitId unitFor(const PersistentDeclarationOwner &owner, SourceUnitId root,
+                     const PersistentDeclarationOwner &rootOwner,
+                     std::span<const CompiledInterfaceUnit> units) {
+  if (owner == rootOwner)
+    return root;
+  for (const auto &binding : units)
+    if (binding.owner == owner)
+      return binding.sourceUnit;
+  invalid("missing defining compiled library for nominal declaration");
+}
 std::string initializer(const LoweredProgram &program,
                         const LoweredStorageDeclaration &storage) {
   if (!storage.hasInitializer)
@@ -260,23 +293,24 @@ std::string initializer(const LoweredProgram &program,
   }
   invalid("unsupported field default constant");
 }
-Nominal project(const LoweredProgram &program, SourceUnitId root,
+Nominal project(const LoweredProgram &program,
+                const PersistentDeclarationOwner &owner,
                 const SemanticType &type,
                 const PersistentTypeRegistry &registry) {
   const auto &d = declaration(program, type);
   Nominal result;
+  result.owner = owner;
   if (d.ownerClass)
     invalid("nested class-owned declarations require owner metadata");
   if (const auto *c = std::get_if<LoweredClassDeclaration>(&d.payload)) {
     if (c->declaresOtherConstructors || c->declaresMemberFunctions ||
         c->declaresDestructor || c->declaresNestedTypes ||
-        c->sourceUnit != root || c->kind == ClassKind::Union ||
-        c->kind == ClassKind::Interface || !c->genericParameters.empty() ||
-        !c->bases.empty() || c->definitionFamilyPrimary ||
-        c->exactSpecializationPrimary || c->forwardDeclaration ||
-        c->polymorphic || c->compilerPrivate || c->reflectPrivate ||
-        c->cAbiRecord || c->cOpaqueHandle || c->requiresActiveDropState ||
-        c->traits.containsBorrowedState ||
+        c->kind == ClassKind::Union || c->kind == ClassKind::Interface ||
+        !c->genericParameters.empty() || !c->bases.empty() ||
+        c->definitionFamilyPrimary || c->exactSpecializationPrimary ||
+        c->forwardDeclaration || c->polymorphic || c->compilerPrivate ||
+        c->reflectPrivate || c->cAbiRecord || c->cOpaqueHandle ||
+        c->requiresActiveDropState || c->traits.containsBorrowedState ||
         c->compilerCapability != CompilerCapabilityTypeKind::None ||
         c->computedTypeProjection != ComputedTypeProjectionKind::None ||
         c->transferPolicy != ConcurrencyCapabilityPolicy::Structural ||
@@ -325,8 +359,7 @@ Nominal project(const LoweredProgram &program, SourceUnitId root,
     }
   } else {
     const auto &e = std::get<LoweredEnumDeclaration>(d.payload);
-    if (e.sourceUnit != root || e.payload || e.compilerPrivate ||
-        !e.genericParameters.empty())
+    if (e.payload || e.compilerPrivate || !e.genericParameters.empty())
       invalid("requires concrete integral enum");
     result.name = e.qualifiedName;
     result.enumeration = true;
@@ -437,6 +470,20 @@ std::string initialSource(const Field &field, const Interface &interface,
   invalid("default kind does not match field type");
 }
 } // namespace
+void validateCompiledInterfaceUnits(
+    std::span<const CompiledInterfaceUnit> units) {
+  if (units.size() > 65)
+    invalid("too many compiled interface units");
+  std::set<SourceUnitId> sources;
+  std::set<std::string> owners;
+  for (const auto &unit : units) {
+    const auto key = writePersistentFunctionKey(
+        {.owner = unit.owner, .qualifiedName = "owner"});
+    if (!unit.sourceUnit || !unit.owner.unit.empty() ||
+        !sources.insert(unit.sourceUnit).second || !owners.insert(key).second)
+      invalid("conflicting compiled interface unit ownership");
+  }
+}
 std::string compiledInterfaceNamespaceSource(std::string_view name,
                                              std::string declaration) {
   if (!isCompiledInterfaceName(name))
@@ -473,7 +520,9 @@ compiledInterfaceTypeSpelling(const SemanticType &type,
 std::string
 projectCompiledInterfaceTypes(const LoweredProgram &program, SourceUnitId root,
                               const PersistentDeclarationOwner &owner,
-                              std::span<const SemanticType> roots) {
+                              std::span<const SemanticType> roots,
+                              std::span<const CompiledInterfaceUnit> units) {
+  validateCompiledInterfaceUnits(units);
   std::map<std::string, SemanticType> closure;
   std::function<void(const SemanticType &)> collect =
       [&](const SemanticType &t) {
@@ -512,9 +561,12 @@ projectCompiledInterfaceTypes(const LoweredProgram &program, SourceUnitId root,
   for (const auto &[name, type] : closure)
     bind(registry,
          Nominal{.name = name, .enumeration = type.kind == SemanticType::Enum},
-         owner, type.kind == SemanticType::Class ? type.classId : type.enumId);
+         ownerFor(sourceUnit(program, type), root, owner, units),
+         type.kind == SemanticType::Class ? type.classId : type.enumId);
   for (const auto &[name, type] : closure)
-    value.types.push_back(project(program, root, type, registry));
+    value.types.push_back(project(
+        program, ownerFor(sourceUnit(program, type), root, owner, units), type,
+        registry));
   const auto bytes = encode(value);
   (void)compiledInterfaceTypeSource(
       bytes); // Also verify closure, recipes and cycles.
@@ -530,34 +582,55 @@ compiledInterfaceSyntheticRegistry(std::string_view bytes) {
 }
 PersistentTypeRegistry
 compiledInterfaceTypeRegistry(const LoweredProgram &program, SourceUnitId root,
-                              std::string_view bytes) {
+                              std::string_view bytes,
+                              std::span<const CompiledInterfaceUnit> units,
+                              bool allowUnreachedDeclarations) {
+  validateCompiledInterfaceUnits(units);
   const auto value = decode(bytes);
+  for (const auto &unit : units)
+    if (!bytes.empty() && unit.sourceUnit == root && unit.owner != value.owner)
+      invalid("nominal metadata root owner disagrees with its library");
   PersistentTypeRegistry registry;
   std::vector<SemanticType> types;
+  Interface expected{value.owner, {}};
   for (const auto &n : value.types) {
+    const auto definingUnit = unitFor(n.owner, root, value.owner, units);
     std::optional<SemanticType> type;
     for (const auto &d : program.declarations()) {
       if (const auto *c = std::get_if<LoweredClassDeclaration>(&d.payload);
-          c && !n.enumeration && c->sourceUnit == root &&
+          c && !n.enumeration && c->sourceUnit == definingUnit &&
           c->qualifiedName == n.name)
         type = nominalType(n, c->id);
       if (const auto *e = std::get_if<LoweredEnumDeclaration>(&d.payload);
-          e && n.enumeration && e->sourceUnit == root &&
+          e && n.enumeration && e->sourceUnit == definingUnit &&
           e->qualifiedName == n.name)
         type = e->type;
     }
+    if (!type && allowUnreachedDeclarations)
+      continue;
     if (!type)
       invalid("imported declaration is missing");
-    bind(registry, n, value.owner,
-         n.enumeration ? type->enumId : type->classId);
+    bind(registry, n, n.owner, n.enumeration ? type->enumId : type->classId);
     types.push_back(*type);
+    expected.types.push_back(n);
   }
   Interface actual{value.owner, {}};
-  for (const auto &type : types)
-    actual.types.push_back(project(program, root, type, registry));
-  if (encode(actual) != bytes)
+  for (std::size_t i = 0; i < types.size(); ++i)
+    actual.types.push_back(
+        project(program, expected.types[i].owner, types[i], registry));
+  if (encode(actual) != encode(expected))
     invalid("imported nominal declaration contract mismatch");
   return registry;
+}
+std::vector<PersistentDeclarationOwner>
+compiledInterfaceDependencies(std::string_view bytes) {
+  const auto value = decode(bytes);
+  std::vector<PersistentDeclarationOwner> owners;
+  for (const auto &type : value.types)
+    if (type.owner != value.owner &&
+        std::find(owners.begin(), owners.end(), type.owner) == owners.end())
+      owners.push_back(type.owner);
+  return owners;
 }
 std::vector<std::string>
 compiledInterfaceDeclarationNames(std::string_view bytes) {
@@ -623,8 +696,9 @@ std::string compiledInterfaceTypeSource(std::string_view bytes,
       }
     }
     definition += "};\n";
-    source += compiledInterfaceNamespaceSource(n.name, std::move(definition));
-    if (!aliasPrefix.empty())
+    if (n.owner == value.owner)
+      source += compiledInterfaceNamespaceSource(n.name, std::move(definition));
+    if (!aliasPrefix.empty() && (n.owner == value.owner || n.exported))
       source += "using " + compiledInterfaceAliasName(n.name, aliasPrefix) +
                 " = " + n.name + ";\n";
     state[index] = 2;

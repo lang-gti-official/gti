@@ -1415,7 +1415,7 @@ void testDetachedDeterministicProgram() {
   const std::string secondText = lang::LoweredProgramPrinter().print(*second);
   expect(firstText == secondText,
          "independent frontend snapshots should lower deterministically");
-  expect(firstText.find("lowered-program-v30") == 0 &&
+  expect(firstText.find("lowered-program-v31") == 0 &&
              firstText.find("\nmir\n") != std::string::npos,
          "the deterministic printer should serialize the complete contract");
   const gti_test::LoweredProgramInventory inventory =

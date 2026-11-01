@@ -3,6 +3,7 @@
 #include "gti/driver/compiled_scalar_library.h"
 #include "gti/driver/process.h"
 #include "gti/driver/project.h"
+#include "gti/lowered_program_printer.h"
 #include "gti/persistent_declaration.h"
 #include <algorithm>
 #include <chrono>
@@ -16,6 +17,7 @@ using namespace lang::driver;
 namespace lang {
 struct LoweredProgramTestAccess {
   static auto &bindings(LoweredProgram &p) { return p.compiledScalarBindings_; }
+  static auto &units(LoweredProgram &p) { return p.compiledInterfaceUnits_; }
 };
 } // namespace lang
 namespace {
@@ -303,6 +305,26 @@ void negativeTests(const std::filesystem::path &root,
   expect(!compileToSelectedBackend(req).succeeded(),
          "ordinary source forged imported admission");
   std::filesystem::remove(facade);
+  auto importedInputs = loadCompilationInputs(
+      req, nullptr,
+      {{facade.string(),
+        "export module compiled_scalar; export int choose(int x);\n"}});
+  const auto importedUnit =
+      importedInputs.sourceGraph.sourceUnitForPath(facade.string());
+  expect(importedUnit != 0, "imported mutation fixture has no source unit");
+  importedInputs.sourceGraph.markCompiledScalarInterface(importedUnit);
+  Capture importedCapture;
+  compiled(compileWithBackend(req, std::move(importedInputs), importedCapture));
+  std::vector<CompiledScalarImport> importedSignatures;
+  for (const auto &entry :
+       decodeCompiledLibraryInterface(bundle.interfaceMetadata))
+    importedSignatures.push_back({entry, importedUnit});
+  auto importedProgram = CompiledScalarUnitBuilder().bindImports(
+      *importedCapture.program, importedSignatures);
+  LoweredProgramTestAccess::bindings(importedProgram).clear();
+  expect(!verifyCompiledScalarUnit(importedProgram).empty(),
+         "deleting every binding must not turn a called import into an open "
+         "fragment");
   const auto library = root / "producer/library.gti";
   for (std::string_view source :
        {"export module numbers; int choose(int x) { return x; }",
@@ -353,6 +375,9 @@ void negativeTests(const std::filesystem::path &root,
   auto bound = CompiledScalarUnitBuilder().bind(*capture.program, keys(), true);
   expect(verifyLoweredProgram(bound).empty(),
          "valid compiled plan failed verification");
+  expect(LoweredProgramPrinter().print(bound).find(
+             "compiled-interface-unit ") != std::string::npos,
+         "compiled interface ownership must enter lowered serialization");
   const std::vector<CompiledScalarSignature> duplicates{signature, signature};
   rejects(
       [&] {
@@ -361,7 +386,7 @@ void negativeTests(const std::filesystem::path &root,
             duplicates);
       },
       "duplicate typed export identity");
-  for (int mutation = 0; mutation < 6; ++mutation) {
+  for (int mutation = 0; mutation < 10; ++mutation) {
     auto changed = bound;
     auto &bindings = LoweredProgramTestAccess::bindings(changed);
     if (mutation == 0)
@@ -376,6 +401,15 @@ void negativeTests(const std::filesystem::path &root,
       bindings[0].sourceUnit = 999999;
     if (mutation == 5)
       bindings[0].result = SemanticType::Bool;
+    auto &units = LoweredProgramTestAccess::units(changed);
+    if (mutation == 6)
+      units.clear();
+    if (mutation == 7)
+      units.front().owner.target = "wrong-owner";
+    if (mutation == 8)
+      units.push_back(units.front());
+    if (mutation == 9)
+      units.front().sourceUnit = 0;
     expect(!verifyCompiledScalarUnit(changed).empty() &&
                !verifyLoweredProgram(changed).empty(),
            "forged compiled plan accepted");
