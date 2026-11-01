@@ -61,10 +61,23 @@
         "48f6c8bb60cafdc22a6fdf237824cfd2be57cda6"
       ],
       "merge": "48f6c8bb60cafdc22a6fdf237824cfd2be57cda6"
+    },
+    {
+      "task": "workflow-ci-scope",
+      "pr": 106,
+      "head": "9dbe80483d47bb1d3da94c22e991b9fe611e5e93",
+      "tests": [
+        "agent_workflow",
+        "ci_release"
+      ],
+      "contributions": [
+        "5ff42bea0bd800ccb228fabb32a8a20991279572"
+      ],
+      "merge": "5ff42bea0bd800ccb228fabb32a8a20991279572"
     }
   ],
   "removed": [],
-  "main": "cfb28948a26a14e58ffb720c3474cbbed8d3f2ff",
-  "previous": "5a22de83762fdbe4145c62108a0fd3d17a026ad3",
-  "candidate": "c9c55fbdb89d4102b891d568ee1ede88"
+  "main": "f1d2db45b292311b2f0f567a6f8ef8b99dbb95bc",
+  "previous": "d4ffb01967fcc57c2f82756f6b3c8e9676e58e7a",
+  "candidate": "2fa9fa929b3b40308cfb010fac386a89"
 }
