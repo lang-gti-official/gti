@@ -1,0 +1,19 @@
+import std.resource_vector;
+import std.resource;
+import std.memory;
+
+std::resource_vector<int32_t, std::process_resource>
+make(std::resource_ref<std::process_resource> resource) {
+  return std::resource_vector<int32_t, std::process_resource>(resource);
+}
+
+int main() {
+  std::process_resource heap{};
+  unsafe {
+    auto binding = std::bind_resource(heap);
+    mut auto values = make(binding);
+    values.push_back(1);
+    if (values.size() != uint64_t(1) || values[uint64_t(0)] != 1) { return 1; }
+  }
+  return 0;
+}

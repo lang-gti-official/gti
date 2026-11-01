@@ -1,0 +1,6 @@
+export module right;
+import "api/base.gti";
+
+export int right_value() {
+    return base_value() * 4;
+}

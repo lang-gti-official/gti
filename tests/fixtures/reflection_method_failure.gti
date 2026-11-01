@@ -1,0 +1,28 @@
+import std.meta;
+import std.string;
+import std.vector;
+
+class Guard {
+public:
+  Guard() {}
+  Guard(Guard& other) = delete;
+  Guard(Guard&& other) = default;
+  ~Guard() { std::println("cleanup"); }
+};
+
+class Probe {
+public:
+  Probe() = default;
+  int32_t divide(int32_t value) { return 12 / value; }
+  Guard make() { return Guard(); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Probe probe{};
+  if (argc > 1) {
+    Guard guard = probe.make();
+    return probe.divide(0);
+  }
+  Guard guard = std::meta::method<Probe, 1>().invoke(probe);
+  return std::meta::method<Probe, 0>().invoke(probe, int32_t(0));
+}

@@ -1,7 +1,9 @@
 #include "gti/driver/build.h"
+#include "gti/driver/compiled_scalar_library.h"
 #include "gti/driver/embedding_library.h"
 
 #include "build_source_identity.h"
+#include "compiled_scalar_support.h"
 #include "gti/build_identity_config.h"
 #include "gti/llvm_backend.h"
 #include "sha256.h"
@@ -3784,8 +3786,12 @@ ExecutableBuildRequest::ExecutableBuildRequest(
     bool captureSuccessfulNativeOutput,
     std::optional<ManagedOutputPolicy> managedOutput,
     std::optional<std::string> cCompiler, std::optional<BuildCachePolicy> cache,
-    std::optional<BuildReportRequest> buildReport)
-    : compilationRequest(compilation.forExecutable()),
+    std::optional<BuildReportRequest> buildReport,
+    std::optional<CompiledLibraryTarget> compiledLibrary,
+    std::optional<CompiledLibraryImport> compiledImport,
+    std::vector<CompiledLibraryImport> compiledImports)
+    : compilationRequest(compiledLibrary ? compilation
+                                         : compilation.forExecutable()),
       toolchainLayout(std::move(toolchain)),
       generatedSourcePath(std::move(generatedSource)),
       outputPath(std::move(output)),
@@ -3797,7 +3803,21 @@ ExecutableBuildRequest::ExecutableBuildRequest(
       captureSuccessfulOutput(captureSuccessfulNativeOutput),
       managedOutputPolicy(std::move(managedOutput)),
       buildCachePolicy(std::move(cache)),
-      requestedBuildReport(std::move(buildReport)) {}
+      requestedBuildReport(std::move(buildReport)),
+      libraryTarget(std::move(compiledLibrary)),
+      libraryImports(normalizeCompiledLibraryImports(
+          std::move(compiledImport), std::move(compiledImports))) {
+  if (libraryImports.size() == 1)
+    libraryImport = libraryImports.front();
+}
+
+const std::optional<CompiledLibraryImport> &
+ExecutableBuildRequest::compiledImport() const {
+  if (libraryImports.size() > 1)
+    throw std::logic_error(
+        "use compiledImports() for multiple compiled libraries");
+  return libraryImport;
+}
 
 const CompilationRequest &ExecutableBuildRequest::compilation() const {
   return compilationRequest;
@@ -3995,8 +4015,58 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
     }
   }
 
-  CompilationInputs compilationInputs =
-      loadCompilationInputs(request.compilation(), progress);
+  const bool compiledLibrary = request.compiledLibrary().has_value();
+  const bool compiledImport = !request.compiledImports().empty();
+  std::string compiledBundle;
+  std::vector<LibraryBundleMember> importedObjects;
+  CompilationInputs compilationInputs;
+  if (compiledLibrary || compiledImport) {
+    try {
+      if (compiledLibrary) {
+        if (request.cache() &&
+            reusableCompiledScalarLibraryTarget(
+                request.compilation(), *request.compiledLibrary(),
+                request.compiledImports(), request.toolchain().runtimeLibrary,
+                request.output())) {
+          result.status = ExecutableBuildStatus::Success;
+          result.compilation.status = CompilationStatus::Success;
+          result.cache.status = BuildCacheStatus::Hit;
+          result.cache.entry = request.output();
+          result.cache.detail =
+              "compiled library source/configuration/dependency fingerprints "
+              "match";
+          return result;
+        }
+        auto built = buildCompiledScalarLibraryTarget(
+            request.compilation(), *request.compiledLibrary(),
+            request.toolchain().runtimeLibrary, request.compiledImports());
+        result.compilation = std::move(built.compilation);
+        compiledBundle = std::move(built.bundle);
+      } else {
+        auto imported = compileCompiledScalarConsumer(
+            request.compilation(), request.compiledImports(),
+            request.toolchain().runtimeLibrary);
+        result.compilation = std::move(imported.compilation);
+        importedObjects = std::move(imported.objects);
+      }
+    } catch (const std::exception &error) {
+      result.status = ExecutableBuildStatus::CompilationFailure;
+      result.driverDiagnostic =
+          "gti: compiled library: " + std::string(error.what());
+      return result;
+    }
+    if (!result.compilation.succeeded()) {
+      if (result.compilation.backendFailureDetails)
+        result.backendDiagnosticLog =
+            writeDiagnosticLog(*result.compilation.backendFailureDetails);
+      result.status = ExecutableBuildStatus::CompilationFailure;
+      return result;
+    }
+    compilationInputs.sources = result.compilation.sources;
+    compilationInputs.sourceValid = true;
+  } else {
+    compilationInputs = loadCompilationInputs(request.compilation(), progress);
+  }
   if (!compilationInputs.succeeded()) {
     result.compilation = compileToSelectedBackend(
         request.compilation(), std::move(compilationInputs), progress);
@@ -4099,7 +4169,12 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
   if (request.cache()) {
     const ProgressScope cacheProgress(progress, ProgressPhase::Cache,
                                       "checking build cache");
-    if (request.buildReport()) {
+    if (compiledLibrary || compiledImport) {
+      result.cache.status = BuildCacheStatus::Bypassed;
+      result.cache.detail =
+          "compiled-library artifacts are explicitly selected; automatic "
+          "artifact caching is not enabled";
+    } else if (request.buildReport()) {
       result.cache.status = BuildCacheStatus::Bypassed;
       result.cache.detail =
           "build-report capture requires a real native invocation";
@@ -4320,8 +4395,9 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
     }
   }
 
-  result.compilation = compileToSelectedBackend(
-      request.compilation(), std::move(compilationInputs), progress);
+  if (!compiledLibrary && !compiledImport)
+    result.compilation = compileToSelectedBackend(
+        request.compilation(), std::move(compilationInputs), progress);
   if (!result.compilation.succeeded()) {
     if (result.compilation.backendFailureDetails) {
       result.backendDiagnosticLog =
@@ -4332,6 +4408,19 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
   }
 
   if (!prepareOutputDirectories()) {
+    return result;
+  }
+
+  if (compiledLibrary) {
+    std::string error;
+    if (!publishTextAtomically(request.output(), compiledBundle, error)) {
+      result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
+      result.driverDiagnostic =
+          "gti: cannot publish compiled library: " + error;
+      return result;
+    }
+    result.artifactPublishResult = ArtifactPublishResult{};
+    result.status = ExecutableBuildStatus::Success;
     return result;
   }
 
@@ -4555,6 +4644,21 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
       nativeDependencyFile,
       request.buildReport().has_value() &&
           backendArtifactKind == BackendArtifactKind::Source);
+  std::vector<std::unique_ptr<TemporaryArtifact>> importedObjectCleanup;
+  for (const auto &member : importedObjects) {
+    const auto object =
+        stagedOutputDirectory /
+        ("compiled-library-" + std::to_string(importedObjectCleanup.size()) +
+         ".gtilib.o");
+    importedObjectCleanup.push_back(
+        std::make_unique<TemporaryArtifact>(object, true));
+    if (writeArtifact(object, member.bytes) != ArtifactWriteStatus::Success) {
+      result.status = ExecutableBuildStatus::GeneratedArtifactFailure;
+      result.driverDiagnostic = "gti: cannot stage compiled library object";
+      return result;
+    }
+    nativeObjects.push_back(object);
+  }
   const NativeInputs effectiveInputs = effectiveNativeInputs(
       request.toolchain(), request.nativeInputs(), nativeObjects);
   ProgressScope nativeProgress(progress, ProgressPhase::NativeLink,
@@ -4819,6 +4923,36 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request,
                                       ProgressObserver *progress) {
   ExecutableBuildResult result;
   result.generatedSource = request.generatedSource();
+  if (request.compiledLibrary() || !request.compiledImports().empty()) {
+    const auto rejectCompiled = [&](std::string reason) {
+      result.status = ExecutableBuildStatus::ToolchainConfigurationFailure;
+      result.driverDiagnostic = "gti: compiled library: " + std::move(reason);
+      return result;
+    };
+    if (request.compilation().backend() != BackendKind::Llvm ||
+        request.compilation().debugInfo() || request.keepGeneratedSource() ||
+        request.buildReport() ||
+        request.compilation().llvmInstrumentation() !=
+            LlvmInstrumentationMode::None ||
+        request.compilation().program().kind != ProgramKind::Executable ||
+        request.compilation().program().testSuite)
+      return rejectCompiled(
+          "requires LLVM without debug, retained C++, instrumentation, "
+          "embedding, tests, or build reports");
+    for (const auto &input : request.compiledImports()) {
+      for (const auto &path : {request.output(), request.generatedSource()})
+        if (artifactPathsAlias(input.artifact, path) ||
+            (input.interfaceRequired &&
+             artifactPathsAlias(input.interfacePath, path)))
+          return rejectCompiled("output must not overwrite the selected "
+                                "artifact or virtual interface");
+    }
+    if (request.compiledLibrary()) {
+      if (auto diagnostic =
+              compiledScalarProducerInputDiagnostic(request.nativeInputs()))
+        return rejectCompiled(*diagnostic);
+    }
+  }
   if (nativeObjectCache(request)) {
     const auto configured = [](const char *name) {
       const char *value = std::getenv(name);

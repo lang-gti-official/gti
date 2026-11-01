@@ -1,0 +1,80 @@
+==================
+Immediate functions constructors and conversion operators
+==================
+
+consteval T identity<T>(T value) { return value; }
+struct Port {
+  int value;
+  implicit consteval Port(int number) : value(number) {}
+  static consteval int checked(int number) { return number; }
+  consteval operator int() { return this.value; }
+};
+
+---
+
+(source_file
+  (function_declaration
+    (type
+      (user_type
+        (identifier)))
+    (identifier)
+    (generic_parameter_clause
+      (generic_parameter
+        (identifier)))
+    (parameter_clause
+      (parameter
+        (type
+          (user_type
+            (identifier)))
+        (identifier)))
+    (block
+      (return_statement
+        (initializer_expression
+          (primary_expression
+            (identifier))))))
+  (class_declaration
+    (identifier)
+    (class_body
+      (variable_declaration
+        (type
+          (primitive_type))
+        (identifier))
+      (constructor_declaration
+        (identifier)
+        (parameter_clause
+          (parameter
+            (type
+              (primitive_type))
+            (identifier)))
+        (constructor_initializer_list
+          (constructor_initializer
+            (user_type
+              (identifier))
+            (constructor_initializer_argument_list
+              (primary_expression
+                (identifier)))))
+        (block))
+      (method_declaration
+        (type
+          (primitive_type))
+        (identifier)
+        (parameter_clause
+          (parameter
+            (type
+              (primitive_type))
+            (identifier)))
+        (block
+          (return_statement
+            (initializer_expression
+              (primary_expression
+                (identifier))))))
+      (operator_declaration
+        (primitive_type)
+        (parameter_clause)
+        (block
+          (return_statement
+            (initializer_expression
+              (member_expression
+                (primary_expression
+                  (this_expression))
+                (identifier)))))))))

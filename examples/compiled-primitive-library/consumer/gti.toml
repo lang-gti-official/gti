@@ -1,0 +1,12 @@
+manifest-version = 1
+[package]
+name = "primitive-consumer"
+version = "0.1.0"
+[targets.app]
+kind = "executable"
+root = "main.gti"
+[targets.app.compiled-library]
+package = "compiled-primitives"
+target = "primitives"
+path = "dependencies/primitives.gtilib"
+interface = "api.gti"

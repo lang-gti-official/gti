@@ -5,6 +5,7 @@
 namespace lang {
 
 auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
+  reflectedMethodTargets.clear();
   macroLookup.clear();
   macroLookupBase = nullptr;
   macroExpansionDepth = 0;
@@ -250,6 +251,7 @@ auto SemanticVisitor::Impl::registerDeclarations(const StmtList &declarations)
   registerClassSpecializations(declarations, {});
   resolveConcepts();
   registerConformances(declarations, {});
+  refreshTypeAliasProjections();
   recordClassTypeIdentities();
   resolveEnumPayloads();
   resolveClassInheritance();
@@ -785,6 +787,7 @@ auto SemanticVisitor::Impl::analyzeClassFieldInitializers(
                 semanticModel.findTypeAlias(*alias)) {
           TypeAliasInfo concrete = *primary;
           concrete.type = typeOf(alias->target());
+          validateTypeAliasReference(alias->target(), concrete.type);
           semanticModel.record(*alias, std::move(concrete));
         }
       } else if (const auto *function = stmtAs<FunctionDecl>(member.get());
@@ -1266,7 +1269,7 @@ auto SemanticVisitor::Impl::analyzeMetaFieldAccess(
     SemanticType actual = *argumentType;
     if (actual.kind == SemanticType::Reference &&
         actual.arguments.size() == 1) {
-      actual = actual.arguments.front();
+      actual = SemanticType(actual.arguments.front());
     }
     if (actual != SemanticType::Unknown && !containsOpenTypeParameter(actual) &&
         !isSameOrDerivedClass(actual, owner)) {
@@ -1559,8 +1562,137 @@ auto SemanticVisitor::Impl::analyzeMetaFieldDefault(
   currentType = produced == SemanticType::Unknown ? produced : facts->type;
 }
 
+// The descriptor selects a declaration at compile time. Alias its invocation
+// to one ordinary member call, with that declaration as the only candidate.
+// The ordinary call owns receiver, argument, access, loan and dispatch checks;
+// its HIR/MIR lowering is unchanged.
+auto SemanticVisitor::Impl::analyzeMetaMethodInvoke(
+    const Call &expr, const Get &member, const SemanticType &methodObject)
+    -> void {
+  if (expr.arguments().empty() || methodObject.arguments.size() != 1 ||
+      methodObject.valueArguments.size() != 1) {
+    report(expr.paren(),
+           "Reflected instance invocation requires a receiver followed by "
+           "the method arguments.",
+           "GTI-S2125");
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  const SemanticType &owner = methodObject.arguments.front();
+  const CompileTimeValue &index = methodObject.valueArguments.front();
+  if (containsOpenTypeParameter(owner) ||
+      index.kind != CompileTimeValue::UInt64) {
+    // Concrete generic reanalysis repeats selection with a fixed identity.
+    const ClassId result = compilerTypeClass(CompilerTypeKind::MetaReturnType);
+    currentType = result == 0
+                      ? SemanticType::Unknown
+                      : SemanticType::classType(result, {owner}, {index});
+    return;
+  }
+  const std::optional<MetaMethodFacts> facts =
+      metaMethodFacts(owner, index.value);
+  if (!facts) {
+    report(expr.paren(),
+           "Method index " + std::to_string(index.value) +
+               " is out of range for '" + typeSpelling(owner) + "'.",
+           "GTI-S2111");
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  if (facts->staticMember || facts->operatorMethod) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2125", DiagnosticPhase::Semantics, expr.paren(),
+        facts->staticMember
+            ? "A static method has no instance receiver and cannot use "
+              "method.invoke in this profile."
+            : "An operator method cannot use method.invoke in this profile.");
+    diagnostic.related.push_back({tokenSpan(facts->declaration->name()),
+                                  "Reflected method declared here."});
+    diagnostics.emplace_back(std::move(diagnostic));
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  const Token &anchor = member.name();
+  const auto generated = [&](TokenKind kind, std::string lexeme) {
+    return Token(kind, std::move(lexeme), std::monostate{}, anchor.position,
+                 anchor.line, anchor.source, false, true);
+  };
+  ExprPtr receiver = cloneExpr(*expr.arguments().front());
+  // The callee already checked the descriptor expression, including its
+  // transfers and effects. Preserve that source evaluation as an alias
+  // prelude instead of cloning and checking it a second time.
+  const Expr *prelude = isEffectFreeMetaReceiver(*member.object())
+                            ? nullptr
+                            : member.object().get();
+  auto selected =
+      std::make_unique<Get>(std::move(receiver), generated(TokenKind::DOT, "."),
+                            generated(TokenKind::IDENTIFIER, facts->name));
+  const Get *selectedGet = selected.get();
+  ExprList arguments;
+  arguments.reserve(expr.arguments().size() - 1);
+  for (std::size_t i = 1; i < expr.arguments().size(); ++i)
+    arguments.push_back(cloneExpr(*expr.arguments()[i]));
+  auto call = std::make_shared<Call>(std::move(selected), expr.typeArguments(),
+                                     expr.paren(), std::move(arguments));
+  reflectedMethodTargets.emplace(selectedGet, facts->declaration);
+  synthesizedExpressions.push_back(call);
+  const Expr &alias = semanticModel.recordExpressionAlias(expr, call, prelude);
+  const std::size_t diagnosticStart = diagnostics.size();
+  currentType = analyze(alias);
+  if (prelude != nullptr) {
+    validateSequencedTransientLoans(member.object(), call->callee(),
+                                    expr.paren());
+    for (const ExprPtr &argument : call->arguments())
+      validateSequencedTransientLoans(member.object(), argument, expr.paren());
+  }
+  if (currentType == SemanticType::Unknown &&
+      diagnostics.size() == diagnosticStart &&
+      semanticModel.findCall(*call) == nullptr)
+    report(expr.paren(),
+           "The selected reflected method is unavailable through this "
+           "receiver; use a receiver whose member set includes the "
+           "selected declaration.",
+           "GTI-S2125");
+  if (const ResolvedCallInfo *selectedCall = semanticModel.findCall(*call)) {
+    // Source-level borrow queries still visit the written invocation. Its
+    // first argument is the ordinary call's receiver, so translate just the
+    // selected result origin into the written argument geometry. Execution
+    // and the full callable contract remain owned by the checked alias.
+    const bool fromReceiver =
+        selectedCall->borrowOrigin == BorrowOriginKind::Receiver;
+    semanticModel.record(
+        expr, ResolvedCallInfo{
+                  .returnType = selectedCall->returnType,
+                  .borrowOrigin = fromReceiver ? BorrowOriginKind::Argument
+                                               : selectedCall->borrowOrigin,
+                  .borrowArgument =
+                      fromReceiver ? 0
+                                   : selectedCall->borrowArgument +
+                                         (selectedCall->borrowOrigin ==
+                                                  BorrowOriginKind::Argument
+                                              ? 1
+                                              : 0),
+                  .borrowAccess = selectedCall->borrowAccess,
+                  .borrowPlace = selectedCall->borrowPlace});
+  }
+  // The source call and its checked alias denote the same returned value.
+  // Preserve the selected call's exact reference/borrow origins for bindings
+  // and flow checks that query the source expression before HIR lowering.
+  if (const auto *dependencies = semanticModel.findBorrowDependencySet(alias))
+    semanticModel.recordBorrowDependencySet(expr, *dependencies);
+}
+
 auto SemanticVisitor::Impl::isEffectFreeMetaReceiver(
     const Expr &expression) const -> bool {
+  // Even an empty descriptor read can initialize lazy storage, access a
+  // foreign object or invoke a conversion. Only ordinary inert places and
+  // trusted empty default construction may disappear.
+  const SymbolId symbol = semanticModel.findResolvedSymbol(expression);
+  if (isThreadLocalStorage(symbol) ||
+      semanticModel.findForeignStorage(symbol) != nullptr ||
+      semanticModel.findOperator(expression) != nullptr ||
+      semanticModel.findContextualConversion(expression) != nullptr)
+    return false;
   switch (expression.exprKind()) {
   case ExprKind::Variable:
   case ExprKind::This:
@@ -1570,9 +1702,12 @@ auto SemanticVisitor::Impl::isEffectFreeMetaReceiver(
   case ExprKind::Grouping:
     return isEffectFreeMetaReceiver(
         *static_cast<const Grouping &>(expression).expression());
-  case ExprKind::Get:
-    return isEffectFreeMetaReceiver(
-        *static_cast<const Get &>(expression).object());
+  case ExprKind::Get: {
+    const auto &member = static_cast<const Get &>(expression);
+    // Arrow may execute a user-defined accessor before reaching the field.
+    return member.access().kind != TokenKind::ARROW &&
+           isEffectFreeMetaReceiver(*member.object());
+  }
   case ExprKind::Call: {
     // Default construction of an empty metaobject has no effects.
     const auto &call = static_cast<const Call &>(expression);
@@ -5890,6 +6025,8 @@ auto SemanticVisitor::Impl::visitStructuredBindingDecl(
 
 auto SemanticVisitor::Impl::visitTypeAliasDecl(const TypeAliasDecl &stmt)
     -> void {
+  if (!stmt.genericParameters().empty())
+    return; // Rejected at registration; family definitions belong to blocks.
   const DeclarationOrderScope declarationOrder{*this, stmt};
   // Identities are registered up front, but source-defined constraints may
   // execute constexpr predicates. Check them at this declaration's lexical
@@ -5945,6 +6082,31 @@ auto SemanticVisitor::Impl::visitConceptDecl(const ConceptDecl &stmt) -> void {
          .symbol = conceptInfo.parameterSymbols[index],
          .roles = OccurrenceRole::Declaration | OccurrenceRole::TypeUse,
          .name = stmt.typeParameters()[index].lexeme});
+  }
+  if (stmt.isProtocol()) {
+    // Alias dependency resolution can request a protocol before conformances
+    // register. Publish its type-use facts from the completed catalog here.
+    std::vector<GenericParameterInfo> parameters;
+    std::vector<SemanticType> arguments;
+    for (std::size_t index = 0; index < count; ++index) {
+      parameters.push_back({.id = conceptInfo.parameterIds[index],
+                            .name = stmt.typeParameters()[index]});
+      arguments.push_back(
+          SemanticType::typeParameter(conceptInfo.parameterIds[index]));
+    }
+    beginTypeParameterScope(parameters);
+    bindAssociatedTypeNames(conceptInfo.id, arguments);
+    const auto record = [&](const auto &self, const TypeRef &type) -> void {
+      recordTypeUse(type);
+      for (const auto &argument : type.arguments)
+        self(self, argument);
+    };
+    for (const auto &operation : conceptInfo.operations) {
+      record(record, operation.declaration->returnType());
+      for (const auto &parameter : operation.declaration->parameters())
+        record(record, parameter.type);
+    }
+    endTypeParameterScope();
   }
 }
 auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
@@ -7421,6 +7583,22 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     calleeType = analyze(expr.callee());
   }
   analyzingCallCallee = enclosingCallCallee;
+
+  // A reflected invocation aliases the whole call before analyzing its
+  // runtime inputs. Analyzing the written inputs first and their checked
+  // aliases again would consume a moved receiver twice.
+  if (const auto *member = exprAs<Get>(expr.callee().get());
+      member != nullptr && member->name().lexeme == "invoke") {
+    if (const SemanticType *objectType =
+            semanticModel.findType(*member->object());
+        objectType != nullptr && objectType->kind == SemanticType::Class &&
+        objectType->classId != 0 && objectType->classId <= classes.size() &&
+        classInfo(objectType->classId).compilerType ==
+            CompilerTypeKind::MetaMethod) {
+      analyzeMetaMethodInvoke(expr, *member, *objectType);
+      return;
+    }
+  }
 
   // An argument is used as the parameters at its position declare. Only an
   // argument that can be an accessor's result needs them.
@@ -11120,18 +11298,18 @@ auto SemanticVisitor::Impl::visitLiteralExpr(const LiteralExpr &expr) -> void {
 auto SemanticVisitor::Impl::visitLogicalExpr(const Logical &expr) -> void {
   const SemanticType leftType =
       analyzeExpectedCallableResult(expr.left(), SemanticType::Bool);
+  requireBool(expr.left(), leftType, expr.oper(),
+              "Logical operands must be bool.");
   const ScopeStack afterLeft = scopes;
   const LoanFlowState loanFlowAfterLeft = loanFlow;
   const std::size_t rightOwnershipStart = semanticModel.ownershipEventCount();
   ++loanFlow.rawConditionalExpressionDepth;
   const SemanticType rightType =
       analyzeExpectedCallableResult(expr.right(), SemanticType::Bool);
-  --loanFlow.rawConditionalExpressionDepth;
-  const ScopeStack afterRight = scopes;
-  requireBool(expr.left(), leftType, expr.oper(),
-              "Logical operands must be bool.");
   requireBool(expr.right(), rightType, expr.oper(),
               "Logical operands must be bool.");
+  --loanFlow.rawConditionalExpressionDepth;
+  const ScopeStack afterRight = scopes;
 
   const std::optional<bool> left = constantBoolean(expr.left());
   const bool skipsRight =
@@ -11534,10 +11712,27 @@ auto SemanticVisitor::Impl::visitQualifiedNameExpr(const QualifiedName &expr)
   if (expr.name().segments.size() > 1) {
     NamePath ownerPath(std::vector<Token>(expr.name().segments.begin(),
                                           expr.name().segments.end() - 1));
-    if (const auto owner = resolveClassPath(ownerPath, currentNamespace);
-        owner && !validateNestedClassAccess(*owner, expr.name().last())) {
-      currentType = SemanticType::Unknown;
-      return;
+    if (const auto owner = resolveClassPath(ownerPath, currentNamespace)) {
+      if (!validateNestedClassAccess(*owner, expr.name().last())) {
+        currentType = SemanticType::Unknown;
+        return;
+      }
+      // Validate the source path before instantiating its generic owner.
+      // A qualified static member is not a protocol invocation; otherwise
+      // unrelated diagnostics inside the instance can mask this path rule.
+      const ClassInfo &ownerInfo = classInfo(*owner);
+      const auto member = ownerInfo.members.find(expr.name().last().lexeme);
+      if (expr.ownerType() && !ownerInfo.genericParameters.empty() &&
+          member != ownerInfo.members.end() &&
+          member->second.symbol.staticMember) {
+        report(expr.name().last(),
+               "Static members of generic classes and structs require "
+               "qualified generic member paths, which are not supported "
+               "yet.",
+               "GTI-S2039");
+        currentType = SemanticType::Unknown;
+        return;
+      }
     }
   }
   if (expr.ownerType()) {
@@ -13010,7 +13205,7 @@ auto SemanticVisitor::Impl::constexprSuccess(const Expr &expression,
   // Function-body expressions can produce a different value per invocation.
   // Only cache constants belonging to the source expression being evaluated
   // outside a call frame.
-  if (context.callDepth == 0) {
+  if (context.callDepth == 0 && context.recordValues) {
     semanticModel.recordConstant(expression, value);
   }
   return {.value = std::move(value), .location = expressionToken(expression)};
@@ -13198,9 +13393,10 @@ auto SemanticVisitor::Impl::seedConstexprValueParameters(
 }
 
 auto SemanticVisitor::Impl::evaluateConstexprConstruction(
-    const Expr &source, const ResolvedConstructionInfo &resolved,
+    const Expr *source, const ResolvedConstructionInfo &resolved,
     const ExprList &explicitArguments, const Token &callSite,
-    ConstexprInterpreter &context) -> ConstexprEvaluation {
+    ConstexprInterpreter &context, const Expr *contextualArgument)
+    -> ConstexprEvaluation {
   if (resolved.directInitialization) {
     if (explicitArguments.size() != 1)
       return constexprFailure(callSite,
@@ -13220,8 +13416,11 @@ auto SemanticVisitor::Impl::evaluateConstexprConstruction(
     if (auto staged = executeStagedConstexpr(
             concrete, {}, classSubstitution(concrete.constructedType), {},
             callSite, context))
-      return *staged ? constexprSuccess(source, *staged->value, context)
-                     : std::move(*staged);
+      return *staged
+                 ? (source ? constexprSuccess(*source, *staged->value, context)
+                           : ConstexprEvaluation{.value = *staged->value,
+                                                 .location = callSite})
+                 : std::move(*staged);
     return constexprFailure(callSite,
                             ConstantEvaluationFailure::UnsupportedExpression,
                             "Generated constant construction requires an "
@@ -13261,6 +13460,8 @@ auto SemanticVisitor::Impl::evaluateConstexprConstruction(
 
   std::vector<const Expr *> argumentExpressions;
   argumentExpressions.reserve(resolved.parameterTypes.size());
+  if (contextualArgument)
+    argumentExpressions.push_back(contextualArgument);
   for (const ExprPtr &argument : explicitArguments) {
     argumentExpressions.push_back(argument.get());
   }
@@ -13342,9 +13543,17 @@ auto SemanticVisitor::Impl::evaluateConstexprConstruction(
                             "enclosing body to execute as verified MIR.");
   if (auto staged = executeStagedConstexpr(concrete, arguments, substitution,
                                            {}, callSite, context)) {
-    return *staged ? constexprSuccess(source, *staged->value, context)
-                   : std::move(*staged);
+    return *staged
+               ? (source ? constexprSuccess(*source, *staged->value, context)
+                         : ConstexprEvaluation{.value = *staged->value,
+                                               .location = callSite})
+               : std::move(*staged);
   }
+  if (context.requireMir || declaration->isConsteval())
+    return constexprFailure(
+        callSite, ConstantEvaluationFailure::UnsupportedExpression,
+        "Immediate constructor evaluation requires an available verified MIR "
+        "body and a supported compile-time call closure.");
   if (referenceInputs)
     return constexprFailure(
         callSite, ConstantEvaluationFailure::UnsupportedExpression,
@@ -13460,7 +13669,12 @@ auto SemanticVisitor::Impl::evaluateConstexprConstruction(
         "A constexpr constructor body cannot transfer control outside the "
         "constructor.");
   }
-  return constexprSuccess(source, std::move(object), context);
+  return source
+             ? constexprSuccess(*source, std::move(object), context)
+             : constexprFailure(
+                   callSite, ConstantEvaluationFailure::UnsupportedExpression,
+                   "A statement-owned immediate constructor requires MIR "
+                   "execution.");
 }
 
 auto SemanticVisitor::Impl::evaluateConstexprExpression(
@@ -13479,6 +13693,10 @@ auto SemanticVisitor::Impl::evaluateConstexprExpression(
     return constexprFailure(expressionToken(source),
                             ConstantEvaluationFailure::ResourceLimit);
   }
+
+  if (&source != context.immediateRoot)
+    if (const auto *immediate = semanticModel.findImmediateInvocation(source))
+      return {.value = immediate->value};
 
   const SemanticType sourceType =
       constexprType(semanticModel.typeOf(source), context);
@@ -13549,8 +13767,33 @@ auto SemanticVisitor::Impl::evaluateConstexprExpression(
             semanticModel.findConstant(source)) {
       return constexprSuccess(source, *value, context);
     }
-    return constexprFailure(expressionToken(source),
-                            ConstantEvaluationFailure::UnsupportedType);
+    ConstexprEvaluation failure = constexprFailure(
+        expressionToken(source), ConstantEvaluationFailure::UnsupportedType);
+    if (const auto *query = exprAs<LayoutQuery>(&source)) {
+      const auto layout =
+          evaluateLayout(constexprType(typeOf(query->type()), context));
+      failure.genericDependency =
+          layout.error == LayoutEvaluationError::SymbolicType ||
+          layout.error == LayoutEvaluationError::SymbolicExtent;
+    } else if (const auto *requirement = exprAs<MemberRequirement>(&source)) {
+      std::vector<const TypeRef *> types;
+      for (const auto &parameter : requirement->parameters())
+        types.push_back(&parameter);
+      const auto result = requirement->resultArgumentType();
+      types.push_back(&result);
+      if (requirement->isExpressionRequirement()) {
+        collectRequirementTypeArguments(requirement->expression().get(), types);
+        collectIterationRequirementTypeArguments(*requirement, types);
+      } else {
+        types.push_back(&requirement->receiver());
+      }
+      failure.genericDependency =
+          std::any_of(types.begin(), types.end(), [&](const TypeRef *type) {
+            return containsOpenTypeParameter(
+                constexprType(typeOf(*type), context));
+          });
+    }
+    return failure;
   }
   if (const auto *literal = exprAs<LiteralExpr>(&source)) {
     const ConstantEvaluation evaluated = evaluateConstantLiteral(
@@ -13613,8 +13856,15 @@ auto SemanticVisitor::Impl::evaluateConstexprExpression(
             semanticModel.findConstant(source)) {
       return constexprSuccess(source, *value, context);
     }
-    return constexprFailure(expressionToken(source),
-                            ConstantEvaluationFailure::NonConstantReference);
+    ConstexprEvaluation failure =
+        constexprFailure(expressionToken(source),
+                         ConstantEvaluationFailure::NonConstantReference);
+    if (const auto *variable = exprAs<Variable>(&source);
+        variable && resolve(variable->name()) == nullptr)
+      if (const auto parameter = resolveValueParameter(variable->name()))
+        failure.genericDependency = constexprValue(*parameter, context).kind ==
+                                    CompileTimeValue::Parameter;
+    return failure;
   }
   if (exprAs<This>(&source) != nullptr) {
     if (context.receivers.empty()) {
@@ -13882,7 +14132,7 @@ auto SemanticVisitor::Impl::evaluateConstexprExpression(
   if (const auto *initializer = exprAs<DirectInitializer>(&source)) {
     if (const ResolvedConstructionInfo *construction =
             semanticModel.findConstruction(*initializer)) {
-      return evaluateConstexprConstruction(source, *construction,
+      return evaluateConstexprConstruction(&source, *construction,
                                            initializer->arguments(),
                                            initializer->brace(), context);
     }
@@ -13905,7 +14155,7 @@ auto SemanticVisitor::Impl::evaluateConstexprExpression(
     if (const ResolvedConstructionInfo *construction =
             semanticModel.findConstruction(*call)) {
       return evaluateConstexprConstruction(
-          source, *construction, call->arguments(), call->paren(), context);
+          &source, *construction, call->arguments(), call->paren(), context);
     }
     const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
     if (resolved == nullptr) {
@@ -14244,8 +14494,9 @@ auto SemanticVisitor::Impl::evaluateConstexprCall(
   ConstexprEvaluation evaluated = executeConstexprFunction(
       *declaration, constexprType(resolved->returnType, context), arguments,
       substitution, receiver, callSite, context);
-  return evaluated ? constexprSuccess(source, *evaluated.value, context)
-                   : evaluated;
+  return evaluated.voidCompletion ? evaluated
+         : evaluated ? constexprSuccess(source, *evaluated.value, context)
+                     : evaluated;
 }
 
 auto SemanticVisitor::Impl::executeConstexprStatements(
@@ -14594,6 +14845,12 @@ auto SemanticVisitor::Impl::executeConstexprFunction(
     return std::move(*staged);
   }
 
+  if (context.requireMir || function.isConsteval()) {
+    return constexprFailure(
+        callSite, ConstantEvaluationFailure::UnsupportedExpression,
+        "Immediate function evaluation requires an available verified MIR "
+        "body and a supported compile-time call closure.");
+  }
   if (function.operatorName() || hasPack) {
     return constexprFailure(
         callSite, ConstantEvaluationFailure::UnsupportedExpression,

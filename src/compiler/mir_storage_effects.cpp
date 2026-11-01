@@ -11,6 +11,11 @@
 namespace lang {
 namespace {
 
+// Keep sanitizer-annotated queue operations distinct from prebuilt libraries.
+struct StorageWorkItem {
+  std::size_t value;
+};
+
 using AddressKey = std::pair<MirBodyKind, std::size_t>;
 AddressKey key(MirBodyAddress address) { return {address.kind, address.owner}; }
 
@@ -205,12 +210,12 @@ verifyMirPersistentStorageEffects(const MirProgram &program) {
 
   // A finite monotone closure over structural place/access facts, including
   // recursion. Source order and effect-summary claims confer no authority.
-  std::deque<std::size_t> work;
+  std::deque<StorageWorkItem> work;
   std::vector<bool> queued(nodes.size(), true);
   for (std::size_t index = 0; index < nodes.size(); ++index)
-    work.push_back(index);
+    work.push_back({index});
   while (!work.empty()) {
-    const auto target = work.front();
+    const auto target = work.front().value;
     work.pop_front();
     queued[target] = false;
     for (const auto caller : nodes[target].callers) {
@@ -225,7 +230,7 @@ verifyMirPersistentStorageEffects(const MirProgram &program) {
           changed |= mergeAccess(nodes[caller].summary, access);
       if (changed && !queued[caller]) {
         queued[caller] = true;
-        work.push_back(caller);
+        work.push_back({caller});
       }
     }
   }

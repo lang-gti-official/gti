@@ -72,6 +72,12 @@ template <typename State> struct MirForwardDataflowResult {
 
 namespace mir_dataflow_detail {
 
+// Keep this container instantiation separate from prebuilt libraries that may
+// use an uninstrumented deque<MirBlockId> with incompatible ASAN annotations.
+struct WorkItem {
+  MirBlockId block;
+};
+
 [[nodiscard]] inline bool validEdge(const MirBody &body, MirBlockId target,
                                     const std::vector<MirOperand> &arguments) {
   return target != 0 && target <= body.blocks.size() &&
@@ -169,7 +175,7 @@ runMirForwardDataflow(const MirBody &body, State entryState,
   }
 
   result.incoming[body.entry - 1] = std::move(entryState);
-  std::deque<MirBlockId> worklist{body.entry};
+  std::deque<mir_dataflow_detail::WorkItem> worklist{{body.entry}};
   std::vector<bool> queued(body.blocks.size(), false);
   std::vector<std::vector<MirDataflowEdgeId>> sourceExecutable(
       body.blocks.size());
@@ -185,7 +191,7 @@ runMirForwardDataflow(const MirBody &body, State entryState,
       return result;
     }
     ++result.iterations;
-    const MirBlockId source = worklist.front();
+    const MirBlockId source = worklist.front().block;
     worklist.pop_front();
     queued[source - 1] = false;
     const MirBlock *block = body.findBlock(source);
@@ -258,7 +264,7 @@ runMirForwardDataflow(const MirBody &body, State entryState,
       }
       ++result.updateCounts[edge.target - 1];
       if (!queued[edge.target - 1]) {
-        worklist.push_back(edge.target);
+        worklist.push_back({edge.target});
         queued[edge.target - 1] = true;
       }
     }

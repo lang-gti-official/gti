@@ -1,0 +1,39 @@
+class Resource {
+  mut int32_t number = 2;
+public:
+  Resource() {}
+  ~Resource() {}
+  int32_t read() { return this.number; }
+  void reset() mut { this.number = 9; }
+};
+
+class Binding {
+  Resource& resource;
+public:
+  Binding(Resource& resource) : resource(resource) {}
+  int32_t read() { return this.resource.read(); }
+};
+
+class Lease {
+  Binding binding;
+public:
+  Lease(Binding binding) : binding(binding) {}
+  ~Lease() {}
+  int32_t read() { return this.binding.read(); }
+};
+
+class Owner {
+  Lease lease;
+public:
+  Owner(Binding binding) : lease(Lease(binding)) {}
+  int32_t read() { return this.lease.read(); }
+};
+
+Owner make(Binding binding) { return Owner(binding); }
+
+int main() {
+  mut Resource resource{};
+  Binding binding{resource};
+  Owner owner = make(binding);
+  return owner.read() - 2;
+}

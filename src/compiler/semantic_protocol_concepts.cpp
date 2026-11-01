@@ -22,7 +22,9 @@ namespace {
 // Projections reduce through block types, which may themselves name
 // projections; a cyclic block must not recurse without bound.
 constexpr std::size_t maximumProjectionDepth = 64;
-thread_local std::size_t projectionDepth = 0;
+constexpr std::size_t maximumProjectionWork = 16384;
+thread_local std::vector<SemanticType> activeProjections;
+thread_local std::size_t projectionWork = 0;
 
 template <class Names>
 [[nodiscard]] std::optional<std::uint32_t> memberIndex(const Names &names,
@@ -76,6 +78,55 @@ auto SemanticVisitor::Impl::reportConformanceError(const Token &site,
   diagnostics.emplace_back(std::move(diagnostic));
 }
 
+auto SemanticVisitor::Impl::makeAssociatedTypeParameters(
+    const std::vector<GenericParameter> &parameters, const Token &name,
+    const std::vector<std::string> &fromScope,
+    const std::vector<std::string> &enclosingNames)
+    -> std::vector<GenericParameterInfo> {
+  for (const GenericParameter &parameter : parameters) {
+    if (parameter.pack || parameter.valueType || parameter.equal) {
+      reportConformanceError(
+          parameter.name,
+          "Associated type families accept type parameters without packs, "
+          "value parameters or defaults.");
+    }
+    if (std::find(enclosingNames.begin(), enclosingNames.end(),
+                  parameter.name.lexeme) != enclosingNames.end()) {
+      reportConformanceError(
+          parameter.name,
+          "Associated type parameter '" + parameter.name.lexeme +
+              "' cannot shadow an enclosing parameter or concept member.");
+    }
+  }
+  return makeGenericParameters(parameters, name, fromScope, false);
+}
+
+// The same lexical bindings serve concept signatures and block alias targets.
+// Keep unapplied families symbolic; only an application substitutes binders.
+auto SemanticVisitor::Impl::bindAssociatedTypeNames(
+    ConceptId id, const std::vector<SemanticType> &arguments) -> void {
+  const auto &names = concepts[id - 1].associatedTypes;
+  for (std::size_t member = 0; member < names.size(); ++member) {
+    SemanticType projection(SemanticType::TypeParameter, arguments);
+    projection.projectionConcept = id;
+    projection.projectionMember = static_cast<std::uint32_t>(member);
+    typeParameterScopes.back().emplace(names[member], std::move(projection));
+  }
+}
+
+auto SemanticVisitor::Impl::associatedTypeSymbol(ConceptId id,
+                                                 std::uint32_t member) const
+    -> SymbolId {
+  const auto &info = concepts[id - 1];
+  if (member >= info.associatedTypes.size())
+    return 0;
+  for (const auto &declaration :
+       info.declaration->protocolBody()->associatedTypes)
+    if (declaration.name.lexeme == info.associatedTypes[member])
+      return symbolForDeclaration(declaration.name);
+  return 0;
+}
+
 // Called by resolveConcept with the concept's parameter scope active.
 auto SemanticVisitor::Impl::resolveProtocolConcept(
     RegisteredConcept &conceptInfo, bool &valid) -> void {
@@ -83,6 +134,7 @@ auto SemanticVisitor::Impl::resolveProtocolConcept(
   const ProtocolConceptBody &body = *declaration.protocolBody();
   conceptInfo.protocol = true;
   conceptInfo.associatedTypes.clear();
+  conceptInfo.associatedTypeParameters.clear();
   conceptInfo.operations.clear();
   if (declaration.typeParameters().empty() ||
       conceptInfo.parameterIds.size() != declaration.typeParameters().size()) {
@@ -112,23 +164,51 @@ auto SemanticVisitor::Impl::resolveProtocolConcept(
     return true;
   };
 
-  // Associated names type as projections of the parameters, so an operation
-  // signature can name them directly.
+  std::vector<std::string> enclosingNames(names.begin(), names.end());
+  for (const auto &associated : body.associatedTypes)
+    enclosingNames.push_back(associated.name.lexeme);
+  for (const auto &statement : body.operations)
+    if (const auto *operation = stmtAs<FunctionDecl>(statement.get()))
+      enclosingNames.push_back(operation->name().lexeme);
+  const std::size_t diagnosticsBefore = diagnostics.size();
   for (const ProtocolAssociatedType &associated : body.associatedTypes) {
     if (!claim(associated.name)) {
       continue;
     }
-    const auto member =
-        static_cast<std::uint32_t>(conceptInfo.associatedTypes.size());
     conceptInfo.associatedTypes.push_back(associated.name.lexeme);
-    typeParameterScopes.back().emplace(
-        associated.name.lexeme,
-        associatedTypeProjection(conceptInfo.id, member, parameters));
+    conceptInfo.associatedTypeParameters.push_back(makeAssociatedTypeParameters(
+        associated.genericParameters, associated.name,
+        conceptInfo.namespaceScope, enclosingNames));
+  }
+  valid = valid && diagnostics.size() == diagnosticsBefore;
+  bindAssociatedTypeNames(conceptInfo.id, parameters);
+  for (const auto &associated : body.associatedTypes) {
+    const auto member =
+        memberIndex(conceptInfo.associatedTypes, associated.name.lexeme);
+    if (!member)
+      continue;
+    std::vector<SemanticType> inputs;
+    for (const auto &parameter : conceptInfo.associatedTypeParameters[*member])
+      inputs.push_back(SemanticType::typeParameter(parameter.id));
+    const auto type =
+        associatedTypeProjection(conceptInfo.id, *member, parameters, inputs);
+    const auto symbol = recordToolingSymbol(
+        associated.name, SymbolKind::TypeAlias,
+        conceptInfo.qualifiedName + "::" + associated.name.lexeme, type);
+    semanticModel.recordOccurrence(
+        {.sourceUnit = currentSourceUnit,
+         .span = tokenSpan(associated.name),
+         .kind = SemanticOccurrenceKind::Symbol,
+         .symbol = symbol,
+         .roles = OccurrenceRole::Declaration | OccurrenceRole::TypeUse,
+         .name = associated.name.lexeme,
+         .type = type});
   }
 
   semanticModel.recordProtocolConcept(
       conceptInfo.id, {.qualifiedName = conceptInfo.qualifiedName,
-                       .associatedTypes = conceptInfo.associatedTypes});
+                       .associatedTypes = conceptInfo.associatedTypes,
+                       .parameterCount = conceptInfo.parameterIds.size()});
 
   for (const StmtPtr &statement : body.operations) {
     const auto *operation = stmtAs<FunctionDecl>(statement.get());
@@ -429,6 +509,17 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
 
     std::vector<SemanticType> associatedTypes(
         conceptInfo.associatedTypes.size(), SemanticType::Unknown);
+    std::vector<std::vector<GenericParameterInfo>> associatedTypeParameters(
+        conceptInfo.associatedTypes.size());
+    typeCheck.conceptId = *conceptId;
+    typeCheck.patterns = patterns;
+    bindAssociatedTypeNames(*conceptId, patterns);
+    std::vector<std::string> enclosingNames = conceptInfo.associatedTypes;
+    enclosingNames.push_back(conceptInfo.declaration->name().lexeme);
+    for (const auto &parameter : parameters)
+      enclosingNames.push_back(parameter.name.lexeme);
+    for (const auto &operation : conceptInfo.operations)
+      enclosingNames.push_back(operation.name);
     std::vector<bool> defined(conceptInfo.associatedTypes.size(), false);
     // Problems below leave the block registered, so its operations are still
     // checked and uses of it do not report a second, missing-block error.
@@ -454,8 +545,40 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
         continue;
       }
       defined[*index] = true;
-      typeCheck.types.push_back(&alias->target());
+      auto familyParameters = makeAssociatedTypeParameters(
+          alias->genericParameters(), alias->name(), enclosing, enclosingNames);
+      const auto &required = conceptInfo.associatedTypeParameters[*index];
+      if (familyParameters.size() != required.size()) {
+        reportConformanceError(
+            alias->name(), "Associated type '" + alias->name().lexeme +
+                               "' requires " + std::to_string(required.size()) +
+                               " type parameters.");
+      } else {
+        for (std::size_t parameter = 0; parameter < required.size();
+             ++parameter)
+          if (familyParameters[parameter].conceptId !=
+                  required[parameter].conceptId ||
+              familyParameters[parameter].constraints !=
+                  required[parameter].constraints)
+            reportConformanceError(familyParameters[parameter].name,
+                                   "Associated type parameter constraints must "
+                                   "match the concept declaration.",
+                                   &required[parameter].name,
+                                   "Declared parameter contract.");
+      }
+      beginTypeParameterScope(familyParameters);
       associatedTypes[*index] = typeOf(alias->target(), enclosing);
+      semanticModel.recordOccurrence(
+          {.sourceUnit = currentSourceUnit,
+           .span = tokenSpan(alias->name()),
+           .kind = SemanticOccurrenceKind::Symbol,
+           .symbol = associatedTypeSymbol(*conceptId, *index),
+           .roles = OccurrenceRole::Definition | OccurrenceRole::TypeUse,
+           .name = alias->name().lexeme,
+           .type = associatedTypes[*index]});
+      endTypeParameterScope();
+      typeCheck.associatedTypes.push_back({alias, familyParameters});
+      associatedTypeParameters[*index] = std::move(familyParameters);
     }
     for (std::size_t index = 0; index < defined.size(); ++index) {
       if (!defined[index]) {
@@ -471,14 +594,16 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
     if (!valid) {
       continue;
     }
-    conformances.push_back({.conceptId = *conceptId,
-                            .sourceUnit = currentSourceUnit,
-                            .declaration = declaration,
-                            .namespaceScope = enclosing,
-                            .functionScope = scope,
-                            .genericParameters = std::move(parameters),
-                            .patterns = std::move(patterns),
-                            .associatedTypes = std::move(associatedTypes)});
+    conformances.push_back(
+        {.conceptId = *conceptId,
+         .sourceUnit = currentSourceUnit,
+         .declaration = declaration,
+         .namespaceScope = enclosing,
+         .functionScope = scope,
+         .genericParameters = std::move(parameters),
+         .patterns = std::move(patterns),
+         .associatedTypes = std::move(associatedTypes),
+         .associatedTypeParameters = std::move(associatedTypeParameters)});
   }
   currentSourceUnit = enclosingSourceUnit;
   currentNamespace = enclosingNamespace;
@@ -505,9 +630,22 @@ auto SemanticVisitor::Impl::bindConformanceOperations() -> void {
                                 SemanticType value) -> SemanticType {
       if (value.isAssociatedTypeProjection() &&
           value.projectionConcept == conformance.conceptId &&
-          value.arguments == conformance.patterns &&
-          value.projectionMember < conformance.associatedTypes.size()) {
-        return conformance.associatedTypes[value.projectionMember];
+          value.projectionMember < conformance.associatedTypes.size() &&
+          value.arguments.size() ==
+              conformance.patterns.size() +
+                  conformance.associatedTypeParameters[value.projectionMember]
+                      .size() &&
+          std::equal(conformance.patterns.begin(), conformance.patterns.end(),
+                     value.arguments.begin())) {
+        GenericSubstitution family;
+        const auto &parameters =
+            conformance.associatedTypeParameters[value.projectionMember];
+        for (std::size_t index = 0; index < parameters.size(); ++index)
+          family.types.emplace(
+              parameters[index].id,
+              value.arguments[conformance.patterns.size() + index]);
+        return substituteType(
+            conformance.associatedTypes[value.projectionMember], family);
       }
       for (SemanticType &argument : value.arguments) {
         argument = self(self, std::move(argument));
@@ -693,6 +831,18 @@ auto SemanticVisitor::Impl::validateConformanceTypes(
     registeringConformanceParameters = &check.genericParameters;
     for (const TypeRef *type : check.types) {
       validateType(*type);
+    }
+    bindAssociatedTypeNames(check.conceptId, check.patterns);
+    for (const auto &associated : check.associatedTypes) {
+      beginTypeParameterScope(associated.parameters);
+      const auto before = diagnostics.size();
+      validateType(associated.declaration->target());
+      if (diagnostics.size() == before &&
+          typeOf(associated.declaration->target()) == SemanticType::Unknown)
+        reportConformanceError(associated.declaration->name(),
+                               "Associated type definition is unresolved, "
+                               "cyclic, or exceeds the projection limit.");
+      endTypeParameterScope();
     }
     registeringConformanceParameters = nullptr;
     endTypeParameterScope();
@@ -948,8 +1098,10 @@ auto SemanticVisitor::Impl::protocolConceptOwner(
 }
 
 auto SemanticVisitor::Impl::associatedTypeProjection(
-    ConceptId id, std::uint32_t member,
-    std::vector<SemanticType> arguments) const -> SemanticType {
+    ConceptId id, std::uint32_t member, std::vector<SemanticType> arguments,
+    std::vector<SemanticType> familyArguments) const -> SemanticType {
+  arguments.insert(arguments.end(), familyArguments.begin(),
+                   familyArguments.end());
   SemanticType projection(SemanticType::TypeParameter, std::move(arguments));
   projection.projectionConcept = id;
   projection.projectionMember = member;
@@ -962,15 +1114,56 @@ auto SemanticVisitor::Impl::reduceAssociatedTypeProjection(
       projection.arguments.empty()) {
     return projection;
   }
+  if (activeProjections.empty())
+    projectionWork = 0;
+  const auto charge = [&](const auto &self, const SemanticType &type) -> bool {
+    if (++projectionWork > maximumProjectionWork)
+      return false;
+    for (const auto &argument : type.arguments)
+      if (!self(self, argument))
+        return false;
+    return true;
+  };
+  if (activeProjections.size() >= maximumProjectionDepth ||
+      !charge(charge, projection) ||
+      std::find(activeProjections.begin(), activeProjections.end(),
+                projection) != activeProjections.end())
+    return SemanticType::Unknown;
+  struct ProjectionScope {
+    explicit ProjectionScope(const SemanticType &projection) {
+      activeProjections.push_back(projection);
+    }
+    ~ProjectionScope() { activeProjections.pop_back(); }
+    ProjectionScope(const ProjectionScope &) = delete;
+    ProjectionScope &operator=(const ProjectionScope &) = delete;
+  } scope(projection);
+  const auto unknown = [&](const auto &self, const SemanticType &type) -> bool {
+    return type == SemanticType::Unknown ||
+           std::any_of(
+               type.arguments.begin(), type.arguments.end(),
+               [&](const auto &argument) { return self(self, argument); });
+  };
+  if (unknown(unknown, projection))
+    return SemanticType::Unknown;
+  const auto &conceptInfo = concepts[projection.projectionConcept - 1];
+  const std::size_t ownerArity = conceptInfo.parameterIds.size();
+  if (projection.projectionMember >=
+          conceptInfo.associatedTypeParameters.size() ||
+      projection.arguments.size() !=
+          ownerArity +
+              conceptInfo.associatedTypeParameters[projection.projectionMember]
+                  .size())
+    return projection;
+  const std::vector<SemanticType> ownerArguments(
+      projection.arguments.begin(), projection.arguments.begin() + ownerArity);
   const std::optional<ConformanceMatch> match =
-      matchConformance(projection.projectionConcept, projection.arguments);
+      matchConformance(projection.projectionConcept, ownerArguments);
   if (!match) {
     return projection;
   }
   const RegisteredConformance &conformance =
       conformances[match->conformance - 1];
-  if (projection.projectionMember >= conformance.associatedTypes.size() ||
-      projectionDepth >= maximumProjectionDepth) {
+  if (projection.projectionMember >= conformance.associatedTypes.size()) {
     return SemanticType::Unknown;
   }
   GenericSubstitution substitution;
@@ -979,14 +1172,17 @@ auto SemanticVisitor::Impl::reduceAssociatedTypeProjection(
     substitution.types.emplace(conformance.genericParameters[parameter].id,
                                match->binding[parameter]);
   }
-  struct DepthScope {
-    DepthScope() { ++projectionDepth; }
-    ~DepthScope() { --projectionDepth; }
-    DepthScope(const DepthScope &) = delete;
-    DepthScope &operator=(const DepthScope &) = delete;
-  } depth;
-  return substituteType(
+  const auto &familyParameters =
+      conformance.associatedTypeParameters[projection.projectionMember];
+  if (projection.arguments.size() != ownerArity + familyParameters.size())
+    return SemanticType::Unknown;
+  for (std::size_t parameter = 0; parameter < familyParameters.size();
+       ++parameter)
+    substitution.types.emplace(familyParameters[parameter].id,
+                               projection.arguments[ownerArity + parameter]);
+  SemanticType result = substituteType(
       conformance.associatedTypes[projection.projectionMember], substitution);
+  return unknown(unknown, result) ? SemanticType::Unknown : result;
 }
 
 // The block whose functions are declared in fromScope, if any.
@@ -1027,7 +1223,8 @@ auto SemanticVisitor::Impl::blockScopeType(
 // associated name, or a projection of the block's own pattern, is the
 // block's `using` type.
 auto SemanticVisitor::Impl::blockAssociatedType(
-    std::string_view name, const std::vector<std::string> &fromScope) const
+    std::string_view name, const std::vector<std::string> &fromScope,
+    const std::vector<SemanticType> &familyArguments) const
     -> std::optional<SemanticType> {
   const RegisteredConformance *conformance = enclosingConformance(fromScope);
   if (conformance == nullptr) {
@@ -1038,13 +1235,22 @@ auto SemanticVisitor::Impl::blockAssociatedType(
   if (!member || *member >= conformance->associatedTypes.size()) {
     return std::nullopt;
   }
-  return blockScopeType(*conformance, conformance->associatedTypes[*member]);
+  const auto &parameters = conformance->associatedTypeParameters[*member];
+  if (parameters.size() != familyArguments.size())
+    return SemanticType::Unknown;
+  GenericSubstitution substitution;
+  for (std::size_t index = 0; index < parameters.size(); ++index)
+    substitution.types.emplace(parameters[index].id, familyArguments[index]);
+  return substituteType(
+      blockScopeType(*conformance, conformance->associatedTypes[*member]),
+      substitution);
 }
 
 auto SemanticVisitor::Impl::ownBlockProjection(
     ConceptId id, std::uint32_t member,
     const std::vector<SemanticType> &arguments,
-    const std::vector<std::string> &fromScope) const
+    const std::vector<std::string> &fromScope,
+    const std::vector<SemanticType> &familyArguments) const
     -> std::optional<SemanticType> {
   const RegisteredConformance *conformance = enclosingConformance(fromScope);
   if (conformance == nullptr || conformance->conceptId != id ||
@@ -1058,7 +1264,8 @@ auto SemanticVisitor::Impl::ownBlockProjection(
       return std::nullopt;
     }
   }
-  return blockScopeType(*conformance, conformance->associatedTypes[member]);
+  return blockAssociatedType(concepts[id - 1].associatedTypes[member],
+                             fromScope, familyArguments);
 }
 
 auto SemanticVisitor::Impl::protocolOperationType(
@@ -1165,6 +1372,34 @@ auto SemanticVisitor::Impl::protocolBorrowContractFailure(
   return std::nullopt;
 }
 
+auto SemanticVisitor::Impl::validateAssociatedTypeArguments(
+    const TypeRef &type, ConceptId id, std::uint32_t member) -> bool {
+  const auto before = diagnostics.size();
+  const auto &parameters = concepts[id - 1].associatedTypeParameters[member];
+  if (type.arguments.size() != parameters.size()) {
+    reportConformanceError(type.name.last(),
+                           "Associated type '" + type.name.last().lexeme +
+                               "' takes " + std::to_string(parameters.size()) +
+                               " type arguments.");
+    return false;
+  }
+  std::vector<SemanticType> arguments;
+  for (const TypeRef &argument : type.arguments) {
+    if (argument.genericArgumentSyntax == GenericArgumentSyntax::Value ||
+        argument.packExpansion) {
+      reportConformanceError(
+          argument.name.last(),
+          "Associated type families require individual type arguments.");
+      return false;
+    }
+    validateType(argument);
+    arguments.push_back(typeOf(argument));
+  }
+  if (const auto failure = firstConstraintFailure(parameters, arguments))
+    reportConstraintFailure(type.name.last(), *failure);
+  return diagnostics.size() == before;
+}
+
 auto SemanticVisitor::Impl::validateAssociatedTypePath(const TypeRef &type,
                                                        ConceptId id) -> void {
   const TypeRef &owner = *type.qualifiedOwner;
@@ -1173,6 +1408,10 @@ auto SemanticVisitor::Impl::validateAssociatedTypePath(const TypeRef &type,
     validateType(argument);
   }
   const Token &site = type.name.last();
+  if (site.completion) {
+    captureQualifiedCompletion(type.name, type.qualifiedOwner.get(), true);
+    return;
+  }
   const std::size_t arity = conceptInfo.parameterIds.size();
   if (owner.arguments.size() != arity) {
     reportConformanceError(site, "Concept '" + conceptInfo.qualifiedName +
@@ -1181,17 +1420,17 @@ auto SemanticVisitor::Impl::validateAssociatedTypePath(const TypeRef &type,
                                      (arity == 1 ? "" : "s") + ".");
     return;
   }
-  if (!type.arguments.empty()) {
-    reportConformanceError(site,
-                           "An associated type takes no generic arguments.");
-    return;
-  }
-  if (!memberIndex(conceptInfo.associatedTypes, site.lexeme)) {
+  const auto member = memberIndex(conceptInfo.associatedTypes, site.lexeme);
+  if (!member) {
     reportConformanceError(site, "Concept '" + conceptInfo.qualifiedName +
                                      "' has no associated type '" +
                                      site.lexeme + "'.");
     return;
   }
+  if (!validateAssociatedTypeArguments(type, id, *member))
+    return;
+  if (deferringTypeAliasConstraints)
+    return;
   std::vector<SemanticType> arguments;
   for (const TypeRef &argument : owner.arguments) {
     arguments.push_back(typeOf(argument));
@@ -1211,7 +1450,11 @@ auto SemanticVisitor::Impl::validateAssociatedTypePath(const TypeRef &type,
       reportConformanceError(site, "'" + application + "::" + site.lexeme +
                                        "' requires 'requires " + application +
                                        "' on the enclosing declaration.");
+      return;
     }
+    if (typeOf(type) == SemanticType::Unknown)
+      reportConformanceError(site, "Associated type application is unresolved, "
+                                   "cyclic, or exceeds the projection limit.");
     return;
   }
   // The selected block must also accept the arguments, exactly as
@@ -1224,6 +1467,9 @@ auto SemanticVisitor::Impl::validateAssociatedTypePath(const TypeRef &type,
                                      application + "' is declared.");
   } else if (failure) {
     reportConstraintFailure(site, *failure);
+  } else if (typeOf(type) == SemanticType::Unknown) {
+    reportConformanceError(site, "Associated type application is unresolved, "
+                                 "cyclic, or exceeds the projection limit.");
   }
 }
 

@@ -171,6 +171,14 @@ std::uint64_t SemanticVisitor::Impl::trustedRegistrationFingerprint() const {
     fingerprint.add(conformance.associatedTypes.size());
     for (const SemanticType &type : conformance.associatedTypes)
       fingerprint.add(type);
+    for (const auto &parameters : conformance.associatedTypeParameters) {
+      fingerprint.add(parameters.size());
+      for (const auto &parameter : parameters) {
+        fingerprint.add(parameter.id);
+        fingerprint.add(parameter.conceptId);
+        fingerprint.add(parameter.constraints);
+      }
+    }
   }
   return fingerprint.value;
 }
@@ -397,8 +405,7 @@ SemanticVisitor::Impl::reuseInstance(const InstanceAnalysisKey &key) {
       ++workMetrics->semanticInstanceReuseRejected;
     return std::nullopt;
   };
-  if (entry->model.sourceDebugProfile() != sourceDebugProfile ||
-      !entry->model.verifySourceDebug().empty())
+  if (entry->model.sourceDebugProfile() != sourceDebugProfile)
     return reject();
   if (entry->declaration == nullptr ||
       entry->declaration != instanceDeclarationSyntax(key))
@@ -413,6 +420,12 @@ SemanticVisitor::Impl::reuseInstance(const InstanceAnalysisKey &key) {
   }
   if (!entry->model.instanceReuseJournalMatches(semanticModel) ||
       !instanceRangeFree(entry->model))
+    return reject();
+  // The cached delta still points at the previous request's semantic base.
+  // Copy and rebase it before any lookup that can follow that pointer.
+  SemanticInstanceAnalysis result{.model = entry->model, .diagnostics = {}};
+  result.model.rebaseReusedInstance(semanticModel);
+  if (!result.model.verifySourceDebug().empty())
     return reject();
   // The delta's own identities stay reserved even if the late demand below
   // fails, so no later identity can collide with them.
@@ -430,8 +443,6 @@ SemanticVisitor::Impl::reuseInstance(const InstanceAnalysisKey &key) {
     if (reachConsultedPreambleBodies(consulted))
       return reject();
   }
-  SemanticInstanceAnalysis result{.model = entry->model, .diagnostics = {}};
-  result.model.rebaseReusedInstance(semanticModel);
   return result;
 }
 

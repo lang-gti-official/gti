@@ -1072,8 +1072,29 @@ specializations, unresolved bases, conversion names with dependent targets and
 unexpanded parameter packs retain their deferred boundary. Known type identity,
 outer categories and reference/pointer access distinctions can establish a
 symbolic equality result; unrelated type parameters do not establish inequality.
-These are semantic constant kernels. Source predicates still execute through
-the existing staged verified-MIR path; no AST execution rule is added.
+For `std::meta::method<T, I>.invoke`, `visitCallExpr` first checks the trusted
+compiler-type identity, then `analyzeMetaMethodInvoke` obtains the indexed
+declaration from the canonical class inventory. It aliases the source call to
+an ordinary member call with that declaration as its sole callable candidate.
+The alias is analyzed before the written runtime inputs so consuming receivers
+are not analyzed twice. An effectful descriptor is an already checked source
+prelude of the alias; HIR preserves it with ordinary sequenced inputs and the
+enclosing full-expression lifetime, without repeating its ownership effects.
+Only inert ordinary descriptor reads and trusted empty default construction are
+elided; arrow access, thread-local or foreign storage and resolved conversions
+retain evaluation. Source-call borrow facts map the checked alias's receiver/argument origin back
+to the written argument positions. Alias wrappers
+reuse the checked operation's failure, raw-result and reference-prefix facts;
+they publish no second invocation or owning temporary. Temporary consumption
+follows the alias to the actual producer. HIR follows the alias; its ordinary
+call plan and verified MIR call retain virtual dispatch,
+ownership effects, cleanup and failure behavior. The metaobject has no
+runtime dispatch representation. Static and operator shapes need distinct
+checked call geometry and currently fail in semantics.
+
+The metadata queries above are semantic constant kernels. Source predicates
+still execute through the existing staged verified-MIR path; no AST execution
+rule is added.
 Expression requirements may retain a proven true result with open arguments;
 failure to prove a symbolic query remains deferred, not a false constant.
 Each request memoizes at most 1024 positive, closed primitive-expression proofs
@@ -2776,7 +2797,8 @@ be implemented as a public-name case or backend expression probe.
 
 A concept with a body ([ADR 028](../decisions/028-protocol-concepts.md))
 resolves to `RegisteredConcept::protocol` state:
-- its associated names, in declaration order;
+- its associated names and each member's independent generic parameter
+  identities/constraints, in declaration order;
 - its operations' signatures, in the concept parameters' space.
 
 While the operations are typed, each associated name maps to a projection of
@@ -2839,13 +2861,45 @@ body first uses the ordinary forwarded proof from active requirement scopes.
 Otherwise it requires a matching block whose parameter constraints hold for
 the binding.
 
-**Projections.** A dependent `C<T, U>::name` is an opaque `TypeParameter`
+**Projections.** A dependent `C<T, U>::name` or `C<T, U>::family<A, B>` is an opaque `TypeParameter`
 with no parameter identity. It carries `projectionConcept`,
-`projectionMember` and the concept's arguments as its arguments.
+`projectionMember` and a single ordered argument vector: concept arguments,
+then family arguments. The concept's declared arity separates the two; the
+same argument traversal therefore preserves substitution, equality, hashing,
+generic instance identity and nested applications. `ProtocolConceptSpelling`
+retains that arity for tooling. No backend type constructor is introduced.
 `substituteType` substitutes the arguments, and
 `selectExactClassSpecialization`, which ends every type resolution and
-substitution, reduces the projection once its arguments are concrete. Reduction
-is depth-limited, so a cyclic block cannot recurse without bound.
+substitution, reduces the projection once a conformance matches its owner arguments. Reduction
+binds both the conformance parameters and the family's own parameters by
+identity. Parameter names may differ between declaration and implementation;
+their arity and resolved unary constraint identities must agree. A family's
+target is checked in its own parameter scope, including its declared input
+constraints. Result capabilities are never inferred for an opaque projection.
+Reduction rejects active identical projections, limits the active stack to 64
+and cumulative type-node work to 16,384, and propagates unresolved nested
+results. This also bounds branching or expanding recursive aliases.
+
+Namespace/class aliases can request a protocol's declaration contract while
+ordinary alias dependencies resolve, before conformances register. Their
+retained projections are resolved again in the alias's declaration scope once
+the conformance catalog is complete. This refreshes the registered alias,
+semantic type record, class member lookup and visibility together, before
+class/callable publication; HIR never repairs a stale alias or substitutes its
+own interpretation of a family. Nongeneric classes and concrete generic class
+instances therefore share the same normalized alias contract. Their
+conformance checks remain deferred with other alias constraints until the
+lexical validation walk. Applications publish tooling type-use records at that
+point, so hover sees the resolved type rather than an early opaque placeholder.
+The ordinary reference-alias restriction checks resolved projections and
+concrete class substitutions too; a family cannot hide a checked reference
+inside an otherwise ordinary namespace or class alias. Associated definitions
+and explicitly borrowed function results retain their existing reference rules.
+Protocol signatures likewise publish their type uses from the completed
+catalog. Associated member declarations, definitions and uses share the exact
+contract symbol; each family's input binders retain separate declaration IDs.
+The conformance reuse fingerprint includes the family's binder and constraint
+identities as well as its target type.
 
 Inside a block's function, a bare associated name and a projection of the
 block's own pattern resolve to the block's `using` type, mapped onto the
@@ -2901,7 +2955,11 @@ participates.
 Ordinary static members of generic classes remain rejected by `GTI-S2039`,
 apart from exact registered collection-protocol hooks. Implemented qualified
 generic type-member paths do not establish a general static callable/storage
-contract. The concurrent-policy path suppresses a redundant `GTI-S2060` only
+contract. A source-qualified call to a hook through a concrete generic class
+is still an ordinary static member path: its `GTI-S2039` is reported at the
+member before the owner instance is analyzed, so an unrelated error inside a
+library instance cannot mask the path rule. Concept-protocol invocation uses
+its separately resolved operation target. The concurrent-policy path suppresses a redundant `GTI-S2060` only
 under that existing rejection. Lifting the generic-static restriction must remove the
 suppression and apply the same immutable/share-capable rule to each concrete
 generic static identity.
@@ -3723,3 +3781,168 @@ profile; it is not admitted by the integral-enum catalog.
 
 Language rules belong in [`docs/language/`](../language/index.md); this document
 only describes their implementation ownership.
+
+## Immediate Invocation Publication
+
+`consteval` shares constexpr signature eligibility but requires ordinary
+invocations to execute during semantic analysis. Selection precedes enforcement:
+free/member/operator calls, constructor expressions, implicit declaration
+construction and conversion operators, and contextual boolean conversions use
+the selected declaration identity. Immediate bodies defer their inner calls to
+their enclosing MIR execution frame. Dependent requests are checked in concrete
+semantic reanalysis, with the same declaration availability and resource limits.
+Argument values can carry that dependency even when the selected parameter
+types are concrete, as in a layout query on a type parameter or an unresolved
+value parameter. Independent runtime arguments remain invalid in a generic body.
+
+`SemanticModel::ImmediateInvocationInfo` retains the proved result and its exact
+expression information separately from the source operand's type and constant.
+This matters for an implicit conversion: the operand and converted value have
+different semantic types. Semantic snapshots own the records; instance deltas
+fall back to their base. Staged requests disable incidental expression-constant
+writes and require MIR execution, preserving the existing constexpr behavior
+and preventing a compatibility AST fallback for immediate requests.
+
+HIR publishes only the result, before traversing the original call operands or
+conversion schedule. MIR's constant-substitution inventory retains the exact
+value; body and program verification prove its typed publication. LLVM uses its
+existing target layout constant materializer. No public library name controls
+admission, and no runtime immediate call recreates the result.
+
+A direct `consteval void` expression statement uses the same verified MIR
+executor and shared resource budget. Semantics records successful completion
+against the statement, selected function identity, and analysis snapshot. HIR
+retains a statement-bound completion inventory without lowering a call or
+full-expression value; verification compares it to the semantic proof and
+rejects an unproved empty expression statement. This profile is limited to a
+call that is itself the statement's root expression.
+
+For an empty `return;`, semantics first selects the implicit constructor using
+the ordinary return rules. If it is immediate, the selected constructor and
+its defaults execute through staged MIR at that return. The return proof owns
+the exact passive constant; dependent selections defer to concrete generic
+reanalysis. HIR publishes a source-less literal with the existing constant
+substitution marker and return full-expression identity. The verifier checks
+the statement proof, selected constructor, constant, class traits, and absence
+of a runtime constructor schedule before MIR lowering.
+
+## Persistent declaration identity foundation
+
+`persistent_declaration.h` supplies compiler-owned, versioned function keys for
+library metadata. Keys alone are not an importer or a callable interface; the
+scalar importer below adds the necessary contract and linkage checks. The initial structural profile admits nongeneric namespace-level GTI
+functions whose parameters are canonical fixed scalar types. Class members,
+generic/pack/constrained declarations, native linkage, compiler-private or
+intrinsic declarations and macros reject. Borrowed, nominal, aggregate, native-C
+scalar distinctions and other unsupported parameter types reject rather than
+being flattened to a spelling. No language or normal build behavior changes.
+
+The driver supplies logical package, target and module identities. Source-local
+functions additionally require a relative logical source-unit key; ordinary
+module declarations forbid it. Neither physical paths, source hashes, AST
+addresses nor numeric session IDs enter the key. The qualified declaration name
+and ordered canonical parameter types distinguish overloads. Return types,
+defaults, contracts and bodies are deliberately not overload identity: the future
+interface record must check their compatibility separately before allowing calls.
+Visibility and compiler trust cannot be inferred from a key.
+
+The canonical grammar begins `gti.function-key.1:` followed by decimal-byte-length
+and colon framed fields: package, target, module, logical unit (empty for module
+scope), qualified name, scope (`local` or `module`), decimal parameter count, then
+one explicit wire type spelling per parameter. Lengths/counts have no leading
+zeroes. Scalar spellings are i8/i16/i32/i64, u8/u16/u32/u64, f32/f64, bool and char;
+void is not a parameter. Tags map directly to existing `SemanticType` values,
+not a new type domain or numeric enum serialization. A decoded record must
+re-encode byte-for-byte; trailing bytes, unknown profiles/tags and truncation
+reject. Limits are 16 KiB per key, 1024 bytes per field and 256 parameters.
+Controls and unsafe logical source components reject. Keys perform no filesystem
+access and confer no package provenance or trust.
+
+`persistent_declaration_identity` checks semantic projection, ordering/relocation,
+overload and owner separation, strict profile rejection and malformed bytes.
+`persistent_declaration_process` compares independent frontend processes. These
+keys now identify exports in the bounded `.gtilib` interface described below. The rest of
+F1 remains in the build plan.
+
+
+### Nominal references across semantic snapshots
+
+`PersistentTypeRegistry` explicitly binds compiler-owned class/enum records to
+logical package/target/module/name keys. Class and enum domains remain distinct,
+even when their numeric IDs and names coincide. The registry rejects zero IDs,
+conflicting key-to-ID or ID-to-key bindings, unsupported owner/substitution
+profiles and compiler-private identities. Repeating the same binding is harmless;
+failed bindings preserve prior entries. Each snapshot builds its own registry,
+so decoding a reference selects that snapshot's declaration ID. An absent key is
+an error, never an invented declaration. The registry is capped at 4096 bindings.
+
+Nominal keys use `gti.nominal-key.2:` and the existing canonical length-framed
+fields: kind (`class` or `enum`), package, target, module, qualified name, and ordered generic parameter shape. Shape characters
+are `t` (type), `v` (uint64 value), and `p` (final type pack); empty denotes a
+nongeneric declaration. They contain no layout or member records. Primary class
+and enum generics are admitted. Transformed class families, exact specializations,
+nested-class owners, projected binders and compiler capability types reject
+rather than collapsing to their primary name. Value packs and nonfinal type
+packs reject. This bounded profile
+must grow with explicit enclosing-owner/substitution records, not heuristics over
+qualified spellings. Logical ownership remains caller supplied; keys confer no
+visibility, capability trust or artifact compatibility.
+
+`writePersistentType`/`readPersistentType` map a bounded recipe directly between
+existing `SemanticType` values. `gti.type.2:` is followed by length-framed explicit
+scalar tags, or `nominal` plus a nominal key, a decimal type-argument count and those recursive
+recipes, then a decimal value-argument count and canonical decimal uint64 values;
+or a structural tag followed by its child recipe. Structural tags are `ref`, `mut-ref`, `ptr`, `mut-ptr`, and `array`;
+arrays also carry a canonical decimal uint64 extent before their element recipe.
+Access mode, extent, nominal identity and substitutions therefore survive
+remapping. Complete argument vectors are required: defaults are resolved before
+serialization. The registry checks fixed type/value arity and permits expanded
+arguments only for a final type pack, including an empty pack. Symbolic values,
+unexpanded packs, unknown/dependent type arguments and noncanonical value payloads
+reject. Binder names, numeric generic IDs, defaults and constraints do not enter
+identity; defaults and constraints remain mandatory future interface facts. Unknown
+or extraneous semantic payloads, unresolved nominal references, noncanonical bytes,
+truncation and trailing data reject. The existing scalar-only function-key version
+is unchanged; this type recipe is a prerequisite for richer function interfaces.
+
+The codec bounds encoded bytes to 16 KiB, depth to 32 and visited type/value nodes
+to 256; each declaration/argument vector is also limited to 256; ordinary fields retain the 1024-byte bound, with a complete nominal-key field
+allowed up to the enclosing byte limit. Caller-owned trees are preflighted before shape comparisons or copies.
+Decoding re-encodes canonically before returning. Version 1 nominal/type recipes
+are deliberately rejected: these development formats are not shipped import
+interfaces. The version 1 scalar function-key grammar is unchanged. It validates representation shape, not whether every structural type
+combination is permitted in a source declaration. The eventual importer must
+perform semantic eligibility and complete contract/layout verification before
+publishing a declaration. Borrowed type references alone are not borrow summaries.
+This adds no AST/HIR/MIR parallel type system and no normal compilation path.
+
+
+### Imported scalar declarations (bounded separate compilation)
+
+The executable artifact profile projects primitive parameter and primitive or
+`void` result metadata into ordinary exported declarations on a virtual source
+unit. The driver marks
+the loaded unit with `compiledScalarInterface`; source syntax cannot create this
+provenance and the marker grants no compiler-private capabilities. The semantic
+source seal and cache context retain it.
+
+Definition closure permits a declaration on that unit only for the bounded
+nongeneric, safe scalar signature with no defaults or ownership/callable
+summaries. Ordinary unresolved source calls continue to emit the existing
+missing-definition diagnostic. Imported calls remain opaque and conservatively
+fallible. After lowering, the compiler validates an explicit binding for each
+remaining GTI declaration before LLVM can emit it. The producer separately
+checks explicit export and the exact signature and preserves checked failure
+propagation through the verified linkage plan; object code does not
+supply semantic authority. For project targets, compiler-owned export selection
+resolves each manifest-selected name against the root unit's lowered declaration
+records before constructing keys. The manifest supplies logical package/target
+identity; the source graph supplies the root module identity. A selected name
+exports its explicitly exported overloads. Missing, entirely private and
+imported-unit selections cannot become exports by manifest fiat.
+
+This is not a general semantic metadata importer. Nominal types, borrowed
+contracts, generics and semantic-shaping constants still require the F1/F3
+schemas and staged query work in [ADR 032](../decisions/032-compiled-library-bundles.md).
+See the [scalar driver profile](build-and-driver.md#executable-scalar-separate-compilation-profile)
+for linkage, compatibility and the runnable source-absent example.

@@ -167,7 +167,17 @@ public:
       std::vector<ProjectExport> exports = {},
       ConfigurationFlags declaredConfigurationFlags = {},
       bool rawPointerAuditLibraryFindings = false,
-      BackendKind backend = BackendKind::Cpp);
+      BackendKind backend = BackendKind::Cpp,
+      std::vector<std::string> compiledFunctions = {},
+      std::optional<CompiledLibraryImport> compiledImport = {},
+      std::vector<CompiledLibraryImport> compiledImports = {});
+
+  [[nodiscard]] const std::vector<ProjectBuildPlan> &
+  compiledBuildDependencies() const {
+    return compiledBuildPlans;
+  }
+  [[nodiscard]] ProjectBuildPlan
+  withCompiledBuildDependencies(std::vector<ProjectBuildPlan> plans) const;
 
   [[nodiscard]] const std::filesystem::path &manifestPath() const;
   [[nodiscard]] const std::filesystem::path &packageRoot() const;
@@ -179,6 +189,13 @@ public:
   [[nodiscard]] ProjectTargetLinkage targetLinkage() const;
   [[nodiscard]] const std::vector<ProjectExport> &exports() const;
   [[nodiscard]] ProgramRequest programRequest() const;
+  [[nodiscard]] std::optional<CompiledLibraryTarget> compiledLibrary() const;
+  [[nodiscard]] const std::optional<CompiledLibraryImport> &
+  compiledImport() const;
+  [[nodiscard]] const std::vector<CompiledLibraryImport> &
+  compiledImports() const {
+    return resolvedCompiledImports;
+  }
   [[nodiscard]] const std::string &profileName() const;
   [[nodiscard]] const std::filesystem::path &entry() const;
   [[nodiscard]] const std::filesystem::path &output() const;
@@ -231,6 +248,10 @@ private:
   std::vector<BuildScriptPlan> resolvedBuildScripts;
   ResolvedProjectToolchain resolvedToolchain;
   std::vector<ProjectExport> resolvedExports;
+  std::vector<std::string> resolvedCompiledFunctions;
+  std::vector<CompiledLibraryImport> resolvedCompiledImports;
+  std::vector<ProjectBuildPlan> compiledBuildPlans;
+  std::optional<CompiledLibraryImport> resolvedCompiledImport;
   bool sourceDebugInfo = false;
   RawPointerAuditMode rawPointerAuditMode = RawPointerAuditMode::Off;
   bool reportLibraryAuditFindings = false;

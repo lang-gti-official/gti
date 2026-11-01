@@ -1,0 +1,49 @@
+import std.meta;
+
+class Base {
+  mut int32_t value;
+public:
+  Base(int32_t value) : value(value) {}
+  virtual int32_t transform(int32_t input) { return input + this.value; }
+  int32_t inherited(int32_t input) { return input + this.value; }
+};
+
+class Derived : public Base {
+public:
+  Derived(int32_t value) : Base(value) {}
+  int32_t transform(int32_t input) override { return input + this.inherited(2); }
+};
+
+class Cell {
+  mut int32_t value;
+public:
+  Cell(int32_t value) : value(value) {}
+  mut int32_t& slot() mut { return this.value; }
+  int32_t read() { return this.value; }
+  int32_t take() && { return this.value; }
+  int32_t twice<U>(U input) { return 12; }
+};
+
+int32_t virtual_reflection(Base& receiver, int32_t input) {
+  return std::meta::method<Base, 0>().invoke(receiver, input);
+}
+
+int main() {
+  Derived derived{4};
+  Base& base = derived;
+  int32_t reflected = virtual_reflection(base, 3);
+  int32_t direct = base.transform(3);
+  mut Cell cell{5};
+  mut int32_t& slot = std::meta::method<Cell, 0>().invoke(cell);
+  slot = 8;
+  mut int32_t inherited = 0;
+  constexpr for (auto method : std::meta::lookup_methods_of<Derived>()) {
+    if constexpr (method.name() == "inherited") {
+      inherited = method.invoke(derived, int32_t(1));
+    }
+  }
+  int32_t generic = std::meta::method<Cell, 3>().invoke<int32_t>(cell, int32_t(6));
+  int32_t consumed = std::meta::method<Cell, 2>().invoke(std::move(cell));
+  return reflected == direct && reflected == 9 && inherited == 5 &&
+                 generic == 12 && consumed == 8 ? 0 : 1;
+}

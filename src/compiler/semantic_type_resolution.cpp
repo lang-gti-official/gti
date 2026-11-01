@@ -20,9 +20,9 @@ auto SemanticVisitor::Impl::nativeFunctionCandidateIsEligible(
     return false;
   }
   const FunctionDecl &declaration = *candidate.declaration;
-  return declaration.body() != nullptr && !declaration.runtimeBinding() &&
-         !declaration.hasCLinkage() && !declaration.operatorName() &&
-         !candidate.record().macroExpansion;
+  return declaration.body() != nullptr && !declaration.isConsteval() &&
+         !declaration.runtimeBinding() && !declaration.hasCLinkage() &&
+         !declaration.operatorName() && !candidate.record().macroExpansion;
 }
 
 auto SemanticVisitor::Impl::functionItemCandidateIsEligible(
@@ -37,9 +37,10 @@ auto SemanticVisitor::Impl::functionItemCandidateIsEligible(
     return false;
   }
   const FunctionDecl &declaration = *candidate.declaration;
-  return declaration.body() != nullptr && !declaration.runtimeBinding() &&
-         !declaration.hasCLinkage() && !declaration.operatorName() &&
-         !candidate.record().macroExpansion && !candidate.record().entryPoint;
+  return declaration.body() != nullptr && !declaration.isConsteval() &&
+         !declaration.runtimeBinding() && !declaration.hasCLinkage() &&
+         !declaration.operatorName() && !candidate.record().macroExpansion &&
+         !candidate.record().entryPoint;
 }
 
 auto SemanticVisitor::Impl::nativeFunctionCandidateMatches(
@@ -2703,13 +2704,32 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
     resolved.dependentTextPublication = true;
   }
   if (emptyReturn != nullptr) {
-    if (currentProgramEffectOwner.valid())
+    std::optional<ConstantValue> immediateValue;
+    const bool immediate = resolved.declaration &&
+                           resolved.declaration->isConsteval() &&
+                           !insideImmediateFunction();
+    if (immediate && !immediateConstructionDependent(resolved)) {
+      ConstexprInterpreter context = makeConstexprInterpreter();
+      context.requireMir = true;
+      context.recordValues = false;
+      ConstexprEvaluation result =
+          evaluateConstexprConstruction(nullptr, resolved, {}, paren, context);
+      if (!result.genericDependency) {
+        if (!result.value) {
+          reportImmediateEvaluationFailure(paren, resolved.declaration->name(),
+                                           result);
+          return;
+        }
+        immediateValue = std::move(result.value);
+      }
+    }
+    if (!immediate && currentProgramEffectOwner.valid())
       static_cast<void>(
           recordProgramConstructionEffects(tokenSpan(paren), resolved, 0));
     semanticModel.recordEmptyReturnConstruction(
         *emptyReturn, std::move(resolved),
-        selected.constructor != nullptr &&
-            selected.constructor->requiresUnsafe);
+        selected.constructor != nullptr && selected.constructor->requiresUnsafe,
+        immediate, std::move(immediateValue));
   } else if (contextualConstruction) {
     // The initializer keeps its own construction, call and occurrence records.
     // A converted value that holds its argument's owner is a dependent value
@@ -3571,6 +3591,8 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
   if (type.qualifiedOwner) {
     if (const std::optional<ConceptId> protocol =
             protocolConceptOwner(*type.qualifiedOwner, currentNamespace)) {
+      if (!deferringTypeAliasConstraints)
+        recordTypeUse(type);
       validateAssociatedTypePath(type, *protocol);
       return;
     }
@@ -4081,7 +4103,12 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
   if (type.name.last().kind != TokenKind::IDENTIFIER) {
     return;
   }
-  if (resolveTypeParameter(type.name)) {
+  if (const auto parameter = resolveTypeParameter(type.name)) {
+    if (parameter->isAssociatedTypeProjection()) {
+      validateAssociatedTypeArguments(type, parameter->projectionConcept,
+                                      parameter->projectionMember);
+      return;
+    }
     if (!type.arguments.empty()) {
       report(type.name.last(),
              "Generic type parameters cannot take generic arguments.");
@@ -4090,10 +4117,13 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
   }
   if (type.name.segments.size() == 1 &&
       blockAssociatedType(type.name.last().lexeme, currentNamespace)) {
-    if (!type.arguments.empty()) {
-      report(type.name.last(), "An associated type takes no generic arguments.",
-             "GTI-S2123");
-    }
+    const auto *block = enclosingConformance(currentNamespace);
+    const auto &names = concepts[block->conceptId - 1].associatedTypes;
+    const auto member =
+        std::find(names.begin(), names.end(), type.name.last().lexeme);
+    validateAssociatedTypeArguments(
+        type, block->conceptId,
+        static_cast<std::uint32_t>(member - names.begin()));
     return;
   }
 
@@ -4854,19 +4884,36 @@ auto SemanticVisitor::Impl::rejectEscapingLocalChildLoan(
         return false;
       if (ancestor->entry)
         return true;
+      const auto *pattern = ancestor->origin == nullptr
+                                ? nullptr
+                                : exprAs<Variable>(ancestor->origin);
+      const BindingInfo *payload =
+          pattern != nullptr && pattern->isReferencePattern()
+              ? semanticModel.findPayloadBinding(pattern->name())
+              : nullptr;
       // A local carrier's stored-value loan names the external referent its
       // stored reference designates, not the carrier's own storage. A
-      // reborrow through it relays that authority; the chain must still
-      // reach caller-owned entry authority above.
+      // reborrow through it relays that authority. A reference-pattern
+      // binding likewise names the switch subject's payload storage rather
+      // than a new local referent. An ordinary local reference alias is not
+      // a payload selection and cannot extend this bounded return rule.
       for (const auto &scope : scopes)
         for (const auto &[_, candidate] : scope)
           if (candidate.bindingKind == SemanticBindingKind::LocalVariable &&
               std::find(ancestor->carriers.begin(), ancestor->carriers.end(),
                         toolingSymbolFor(candidate)) !=
                   ancestor->carriers.end() &&
-              !(ancestor->kind == SemanticLoanKind::StoredValue &&
-                ancestor->place.root != toolingSymbolFor(candidate)))
+              !(ancestor->place.root != toolingSymbolFor(candidate) &&
+                (ancestor->kind == SemanticLoanKind::StoredValue ||
+                 (ancestor->kind == SemanticLoanKind::Reference &&
+                  payload != nullptr && payload->retainedLoan == ancestor->id &&
+                  payload->symbol == toolingSymbolFor(candidate)))))
             return false;
+      // A receiver payload's first checked selection is itself a local loan,
+      // but its place still names storage inside `this`. It has no separate
+      // entry loan to reach, unlike a reference parameter.
+      if (ancestor->parent == 0 && ancestor->place.receiver)
+        return true;
       current = ancestor->parent;
     }
     return false;
