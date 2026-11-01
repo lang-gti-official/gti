@@ -5216,7 +5216,12 @@ dispatch state in its destination. The moved replacement of `std::exchange`
 waits in its own value storage until the exchange relocates it into the place
 the exchange vacates, and the exchange takes over its value obligation. The
 previous object is a fresh producer, relocated directly into the local the
-exchange result initializes, as a taken thread result is. As for replacement,
+exchange result initializes, as a taken thread result is. This local publication
+contract also applies inside lambda bodies, including threaded workers:
+constructors and by-value calls may initialize whole locals, but captures and
+incoming parameters are not fresh destinations. Generated moves of owned
+lambda locals use the same exact publication and cleanup-transfer proofs,
+including moves into consuming receivers. As for replacement,
 each polymorphic place must be a complete object. Inside the generic
 `std::exchange` and `std::swap` bodies a place is the referent of a reference
 parameter, which is complete only when nothing in the sealed program derives
