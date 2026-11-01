@@ -1459,7 +1459,8 @@ class ValidationChecks(unittest.TestCase):
             with self.subTest(harness=harness):
                 self.assertTrue((ROOT / "tests" / harness).is_file())
                 self.assertIn(harness, validation.AUTOMATION_TESTS)
-                self.assertEqual(validation.ci_mode({}, ["tests/" + harness]), "automation")
+                expected = "full" if "tests/" + harness in validation.FULL_VALIDATION_FILES else "automation"
+                self.assertEqual(validation.ci_mode({}, ["tests/" + harness]), expected)
 
     def test_platform_scoped_gates_keep_other_hosts_obligations(self):
         plan = batch_plan(platforms=["darwin", "linux"],
