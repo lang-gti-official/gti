@@ -870,6 +870,8 @@ private:
         llvm::BasicBlock::Create(session.context(), "check.failed", &function);
     auto *normal =
         llvm::BasicBlock::Create(session.context(), "check.success", &function);
+    // Direct detectors expose a cold originator in the failed successor.
+    // Leave their likelihood to LLVM rather than overriding that inference.
     ir.CreateCondBr(condition, failed, normal);
     ir.SetInsertPoint(failed);
     if (terminalAllocation) {
@@ -976,7 +978,7 @@ private:
         llvm::BasicBlock::Create(session.context(), "call.success", &function);
     auto *failed =
         llvm::BasicBlock::Create(session.context(), "call.failed", &function);
-    ir.CreateCondBr(status, normal, failed);
+    Failures::branchOnSuccess(ir, status, normal, failed);
     ir.SetInsertPoint(failed);
     failedOperation();
     ir.SetInsertPoint(normal);
@@ -1300,7 +1302,7 @@ private:
                                                   "memory.success", &function);
           auto *failed = llvm::BasicBlock::Create(session.context(),
                                                   "memory.failed", &function);
-          ir.CreateCondBr(emitted.status, normal, failed);
+          Failures::branchOnSuccess(ir, emitted.status, normal, failed);
           ir.SetInsertPoint(failed);
           failedOperation();
           ir.SetInsertPoint(normal);
@@ -1550,7 +1552,7 @@ private:
                                               &function);
       auto *failed =
           llvm::BasicBlock::Create(session.context(), "call.failed", &function);
-      ir.CreateCondBr(result, normal, failed);
+      Failures::branchOnSuccess(ir, result, normal, failed);
       ir.SetInsertPoint(failed);
       failedOperation();
       ir.SetInsertPoint(normal);
@@ -1648,7 +1650,7 @@ private:
     if (checked) {
       auto *bad =
           llvm::BasicBlock::Create(session.context(), "drop.failed", &function);
-      ir.CreateCondBr(status, done, bad);
+      Failures::branchOnSuccess(ir, status, done, bad);
       ir.SetInsertPoint(bad);
       failedOperation();
     } else {

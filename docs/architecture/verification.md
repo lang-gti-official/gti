@@ -1,5 +1,71 @@
 # Compiler Verification
 
+## Owned inline consumption (unreleased)
+
+The user-facing slice is allocation-free small once-invoked callbacks and
+`std::move(owner).invoke_once<R>(arguments...)` on an ordinary
+`inline_polymorphic` owner. This is a T3 ownership/storage change: semantics
+derives an exact owning projection, MIR re-proves it, and LLVM preserves the
+actual cleanup temporary through conditional invocation. No new parser,
+formatter, Tree-sitter syntax or C++ backend mechanism is introduced.
+
+`consuming_owned_pointee` checks inline accessor summaries, root consuming
+authority, malformed field/intrinsic/loan metadata, and the named-method
+borrowed-result diagnostic's source/declaration spans and hint. Existing
+unique-owner mutation checks remain. `consuming_receiver_types` now expects
+named methods to retain owned fields like call operators. The conditional
+receiver runtime oracle explicitly checks the revised reverse-field cleanup
+order; extraction into a separate local retains its own lifetime.
+
+`llvm_admission` checks exact branch-temporary publication and mutations of
+its origin, availability and root. `owned_inline_consumption_runtime` executes
+LLVM O0/O3 with an unrelated application interface and a named consuming
+ticket method. It checks zero allocations for eligible function, clone,
+move-only and transferable targets, one allocation for oversized/cleanup
+fallback, exactly-once cleanup on normal return, invocation failure and later
+sibling failure, empty invocation, and rejection of reuse, conflicting loans,
+borrowed receivers, escaped references and mismatched result signatures.
+`owning_function_policy_failure_runtime` retains boxed-clone allocation failure
+and adds successful small once-cloning while allocation is disabled. The
+broader owning-function/consuming receiver suites preserve C++20/23,
+no-elide and ASan/UBSan comparison evidence for supported behavior; those
+sanitizer runs do not instrument native LLVM code.
+
+Example 135 demonstrates inline consuming invocation and is executed with
+LLVM O3. The stdlib surface manifest registers the new operation and native
+O0/O3 case. Reviewed inventories cover all 183 examples: MIR has 28,103 macOS
+and 28,099 Linux bodies; LoweredProgram has 28,225 and 28,221 bodies. Only
+examples 086 and 135 gain bodies. Removing the four obsolete boxed-factory
+declarations also reduces declaration counts in importing examples. The normal
+macOS CLI census agrees exactly with a scratch cross-target emitter using the
+same frontend/lowering/backend libraries; its Linux inventory preserves the
+census's canonical inventory convention for LLVM-only examples.
+
+Release-compiler acceptance passed on macOS arm64 and Linux x86_64: 23 selected
+compiler/ownership/runtime checks, with affected local checks rerun after the
+named-method fallback correction. Linux ran all 23 together in 966 seconds
+(managed run `run-97d23d3ec1fa4874bab7697cad2eabf2`); its results were fetched
+without truncation and its remote checkout removed. Scalar/owner compiler smoke
+passes O0/O3, as do the new stdlib surface case and scoped C++ formatting.
+This is targeted subsystem/platform acceptance, not a full repository CTest run.
+The repository-wide formatting failures in unchanged `source_loader.cpp` and
+`process_allocation_elision.cpp` also reproduce from the parent source.
+Evidence, source/compiler hashes, census collector and performance inputs are
+retained in `build-release/owned-inline-evidence/`. This records the original local checkpoint `efb90034c`. Publication rebases
+only this feature onto GitHub main; that migrated source requires its own
+focused acceptance. The original measurements remain tied to their source.
+
+An Apple Silicon LLVM O3 scalar-callback microbenchmark compared the same
+compiler against the parent and current stdlib: 200,000 construct/invoke
+operations, eleven alternating runs, identical checksum 20,001,300,000.
+Median runtime was 4.83 ms boxed and 0.34 ms inline, with 200,000 versus zero
+allocations. The wrapper grows from 8 to 56 bytes; executable file size was
+125,248 versus 125,424 bytes, with unchanged page-rounded text/data segments.
+One-shot compile observations were 1.02 versus 0.68 seconds and peak RSS
+194,461,696 versus 219,840,512 bytes. Compile timings are noisy observations,
+not a compiler-speed claim. This demonstrates the scalar registration/invocation
+cost model, not universal speedup or a cleanup-bearing inline-storage policy.
+
 ## Generic associated type families (0.494.0)
 
 `protocol_concepts` covers positional family binding, alpha-renamed inputs,
@@ -10307,6 +10373,16 @@ and empty arguments through C++20/C++23 executables and `gti run --`, while
 `lsp_protocol` checks publication of the shared invalid-signature diagnostic.
 The optional audit retains a compact execution snapshot.
 
+`testExclusiveReborrowLoanGraph` also checks returns through local receiver,
+reference-parameter, generic, projected and accessor-result aliases, including
+read-only children and borrowed carrier results. Local storage, wrong-owner
+returns, and caller-side invalidation remain negative cases. MIR mutations
+remove an accessor parent or the returned child's retirement and must fail
+verification. Example 042 executes receiver and generic return chains through
+the existing corpus gates; its reviewed census adds two accessors and one
+concrete generic body. Owning callable coverage separately rejects borrowed
+heap environments before MIR while retaining tracked locals and owned targets.
+
 Neither exclusive reborrows nor the additional `main` signature adds a token,
 grammar production, or formatting rule. The LSP receives their semantic
 diagnostics through the shared frontend and should not implement separate
@@ -10843,6 +10919,16 @@ the requisite native lowering milestones, and does not certify support today.
 
 ### MIR And C++ Corpus Gates
 
+The MIR census and native corpus oracle select the reviewed host target from
+`mir_census_baseline.json`: common `arm64-apple-macos` counts with sparse
+`x86_64-unknown-linux` overrides, matching the LoweredProgram census convention.
+Both validate the complete example inventory and every profile total before
+using a selected-case filter. Unknown hosts, targets, examples and malformed
+counts fail closed. LLVM-only inventory observations explicitly pass the same
+host target to the LoweredProgram helper. Refreshing one measured profile keeps
+the other profile's reviewed counts; incomplete observations cannot update it.
+`mir_census_profile_controls` checks target selection, both consumers, malformed
+profiles and update isolation without claiming native execution evidence.
 The C++ body-emitter corpus retains example 183, `immediate-functions.gti`,
 in its structural readiness sweep and asserts the explicit unsupported
 `aggregate constant publication` boundary in its emission sweep. The native
@@ -12344,7 +12430,72 @@ original shadowing control and measurements are retained under
 `build-release/tests/compiled-namespaces/`. At the coordinator-requested source
 handoff, the nine-sample O3 cost run remains queued in the shared suite window;
 performance acceptance is pending, and the existing run must be resumed rather
-than duplicated. No syntax, ordinary ownership rules,
+than duplicated. That original run subsequently completed successfully: all five
+nine-sample O3 ratios were below 1.012, including Point at 0.9986; its original
+`cost.json` retains the compiler and measurement identities. No syntax, ordinary ownership rules,
 C++ feature coverage, LSP protocol or installed package layout changes are claimed.
 Cross-library nominal forwarding, custom lifecycles, generic/constexpr recipes and
 the remaining F1–F5 production prerequisites are still open.
+
+### Dependency-owned compiled types (2026-10-31)
+
+This T3 component extends the wire and sealed ownership contracts so a library
+can expose a dependency's generated value record or integral enum. Local branch
+`codex/compiled-type-forwarding` starts at the reconciled
+`2905d5be1172d84a4d783c1e3fd64d1015ae60ea` snapshot and belongs to a separate
+integration batch. Proposed version: 0.500.0. No native calling convention,
+source-language ownership rule or C++ backend capability changed. Full combined
+native/sanitizer, Linux/macOS and relocated staged-toolchain validation remains
+with the coordinator; this component did not modify the frozen earlier campaign.
+
+Release compiler evidence on macOS arm64:
+
+- `compiled_type_forwarding`: 45 recorded steps at O0/O1/O3. Four libraries form
+  a chain and diamond sharing one defining type; no dependency function calls are
+  needed to retain that identity. Tests cover nested/private fields, enum defaults,
+  copies and whole-reference borrowing; consumer-only reuse; a private layout
+  change rebuilding every dependent bundle; reordered artifacts and escaped,
+  relocated interface paths; and checking/running after deleting every producer.
+  A types-only consumer calls no imported function. Partial API use, private
+  names/fields, wrong nominal arguments, conflicting loans, missing owners and
+  stale receipts are checked. The expanded enum parameter/result and field-default matrix passed in 91.21 seconds.
+- `compiled_interface_types` verifies multi-owner source/metadata round trips,
+  fresh ID mapping, missing/wrong owner rejection and conflicting unit mappings.
+  `compiled_scalar_library` mutates the sealed ownership bindings and proves that
+  deleting every binding cannot reopen a called import. The latter also checks
+  ownership serialization in `lowered-program-v31`.
+- Twenty-three affected regressions passed without skips in 219.14 seconds before
+  the final empty-binding verifier guard. That guard changes only a compiled
+  context with interface units and no callable bindings; paths with bindings or
+  no interface context are unchanged. After rebuilding, all six owning gates
+  passed without skips in 90.31 seconds, including the new types-only case and
+  the closed-import mutation, borrowing and lowered-contract checks.
+
+The original compiler rejected the valid drawing API with `GTI-B0003`. Integration
+testing also exposed a moved-signature lookup in diamond admission and validation
+that incorrectly required unreachable nominal declarations; both are corrected.
+Complete wire validation remains mandatory, concrete comparison follows HIR
+reachability, and every reached imported callable must have its verified binding.
+Missing/stale artifact checks retain the existing driver error presentation;
+artifact diagnostic provenance remains future work.
+
+Nine alternating O3 samples per operation passed the 25% same-ABI cost bound.
+Native/baseline median ratios were int64 1.0011, double 0.9993, void 0.9993,
+checked division 0.8443 and dependency-owned Point 0.9936. Point medians were
+42.154/42.426 ms for 50 million calls. These are successful external-call
+comparisons without LTO, not speedup or whole-program-inlining claims. Fixtures
+perform no heap operations; host/loader allocations are excluded. The native
+object is 1,976 bytes versus 1,768 for the baseline; native/baseline executables
+are 34,904/34,936 bytes. The forwarding and defining bundles are 4,778 and 1,513
+bytes. Producer time is 3.263 seconds, now including two bundle generations,
+source-free type import and canonical signature decoding; it is not directly
+comparable to the earlier single-library producer time. Maximum cumulative child
+RSS for the measurement run was 123,584,512 bytes.
+
+Original failures, source/compiler hashes, JUnit results and measurements are
+retained in `build-release/compiled-type-forwarding-evidence/`; native CLI logs
+are in `build-release/compiled-type-forwarding/`. Scoped C++ formatting (15 files),
+Python syntax, example inventory/registration and `git diff --check` pass. Remaining
+production work includes custom lifecycles, generic/constexpr recipes, complete
+source-module/re-export ownership, colliding qualified names, globals/TLS and
+artifact-aware LSP/provenance, alongside combined platform acceptance.

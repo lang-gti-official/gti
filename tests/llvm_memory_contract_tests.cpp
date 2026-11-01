@@ -5,6 +5,8 @@
 #include "gti/process_memory_runtime.h"
 #include <fstream>
 #include <iterator>
+#include <llvm/Analysis/AliasAnalysis.h>
+#include <llvm/Passes/PassBuilder.h>
 
 #include <array>
 #include <filesystem>
@@ -35,7 +37,8 @@ void providerContracts() {
   }
   Session session(*input, {});
   auto *function = llvm::Function::Create(
-      llvm::FunctionType::get(llvm::Type::getVoidTy(session.context()), false),
+      llvm::FunctionType::get(llvm::Type::getVoidTy(session.context()),
+                              {session.layouts().pointer()}, false),
       llvm::GlobalValue::InternalLinkage, "memory.contract", session.module());
   llvm::IRBuilder<> ir(
       llvm::BasicBlock::Create(session.context(), "entry", function));
@@ -96,8 +99,72 @@ void providerContracts() {
   expect(rejected,
          "conflicting provider symbols reject without a pointer bitcast");
   conflict->eraseFromParent();
+  const std::array<llvm::Value *, 2> alignmentArguments{function->getArg(0),
+                                                        ir.getInt64(16)};
+  auto *alignment = llvm::cast<llvm::CallBase>(memory.processCall(
+      binding(Operation::AddressIsAligned), alignmentArguments));
+  expect(!alignment->doesNotCapture(0),
+         "address-bit queries do not acquire a stronger capture promise");
+  auto *first = llvm::cast<llvm::CallBase>(memory.allocateStorage(64, 16));
+  auto *second = llvm::cast<llvm::CallBase>(memory.allocateStorage(64, 16));
+  expect(
+      first->hasRetAttr(llvm::Attribute::NoAlias) &&
+          second->hasRetAttr(llvm::Attribute::NoAlias),
+      "sealed allocation calls preserve the provider's fresh-result contract");
+  expect(!first->onlyReadsMemory() && !first->doesNotThrow() &&
+             !first->hasRetAttr(llvm::Attribute::NonNull),
+         "freshness does not erase allocation effects or nullable failure");
+  for (unsigned index = 0; index < first->arg_size(); ++index)
+    if (first->getArgOperand(index)->getType()->isPointerTy())
+      expect(first->doesNotCapture(index),
+             "the sealed allocation provider cannot retain its status pointer");
+
+  // The same physical declaration can also be reached by an unclassified C
+  // call. Attribute only the edge carrying the exact process-memory witness.
+  llvm::SmallVector<llvm::Value *, 3> arguments;
+  for (const auto &argument : first->args())
+    arguments.push_back(argument.get());
+  auto *ordinary = ir.CreateCall(first->getFunctionType(),
+                                 first->getCalledFunction(), arguments);
+  expect(!ordinary->hasRetAttr(llvm::Attribute::NoAlias) &&
+             !first->getCalledFunction()->hasRetAttribute(
+                 llvm::Attribute::NoAlias),
+         "an ordinary foreign call does not inherit allocation facts by name");
+  if (first->arg_size() == 3)
+    expect(!ordinary->doesNotCapture(2) &&
+               !first->getCalledFunction()->getArg(2)->hasNoCaptureAttr(),
+           "ordinary calls and declarations retain unknown status capture");
+  auto *derived =
+      llvm::GetElementPtrInst::Create(ir.getInt8Ty(), first, {ir.getInt64(0)},
+                                      "derived.alias", ir.GetInsertBlock());
   ir.CreateRetVoid();
   session.verify();
+
+  llvm::LoopAnalysisManager loops;
+  llvm::FunctionAnalysisManager functions;
+  llvm::CGSCCAnalysisManager cgscc;
+  llvm::ModuleAnalysisManager modules;
+  llvm::PassBuilder builder;
+  builder.registerModuleAnalyses(modules);
+  builder.registerCGSCCAnalyses(cgscc);
+  builder.registerFunctionAnalyses(functions);
+  builder.registerLoopAnalyses(loops);
+  builder.crossRegisterProxies(loops, functions, cgscc, modules);
+  auto &aliases = functions.getResult<llvm::AAManager>(*function);
+  const auto location = [](llvm::Value *address) {
+    return llvm::MemoryLocation(address, llvm::LocationSize::precise(8));
+  };
+  expect(aliases.alias(location(first), location(function->getArg(0))) ==
+                 llvm::AliasResult::NoAlias &&
+             aliases.alias(location(first), location(second)) ==
+                 llvm::AliasResult::NoAlias,
+         "LLVM can separate fresh regions from prior storage and each other");
+  expect(aliases.alias(location(ordinary), location(function->getArg(0))) ==
+             llvm::AliasResult::MayAlias,
+         "unclassified foreign results preserve potential aliasing");
+  expect(aliases.alias(location(first), location(derived)) ==
+             llvm::AliasResult::MustAlias,
+         "freshness does not make later copies of one pointer disjoint");
 }
 
 void sourceProviderContracts(const std::filesystem::path &root) {

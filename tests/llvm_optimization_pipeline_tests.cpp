@@ -16,6 +16,7 @@
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/Transforms/Utils/ModuleUtils.h>
 
+#include <initializer_list>
 #include <iostream>
 #include <optional>
 #include <stdexcept>
@@ -51,6 +52,71 @@ using namespace lang;
 using namespace lang::native_llvm;
 
 namespace {
+void verifyFailureBranchHints(
+    std::initializer_list<const llvm::Function *> functions) {
+#if LLVM_VERSION_MAJOR >= 23
+  using ConditionalBranch = llvm::CondBrInst;
+#else
+  using ConditionalBranch = llvm::BranchInst;
+#endif
+  unsigned checks = 0, calls = 0, drops = 0, ordinary = 0;
+  for (const auto *function : functions) {
+    if (!function)
+      throw std::runtime_error("missing failure-likelihood observation root");
+    for (const auto &block : *function) {
+      const auto *branch =
+          llvm::dyn_cast<ConditionalBranch>(block.getTerminator());
+      if (!branch || branch->getNumSuccessors() != 2)
+        continue;
+      std::optional<unsigned> failure;
+      bool detector = false;
+      for (unsigned index = 0; index < 2; ++index) {
+        const auto name = branch->getSuccessor(index)->getName().str();
+        if (name.starts_with("check.failed")) {
+          ++checks;
+          detector = true;
+          failure = index;
+        } else if (name.starts_with("call.failed")) {
+          ++calls;
+          failure = index;
+        } else if (name.starts_with("drop.failed")) {
+          ++drops;
+          failure = index;
+        }
+      }
+      const auto *metadata = branch->getMetadata(llvm::LLVMContext::MD_prof);
+      if (detector) {
+        if (metadata)
+          throw std::runtime_error(
+              "direct detector acquired an explicit failure preference");
+        continue;
+      }
+      if (!failure) {
+        ++ordinary;
+        if (metadata)
+          throw std::runtime_error(
+              "ordinary source/liveness branch acquired failure weights");
+        continue;
+      }
+      if (!metadata || metadata->getNumOperands() != 3)
+        throw std::runtime_error("failure edge lost its relative likelihood");
+      const auto *tag = llvm::dyn_cast<llvm::MDString>(metadata->getOperand(0));
+      const auto *failedWeight = llvm::mdconst::dyn_extract<llvm::ConstantInt>(
+          metadata->getOperand(1 + *failure));
+      const auto *normalWeight = llvm::mdconst::dyn_extract<llvm::ConstantInt>(
+          metadata->getOperand(2 - *failure));
+      if (!tag || tag->getString() != "branch_weights" || !failedWeight ||
+          !normalWeight || failedWeight->isZero() ||
+          normalWeight->getZExtValue() <= failedWeight->getZExtValue())
+        throw std::runtime_error(
+            "failure hint changed polarity or erased the rare continuation");
+    }
+  }
+  if (!checks || !calls || !drops || !ordinary)
+    throw std::runtime_error(
+        "failure hint fixture lost a checked, call, cleanup or ordinary edge");
+}
+
 void verifyCheckedArithmeticReuse() {
   llvm::LLVMContext context;
   llvm::Module module("checked-result-reuse", context);
@@ -624,6 +690,7 @@ int main() {
     }
     if (!promote || !checked || !strict || !step || !drive)
       throw std::runtime_error("missing pipeline function");
+    verifyFailureBranchHints({checked, drive, guarded, passive});
     // Keep these unknown-input observation roots available after optimization.
     llvm::appendToUsed(session.module(), {promote, checked, strict, drive});
     const auto allocas = [](const llvm::Function &function) {

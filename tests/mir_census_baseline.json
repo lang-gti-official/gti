@@ -40,7 +40,7 @@
     "039-raw-pointers.gti": 9,
     "040-loan-flow-edges.gti": 173,
     "041-owner-dependencies.gti": 186,
-    "042-exclusive-reborrows.gti": 75,
+    "042-exclusive-reborrows.gti": 78,
     "043-program-arguments.gti": 205,
     "044-bounded-requires.gti": 152,
     "045-layout-queries.gti": 8,
@@ -82,11 +82,11 @@
     "083-complete-ranges.gti": 171,
     "084-optional-values.gti": 29,
     "085-payload-enum-fields.gti": 16,
-    "086-owning-callbacks.gti": 279,
+    "086-owning-callbacks.gti": 285,
     "087-associative-containers.gti": 452,
     "088-consuming-builders.gti": 180,
     "089-library-workflow.gti": 918,
-    "090-generic-algorithms.gti": 443,
+    "090-generic-algorithms.gti": 435,
     "091-json-documents.gti": 647,
     "092-json-codecs.gti": 618,
     "093-http-json-client.gti": 716,
@@ -131,7 +131,7 @@
     "132-qualified-type-members.gti": 174,
     "133-raw-text-owner-views.gti": 71,
     "134-standard-library-modules.gti": 310,
-    "135-inline-polymorphic-values.gti": 340,
+    "135-inline-polymorphic-values.gti": 370,
     "136-inline-closure-cells.gti": 156,
     "137-declared-attributes.gti": 248,
     "138-structural-construction.gti": 301,
@@ -139,7 +139,7 @@
     "140-environment-configuration.gti": 192,
     "141-reflected-json.gti": 710,
     "142-constexpr-builders.gti": 122,
-    "143-checked-container-iteration.gti": 533,
+    "143-checked-container-iteration.gti": 525,
     "144-checked-view-iteration.gti": 451,
     "145-live-slot-and-lane-iteration.gti": 411,
     "146-counted-text-view-iteration.gti": 190,
@@ -182,19 +182,18 @@
     "182-associated-type-families.gti": 281,
     "183-immediate-functions.gti": 11,
     "184-payload-borrow-chains.gti": 11,
-    "185-reflected-method-dispatch.gti": 47
+    "185-reflected-method-dispatch.gti": 47,
+    "182-bounded-array-borrows.gti": 156
   },
+  "total": 28246,
   "target": "arm64-apple-macos",
-  "total": 28067,
   "variants": {
     "x86_64-unknown-linux": {
       "examples": {
         "087-associative-containers.gti": 451,
-        "089-library-workflow.gti": 917,
-        "090-generic-algorithms.gti": 442,
-        "143-checked-container-iteration.gti": 532
+        "089-library-workflow.gti": 917
       },
-      "total": 28063
+      "total": 28244
     }
   }
 }

@@ -29,8 +29,8 @@ import sys
 import tempfile
 
 from backend_execution import Endpoint, execute
+import mir_census_baseline as reviewed
 from example_case_context import LLVM_ONLY_EXAMPLES, require_cpp_limitation
-from mir_census_baseline import expected_for_target, host_target
 
 
 CONFIGURATIONS = (("O0", "c++20"), ("O3", "c++23"))
@@ -119,6 +119,8 @@ def main() -> int:
     parser.add_argument("gti")
     parser.add_argument("root")
     parser.add_argument("baseline")
+    parser.add_argument("--target", choices=reviewed.TARGETS,
+                        help="assert the native host target; cross-target execution is not supported")
     parser.add_argument("runtime_library")
     parser.add_argument("--jobs", type=int, default=min(4, os.cpu_count() or 1))
     parser.add_argument("--backend", choices=("cpp", "llvm"), default="cpp")
@@ -137,11 +139,13 @@ def main() -> int:
         return 1
 
     try:
-        target = host_target()
-        expected, _ = expected_for_target(
-            json.loads(baseline_path.read_text(encoding="utf-8")), target)
-    except (KeyError, TypeError, ValueError) as error:
-        print(f"FAIL: invalid MIR census baseline: {error}", file=sys.stderr)
+        baseline_document = json.loads(baseline_path.read_text(encoding="utf-8"))
+        target = reviewed.host_target()
+        if arguments.target is not None and arguments.target != target:
+            parser.error(f"--target {arguments.target} does not match executing host {target}")
+        expected = reviewed.select(baseline_document, target)
+    except (OSError, ValueError) as error:
+        print(f"FAIL: {error}", file=sys.stderr)
         return 1
     sources = sorted((root / "examples").glob("*.gti"))
     source_names = {source.name for source in sources}
@@ -244,10 +248,9 @@ def main() -> int:
                 f"{second.optimization}/{second.standard}"
             )
 
-    reviewed_count = sum(expected[source.name] for source in sources)
     print(
-        f"MIR corpus oracle ({arguments.backend}, {target}): {len(sources)} "
-        f"examples, {reviewed_count} reviewed body identities, "
+        f"MIR corpus oracle ({arguments.backend}, {target}): {len(sources)} examples, "
+        f"{sum(expected[source.name] for source in sources)} reviewed body identities, "
         f"{len(configurations)} endpoint configurations"
     )
     if failures:

@@ -4,16 +4,14 @@
 
 The hard cutover has one executable backend route, so any body-count change is
 a reviewed corpus-contract change rather than an incremental coverage gain or
-loss. This test recomputes the per-example census for the host target and names
-every mismatch. A target variant records only reviewed differences from the
-macOS base; it never permits an arbitrary count change.
+loss. This test recomputes the per-example census and names every mismatch.
 
     python3 tests/mir_census_test.py <gti> <repo-root> <baseline.json>
     python3 tests/mir_census_test.py <gti> <repo-root> <baseline.json> --update
 
-Refresh a target's baseline with --update only after reviewing the changed body
-inventory and checking the corpus oracle. The baseline is a claim about the
-complete reviewed corpus, not a way to silence a change.
+Refresh the baseline with --update only after the corpus oracle and suite are
+green. The baseline is a claim about the complete reviewed corpus, not a way to
+silence a change.
 """
 
 from __future__ import annotations
@@ -28,7 +26,7 @@ import sys
 import tempfile
 
 import example_case_context as examples
-from mir_census_baseline import BASE_TARGET, expected_for_target, host_target
+import mir_census_baseline as reviewed
 
 MARKER = "GTI verified-MIR body"
 MARKER_PATTERN = re.compile(
@@ -56,6 +54,7 @@ def emitted_body_count(text: str) -> int:
 def census(gti: Path, root: Path) -> dict[str, int | None]:
     """Per-example MIR-emitted body counts. None means the example failed."""
     counts: dict[str, int | None] = {}
+    target = reviewed.host_target()
     # A release-configured gti discovers only the installed stdlib layout;
     # point it at the repository stdlib so the census is build-flavor
     # independent.
@@ -70,7 +69,8 @@ def census(gti: Path, root: Path) -> dict[str, int | None]:
                 # Inventory comes from the sealed LoweredProgram, independently
                 # of target emission. Native execution remains the corpus oracle.
                 inventory = subprocess.run(
-                    [str(gti.parent / "gti_lowered_program_census"), str(root), source.name],
+                    [str(gti.parent / "gti_lowered_program_census"), str(root),
+                     "--target", target, source.name],
                     capture_output=True, text=True, env=env, timeout=examples.CENSUS_TIMEOUT)
                 if inventory.returncode != 0:
                     counts[source.name] = None
@@ -111,6 +111,8 @@ def main() -> int:
     parser.add_argument("gti")
     parser.add_argument("root")
     parser.add_argument("baseline")
+    parser.add_argument("--target", choices=reviewed.TARGETS,
+                        help="assert the native host target; cross-target execution is not supported")
     parser.add_argument(
         "--update",
         action="store_true",
@@ -121,22 +123,16 @@ def main() -> int:
     gti = Path(arguments.gti).resolve()
     root = Path(arguments.root).resolve()
     baseline_path = Path(arguments.baseline)
+
     try:
-        target = host_target()
-    except ValueError as error:
+        document = json.loads(baseline_path.read_text(encoding="utf-8"))
+        target = reviewed.host_target()
+        if arguments.target is not None and arguments.target != target:
+            parser.error(f"--target {arguments.target} does not match executing host {target}")
+        baseline = reviewed.select(document, target)
+    except (OSError, ValueError) as error:
         print(f"FAIL: {error}", file=sys.stderr)
         return 1
-    if not arguments.update:
-        if not baseline_path.is_file():
-            print(f"FAIL: missing baseline {baseline_path}; run with --update "
-                  "from a clean tree", file=sys.stderr)
-            return 1
-        try:
-            baseline, baseline_total = expected_for_target(
-                json.loads(baseline_path.read_text(encoding="utf-8")), target)
-        except (KeyError, TypeError, ValueError) as error:
-            print(f"FAIL: invalid MIR census baseline: {error}", file=sys.stderr)
-            return 1
 
     current = census(gti, root)
     if not current:
@@ -144,42 +140,13 @@ def main() -> int:
         return 1
 
     if arguments.update:
-        if any(value is None for value in current.values()):
-            print("FAIL: cannot update MIR census with failed examples", file=sys.stderr)
+        try:
+            document = reviewed.updated(document, target, current)
+        except ValueError as error:
+            print(f"FAIL: {error}", file=sys.stderr)
             return 1
-        if baseline_path.is_file():
-            document = json.loads(baseline_path.read_text(encoding="utf-8"))
-        elif target == BASE_TARGET:
-            document = {"target": BASE_TARGET, "examples": {}, "total": 0,
-                        "variants": {}}
-        else:
-            print("FAIL: update the macOS base census before a target variant",
-                  file=sys.stderr)
-            return 1
-        if document.get("target") != BASE_TARGET:
-            print("FAIL: MIR census base target is not arm64-apple-macos",
-                  file=sys.stderr)
-            return 1
-        if target == BASE_TARGET:
-            document["examples"] = current
-            document["total"] = total(current)
-        else:
-            base = document["examples"]
-            if set(current) != set(base):
-                print("FAIL: target corpus differs from the macOS base census",
-                      file=sys.stderr)
-                return 1
-            document.setdefault("variants", {})[target] = {
-                "examples": {name: count for name, count in current.items()
-                             if count != base[name]},
-                "total": total(current),
-            }
-        baseline_path.write_text(
-            json.dumps(document, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        print(f"baseline updated for {target}: {total(current)} bodies "
-              f"across {len(current)} examples")
+        baseline_path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+        print(f"baseline updated ({target}): {total(current)} bodies across {len(current)} examples")
         return 0
 
     broken = sorted(name for name, value in current.items() if value is None)
@@ -194,8 +161,8 @@ def main() -> int:
     added = sorted(name for name in current if name not in baseline)
     removed = sorted(name for name in baseline if name not in current)
 
-    print(f"MIR census {target}: {total(current)} bodies across "
-          f"{len(current)} examples (baseline {baseline_total})")
+    print(f"MIR census ({target}): {total(current)} bodies across {len(current)} examples "
+          f"(baseline {sum(v for v in baseline.values() if v)})")
 
     if broken:
         print("FAIL: examples no longer compile, so their census is unknown:",
