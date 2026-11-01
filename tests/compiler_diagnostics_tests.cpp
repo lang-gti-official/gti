@@ -3188,7 +3188,7 @@ int main() {
   const auto pack = lang::Frontend().analyze(
       "duplicate-semantic.gti",
       "class Pack<Args...> { public: Pack() = default; }; int main() { "
-      "Pack<int[2]&> value{}; return 0; }");
+      "Pack<void&> value{}; return 0; }");
   expect(!pack.canGenerateCode() && count(pack, "GTI-S2017") == 1,
          "a type checked twice reports its error once");
 }
