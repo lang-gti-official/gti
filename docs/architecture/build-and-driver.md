@@ -281,6 +281,53 @@ Builds default to all detected logical CPUs (one if detection is unavailable),
 at normal process priority. `--jobs N` overrides the job count; the dry-run and
 normal output both report the selected parallelism.
 
+### Managed toolchains and preview distribution
+
+`scripts/gtiup.py` is a standalone Python 3.9+ toolchain manager. Its bootstrap
+places `gtiup`, `gti` and `gti_lsp` proxies in `$GTIUP_HOME/bin` (default
+`~/.gtiup/bin`). Installation is explicit; neither compiler invocation nor
+Neovim downloads a missing selection. The manager resolves command overrides,
+`GTIUP_TOOLCHAIN`, the nearest ancestor `gti-toolchain` file, then the persisted
+user default. Explicit version tags remain separate from moving channel
+selections. The selected compiler and language server resolve to real paths in
+one immutable, checksum-named directory with their matching packaged resources.
+
+Downloads use fixed canonical GitHub release URLs. The manager checks archive
+checksums, source identity (`BUILD_ID` for rolling channels), packaged VERSION,
+and preview inclusion metadata before atomically updating settings under a
+process lock. Extraction rejects path traversal, special files, hard links,
+symlink-parent writes and symlink targets containing parent traversal. Install
+and update fail closed on absent or revoked releases; they never substitute an
+older or different channel. Existing installations stay usable offline; release
+revocations are checked during download, not every compiler invocation.
+GitHub publication attestations are available separately; the manager's trust
+boundary is HTTPS downloads plus published checksums and embedded identity.
+Updates retain old immutable directories; explicit `gc` removes unreferenced
+managed directories after the user has stopped processes using them.
+
+`.github/workflows/preview.yml` builds downloadable packages after a canonical
+`preview` branch push, or an explicit dispatch from main. It selects the exact
+current preview source with `.gti-preview.json`, uses the reviewed production
+configuration on Linux x64 and macOS arm64, runs combined `preview_admission`
+(included feature checks and automated examples) and installed-toolchain checks
+on each platform, then packages that validated stage. The separate `preview`
+prerelease uses `gti-preview-<platform>.tar.gz` names, checksums, embedded and
+release `BUILD_ID`, `PREVIEW_SOURCE`, inclusion metadata and run/attempt-bound
+provenance. Publication verifies both platforms, attests archives, rechecks
+current preview, and uses an exact lease on its own rolling tag. BUILD_ID is
+uploaded last so a racing installer rejects inconsistent assets.
+
+This does not qualify preview artifacts for nightly or advance main. Preview
+can include features whose original PR review and complete integration are
+pending. Nightly still requires successful full CI on its selected main source;
+beta/stable promotion is unchanged. Preview source admission and package
+publication are asynchronous: a source branch can advance before downloadable
+packages finish, and an older packaging run then refuses stale publication.
+A workflow retry must rerun both package jobs in the same attempt. Initial
+commissioning requires this orchestration on main and a published preview source.
+Neovim managed mode delegates compiler/LSP/parser selection to gtiup; it installs
+only editor configuration and never an independent language-server version.
+
 ### GitHub nightly publication
 
 `.github/workflows/nightly.yml` runs daily at 02:00 UTC and on manual dispatch.

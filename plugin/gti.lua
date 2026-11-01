@@ -20,7 +20,8 @@ local channel = vim.g.gti_channel or vim.env.GTI_CHANNEL or "stable"
 local expected_version = toolchain.expected_version()
 local installed_version = toolchain.installed_version()
 if
-  channel == "stable"
+  not toolchain.managed()
+  and channel == "stable"
   and expected_version
   and installed_version
   and expected_version ~= installed_version
@@ -52,7 +53,7 @@ vim.api.nvim_create_autocmd("LspAttach", {
   callback = function(args)
     local client_id = args.data and args.data.client_id or nil
     local client = client_id and vim.lsp.get_client_by_id(client_id) or nil
-    if not client or client.name ~= "gti_lsp" or not expected_version then
+    if toolchain.managed() or not client or client.name ~= "gti_lsp" or not expected_version then
       return
     end
     local actual = client.server_info and client.server_info.version or nil
@@ -230,7 +231,8 @@ vim.api.nvim_create_user_command("GTIExpandMacro", function()
 end, { desc = "Inspect the checked macro expansion under the cursor (read-only)" })
 
 vim.api.nvim_create_user_command("GTIInfo", function()
-  local info = toolchain.version_info()
+  local name = vim.api.nvim_buf_get_name(0)
+  local info = toolchain.version_info({ cwd = name ~= "" and vim.fs.dirname(name) or nil })
   local active_versions = {}
   local active_profiles = {}
   local problems = vim.deepcopy(info.problems)
@@ -238,7 +240,7 @@ vim.api.nvim_create_user_command("GTIInfo", function()
     local version = client.server_info and client.server_info.version or "unknown"
     table.insert(active_versions, version)
     table.insert(active_profiles, requested_profile(client))
-    if info.expected and version ~= info.expected then
+    if not info.managed and info.expected and version ~= info.expected then
       table.insert(problems, string.format(
         "running language server is %s but the plugin expects %s",
         version,
@@ -248,6 +250,7 @@ vim.api.nvim_create_user_command("GTIInfo", function()
   end
 
   local lines = {
+    "Toolchain manager: " .. (info.managed and "gtiup" or "legacy plugin installer"),
     "Plugin version: " .. (info.expected or "unknown"),
     "Installed toolchain: " .. (info.installed or "not installed by Lazy"),
     string.format(
