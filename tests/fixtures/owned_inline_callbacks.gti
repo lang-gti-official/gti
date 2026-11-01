@@ -1,0 +1,64 @@
+import std.functional;
+import std.string;
+import std.vector;
+
+extern "C" {
+uint64_t inline_probe_allocations();
+uint64_t inline_probe_live();
+void inline_probe_drop(int value);
+}
+
+class small_operation {
+  int value;
+public:
+  small_operation(int value) : value(value) {}
+  int operator()(int amount) && { return this.value + amount; }
+};
+
+class large_operation {
+  int64_t a;
+  int64_t b;
+  int64_t c;
+  int64_t d;
+public:
+  large_operation() : a(1), b(2), c(3), d(4) {}
+  int operator()(int amount) && { return int(this.a + this.b + this.c + this.d) + amount; }
+};
+
+class cleanup_operation {
+  int value;
+public:
+  cleanup_operation(int value) : value(value) {}
+  ~cleanup_operation() { inline_probe_drop(this.value); }
+  int operator()(int divisor) && { return this.value / divisor; }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  uint64_t live = inline_probe_live();
+  uint64_t before = inline_probe_allocations();
+  {
+    std::function<int(int) &&> first{small_operation(40)};
+    auto second = first.clone();
+    std::move_only_function<int(int) &&> third{small_operation(40)};
+    int base = 40;
+    std::transfer_function<int(int) &&> fourth{[base](int amount) -> int { return base + amount; }};
+    if (inline_probe_allocations() != before) return 1;
+    if (std::move(first)(2) != 42 || std::move(second)(2) != 42) return 2;
+    if (std::move(third)(2) != 42 || std::move(fourth)(2) != 42) return 3;
+  }
+  if (inline_probe_live() != live) return 4;
+  {
+    std::move_only_function<int(int) &&> large{large_operation()};
+    if (inline_probe_allocations() != before + uint64_t(1)) return 5;
+    if (std::move(large)(32) != 42) return 6;
+  }
+  if (inline_probe_live() != live) return 7;
+  {
+    std::move_only_function<int(int) &&> cleanup{cleanup_operation(84)};
+    if (inline_probe_allocations() != before + uint64_t(2)) return 8;
+    if (argc == 3) return std::move(cleanup)(2) + 8 / (argc - 3);
+    int result = std::move(cleanup)(argc == 1 ? 2 : 0);
+    if (result != 42) return 9;
+  }
+  return inline_probe_live() == live ? 0 : 10;
+}

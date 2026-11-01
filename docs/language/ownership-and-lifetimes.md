@@ -1267,7 +1267,8 @@ fields. Read-only and mutable fallback overloads selected for an explicit move
 operate on this same materialized value.
 
 Inside a consuming method, immediate invocation of an owned nominal
-or stored-lambda field, `std::move(this.field)(arguments)`, instead operates in
+or stored-lambda field, `std::move(this.field)(arguments)`, or a named method
+`std::move(this.field).method(arguments)`, instead operates in
 place. Its
 remaining resources stay in the outer receiver through that receiver's full
 expression, including later arguments and failure cleanup. Grouping the moved
@@ -1276,19 +1277,31 @@ use; retaining its storage does not permit another invocation. The selected
 call must return an owned value or void, not a reference or tracked borrow.
 This rule covers writable, ordinary field-only paths rooted in consuming
 `this`, not reference fields. It also permits immediate invocation through a
-transparent mutable unique-owner accessor, as in
+transparent mutable owning-storage accessor, as in
 `std::move(*this.target)(arguments)`. The compiler must prove that the exact
-nonvirtual, zero-argument accessor returns the checked private unique-owner
-borrow of one direct field. The owner wrapper must itself be a writable field
-of consuming `this`. Its availability is consumed while its physical cleanup
+nonvirtual, zero-argument accessor has one return of the checked private
+unique-owner borrow or inline-polymorphic-storage mutable read of one direct
+field. The owner wrapper is consuming `this` itself or a writable field-only
+path beneath it. Its availability is consumed while its physical cleanup
 stays with the outer receiver. Only the accessor's temporary result loan is
 used for invocation; an unrelated live alias still conflicts. Ordinary
 references, raw-pointer dereferences, local owners, and extraction of the
 pointee do not gain an ownership-transfer capability from this rule.
+`std::inline_polymorphic::invoke_once<R>` uses this proof to invoke an inline
+payload, and the same unique-owner proof for its boxed fallback. Neither the
+public owner type nor the method name is compiler-recognized. The inline
+payload policy still requires inert cleanup and failure-free relocation;
+consuming access does not grant eligibility to cleanup-bearing payloads.
 Stored lambdas keep their exact closure identity and read-invocation policy;
 fixed arguments and expanded argument packs use the same retained checkpoint.
 Explicit extraction into a local remains an actual ownership transfer and
 retains that local's ordinary cleanup scope.
+The owned-inline-consumption named-method extension revises the earlier materialization rule for
+an immediate moved field: its cleanup now follows the enclosing receiver's
+reverse field order, as an immediate call operator already did. For example,
+consuming `first` in an owner with fields `first, second` leaves destruction in
+the order `second, first`. Extracting `first` into a separate local still
+transfers its cleanup to that local.
 
 A destructor does not acquire consuming-receiver permission. It may observe
 or mutate its available fields, but cannot move a receiver field into a local

@@ -485,7 +485,10 @@ public:
                     (initialization || declaration ||
                      closureCopySource(body, stage))) &&
                   !publishedArgument(address, body, placement, stage) &&
-                  !copiedArgument(body, stage) && !replaced)
+                  !copiedArgument(body, stage) && !replaced &&
+                  !(transfer && stage.kind == MirInstructionKind::Move &&
+                    plannedTransfer(body, stage) ==
+                        native_llvm::FreshHierarchyPublication::Receiver))
                 proof.transfer = true;
           const auto transferred = [&](const MirOperand &operand) {
             return contains(operand.type) &&

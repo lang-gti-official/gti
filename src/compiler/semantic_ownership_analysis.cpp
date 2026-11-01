@@ -15316,8 +15316,10 @@ auto SemanticVisitor::Impl::analyzeMoveCall(
       }
     }
     if (function != nullptr && function->ownedPointeeProjection &&
-        function->ownedPointeeProjection->borrowIntrinsic ==
-            IntrinsicKind::UniqueOwnerBorrowMut &&
+        (function->ownedPointeeProjection->borrowIntrinsic ==
+             IntrinsicKind::UniqueOwnerBorrowMut ||
+         function->ownedPointeeProjection->borrowIntrinsic ==
+             IntrinsicKind::PolymorphicStorageReadMut) &&
         ownerExpression != nullptr) {
       const ExpressionInfo *owner =
           semanticModel.findExpression(*ownerExpression);
@@ -15326,7 +15328,7 @@ auto SemanticVisitor::Impl::analyzeMoveCall(
           owner->access == AccessMode::Mutable &&
           owner->type.kind == SemanticType::Class &&
           !owner->traits.containsBorrowedState && anchor.root != nullptr &&
-          anchor.receiver && !anchor.projections.empty() &&
+          anchor.receiver &&
           std::all_of(anchor.projections.begin(), anchor.projections.end(),
                       [](const auto &projection) {
                         return projection.kind == PlaceProjectionKind::Field;
@@ -15356,7 +15358,8 @@ auto SemanticVisitor::Impl::analyzeMoveCall(
     currentType = SemanticType::Unknown;
     return;
   }
-  if (place.root != nullptr && !place.projections.empty()) {
+  if (place.root != nullptr &&
+      (retainedOwner != nullptr || !place.projections.empty())) {
     const ExpressionInfo *info = semanticModel.findExpression(*argument);
     if (place.root->type.kind == SemanticType::Reference) {
       report(expressionToken(argument),
@@ -15370,7 +15373,9 @@ auto SemanticVisitor::Impl::analyzeMoveCall(
       currentType = SemanticType::Unknown;
       return;
     }
-    const PlaceProjectionKind projectionKind = place.projections.back().kind;
+    const PlaceProjectionKind projectionKind =
+        place.projections.empty() ? PlaceProjectionKind::Field
+                                  : place.projections.back().kind;
     if (info == nullptr || info->category != ValueCategory::Place ||
         info->access != AccessMode::Mutable ||
         (projectionKind != PlaceProjectionKind::Field &&

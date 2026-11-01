@@ -5154,6 +5154,14 @@ fields retain their separate transfer prerequisites. Cleanup identity is checked
 against the canonical MIR recipe, including nested fields, rather than a second
 backend reconstruction of destructor order.
 
+A whole-binding move used by one consuming receiver can also publish into
+MIR's exact branch temporary. The planner verifies the moved-temporary
+producer identity, initially unavailable destination, source/value drop
+transition, and single receiver publication. Emission relocates into that
+named temporary, so cleanup after a conditional merge observes the object
+that was actually invoked. Other destinations and consumers gain no transfer
+permission from this case.
+
 The program-aware placement query binds only those proven hierarchy producers.
 Body-only placement and ordinary nonhierarchy Copy/Move retain their existing
 snapshot behavior. Typed copy walks logical fields and installs each complete

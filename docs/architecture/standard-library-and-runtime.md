@@ -834,6 +834,15 @@ recipe; it is movable and move-assignable while optional's slot is not. The
 library chooses inline placement with an `if constexpr` over that concept and
 a runtime `std::layout_of` comparison, which the native compiler folds.
 
+The source-defined consuming `invoke_once<R>` selects its inline or boxed
+target. Semantics derives an owned-pointee projection from its transparent
+mutable accessor; MIR independently checks the exact capability, field,
+intrinsic, returned loan and single invocation use. The root may be consuming
+`this` or an owned field path. Remaining cleanup stays with that owner. The
+once-invoked function wrappers use this same owner and allocation policy, so
+small eligible captures avoid a heap allocation without new callback-specific
+compiler behavior. Cleanup-bearing captures remain boxed.
+
 MIR verification re-proves each of the five operations: the exact capability
 class and staged storage place, the interface result and owner-tied loan for
 reads, no failure edge, and for construction one completed payload of a
