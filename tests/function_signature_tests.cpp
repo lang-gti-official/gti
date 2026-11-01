@@ -854,6 +854,7 @@ int main() {
   Types<> no_types{};
   auto constructed = Types<>();
   Types<void, int&> metadata{};
+  Types<int[2]&, int[3]&> array_borrow_metadata{};
   return empty.value() + binary.value() + borrowing.value() +
          forwarded.value() + forwarded_empty.value() + no_types.value() +
          metadata.value() - 49;
@@ -873,6 +874,7 @@ int main() {
            "class-pack metadata must lower without a backend type system");
     int emptyTypes = 0;
     int referenceSignatures = 0;
+    int arrayBorrowPacks = 0;
     for (const auto &instance : frontend.hir.classInstances()) {
       if (instance.source == nullptr) {
         continue;
@@ -889,6 +891,20 @@ int main() {
         expect(!instance.traits.containsBorrowedState,
                "reference metadata must not introduce a stored borrow");
       }
+      if (instance.source->name().lexeme == "Types" &&
+          instance.typeArguments.size() == 2 &&
+          instance.typeArguments.front() ==
+              lang::SemanticType::referenceTo(
+                  lang::SemanticType::arrayOf(lang::SemanticType::Int32, 2))) {
+        ++arrayBorrowPacks;
+        expect(
+            instance.typeArguments.back() ==
+                    lang::SemanticType::referenceTo(lang::SemanticType::arrayOf(
+                        lang::SemanticType::Int32, 3)) &&
+                !instance.traits.containsBorrowedState,
+            "array reference pack metadata preserves extent and access "
+            "without introducing a stored loan");
+      }
       expect(std::none_of(
                  instance.typeArguments.begin(), instance.typeArguments.end(),
                  [](const auto &argument) {
@@ -896,7 +912,7 @@ int main() {
                  }),
              "concrete class identities must flatten packs before HIR");
     }
-    expect(emptyTypes == 1 && referenceSignatures == 1,
+    expect(emptyTypes == 1 && referenceSignatures == 1 && arrayBorrowPacks == 1,
            "empty constructors must share identity and reference metadata must "
            "remain exact");
     const std::string formatted = lang::Formatter().format(source);
@@ -955,10 +971,6 @@ void invalidClassTypePacks() {
        "GTI-S2093"},
       {"class Pack<Args...> { public: Pack() = default; }; int main() { "
        "Pack<void&> value{}; return 0; }",
-       "GTI-S2017"},
-      {"class Pack<Args...> { public: Pack() = default; }; int main() { "
-       "Pack<int[2]&> value{}; return "
-       "0; }",
        "GTI-S2017"},
       {"class Box<T> { T field{};  public: Box() = default; }; int main() { "
        "Box<int&> value{}; return 0; "
