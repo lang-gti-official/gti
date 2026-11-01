@@ -30,6 +30,7 @@ public:
   ~Square() { record(this.side); live -= 1; }
   int code() override { return *this.label; }
   int area() override { return this.side * this.side; }
+  int take_area() && { return this.side * this.side; }
 };
 
 Square make(int side) { return Square(12 / side); }
@@ -140,6 +141,27 @@ int readings() {
   return total == 35209 ? 0 : 6;
 }
 
+// Fresh construction and exchanged call results have the same local storage
+// contract inside a lambda. The capture and parameter are not destinations.
+int lambda_exchanges() {
+  int offset = 1;
+  auto worker = [offset](int side) -> int {
+    Square initial = Square(side);
+    mut Square current = std::move(initial);
+    Square previous = std::exchange(current, Square(side + offset));
+    Shape& view = current;
+    int taken = std::move(previous).take_area();
+    return view.area() == 4 && taken == 1 ? 0 : 9;
+  };
+  int status = worker(1);
+  if (status != 0) { return status; }
+  auto consume = [](Square incoming) -> int {
+    Square local = std::move(incoming);
+    return std::move(local).take_area();
+  };
+  return consume(Square(3)) == 9 ? 0 : 11;
+}
+
 // EXCHANGED_TRANSFERS_MAIN
 int main() {
   mut int status = squares();
@@ -149,5 +171,9 @@ int main() {
   status = readings();
   if (status != 0) { return status; }
   if (live != 0) { return 7; }
-  return events == 341256312 ? 0 : 8;
+  if (events != 341256312) { return 8; }
+  events = 0;
+  status = lambda_exchanges();
+  if (status != 0) { return status; }
+  return events == 123 && live == 0 ? 0 : 10;
 }
