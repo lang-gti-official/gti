@@ -2422,6 +2422,17 @@ int main() {
         exchange_failure.replace("expected_cleanup = 15;", "expected_cleanup = 16;"),
         "wrong-cleanup-trace", expected_exit=70, failure_needle=exchange_needle,
         endpoints=TRANSFER_ENDPOINTS)
+    lambda_exchange_failure = exchange_failure.replace(
+        "int main() {", "int main() {\n  auto worker = []() -> int {").replace(
+        "  return old.area() + broken.area();\n}",
+        "  return old.area() + broken.area();\n  };\n  return worker();\n}")
+    add("lambda-exchanged-transfer-failure", lambda_exchange_failure,
+        "defined-failure", expected_exit=70, failure_needle=exchange_needle,
+        endpoints=TRANSFER_ENDPOINTS)
+    add("lambda-exchanged-transfer-wrong-cleanup",
+        lambda_exchange_failure.replace("expected_cleanup = 15;", "expected_cleanup = 16;"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle=exchange_needle,
+        endpoints=TRANSFER_ENDPOINTS)
     for name, source in REJECTIONS.items():
         add(name, source, "backend-rejection")
     for name, source in SOURCE_REJECTIONS.items():
@@ -2476,7 +2487,8 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
             "returned-siblings",
             "returned-sibling-failure", "returned-sibling-wrong-cleanup",
             "exchanged-transfers", "exchanged-transfer-failure",
-            "exchanged-transfer-wrong-cleanup"),
+            "exchanged-transfer-wrong-cleanup", "lambda-exchanged-transfer-failure",
+            "lambda-exchanged-transfer-wrong-cleanup"),
         "fresh-publication": (
             "fresh-publication", "fresh-return-former-reject",
             "fresh-value-argument-former-reject",
@@ -2583,6 +2595,7 @@ def main() -> None:
             "hierarchy-array-field-first-failure", "hierarchy-array-field-first-wrong-cleanup",
              "returned-sibling-failure", "returned-sibling-wrong-cleanup",
              "exchanged-transfer-failure", "exchanged-transfer-wrong-cleanup",
+             "lambda-exchanged-transfer-failure", "lambda-exchanged-transfer-wrong-cleanup",
              "program-storage-failure",
              "shared-polymorphic-owner-failure", "shared-polymorphic-owner-wrong-cleanup",
              *LIFECYCLE_FORMER_REJECTS, "rollback-virtual-observation-former-reject",

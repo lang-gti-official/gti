@@ -1216,7 +1216,7 @@ class ValidationChecks(unittest.TestCase):
     def test_ci_gate_requires_fast_checks_on_prs_and_the_suite_in_the_queue(self):
         lint = {name: {"result": "success"} for name in validation.LINT_JOBS}
         pr = {**lint, "fast": {"result": "success"}}
-        queue = {**lint, "integration": {"result": "success"}, "sanitizers": {"result": "success"}}
+        queue = {**lint, "fast": {"result": "success"}, "package": {"result": "success"}, "integration": {"result": "success"}, "sanitizers": {"result": "success"}}
         validation.admission("full", pr, "pull_request")
         validation.admission("full", queue, "merge_group")
         with self.assertRaises(ValueError):
@@ -1459,7 +1459,8 @@ class ValidationChecks(unittest.TestCase):
             with self.subTest(harness=harness):
                 self.assertTrue((ROOT / "tests" / harness).is_file())
                 self.assertIn(harness, validation.AUTOMATION_TESTS)
-                self.assertEqual(validation.ci_mode({}, ["tests/" + harness]), "automation")
+                expected = "full" if "tests/" + harness in validation.FULL_VALIDATION_FILES else "automation"
+                self.assertEqual(validation.ci_mode({}, ["tests/" + harness]), expected)
 
     def test_platform_scoped_gates_keep_other_hosts_obligations(self):
         plan = batch_plan(platforms=["darwin", "linux"],
@@ -1538,7 +1539,8 @@ class CIEnvironment(unittest.TestCase):
             output = root / "runner output"
             env = {key: value for key, value in os.environ.items()
                    if key not in {"GITEA_EVENT_PATH", "GITHUB_EVENT_PATH"}}
-            env.update(GTI_EVENT_PATH=str(payload), GTI_BASE_SHA=base, GITHUB_OUTPUT=str(output))
+            env.update(GTI_EVENT_PATH=str(payload), GTI_BASE_SHA=base, GITHUB_OUTPUT=str(output),
+                       GITHUB_EVENT_NAME="pull_request", GITHUB_REF="refs/pull/1/merge")
 
             def execute(success):
                 output.write_text("")
@@ -1559,6 +1561,13 @@ class CIEnvironment(unittest.TestCase):
                     self.assertEqual(execute(False), "")
             env["GTI_EVENT_PATH"] = str(payload)
             payload.write_text("invalid JSON")
+            self.assertEqual(execute(False), "")
+            # Full commissioning ignores diff classification, but only on main.
+            # Simulate this explicitly rather than inheriting the host event.
+            payload.write_text("{}")
+            env.update(GITHUB_EVENT_NAME="workflow_dispatch", GITHUB_REF="refs/heads/main")
+            self.assertEqual(execute(True), "mode=full\n")
+            env["GITHUB_REF"] = "refs/heads/feature"
             self.assertEqual(execute(False), "")
         self.assertIn("GTI_EVENT_PATH: ${{ github.event_path }}", step)
 

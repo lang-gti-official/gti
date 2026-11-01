@@ -68,7 +68,7 @@ TITLE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ,.:'()/+&-]{0,79}")
 DIGITS = re.compile(r"[0-9]{1,3}")
 
 Request = Callable[[str], Any]
-Evidence = Callable[[str, str], int]
+Evidence = Callable[[str, str], int | dict[str, str]]
 
 
 class TrainError(ValueError):
@@ -403,7 +403,7 @@ def train_plan(event: str, ref: str, stage: str, now: datetime) -> dict[str, str
 
 def select_cut(repository: str, ref: str, min_age: int, now: datetime,
                evidence: Evidence, request: Request) -> dict[str, str]:
-    """The completely published nightly, queue-verified and old enough to cut."""
+    """The completely published nightly, full-CI-verified and old enough to cut."""
     if ref != "refs/heads/main":
         raise TrainError("a release cut runs only from main's own definition")
     head = source.remote_main()
@@ -425,7 +425,7 @@ def select_cut(repository: str, ref: str, min_age: int, now: datetime,
                     f"{min_age} h old")
     if version_at(nightly) != version_at(head):
         return skip(f"a release cut landed on main after the published nightly {nightly}")
-    print(f"Release cut source {nightly}: published nightly, merge-queue CI run {run}, "
+    print(f"Release cut source {nightly}: published nightly, full CI evidence {run}, "
           f"on main for {age.total_seconds() / 3600:.1f} h")
     return {"cut": "true", "sha": nightly, "version": version_at(nightly)}
 
@@ -624,15 +624,17 @@ def main_release_cut(head: str) -> tuple[str, str, str] | None:
     return merge, cuts[0], version
 
 
-def select_beta(repository: str, ref: str, evidence: Evidence) -> dict[str, str]:
+def select_beta(repository: str, ref: str, evidence: Evidence,
+                nightly_evidence: Evidence | None = None) -> dict[str, str]:
     if ref == "refs/heads/main":
-        return select_main_beta(repository, evidence)
+        return select_main_beta(repository, evidence, nightly_evidence)
     if BETA_BRANCH.fullmatch(ref):
         return select_line_beta(ref)
     raise TrainError("betas publish only from main or a beta/<major>.<minor> branch")
 
 
-def select_main_beta(repository: str, evidence: Evidence) -> dict[str, str]:
+def select_main_beta(repository: str, evidence: Evidence,
+                     nightly_evidence: Evidence | None = None) -> dict[str, str]:
     """The first beta of a release cut that the merge queue landed on main.
 
     The beta is built from the cut commit itself, not the queue's merge onto a
@@ -660,12 +662,14 @@ def select_main_beta(repository: str, evidence: Evidence) -> dict[str, str]:
     if pending_fragments(cut):
         raise TrainError(f"release cut {cut} leaves user-visible fragments pending")
     merged_run = evidence(repository, merge)
-    base_run = evidence(repository, base)
+    # The nightly may have been commissioned by full CI on main. This does
+    # not relax the separate queue evidence for the release-cut landing above.
+    base_run = (nightly_evidence or evidence)(repository, base)
     branch = line_branch(version)
     existing = remote_head("refs/heads/" + branch)
     if existing and existing != cut:
         raise TrainError(f"{branch} already exists at {existing}; a main cut opens a new line only")
-    print(f"Beta source {cut}: Release-Cut {version} on queue-verified {base} (CI run {base_run}), "
+    print(f"Beta source {cut}: Release-Cut {version} on full-CI-verified {base} (evidence {base_run}), "
           f"landed on main by {merge} (CI run {merged_run})")
     return {"build": "true", "sha": cut, "version": version, "tag": beta_tag(version, 1),
             "number": "1", "branch": branch, "create_branch": str(not existing).lower(),
@@ -1318,6 +1322,12 @@ def evidence_reader() -> Evidence:
     return lambda repository, sha: source.queue_evidence(repository, sha, request)
 
 
+def nightly_evidence_reader() -> Evidence:
+    from release_artifacts import release_evidence
+    request = reader()
+    return lambda repository, sha: release_evidence(repository, sha, request)
+
+
 def check_repository(repository: str) -> str:
     if repository != REPOSITORY:
         raise TrainError(f"the release train runs only in {REPOSITORY}")
@@ -1374,10 +1384,11 @@ def main(argv: list[str] | None = None) -> int:
                 delivery = Delivery(agent_workflow.GitHub(token=token), reader(), token)
             values = run_cut(arguments.repository, arguments.event, arguments.ref,
                              arguments.min_age_hours, arguments.title, Path(arguments.worktree),
-                             now_utc(), evidence_reader(), delivery, reader())
+                             now_utc(), nightly_evidence_reader(), delivery, reader())
         elif name == "select-beta":
             check_repository(arguments.repository)
-            values = select_beta(arguments.repository, arguments.ref, evidence_reader())
+            values = select_beta(arguments.repository, arguments.ref, evidence_reader(),
+                                 nightly_evidence_reader())
         elif name == "confirm":
             source.checked_sha(arguments.sha)
             if version_at("HEAD") != arguments.version or \

@@ -1,6 +1,6 @@
 ---
 name: finish-release
-description: Apply GTI version and release policy to focused-validated work delivered through the agent-workflow merge-queue lifecycle. Use when an implementation is ready to deliver or the user asks to commit, publish or release. Asynchronous release packaging does not block completion.
+description: Apply GTI version and release policy to focused-validated work delivered through the agent-workflow merge-queue lifecycle. Use when an implementation is ready to deliver or the user asks to commit, publish or release. Asynchronous release publication does not block completion.
 ---
 
 # Finish A GTI Release
@@ -61,11 +61,16 @@ policy below without bypassing that lifecycle.
 
 Toolchain releases publish to GitHub Releases; only the `gti add`
 package registry stays on Gitea. `.github/workflows/nightly.yml` republishes
-the rolling `nightly` prerelease daily from the newest main commit that passed
-the merge queue, so a merged change reaches nightly users without any release
-step. The release train publishes versioned releases on its own: every 48
+the rolling `nightly` prerelease daily using the selected main commit's
+validated production archives from full CI. Nightly verifies exact source,
+run/attempt, platform, configuration and checksums; it never rebuilds or repeats
+the complete suite. An automation-only pass or an approved merge exception
+does not supply those artifacts: commissioning/recovery uses a full CI dispatch
+on main, not a release-gate bypass. Missing or expired artifacts stop publication.
+The release train publishes versioned releases on its own: every 48
 hours `train.yml` cuts the published nightly into a `Release-Cut:` PR,
-`beta.yml` publishes `v<VERSION>-beta.<K>` once it merges, and promotion
+`beta.yml` builds and fully validates the versioned cut before publishing
+`v<VERSION>-beta.<K>`, and promotion
 republishes a soaked beta as stable `v<VERSION>` behind the owner-approved
 `stable` environment. A task therefore never runs a release cut, tags or
 publishes; report the changelog fragment, which the next train cut assembles.
@@ -88,4 +93,5 @@ validation, report the PR, its changelog fragment when applicable, exactly which
 checks ran, and that the complete suite is the queue's. After the queue merges
 it and local-main sync succeeds, report the merge and local commit. A queue
 removal or sync failure keeps the task open and visible; a later asynchronous
-packaging failure can be handled separately.
+publication failure can be handled separately. Production packaging failures
+are integration failures and are not deferred to nightly.

@@ -40,11 +40,92 @@ CONFIGURE_RELEASE = """        run: >-
 """
 
 
+def artifact_contract(root):
+    import copy
+    sys.path.insert(0, str(root / "scripts"))
+    artifacts = load_module(root / "scripts/release_artifacts.py", "release_artifacts")
+    sha, repository = "c" * 40, "lang-gti-official/gti"
+    run = queue_run(sha, status="completed", conclusion="success", run_attempt=2)
+    names = ["CI gate", *(f"Release package ({p})" for p in artifacts.PLATFORMS),
+             *(f"Integration ({p} {i}/{n})" for p, n in (("linux", 6), ("darwin", 5)) for i in range(n))]
+    jobs = [gate_job(sha, name=n) for n in names]
+    assets = [{"name": f"gti-nightly-{p}-2", "expired": False} for p in artifacts.PLATFORMS]
+
+    def evidence(run=run, jobs=jobs, assets=assets):
+        def request(path):
+            if "/workflows/" in path:
+                return {"workflow_runs": [run]}
+            if "/jobs?" in path:
+                assert "/attempts/2/" in path, path
+                return {"jobs": jobs}
+            return {"artifacts": assets, "total_count": len(assets)}
+        return artifacts.release_evidence(repository, sha, request)
+
+    assert evidence() == {"run_id": "7", "run_attempt": "2"}
+    assert evidence(run={**run, "event": "workflow_dispatch", "head_branch": "main"})["run_id"] == "7"
+    rejected = [
+        {"run": {**run, "event": "pull_request"}},
+        {"run": {**run, "event": "workflow_dispatch", "head_branch": "feature"}},
+        {"run": {**run, "conclusion": "failure"}},
+        {"run": {**run, "status": "in_progress"}},
+        {"run": {**run, "head_sha": "a" * 40}},
+        {"run": {**run, "path": ".github/workflows/fake.yml"}},
+        {"run": {**run, "head_repository": {"full_name": "attacker/gti"}}},
+        {"jobs": jobs[:1]},  # automation gate alone cannot publish
+        {"jobs": jobs[1:]},
+        {"jobs": [*jobs, jobs[0]]},
+        {"jobs": [{**j, "conclusion": "skipped"} if j["name"].startswith("Integration") else j for j in jobs]},
+        {"assets": assets[:1]},
+        {"assets": [{**a, "expired": True} for a in assets]},
+        {"assets": [{**a, "name": a["name"].replace("-2", "-1")} for a in assets]},
+    ]
+    for options in rejected:
+        try:
+            evidence(**options)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(("accepted untrusted/incomplete artifact evidence", options))
+    with tempfile.TemporaryDirectory() as temporary:
+        directory = pathlib.Path(temporary)
+        for platform in artifacts.PLATFORMS:
+            for suffix in (".tar.gz", ".tar.gz.sha256"):
+                (directory / f"gti-nightly-{platform}{suffix}").write_bytes(b"fixture")
+            artifacts.record(directory, platform, {"GITHUB_SHA": sha, "GITHUB_REPOSITORY": repository,
+                "GITHUB_RUN_ID": "7", "GITHUB_RUN_ATTEMPT": "2"})
+        artifacts.verify(directory, sha, 7, 2, repository)
+        manifest = directory / "provenance-linux-x64.json"
+        original = json.loads(manifest.read_text())
+        for field, value in (("sha", "b" * 40), ("profile", "system-llvm"), ("attempt", 1),
+                             ("run_id", 8), ("repository", "attacker/gti"), ("platform", "darwin-arm64")):
+            broken = copy.deepcopy(original)
+            broken[field] = value
+            manifest.write_text(json.dumps(broken))
+            try:
+                artifacts.verify(directory, sha, 7, 2, repository)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError(("accepted wrong provenance", field))
+        manifest.write_text(json.dumps(original))
+        archive = directory / "gti-nightly-linux-x64.tar.gz"
+        archive.write_bytes(b"tampered")
+        try:
+            artifacts.verify(directory, sha, 7, 2, repository)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("accepted tampered archive")
+        archive.write_bytes(b"fixture")
+        artifacts.verify(directory, sha, 7, 2, repository, consume=True)
+        assert not list(directory.glob("provenance-*"))
+
+
 def nightly_contract(root):
     nightly = (root / ".github/workflows/nightly.yml").read_text()
     ci = (root / ".github/workflows/ci.yml").read_text()
     sections = jobs(nightly)
-    assert list(sections) == ["select", "package", "suite", "release-gate", "publish"], list(sections)
+    assert list(sections) == ["select", "publish"], list(sections)
     header = nightly.split("\njobs:\n", 1)[0]
     assert '  schedule:\n    - cron: "0 2 * * *"\n  workflow_dispatch:' in header
     assert "push:" not in header and "pull_request" not in nightly, "nightly runs only on schedule or dispatch"
@@ -78,7 +159,8 @@ def nightly_contract(root):
     assert "ref: main" in select and "fetch-depth: 0" in select
     assert "python3 tests/ci_release_test.py ." in select and "select-nightly" in select
     assert '--ref "${GTI_REF}"' in select
-    package, suite = sections["package"], sections["suite"]
+    integration = jobs(ci)
+    package, suite = integration["package"], integration["integration"]
     assert "{os: ubuntu-24.04, platform: linux-x64, host: Linux-X64}" in package
     assert "{os: macos-26, platform: darwin-arm64, host: macOS-ARM64}" in package
     assert "linux-arm64" not in package.replace("# linux-arm64", ""), "linux-arm64 has no reviewed compiler"
@@ -86,8 +168,8 @@ def nightly_contract(root):
         assert body.count(CONFIGURE_RELEASE) == 1, "package and suite must configure one release build"
         assert "bash scripts/configure_ci_toolchain.sh" in body and "brew install" not in body
         assert "bash scripts/configure_ci_resources.sh" in body and "vars.GTI_TEST_JOBS" in body
-        assert "ref: ${{ needs.select.outputs.sha }}" in body
-        assert "if: needs.select.outputs.build == 'true'" in body
+        assert "ref: ${{ github.sha }}" in body
+        assert "needs.plan.outputs.mode == 'full'" in body
     assert "--event nightly" in package and 'mktemp -d "${RUNNER_TEMP}/gti-stage.XXXXXXXX"' in package
     assert package.index("name: Build\n") < package.index("name: Test installed toolchain")
     assert package.index("name: Test installed toolchain") < package.index("-DGTI_CHANNEL=nightly")
@@ -98,7 +180,7 @@ def nightly_contract(root):
     assert '-DGTI_BUILD_ID="${GTI_NIGHTLY_SHA}"' in package and "-DGTI_EXPECTED_TAG=nightly" in package
     assert "CMakeFiles/gti_driver.dir/src/driver/build.cpp.o" in package
     key = ("gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('CMakeLists.txt', "
-           "'cmake/**') }}-${{ needs.select.outputs.sha }}-${{ github.run_id }}")
+           "'cmake/**') }}-${{ github.sha }}-${{ github.run_id }}")
     assert f"key: {key}" in package and f"key: {key}" in suite, "suite shards reuse the package objects"
     assert "actions/cache/save@" in package and "actions/cache/save@" not in suite
     shards = re.findall(r"platform: (linux|darwin), shards: (\d+), index: (\d+)", suite)
@@ -107,11 +189,19 @@ def nightly_contract(root):
         assert rows and sorted(index for _, index in rows) == list(range(rows[0][0])), platform
         assert all(count == rows[0][0] for count, _ in rows)
     assert "validation_checks.py shard --build build" in suite
-    gate = sections["release-gate"]
-    assert "needs: [select, suite]" in gate
-    assert 'merge-shards\n          --shard-reports "${RUNNER_TEMP}/shards" --platforms darwin,linux' in gate
+    gate = integration["gate"]
+    assert "fast, package, integration, sanitizers]" in gate
+    assert "validation_checks.py ci-gate" in gate
+    assert "named_test_shards.py verify" in gate
     publish = sections["publish"]
-    assert "needs: [select, package, release-gate]" in publish
+    assert "needs: select" in publish
+    assert "run-id: ${{ needs.select.outputs.run_id }}" in publish
+    assert "pattern: gti-nightly-*-${{ needs.select.outputs.run_attempt }}" in publish
+    assert "release_artifacts.py verify" in publish
+    assert "release_artifacts.py record" in package
+    assert "gti-nightly-${{ matrix.platform }}-${{ github.run_attempt }}" in package
+    assert "retention-days: 30" in package
+    assert "cmake --build" not in nightly and "validation_checks.py shard" not in nightly
     assert "group: gti-nightly-publication\n      cancel-in-progress: false" in publish
     assert "GTI_NIGHTLY_PLATFORMS: linux-x64 darwin-arm64" in publish
     order = ["Verify the complete asset set", "admit-nightly", "attest-build-provenance",
@@ -196,8 +286,8 @@ def train_contract(root):
         assert "ref: ${{ needs.select.outputs.sha }}" in body
         assert "if: needs.select.outputs.build == 'true'" in body
     shard_rows = lambda body: re.findall(r"\{os: [^}]*shards: \d+, index: \d+\}", body)
-    assert shard_rows(suite) == shard_rows(nightly_jobs["suite"]), "beta runs the nightly's release shards"
-    assert shard_rows(backport_text) == shard_rows(nightly_jobs["suite"]), "backports run the same shards"
+    assert shard_rows(suite) == shard_rows(jobs(ci)["integration"]), "beta runs the nightly's release shards"
+    assert shard_rows(backport_text) == shard_rows(jobs(ci)["integration"]), "backports run the same shards"
     for check in ("lsp_smoke_test.py", "cli_smoke_test.py", "project_cli_smoke_test.py",
                   "process_resource_policy_test.py", "managed_thread_runtime_test.py",
                   "atomic_runtime_test.py", "installed_library_smoke"):
@@ -671,6 +761,7 @@ def main():
     args = parser.parse_args()
     root = args.root.resolve()
     workflow_contract(root)
+    artifact_contract(root)
     nightly_contract(root)
     train_contract(root)
     source_contract(root)

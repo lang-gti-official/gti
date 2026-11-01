@@ -6206,7 +6206,8 @@ four configurations, with seed `20260809`. It reported no additional defect.
 This is local macOS evidence, not Linux/Windows execution or a bundled-LLVM
 production archive check. The local build uses system LLVM; the isolated
 installed SDK, CLI/LSP and local Neovim archive checks pass with that setup.
-The release workflow remains responsible for bundled production packaging.
+Full integration now owns bundled production packaging for nightly; the
+beta workflow owns its versioned production build.
 
 `raw_pointer_conversion_contract` checks ordinary pointer-alias and dependent
 type calls, source-defined erasure/restoration helpers, constness, forbidden
@@ -9645,14 +9646,14 @@ the merge queue" in `agent-workflow.md` and the channels in
 and the helper scripts and their gates (`ci_resources`, `ci_cache`,
 `ci_sanitizer_capability`, `ci_release`, `release_asset_sync`,
 `release_version_policy`, `repository_hosting`) guard them. The CI workflow
-orders its jobs: early formatting, release-version and Tree-sitter checks gate
-the native toolchain job (`needs`); the sanitizer job follows the native job on a
-success or failure, never when it was skipped, so a native test failure still
-yields the sanitizer signal and the two heavy jobs never share one runner's
-budget. Tree-sitter is already a required native-job dependency alongside
-formatting
-and release-version checks; it is not an independent failing job that the
-native build ignores.
+runs formatting, release-version, Tree-sitter and workflow regressions before
+heavy jobs. Full integration retains the system-LLVM fast checks and Linux
+system-LLVM installed consumers, and requires production packaging, its installed
+consumer checks, bundled-release suite shards and the separate sanitizer
+matrix. Packaging precedes the release shards so they can reuse its object
+cache. Sanitizer jobs have their own runner budgets; one job's successful build
+does not satisfy another job's test gate. A failure in any required job keeps
+the CI gate red and prevents its artifacts from qualifying for nightly.
 
 CI and release jobs use the job's detected available processor count for both
 compilation and CTest. `scripts/configure_ci_resources.sh` uses `nproc` (not
@@ -9700,9 +9701,12 @@ failures, not reasons to skip verification. The cache helper uses compiler
 content checks without header/PCH/time-macro sloppiness or path rewriting, and
 caches no build tree, test results, or installed toolchain.
 The native CI build also supplies the deterministic documentation index,
-avoiding a second compiler build. Nightly and stable share one bundled build
-and complete validation suite per commit, but retain separate publication
-contracts described in `build-and-driver.md`.
+avoiding a second compiler build. Full integration builds nightly archives and runs the complete bundled-release
+suite plus installed-consumer and sanitizer gates. Nightly verifies and publishes
+those retained artifacts without another compiler build or full-suite run. Beta
+retains its own versioned build and suite; stable republishes the accepted beta
+archives byte for byte. These are separate publication contracts described in
+`build-and-driver.md`.
 In every profile, the cache is an exact-input build accelerator and never an authority for
 test selection, compiler semantics, or release contents. A cold cache must
 therefore pass the same build, build-tree tests, staged-toolchain tests, and
@@ -9713,7 +9717,12 @@ archives.
 
 `ci_resources`, `ci_cache`, and `ci_release` cover detected/explicit budgets,
 fail-closed cache setup, exact source/version/tag admission, shared-build
-workflow structure, and stale-nightly skipping. `ci_release` additionally
+workflow structure, and stale-nightly skipping. Artifact-reuse checks must also
+reject wrong source/run/attempt/platform/configuration, incomplete or expired
+artifact sets and altered archives/checksums; orchestration-only success does
+not establish release evidence. Main-only full CI dispatch is the commissioning
+and artifact-recovery route, with the same required integration gates.
+`ci_release` additionally
 archives a staged fixture through the real packaging script and compares both
 channels' contents and checksums. The cache test's optional `--ccache` mode
 proves cold/warm object identity and header/flag invalidation using a real

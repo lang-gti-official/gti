@@ -40,7 +40,10 @@ def main():
         log = output / f"command-{len(commands):03}.log"
         log.write_text(result.stdout + result.stderr)
         commands.append({"argv": [str(x) for x in argv], "exit": result.returncode, "log": log.name})
-        assert result.returncode == 0, str(log)
+        assert result.returncode == 0, (
+            f"{log}: command {argv!r} exited {result.returncode}\n"
+            f"{result.stdout[-3000:]}\n{result.stderr[-5000:]}"
+        )
         return result
 
     count = 0
@@ -54,6 +57,13 @@ def main():
         clang = shutil.which(args.clang)
         opt = shutil.which(args.opt)
         assert clang and opt
+        # A bundled upstream clang has no Homebrew/Xcode default SDK config.
+        # Resolve the selected developer SDK explicitly for the native link.
+        native_flags = []
+        if platform.system() == "Darwin":
+            sdk = run(["/usr/bin/xcrun", "--sdk", "macosx", "--show-sdk-path"]).stdout.strip()
+            assert sdk and Path(sdk).is_dir(), f"invalid macOS SDK: {sdk!r}"
+            native_flags = ["-isysroot", sdk]
         scalar_ir = output / "simd-scalarized.ll"
         run([opt, ir, "-passes=scalarizer,dce", "-S", "-o", scalar_ir])
         scalar_text = scalar_ir.read_text()
@@ -62,7 +72,7 @@ def main():
         for optimization, selected_ir in [(str(i), ir) for i in range(4)] + [("0", scalar_ir), ("3", scalar_ir)]:
             label = f"O{optimization}" + ("-scalarized" if selected_ir == scalar_ir else "")
             library = output / f"simd-{label}.{'dylib' if platform.system() == 'Darwin' else 'so'}"
-            run([clang, f"-O{optimization}", "-fno-fast-math", "-ffp-contract=off", "-fPIC",
+            run([clang, *native_flags, f"-O{optimization}", "-fno-fast-math", "-ffp-contract=off", "-fPIC",
                  "-fno-vectorize", "-fno-slp-vectorize",
                  "-dynamiclib" if platform.system() == "Darwin" else "-shared",
                  selected_ir, oracle, "-o", library])

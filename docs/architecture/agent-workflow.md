@@ -697,9 +697,10 @@ advisory-CI policy. `.github/workflows/ci.yml` reports one required check,
 | --- | --- | --- |
 | `pull_request` (ready) | full | lint (formatting, release version, Tree-sitter), workflow regressions, and `fast` on macOS arm64 and Linux x64 (`feedback-fast`, `compiler_pipeline` and the PR's declared T0/T1 tests) |
 | `pull_request` (draft) | draft | lint and workflow regressions only; a draft cannot enter the queue |
-| `merge_group` | full | lint, workflow regressions, every `integration` shard on both platforms, and `sanitizers` |
-| either | automation | lint and workflow regressions only |
-| either | component | always fails: a batch component cannot merge directly |
+| `merge_group` | full | lint, workflow regressions, system-LLVM `fast` checks, production packaging and installed checks, every bundled-release `integration` shard on both platforms, and `sanitizers` |
+| `workflow_dispatch` on main | full | the same full integration and production packaging gates, for release commissioning/recovery |
+| PR or merge group | automation | lint and workflow regressions only |
+| PR or merge group | component | always fails: a batch component cannot merge directly |
 
 `validation_checks.py ci-mode` classifies the candidate from its diff. A
 conservative automation-only diff (docs and the workflow scripts with their own
@@ -715,17 +716,34 @@ any non-automation path; adding a new workflow does not automatically exempt it.
 classification step binds `github.event_path` to `GTI_EVENT_PATH` and rejects
 missing or non-file payloads before running the classifier.
 
-In the queue, `validation_checks.py shard` builds the optimized tree, takes the
+In full integration, production packaging builds the pinned bundled LLVM/Clang
+release configuration on both platforms and validates the staged toolchain
+before archiving it. The integration shards reuse its object cache, with the
+same bundled release configuration; the cache never substitutes for validation.
+`validation_checks.py shard` builds the optimized tree, takes the
 complete CTest inventory, and runs its share of a deterministic partition:
 longest first onto the lightest shard, weighted by `tests/ci_test_durations.json`
 (slowest observed seconds; unknown tests take the default). The first shard on
 each platform also runs the native smoke, and the first Linux shard checks
-deterministic docgen and the installed toolchain. Each shard uploads a report
+deterministic docgen. The system-LLVM `fast` checks also run in full
+integration; their Linux job retains the installed-library and process-resource
+consumer checks against system LLVM. Production packages independently run
+their installed-consumer checks against bundled LLVM. Each shard uploads a report
 of its head, tree, inventory and executed tests. The gate merges them and fails
 unless, for each required platform, the shards are complete, disjoint, agree
 on source and inventory, ran every registered test exactly once and include the
 smoke, and both platforms validated the same source. Refresh the duration table
 from queue JUnit reports when shard wall times drift apart.
+
+Nightly consumes these CI-produced archives; it does not repeat compilation or
+the full suite. Publication binds the complete artifact set to the successful
+full CI run and attempt, exact source, platform, configuration and file hashes.
+The main-only full CI dispatch provides the same evidence for commissioning or
+recovery, including a main commit admitted under an explicit merge exception.
+The exception itself is not release evidence. Automation-only passes produce
+no production archives, and missing or expired artifacts require a new full
+run rather than reuse of older binaries under a new source identity. See
+[GitHub nightly publication](build-and-driver.md#github-nightly-publication).
 
 Shards run with every test timeout scaled three times
 (`-DGTI_TEST_TIMEOUT_SCALE=3`): hosted runners have 3-4 cores, against the

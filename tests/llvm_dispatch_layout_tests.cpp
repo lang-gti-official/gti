@@ -4011,10 +4011,44 @@ void testExchangedAndReturnedTransferPlanning() {
       load("tests/fixtures/llvm_dispatch_exchanged_transfers.gti");
   const auto &program = exchanged.program().mir();
   std::size_t exchanges = 0;
+  std::size_t lambdaConstructions = 0, lambdaCalls = 0, lambdaMoves = 0;
   for (const auto address : enumerateMirBodyAddresses(program)) {
     const auto &body = *findMirBody(program, address);
     for (const auto &block : body.blocks)
       for (const auto &stage : block.instructions) {
+        if (address.kind == MirBodyKind::Lambda &&
+            isFreshObjectProducer(program, stage) &&
+            containsHierarchyStorage(program, stage.info.type)) {
+          const Placement placement(body);
+          const auto destination = freshConstructionDestination(
+              program, address, body, placement, stage);
+          // Replacements passed as arguments have their own storage contract;
+          // check the constructions and results published into whole locals.
+          if (const auto *target = placement.target(*stage.result);
+              target && target->place &&
+              body.findPlace(target->place)->root ==
+                  MirPlaceRootKind::Binding) {
+            expect(destination == target->place,
+                   "lambda-local hierarchy producers publish in final storage");
+            lambdaConstructions += stage.kind == MirInstructionKind::Construct;
+            lambdaCalls += stage.kind == MirInstructionKind::Call;
+            for (unsigned mutation = 0; mutation != 2; ++mutation) {
+              auto changed = program;
+              auto &changedBody = *findMirBody(changed, address);
+              auto &place = changedBody.places.at(target->place - 1);
+              if (mutation == 0)
+                place.capture = 1;
+              else
+                place.binding = changed.findLambda(address.owner)
+                                    ->parameterBindings.front();
+              expect(
+                  !freshConstructionDestination(changed, address, changedBody,
+                                                Placement(changedBody),
+                                                find(changedBody, stage.id)),
+                  "a lambda capture or parameter is not fresh local storage");
+            }
+          }
+        }
         if (!isFreshHierarchyTransferProducer(stage) ||
             stage.kind != MirInstructionKind::Move)
           continue;
@@ -4025,6 +4059,20 @@ void testExchangedAndReturnedTransferPlanning() {
           planned = planFreshHierarchyTransfer(program, body, stage);
         } catch (const BackendUnsupportedError &) {
           continue;
+        }
+        if (address.kind == MirBodyKind::Lambda &&
+            planned.publishes == FreshHierarchyPublication::Local) {
+          ++lambdaMoves;
+          auto changed = program;
+          auto &changedBody = *findMirBody(changed, address);
+          changedBody.places.at(planned.destination - 1).binding =
+              changed.findLambda(address.owner)->parameterBindings.front();
+          rejects<BackendUnsupportedError>(
+              [&] {
+                static_cast<void>(planFreshHierarchyTransfer(
+                    changed, changedBody, find(changedBody, stage.id)));
+              },
+              "a moved lambda local cannot publish over an incoming parameter");
         }
         if (planned.publishes != FreshHierarchyPublication::Exchange)
           continue;
@@ -4077,6 +4125,9 @@ void testExchangedAndReturnedTransferPlanning() {
   }
   expect(exchanges >= 3,
          "exchanged elements, fields and slots were planned and mutated");
+  expect(lambdaConstructions && lambdaCalls && lambdaMoves >= 2,
+         "lambda locals cover construction, exchanged results and "
+         "local/parameter moves");
 
   const auto siblings =
       load("tests/fixtures/llvm_dispatch_returned_siblings.gti");

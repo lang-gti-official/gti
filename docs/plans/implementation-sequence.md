@@ -7677,7 +7677,8 @@ consumer, and release refreshes remain outstanding for the full campaign.
   The recorded 0.346.0 combined production suite passed all 294 tests. That
   historical publication included other tasks' shared-checkout work with
   explicit user approval and used Gitea's then-current release workflow.
-  Current publication follows the Gitea PR/nightly/stable lifecycle.
+  Current publication follows the GitHub PR/merge-queue and nightly/beta/stable
+  lifecycle in `docs/architecture/build-and-driver.md`.
   The earlier owning-wrapper deferral in L-CALL-01 is superseded.
 - **Unlocks:** a command schema with an owned handler and an object API such as
   `set_auth_login_callback(lambda)` that retains and invokes the callback later.

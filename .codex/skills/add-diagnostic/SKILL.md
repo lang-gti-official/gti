@@ -38,7 +38,7 @@ earliest phase that knows the rule.
 
 After local validation, use `$agent-workflow` and `$finish-release` for PR
 integration, local-main sync and version policy. Respect required PR checks;
-post-merge packaging does not block completion. Explicit PR-only/local-only
+post-merge release publication does not block completion. Explicit PR-only/local-only
 instructions override integration.
 
 Do not use `GTI-B0001` for invalid user source; it is the internal MIR/backend

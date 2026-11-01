@@ -120,9 +120,9 @@ not a C++ wrapper, and neither backend defines its semantics.
   role. A PR's `CI gate` runs the fast checks (lint, workflow regressions, and
   a macOS arm64 and Linux x64 build with `feedback-fast` and
   `compiler_pipeline`); the queue's `CI gate` runs the complete suite in
-  cost-balanced shards on both platforms, the sanitizer subset and the
-  installed-toolchain checks, and proves the shards covered every registered
-  test. Explicitly allowlisted orchestration-only changes run lint and workflow
+  cost-balanced bundled-release shards on both platforms, the sanitizer subset
+  and installed-toolchain checks, produces the production archives, and proves
+  the shards covered every registered test. Explicitly allowlisted orchestration-only changes run lint and workflow
   regressions instead; compiler/runtime, build/packaging, validation selection,
   mixed and unknown changes retain full integration coverage. See the CI
   classification contract in `docs/architecture/agent-workflow.md`.
@@ -301,11 +301,14 @@ one-off implementation-note or redesign files when an existing category fits.
 
 ## Release Channels And VERSION
 
-Two channels publish this repository, and they answer different questions.
+The nightly, beta and stable channels serve different release stages.
 Toolchain releases publish to GitHub Releases on `lang-gti-official/gti`.
-`.github/workflows/nightly.yml` and the release train (`train.yml`, `beta.yml`,
-`backport.yml`, `rollback.yml`, logic in `scripts/release_train.py`) package
-`linux-x64` and `darwin-arm64` on GitHub-hosted runners; `linux-arm64` waits
+Full integration in `.github/workflows/ci.yml` builds and validates the nightly
+archives for `linux-x64` and `darwin-arm64` on GitHub-hosted runners;
+`nightly.yml` publishes those existing artifacts without rebuilding. The release
+train (`train.yml`, `beta.yml`, `backport.yml`, `rollback.yml`, logic in
+`scripts/release_train.py`) retains versioned beta builds and byte-for-byte
+stable promotion. `linux-arm64` waits
 for a reviewed linux-aarch64 runtime compiler profile. The Neovim installer
 downloads from GitHub Releases. The
 frozen Gitea workflow (`.gitea/workflows/release.yml`) no longer runs. Do not
@@ -314,9 +317,14 @@ on Gitea and is unaffected. See "Published Toolchain Channels" in
 `docs/architecture/build-and-driver.md`.
 
 - **Nightly** republishes one rolling `nightly` prerelease, daily, from the
-  newest `main` commit that passed the merge queue's `CI gate`. It replaces
-  its own assets and needs no `VERSION` change. Every merged commit reaches
-  users through this channel.
+  selected `main` commit with successful full CI and retained production
+  artifacts. It verifies exact source/run/attempt, platform, configuration and
+  checksums before publication; it does not compile or rerun the full suite.
+  Merge-queue CI normally supplies this evidence. A full CI dispatch on main
+  supplies commissioning/recovery evidence after a merge exception or missing
+  artifacts. PR-only or automation-only passes cannot qualify. Missing evidence
+  stops publication rather than relabelling an older compiler. Nightly replaces
+  its own assets and needs no `VERSION` change.
 - **Beta** is `v<VERSION>-beta.<K>`, a GitHub prerelease. Every 48 hours the
   train cuts the published nightly's commit, once it has been on `main` for 24
   hours, into a `Release-Cut:` PR that the merge queue lands like any other
