@@ -1539,7 +1539,8 @@ class CIEnvironment(unittest.TestCase):
             output = root / "runner output"
             env = {key: value for key, value in os.environ.items()
                    if key not in {"GITEA_EVENT_PATH", "GITHUB_EVENT_PATH"}}
-            env.update(GTI_EVENT_PATH=str(payload), GTI_BASE_SHA=base, GITHUB_OUTPUT=str(output))
+            env.update(GTI_EVENT_PATH=str(payload), GTI_BASE_SHA=base, GITHUB_OUTPUT=str(output),
+                       GITHUB_EVENT_NAME="pull_request", GITHUB_REF="refs/pull/1/merge")
 
             def execute(success):
                 output.write_text("")
@@ -1560,6 +1561,13 @@ class CIEnvironment(unittest.TestCase):
                     self.assertEqual(execute(False), "")
             env["GTI_EVENT_PATH"] = str(payload)
             payload.write_text("invalid JSON")
+            self.assertEqual(execute(False), "")
+            # Full commissioning ignores diff classification, but only on main.
+            # Simulate this explicitly rather than inheriting the host event.
+            payload.write_text("{}")
+            env.update(GITHUB_EVENT_NAME="workflow_dispatch", GITHUB_REF="refs/heads/main")
+            self.assertEqual(execute(True), "mode=full\n")
+            env["GITHUB_REF"] = "refs/heads/feature"
             self.assertEqual(execute(False), "")
         self.assertIn("GTI_EVENT_PATH: ${{ github.event_path }}", step)
 
