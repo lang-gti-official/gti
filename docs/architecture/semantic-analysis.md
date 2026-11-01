@@ -3095,6 +3095,16 @@ uses the selected stored dependency, not the alias's separate physical-shell
 loan. A projected referent retains its exact suffix instead of becoming an
 alias of the whole external owner. Dynamic, ambiguous and recursive declaration
 provenance remain conservative.
+Ordinary recursive reference-returning functions can still relay their one
+declared parameter origin through safe owning accessors. This needs no
+recursive allocation-path summary: each call protects its checked origin,
+and body analysis validates the returned reference against that contract.
+The selected referent and protecting root remain distinct in MIR. Owner
+reset, movement and unlinking conflict with the retained root loan; arbitrary
+raw-pointer reachability does not establish an owner dependency. The
+`borrow_origin` owner-chain regressions and `owner_chain_runtime` example cover
+both shared and mutable recursion, invalidation and escaping-reference
+rejections, return-loan verifier mutations and native cleanup.
 Synthesized range dereference retains the selected physical range-storage loan
 before composing field mappings. Its transitive resource dependency remains
 separate; borrowing an element cannot be substituted with borrowing the resource
