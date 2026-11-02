@@ -22,6 +22,27 @@ void expect(bool condition, const char *message) {
   }
 }
 
+void allocationLayoutWitness() {
+  using lang::native_llvm::processMallocSatisfiesLayout;
+  for (const auto specification : {"e-p:32:32", "e-p:64:64", "e-p:64:32"}) {
+    const llvm::DataLayout layout(specification);
+    const auto size = layout.getPointerSize(0);
+    const auto alignment = layout.getPointerABIAlignment(0).value();
+    expect(processMallocSatisfiesLayout(layout, 1, 1),
+           "one byte needs only byte alignment");
+    expect(processMallocSatisfiesLayout(layout, size, alignment) &&
+               processMallocSatisfiesLayout(layout, size + 1, alignment),
+           "a fitting target pointer witnesses its ABI alignment");
+    expect(!processMallocSatisfiesLayout(layout, size - 1, alignment) &&
+               !processMallocSatisfiesLayout(layout, size, alignment * 2),
+           "neither undersized nor over-aligned requests inherit a witness");
+    expect(!processMallocSatisfiesLayout(layout, 0, 1) &&
+               !processMallocSatisfiesLayout(layout, size, 0) &&
+               !processMallocSatisfiesLayout(layout, size, 3),
+           "empty and malformed requests are not ordinary allocations");
+  }
+}
+
 void providerContracts() {
   using namespace lang;
   using namespace lang::native_llvm;
@@ -118,6 +139,32 @@ void providerContracts() {
     if (first->getArgOperand(index)->getType()->isPointerTy())
       expect(first->doesNotCapture(index),
              "the sealed allocation provider cannot retain its status pointer");
+
+  if (input->program().mir().target().os != "windows") {
+    auto *ordinaryAllocation =
+        llvm::cast<llvm::CallBase>(memory.allocateStorage(
+            session.dataLayout().getPointerSize(0),
+            session.dataLayout().getPointerABIAlignment(0).value()));
+    auto *tinyAligned =
+        llvm::cast<llvm::CallBase>(memory.allocateStorage(1, 2));
+    expect(ordinaryAllocation->getCalledFunction()->getName() ==
+                   "gti_rt_malloc_v1" &&
+               ordinaryAllocation->hasRetAttr(llvm::Attribute::NoAlias) &&
+               ordinaryAllocation->arg_size() == 1 &&
+               !ordinaryAllocation->hasRetAttr(llvm::Attribute::NonNull) &&
+               !ordinaryAllocation->onlyReadsMemory(),
+           "fitting target witness selects nullable fresh ordinary allocation");
+    expect(tinyAligned->getCalledFunction()->getName() ==
+               "gti_rt_posix_memalign_v1",
+           "tiny aligned storage retains the explicit aligned provider");
+    auto *unclassified = ir.CreateCall(ordinaryAllocation->getCalledFunction(),
+                                       {ir.getInt64(64)});
+    expect(
+        !unclassified->hasRetAttr(llvm::Attribute::NoAlias) &&
+            !ordinaryAllocation->getCalledFunction()->hasRetAttribute(
+                llvm::Attribute::NoAlias),
+        "ordinary malloc-spelled foreign calls inherit no freshness promise");
+  }
 
   // The same physical declaration can also be reached by an unclassified C
   // call. Attribute only the edge carrying the exact process-memory witness.
@@ -280,6 +327,7 @@ void sourceProviderContracts(const std::filesystem::path &root) {
 int main(int argc, char **argv) {
   if (argc != 2)
     return 2;
+  allocationLayoutWitness();
   providerContracts();
   sourceProviderContracts(std::filesystem::path(argv[1]));
   using namespace lang;
@@ -313,8 +361,9 @@ int main(int argc, char **argv) {
                signature->symbol, SemanticType::Bool, signature->parameters) ==
                Operation::None,
            "provider result transport is not guessed from a symbol");
-    const bool posix = operation >= Operation::PosixPointerSize &&
-                       operation <= Operation::PosixRelease;
+    const bool posix = (operation >= Operation::PosixPointerSize &&
+                        operation <= Operation::PosixRelease) ||
+                       operation == Operation::PosixMalloc;
     const bool aligned = operation == Operation::AlignedAllocate ||
                          operation == Operation::AlignedRelease;
     expect(processMemoryRuntimeSelectedForTarget(operation, "windows") ==

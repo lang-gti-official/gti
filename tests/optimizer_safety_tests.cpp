@@ -1363,6 +1363,102 @@ int32_t descending(uint64_t seed, mut uint64_t rounds) {
   }
 }
 
+void testSuccessfulBoundsPostconditions() {
+  const auto frontend = analyzeTrusted("successful-bounds.gti", R"(
+extern "C" { void mutate_index(mut int32_t& value); }
+int32_t after_write(int32_t index) {
+  mut int32_t values[8] = {};
+  values[index] = 3;
+  return index + int32_t(1);
+}
+int32_t after_read(int32_t index) {
+  mut int32_t values[8] = {};
+  int32_t seen = values[index];
+  return index + seen + int32_t(1);
+}
+int32_t after_address(int32_t index) {
+  mut int32_t values[8] = {};
+  const int32_t* address = &values[index];
+  return index + int32_t(1);
+}
+int32_t skipped(int32_t index, bool checked) {
+  mut int32_t values[8] = {};
+  if (checked) values[index] = 3;
+  return index + int32_t(1);
+}
+int32_t changed(int32_t initial) {
+  mut int32_t index = initial;
+  mut int32_t values[8] = {};
+  values[index] = 3;
+  mutate_index(index);
+  return index + int32_t(1);
+}
+int32_t aliases_index(int32_t index) {
+  mut int32_t values[8] = {};
+  values[0] = index;
+  values[values[0]] = 2147483647;
+  return values[0] + int32_t(1);
+}
+int32_t checked_loop(int32_t initial) {
+  mut int32_t index = initial;
+  mut int32_t values[8] = {};
+  for (mut int32_t round = 0; round < 3; round++) {
+    values[index] = 3;
+    index = index + int32_t(1);
+  }
+  return index;
+}
+uint64_t repeated(uint64_t index, uint64_t size) {
+  gti_internal::index_bounds_check(index, size);
+  gti_internal::index_bounds_check(index, size);
+  return index;
+}
+uint64_t different(uint64_t index, uint64_t size, uint64_t other) {
+  gti_internal::index_bounds_check(index, size);
+  gti_internal::index_bounds_check(index, other);
+  return index;
+}
+int32_t main() { return 0; }
+)");
+  expect(frontend.canGenerateCode(), "successful-bounds fixture should lower");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &d : frontend.diagnostics)
+      std::cerr << d.code << ": " << d.message << '\n';
+    return;
+  }
+  for (const auto level :
+       {lang::OptimizationLevel::O2, lang::OptimizationLevel::O3}) {
+    const auto optimized = lang::OptimizationPipeline().run(
+        {.hir = frontend.hir, .mir = frontend.mir, .level = level});
+    expect(optimized.valid(), "successful bounds proofs must replay");
+    const auto adds = [&](std::string_view name) {
+      return functionOperationDischarges(
+          frontend, optimized, name,
+          lang::MirSafetyCheckFamily::ArithmeticOverflow,
+          lang::MirOperation::Add, lang::SemanticType::Int32);
+    };
+    for (const auto name : {"after_write", "after_read", "after_address"})
+      expect(adds(name) > 0,
+             std::string(name) +
+                 " learns a bounded index only after successful access (" +
+                 std::to_string(adds(name)) + ")");
+    for (const auto name : {"skipped", "changed", "aliases_index"})
+      expect(adds(name) == 0,
+             std::string(name) +
+                 " must retain its potentially overflowing addition");
+    const auto bounds = [&](std::string_view name) {
+      return functionDischarges(frontend, optimized, name,
+                                lang::MirSafetyCheckFamily::Bounds);
+    };
+    expect(bounds("repeated") == 1,
+           "only the repeated logical-size check is discharged (" +
+               std::to_string(bounds("repeated")) + ")");
+    expect(bounds("different") == 0 && bounds("checked_loop") == 0,
+           "different bounds and the loop's potentially failing first/later "
+           "access remain checked");
+  }
+}
+
 void testRelationalEdgeArguments() {
   using namespace lang;
   // Analysis-only scheduling probes use the frontend's actual intrinsic and
@@ -2743,9 +2839,9 @@ int32_t main() {
 
 // A multidimensional access checks each prefix before evaluating the next
 // index, then retains the complete place on its terminal bounds operation.
-// Proving only the last index must not discharge that terminal check: every
-// dimension must be proven. The early AddressOf preflight currently remains
-// conservatively checked and retains its own first-failure source identity.
+// Every dimension must be proven before the terminal check. A successful
+// prefix preflight supplies its dimension's bound; it remains conservatively
+// checked and retains its own first-failure source identity.
 void testChainedFixedArrayDimensionBounds() {
   const std::string source = R"(
 int32_t proven_chain() {
@@ -2877,10 +2973,12 @@ int32_t main() { return proven_chain(); }
   expect(o3.valid() && bounds("proven_chain") == 1,
          "a chained element access whose every dimension is proven should "
          "discharge its terminal bounds site without erasing the preflight");
-  expect(o3.valid() && bounds("dynamic_parent_chain") == 0 &&
-             bounds("dynamic_terminal_chain") == 0,
-         "an unproven dimension anywhere in the chain must leave the access "
-         "checked, whichever dimension it is");
+  expect(o3.valid() && bounds("dynamic_parent_chain") == 1,
+         "a successful prefix preflight proves the dynamic parent dimension "
+         "for the later terminal access");
+  expect(
+      o3.valid() && bounds("dynamic_terminal_chain") == 0,
+      "an unproven terminal dimension must leave the terminal access checked");
   expect(functionOperationDischarges(frontend, o3, "proven_chain",
                                      lang::MirSafetyCheckFamily::Bounds,
                                      lang::MirOperation::AddressOf) == 0,
@@ -2897,6 +2995,7 @@ int main() {
   testOpaqueRuntimeCallInvalidation();
   testSourcePrefixBoundsRelation();
   testRelationalBoundsDischarge();
+  testSuccessfulBoundsPostconditions();
   testRelationalEdgeArguments();
   testDivisionAndComposedEnvelopes();
   testClosedIndexedElementEnvelope();

@@ -116,6 +116,30 @@ test limit before the operation. This is not a process-wide cache: later
 operations observe the limit again. Descriptor size/alignment, nonnull address,
 actual address alignment and matching-provider rollback checks remain intact.
 
+On non-Windows targets, process allocation uses the sealed `gti_rt_malloc_v1`
+byte adapter when alignment is one, or when a target `void*` object both fits
+within the requested byte extent and has at least the requested alignment.
+This is a target-layout witness, not an assumed host maximum alignment: tiny
+non-byte-aligned and over-aligned requests keep `gti_rt_posix_memalign_v1` and
+its unchanged status mapping. Both routes release through the same POSIX free
+adapter. Windows keeps its aligned CRT pair. Zero-size requests make no native
+allocation; null on the ordinary route maps to resource exhaustion. Descriptor
+contents, actual address checks, exact release and failed sparse-region rollback
+are unchanged. LLVM's compiler-owned scalar/box allocation chooses the physical
+provider with the same target-layout witness after extent validation.
+
+The appended private operation has an exact fixed-width signature and target
+selection in `process_memory_runtime`; an application declaration with the same
+symbol stays an ordinary foreign call. Its MIR effect allocates but has no
+status-pointee write. Verified LLVM call edges retain nullable fresh-return
+`noalias`, without declaration-wide purity, nonnull, extent or capture promises.
+Injected allocation providers implement both routes with the same observation,
+failure and release accounting. `process_provider_target_contract`,
+`llvm_memory_contracts`, `resource_memory_runtime` and
+`process_storage_query_runtime` own the route/signature, size/alignment boundary,
+exhaustion and rollback controls. Allocation count and runtime improvements
+still require measurement; choosing the ordinary route is not allocation elision.
+
 | Allocation family | Current owner and rationale |
 | --- | --- |
 | Sparse object bytes and per-slot metadata | Source `try_allocate_sparse`, leases and process-resource policy in the private `stdlib/std/detail/memory_storage.gti` interface; POSIX/CRT adapters only acquire or release bytes. The old `gti_rt_memory_allocate_v1`/`release_v1`, sparse C++ allocation/bitmap helpers and sparse capability operations have no remaining consumers and are removed. |

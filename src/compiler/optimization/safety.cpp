@@ -1817,6 +1817,58 @@ void refineTagPredicate(const MirProgram *program, MirBodyAddress address,
                         const TagPredicate &predicate, bool value,
                         Evidence evidence);
 
+// Refine a successfully observed scalar and any still-current origin. Bounds
+// are independent facts at this program point; the failure continuation keeps
+// the pre-instruction state and cannot observe these postconditions.
+void applyIntegerBounds(const MirBody &body, AbstractState &state,
+                        MirValueId value, IntegerFact fact,
+                        std::optional<CheckedIntegerValue> lower,
+                        std::optional<CheckedIntegerValue> upper,
+                        const Evidence &evidence) {
+  if (!intersect(fact, lower, upper, evidence)) {
+    state.reachable = false;
+    return;
+  }
+  // This edge's predicate is an independent threshold. An earlier contextual
+  // singleton is not an invariant of repeated executions of the guard: keeping
+  // it here would make an affine loop expand its threshold one step at a time.
+  auto branchEnvelope =
+      std::pair{minimumValue(fact.domain), maximumValue(fact.domain)};
+  if (lower && compare(*lower, branchEnvelope.first) > 0) {
+    branchEnvelope.first = *lower;
+  }
+  if (upper && compare(*upper, branchEnvelope.second) < 0) {
+    branchEnvelope.second = *upper;
+  }
+  if (compare(branchEnvelope.first, branchEnvelope.second) <= 0) {
+    fact.wideningEnvelope = branchEnvelope;
+  }
+  state.integers[value] = fact;
+  const auto loadedOrigin = state.loadedOrigins.find(value);
+  if (loadedOrigin != state.loadedOrigins.end()) {
+    const MirPlaceId place = loadedOrigin->second;
+    IntegerFact placeFact = integerForPlace(body, state, place).value_or(fact);
+    if (!intersect(placeFact, lower, upper, evidence)) {
+      state.reachable = false;
+      return;
+    }
+    placeFact.wideningEnvelope = fact.wideningEnvelope;
+    state.integerPlaces[place] = std::move(placeFact);
+  }
+  if (const auto origin = state.fieldOrigins.find(value);
+      origin != state.fieldOrigins.end()) {
+    auto &fields = state.objects[origin->second.root].integers;
+    auto field = fields.find(origin->second.path);
+    IntegerFact current = field == fields.end() ? fact : field->second;
+    if (!intersect(current, lower, upper, evidence)) {
+      state.reachable = false;
+      return;
+    }
+    current.wideningEnvelope = fact.wideningEnvelope;
+    publishFieldFact(body, state, origin->second, current);
+  }
+}
+
 void refineCondition(const MirBody &body, MirBlockId block,
                      const MirOperand &condition, AbstractState &state,
                      bool branchTaken, Evidence conditionEvidence = {},
@@ -1985,49 +2037,8 @@ void refineCondition(const MirBody &body, MirBlockId block,
   add(evidence, block);
   addInstruction(evidence, comparison->id);
   addValue(evidence, condition.value);
-  if (!intersect(*variableFact, lower, upper, evidence)) {
-    state.reachable = false;
-    return;
-  }
-  // This edge's predicate is an independent threshold. An earlier contextual
-  // singleton is not an invariant of repeated executions of the guard: keeping
-  // it here would make an affine loop expand its threshold one step at a time.
-  auto branchEnvelope = std::pair{minimumValue(variableFact->domain),
-                                  maximumValue(variableFact->domain)};
-  if (lower && compare(*lower, branchEnvelope.first) > 0) {
-    branchEnvelope.first = *lower;
-  }
-  if (upper && compare(*upper, branchEnvelope.second) < 0) {
-    branchEnvelope.second = *upper;
-  }
-  if (compare(branchEnvelope.first, branchEnvelope.second) <= 0) {
-    variableFact->wideningEnvelope = branchEnvelope;
-  }
-  state.integers[variable->value] = *variableFact;
-  const auto loadedOrigin = state.loadedOrigins.find(variable->value);
-  if (loadedOrigin != state.loadedOrigins.end()) {
-    const MirPlaceId place = loadedOrigin->second;
-    IntegerFact placeFact =
-        integerForPlace(body, state, place).value_or(*variableFact);
-    if (!intersect(placeFact, lower, upper, evidence)) {
-      state.reachable = false;
-      return;
-    }
-    placeFact.wideningEnvelope = variableFact->wideningEnvelope;
-    state.integerPlaces[place] = std::move(placeFact);
-  }
-  if (const auto origin = state.fieldOrigins.find(variable->value);
-      origin != state.fieldOrigins.end()) {
-    auto &fields = state.objects[origin->second.root].integers;
-    auto field = fields.find(origin->second.path);
-    IntegerFact current = field == fields.end() ? *variableFact : field->second;
-    if (!intersect(current, lower, upper, evidence)) {
-      state.reachable = false;
-      return;
-    }
-    current.wideningEnvelope = variableFact->wideningEnvelope;
-    publishFieldFact(body, state, origin->second, current);
-  }
+  applyIntegerBounds(body, state, variable->value, *variableFact, lower, upper,
+                     evidence);
 }
 
 void refineBranch(const MirBody &body, const MirBlock &block,
@@ -5288,13 +5299,11 @@ void invalidateValueStorage(const MirProgram *program, MirBodyAddress address,
   return true;
 }
 
-void applyInstruction(const MirBody &body,
-                      const MirPlaceAliasEscapeAnalysis &aliases,
-                      const MirBlock &block, const MirInstruction &instruction,
-                      AbstractState &state,
-                      const PlaceThresholds *thresholds = nullptr,
-                      ClosedCallRound *closedCalls = nullptr,
-                      MirBodyAddress address = {}) {
+void applyInstructionCore(
+    const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
+    const MirBlock &block, const MirInstruction &instruction,
+    AbstractState &state, const PlaceThresholds *thresholds = nullptr,
+    ClosedCallRound *closedCalls = nullptr, MirBodyAddress address = {}) {
   if (!state.reachable || instruction.tombstone) {
     return;
   }
@@ -6445,6 +6454,90 @@ void applyInstruction(const MirBody &body,
   // reachable place through a reference or opaque host boundary. Value facts
   // remain valid because MIR values are immutable.
   unknownEffectBarrier();
+}
+
+// Every checked indexing operation either fails or establishes its bounds.
+// Keep these facts in the successful state even when the access could not be
+// discharged beforehand. This also lets a loop carry bounded indices learned
+// from an earlier iteration without making its first access unchecked.
+void refineSuccessfulBounds(const MirBody &body, const MirBlock &block,
+                            const MirInstruction &instruction,
+                            AbstractState &state) {
+  if (!state.reachable || instruction.tombstone)
+    return;
+  const auto hasBounds = [&](DefinedFailureDetail detail) {
+    for (const auto &origin : instruction.definedFailure.localOrigins)
+      for (const auto &outcome : origin.outcomes)
+        if (outcome.code == DefinedFailureCode::IndexOutOfBounds &&
+            outcome.detail == detail)
+          return true;
+    return false;
+  };
+  if (instruction.intrinsic == IntrinsicKind::StorageBoundsCheck &&
+      instruction.info.type == SemanticType::Void && !instruction.result &&
+      !instruction.receiver && instruction.operands.size() == 2 &&
+      instruction.operands[0].type == SemanticType::UInt64 &&
+      instruction.operands[1].type == SemanticType::UInt64) {
+    // The trusted detector itself establishes index < size on return. Reuse
+    // the same typed relation representation as a successful comparison.
+    recordOrder(body, state, block.id, instruction, MirOperation::Less, true,
+                {}, 0);
+  }
+  if (!hasBounds(DefinedFailureDetail::FixedArray))
+    return;
+  MirPlaceId projected = 0;
+  if (instruction.kind == MirInstructionKind::Load && instruction.result &&
+      instruction.operands.size() == 1)
+    projected = instruction.operands.front().place;
+  else if (instruction.kind == MirInstructionKind::Assign &&
+           instruction.destination && instruction.operands.size() == 1)
+    projected = *instruction.destination;
+  else if (instruction.kind == MirInstructionKind::Compute &&
+           instruction.operation == MirOperation::AddressOf &&
+           instruction.operands.size() == 1)
+    projected = instruction.operands.front().place;
+  const MirPlace *element = body.findPlace(projected);
+  while (element && !element->projections.empty() &&
+         element->projections.back().kind == MirProjectionKind::Index) {
+    const MirPlace *array = fixedArrayParentPlace(body, *element);
+    if (!array)
+      return;
+    const auto &projection = element->projections.back();
+    if (!projection.constantIndex && projection.index != 0) {
+      const auto fact = integerForValue(body, state, projection.index);
+      if (fact) {
+        if (array->type.arrayLength == 0) {
+          state.reachable = false;
+          return;
+        }
+        Evidence evidence;
+        add(evidence, block.id);
+        addInstruction(evidence, instruction.id);
+        addPlace(evidence, element->id);
+        addPlace(evidence, array->id);
+        addValue(evidence, projection.index);
+        applyIntegerBounds(
+            body, state, projection.index, *fact, CheckedIntegerValue{},
+            CheckedIntegerValue{.magnitude = array->type.arrayLength - 1},
+            evidence);
+        if (!state.reachable)
+          return;
+      }
+    }
+    element = array;
+  }
+}
+
+void applyInstruction(const MirBody &body,
+                      const MirPlaceAliasEscapeAnalysis &aliases,
+                      const MirBlock &block, const MirInstruction &instruction,
+                      AbstractState &state,
+                      const PlaceThresholds *thresholds = nullptr,
+                      ClosedCallRound *closedCalls = nullptr,
+                      MirBodyAddress address = {}) {
+  applyInstructionCore(body, aliases, block, instruction, state, thresholds,
+                       closedCalls, address);
+  refineSuccessfulBounds(body, block, instruction, state);
 }
 
 [[nodiscard]] BlockTransfer

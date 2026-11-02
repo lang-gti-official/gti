@@ -14,6 +14,15 @@
 
 namespace lang::native_llvm {
 
+bool processMallocSatisfiesLayout(const llvm::DataLayout &layout,
+                                  std::uint64_t size, std::uint64_t alignment) {
+  if (!size || !alignment || (alignment & (alignment - 1)))
+    return false;
+  return alignment == 1 ||
+         (alignment <= layout.getPointerABIAlignment(0).value() &&
+          size >= layout.getPointerSize(0));
+}
+
 bool nativeProcessMemoryBinding(const MirProgram &program,
                                 const MirFunctionInstance &function) {
   const auto *signature =
@@ -142,7 +151,8 @@ llvm::Value *Memory::providerCall(ProcessMemoryRuntimeOperation operation,
   // guarantees, not properties inferred from a public allocator name. Keep
   // them on this verified call edge: an ordinary foreign declaration does not
   // inherit them merely because it has the same symbol or physical signature.
-  if (operation == ProcessMemoryRuntimeOperation::PosixAllocate ||
+  if (operation == ProcessMemoryRuntimeOperation::PosixMalloc ||
+      operation == ProcessMemoryRuntimeOperation::PosixAllocate ||
       operation == ProcessMemoryRuntimeOperation::AlignedAllocate)
     call->addRetAttr(llvm::Attribute::NoAlias);
   // The POSIX status address is only written, never returned or retained. Do
@@ -186,11 +196,17 @@ llvm::Value *Memory::allocateBytes(std::uint64_t size,
                                               ir.getInt64(alignment)};
     return providerCall(ProcessMemoryRuntimeOperation::AlignedAllocate, inputs);
   }
+  // Use target layout, never host sizeof: malloc's fundamental-alignment
+  // witness must fit this request. Tiny non-byte-aligned requests stay aligned.
+  const auto pointerSize = session.dataLayout().getPointerSize();
+  if (processMallocSatisfiesLayout(session.dataLayout(), size, alignment)) {
+    const std::array<llvm::Value *, 1> inputs{ir.getInt64(size)};
+    return providerCall(ProcessMemoryRuntimeOperation::PosixMalloc, inputs);
+  }
   llvm::IRBuilder<> entry(
       &ir.GetInsertBlock()->getParent()->getEntryBlock(),
       ir.GetInsertBlock()->getParent()->getEntryBlock().begin());
   auto *status = entry.CreateAlloca(ir.getInt32Ty());
-  const auto pointerSize = session.dataLayout().getPointerSize();
   const std::array<llvm::Value *, 3> inputs{
       ir.getInt64(size),
       ir.getInt64(std::max<std::uint64_t>(alignment, pointerSize)), status};

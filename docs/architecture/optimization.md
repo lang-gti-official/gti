@@ -872,11 +872,27 @@ reordered. Unrelated user-defined witnesses exercise read-only and mutable
 formation, mutation through the alias, and a different pointee under the same
 witness; forged arithmetic proofs for the latter two are rejected.
 
+Successful fixed-array reads, writes and address preflights establish an index
+interval from zero through that dimension's extent minus one. The analysis
+records this only after the checked instruction, so it cannot justify removing
+that instruction's own check. Each dimension uses its own typed array place.
+The fact refines an immutable index value and only a still-current loaded
+origin; a write that aliases the origin invalidates it before refinement. A
+join retains only facts established on every incoming path, and loop widening
+does not turn a later successful access into evidence for the first iteration.
+These facts can prove later arithmetic or repeated indexing. Prefix preflights
+retain their own failure sites even when their successful bound discharges a
+later terminal multidimensional check. Native regressions cover mutation,
+aliasing, changed logical sizes, skipped checks, loops and cleanup at the first
+failure, against both an independent expected result and unoptimized execution.
+
 The trusted scalar bounds detector has no memory transfer: its exact void
 call takes two staged `uint64_t` values, compares them and may raise its defined
 failure. Successful execution therefore preserves unrelated scalar/object
-facts and does not make a source body opaque. Its existing Invoke failure edge
-still uses the pre-instruction state. This is not a source-container length or
+facts and does not make a source body opaque. It also records the same-domain
+strict order between its immutable arguments on success, using the existing
+relation representation and origin invalidation. Its existing Invoke failure
+edge still uses the pre-instruction state. This is not a source-container length or
 initialized-element invariant; those require independently represented facts.
 An unrelated record regression distinguishes the pure detector from an
 unknown field, conflicting field writes and an unreached call context.

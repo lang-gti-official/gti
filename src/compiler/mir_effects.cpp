@@ -1259,6 +1259,7 @@ processMemoryRuntimeSummary(const MirFunctionInstance &function) {
     traits.writesUnknownMemory = true;
     traits.allocates = true;
     break;
+  case ProcessMemoryRuntimeOperation::PosixMalloc:
   case ProcessMemoryRuntimeOperation::AlignedAllocate:
     traits.allocates = true;
     break;
