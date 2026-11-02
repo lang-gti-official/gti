@@ -305,6 +305,10 @@ void testThunks(Session &session) {
            "publishing functions or tables");
     std::map<std::pair<std::vector<unsigned>, unsigned>, llvm::GlobalVariable *>
         physical;
+    std::map<
+        std::tuple<HirFunctionInstanceId, HirFunctionInstanceId, std::int64_t>,
+        llvm::Function *>
+        adapters;
     for (const auto &view : dispatch.views(active.id)) {
       auto *table = dispatch.table(active.id, view.viewClass);
       const auto *candidates = table->getMetadata("gti.dispatch.candidates");
@@ -375,10 +379,17 @@ void testThunks(Session &session) {
                "valid typed IR");
         if (!thunk)
           continue;
-        expect(
-            dispatch.adjustment(active.id, view.profileOwner, slot.root) ==
-                thunk,
-            "thunk cache retains source and physical receiver presentations");
+        const auto adapterKey =
+            std::tuple{slot.root, slot.target, slot.receiverAdjustment};
+        const auto [adapter, newAdapter] = adapters.emplace(adapterKey, thunk);
+        expect(newAdapter || adapter->second == thunk,
+               "identical root, target and adjustment share one adapter");
+        for (const auto &[otherKey, otherThunk] : adapters)
+          expect(otherKey == adapterKey || otherThunk != thunk,
+                 "different root, target or adjustment keeps distinct code");
+        expect(dispatch.adjustment(active.id, view.profileOwner, slot.root) ==
+                   thunk,
+               "thunk cache retains the verified physical receiver adjustment");
         llvm::CallInst *call = nullptr;
         std::vector<const llvm::StoreInst *> stores;
         for (auto &block : *thunk)
@@ -4938,8 +4949,9 @@ int main(void) { return gti_relocation_probe(); }
   }
 }
 
-// Exercise the real planner inventory: two implementations can have four
-// physical-view thunks. Synthetic tagged calls alone cannot prove admission.
+// Exercise the real planner inventory: physically different logical views
+// with identical adapter inputs share code. Synthetic tagged calls alone
+// cannot prove admission or canonicalization.
 void testSourceGuardedDispatchPromotion() {
   const auto frontend =
       Frontend().analyze("guarded-mixed-source.gti", std::string(R"(
@@ -5000,9 +5012,8 @@ int main() {
         physicalTargets.insert(
             llvm::mdconst::extract<llvm::Function>(entry->getOperand(1)));
       }
-  expect(
-      physicalTargets.size() == 4,
-      "two source implementations publish four distinct physical-view targets");
+  expect(physicalTargets.size() == 2,
+         "two implementations share identical adapters across logical views");
   expect(
       promoteGuardedDispatchCalls(session.module()) > 0,
       "real mixed-record emitted call meets promotion and instruction budgets");
@@ -5015,8 +5026,8 @@ int main() {
         else if (physicalTargets.contains(call->getCalledFunction()))
           ++selectedDirect;
       }
-  expect(indirect == 1 && selectedDirect == 4,
-         "real mixed-record call retains fallback and guards all four physical "
+  expect(indirect == 1 && selectedDirect == 2,
+         "real mixed-record call retains fallback and guards both canonical "
          "targets");
   session.verify();
 }

@@ -373,8 +373,12 @@ llvm::Function *Dispatch::adjustment(HirClassInstanceId activeClass,
   const auto &selected = planned.selected;
   const auto *target =
       session.program().mir().findFunctionInstance(selected.target);
-  const AdjustmentKey key{activeClass, sourceView, planned.physicalOwner,
-                          root,        target->id, selected.receiverAdjustment};
+  // Every logical view is checked above. The emitted adapter depends only on
+  // the exact root ABI, implementation ABI and byte adjustment. Views with
+  // those same inputs may share code; distinct adjustments still get distinct
+  // adapters. In particular, no runtime table/receiver invariance is assumed.
+  const AdjustmentKey key{activeClass, root, target->id,
+                          selected.receiverAdjustment};
   if (const auto found = adjustments_.find(key); found != adjustments_.end())
     return found->second;
   auto *callee = session.abi().declareFunction(target->id);
@@ -774,8 +778,8 @@ llvm::Value *Dispatch::directReceiver(llvm::IRBuilder<> &ir,
 // No vptr invariance, family completeness, memory effects or branch weights
 // are inferred. Even an unlisted phase/view continues through the old call.
 std::size_t promoteGuardedDispatchCalls(llvm::Module &module) {
-  // Two concrete implementations can publish four different physical-view
-  // thunks. Compare each exact pointer; do not assume alias-identical views.
+  // Compare exact emitted adapter pointers, including distinct receiver
+  // adjustments. Canonical identical adapters need only one guard.
   constexpr std::size_t maxCandidates = 4;
   constexpr std::size_t maxSitesPerFunction = 4;
   constexpr std::size_t maxSitesPerModule = 16;

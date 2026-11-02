@@ -5458,14 +5458,17 @@ active phase or view. This does not create MIR/HIR instances or change virtual
 selection, lifetime, receiver adjustment, evaluation order or cleanup policy.
 
 The initial cost boundary is at most four distinct candidates per site, four
-sites per function and sixteen per module. Two concrete implementations may
-publish four distinct physical-view adjustment pointers; each is compared
-independently without assuming address equivalence. Each candidate and its immediate
+sites per function and sixteen per module. Within one active class, logical
+views share an adapter only when its root ABI, implementation identity and
+receiver byte adjustment are identical. Every view is still independently
+planned and validated before consulting this cache; different adjustments
+retain distinct adapters. Promotion compares these exact emitted pointers,
+without assuming runtime view or table equivalence. Each candidate and its immediate
 implementation bodies total at most 128 LLVM instructions. Different physical
 signatures/calling conventions, indirect invokes, personality-bearing bodies,
 volatile/atomic callee loads, operand bundles, tail calls, convergence,
 nonduplicable operations and returns-twice functions remain unchanged.
-Ordinary LLVM inlining still owns further expansion. O0/O1 are unchanged;
+Ordinary LLVM inlining still owns further expansion. O0/O1 do not promote calls;
 there are no guessed branch weights, `!callees` exhaustive-family assertions,
 vptr invariance or added alias/effect promises. Temporary inventories are
 removed after the decision so repeated emission does not promote a fallback
