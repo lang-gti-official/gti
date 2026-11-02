@@ -36,6 +36,7 @@ class GitHub:
         self.checks = {}
         self.queue = set()
         self.runs = []
+        self.head_runs = {}
         self.permissions = {}
         self.writes = []
         self.reject_enqueue = False
@@ -58,6 +59,7 @@ class GitHub:
     def set_gate(self, sha, conclusion="success", completed="2026-10-29T01:00:00Z", status="completed"):
         runs = self.checks.setdefault(sha, [])
         runs.append({"id": len(runs) + 1, "name": workflow.GATE_CHECK, "status": status,
+                     "check_suite": {"id": len(runs) + 1},
                      "conclusion": conclusion if status == "completed" else None, "completed_at": completed,
                      "html_url": f"https://example.invalid/checks/{sha[:7]}/{len(runs) + 1}"})
 
@@ -128,6 +130,12 @@ class GitHub:
                 raise workflow.WorkflowError("GitHub GET failed (404)")
             return dict(self.permissions[parts[2]])
         if url.path == "/actions/workflows/ci.yml/runs":
+            if "head_sha" in query:
+                sha = query["head_sha"][0]
+                if sha in self.head_runs:
+                    return {"workflow_runs": copy.deepcopy(self.head_runs[sha])}
+                return {"workflow_runs": [dict(run, check_suite_id=run["check_suite"]["id"])
+                                          for run in self.checks.get(sha, [])]}
             assert query["event"] == ["merge_group"]
             return {"workflow_runs": copy.deepcopy(self.runs)}
         raise AssertionError((method, path, payload))
@@ -298,6 +306,20 @@ class Selection(unittest.TestCase):
 
 
 class Compose(Repositories):
+    def test_old_draft_gate_cannot_admit_a_newer_pending_ready_run(self):
+        pr = self.member("ready")
+        sha = pr["head"]["sha"]
+        latest = {"id": 2, "check_suite_id": 2, "status": "in_progress", "conclusion": None}
+        self.api.head_runs[sha] = [latest]
+        self.assertIsNone(self.bot().gate(sha))
+        self.assertEqual(self.bot().compose()["members"], [])
+        latest.update(status="completed", conclusion="success")
+        self.assertIsNone(self.bot().gate(sha))  # Old suite still cannot qualify.
+        self.api.set_gate(sha)
+        self.assertTrue(rollup.green(self.bot().gate(sha)))
+        latest.update(conclusion="failure")
+        self.assertFalse(rollup.green(self.bot().gate(sha)))
+
     def test_single_ready_member_enters_queue_without_waiting_for_another_pr(self):
         member = self.member("only")
         report = self.bot().compose()

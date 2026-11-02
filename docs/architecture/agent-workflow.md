@@ -905,7 +905,10 @@ checks the canonical repository and CI workflow identity, and the bot executes
 only `main`'s code without downloading run artifacts or checking out a PR.
 It queries current PR heads and gates again before any queue operation. Failed
 and cancelled CI runs also wake reconciliation; they do not qualify a PR for
-integration. The scheduled trigger remains a recovery fallback.
+integration. Admission requires the latest CI run for that exact head to finish
+successfully and its own matching check suite's gate to pass; an older green
+draft gate cannot substitute for pending ready-for-review validation. The
+scheduled trigger remains a recovery fallback.
 
 Automation-only and source-only GTI stdlib local owning checks may use
 `verify --focused`, which checks the actual diff and does not reserve a

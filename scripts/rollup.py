@@ -347,9 +347,20 @@ class Rollup:
         return self.api.request("GET", f"/pulls/{number}")
 
     def gate(self, sha):
+        query = urllib.parse.urlencode({"head_sha": sha, "per_page": 100})
+        workflows = (self.runs_api.request("GET", "/actions/workflows/ci.yml/runs?" + query) or {}).get("workflow_runs", [])
+        latest = max(workflows, key=lambda run: run.get("id", 0)) if workflows else None
+        # Ready-for-review and rerun events can start new validation without
+        # changing the source SHA. Its gate job may not exist until its needs
+        # finish; an older successful draft gate must not admit that candidate.
+        if not latest or latest.get("status") != "completed":
+            return None
+        if latest.get("conclusion") != "success":
+            return latest
         query = urllib.parse.urlencode({"check_name": GATE, "per_page": 100})
         runs = [run for run in (self.api.request("GET", f"/commits/{sha}/check-runs?{query}") or {}).get("check_runs", [])
-                if run.get("name") == GATE]
+                if run.get("name") == GATE and latest.get("check_suite_id")
+                and (run.get("check_suite") or {}).get("id") == latest["check_suite_id"]]
         return max(runs, key=lambda run: run.get("id", 0)) if runs else None
 
     def queued(self):
