@@ -3391,8 +3391,9 @@ Receiver lowering honors the same substitution before considering the source
 expression's place category. A direct read-only receiver consumes the constant
 value, including through transparent grouping and comma expressions. Their
 dependency schedule preserves sequenced effects and emits the constant exactly
-once. Actual storage borrows and projections retain the semantic boundary's storage access and
-do not acquire a substitution merely because the binding is constant.
+once. Actual storage borrows and projections retain the semantic boundary's
+storage access and do not acquire a substitution merely because the binding is
+constant.
 
 `MirProgramInitializationPlan` is the pointer-free authority for the merged
 `Module/0` schedule. Ordered unit rows retain even empty source units. Dense

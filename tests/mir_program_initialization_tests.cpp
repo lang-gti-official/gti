@@ -1294,7 +1294,6 @@ int inspect(Choice<Leaf> value) {
   }
 }
 int main() {
-  testConstantReceiverSubstitutions();
   Box box = make_box();
   int values[2] = numbers();
   Mode mode = selected();
@@ -1426,6 +1425,7 @@ int main() {
 } // namespace
 
 int main() {
+  testConstantReceiverSubstitutions();
   testImmediateConstantInventories();
   const lang::FrontendResult frontend = analyzeFixture();
   testExactLoweringAndPrinting(frontend);

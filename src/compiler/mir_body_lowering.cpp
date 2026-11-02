@@ -5583,10 +5583,6 @@ private:
       valid = false;
       return;
     }
-    if (value->programConstantSubstitution) {
-      emitProgramConstantSubstitution(*value);
-      return;
-    }
     for (const HirValueId input : value->sequencedInputs) {
       emitValue(input);
       if (terminated()) {
