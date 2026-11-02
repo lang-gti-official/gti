@@ -484,6 +484,8 @@ struct FreshStorageProfile {
   // Exact own-field writes; returned/released inputs always denote entry state.
   std::set<FieldPath> receiverWrites;
   std::map<FieldPath, FreshPointerOrigins> receiverPointerResults;
+  std::set<InputField> parameterWrites;
+  std::map<InputField, FreshPointerOrigins> parameterPointerResults;
   std::set<InputField> releasedParameters;
   friend bool operator==(const FreshStorageProfile &,
                          const FreshStorageProfile &) = default;
@@ -9774,6 +9776,39 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
     }
     return path;
   };
+  // An incoming checked reference is not local storage. Preserve its formal
+  // identity and permit only the exact outer dereference followed by fields.
+  const auto referenceInput =
+      [&](const MirPlace &place) -> std::optional<InputField> {
+    if (place.root != MirPlaceRootKind::Binding || place.foreignStorage ||
+        place.projections.empty() ||
+        place.projections.front().kind != MirProjectionKind::Dereference)
+      return std::nullopt;
+    for (std::size_t index = 0; index < bindings.size(); ++index) {
+      if (bindings[index] != place.binding ||
+          types[index].kind != SemanticType::Reference ||
+          types[index].arguments.size() != 1)
+        continue;
+      const auto *root = body.findPlace(rootForBinding(body, place.binding));
+      if (!root || root->type != types[index] || root->foreignStorage ||
+          !root->projections.empty())
+        return std::nullopt;
+      const SemanticType *type = &types[index].arguments.front();
+      FieldPath path;
+      for (std::size_t i = 1; i < place.projections.size(); ++i) {
+        const auto &projection = place.projections[i];
+        if (projection.kind != MirProjectionKind::Field || !projection.field)
+          return std::nullopt;
+        type = ordinaryFieldType(&program, type, projection.field);
+        if (!type)
+          return std::nullopt;
+        path.push_back(projection.field);
+      }
+      return *type == place.type ? std::optional<InputField>{{index, path}}
+                                 : std::nullopt;
+    }
+    return std::nullopt;
+  };
   for (const auto &block : body.blocks)
     if (dominance->isReachable(block.id))
       for (const auto &instruction : block.instructions) {
@@ -9882,8 +9917,20 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
     FieldPath path;
     InstructionSite site;
     const FreshStorageProfile *profile;
+    std::optional<std::size_t> parameter;
   };
   std::vector<ReceiverMutation> receiverMutations;
+  const auto mutationWrites = [](const ReceiverMutation &mutation) {
+    std::vector<FieldPath> paths;
+    if (!mutation.parameter)
+      paths.assign(mutation.profile->receiverWrites.begin(),
+                   mutation.profile->receiverWrites.end());
+    else
+      for (const auto &written : mutation.profile->parameterWrites)
+        if (written.parameter == mutation.parameter)
+          paths.push_back(written.field);
+    return paths;
+  };
   const auto receiverPlace = [&](auto &&self, const MirOperand &operand,
                                  unsigned depth) -> const MirPlace * {
     if (depth > 16)
@@ -9905,6 +9952,8 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
       const auto *loan = body.findLoan(place->loan);
       place = loan ? body.findPlace(loan->source) : nullptr;
     }
+    if (place && referenceInput(*place))
+      return place;
     return place && !place->foreignStorage && ownFields(*place) &&
                    (place->root == MirPlaceRootKind::This ||
                     (place->root == MirPlaceRootKind::Binding &&
@@ -9917,22 +9966,47 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
   for (const auto &block : body.blocks)
     if (dominance->isReachable(block.id))
       for (const auto &instruction : block.instructions)
-        if (const auto *profile = sourceProfile(instruction);
-            profile && !profile->receiverWrites.empty()) {
-          const auto *place =
-              instruction.receiver
-                  ? receiverPlace(receiverPlace, *instruction.receiver, 0)
-                  : nullptr;
-          if (!place || place->root == MirPlaceRootKind::This)
-            return {}; // Nested receiver mutation needs its own exported
-                       // footprint.
-          receiverMutations.push_back(
-              {place->root == MirPlaceRootKind::This
-                   ? thisRoot(body)
-                   : rootForBinding(body, place->binding),
-               *ownFields(*place),
-               {&block, &instruction},
-               profile});
+        if (const auto *profile = sourceProfile(instruction)) {
+          std::set<std::optional<std::size_t>> inputs;
+          if (!profile->receiverWrites.empty())
+            inputs.insert(std::nullopt);
+          for (const auto &written : profile->parameterWrites)
+            inputs.insert(written.parameter);
+          for (const auto parameter : inputs) {
+            const auto *argument =
+                parameter
+                    ? (*parameter < instruction.operands.size()
+                           ? &instruction.operands[*parameter]
+                           : nullptr)
+                    : (instruction.receiver ? &*instruction.receiver : nullptr);
+            const auto *place =
+                argument ? receiverPlace(receiverPlace, *argument, 0) : nullptr;
+            if (!place || place->root == MirPlaceRootKind::This)
+              return {}; // Nested receiver effects remain separate.
+            const auto incoming = referenceInput(*place);
+            if (incoming &&
+                (!parameterAllowsMutation(types[*incoming->parameter]) ||
+                 receiverClass ||
+                 std::count_if(types.begin(), types.end(),
+                               [](const SemanticType &type) {
+                                 return type.kind == SemanticType::Reference;
+                               }) != 1))
+              return {}; // Distinct formal roots do not establish non-aliasing.
+            ReceiverMutation mutation{rootForBinding(body, place->binding),
+                                      incoming ? incoming->field
+                                               : *ownFields(*place),
+                                      {&block, &instruction},
+                                      profile,
+                                      parameter};
+            if (incoming)
+              for (const auto &written : mutationWrites(mutation)) {
+                auto path = incoming->field;
+                path.insert(path.end(), written.begin(), written.end());
+                result.parameterWrites.insert(
+                    {incoming->parameter, std::move(path)});
+              }
+            receiverMutations.push_back(std::move(mutation));
+          }
         }
   // The capture owner already verifies the complete SSA use chain into the
   // sealed status role. Here only locate that role's exact private int32 slot.
@@ -10024,8 +10098,25 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
   const auto pointerField = [&](const SemanticType &type,
                                 const FieldPath &path) {
     const auto paths = pointerPaths(type);
-    return paths &&
-           std::find(paths->begin(), paths->end(), path) != paths->end();
+    if (paths)
+      return std::find(paths->begin(), paths->end(), path) != paths->end();
+    if (path.empty())
+      return false;
+    const auto *record = recordFor(type);
+    if (!record || record->cOpaqueHandle || record->unionLayout ||
+        record->polymorphic || record->abstract || !record->bases.empty() ||
+        !record->structuralBases.empty() ||
+        record->traits.containsBorrowedState ||
+        record->compilerCapability != CompilerCapabilityTypeKind::None)
+      return false;
+    for (const auto &field : record->declaredFields)
+      if (field.symbol == path.front()) {
+        const auto nested = pointerPaths(field.type);
+        const FieldPath rest(path.begin() + 1, path.end());
+        return nested &&
+               std::find(nested->begin(), nested->end(), rest) != nested->end();
+      }
+    return false;
   };
   const auto receiverPointerField = [&](const FieldPath &path) {
     if (!receiverClass || path.empty())
@@ -10039,7 +10130,43 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
   const auto origins = [&](auto &&self, const MirOperand &operand,
                            FieldPath path, InstructionSite use,
                            unsigned depth) -> std::optional<Origins> {
-    if (depth > 32 || !pointerField(operand.type, path))
+    if (depth > 32)
+      return std::nullopt;
+    if (operand.value && operand.type.kind == SemanticType::Reference &&
+        operand.type.arguments.size() == 1) {
+      const auto site = definitionSite(body, operand.value);
+      const auto *producer = site.instruction;
+      if (!producer || !precedes(site, use) ||
+          producer->kind != MirInstructionKind::CallInput ||
+          producer->info.type != operand.type || producer->destination ||
+          producer->receiver || producer->rawMemoryAccess ||
+          producer->operands.size() != 1 ||
+          (producer->callInputKind != HirCallInputKind::ReadBorrow &&
+           producer->callInputKind != HirCallInputKind::MutableBorrow) ||
+          (producer->operands.front().type != operand.type.arguments.front() &&
+           producer->operands.front().type != operand.type) ||
+          (producer->operands.front().kind != MirOperandKind::BorrowRead &&
+           producer->operands.front().kind != MirOperandKind::BorrowWrite &&
+           producer->operands.front().kind != MirOperandKind::Loan))
+        return std::nullopt;
+      return self(self, producer->operands.front(), std::move(path), site,
+                  depth + 1);
+    }
+    if (!operand.value && operand.type.kind == SemanticType::Reference &&
+        operand.type.arguments.size() == 1 &&
+        (operand.kind == MirOperandKind::BorrowRead ||
+         operand.kind == MirOperandKind::BorrowWrite ||
+         operand.kind == MirOperandKind::Loan)) {
+      const auto *place = body.findPlace(operand.place);
+      if (!place || place->type != operand.type.arguments.front())
+        return std::nullopt;
+      // Borrow staging carries the formal reference type while the existing
+      // source place remains typed as its referent. Query that exact place.
+      auto referent = operand;
+      referent.type = place->type;
+      return self(self, referent, std::move(path), use, depth + 1);
+    }
+    if (!pointerField(operand.type, path))
       return std::nullopt;
     if (path.empty() && operand.literal &&
         std::holds_alternative<std::nullptr_t>(*operand.literal))
@@ -10183,34 +10310,43 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
       return Origins{
           {.input = InputField{std::nullopt, std::move(path)}, .calls = {}}};
     }
+    const auto formal = place ? referenceInput(*place) : std::nullopt;
     if (!place || place->root != MirPlaceRootKind::Binding ||
-        place->traits.containsBorrowedState)
+        (!formal && place->traits.containsBorrowedState))
       return std::nullopt;
-    const auto projection = ownFields(*place);
+    const auto projection =
+        formal ? std::optional<FieldPath>{formal->field} : ownFields(*place);
     if (!projection)
       return std::nullopt;
     path.insert(path.begin(), projection->begin(), projection->end());
     const auto rootId = rootForBinding(body, place->binding);
     const auto *root = body.findPlace(rootId);
-    if (!root || !ownedBinding(*root) || !pointerField(root->type, path))
+    if (!root || (!formal && !ownedBinding(*root)) ||
+        !pointerField(formal ? types[*formal->parameter].arguments.front()
+                             : root->type,
+                      path))
       return std::nullopt;
     const ReceiverMutation *latest = nullptr;
+    std::vector<std::pair<const ReceiverMutation *, FieldPath>> alternatives;
     FieldPath latestPath;
     for (const auto &mutation : receiverMutations) {
       if (mutation.root != rootId || mutation.path.size() > path.size() ||
           !std::equal(mutation.path.begin(), mutation.path.end(), path.begin()))
         continue;
       const FieldPath relative(path.begin() + mutation.path.size(), path.end());
+      const auto writes = mutationWrites(mutation);
       const bool affected = std::any_of(
-          mutation.profile->receiverWrites.begin(),
-          mutation.profile->receiverWrites.end(),
-          [&](const FieldPath &written) {
+          writes.begin(), writes.end(), [&](const FieldPath &written) {
             return written.size() <= relative.size() &&
                    std::equal(written.begin(), written.end(), relative.begin());
           });
       if (!affected || mutation.site.instruction == use.instruction ||
           precedes(use, mutation.site))
         continue;
+      if (formal) {
+        alternatives.emplace_back(&mutation, relative);
+        continue; // Entry/new union, never choose a conditional store.
+      }
       if (!precedes(mutation.site, use))
         return std::nullopt; // A conditional publication cannot replace entry.
       if (!latest || precedes(latest->site, mutation.site)) {
@@ -10219,15 +10355,28 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
       } else if (!precedes(mutation.site, latest->site))
         return std::nullopt;
     }
-    if (latest) {
-      const auto output =
-          latest->profile->receiverPointerResults.find(latestPath);
-      if (output == latest->profile->receiverPointerResults.end())
+    if (latest)
+      alternatives.emplace_back(latest, latestPath);
+    Origins published;
+    for (const auto &[event, eventPath] : alternatives) {
+      const Origins *output = nullptr;
+      if (event->parameter) {
+        const auto found = event->profile->parameterPointerResults.find(
+            InputField{event->parameter, eventPath});
+        if (found != event->profile->parameterPointerResults.end())
+          output = &found->second;
+      } else {
+        const auto found =
+            event->profile->receiverPointerResults.find(eventPath);
+        if (found != event->profile->receiverPointerResults.end())
+          output = &found->second;
+      }
+      if (!output)
         return std::nullopt;
       Origins mapped;
-      for (const auto &origin : output->second) {
+      for (const auto &origin : *output) {
         if (origin.input) {
-          const auto &call = *latest->site.instruction;
+          const auto &call = *event->site.instruction;
           const MirOperand *argument =
               origin.input->parameter
                   ? (*origin.input->parameter < call.operands.size()
@@ -10237,7 +10386,7 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
           if (!argument)
             return std::nullopt;
           const auto prior = self(self, *argument, origin.input->field,
-                                  latest->site, depth + 1);
+                                  event->site, depth + 1);
           if (!prior)
             return std::nullopt;
           mapped.insert(prior->begin(), prior->end());
@@ -10246,7 +10395,7 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
             return std::nullopt;
           auto rebased = origin;
           rebased.calls.insert(rebased.calls.begin(),
-                               latest->site.instruction->id);
+                               event->site.instruction->id);
           mapped.insert(std::move(rebased));
         }
         if (mapped.size() > 32)
@@ -10255,9 +10404,20 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
       // A later local whole-value assignment is not described by this call.
       if (const auto found = stores.find(root->binding); found != stores.end())
         for (const auto store : found->second)
-          if (!precedes(store, latest->site))
+          if (!precedes(store, event->site))
             return std::nullopt;
-      return mapped;
+      published.insert(mapped.begin(), mapped.end());
+      if (published.size() > 32)
+        return std::nullopt;
+    }
+    if (latest)
+      return published;
+    if (formal) {
+      published.insert(
+          {.input = InputField{formal->parameter, path}, .calls = {}});
+      return published.size() <= 32
+                 ? std::optional<Origins>{std::move(published)}
+                 : std::nullopt;
     }
     Origins joined;
     bool known = false;
@@ -10461,6 +10621,42 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
             return {};
         }
       }
+    for (const auto &written : result.parameterWrites) {
+      const auto parameter = *written.parameter;
+      const auto root = rootForBinding(body, bindings[parameter]);
+      const auto view = std::find_if(
+          body.places.begin(), body.places.end(), [&](const MirPlace &place) {
+            const auto input = referenceInput(place);
+            return input && input->parameter == written.parameter &&
+                   input->field.empty();
+          });
+      if (!root || view == body.places.end())
+        return {};
+      const auto *fieldType = &types[parameter].arguments.front();
+      for (auto field : written.field)
+        fieldType = ordinaryFieldType(&program, fieldType, field);
+      if (!fieldType)
+        return {};
+      const auto paths = pointerPaths(*fieldType);
+      if (!paths)
+        return {};
+      for (const auto &suffix : *paths) {
+        auto path = written.field;
+        path.insert(path.end(), suffix.begin(), suffix.end());
+        MirOperand operand;
+        operand.kind = MirOperandKind::Copy;
+        operand.place = view->id;
+        operand.type = view->type;
+        const auto values =
+            origins(origins, operand, path, {&block, nullptr}, 0);
+        if (!values)
+          return {};
+        auto &joined = result.parameterPointerResults[{parameter, path}];
+        joined.insert(values->begin(), values->end());
+        if (joined.size() > 32)
+          return {};
+      }
+    }
     const auto outputType = constructor ? constructed->type : body.returnType;
     const auto outputPaths = pointerPaths(outputType);
     if (!outputPaths && outputType.kind != SemanticType::Void &&
@@ -10514,6 +10710,13 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
       ++it;
   for (const auto &[path, values] : result.receiverPointerResults) {
     (void)path;
+    if (std::any_of(values.begin(), values.end(), [&](const auto &origin) {
+          return released.contains(origin);
+        }))
+      return {};
+  }
+  for (const auto &[input, values] : result.parameterPointerResults) {
+    (void)input;
     if (std::any_of(values.begin(), values.end(), [&](const auto &origin) {
           return released.contains(origin);
         }))

@@ -109,11 +109,15 @@ public:
     return previous;
   }
 };
+void fill_native_parameter(mut NativeMutableDescriptor& slot, bool choose) {
+  if (choose) { slot.attach(fresh_pointer()); }
+}
 void mutable_descriptor_scratch() {
   mut NativeMutableDescriptor slot{nullptr};
-  slot.attach(fresh_pointer());
+  fill_native_parameter(slot, true);
   void* first = slot.take();
   unsafe { release_pointer(first); }
+  fill_native_parameter(slot, false);
   void* empty = slot.take();
   unsafe { release_pointer(empty); }
 }
@@ -127,9 +131,12 @@ public:
     this.length = int32_t(2147483647);
   }
 };
+void mutate_metadata_parameter(mut MutableMetadata& owner) {
+  owner.overwrite();
+}
 int32_t mutable_same_receiver_probe() {
   mut MutableMetadata owner{int32_t(9)};
-  owner.overwrite();
+  mutate_metadata_parameter(owner);
   return owner.length * int32_t(2);
 }
 

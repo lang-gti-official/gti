@@ -903,6 +903,38 @@ void conditional_descriptor(bool choose) {
 }
 )",
                                      "conditional_descriptor(false);\n", false);
+  const std::string parameterDescriptor = mutableDescriptor + R"(
+void fill_parameter(mut MutableDescriptor& slot, bool choose) {
+  if (choose) { slot.attach(fresh_pointer()); }
+}
+void replace_parameter(mut MutableDescriptor& slot) {
+  slot.attach(unsafe_external_pointer());
+}
+void ambiguous_parameters(mut MutableDescriptor& first, MutableDescriptor& second) {
+  first.attach(fresh_pointer());
+}
+)";
+  descriptorControls &= freshControl(
+      "fresh-parameter-publication.gti", parameterDescriptor,
+      "mut MutableDescriptor slot{nullptr}; fill_parameter(slot, true); "
+      "void* pointer = slot.take(); unsafe { release_pointer(pointer); }\n",
+      true);
+  descriptorControls &= freshControl(
+      "fresh-parameter-unwritten.gti", parameterDescriptor,
+      "mut MutableDescriptor slot{nullptr}; fill_parameter(slot, false); "
+      "void* pointer = slot.take(); unsafe { release_pointer(pointer); }\n",
+      true);
+  descriptorControls &= freshControl(
+      "fresh-parameter-incoming.gti", parameterDescriptor,
+      "mut MutableDescriptor slot{nullptr}; replace_parameter(slot); "
+      "void* pointer = slot.take(); unsafe { release_pointer(pointer); }\n",
+      false);
+  descriptorControls &= freshControl(
+      "fresh-parameter-alias-boundary.gti", parameterDescriptor,
+      "mut MutableDescriptor slot{nullptr}; MutableDescriptor other{nullptr}; "
+      "ambiguous_parameters(slot, other); void* pointer = slot.take(); "
+      "unsafe { release_pointer(pointer); }\n",
+      false);
   if (!descriptorControls)
     return 1;
   const auto sameReceiver = gti_test::analyzeTrustedPrivateMemoryFixture(

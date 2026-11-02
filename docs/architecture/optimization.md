@@ -1496,9 +1496,16 @@ source-level mutation still invalidates caller facts aliasing the receiver.
 A later read of an owned local descriptor uses the latest dominating mutation,
 while a call's returned/released inputs are resolved immediately before that
 call. Conditional or unordered publications, later whole-object replacement,
-projected loan views without a composed path, nested external receiver mutation,
-and mutable reference-parameter receivers remain excluded. This transports
-allocation origins only, not initialized payload, capacity or lifetime facts.
+projected loan views without a composed path and nested external receiver
+mutation remain excluded. A single incoming checked-reference parameter can
+carry an explicit `InputField` write footprint. Its outgoing field origins union
+the entry origin with every possible publication; a conditional assignment never
+silently replaces entry state. Bodies with another receiver/reference formal are
+rejected because distinct formal roots do not establish disjoint storage.
+Exact read/mutable-borrow call staging is unwrapped only through the existing
+referent place with a matching type. This transports allocation origins only,
+not initialized payload, capacity, lifetime or capture facts. Inspecting a plain
+shell's passive field does not make the shell's move or destructor passive.
 
 The all-path scan also admits exact operand-free terminal failure origins whose
 existing MIR contract has no memory or runtime effects; panic and all cleanup
