@@ -767,8 +767,9 @@ target_include_directories(gti_project_services PUBLIC
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
   "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>")
 target_include_directories(gti_project_services PRIVATE
-  "${CMAKE_CURRENT_SOURCE_DIR}/vendor/tomlplusplus"
   "${CMAKE_CURRENT_SOURCE_DIR}/runtime/include")
+target_include_directories(gti_project_services SYSTEM PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/vendor/tomlplusplus" ${GTI_LLVM_INCLUDE_DIRS})
 target_compile_features(gti_project_services PUBLIC cxx_std_20)
 target_link_libraries(gti_project_services PUBLIC gti_compiler Threads::Threads PRIVATE gti_runtime)
 target_compile_definitions(gti_project_services PRIVATE

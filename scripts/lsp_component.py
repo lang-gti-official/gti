@@ -4,7 +4,7 @@ import argparse
 import io
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import subprocess
 import tarfile
@@ -42,7 +42,8 @@ def select(api=source.request):
         except (ValueError, subprocess.SubprocessError):
             continue
         return {"sha": sha, "run_id": int(evidence["run_id"]),
-                "attempt": int(evidence["run_attempt"]), "compatibility": compatibility}
+                "attempt": int(evidence["run_attempt"]), "compatibility": compatibility,
+                "validation_mode": evidence.get("validation_mode", "full")}
     return None
 
 
@@ -57,7 +58,8 @@ def pack(directory, output, plan):
     sha, run, attempt, compatibility = (plan[k] for k in ("sha", "run_id", "attempt", "compatibility"))
     if not source.SHA.fullmatch(sha) or not HEX.fullmatch(compatibility):
         raise ValueError("invalid LSP package identity")
-    release_artifacts.verify(directory, sha, run, attempt, REPOSITORY)
+    release_artifacts.verify(directory, sha, run, attempt, REPOSITORY,
+                             require_compiler_origin=plan.get("validation_mode") in ("lsp", "source-stdlib"))
     output.mkdir(parents=True, exist_ok=False)
     manifest = {"schema": 1, "kind": "gti-lsp", "compatibility": compatibility,
                 "source": sha, "run_id": run, "attempt": attempt, "platforms": {}}
@@ -78,6 +80,8 @@ def pack(directory, output, plan):
                 for member in original.getmembers():
                     name = member.name.removeprefix("./")
                     if name.startswith("share/licenses/gti/") and member.isfile():
+                        if ".." in PurePosixPath(name).parts:
+                            raise ValueError("unsafe license path")
                         entries[name] = read_member(original, name, 8 * 1024 * 1024)
                 for name, data in entries.items():
                     item = tarfile.TarInfo(name)
@@ -117,7 +121,7 @@ def publish(directory, plan, api=source.request):
         if manifest[key] != value:
             raise ValueError("component differs from admitted source/run")
     evidence = release_artifacts.release_evidence(REPOSITORY, plan["sha"], api)
-    if (int(evidence["run_id"]), int(evidence["run_attempt"])) != (plan["run_id"], plan["attempt"]):
+    if (int(evidence["run_id"]), int(evidence["run_attempt"])) != (plan["run_id"], plan["attempt"]) or evidence.get("validation_mode", "full") != plan.get("validation_mode", "full"):
         raise ValueError("CI evidence changed before component publication")
     releases = []
     for page in range(1, 101):
@@ -137,6 +141,13 @@ def publish(directory, plan, api=source.request):
         if (item["asset"] != f"gti-lsp-{platform}.tar.gz" or
                 release_artifacts.digest(directory / item["asset"]) != item["sha256"]):
             raise ValueError("LSP archive changed after validation")
+    expected = {"lsp.json"}
+    for item in manifest["platforms"].values():
+        expected.update((item["asset"], item["asset"] + ".sha256"))
+        if (directory / (item["asset"] + ".sha256")).read_text() != item["sha256"] + "  " + item["asset"] + "\n":
+            raise ValueError("LSP checksum sidecar changed after validation")
+    if {p.name for p in directory.iterdir()} != expected or any(p.is_symlink() for p in directory.iterdir()):
+        raise ValueError("unexpected LSP publication files")
     tag = f"lsp-{manifest['compatibility']}-{manifest['run_id']}"
     # The workflow serializes all component publishers. Releases are immutable
     # and never alter compiler-channel tags or assets.

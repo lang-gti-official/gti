@@ -109,6 +109,8 @@ class IndependentLSP(unittest.TestCase):
                     self.assertEqual(meta, dict(schema=1, kind='gti-lsp', compatibility=COMPAT,
                                                source=SHA, run_id=7, attempt=2, platform=platform))
                     self.assertTrue(archive.getmember('bin/gti_lsp').mode & 0o111)
+            with self.assertRaisesRegex(ValueError, 'compiler origin'):
+                component.pack(root / 'input', root / 'missing-origin', {**PLAN, 'validation_mode':'lsp'})
             for key, value in [('sha', 'b'*40), ('attempt', 3), ('run_id', 8), ('compatibility', 'd'*64)]:
                 with self.subTest(key=key), self.assertRaises(ValueError):
                     component.pack(root / 'input', root / ('bad-' + key), {**PLAN, key: value})
