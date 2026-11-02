@@ -5769,6 +5769,18 @@ overflow-predicate operations. This preserves facts for LLVM's ordinary range,
 induction-variable and loop optimizations instead of feeding them the overflow
 intrinsic's wrapping result lane.
 
+Successful integer squares also retain a bounded result postcondition. For
+`k*x*x`, where `k` is a positive constant and the first product is already
+nonwrapping, the upper bound is `k*floor(sqrt(MAX/k))^2`. The backend computes
+this bound with integer arithmetic and emits an assumption only after the
+original overflow guard succeeds. It applies to ordinary signed or unsigned
+integers through 64 bits. Operand identity must be explicit SSA identity or
+repeated ordinary loads on one unchanged, nonsynchronizing path; intervening
+writes, opaque calls, volatile/atomic accesses, and differing addresses reject
+the memory form. Explicit wrapping products do not qualify. This lets LLVM
+remove later redundant bounds and overflow checks, including small offsets
+after a square, while preserving the original overflow and cleanup behavior.
+
 After the normal LLVM optimization pipeline has used those facts, a final
 arithmetic canonicalization reuses an existing overflow intrinsic's result lane
 for an identical flagged add/subtract/multiply. The intrinsic must dominate the

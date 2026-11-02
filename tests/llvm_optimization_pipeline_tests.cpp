@@ -1,5 +1,6 @@
 #include "../src/compiler/llvm/abi.h"
 #include "../src/compiler/llvm/body.h"
+#include "../src/compiler/llvm/scalar.h"
 #include "gti/frontend.h"
 #include "gti/lowered_program_builder.h"
 #include "gti/optimizer.h"
@@ -543,6 +544,190 @@ llvm::Function *addColdRegionFixture(llvm::Module &module) {
   return function;
 }
 
+void verifyCheckedSquareBounds() {
+  llvm::LLVMContext context;
+  llvm::Module module("checked-square-bounds", context);
+  for (unsigned width : {8U, 16U, 32U, 64U}) {
+    auto *integer = llvm::IntegerType::get(context, width);
+    auto *function = llvm::Function::Create(
+        llvm::FunctionType::get(integer, {integer}, false),
+        llvm::GlobalValue::ExternalLinkage, "square", module);
+    llvm::IRBuilder<> builder(
+        llvm::BasicBlock::Create(context, "entry", function));
+    auto *input = function->getArg(0);
+    for (bool sign : {false, true}) {
+      for (std::uint64_t factor : {1U, 3U, 5U}) {
+        auto *weighted =
+            builder.CreateMul(input, llvm::ConstantInt::get(integer, factor),
+                              "weighted", !sign, sign);
+        const auto bound = checkedSquareResultBound(weighted, input, sign);
+        if (!bound)
+          throw std::runtime_error(
+              "checked square lost an exact weighted identity");
+        if (width <= 16) {
+          std::uint64_t largest = 0;
+          const std::int64_t limit = std::int64_t{1}
+                                     << (width - (sign ? 1 : 0));
+          for (std::int64_t value = sign ? -limit : 0; value < limit; ++value) {
+            const auto square = std::uint64_t(value * value) * factor;
+            if (square < std::uint64_t(limit)) {
+              largest = std::max(largest, square);
+              if (square > *bound)
+                throw std::runtime_error(
+                    "checked square bound excludes a successful product");
+            }
+          }
+          if (largest != *bound)
+            throw std::runtime_error(
+                "checked square bound is not the exact integer maximum");
+        }
+      }
+    }
+    if (width == 64 && (checkedSquareResultBound(input, input, true) !=
+                            9223372030926249001ULL ||
+                        checkedSquareResultBound(input, input, false) !=
+                            18446744065119617025ULL))
+      throw std::runtime_error(
+          "64-bit square bound rounded through floating point");
+    builder.CreateRet(input);
+  }
+  auto *integer = llvm::Type::getInt32Ty(context);
+  auto *pointer = llvm::PointerType::getUnqual(context);
+  auto *function = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(context),
+                              {pointer, pointer}, false),
+      llvm::GlobalValue::ExternalLinkage, "load_boundaries", module);
+  llvm::IRBuilder<> builder(
+      llvm::BasicBlock::Create(context, "entry", function));
+  auto *first = builder.CreateLoad(integer, function->getArg(0));
+  auto *same = builder.CreateLoad(integer, function->getArg(0));
+  auto *different = builder.CreateLoad(integer, function->getArg(1));
+  if (!checkedSquareResultBound(first, same, true) ||
+      checkedSquareResultBound(first, different, true))
+    throw std::runtime_error(
+        "checked square confused same and different storage");
+  auto *wrapped = builder.CreateMul(first, builder.getInt32(3));
+  if (checkedSquareResultBound(wrapped, same, true))
+    throw std::runtime_error(
+        "wrapped weighted product acquired a square bound");
+  auto *weighted =
+      builder.CreateMul(first, builder.getInt32(3), "weighted", false, true);
+  builder.CreateStore(builder.getInt32(1), function->getArg(0));
+  auto *changed = builder.CreateLoad(integer, function->getArg(0));
+  if (checkedSquareResultBound(weighted, changed, true))
+    throw std::runtime_error("checked square crossed an intervening store");
+  auto *opaque = llvm::Function::Create(
+      llvm::FunctionType::get(builder.getVoidTy(), {pointer}, false),
+      llvm::GlobalValue::ExternalLinkage, "opaque", module);
+  builder.CreateCall(opaque, {function->getArg(0)});
+  auto *afterCall = builder.CreateLoad(integer, function->getArg(0));
+  if (checkedSquareResultBound(changed, afterCall, true))
+    throw std::runtime_error("checked square crossed an opaque call");
+  auto *volatileLoad = builder.CreateLoad(integer, function->getArg(0));
+  volatileLoad->setVolatile(true);
+  if (checkedSquareResultBound(afterCall, volatileLoad, true))
+    throw std::runtime_error(
+        "volatile reads acquired a repeated-value identity");
+  builder.CreateFence(llvm::AtomicOrdering::SequentiallyConsistent);
+  auto *afterFence = builder.CreateLoad(integer, function->getArg(0));
+  if (checkedSquareResultBound(afterCall, afterFence, true))
+    throw std::runtime_error("checked square crossed synchronization");
+  auto *continuation = llvm::BasicBlock::Create(context, "success", function);
+  builder.CreateBr(continuation);
+  builder.SetInsertPoint(continuation);
+  auto *afterEdge = builder.CreateLoad(integer, function->getArg(0));
+  if (!checkedSquareResultBound(afterFence, afterEdge, true))
+    throw std::runtime_error(
+        "unchanged single-predecessor path lost its identity");
+  builder.CreateRetVoid();
+  if (llvm::verifyModule(module))
+    throw std::runtime_error("invalid checked-square structural fixture");
+}
+
+void verifySquareOffsetOptimization() {
+  const auto frontend = Frontend().analyze("square-offset.gti", R"(
+extern "C" { int square_input(); }
+int square(int value) { return value * value + 7; }
+int weighted(int value) { return (value * 3) * value + 7; }
+int different(int left, int right) { return left * right + 7; }
+int main() {
+  int value = square_input();
+  return square(value) + weighted(value) + different(value, value + 1);
+}
+)");
+  if (!frontend.canGenerateCode())
+    throw std::runtime_error("invalid square offset source");
+  auto lowered = LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, frontend.mir,
+      frontend.mir, {}, TargetInfo::host());
+  if (!lowered.valid())
+    throw std::runtime_error("invalid square offset lowering");
+  std::vector<LoweredProgramIssue> issues;
+  const auto input = verifiedLoweredProgram(*lowered.program, issues);
+  if (!input)
+    throw std::runtime_error("unverified square offset lowering");
+  for (const auto level :
+       {LlvmCodegenOptimization::None, LlvmCodegenOptimization::Default,
+        LlvmCodegenOptimization::Aggressive}) {
+    const LlvmBackendOptions options{.optimization = level};
+    const auto admission = planLlvmAdmission(*input, options);
+    if (!admission.admitted())
+      throw std::runtime_error(admission.limitation());
+    Session session(*input, options);
+    lowerScalarProgram(session, admission);
+    std::map<std::string, llvm::Function *> observed;
+    llvm::SmallVector<llvm::GlobalValue *> roots;
+    for (const auto &instance : input->program().mir().functionInstances()) {
+      const auto *declaration =
+          input->program().findFunctionDeclaration(instance.declaration);
+      if (declaration && (declaration->qualifiedName == "square" ||
+                          declaration->qualifiedName == "weighted" ||
+                          declaration->qualifiedName == "different")) {
+        auto *function = session.abi().declareFunction(instance.id);
+        observed.emplace(declaration->qualifiedName, function);
+        roots.push_back(function);
+      }
+    }
+    if (observed.size() != 3)
+      throw std::runtime_error("missing square offset observation roots");
+    llvm::appendToUsed(session.module(), roots);
+    static_cast<void>(session.emitObject());
+    for (const auto &[name, function] : observed) {
+      unsigned additions = 0, conditionalBranches = 0;
+      for (const auto &block : *function)
+        for (const auto &instruction : block) {
+          if (const auto *intrinsic =
+                  llvm::dyn_cast<llvm::IntrinsicInst>(&instruction))
+            additions += intrinsic->getIntrinsicID() ==
+                         llvm::Intrinsic::sadd_with_overflow;
+#if LLVM_VERSION_MAJOR >= 23
+          conditionalBranches += llvm::isa<llvm::CondBrInst>(instruction);
+#else
+          if (const auto *branch =
+                  llvm::dyn_cast<llvm::BranchInst>(&instruction))
+            conditionalBranches += branch->isConditional();
+#endif
+        }
+      // LLVM can rewrite add-with-overflow into a comparison with MAX-7.
+      // Count the remaining failure decisions as well as the intrinsic so
+      // that such a rewrite is not mistaken for eliminating the check.
+      const bool unoptimized = level == LlvmCodegenOptimization::None;
+      const bool valid =
+          unoptimized ? additions > 0
+          : name == "different"
+              ? conditionalBranches >= 2
+              : additions == 0 &&
+                    conditionalBranches <= (name == "weighted" ? 2U : 1U);
+      if (!valid) {
+        function->print(llvm::errs());
+        throw std::runtime_error(
+            "square offset check disagrees with operand identity: " + name +
+            " at optimization " + std::to_string(static_cast<int>(level)));
+      }
+    }
+  }
+}
+
 void verifyPrivateScalarResultPromotion() {
   llvm::LLVMContext context;
   llvm::Module module("private-scalar-results", context);
@@ -727,6 +912,8 @@ int main() {
   verifyMergedCheckedArithmetic();
   verifyRecoveryExecutionFrequency();
   verifyPrivateScalarResultPromotion();
+  verifyCheckedSquareBounds();
+  verifySquareOffsetOptimization();
   verifyDischargedCheckFacts();
   FrontendOptions frontendOptions;
   frontendOptions.requireEntryPoint = true;

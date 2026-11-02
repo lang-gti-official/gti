@@ -1180,6 +1180,11 @@ add_test(NAME optimizer_recurrence_capture
                  "${PROJECT_SOURCE_DIR}/tests/optimizer_recurrence_capture_test.py"
                  "$<TARGET_FILE:gti>")
 set_tests_properties(optimizer_recurrence_capture PROPERTIES TIMEOUT 300)
+add_test(NAME llvm_checked_square_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/llvm_checked_square_test.py"
+                 "$<TARGET_FILE:gti>")
+set_tests_properties(llvm_checked_square_runtime PROPERTIES TIMEOUT 300)
 add_executable(gti_optimizer_prefix_relocation_tests optimizer_prefix_relocation_tests.cpp)
 target_link_libraries(gti_optimizer_prefix_relocation_tests PRIVATE gti_compiler)
 add_test(NAME optimizer_prefix_relocation COMMAND gti_optimizer_prefix_relocation_tests)
