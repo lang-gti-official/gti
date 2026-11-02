@@ -298,6 +298,22 @@ class Selection(unittest.TestCase):
 
 
 class Compose(Repositories):
+    def test_single_ready_member_enters_queue_without_waiting_for_another_pr(self):
+        member = self.member("only")
+        report = self.bot().compose()
+        self.assertIsNone(report["rollup"])
+        self.assertEqual(report["enqueued"], [member["number"]])
+        self.assertEqual(self.api.queue, {member["number"]})
+        self.assertEqual(len(self.api.prs), 1)
+        self.assertEqual(self.bot().compose()["members"], [])
+
+    def test_single_member_dry_run_does_not_enqueue(self):
+        member = self.member("only")
+        report = self.bot(dry_run=True).compose()
+        self.assertEqual(report["enqueued"], [member["number"]])
+        self.assertEqual(self.api.queue, set())
+        self.assertEqual(self.api.writes, [])
+
     def test_compose_merges_exact_heads_in_order_and_records_a_valid_manifest(self):
         low = self.member("low", ready="2026-10-29T02:00:00Z", body="Validation:\n- T0: low_regression\n- T1: shared_suite\n")
         high = self.member("high", labels=(rollup.MAYBE, "p=5"), ready="2026-10-29T04:00:00Z",
@@ -398,12 +414,13 @@ class Compose(Repositories):
         with self.assertRaises(rollup.RollupError):
             self.bot(max_members=9)
 
-    def test_fewer_than_two_members_is_a_no_op(self):
-        self.member("alone")
+    def test_no_eligible_members_is_a_no_op(self):
         self.member("red", gate="failure")
+        self.member("pending", gate=None)
+        self.member("draft", draft=True)
         report = self.bot().compose()
         self.assertIsNone(report["rollup"])
-        self.assertEqual(report["reason"], "fewer than two members")
+        self.assertEqual(report["reason"], "no eligible members")
         self.assertEqual(self.api.writes, [])
         self.assertEqual(git(self.remote, "for-each-ref", "refs/heads/rollup"), "")
 
@@ -553,6 +570,21 @@ class Queue(Repositories):
 
 
 class Trigger(unittest.TestCase):
+    def test_completed_canonical_ci_wakes_reconciliation_on_success_or_failure(self):
+        api = unittest.mock.Mock()
+        api.request.return_value = {"id": 12, "path": ".github/workflows/ci.yml"}
+        event = {"action": "completed", "repository": dict(REPO),
+                 "workflow_run": {"workflow_id": 12, "status": "completed", "conclusion": "success"}}
+        for conclusion in ("success", "failure", "cancelled", "timed_out"):
+            event["workflow_run"]["conclusion"] = conclusion
+            self.assertTrue(rollup.authorize("workflow_run", event, api))
+        for replacement in ({"action": "requested"}, {"repository": {"full_name": "foreign/repo"}},
+                            {"workflow_run": {"workflow_id": 13, "status": "completed"}},
+                            {"workflow_run": {"workflow_id": 12, "status": "in_progress"}}):
+            self.assertFalse(rollup.authorize("workflow_run", dict(event, **replacement), api))
+        api.request.side_effect = workflow.WorkflowError("unavailable")
+        self.assertFalse(rollup.authorize("workflow_run", event, api))
+
     def test_only_an_exact_rollup_comment_from_a_writer_runs_the_bot(self):
         api = GitHub(None)
         api.permissions = {"writer": {"permission": "write", "role_name": "write"},
@@ -599,6 +631,11 @@ class Trigger(unittest.TestCase):
 
     def test_checkout_origin_is_normalized_before_rollup(self):
         text = (ROOT / ".github/workflows/rollup.yml").read_text()
+        self.assertRegex(text, r"workflow_run:\s+workflows: \[CI\]\s+types: \[completed\]")
+        self.assertIn("actions: read", text)
+        self.assertEqual(text.count("ref: main"), 2)
+        self.assertNotIn("workflow_run.head_sha", text)
+        self.assertNotIn("download-artifact", text)
         command = "git remote set-url origin " + workflow.CANONICAL
         self.assertIn(command, text)
         self.assertLess(text.index(command), text.index("python3 scripts/rollup.py reconcile"))

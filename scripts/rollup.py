@@ -222,9 +222,21 @@ def rollup_body(base, members, block):
 
 
 def authorize(event_name, event, api):
-    """Whether this event may run the bot: schedule/dispatch, or an exact `/rollup` from a writer."""
+    """Authorize trusted wakeups; CI completion only wakes a fresh server-side audit."""
     if event_name in {"schedule", "workflow_dispatch"}:
         return True
+    if event_name == "workflow_run":
+        run = event.get("workflow_run") or {}
+        if (event.get("action") != "completed" or run.get("status") != "completed"
+                or (event.get("repository") or {}).get("full_name") != workflow.REPOSITORY):
+            return False
+        try:
+            ci = api.request("GET", "/actions/workflows/ci.yml") or {}
+        except workflow.WorkflowError:
+            return False
+        # Never trust a workflow's display name or run artifacts. The bot uses
+        # main's code and independently queries current heads and their gates.
+        return bool(ci.get("id") and run.get("workflow_id") == ci["id"])
     if event_name != "issue_comment" or event.get("action") != "created":
         return False
     comment = event.get("comment") or {}
@@ -471,7 +483,14 @@ class Rollup:
             members.append({"pr": number, "head": head, "title": pr.get("title"), "declared": candidate["declared"]})
         report["members"] = [{"pr": m["pr"], "head": m["head"]} for m in members]
         if len(members) < 2:
-            report["reason"] = "fewer than two members"
+            report["enqueued"] = []
+            if members:
+                member = members[0]
+                self.enqueue_pr(self.pull(member["pr"]), member["head"])
+                report["enqueued"].append(member["pr"])
+                report["reason"] = "single eligible member queued alone"
+            else:
+                report["reason"] = "no eligible members"
             return report
         branch, path = self.identity(base)
         record = {"schema": 1, "base": base, "members": [
