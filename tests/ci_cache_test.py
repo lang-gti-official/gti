@@ -4,6 +4,8 @@
 import argparse
 import os
 import pathlib
+import re
+import json
 import shutil
 import subprocess
 import tempfile
@@ -11,6 +13,53 @@ import tempfile
 
 def values(path):
     return dict(line.split("=", 1) for line in path.read_text().splitlines())
+
+
+
+def warmup_contract(repository, bash):
+    workflow = (repository / ".github/workflows/cache.yml").read_text()
+    ci = (repository / ".github/workflows/ci.yml").read_text()
+    def step(name):
+        block = workflow.split("      - name: " + name + "\n", 1)[1].split("      - ", 1)[0]
+        lines = block.split("        run: |\n", 1)[1].splitlines()
+        return "\n".join(line[10:] for line in lines if line.startswith("          "))
+    build = step("Build compiler cache inputs")
+    cleanup = step("Release warmup scratch space before cache upload")
+    assert workflow.index("run: ccache --cleanup") < workflow.index("name: Build compiler cache inputs")
+    assert workflow.index("name: Release warmup scratch space") < workflow.index("name: Save the cache under main")
+    assert "if: always()" in workflow.split("name: Release warmup scratch space", 1)[1].split("      - ", 1)[0]
+    # Main owns reusable native/sanitizer caches. Release packaging must still
+    # write the run-specific cache consumed by its integration jobs.
+    save_blocks = re.findall(r"      - name: Save compiler object cache\n(.*?)(?=\n  [a-z]|\Z)", ci, re.S)
+    assert len(save_blocks) == 2
+    assert all("github.ref == 'refs/heads/main'" in block.split("uses:", 1)[0] for block in save_blocks)
+    package = ci.split("      - name: Save compiler and LLVM/Clang cache, including partial builds", 1)[1].split("uses:", 1)[0]
+    assert "github.ref" not in package, "integration shards still need their packaging job's cache"
+    for profile, build_dir, expected in (("native", "build", ["gti", "gti_lsp"]),
+                                         ("sanitizers", "build-sanitized", ["gti"])):
+        with tempfile.TemporaryDirectory(prefix="gti-cache-warmup-") as temporary:
+            root = pathlib.Path(temporary)
+            commands = root / "bin"; commands.mkdir()
+            log = root / "commands.jsonl"
+            for command in ("cmake", "ccache"):
+                fake = commands / command
+                fake.write_text("#!" + shutil.which("python3") + "\nimport json, os, sys\n"
+                                "with open(os.environ['COMMAND_LOG'], 'a') as output: output.write(json.dumps(sys.argv) + '\\n')\n")
+                fake.chmod(0o755)
+            cache = root / "cache"; cache.mkdir(); (cache / "retained.o").write_text("cached object")
+            scratch = root / build_dir; scratch.mkdir(); (scratch / "discarded.o").write_text("scratch object")
+            environment = dict(os.environ, PATH=str(commands) + os.pathsep + os.environ["PATH"],
+                               COMMAND_LOG=str(log), GTI_JOBS="2", CCACHE_DIR=str(cache), RUNNER_TEMP=str(root),
+                               GTI_CACHE_DIRECTORY=str(cache))
+            for script in (build, cleanup):
+                script = script.replace("${{ matrix.profile }}", profile).replace("${{ matrix.build }}", build_dir)
+                subprocess.run([bash, "-euo", "pipefail", "-c", script], cwd=root, env=environment,
+                               check=True, capture_output=True, text=True, timeout=10)
+            calls = [json.loads(line) for line in log.read_text().splitlines()]
+            assert calls[0][1:] == ["--build", build_dir, "--parallel", "2", "--target", *expected], calls
+            assert calls[1][1:] == ["--cleanup"], calls
+            assert not scratch.exists() and (cache / "retained.o").read_text() == "cached object"
+    print("Warmup builds only compiler/LSP targets; scratch cleanup preserves cache; cache writers are scoped")
 
 
 def main():
@@ -48,7 +97,7 @@ def main():
             assert settings == {
                 "CMAKE_C_COMPILER_LAUNCHER": str(launcher),
                 "CMAKE_CXX_COMPILER_LAUNCHER": str(launcher),
-                "CCACHE_DIR": directory, "CCACHE_MAXSIZE": "10G",
+                "CCACHE_DIR": directory, "CCACHE_MAXSIZE": "2G",
                 "CCACHE_COMPILERCHECK": "content", "CCACHE_BASEDIR": "",
                 "CCACHE_SLOPPINESS": "",
             }
@@ -102,6 +151,7 @@ def main():
                     int(counts.get("preprocessed_cache_hit", 0))) >= 1, stats.stdout
             assert int(counts["cache_miss"]) >= 3, stats.stdout
             print("Real compiler cache: cold miss, byte-identical warm hit, header/flag invalidation passed")
+    warmup_contract(script.parents[1], bash)
     print("CI compiler-cache configuration and negative cases passed")
 
 
