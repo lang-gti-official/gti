@@ -57,6 +57,7 @@ include(CMakePackageConfigHelpers)
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
 set(GTI_REUSE_TOOLCHAIN "" CACHE PATH "Admitted production toolchain for source-only library CI")
+option(GTI_REBUILD_LSP "Rebuild only the LSP against an admitted installed SDK" OFF)
 if(GTI_REUSE_TOOLCHAIN)
   include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/ReuseToolchain.cmake")
   return()
@@ -743,9 +744,55 @@ if(WIN32)
   target_link_libraries("gti_runtime" PRIVATE "bcrypt")
 endif()
 
+# Read-only project and frontend services are shared by CLI and LSP without
+# introducing code-generation or bindgen dependencies. Registry resolution
+# retains the small shared runtime transport used by the existing driver.
+add_library(gti_project_services STATIC
+  "src/driver/analysis_configuration.cpp"
+  "src/driver/native_toolchain.cpp"
+  "src/driver/artifact.cpp"
+  "src/driver/dependencies.cpp"
+  "src/driver/package_archive.cpp"
+  "src/driver/registry_metadata.cpp"
+  "src/driver/registry_gitea.cpp"
+  "src/driver/registry_credentials.cpp"
+  "src/driver/registry_cache.cpp"
+  "src/driver/registry_resolver.cpp"
+  "src/driver/semver.cpp"
+  "src/driver/manifest.cpp"
+  "src/driver/module_discovery.cpp"
+  "src/driver/process.cpp"
+  "src/driver/project_facts.cpp"
+  "src/driver/workspace.cpp"
+)
+target_include_directories(gti_project_services PUBLIC
+  "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+  "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>")
+target_include_directories(gti_project_services PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/runtime/include")
+target_include_directories(gti_project_services SYSTEM PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/vendor/tomlplusplus" ${GTI_LLVM_INCLUDE_DIRS})
+target_compile_features(gti_project_services PUBLIC cxx_std_20)
+target_link_libraries(gti_project_services PUBLIC gti_compiler Threads::Threads PRIVATE gti_runtime)
+target_compile_definitions(gti_project_services PRIVATE
+  GTI_BUILD_STDLIB_ROOT="${GTI_BUILD_STDLIB_ROOT}"
+  GTI_BUILD_RUNTIME_INCLUDE_DIR="${GTI_BUILD_RUNTIME_INCLUDE_DIR}"
+  GTI_BUILD_RUNTIME_LIBRARY_PATH="${GTI_BUILD_RUNTIME_LIBRARY_PATH}"
+  GTI_RUNTIME_LIBRARY_NAME="$<TARGET_FILE_NAME:gti_runtime>")
+if(APPLE)
+  enable_language(OBJCXX)
+  set_target_properties(gti_project_services PROPERTIES OBJCXX_STANDARD 20
+    OBJCXX_STANDARD_REQUIRED ON OBJCXX_EXTENSIONS OFF)
+  target_sources(gti_project_services PRIVATE "src/driver/registry_credentials_macos.mm")
+  set_source_files_properties("src/driver/registry_credentials_macos.mm"
+    PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+  # System framework names remain relocatable in the installed static SDK.
+  target_link_libraries(gti_project_services PRIVATE
+    "-framework Security" "-framework Foundation" "-framework LocalAuthentication")
+endif()
+
 add_library(
   "gti_driver" STATIC
-  "src/driver/artifact.cpp"
   "src/driver/library_bundle.cpp"
   "src/driver/compiled_scalar_library.cpp"
   "src/driver/embedding_library.cpp"
@@ -754,25 +801,11 @@ add_library(
   "src/driver/build.cpp"
   "src/driver/build_report.cpp"
   "src/driver/compilation.cpp"
-  "src/driver/dependencies.cpp"
   "src/driver/install.cpp"
-  "src/driver/package_archive.cpp"
-  "src/driver/registry_metadata.cpp"
-  "src/driver/registry_gitea.cpp"
-  "src/driver/registry_credentials.cpp"
-  "src/driver/registry_cache.cpp"
-  "src/driver/registry_resolver.cpp"
   "src/driver/registry_commands.cpp"
-  "src/driver/semver.cpp"
-  "src/driver/manifest.cpp"
-  "src/driver/module_discovery.cpp"
-  "src/driver/native_toolchain.cpp"
-  "src/driver/process.cpp"
   "src/driver/test_runner.cpp"
   "src/driver/test_report.cpp"
   "src/driver/project.cpp"
-  "src/driver/project_facts.cpp"
-  "src/driver/workspace.cpp"
 )
 target_include_directories(
   "gti_driver"
@@ -791,20 +824,9 @@ target_include_directories("gti_driver" PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/run
 target_compile_features("gti_driver" PUBLIC cxx_std_20)
 target_link_libraries(
   "gti_driver"
-  PUBLIC gti_compiler
+  PUBLIC gti_project_services
   PRIVATE gti_cpp_backend gti_llvm_backend gti_bindgen gti_runtime
 )
-if(APPLE)
-  enable_language(OBJCXX)
-  set_target_properties(gti_driver PROPERTIES OBJCXX_STANDARD 20
-    OBJCXX_STANDARD_REQUIRED ON OBJCXX_EXTENSIONS OFF)
-  target_sources(gti_driver PRIVATE "src/driver/registry_credentials_macos.mm")
-  set_source_files_properties("src/driver/registry_credentials_macos.mm"
-    PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
-  # System framework names remain relocatable in the installed static SDK.
-  target_link_libraries(gti_driver PRIVATE
-    "-framework Security" "-framework Foundation" "-framework LocalAuthentication")
-endif()
 add_dependencies("gti_driver" "gti_runtime" "gti_build_identity_refresh")
 target_compile_definitions(
   "gti_driver"
@@ -892,7 +914,7 @@ if(GTI_BUILD_LSP)
   add_executable("gti_lsp" "src/lsp/main.cpp")
   target_include_directories("gti_lsp" SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
   target_link_libraries(
-    "gti_lsp" PRIVATE gti_driver gti_lsp_state Threads::Threads
+    "gti_lsp" PRIVATE gti_project_services gti_lsp_state Threads::Threads
   )
   target_compile_definitions(
     "gti_lsp"
@@ -901,6 +923,37 @@ if(GTI_BUILD_LSP)
       GTI_BUILD_STDLIB_ROOT="${GTI_BUILD_STDLIB_ROOT}"
   )
 endif()
+
+# Compatibility describes shared source inputs, not the independently replaceable
+# protocol adapter. Release CI requires a clean Git source and verifies this ID.
+execute_process(COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/scripts/lsp_compatibility.py"
+  --source "${CMAKE_CURRENT_SOURCE_DIR}"
+  RESULT_VARIABLE GTI_LSP_ID_RESULT OUTPUT_VARIABLE GTI_LSP_COMPATIBILITY
+  OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+if(NOT GTI_LSP_ID_RESULT EQUAL 0)
+  set(GTI_LSP_COMPATIBILITY "unavailable")
+endif()
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/LSP_COMPATIBILITY.json"
+  "{\"schema\":1,\"compatibility\":\"${GTI_LSP_COMPATIBILITY}\"}\n")
+execute_process(COMMAND git -C "${CMAKE_CURRENT_SOURCE_DIR}" rev-parse HEAD
+  OUTPUT_VARIABLE GTI_LSP_SOURCE OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/LSP_SOURCE" "${GTI_LSP_SOURCE}\n")
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/LSP_COMPATIBILITY.json"
+  "${CMAKE_CURRENT_BINARY_DIR}/LSP_SOURCE"
+  DESTINATION "${CMAKE_INSTALL_DATADIR}/gti" COMPONENT gti_toolchain)
+# The LSP uses LLVM's JSON and thread support. Ship their pinned headers with
+# the SDK so rebuilding the adapter never fetches or rebuilds LLVM/Clang.
+foreach(llvm_include IN LISTS GTI_LLVM_INCLUDE_DIRS)
+  foreach(llvm_header_root IN ITEMS llvm llvm-c)
+    if(EXISTS "${llvm_include}/${llvm_header_root}")
+      install(DIRECTORY "${llvm_include}/${llvm_header_root}"
+        DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/gti-llvm"
+        COMPONENT gti_toolchain FILES_MATCHING PATTERN "*.h" PATTERN "*.inc"
+        PATTERN "CMakeFiles" EXCLUDE)
+    endif()
+  endforeach()
+endforeach()
 
 if(GTI_RELEASE_BUILD AND NOT TARGET gti_lsp)
   message(FATAL_ERROR "A release build requires the gti_lsp target")
@@ -912,10 +965,11 @@ set_target_properties(gti_compiler PROPERTIES EXPORT_NAME compiler)
 set_target_properties(gti_cpp_backend PROPERTIES EXPORT_NAME cpp_backend)
 set_target_properties(gti_llvm_backend PROPERTIES EXPORT_NAME llvm_backend)
 set_target_properties(gti_driver PROPERTIES EXPORT_NAME driver)
+set_target_properties(gti_project_services PROPERTIES EXPORT_NAME project_services)
 set_target_properties(gti_bindgen PROPERTIES EXPORT_NAME bindgen)
 set_target_properties(gti_runtime PROPERTIES EXPORT_NAME runtime)
 install(
-  TARGETS gti_compiler gti_cpp_backend gti_llvm_backend gti_driver gti_bindgen
+  TARGETS gti_compiler gti_cpp_backend gti_llvm_backend gti_driver gti_project_services gti_bindgen
           gti_runtime
   EXPORT GTITargets
   ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
@@ -977,8 +1031,7 @@ if(GTI_BUNDLE_LLVM)
   # libclang is deliberately shared — the C API's supported distribution form
   # — and ships beside the LLVM archives. Every installed executable that
   # reaches the bindgen reader locates it by rpath relative to its own
-  # location, so each one needs the rpath: gti_lsp links the same driver and
-  # fails to load at startup without it.
+  # location. The independent LSP has no bindgen dependency.
   install(
     TARGETS libclang
     LIBRARY DESTINATION "${GTI_LLVM_ARCHIVE_INSTALL_DIR}"

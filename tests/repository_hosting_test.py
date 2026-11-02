@@ -64,7 +64,7 @@ def main():
     workflows = sorted(p for p in tracked if p.startswith((".github/workflows/", ".gitea/workflows/")))
     # CI, nightly toolchain releases and the rollup bot run on GitHub. The frozen
     # Gitea release workflow stays as the record of the contract it replaces.
-    expect(set(workflows) == {CI, NIGHTLY, PREVIEW, RELEASE, ROLLUP, CACHE, *RELEASE_TRAIN},
+    expect(set(workflows) == {CI, NIGHTLY, PREVIEW, RELEASE, ROLLUP, CACHE, ".github/workflows/lsp.yml", *RELEASE_TRAIN},
            f"unexpected live workflows: {workflows}")
     for relative in (CI, NIGHTLY, PREVIEW, RELEASE, ROLLUP, CACHE, *RELEASE_TRAIN, ".github/README.md", ".gitea/README.md",
                      ".gitea/ISSUE_TEMPLATE/bug_report.md",
@@ -132,7 +132,7 @@ def main():
         "if: github.event_name == 'pull_request'" in step for step in declared_steps),
         "PR declarations must only run on pull_request; manual CI has no PR body")
     # Every native job takes the one reviewed toolchain; none installs its own.
-    expect(ci.count("bash scripts/configure_ci_toolchain.sh") == 5 and "llvm-18" not in ci
+    expect(ci.count("bash scripts/configure_ci_toolchain.sh") == 6 and "llvm-18" not in ci
            and "brew install" not in ci and "macos-26" in ci and "macos-15" not in ci,
            "native CI jobs must use the reviewed compiler from configure_ci_toolchain.sh")
     expect("-DCMAKE_BUILD_TYPE=Debug" not in ci and "-DCMAKE_BUILD_TYPE=RelWithDebInfo" in ci

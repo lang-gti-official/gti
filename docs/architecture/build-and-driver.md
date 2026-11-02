@@ -64,12 +64,16 @@ choice enters a compilation request, manifest, executable or cache key.
   interface is LLVM-free; its private implementation owns LLVM IR/native
   code-generation libraries and host initialization. Its implemented native profile and fail-closed admission are documented in
   [Backend](backend.md#llvm-coverage-and-admission).
+- `gti_project_services` owns the shared analysis configuration, read-only project
+  facts, manifest/dependency/registry services and native argument policy. It
+  links the compiler and small runtime transport support, without LLVM codegen,
+  the C++ emitter or bindgen. The driver and LSP consume this same implementation.
 - `gti_driver` in `include/gti/driver/` and `src/driver/` owns immutable
   compilation/build requests, resources, manifests, project plans, artifacts,
   native command construction, and process execution.
 - `src/cli/` owns argument routing, diagnostics/output presentation, and exit
   status. It constructs driver requests rather than reimplementing compilation.
-- `gti_lsp` is built whenever `GTI_BUILD_LSP` is enabled. It links the driver
+- `gti_lsp` is built whenever `GTI_BUILD_LSP` is enabled. It links `gti_project_services`
   for canonical read-only manifest discovery and selected configuration, but
   does not construct compilation, backend, or native-process requests. Its
   private JSON protocol machinery reuses the mandatory LLVM support dependency,
@@ -343,6 +347,52 @@ A workflow retry must rerun both package jobs in the same attempt. Initial
 commissioning requires this orchestration on main and a published preview source.
 Neovim managed mode delegates compiler/LSP/parser selection to gtiup; it installs
 only editor configuration and never an independent language-server version.
+
+### Independent compatible LSP updates
+
+The source remains in this repository. `gti_lsp` and its snapshot-state library
+can be rebuilt against an installed, full-CI-validated SDK using
+`GTI_REUSE_TOOLCHAIN=<prefix>` and `GTI_REBUILD_LSP=ON`. The SDK exports
+`GTI::project_services`, the compiler libraries and pinned LLVM support headers;
+this build does not compile the compiler, native runtime, bindgen or backends.
+
+Every new toolchain contains `share/gti/LSP_COMPATIBILITY.json`. Its identity
+hashes Git tree records for shared inputs including the compiler, standard
+library, runtime, parser, version, build configuration and orchestration.
+Protocol adapters, editor integration, tests and documentation do not affect it.
+This conservative source identity is a compatibility requirement, not an ABI
+promise across differing compiler versions. Source-only library CI refreshes
+it when replacing the library. Older packages without this metadata must first
+receive a complete toolchain update.
+
+The focused LSP CI lane admits only allowlisted protocol/editor changes and
+their test/documentation companions. It requires an ancestor full-CI SDK with
+identical shared inputs; otherwise it falls back to full integration. Shared
+frontend, semantic-query, cache, runtime, parser or build changes still require
+full CI. The lane runs registered LSP consumers, frontend/project checks,
+compiler pipeline, Neovim integration, installed checks and native smoke on
+both supported platforms. It seals the reused compiler and resource bytes and
+retains complete toolchain packages with exact compiler-origin provenance.
+
+`lsp.yml` publishes immutable, non-latest prereleases from successful integration
+packages whose source reached main. It verifies both platform archives and their
+exact source/run/attempt, extracts the already-tested LSP, embeds component
+identity, checksums and attests the archives. No rebuild occurs in publication.
+Tags are `lsp-<compatibility>-<run-id>`; serialized publication rejects divergent
+or older compatible sources. Uploads remain hidden in a draft until every
+asset is present with the expected digest; retries resume matching assets
+without overwriting them. Compiler channel tags remain independent.
+
+With a compatible version of gtiup, `gtiup update lsp [channel]` explicitly
+updates only the selected toolchain's LSP. Omitted channel uses the same project,
+environment and default selection as `gti`. The manager checks the compatibility
+manifest, exact platform/source/run identity, archive checksum and embedded
+metadata before activation. It creates a new immutable prefix using hard links
+for the unchanged compiler/resources and replaces only the LSP. Failure leaves
+the active selection unchanged; proxies work offline. A complete channel update
+resets the component override to that bundle's LSP. `gtiup show` identifies the
+component; `gc` removes old unreferenced prefixes only on explicit request.
+No installation or download occurs on compiler or editor startup.
 
 ### GitHub nightly publication
 

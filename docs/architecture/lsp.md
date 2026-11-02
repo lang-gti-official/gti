@@ -35,7 +35,12 @@ does not reserve these identifiers.
 The opt-in `vim.g.gti_toolchain = "gtiup"` integration delegates installation
 and channel selection to the toolchain manager. Its release prefix contains
 matching compiler, LSP, standard library, runtime and Tree-sitter parser; the
-editor never downloads the LSP separately. `gtiup which gti_lsp` runs from each
+editor never downloads updates itself. An explicit `gtiup update lsp` can
+activate a compatible independently published adapter while preserving the
+compiler, standard library and parser bytes. Restart the LSP client afterward;
+`gtiup which gti_lsp` resolves the new immutable prefix. A shared frontend or
+semantic change requires a complete toolchain update instead. See
+[compatible LSP updates](build-and-driver.md#independent-compatible-lsp-updates). `gtiup which gti_lsp` runs from each
 client's project root before the RPC process starts. Existing `gti.toml`, `.git`
 and `CMakeLists.txt` root-marker priority is preserved; `gti-toolchain` is a
 fallback marker, so an inherited workspace selection does not collapse nested

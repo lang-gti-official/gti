@@ -3552,6 +3552,14 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}"
             --cmake "${CMAKE_COMMAND}"
   )
+  if(TARGET gti_lsp AND NOT GTI_REUSE_TOOLCHAIN)
+    add_test(NAME lsp_sdk
+      COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lsp_sdk_test.py"
+              "$<TARGET_FILE:gti>" "$<TARGET_FILE:gti_tree_sitter>" "$<TARGET_FILE:gti_lsp>")
+    set_tests_properties(lsp_sdk PROPERTIES TIMEOUT 600)
+  endif()
+  add_test(NAME lsp_release
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lsp_release_test.py")
   add_test(NAME source_stdlib_ci
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_stdlib_ci_test.py")
   add_test(NAME preview_release

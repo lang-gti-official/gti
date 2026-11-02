@@ -851,6 +851,20 @@ before its real, disposable CMake/CTest batch fixtures run. `CIEnvironment` in
 initially tool-free PATH. The lightweight job also runs `repository_hosting`,
 the ownership-map coverage check and the planner's tests.
 
+### LSP adapter CI classification
+
+Only `src/lsp/`, `lua/gti/`, `lsp/` and `plugin/` adapter changes with allowlisted
+Python LSP/Neovim harnesses and documentation/fragments may use the `lsp` lane.
+`scripts/lsp_ci.py` owns this allowlist. Any shared compiler/stdlib/runtime/parser,
+build, CI, test-registration or unknown path retains full integration. A missing
+full-CI ancestor SDK or unequal shared-input identity also selects full CI.
+Contributors still record focused owning evidence and submit through the normal
+preview/PR lifecycle; this lane is not a local-validation exemption. Both platform
+LSP jobs must pass the CI gate. Reused compiler provenance is mandatory when
+nightly consumes their complete packages. LSP-only evidence cannot seed another
+compiler SDK. Independent component publication is detached after integration
+and does not require an agent to poll publication or install anything.
+
 ### Rollups
 
 A complete queue run is long and hosted macOS concurrency is small, so the

@@ -42,6 +42,7 @@ tests = [
   "frontend_cache_invalidation",
   "include_removal_lsp",
   "lsp_code_snippets",
+  "lsp_sdk",
   "lsp_configuration",
   "lsp_completion_work",
   "lsp_include_suggestions",
@@ -1511,6 +1512,7 @@ paths = [
 ]
 owners = [
   "cmake_test_ownership",
+  "lsp_sdk",
   "optimized_test_compiler_policy",
   "compiler_library_boundary",
   "cpp_backend_library_boundary",
@@ -1564,6 +1566,7 @@ owners = [
   "ci_release",
   "ci_sanitizer_capability",
   "source_stdlib_ci",
+  "lsp_release",
   "named_test_shards",
 ]
 consumers = [
@@ -1883,3 +1886,17 @@ paths = ["scripts/preview_release.py", ".github/workflows/preview.yml"]
 owners = ["preview_release", "ci_release"]
 consumers = ["preview_workflow", "neovim_gtiup"]
 risk = "system"
+
+[[area]]
+area = "lsp-sdk-publication"
+risk = "system"
+paths = [
+  "scripts/lsp_ci.py",
+  "scripts/lsp_compatibility.py",
+  "scripts/lsp_component.py",
+  "scripts/install_ci_neovim.py",
+  "tests/lsp_release_test.py",
+  "tests/lsp_sdk_test.py",
+]
+owners = ["lsp_release", "lsp_sdk"]
+consumers = ["source_stdlib_ci", "ci_release", "lsp_protocol", "neovim_lsp_configuration"]
