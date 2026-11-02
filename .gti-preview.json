@@ -224,10 +224,35 @@
         "7f264a458230a6355b96b9db6bd7fa72fc7f1ac8"
       ],
       "merge": "7f264a458230a6355b96b9db6bd7fa72fc7f1ac8"
+    },
+    {
+      "task": "issue-reconciliation",
+      "pr": 143,
+      "head": "96ae29dfe90491d4df41e8a50ef2fb66dd5d057a",
+      "tests": [
+        "borrowed_field_publication_runtime",
+        "owning_expression_transfers",
+        "llvm_borrowed_dispatch_regressions",
+        "documentation_index",
+        "llvm_coverage_evidence",
+        "llvm_readiness_collection_controls",
+        "llvm_canonical_host_controls",
+        "cpp_mir_body_emitter_corpus",
+        "mir_census_regression",
+        "mir_cutover_corpus_oracle",
+        "package_registry_cli",
+        "mir_full_expression",
+        "carrier_shell_references",
+        "cpp_mir_body_emitter_lifecycle"
+      ],
+      "contributions": [
+        "ae4b899b475ba78e34f9215502c4fcfda1cb870a"
+      ],
+      "merge": "ae4b899b475ba78e34f9215502c4fcfda1cb870a"
     }
   ],
   "removed": [],
   "main": "e3532e6715dd6344b0085e367982a8f2d496bda1",
-  "previous": "421f90dc870c39c92f60c3b0b0d684cf2572f1b1",
-  "candidate": "efa9a46feef940418da92570df02fab4"
+  "previous": "1e739f24b8b9e2f8e6da10de9afc1f1fd995263d",
+  "candidate": "6e929e0481c848168c4b02126f6e8409"
 }
