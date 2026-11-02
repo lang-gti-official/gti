@@ -12539,3 +12539,18 @@ Python syntax, example inventory/registration and `git diff --check` pass. Remai
 production work includes custom lifecycles, generic/constexpr recipes, complete
 source-module/re-export ownership, colliding qualified names, globals/TLS and
 artifact-aware LSP/provenance, alongside combined platform acceptance.
+
+
+### Removal algorithms
+
+`removal_algorithms` runs the complete structural compaction/erasure fixture
+under LLVM O0/O3 and the supported scalar/string comparison under C++ O3.
+Independent assertions exhaust every eight-element keep/remove pattern, verify
+retained order, destructor counts, immovable linked elements, colliding hash
+chains and node reuse. Semantic negatives reject mutable/consuming/wrong-result
+predicates, live cursor conflicts, aliased comparison values, read-only owners,
+and fixed-size erasure. LLVM O3 also proves zero allocation during 16 passes
+over 65,536 vector elements and cleanup of every owner on predicate failure.
+The full mixed generic ownership fixture currently exceeds the C++ emitter's
+consistent `uninitialized_storage` trait representation; its LLVM lifecycle
+checks remain mandatory and the scalar/string comparator is retained.

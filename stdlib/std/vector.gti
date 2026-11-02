@@ -1,4 +1,5 @@
 export module vector;
+import "detail/sequence_removal.gti";
 import "detail/memory_storage.gti";
 
 import std.span;
@@ -471,4 +472,19 @@ public:
     return std::move(result);
   }
 };
+}
+
+namespace std {
+/// Remove matching elements, preserve the order of the rest, and return the count.
+export [[discardable]] size_t erase_if<std::vector_element T, Predicate>(mut vector<T>& values, mut Predicate predicate)
+    requires std::detail::indexed_predicate<Predicate, vector<T>> {
+  size_t retained = std::detail::compact_remove_if(values, predicate);
+  return std::detail::erase_tail(values, retained);
+}
+
+/// Remove elements equal to value and return the number destroyed.
+export [[discardable]] size_t erase<std::vector_element T>(mut vector<T>& values, T& value) requires std::equality_comparable<T> {
+  size_t retained = std::detail::compact_remove(values, value);
+  return std::detail::erase_tail(values, retained);
+}
 }

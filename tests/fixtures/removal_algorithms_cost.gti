@@ -1,0 +1,29 @@
+import std.vector;
+extern "C" {
+  void adoption_count_begin();
+  void adoption_count_end();
+  uint64_t adoption_allocations();
+}
+mut uint64_t predicate_calls = 0;
+class RejectEven {
+public:
+  RejectEven() = default;
+  bool operator()(int& value) mut { predicate_calls++; return value % 2 == 0; }
+};
+int main() {
+  mut std::vector<int> values{};
+  values.reserve(std::size_t(65536));
+  for (mut int run = 0; run < 16; run++) {
+    values.clear();
+    for (mut int i = 0; i < 65536; i++) { values.push_back(i); }
+    predicate_calls = 0;
+    unsafe { adoption_count_begin(); }
+    auto removed = std::erase_if(values, RejectEven());
+    unsafe { adoption_count_end(); if (adoption_allocations() != 0) { return 1; } }
+    if (removed != 32768 || values.size() != 32768 || predicate_calls != 65536) { return 2; }
+    for (mut std::size_t i = 0; i < values.size(); i++) {
+      if (values[i] != int(i * 2 + 1)) { return 3; }
+    }
+  }
+  return 0;
+}

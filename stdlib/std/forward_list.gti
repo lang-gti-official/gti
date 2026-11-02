@@ -1,4 +1,5 @@
 export module forward_list;
+import std.functional;
 
 // Node algorithms transfer exclusive node owners instead of retaining mutable
 // traversal borrows. Cursors retain the whole chain's checked owner dependency
@@ -283,7 +284,25 @@ namespace std {
       result.head = std::unique_ptr<detail::forward_list_node<T>>();
     }
 
-    [[discardable]] size_t remove(T& value) mut
+    /// Destroy matching nodes without moving the retained elements.
+  [[discardable]] size_t remove_if<Predicate>(mut Predicate predicate) mut
+      requires std::predicate<Predicate, T> {
+    mut forward_list<T> retained{};
+    mut size_t removed = 0;
+    while (!this.empty()) {
+      if (predicate(this.front())) {
+        this.pop_front();
+        removed++;
+      } else {
+        retained.prepend_node(this.detach_front());
+      }
+    }
+    retained.reverse();
+    this.head = std::move(retained.head);
+    retained.head = std::unique_ptr<detail::forward_list_node<T>>();
+    return removed;
+  }
+  [[discardable]] size_t remove(T& value) mut
       requires std::equality_comparable<T> {
       mut forward_list<T> retained = forward_list<T>();
       mut size_t removed = 0;
@@ -378,4 +397,17 @@ namespace std {
       return detail::forward_list_mut_iterator<T>(this.head, true);
     }
   };
+}
+
+namespace std {
+/// Destroy matching nodes and return their count; retained order is unchanged.
+export [[discardable]] size_t erase_if<T, Predicate>(mut forward_list<T>& values, Predicate predicate)
+    requires std::predicate<Predicate, T> {
+  return values.remove_if(std::move(predicate));
+}
+
+/// Destroy nodes equal to value and return their count.
+export [[discardable]] size_t erase<std::equality_comparable T>(mut forward_list<T>& values, T& value) {
+  return values.remove(value);
+}
 }
