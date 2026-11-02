@@ -630,3 +630,48 @@ work by about 11.1% against this checkpoint (ratio 0.8891, 95% interval
 0.8630–0.9124). Its other five sampled workloads showed no material improvement.
 That six-case experiment does not establish whole-corpus performance acceptance;
 a full 34-program comparison is required before changing the default.
+
+### Measured checkpoint `6d7a4dd6`
+
+The next isolated full-corpus measurement has **23/34 competitive against both
+comparators and eleven slower than at least one**. All programs pass their
+digests; no comparison is noisy, too short or inconclusive. The previously
+uncertain predictable-branch control is within the band again.
+
+| Remaining workload | GTI / C++ median | GTI / Rust median |
+| --- | ---: | ---: |
+| `kernel-recursive-tree` | 1.112 | 1.108 |
+| `lib-vector-growth` | 1.704 | 1.774 |
+| `lib-vector-reserved` | 1.586 | 1.549 |
+| `lib-vector-transform` | 1.223 | 1.371 |
+| `lib-sort-random` | 1.445 | 2.423 |
+| `lib-sort-sorted` | 1.180 | 1.040 |
+| `lib-sort-reverse` | 1.044 | 1.200 |
+| `lib-string-growth-search` | 0.419 | 1.388 |
+| `lib-string-substrings` | 1.232 | 2.656 |
+| `lib-hashmap-reserved` | 0.993 | 1.362 |
+| `lib-interface-dispatch` | 0.750 | 1.581 |
+
+Capturing predicates crossed the 10% boundary at `10f9a41f`: a paired
+comparison against `2b55e33d` measured ratio 0.8707 (95% interval
+0.8612–0.8751). The same checkpoint improved reserved-vector work by about
+31.5% (0.6850, 0.6830–0.6906), while leaving a substantial gap to both
+comparators. The later unchecked restoring swaps improved random and reverse
+sorting by about 2.3% and 2.7%, respectively, against `10f9a41f`; they did not
+close another 10% gap. These comparisons are retained in `loop-receiver-mini`
+and `named-field-mini` within the round-eight manual campaign artifact.
+
+The separate full-34 O3 inlining-threshold experiment (400 versus the default,
+both based on `6d7a4dd6`) measured ratios 0.6547 for sorted input (95% interval
+0.6464–0.6575), 0.5696 for reverse input (0.5624–0.6169), and 0.9013 for
+substrings (0.8731–0.9255). No definite material regression was observed, but
+reserved hashing, string growth and interface dispatch need stronger repeats:
+their intervals cross the separate 5% regression boundary. A new three-language
+run must establish how many gaps the candidate actually closes.
+
+Summed compilation observations for that inlining experiment were 17.015 s
+and 17.149 s; median paired peak compiler RSS was 0.9995 times the baseline.
+The largest executable-size increase was 0.21% for reserved hashing. These
+are cost observations, not repeated compiler-speed or peak application-memory
+measurements. The experiment and all raw samples are retained under
+`named-field-mini/Testing/inlining-paired`.

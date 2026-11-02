@@ -33,6 +33,7 @@
 #include <llvm/TargetParser/Triple.h>
 #include <llvm/Transforms/IPO/HotColdSplitting.h>
 #include <llvm/Transforms/Utils/BasicBlockUtils.h>
+#include <llvm/Transforms/Utils/Cloning.h>
 
 #include <algorithm>
 #include <array>
@@ -44,6 +45,131 @@
 #include <stdexcept>
 
 namespace lang::native_llvm {
+
+bool specializeBoundedRecursion(llvm::Module &module) {
+  // This is a bounded first profile of call-site range specialization. These
+  // operations bound every defined result without a memory, path, nowrap or
+  // undef assumption. In particular, never look through freeze: freezing a
+  // poison remainder may yield a value outside the remainder's domain.
+  const auto maximum = [](llvm::Value *value) -> std::optional<llvm::APInt> {
+    if (auto *binary = llvm::dyn_cast<llvm::BinaryOperator>(value)) {
+      if (binary->getOpcode() == llvm::Instruction::URem) {
+        const auto *divisor =
+            llvm::dyn_cast<llvm::ConstantInt>(binary->getOperand(1));
+        if (divisor && !divisor->isZero())
+          return divisor->getValue() - 1;
+      }
+      if (binary->getOpcode() == llvm::Instruction::And)
+        for (auto &operand : binary->operands())
+          if (const auto *mask =
+                  llvm::dyn_cast<llvm::ConstantInt>(operand.get()))
+            return mask->getValue();
+    }
+    if (const auto *extension = llvm::dyn_cast<llvm::ZExtInst>(value))
+      return llvm::APInt::getLowBitsSet(
+          value->getType()->getIntegerBitWidth(),
+          extension->getSrcTy()->getIntegerBitWidth());
+    return std::nullopt;
+  };
+  constexpr unsigned maximumClones = 8;
+  constexpr unsigned maximumBodyInstructions = 192;
+  constexpr unsigned maximumAddedInstructions = 1024;
+  llvm::SmallVector<llvm::Function *> candidates;
+  for (auto &function : module)
+    if (!function.isDeclaration() && function.hasLocalLinkage() &&
+        !function.isVarArg() && !function.hasPersonalityFn() &&
+        !function.hasAddressTaken() && !function.hasComdat() &&
+        !function.hasFnAttribute("gti.range-specialized") &&
+        !function.hasFnAttribute(llvm::Attribute::OptimizeNone) &&
+        !function.hasFnAttribute(llvm::Attribute::OptimizeForSize) &&
+        !function.hasFnAttribute(llvm::Attribute::MinSize) &&
+        !function.hasFnAttribute(llvm::Attribute::Convergent) &&
+        !function.hasFnAttribute(llvm::Attribute::NoDuplicate) &&
+        !function.hasFnAttribute(llvm::Attribute::ReturnsTwice) &&
+        function.size() <= 32 &&
+        function.getInstructionCount() <= maximumBodyInstructions)
+      candidates.push_back(&function);
+  unsigned clones = 0, added = 0;
+  for (auto *function : candidates) {
+    llvm::SmallVector<llvm::CallInst *> recursive;
+    bool eligible = true, checkedArithmetic = false;
+    for (auto &block : *function) {
+      if (block.hasAddressTaken())
+        eligible = false;
+      for (auto &instruction : block) {
+        if (llvm::isa<llvm::WithOverflowInst>(instruction))
+          checkedArithmetic = true;
+        if (auto *call = llvm::dyn_cast<llvm::CallBase>(&instruction)) {
+          if (!llvm::isa<llvm::CallInst>(call) || call->isConvergent() ||
+              call->cannotDuplicate() || call->getNumOperandBundles() ||
+              call->hasFnAttr(llvm::Attribute::ReturnsTwice) ||
+              llvm::cast<llvm::CallInst>(call)->isMustTailCall())
+            eligible = false;
+          if (call->getCalledFunction() == function) {
+            if (call->getFunctionType() != function->getFunctionType() ||
+                call->getCallingConv() != function->getCallingConv())
+              eligible = false;
+            else if (auto *direct = llvm::dyn_cast<llvm::CallInst>(call))
+              recursive.push_back(direct);
+          }
+        }
+      }
+    }
+    if (!eligible || !checkedArithmetic || recursive.empty())
+      continue;
+    llvm::SmallVector<std::pair<unsigned, llvm::APInt>> bounds;
+    for (auto &argument : function->args()) {
+      const auto *integer =
+          llvm::dyn_cast<llvm::IntegerType>(argument.getType());
+      if (!integer || integer->getBitWidth() < 8 ||
+          integer->getBitWidth() > 64 ||
+          argument.hasAttribute(llvm::Attribute::Range))
+        continue;
+      std::optional<llvm::APInt> bound;
+      for (auto *call : recursive) {
+        const auto known = maximum(call->getArgOperand(argument.getArgNo()));
+        if (!known) {
+          bound.reset();
+          break;
+        }
+        bound = bound ? llvm::APIntOps::umax(*bound, *known) : *known;
+      }
+      // Leave minor refinements to ordinary interprocedural propagation.
+      if (bound && bound->getActiveBits() + 4 <= integer->getBitWidth()) {
+        bounds.emplace_back(argument.getArgNo(), *bound);
+        if (bounds.size() == 2)
+          break;
+      }
+    }
+    const auto cost = function->getInstructionCount();
+    if (bounds.empty() || clones == maximumClones ||
+        cost > maximumAddedInstructions - added)
+      continue;
+    llvm::ValueToValueMapTy mapping;
+    auto *specialized = llvm::CloneFunction(function, mapping);
+    specialized->setName(function->getName() + ".bounded");
+    specialized->addFnAttr("gti.range-specialized");
+    function->addFnAttr("gti.range-specialized");
+    for (const auto &[index, bound] : bounds)
+      specialized->addParamAttr(
+          index, llvm::Attribute::get(
+                     module.getContext(), llvm::Attribute::Range,
+                     llvm::ConstantRange(llvm::APInt(bound.getBitWidth(), 0),
+                                         bound + 1)));
+    // A parameter range preserves poison semantics; unlike llvm.assume it
+    // does not introduce a new poison-consuming operation at function entry.
+    // Both the original and cloned self calls satisfy the recorded ranges.
+    // Other callers keep the original unrestricted signature and failures.
+    for (auto *call : recursive) {
+      auto *copy = llvm::cast<llvm::CallInst>(mapping.lookup(call));
+      copy->setCalledFunction(specialized);
+      call->setCalledFunction(specialized);
+    }
+    ++clones;
+    added += cost;
+  }
+  return clones != 0;
+}
 
 void promotePrivateScalarResults(llvm::Module &module) {
   const auto nextInstruction = [](llvm::Instruction *instruction) {
@@ -833,7 +959,10 @@ BackendArtifact Session::emitObject() {
   llvm::FunctionAnalysisManager functions;
   llvm::CGSCCAnalysisManager cgscc;
   llvm::ModuleAnalysisManager modules;
-  llvm::PassBuilder builder(machine_.get());
+  llvm::PipelineTuningOptions tuning;
+  if (options_.optimization == LlvmCodegenOptimization::Aggressive)
+    tuning.InlinerThreshold = 400;
+  llvm::PassBuilder builder(machine_.get(), tuning);
   registerPrivateAtomicPass(builder);
   registerCheckedOffsetPass(builder);
   registerCheckedReductionPass(builder);
@@ -854,6 +983,9 @@ BackendArtifact Session::emitObject() {
   pipeline.run(module_, modules);
   if (level == llvm::OptimizationLevel::O2 ||
       level == llvm::OptimizationLevel::O3) {
+    const bool specialized = specializeBoundedRecursion(module_);
+    if (specialized)
+      modules.invalidate(module_, llvm::PreservedAnalyses::none());
     // Inlining exposes complete checked-failure/cleanup regions only after
     // the ordinary pipeline has simplified their ownership state. Outline
     // LLVM's profitable cold regions, then give the now-smaller hot helpers
@@ -861,7 +993,7 @@ BackendArtifact Session::emitObject() {
     // erased or assigned invented likelihood, and there is no retry loop.
     const auto outlined = llvm::HotColdSplittingPass().run(module_, modules);
     modules.invalidate(module_, outlined);
-    if (!outlined.areAllPreserved()) {
+    if (specialized || !outlined.areAllPreserved()) {
       auto exposed = builder.buildModuleSimplificationPipeline(
           level, llvm::ThinOrFullLTOPhase::None);
       exposed.addPass(builder.buildModuleOptimizationPipeline(

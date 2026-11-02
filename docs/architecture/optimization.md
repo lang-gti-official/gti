@@ -1702,7 +1702,7 @@ application's failure path.
 
 At O2/O3, one late LLVM hot/cold splitting pass separates profitable cold
 regions after ordinary inlining has exposed and simplified their cleanup state.
-If outlining changes the module, one further standard LLVM module
+If outlining or bounded recursive specialization changes the module, one further standard LLVM module
 simplification/optimization round can inline the smaller hot helpers and
 optimize their exposed storage. There is no fixed-point retry or forced
 inlining. The pass uses LLVM's existing cost model and cold evidence; it adds
@@ -1710,6 +1710,34 @@ no failure-likelihood hints or semantic assumptions. O0/O1 retain their
 original pipelines. Cold-path extraction retains failure records, cleanup
 order, side effects and return values. Focused runtime and code-size/build-cost
 measurements remain required before accepting this pipeline change.
+
+O3 uses an ordinary LLVM inlining threshold of 400; other levels retain LLVM's
+defaults. This is a profitability setting, not forced inlining or a change to
+the language's failure policy. The manual 34-program experiment measured large
+gains for monotonic sorting and a smaller gain for substring construction;
+code size, compilation cost and noisy comparisons remain separate acceptance
+evidence. The comparative corpus is not registered with CTest or CI.
+
+After the first O2/O3 pipeline, a private recursive function can receive one
+additional body specialized for its recursive inputs. Every direct self call
+must independently bound the selected integer argument through a constant
+unsigned remainder, a constant bit mask, or zero extension. Bounds are joined
+across **all** self calls; at most two parameters are narrowed, by at least four
+bits. The unrestricted entry remains unchanged. Both original and cloned self
+calls then target the bounded body, whose LLVM parameter range records only
+the proven domain of defined values. No new `assume` consumes a possibly poison
+argument, and bounds are never transported through `freeze`.
+
+Admission requires private direct-call identity, checked arithmetic, at most
+192 instructions and 32 blocks, and no address-taking, variadic/personality,
+convergent, nonduplicable, must-tail or size-optimization boundary. A module adds
+at most eight clones and 1,024 instructions. A marker prevents repeat cloning;
+normal LLVM optimization owns subsequent simplification. Failure and cleanup
+paths remain in both bodies until ordinary proofs eliminate unreachable work.
+This is a structural first slice of call-site range specialization, not an
+assumption that arbitrary recursion has bounded inputs or results. The native
+regression checks unrestricted large inputs, both multiply and add failures,
+base-case returns, and recursive successful execution against O0 and C++.
 
 LLVM lowering preserves two kinds of successful-execution facts for its normal
 optimization pipeline: explicit verified safety discharges become assumptions

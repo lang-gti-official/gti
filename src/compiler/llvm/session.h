@@ -42,6 +42,11 @@ void reuseCheckedArithmeticResults(llvm::Module &module);
 // and failure publication retain the ordinary private ABI.
 void promotePrivateScalarResults(llvm::Module &module);
 
+// A private recursive body may have broader entry inputs than its recursive
+// edges. Clone only when every self edge proves the same bounded scalar domain.
+// Unrestricted entries keep the original body and its checked failures.
+bool specializeBoundedRecursion(llvm::Module &module);
+
 class Session final {
 public:
   explicit Session(VerifiedLoweredProgram program, LlvmBackendOptions options);

@@ -1185,6 +1185,11 @@ add_test(NAME llvm_checked_square_runtime
                  "${PROJECT_SOURCE_DIR}/tests/llvm_checked_square_test.py"
                  "$<TARGET_FILE:gti>")
 set_tests_properties(llvm_checked_square_runtime PROPERTIES TIMEOUT 300)
+add_test(NAME llvm_bounded_recursion_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/llvm_bounded_recursion_test.py"
+                 "$<TARGET_FILE:gti>")
+set_tests_properties(llvm_bounded_recursion_runtime PROPERTIES TIMEOUT 300)
 add_executable(gti_optimizer_prefix_relocation_tests optimizer_prefix_relocation_tests.cpp)
 target_link_libraries(gti_optimizer_prefix_relocation_tests PRIVATE gti_compiler)
 add_test(NAME optimizer_prefix_relocation COMMAND gti_optimizer_prefix_relocation_tests)

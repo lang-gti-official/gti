@@ -728,6 +728,79 @@ int main() {
   }
 }
 
+void verifyBoundedRecursion() {
+  llvm::LLVMContext context;
+  llvm::Module module("bounded-recursion", context);
+  auto *integer = llvm::Type::getInt64Ty(context);
+  const auto make = [&](llvm::StringRef name, unsigned shape) {
+    auto *function = llvm::Function::Create(
+        llvm::FunctionType::get(integer, {integer}, false),
+        llvm::GlobalValue::InternalLinkage, name, module);
+    llvm::IRBuilder<> builder(
+        llvm::BasicBlock::Create(context, "entry", function));
+    auto *input = function->getArg(0);
+    builder.CreateBinaryIntrinsic(llvm::Intrinsic::uadd_with_overflow, input,
+                                  builder.getInt64(1));
+    llvm::Value *argument = builder.CreateURem(input, builder.getInt64(251));
+    if (shape == 1)
+      argument = builder.CreateAnd(input, builder.getInt64(255));
+    if (shape == 2)
+      argument = builder.CreateZExt(
+          builder.CreateTrunc(input, builder.getInt8Ty()), integer);
+    if (shape == 3)
+      argument = builder.CreateFreeze(argument);
+    if (shape == 4)
+      argument = input;
+    if (shape == 5)
+      argument = builder.CreateURem(input, builder.getInt64(0));
+    if (shape == 6)
+      argument = builder.CreateAnd(input, builder.getInt64(UINT64_MAX - 1));
+    auto *first = builder.CreateCall(function, {argument});
+    if (shape == 7)
+      builder.CreateCall(function, {input});
+    if (shape == 8)
+      function->addFnAttr(llvm::Attribute::Convergent);
+    if (shape == 9)
+      new llvm::GlobalVariable(module, function->getType(), true,
+                               llvm::GlobalValue::ExternalLinkage, function,
+                               "escaped-recursive-address");
+    builder.CreateRet(first);
+    return function;
+  };
+  for (unsigned shape = 0; shape != 10; ++shape)
+    make("recursive" + std::to_string(shape), shape);
+  if (!specializeBoundedRecursion(module) || specializeBoundedRecursion(module))
+    throw std::runtime_error(
+        "recursive range specialization is not idempotent");
+  for (unsigned shape = 0; shape != 10; ++shape) {
+    auto *original = module.getFunction("recursive" + std::to_string(shape));
+    auto *bounded = module.getFunction((original->getName() + ".bounded").str());
+    if ((bounded != nullptr) != (shape < 3))
+      throw std::runtime_error("recursive specialization crossed its boundary");
+    if (!bounded)
+      continue;
+    const auto range = bounded->getArg(0)->getRange();
+    const unsigned maximum = shape == 0 ? 250 : 255;
+    if (!range || range->getUnsignedMax() != maximum ||
+        original->getArg(0)->hasAttribute(llvm::Attribute::Range))
+      throw std::runtime_error(
+          "recursive specialization narrowed an open entry");
+    for (auto *body : {original, bounded})
+      for (auto &block : *body)
+        for (auto &instruction : block)
+          if (const auto *call = llvm::dyn_cast<llvm::CallInst>(&instruction)) {
+            if (!call->getCalledFunction()->isIntrinsic() &&
+                call->getCalledFunction() != bounded)
+              throw std::runtime_error("recursive edge missed bounded body");
+            if (call->getIntrinsicID() == llvm::Intrinsic::assume)
+              throw std::runtime_error(
+                  "recursive range consumed a new poison value");
+          }
+  }
+  if (llvm::verifyModule(module))
+    throw std::runtime_error("recursive specialization produced invalid IR");
+}
+
 void verifyPrivateScalarResultPromotion() {
   llvm::LLVMContext context;
   llvm::Module module("private-scalar-results", context);
@@ -912,6 +985,7 @@ int main() {
   verifyMergedCheckedArithmetic();
   verifyRecoveryExecutionFrequency();
   verifyPrivateScalarResultPromotion();
+  verifyBoundedRecursion();
   verifyCheckedSquareBounds();
   verifySquareOffsetOptimization();
   verifyDischargedCheckFacts();
