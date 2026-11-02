@@ -9103,16 +9103,20 @@ private:
               published->additionalDependencies &&
           sameBorrowSource(previous->source, published->source)) {
         // Semantic carrier membership describes the completed source flow;
-        // intermediate moved locals can have no retained-loan annotation.
+        // only a retained result binding continues that semantic identity.
         // Transport a preserved identity at the exact consuming call, not by
         // later resurrecting an already retired formal's runtime capability.
         // A distinct retained result has its own semantic endpoint: redirecting
         // the input identity would let the input's last use retire that result.
+        // An unretained temporary has its own full-expression endpoint, even
+        // when relayed through another call. Its physical dependencies still
+        // travel with the value; the input's semantic acknowledgement stays
+        // on the consumed loan instead of following that temporary.
         bool transported = false;
         for (auto &[semantic, currentLoan] : semanticLoans) {
           if (currentLoan == loan &&
-              (resultIdentity == retainedInitializerLoans.end() ||
-               resultIdentity->second == semantic)) {
+              resultIdentity != retainedInitializerLoans.end() &&
+              resultIdentity->second == semantic) {
             currentLoan = publishedLoan;
             transported = true;
           }

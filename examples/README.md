@@ -302,7 +302,7 @@ is a teaching helper, not a production server.
 | `087-associative-containers.gti` | ordered and hashed dictionaries, nested borrowed insertion results, moves, and owner reactivation |
 | `088-consuming-builders.gti` | consuming builder methods and explicit receiver movement |
 | `089-library-workflow.gti` | numeric option parsing, string editing, filesystem queries, owning work queues/history/sets, and emplacement with a move-only constructor argument |
-| `090-generic-algorithms.gti` | search, mutation, replacement, and filtered copying |
+| `090-generic-algorithms.gti` | search, mutation, replacement, filtered copying, and chaining returned output cursors |
 | `091-json-documents.gti` | decoding and encoding structs through reflection, optionals for `null` and absent members, pretty output, strict-grammar errors with paths and locations |
 | `092-json-codecs.gti` | a `std::json::codec` specialization for a class with an invariant, used automatically inside structs and vectors, and JSON Pointer errors through it |
 | `093-http-json-client.gti` | encoded URLs, bounded GET/POST requests, transport/status/schema errors, and JSON responses |
@@ -692,9 +692,10 @@ With the locally installed toolchain, run it from the repository root:
 
 [`090-generic-algorithms.gti`](090-generic-algorithms.gti) demonstrates sequence
 `contains`/`find`, adjacent search, associative member lookup, mutable array
-traversal, replacement predicates, and filtered copying into an existing
-destination. Search cursors retain a checked borrow of their owner; mutating
-that owner while the cursor is still used is rejected.
+traversal, replacement predicates, filtered copying, and chaining `copy` calls
+by moving the returned output cursor. Search cursors retain a checked borrow
+of their owner; returned output cursors retain exclusive access to their
+destination. Conflicting owner access while a cursor is still used is rejected.
 
 ## Programmable allocators
 
