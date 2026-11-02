@@ -6563,6 +6563,12 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
   const auto invalidSummary = [&](std::string message) {
     return verificationFailure(body, instance.id, std::move(message));
   };
+  if (instance.returnType.kind == SemanticType::Reference &&
+      instance.returnBorrowOrigin != BorrowOriginKind::None &&
+      instance.returnBorrowAccess != instance.returnType.referenceAccess) {
+    return invalidSummary(
+        "reference return summary does not match its declared result access");
+  }
   if (instance.explicitReturnBorrowOrigin &&
       instance.returnBorrowOrigin == BorrowOriginKind::None) {
     const auto inventory =
@@ -6712,7 +6718,13 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
           parameter.kind == SemanticType::Reference &&
           parameter.arguments.size() == 1 &&
           (completeConditionalResult ||
-           parameter.referenceAccess == instance.returnBorrowAccess);
+           parameter.referenceAccess == instance.returnBorrowAccess ||
+           // A checked exclusive parameter may publish shared access. The
+           // Return loan still has the declared result permission, and its
+           // producer proves that no read-only input is upgraded.
+           (instance.returnType.kind == SemanticType::Reference &&
+            parameter.referenceAccess == AccessMode::Mutable &&
+            instance.returnBorrowAccess == AccessMode::ReadOnly));
       const bool exactCarrier =
           storedCarrierReference &&
           storedCarrierReference->reference.referenceAccess ==
