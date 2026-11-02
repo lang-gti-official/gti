@@ -63,7 +63,9 @@ policy below without bypassing that lifecycle.
 Toolchain releases publish to GitHub Releases; only the `gti add`
 package registry stays on Gitea. `.github/workflows/nightly.yml` republishes
 the rolling `nightly` prerelease daily using the selected main commit's
-validated production archives from full CI. Nightly verifies exact source,
+validated production archives from full CI or admitted source-only stdlib
+integration. The latter retains the original full-build compiler identity and
+validates the updated library on both platforms. Nightly verifies exact source,
 run/attempt, platform, configuration and checksums; it never rebuilds or repeats
 the complete suite. An automation-only pass or an approved merge exception
 does not supply those artifacts: commissioning/recovery uses a full CI dispatch
