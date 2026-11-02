@@ -45,6 +45,24 @@ constexpr T scaled<std::numeric T, uint64_t N>(T value) {
 }
 
 constexpr std::string_view path = "mesh/player\0lod";
+static constexpr std::string_view empty_path = "";
+constexpr std::string_view utf8_path = "é";
+
+class AssetNames {
+public:
+  // The earlier initializer must consume the later field's constant value.
+  static mut uint64_t length = AssetNames::later.size();
+  static constexpr std::string_view later = "a\0b";
+};
+
+struct NamedAsset {
+  std::string_view name;
+  constexpr NamedAsset(std::string_view input) : name(input) {}
+};
+constexpr NamedAsset named_asset{path};
+mut int observations = 0;
+int observe() { observations++; return 0; }
+
 constexpr asset_info asset = inspect_asset(path);
 static_assert(asset.length == 15 && asset.separators == 1 && !asset.empty);
 static_assert(path[11] == '\0');
@@ -57,6 +75,14 @@ static_assert(scaled<int, 3>(7) == 21 && scaled<int, 0>(7) == 0);
 static_assert(scaled<double, 2>(double(1.5)) == double(3.0));
 
 int main() {
+  if (path.size() != 15 || path.empty() || !empty_path.empty() ||
+      empty_path.size() != 0 || utf8_path.size() != 2 ||
+      ((path)).size() != 15 || (observe(), path).empty() ||
+      observations != 1 || path[11] != '\0' ||
+      AssetNames::length != 3 || AssetNames::later.size() != 3 ||
+      ((AssetNames::later)).empty() || named_asset.name.size() != 15) {
+    return 5;
+  }
   asset_info actual = inspect_asset(path);
   asset_info empty = inspect_asset("");
   asset_info high = inspect_asset("é");

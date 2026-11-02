@@ -1126,6 +1126,81 @@ int main() { return out; }
          "retargeting mutation");
 }
 
+void testConstantReceiverSubstitutions() {
+  const auto frontend = lang::Frontend().analyze("constant-receivers.gti", R"(
+import std.string_view;
+constexpr std::string_view name = "a\0b";
+static constexpr std::string_view empty = "";
+class Names {
+public:
+  static mut uint64_t length = Names::later.size();
+  static constexpr std::string_view later = "é";
+};
+mut int calls = 0;
+int observe() { calls++; return 0; }
+int main() {
+  return name.size() == 3 && !((name)).empty() && empty.empty() &&
+         (observe(), name).size() == 3 && calls == 1 &&
+         Names::later.size() == 2 && Names::length == 2 ? 0 : 1;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "constant receivers lower through direct, grouped, sequenced and "
+         "later static-field occurrences");
+  if (!frontend.canGenerateCode()) {
+    printDiagnostics(frontend);
+    return;
+  }
+  std::size_t observers = 0;
+  const auto checkBody = [&](const lang::MirBody &body) {
+    for (const auto &block : body.blocks) {
+      for (const auto &item : block.instructions) {
+        if (item.intrinsic != lang::IntrinsicKind::StringViewSize &&
+            item.intrinsic != lang::IntrinsicKind::StringViewEmpty)
+          continue;
+        ++observers;
+        const auto *receiver =
+            item.receiver ? body.findValue(item.receiver->value) : nullptr;
+        expect(item.receiver &&
+                   item.receiver->kind == lang::MirOperandKind::Value &&
+                   receiver &&
+                   std::any_of(body.programConstantSubstitutions.begin(),
+                               body.programConstantSubstitutions.end(),
+                               [&](const auto &entry) {
+                                 return entry.hirValue == receiver->sourceValue;
+                               }),
+               "constant observers consume the exact substituted SSA value "
+               "rather than borrowing program storage");
+      }
+    }
+  };
+  checkBody(frontend.mir.module());
+  for (const auto &function : frontend.mir.functionInstances())
+    checkBody(function.body);
+  expect(observers == 6, "all six constant observer occurrences are checked");
+
+  auto forged = frontend.mir;
+  bool changed = false;
+  for (auto &block : module(forged)->blocks) {
+    for (auto &item : block.instructions) {
+      if (item.programConstantSubstitution &&
+          item.info.type == lang::SemanticType::StringView) {
+        item.programConstantSubstitution = false;
+        changed = true;
+      }
+    }
+  }
+  const auto verification = lang::verifyMirProgram(forged);
+  expect(changed && !verification.valid() &&
+             std::any_of(verification.errors.begin(), verification.errors.end(),
+                         [](const auto &error) {
+                           return error.message.find("program-constant") !=
+                                  std::string::npos;
+                         }),
+         "constant receiver substitution still requires its exact marked "
+         "materialization");
+}
+
 void testOptimizationCoherence(const lang::FrontendResult &frontend) {
   const lang::OptimizationPipeline pipeline;
   const lang::OptimizationResult compatibility = pipeline.run(
@@ -1219,6 +1294,7 @@ int inspect(Choice<Leaf> value) {
   }
 }
 int main() {
+  testConstantReceiverSubstitutions();
   Box box = make_box();
   int values[2] = numbers();
   Mode mode = selected();

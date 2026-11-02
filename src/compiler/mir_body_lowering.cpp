@@ -5583,6 +5583,10 @@ private:
       valid = false;
       return;
     }
+    if (value->programConstantSubstitution) {
+      emitProgramConstantSubstitution(*value);
+      return;
+    }
     for (const HirValueId input : value->sequencedInputs) {
       emitValue(input);
       if (terminated()) {
@@ -6226,6 +6230,26 @@ private:
     if (receiver == nullptr) {
       valid = false;
       return {};
+    }
+    // Transparent place wrappers still denote the substituted value. Keep
+    // their sequenced effects, but do not turn the SSA value into storage
+    // merely to observe it through a receiver.
+    const HirValue *substituted = receiver;
+    while (substituted != nullptr &&
+           !substituted->programConstantSubstitution &&
+           !substituted->operands.empty() &&
+           (substituted->kind == HirValueKind::Grouping ||
+            (substituted->kind == HirValueKind::Binary &&
+             substituted->operation == TokenKind::COMMA))) {
+      substituted = findValue(substituted->operands.back());
+    }
+    if (substituted != nullptr && substituted->programConstantSubstitution) {
+      if (access != AccessMode::ReadOnly) {
+        valid = false;
+        return {};
+      }
+      emitPlaceDependencies(id);
+      return terminated() ? MirOperand{} : valueOperand(substituted->id);
     }
     // A raw-pointer method receiver (`pointer->method()`) is the pointee
     // itself. A field reached through the pointer (`pointer->field.method()`)
