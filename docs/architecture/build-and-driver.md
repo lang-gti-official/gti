@@ -316,16 +316,29 @@ configuration on Linux x64 and macOS arm64, runs combined `preview_admission`
 on each platform, then packages that validated stage. The separate `preview`
 prerelease uses `gti-preview-<platform>.tar.gz` names, checksums, embedded and
 release `BUILD_ID`, `PREVIEW_SOURCE`, inclusion metadata and run/attempt-bound
-provenance. Publication verifies both platforms, attests archives, rechecks
-current preview, and uses an exact lease on its own rolling tag. BUILD_ID is
-uploaded last so a racing installer rejects inconsistent assets.
+provenance. Publication verifies both platforms, attests archives, and requires
+the candidate to remain in the admitted preview branch's ancestry, with its
+packaged inclusion manifest equal to the committed source manifest. Branch
+advancement alone does not invalidate a successful build. An explicit, unrestored
+feature withdrawal still blocks candidates containing that feature.
+
+The rolling tag advances only to a descendant of its existing source commit;
+an older candidate is a successful no-op, and divergent history is rejected.
+An exact tag lease prevents a concurrent tag update from being overwritten.
+The workflow serializes publishers with `cancel-in-progress: false`, retaining
+the running build while pending submissions consolidate into the next build.
+Same-commit retries may complete an interrupted upload after the tag moved.
+BUILD_ID is uploaded last so a racing installer rejects inconsistent assets.
 
 This does not qualify preview artifacts for nightly or advance main. Preview
 can include features whose original PR review and complete integration are
 pending. Nightly still requires successful full CI on its selected main source;
 beta/stable promotion is unchanged. Preview source admission and package
 publication are asynchronous: a source branch can advance before downloadable
-packages finish, and an older packaging run then refuses stale publication.
+packages finish. A completed build may publish while newer source is pending,
+but cannot replace a newer published snapshot. Thus steady submissions do not
+starve publication. Publication order follows source ancestry, not run IDs or
+completion times.
 A workflow retry must rerun both package jobs in the same attempt. Initial
 commissioning requires this orchestration on main and a published preview source.
 Neovim managed mode delegates compiler/LSP/parser selection to gtiup; it installs
