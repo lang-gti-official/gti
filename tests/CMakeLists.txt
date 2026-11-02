@@ -3524,6 +3524,8 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}"
             --cmake "${CMAKE_COMMAND}"
   )
+  add_test(NAME source_stdlib_ci
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_stdlib_ci_test.py")
   add_test(NAME preview_release
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/preview_release_test.py")
   add_test(

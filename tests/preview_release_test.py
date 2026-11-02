@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Reject stale, mixed and incomplete preview publication without network/builds."""
+"""Publish admitted snapshots in source order; reject mixed/incomplete artifacts."""
 import base64
 import copy
 import io
 import json
 import os
+import subprocess
 from pathlib import Path
 import sys
 import tarfile
@@ -22,18 +23,31 @@ MANIFEST = {'schema': 1, 'features': [{'task': 'feature-a', 'head': 'd' * 40}]}
 
 
 class PreviewTests(unittest.TestCase):
+    def api(self, current=SHA, documents=None):
+        documents = documents or {}
+        history = ['a' * 40, 'b' * 40, SHA, 'd' * 40, 'e' * 40]
+        def request(path):
+            if '/contents/' in path:
+                document = documents.get(path.split('?ref=')[1], MANIFEST)
+                return {'content': base64.b64encode(json.dumps(document).encode()).decode()}
+            if '/compare/' in path:
+                base, head = path.split('/compare/')[1].split('...')
+                if base not in history or head not in history:
+                    return {'status': 'diverged'}
+                return {'status': 'ahead' if history.index(base) < history.index(head) else 'behind'}
+            self.assertEqual(path, p.BASE + '/git/ref/heads/preview')
+            return {'object': {'sha': current}}
+        return request
+
     def request(self, path):
-        if '/contents/' in path:
-            return {'content': base64.b64encode(json.dumps(MANIFEST).encode()).decode()}
-        return {'object': {'sha': SHA}}
+        return self.api()(path)
 
     def test_select_and_admit(self):
         self.assertEqual(p.select(self.request, 'push', 'refs/heads/preview'), SHA)
         self.assertEqual(p.select(self.request, 'workflow_dispatch', 'refs/heads/main'), SHA)
         for event, ref in [('pull_request', 'refs/heads/preview'), ('workflow_dispatch', 'refs/heads/feature'), ('push', 'refs/heads/main')]:
             with self.assertRaises(ValueError): p.select(self.request, event, ref)
-        with self.assertRaisesRegex(ValueError, 'advanced'):
-            p.admit(self.request, 'a' * 40)
+        self.assertTrue(p.admit(self.request, 'a' * 40, '', MANIFEST))
         with self.assertRaisesRegex(ValueError, 'manifest'):
             p.manifest({'schema': 1})
 
@@ -79,24 +93,97 @@ class PreviewTests(unittest.TestCase):
             (directory / 'unexpected').touch()
             with self.assertRaisesRegex(ValueError, 'artifact set'): p.check_packages(directory, SHA, 123, 2)
 
-    def test_publication_rechecks_head_and_uses_lease(self):
+    def publication(self, request, published='a' * 40, push_error=False):
         with tempfile.TemporaryDirectory() as tmp:
             directory = Path(tmp) / 'dist'; directory.mkdir(); self.make_packages(directory)
             calls = []
             def command(*args):
                 calls.append(args)
-                return 'f' * 40 + '\trefs/tags/preview' if args[1] == 'ls-remote' else ''
+                if args[:2] == ('git', 'push') and push_error:
+                    raise subprocess.CalledProcessError(1, args, stderr='stale lease')
+                return published + '\trefs/tags/preview' if args[1] == 'ls-remote' and published else ''
             with patch.object(p, 'command', side_effect=command), patch.object(p.subprocess, 'run') as run:
                 run.return_value.returncode = 0
-                p.publish(directory, SHA, self.request, 123, 2)
-            push = next(call for call in calls if call[:2] == ('git', 'push'))
-            self.assertIn('--force-with-lease=refs/tags/preview:' + 'f' * 40, push)
-            self.assertIn(SHA + ':refs/tags/preview', push)
-            self.assertEqual(calls[-1][-1], str(directory / 'BUILD_ID'))
-            for path in (directory / 'BUILD_ID', directory / 'preview.json'): path.unlink()
-            with patch.object(p, 'command', side_effect=AssertionError('must not publish')):
-                with self.assertRaisesRegex(ValueError, 'advanced'):
-                    p.publish(directory, SHA, lambda _: {'object': {'sha': 'a' * 40}}, 123, 2)
+                if push_error:
+                    with self.assertRaises(subprocess.CalledProcessError):
+                        p.publish(directory, SHA, request, 123, 2)
+                    self.assertFalse(any(c[0] == 'gh' for c in calls))
+                    return None, calls
+                result = p.publish(directory, SHA, request, 123, 2)
+            if result:
+                push = next(call for call in calls if call[:2] == ('git', 'push'))
+                self.assertIn('--force-with-lease=refs/tags/preview:' + published, push)
+                self.assertIn(SHA + ':refs/tags/preview', push)
+                self.assertEqual(calls[-1][-1], str(directory / 'BUILD_ID'))
+            return result, calls
+
+    def test_publish_successful_build_after_branch_advances(self):
+        result, _ = self.publication(self.api(current='e' * 40))
+        self.assertTrue(result)
+
+    def test_first_publication_and_same_commit_retry(self):
+        # Same-source retries must finish partial uploads after the tag moved.
+        for published in ('', SHA):
+            with self.subTest(published=published):
+                self.assertTrue(self.publication(self.api(current='e' * 40), published)[0])
+
+    def test_older_build_cannot_replace_newer_release(self):
+        result, calls = self.publication(self.api(current='e' * 40), published='d' * 40)
+        self.assertFalse(result)
+        self.assertEqual([call[:2] for call in calls], [('git', 'ls-remote')])
+
+    def test_branch_advancement_between_checks_is_allowed(self):
+        reads = 0
+        def request(path):
+            nonlocal reads
+            if '/git/ref/' in path:
+                reads += 1
+            return self.api(current=SHA if reads == 1 else 'e' * 40)(path)
+        self.assertTrue(self.publication(request)[0])
+        self.assertEqual(reads, 2)
+
+    def test_concurrent_tag_advance_stops_uploads(self):
+        self.publication(self.api(current='e' * 40), push_error=True)
+
+    def test_divergent_and_unadmitted_candidates_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'admitted preview history'):
+            p.admit(self.api(current='f' * 40), SHA, '', MANIFEST)
+        with self.assertRaisesRegex(ValueError, 'admitted preview history'):
+            p.admit(self.api(current='a' * 40), SHA, '', MANIFEST)
+        with self.assertRaisesRegex(ValueError, 'diverges'):
+            p.admit(self.request, SHA, 'f' * 40, MANIFEST)
+        with self.assertRaisesRegex(ValueError, 'unknown'):
+            p.relation(lambda _: {'status': 'unknown'}, 'a' * 40, SHA)
+
+    def test_withdrawal_and_source_manifest_identity(self):
+        latest = {'schema': 1, 'features': [], 'removed': MANIFEST['features']}
+        request = self.api(current='e' * 40, documents={'e' * 40: latest})
+        with self.assertRaisesRegex(ValueError, 'withdrawn'):
+            p.admit(request, SHA, '', MANIFEST)
+        latest['removed'] = [{**MANIFEST['features'][0], 'restored': True}]
+        self.assertTrue(p.admit(request, SHA, '', MANIFEST))
+        with self.assertRaisesRegex(ValueError, 'inclusion differs'):
+            p.admit(self.request, SHA, '', {'schema': 1, 'features': []})
+        for document in ({'schema': 1, 'features': ['invalid']},
+                         {'schema': 1, 'features': [], 'removed': 'invalid'}):
+            with self.assertRaisesRegex(ValueError, 'manifest'):
+                p.manifest(document)
+
+    def test_withdrawal_between_checks_stops_publication(self):
+        reads = 0
+        latest = {'schema': 1, 'features': [], 'removed': MANIFEST['features']}
+        def request(path):
+            nonlocal reads
+            if '/git/ref/' in path:
+                reads += 1
+            return self.api(current=SHA if reads == 1 else 'e' * 40,
+                            documents={'e' * 40: latest})(path)
+        with patch.object(p, 'command', return_value='') as command:
+            with tempfile.TemporaryDirectory() as tmp:
+                directory = Path(tmp); self.make_packages(directory)
+                with self.assertRaisesRegex(ValueError, 'withdrawn'):
+                    p.publish(directory, SHA, request, 123, 2)
+            self.assertFalse(any(c.args[:2] == ('git', 'push') for c in command.call_args_list))
 
     def test_workflow_admission(self):
         workflow = (ROOT / '.github/workflows/preview.yml').read_text()
@@ -124,6 +211,8 @@ class PreviewTests(unittest.TestCase):
                 self.assertEqual(output.read_text(), f"available={str(present).lower()}\n")
         self.assertIn("hashFiles('source/CMakeLists.txt', 'source/cmake/**')", workflow)
         self.assertIn('cancel-in-progress: false', workflow)
+        self.assertIn('group: gti-preview-toolchain', workflow)
+        self.assertIn('Publish validated preview without replacing a newer release', workflow)
         self.assertIn('needs: [select, package]', workflow)
         self.assertIn("-R '^preview_admission$' --no-tests=error", workflow)
         self.assertIn('-DGTI_RELEASE_BUILD=ON', workflow)
