@@ -199,6 +199,11 @@ struct CompletionCandidate {
 struct CompletionResult {
   std::vector<CompletionCandidate> candidates;
   bool isIncomplete = false;
+  // Exact loaded inputs let asynchronous adapters reject results when a
+  // dependency changes before publication, including newly discovered imports.
+  std::unordered_map<std::string, std::uint64_t> sourceDigests;
+  // Missing lookups and authored symlink paths also participate in freshness.
+  std::vector<std::filesystem::path> sourceLookupPaths;
 };
 
 struct CompletionInput {
@@ -219,6 +224,9 @@ struct CompletionInput {
   std::vector<PackageSourceRoot> packageSourceRoots;
   FrontendWorkMetrics *workMetrics = nullptr;
   std::shared_ptr<FrontendCache> cache;
+  std::shared_ptr<InstanceAnalysisCache> instanceCache;
+  std::shared_ptr<SemanticPreambleCache> preambleCache;
+  const std::atomic<bool> *cancellation = nullptr;
   std::unordered_map<std::string, std::uint64_t> sourceGenerations;
   std::unordered_map<std::string, std::uint64_t> sourceDigests;
 };

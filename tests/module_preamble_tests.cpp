@@ -1,6 +1,8 @@
 #include "gti/frontend.h"
+#include "gti/semantic_analyzer.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -151,9 +153,75 @@ void testPreambleGlobalOwnerParity() {
   }
 }
 
+void testCancelledPreambleDoesNotPublish() {
+  using namespace lang;
+  const auto root =
+      std::filesystem::current_path() / "cancelled-preamble-fixture";
+  const auto api = root / "api.gti", entry = root / "main.gti";
+  const std::string text = "int main() { return library_value(); }";
+  const std::unordered_map<std::string, std::string> sources{
+      {api.string(), "export module api; "
+                     "export int library_value() { return 42; }"}};
+  std::atomic<bool> cancellation{true};
+  FrontendWorkMetrics metrics;
+  FrontendOptions options;
+  options.stopAfter = FrontendPhase::Semantics;
+  options.suggestIncludes = false;
+  options.requireEntryPoint = true;
+  options.cache = std::make_shared<FrontendCache>();
+  options.preambleCache = std::make_shared<SemanticPreambleCache>();
+  options.cancellation = &cancellation;
+  options.workMetrics = &metrics;
+  const auto analyze = [&] {
+    return Frontend(options).analyze(entry, text, {api}, sources);
+  };
+
+  const auto cancelled = analyze();
+  expect(cancelled.cancelled && options.preambleCache->stats().entries == 0 &&
+             options.preambleCache->stats().stores == 0 &&
+             metrics.semanticPreambleBuilds == 0,
+         "a cancelled cold prefix must stop without publishing a preamble");
+
+  cancellation = false;
+  const auto recovered = analyze();
+  expect(!recovered.cancelled && recovered.semanticValid &&
+             recovered.diagnostics.empty() &&
+             options.preambleCache->stats().entries == 1 &&
+             options.preambleCache->stats().stores == 1 &&
+             metrics.semanticPreambleBuilds == 1,
+         "a fresh analysis after cancellation builds a complete valid prefix");
+
+  cancellation = true;
+  const auto warmCancelled = analyze();
+  expect(warmCancelled.cancelled &&
+             options.preambleCache->stats().entries == 1 &&
+             options.preambleCache->stats().stores == 1 &&
+             metrics.semanticPreambleBuilds == 0,
+         "cancelling a resumed analysis preserves its complete cached prefix");
+
+  cancellation = false;
+  const auto resumed = analyze();
+  expect(!resumed.cancelled && resumed.semanticValid &&
+             resumed.diagnostics.empty() &&
+             metrics.semanticPreambleBuilds == 0 &&
+             metrics.semanticPreambleAdoptions == 1,
+         "later requests still reuse the complete prefix after cancellation");
+
+  auto prefix =
+      Frontend({.stopAfter = FrontendPhase::Parsing})
+          .analyze("cancelled-prefix.gti", "int value() { return 1; }");
+  SemanticVisitor builder(TargetInfo::host());
+  cancellation = true;
+  builder.setCancellation(&cancellation);
+  const auto incomplete = builder.buildPreamble(std::move(prefix.program));
+  expect(incomplete == nullptr && builder.cancelled(),
+         "direct preamble building catches cancellation and returns no state");
+}
+
 } // namespace
 
 int main() {
+  testCancelledPreambleDoesNotPublish();
   testPreambleGlobalDeclarationParity();
   testPreambleGlobalOwnerParity();
   const auto stdlib =

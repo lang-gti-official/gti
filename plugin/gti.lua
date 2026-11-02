@@ -13,29 +13,37 @@ local toolchain = require("gti.toolchain")
 toolchain.prepend_path()
 require("gti.treesitter").setup(toolchain)
 
--- On the nightly channel the checkout runs ahead of the last published build,
--- so its VERSION legitimately differs from the installed toolchain's. Only the
--- stable channel pins the two together.
-local channel = vim.g.gti_channel or vim.env.GTI_CHANNEL or "stable"
-local expected_version = toolchain.expected_version()
-local installed_version = toolchain.installed_version()
-if
-  not toolchain.managed()
-  and channel == "stable"
-  and expected_version
-  and installed_version
-  and expected_version ~= installed_version
-then
+local reported_version_problems = {}
+local running_toolchains = {}
+local function report_version_problems(info)
+  local problems = toolchain.version_problems(info)
+  local message = table.concat(problems, "; ")
+  if message == "" or reported_version_problems[message] then return end
+  reported_version_problems[message] = true
+  vim.notify(message .. ". Run :GTIInfo to inspect the selected and running toolchains.",
+    vim.log.levels.WARN, { title = "GTI version mismatch" })
+end
+
+local function capture_running_toolchain(client)
+  local launched = client.config and client.config._gti_toolchain_launch
+  local command = launched and launched.command or (client.config and client.config.cmd)
+  local executable = type(command) == "table" and type(command[1]) == "string" and command[1] or nil
+  local arguments = {}
+  if type(command) == "table" then
+    for _, argument in ipairs(command) do table.insert(arguments, tostring(argument)) end
+  end
+  return {
+    command = #arguments > 0 and table.concat(arguments, " ") or "custom command",
+    binary = launched and vim.deepcopy(launched.binary) or toolchain.binary_info(executable),
+    compiler = launched and vim.deepcopy(launched.compiler) or nil,
+  }
+end
+
+-- Avoid synchronous process probes on startup or attachment. Installed metadata
+-- and the server's initialize response suffice here; GTIInfo probes on demand.
+if not toolchain.managed() then
   vim.schedule(function()
-    vim.notify(
-      string.format(
-        "GTI plugin %s is using toolchain %s. Run :Lazy build gti, then restart Neovim.",
-        expected_version,
-        installed_version
-      ),
-      vim.log.levels.WARN,
-      { title = "GTI version mismatch" }
-    )
+    report_version_problems(toolchain.version_info({ probe_binaries = false }))
   end)
 end
 
@@ -47,29 +55,28 @@ else
   end)
 end
 
-local reported_lsp_versions = {}
 vim.api.nvim_create_autocmd("LspAttach", {
   group = vim.api.nvim_create_augroup("gti_version_check", { clear = true }),
   callback = function(args)
     local client_id = args.data and args.data.client_id or nil
     local client = client_id and vim.lsp.get_client_by_id(client_id) or nil
-    if toolchain.managed() or not client or client.name ~= "gti_lsp" or not expected_version then
+    if not client or client.name ~= "gti_lsp" then
       return
     end
-    local actual = client.server_info and client.server_info.version or nil
-    if not actual or actual == expected_version or reported_lsp_versions[actual] then
-      return
+    local running = running_toolchains[client.id] or capture_running_toolchain(client)
+    running_toolchains[client.id] = running
+    local info
+    if toolchain.managed() then
+      -- Managed selection already ran from this client's root at launch.
+      -- Do not run another manager process from the editor's current cwd.
+      local compiler = running.compiler or toolchain.binary_info(vim.env.GTI_PATH)
+      info = { compiler_info = compiler, compiler_version = compiler.version }
+    else
+      info = toolchain.version_info({ probe_binaries = false })
     end
-    reported_lsp_versions[actual] = true
-    vim.notify(
-      string.format(
-        "gti_lsp %s is attached, but this GTI plugin expects %s. Run :Lazy build gti, then restart Neovim.",
-        actual,
-        expected_version
-      ),
-      vim.log.levels.WARN,
-      { title = "GTI version mismatch" }
-    )
+    info.language_server_info = running.binary
+    info.language_server_version = client.server_info and client.server_info.version or running.binary.version
+    report_version_problems(info)
   end,
 })
 
@@ -239,37 +246,55 @@ vim.api.nvim_create_user_command("GTIInfo", function()
   local info = toolchain.version_info({
     cwd = project_root or (name ~= "" and vim.fs.dirname(name) or nil),
   })
-  local active_versions = {}
+  local active_servers = {}
   local active_profiles = {}
   local problems = vim.deepcopy(info.problems)
+  local function identity(binary)
+    local details = ""
+    if binary.resolved_path and binary.path ~= binary.resolved_path then
+      details = "; resolved " .. binary.resolved_path
+    end
+    if binary.build_id then
+      details = details .. "; " .. (binary.channel or "source") .. " build " .. binary.build_id
+    end
+    return details
+  end
   for _, client in ipairs(clients) do
     local version = client.server_info and client.server_info.version or "unknown"
-    table.insert(active_versions, version)
+    local running = running_toolchains[client.id] or capture_running_toolchain(client)
+    table.insert(active_servers, string.format("#%s %s (%s%s)",
+      client.id, running.command, version, identity(running.binary)))
     table.insert(active_profiles, requested_profile(client))
-    if not info.managed and info.expected and version ~= info.expected then
-      table.insert(problems, string.format(
-        "running language server is %s but the plugin expects %s",
-        version,
-        info.expected
-      ))
+    local active_info = vim.tbl_extend("force", info, {
+      language_server_version = version,
+      language_server_info = running.binary,
+      language_server_label = "running language server #" .. client.id,
+      probe_binaries = false,
+    })
+    for _, problem in ipairs(toolchain.version_problems(active_info)) do
+      if not vim.tbl_contains(problems, problem) then table.insert(problems, problem) end
     end
   end
 
   local lines = {
     "Toolchain manager: " .. (info.managed and "gtiup" or "legacy plugin installer"),
     "Plugin version: " .. (info.expected or "unknown"),
-    "Installed toolchain: " .. (info.installed or "not installed by Lazy"),
+    info.managed and "Channel selection: gtiup project setting" or ("Configured channel: " .. info.channel),
+    (info.managed and "Selected toolchain: " or "Bundled toolchain: ")
+      .. (info.installed or (info.managed and "unavailable" or "not installed by Lazy")),
     string.format(
-      "Compiler: %s (%s)",
+      "Compiler: %s (%s%s)",
       info.compiler,
-      info.compiler_version or info.compiler_problem or "unknown"
+      info.compiler_version or info.compiler_problem or "unknown",
+      identity(info.compiler_info)
     ),
     string.format(
-      "Language server: %s (%s)",
+      "Language server: %s (%s%s)",
       info.language_server,
-      info.language_server_version or info.language_server_problem or "unknown"
+      info.language_server_version or info.language_server_problem or "unknown",
+      identity(info.language_server_info)
     ),
-    "Running LSP: " .. (#active_versions > 0 and table.concat(active_versions, ", ") or "not attached"),
+    "Running LSP: " .. (#active_servers > 0 and table.concat(active_servers, "; ") or "not attached"),
     "Editor profile: " .. (#active_profiles > 0 and table.concat(active_profiles, ", ") or "project default"),
     "Tree-sitter parser: " .. (info.parser or "not found (using regex fallback)"),
     "Status: " .. (#problems == 0 and "versions agree" or table.concat(problems, "; ")),
