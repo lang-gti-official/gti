@@ -3640,12 +3640,12 @@ void invalidatePlaceRoot(const MirBody &body,
     }
 }
 
-[[nodiscard]] bool initializesReferenceCarrier(
+[[nodiscard]] const MirLoan *referenceCarrierInitializationLoan(
     const MirBody &body, const MirInstruction &instruction,
     const MirProgram *program = nullptr, const AbstractState *state = nullptr) {
   if (instruction.kind != MirInstructionKind::Initialize ||
       !instruction.destination || instruction.operands.size() != 1) {
-    return false;
+    return nullptr;
   }
   const MirPlace *destination = body.findPlace(*instruction.destination);
   const MirOperand &source = instruction.operands.front();
@@ -3655,7 +3655,7 @@ void invalidatePlaceRoot(const MirBody &body,
       destination->type.kind != SemanticType::Reference ||
       source.kind != MirOperandKind::Loan || source.place == 0 ||
       source.loan == 0) {
-    return false;
+    return nullptr;
   }
   const MirLoan *loan = body.findLoan(source.loan);
   const MirPlace *address = body.findPlace(source.place);
@@ -3671,14 +3671,58 @@ void invalidatePlaceRoot(const MirBody &body,
         *addressPointeeType(body, retained->second) == address->type;
   }
   return loan != nullptr && address != nullptr && !loan->entry &&
-         !loan->escapes &&
+                 loan->carriers.size() == 1 &&
+                 loan->carriers.front() == destination->binding &&
+                 ((address->root == MirPlaceRootKind::Loan &&
+                   address->loan == loan->id) ||
+                  loan->source == address->id || exactDerivedAddress)
+             ? loan
+             : nullptr;
+}
+
+[[nodiscard]] bool initializesReferenceCarrier(
+    const MirBody &body, const MirInstruction &instruction,
+    const MirProgram *program = nullptr, const AbstractState *state = nullptr) {
+  const auto *loan =
+      referenceCarrierInitializationLoan(body, instruction, program, state);
+  return loan && !loan->escapes &&
          (loan->kind == MirLoanKind::Local ||
-          loan->kind == MirLoanKind::CallResult) &&
-         loan->carriers.size() == 1 &&
-         loan->carriers.front() == destination->binding &&
-         ((address->root == MirPlaceRootKind::Loan &&
-           address->loan == loan->id) ||
-          loan->source == address->id || exactDerivedAddress);
+          loan->kind == MirLoanKind::CallResult);
+}
+
+// Creating a local carrier for a returned loan does not write its referent.
+// This deliberately retains the escape and publishes no address/value fact.
+[[nodiscard]] bool
+initializesReturnedReferenceCarrier(const MirProgram &program,
+                                    const MirBody &body,
+                                    const MirInstruction &instruction) {
+  const auto *loan = referenceCarrierInitializationLoan(body, instruction);
+  const auto *destination = instruction.destination
+                                ? body.findPlace(*instruction.destination)
+                                : nullptr;
+  const auto *source = instruction.operands.size() == 1
+                           ? body.findPlace(instruction.operands.front().place)
+                           : nullptr;
+  if (!loan || loan->kind != MirLoanKind::Return || !loan->escapes ||
+      !destination || destination->initiallyAvailable ||
+      destination->foreignStorage || destination->capture ||
+      !destination->projections.empty() ||
+      destination->type.arguments.size() != 1 || !source ||
+      destination->type.arguments.front() != source->type ||
+      instruction.operation != MirOperation::None ||
+      instruction.intrinsic != IntrinsicKind::None || instruction.receiver ||
+      instruction.functionTarget || instruction.constructorTarget ||
+      instruction.bodyTarget || instruction.lambdaTarget ||
+      instruction.nativeCallbackAdapter || instruction.threadTaskAdapter ||
+      instruction.callableBoundary || instruction.callableInvocation ||
+      instruction.rawMemoryAccess ||
+      instruction.unsafeOperation != UnsafeOperationKind::None)
+    return false;
+  const auto effect = effects(program, body, instruction);
+  return !effect.readsUnknownMemory && !effect.writesUnknownMemory &&
+         !effect.invokesUserCode && !effect.invokesRuntime &&
+         !effect.allocates && !effect.maySynchronize && !effect.movesValue &&
+         !effect.dropsValue;
 }
 
 struct FixedArrayIndex {
@@ -9732,7 +9776,8 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
       for (const auto &instruction : block.instructions) {
         if (instruction.tombstone || !instruction.destination ||
             instruction.kind == MirInstructionKind::Drop ||
-            temporaryCopy(instruction) || scalarTemporaryStore(instruction))
+            temporaryCopy(instruction) || scalarTemporaryStore(instruction) ||
+            initializesReturnedReferenceCarrier(program, body, instruction))
           continue;
         const auto *place = body.findPlace(*instruction.destination);
         if (!place)
@@ -10116,6 +10161,33 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
       const InstructionSite site{&block, &instruction};
       if (independentLayoutQuery(instruction, effects(program, instruction)))
         continue;
+      if (initializesReturnedReferenceCarrier(program, body, instruction))
+        continue;
+      const auto terminal =
+          intrinsicTerminalFailureOutcome(instruction.intrinsic);
+      const auto terminalEffects = effects(program, body, instruction);
+      if (terminal && instruction.intrinsic != IntrinsicKind::Panic &&
+          instruction.kind == MirInstructionKind::Call &&
+          instruction.info.type == SemanticType::Void &&
+          instruction.operands.empty() && !instruction.result &&
+          !instruction.destination && !instruction.receiver &&
+          !instruction.functionTarget && !instruction.constructorTarget &&
+          !instruction.lambdaTarget && !instruction.bodyTarget &&
+          !instruction.nativeCallbackAdapter &&
+          !instruction.threadTaskAdapter && !instruction.callableBoundary &&
+          !instruction.callableInvocation && !instruction.rawMemoryAccess &&
+          instruction.unsafeOperation == UnsafeOperationKind::None &&
+          instruction.definedFailure.localOrigins.size() == 1 &&
+          instruction.definedFailure.localOrigins.front().outcomes.size() ==
+              1 &&
+          instruction.definedFailure.localOrigins.front().outcomes.front() ==
+              *terminal &&
+          !terminalEffects.readsPlace && !terminalEffects.writesPlace &&
+          !terminalEffects.readsUnknownMemory &&
+          !terminalEffects.writesUnknownMemory &&
+          !terminalEffects.invokesRuntime && !terminalEffects.invokesUserCode &&
+          !terminalEffects.allocates && !terminalEffects.maySynchronize)
+        continue;
       if (instruction.kind == MirInstructionKind::Call ||
           instruction.kind == MirInstructionKind::Construct) {
         const auto op = operation(instruction);
@@ -10221,8 +10293,11 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
       continue;
     const auto outputType = constructor ? constructed->type : body.returnType;
     const auto outputPaths = pointerPaths(outputType);
-    if (!outputPaths && outputType.kind != SemanticType::Void)
+    if (!outputPaths && outputType.kind != SemanticType::Void &&
+        outputType.kind != SemanticType::Reference)
       return {};
+    // Reference outputs retain their existing loan/escape contracts. They do
+    // not acquire an allocation token from this noninterference profile.
     const auto paths = outputPaths.value_or(std::vector<FieldPath>{});
     std::map<FieldPath, Origins> fields;
     for (const auto &path : paths) {

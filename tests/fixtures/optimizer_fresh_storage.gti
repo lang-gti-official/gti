@@ -98,10 +98,38 @@ void status_and_join_scratch(bool alternate) {
   }
   unsafe { release_pointer(pointer); }
 }
+class NativeReferenceBox {
+  mut int32_t value;
+public:
+  NativeReferenceBox(int32_t value) : value(value) {}
+  int32_t& read(bool fail) {
+    if (fail) { gti_internal::fail_inactive_error(); }
+    int32_t& result = this.value;
+    return result;
+  }
+  mut int32_t& edit() mut {
+    mut int32_t& result = this.value;
+    return result;
+  }
+};
+void reference_scratch() {
+  void* scratch = fresh_pointer();
+  unsafe { release_pointer(scratch); }
+  NativeReferenceBox box{int32_t(7)};
+  int32_t observed = box.read(false);
+  if (observed != int32_t(7)) { gti_internal::fail_inactive_value(); }
+}
+int32_t mutated_reference_probe() {
+  mut NativeReferenceBox box{int32_t(9)};
+  mut int32_t& reference = box.edit();
+  reference = int32_t(2147483647);
+  return box.read(false) * int32_t(2);
+}
 int32_t fresh_probe(int32_t value) {
   mut PrefixParcel parcel{};
   parcel.append(value);
   fresh_scratch();
+  reference_scratch();
   descriptor_scratch();
   payload_scratch(true);
   payload_scratch(false);
@@ -110,6 +138,8 @@ int32_t fresh_probe(int32_t value) {
 }
 int main(int argc, std::vector<std::string> argv) {
   FreshAudit audit{};
+  if (argc == 3) { NativeReferenceBox box{int32_t(9)}; return box.read(true); }
+  if (argc == 4) { return mutated_reference_probe(); }
   int32_t result = fresh_probe(argc > 1 ? int32_t(2147483647) : int32_t(9));
   return result == int32_t(18) ? 0 : 2;
 }

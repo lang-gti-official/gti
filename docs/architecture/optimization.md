@@ -1489,6 +1489,16 @@ Aggregate fields still require one dominating store. Exact `NullPtr` to raw-poin
 value staging transports the empty origin set; arbitrary pointer conversions
 do not acquire a null or fresh origin.
 
+The all-path scan also admits exact operand-free terminal failure origins whose
+existing MIR contract has no memory or runtime effects; panic and all cleanup
+instructions retain their ordinary effects. Creating an ordinary local carrier
+for an exact escaping return loan does not write the referent. This separate
+rule retains the loan's return/escape identity and does not broaden the existing
+nonescaping-carrier predicate. A returned reference contributes no fresh pointer
+origin, and subsequent caller writes and escapes retain normal invalidation.
+Foreign/projected carrier storage, adapters, value moves/drops, and unresolved
+effects remain excluded.
+
 POSIX allocation is admitted only with an ordinary private local `int32_t`
 status slot and the capture analysis's complete exclusive status-use proof.
 Later address escapes, unknown callbacks and incoming status slots reject it;

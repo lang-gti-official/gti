@@ -792,8 +792,85 @@ Descriptor nullable_descriptor(bool allocate) {
                    "std::typed_address<int32_t>(address); unsafe { "
                    "release_pointer(std::erase_address(typed)); }\n",
                    false);
+  descriptorControls &= freshControl("fresh-terminal-failure.gti", R"(
+void checked_scratch(bool fail) {
+  void* pointer = fresh_pointer(); unsafe { release_pointer(pointer); }
+  if (fail) { gti_internal::fail_inactive_error(); }
+}
+)",
+                                     "checked_scratch(false);\n", true);
+  descriptorControls &= freshControl("fresh-panic-effect.gti", R"(
+void checked_scratch(bool fail) {
+  void* pointer = fresh_pointer(); unsafe { release_pointer(pointer); }
+  if (fail) { gti_internal::panic("opaque message capture"); }
+}
+)",
+                                     "checked_scratch(false);\n", false);
+  descriptorControls &= freshControl("fresh-failure-cleanup.gti", R"(
+extern "C" { void failure_cleanup(); }
+class FailureCleanup { public: FailureCleanup() {} ~FailureCleanup() { unsafe { failure_cleanup(); } } };
+void checked_scratch(bool fail) {
+  FailureCleanup cleanup{};
+  void* pointer = fresh_pointer(); unsafe { release_pointer(pointer); }
+  if (fail) { gti_internal::fail_inactive_error(); }
+}
+)",
+                                     "checked_scratch(false);\n", false);
+  descriptorControls &= freshControl("fresh-returned-reference-write.gti", R"(
+mut int32_t& relay_reference(mut int32_t& value) {
+  mut int32_t& returned = value;
+  return returned;
+}
+void write_reference(mut int32_t& value) {
+  void* pointer = fresh_pointer(); unsafe { release_pointer(pointer); }
+  mut int32_t& returned = relay_reference(value);
+  returned = int32_t(2147483647);
+}
+)",
+                                     "", false, false, true);
+  descriptorControls &= freshControl(
+      "fresh-returned-reference-origin.gti", descriptor + R"(
+class BorrowedDescriptor { public:
+  Descriptor region;
+  BorrowedDescriptor(Descriptor region) : region(region) {}
+  Descriptor& borrow() { Descriptor& view = this.region; return view; }
+};
+)",
+      "BorrowedDescriptor region{fresh_descriptor()}; Descriptor& borrowed = "
+      "region.borrow(); unsafe { release_pointer(borrowed.address); }\n",
+      false);
+  descriptorControls &= freshControl("fresh-reference-callback.gti", R"(
+extern "C" { void reference_callback(); }
+class CallbackReference { int32_t value; public:
+  CallbackReference(int32_t value) : value(value) {}
+  int32_t& read() { unsafe { reference_callback(); } int32_t& result = this.value; return result; }
+};
+void callback_scratch() {
+  void* pointer = fresh_pointer(); unsafe { release_pointer(pointer); }
+  CallbackReference value{int32_t(7)}; int32_t result = value.read();
+}
+)",
+                                     "callback_scratch();\n", false);
   if (!descriptorControls)
     return 1;
+  const auto returnedWrite = gti_test::analyzeTrustedPrivateMemoryFixture(
+      "returned-reference-write.gti",
+      "import \"../std/detail/memory_capabilities.gti\"; " +
+          freshSource.substr(0, freshSource.find("int main")) +
+          "int main() { return mutated_reference_probe(); }");
+  if (!returnedWrite.canGenerateCode()) {
+    for (const auto &diagnostic : returnedWrite.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return 1;
+  }
+  const auto returnedWriteAnalysis =
+      lang::analyzeMirClosedCallSafetyChecks(returnedWrite.mir);
+  if (!returnedWriteAnalysis.converged ||
+      countDischarges(returnedWrite, returnedWriteAnalysis,
+                      "mutated_reference_probe") != 0) {
+    std::cerr << "returned mutable reference kept overwritten scalar fact\n";
+    return 1;
+  }
   const auto discharges = [&](const std::string &name) {
     return countDischarges(frontend, analysis, name);
   };

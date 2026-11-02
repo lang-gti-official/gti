@@ -59,16 +59,18 @@ int main() {
             command = [str(compiler), str(fresh_source), *flags, "-o", str(fresh_binary)]
             built = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
             assert built.returncode == 0, (command, built.stdout, built.stderr)
-            for failure in (False, True):
-                result = subprocess.run([str(fresh_binary), *(["overflow"] if failure else [])],
+            for fresh_case in range(4):
+                result = subprocess.run([str(fresh_binary), *(["x"] * fresh_case)],
                                         env=environment, capture_output=True, text=True, timeout=15)
-                assert result.returncode == (70 if failure else 0), (mode, failure, result)
-                assert result.stdout == "99\n", (mode, failure, result)
-                if failure:
+                assert result.returncode == (70 if fresh_case else 0), (mode, fresh_case, result)
+                assert result.stdout == "99\n", (mode, fresh_case, result)
+                if fresh_case == 2:
+                    assert "runtime error[GTI-R0009]: invalid_expected_access in error_on_value" in result.stderr
+                elif fresh_case:
                     assert "runtime error[GTI-R0001]: integer_overflow in multiplication" in result.stderr
                 else:
-                    assert not result.stderr, (mode, failure, result)
-                key = ("fresh", failure)
+                    assert not result.stderr, (mode, fresh_case, result)
+                key = ("fresh", fresh_case)
                 observation = result.returncode, result.stdout, result.stderr
                 if mode == "llvm-O0": observations[key] = observation
                 else: assert observation == observations[key], (mode, key, observation, observations[key])
