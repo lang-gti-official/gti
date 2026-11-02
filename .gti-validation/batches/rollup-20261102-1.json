@@ -1,0 +1,79 @@
+{
+  "schema": 1,
+  "base": "52809340f6ee5a6604748a7ca2fe86ff2d400149",
+  "members": [
+    {
+      "pr": 117,
+      "head": "c6809de8fb0cb6c4838609dda0f9d43222df51ae",
+      "plan": {
+        "tier": "T2",
+        "rationale": "Rollup member #117: its declared Validation T0/T1 tests; the merge queue runs the complete suite on the combined candidate; its tier was not declared, so it is recorded as T2",
+        "regressions": [
+          "llvm_checked_reductions",
+          "llvm_checked_reduction_runtime"
+        ],
+        "owning": [
+          "compiler_pipeline",
+          "llvm_checked_ranges",
+          "llvm_checked_range_runtime",
+          "llvm_optimization_pipeline",
+          "llvm_scalar_execution",
+          "llvm_place_execution",
+          "llvm_hosted_cleanup_execution"
+        ],
+        "cross_phase": [],
+        "unaffected": "Not assessed per member by the rollup bot; the merge queue runs every registered test",
+        "targets": [
+          "gti"
+        ],
+        "platforms": [
+          "darwin",
+          "linux"
+        ],
+        "reproduction": {
+          "exception": "Recorded in the description of #117; a rollup reproduces no member failure"
+        },
+        "broader": [
+          "compiler_pipeline",
+          "llvm_checked_ranges",
+          "llvm_checked_range_runtime",
+          "llvm_optimization_pipeline",
+          "llvm_scalar_execution",
+          "llvm_place_execution",
+          "llvm_hosted_cleanup_execution"
+        ]
+      }
+    },
+    {
+      "pr": 119,
+      "head": "83a7a5248ce2e54b66564170dd60d6f45dd3a72e",
+      "plan": {
+        "tier": "T2",
+        "rationale": "Rollup member #119: its declared Validation T0/T1 tests; the merge queue runs the complete suite on the combined candidate; its tier was not declared, so it is recorded as T2",
+        "regressions": [
+          "preview_workflow"
+        ],
+        "owning": [
+          "agent_workflow",
+          "repository_hosting"
+        ],
+        "cross_phase": [],
+        "unaffected": "Not assessed per member by the rollup bot; the merge queue runs every registered test",
+        "targets": [
+          "gti"
+        ],
+        "platforms": [
+          "darwin",
+          "linux"
+        ],
+        "reproduction": {
+          "exception": "Recorded in the description of #119; a rollup reproduces no member failure"
+        },
+        "broader": [
+          "agent_workflow",
+          "repository_hosting"
+        ]
+      }
+    }
+  ]
+}
