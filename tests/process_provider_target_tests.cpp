@@ -349,8 +349,10 @@ void* gti_rt_malloc_v1(uint64_t bytes);
 void gti_rt_posix_free_v1(void* address);
 }
 int main() {
-  void* address = gti_rt_malloc_v1(uint64_t(17));
-  gti_rt_posix_free_v1(address);
+  unsafe {
+    void* address = gti_rt_malloc_v1(uint64_t(17));
+    gti_rt_posix_free_v1(address);
+  }
   return gti_rt_native_size_max_v1() == uint64_t(0) ? 1 : 0;
 }
 )",

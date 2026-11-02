@@ -1365,7 +1365,7 @@ int32_t descending(uint64_t seed, mut uint64_t rounds) {
 
 void testSuccessfulBoundsPostconditions() {
   const auto frontend = analyzeTrusted("successful-bounds.gti", R"(
-extern "C" { void mutate_index(mut int32_t& value); }
+extern "C" { void mutate_index(mut int32_t* value); }
 int32_t after_write(int32_t index) {
   mut int32_t values[8] = {};
   values[index] = 3;
@@ -1390,7 +1390,7 @@ int32_t changed(int32_t initial) {
   mut int32_t index = initial;
   mut int32_t values[8] = {};
   values[index] = 3;
-  mutate_index(index);
+  unsafe { mutate_index(&index); }
   return index + int32_t(1);
 }
 int32_t aliases_index(int32_t index) {
