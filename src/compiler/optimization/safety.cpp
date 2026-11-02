@@ -382,6 +382,10 @@ struct AbstractState {
   std::map<MirLoanId, AddressRegion> borrowedRegions;
   ConstructedScalars constructedScalars;
   EntryRelativeFields entryRelativeFields;
+  // Equalities to this body's entry receiver only. These never enter
+  // ObjectFact or a call context, where their field identity would change.
+  std::map<FieldOrigin, EntryRelativeField> storedRelativeMetadata;
+  std::map<MirValueId, EntryRelativeFields> stagedRelativeMetadata;
   std::map<MirValueId, EntryRelativeField> entryRelativeValues;
   std::map<MirPlaceId, IntegerFact> aggregateElements;
   std::map<MirPlaceId, IntegerFieldFacts> aggregateElementIntegers;
@@ -3365,6 +3369,7 @@ void invalidatePlaceRoot(const MirBody &body,
     state.loadedOrigins.clear();
     state.fieldOrigins.clear();
     state.entryRelativeFields.clear();
+    state.storedRelativeMetadata.clear();
     state.entryRelativeValues.clear();
     state.scalarAddressValues.clear();
     state.scalarAddressPlaces.clear();
@@ -3384,6 +3389,8 @@ void invalidatePlaceRoot(const MirBody &body,
     }
     return aliases.relation(destination, place) != MirAliasRelation::NoAlias;
   };
+  std::erase_if(state.storedRelativeMetadata,
+                [&](const auto &entry) { return overlaps(entry.first.root); });
   const auto pointerFieldOverlaps = [&](const ScalarAddress &pointer) {
     // Different owned fields are disjoint storage, but walking through a
     // stored reference or raw pointer loses that guarantee. A checked root
@@ -3503,7 +3510,12 @@ void invalidatePlaceRoot(const MirBody &body,
                                        entry.first.begin());
                    }));
   const auto overlapsEntry = [&](const auto &entry) {
-    if (fresh)
+    // This relation concerns the receiver's scalar storage. A proved-disjoint
+    // destination (including a newly bound local owner) cannot overwrite it.
+    // This grants no disjointness to pointers contained in either object.
+    const auto receiver = thisRoot(body);
+    if (fresh || (receiver && aliases.relation(destination, receiver) ==
+                                  MirAliasRelation::NoAlias))
       return false;
     if (!knownOwnedPath)
       return true;
@@ -3873,6 +3885,8 @@ struct DisjointScalarFields {
   std::map<MirPlaceId, IntegerFieldFacts> objects;
   std::map<MirPlaceId, IntegerFact> places;
   ConstructedScalars pointees;
+  EntryRelativeFields relative;
+  std::map<FieldOrigin, EntryRelativeField> storedRelative;
 };
 
 // Only declaration-bound process adapters have this contract. Their ordering,
@@ -3927,6 +3941,14 @@ preserveDifferentWidthFields(const MirProgram *program, MirBodyAddress address,
     if (fact.domain.width != writtenWidth && fact.domain.width > 8 &&
         liveScalarPath(program, address, body, place, {}))
       saved.places.emplace(place, fact);
+  for (const auto &[path, fact] : state.entryRelativeFields)
+    if (fact.domain.width > 8 && fact.domain.width != writtenWidth &&
+        liveScalarPath(program, address, body, 0, path))
+      saved.relative.emplace(path, fact);
+  for (const auto &[field, fact] : state.storedRelativeMetadata)
+    if (fact.domain.width > 8 && fact.domain.width != writtenWidth &&
+        liveScalarPath(program, address, body, field.root, field.path))
+      saved.storedRelative.emplace(field, fact);
   for (const auto &[pointer, fact] : state.constructedScalars)
     if (fact.value.domain.width > 8 && fact.value.domain.width != writtenWidth)
       saved.pointees.emplace(pointer, fact);
@@ -3942,6 +3964,92 @@ void restoreDifferentWidthFields(AbstractState &state,
     state.integerPlaces.insert_or_assign(place, fact);
   for (const auto &[pointer, fact] : saved.pointees)
     publishConstructedScalar(state, pointer, fact);
+  for (const auto &[path, fact] : saved.relative)
+    state.entryRelativeFields.insert_or_assign(path, fact);
+  for (const auto &[field, fact] : saved.storedRelative)
+    state.storedRelativeMetadata.insert_or_assign(field, fact);
+}
+
+[[nodiscard]] bool relativeReceiverRoot(const MirBody &body, MirPlaceId root) {
+  const auto *place = root ? body.findPlace(root) : nullptr;
+  return !root || (place && place->root == MirPlaceRootKind::This &&
+                   place->projections.empty());
+}
+[[nodiscard]] std::optional<EntryRelativeField>
+relativeMetadataAt(const MirBody &body, const AbstractState &state,
+                   const FieldOrigin &field) {
+  if (relativeReceiverRoot(body, field.root)) {
+    const auto found = state.entryRelativeFields.find(field.path);
+    return found == state.entryRelativeFields.end()
+               ? std::nullopt
+               : std::optional{found->second};
+  }
+  const auto found = state.storedRelativeMetadata.find(field);
+  return found == state.storedRelativeMetadata.end()
+             ? std::nullopt
+             : std::optional{found->second};
+}
+void publishRelativeMetadata(const MirProgram &program, MirBodyAddress address,
+                             const MirBody &body, AbstractState &state,
+                             const FieldOrigin &field,
+                             EntryRelativeField fact) {
+  const auto *type =
+      liveOwnedPathType(&program, address, body, field.root, field.path);
+  if (!type || constantIntegerDomain(*type) != fact.domain ||
+      fact.domain.width <= 8)
+    return;
+  if (relativeReceiverRoot(body, field.root))
+    state.entryRelativeFields.insert_or_assign(field.path, std::move(fact));
+  else if (state.storedRelativeMetadata.size() < 128 ||
+           state.storedRelativeMetadata.contains(field))
+    state.storedRelativeMetadata.insert_or_assign(field, std::move(fact));
+}
+[[nodiscard]] std::optional<FieldOrigin> metadataCarrierForPlace(
+    const MirProgram &program, MirBodyAddress address, const MirBody &body,
+    const MirPlaceAliasEscapeAnalysis &aliases, MirPlaceId source) {
+  const auto *place = body.findPlace(source);
+  if (!place || place->type.kind != SemanticType::Class)
+    return std::nullopt;
+  const bool receiver = place->root == MirPlaceRootKind::This;
+  const auto root = receiver ? canonicalPlace(aliases, thisRoot(body))
+                             : aggregateRoot(body, aliases, source);
+  if (!receiver && !root)
+    return std::nullopt;
+  const auto path = fieldPath(body, root, source, true);
+  if (!path || !liveOwnedPathType(&program, address, body, root, *path))
+    return std::nullopt;
+  return FieldOrigin{root, *path};
+}
+
+[[nodiscard]] EntryRelativeFields relativeMetadataForOperand(
+    const MirProgram &program, MirBodyAddress address, const MirBody &body,
+    const MirPlaceAliasEscapeAnalysis &aliases, const AbstractState &state,
+    const MirOperand &operand) {
+  if (operand.kind == MirOperandKind::Value) {
+    const auto found = state.stagedRelativeMetadata.find(operand.value);
+    return found == state.stagedRelativeMetadata.end() ? EntryRelativeFields{}
+                                                       : found->second;
+  }
+  const auto origin =
+      metadataCarrierForPlace(program, address, body, aliases, operand.place);
+  EntryRelativeFields result;
+  if (!origin)
+    return result;
+  const auto take = [&](const FieldPath &path, const EntryRelativeField &fact) {
+    if (origin->path.size() > path.size() ||
+        !std::equal(origin->path.begin(), origin->path.end(), path.begin()))
+      return;
+    result.emplace(FieldPath(path.begin() + origin->path.size(), path.end()),
+                   fact);
+  };
+  if (relativeReceiverRoot(body, origin->root))
+    for (const auto &[path, fact] : state.entryRelativeFields)
+      take(path, fact);
+  else
+    for (const auto &[field, fact] : state.storedRelativeMetadata)
+      if (field.root == origin->root)
+        take(field.path, fact);
+  return result;
 }
 
 void killUnknownMemory(const MirBody &body, AbstractState &state);
@@ -4199,6 +4307,7 @@ void invalidateClosedCallInputs(const MirProgram &program, const MirBody &body,
       const auto value = instruction.receiver->value;
       state.objectValues.erase(value);
       state.stagedMetadata.erase(value);
+      state.stagedRelativeMetadata.erase(value);
       state.valueAlternatives.erase(value);
       state.fieldOrigins.erase(value);
       state.aggregateOrigins.erase(value);
@@ -4659,9 +4768,10 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
     FieldOrigin sourceEnd;
     FieldOrigin destinationEnd;
     FieldOrigin destinationPointer;
-    ScalarAddress pointer;
+    std::optional<ScalarAddress> pointer;
     IntegerFact count;
     std::optional<IntegerFact> values;
+    std::optional<EntryRelativeField> relativeCount;
   };
   std::optional<RelocatedPublication> relocated;
   if (summary.relocatedPrefix && summary.relocatedPrefix->destinationEnd) {
@@ -4699,7 +4809,7 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
       const auto pointer =
           inputAddressForCall(closedCalls->program, address, body, aliases,
                               state, instruction, transfer.destination);
-      if (source && destination && pointer) {
+      if (source && destination) {
         const auto count = source->integers.find(sourceEnd->path);
         const auto empty = destination->integers.find(destinationEnd->path);
         const auto values = source->prefixes.find(
@@ -4710,16 +4820,17 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
             empty->second.lower.magnitude == 0 &&
             !count->second.lower.negative && count->second.domain.width == 64 &&
             !count->second.domain.signedValue)
-          relocated = RelocatedPublication{*sourceEnd,
-                                           *destinationEnd,
-                                           *destinationPointer,
-                                           *pointer,
-                                           count->second,
-                                           values != source->prefixes.end() &&
-                                                   values->second.domain ==
-                                                       transfer.domain
-                                               ? std::optional{values->second}
-                                               : std::nullopt};
+          relocated = RelocatedPublication{
+              *sourceEnd,
+              *destinationEnd,
+              *destinationPointer,
+              pointer,
+              count->second,
+              pointer && values != source->prefixes.end() &&
+                      values->second.domain == transfer.domain
+                  ? std::optional{values->second}
+                  : std::nullopt,
+              relativeMetadataAt(body, state, *sourceEnd)};
       }
     }
   }
@@ -5153,13 +5264,21 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
                       relocated->destinationEnd.path,
                       {}},
           rebased(*relocated->values, block.id, instruction.id));
-    state.fieldAddresses.insert_or_assign(relocated->destinationPointer,
-                                          relocated->pointer);
+    // Endpoint copying is an ordinary scalar store proved independently of
+    // pointer identity. Raw address/prefix facts still require the witness.
+    if (relocated->pointer)
+      state.fieldAddresses.insert_or_assign(relocated->destinationPointer,
+                                            *relocated->pointer);
     auto zero = count;
     zero.lower = {};
     zero.upper = {};
     publishFieldFact(body, state, relocated->sourceEnd, zero);
     publishFieldFact(body, state, relocated->destinationEnd, count);
+    if (relocated->relativeCount &&
+        relocated->relativeCount->domain == count.domain)
+      publishRelativeMetadata(closedCalls->program, address, body, state,
+                              relocated->destinationEnd,
+                              *relocated->relativeCount);
   }
   applyClosedCallTags(closedCalls->program, address, body, aliases, block,
                       instruction, summary, receiverOrigin, argumentOrigins,
@@ -5184,6 +5303,7 @@ void killUnknownMemory(const MirBody &body, AbstractState &state) {
   state.loadedOrigins.clear();
   state.fieldOrigins.clear();
   state.entryRelativeFields.clear();
+  state.storedRelativeMetadata.clear();
   state.entryRelativeValues.clear();
   preserveEntryPointerIdentities(body, state);
   state.aggregateOrigins.clear();
@@ -5496,6 +5616,10 @@ void preserveLiveScalarFactsForConstruction(const MirProgram *program,
   std::erase_if(state.entryRelativeFields, [&](const auto &entry) {
     return !liveScalarPath(program, address, body, 0, entry.first);
   });
+  std::erase_if(state.storedRelativeMetadata, [&](const auto &entry) {
+    return !liveScalarPath(program, address, body, entry.first.root,
+                           entry.first.path);
+  });
   state.entryRelativeValues.clear();
   preserveEntryPointerIdentities(body, state, true);
   state.aggregateOrigins.clear();
@@ -5549,7 +5673,8 @@ void invalidateValueStorage(const MirProgram *program, MirBodyAddress address,
                             const MirBody &body,
                             const MirPlaceAliasEscapeAnalysis &aliases,
                             AbstractState &state, MirPlaceId source,
-                            bool passiveLocalDrop = false) {
+                            bool passiveLocalDrop = false,
+                            bool movedResultRetirement = false) {
   const auto *place = body.findPlace(source);
   std::map<MirPlaceId, ObjectFact> receivers;
   std::map<MirPlaceId, IntegerFact> fields;
@@ -5586,8 +5711,15 @@ void invalidateValueStorage(const MirProgram *program, MirBodyAddress address,
       place && place->root == MirPlaceRootKind::Temporary &&
       place->projections.empty() && !place->initiallyAvailable &&
       !place->traits.containsBorrowedState;
-  if (place && (independentLocal || independentTemporary ||
-                independentValueParameter(program, address, *place))) {
+  const bool independentMovedResult =
+      movedResultRetirement && place &&
+      place->root == MirPlaceRootKind::Value && place->value &&
+      place->projections.empty() && !place->initiallyAvailable &&
+      !place->traits.containsBorrowedState &&
+      place->type.kind == SemanticType::Class;
+  if (place &&
+      (independentLocal || independentTemporary || independentMovedResult ||
+       independentValueParameter(program, address, *place))) {
     // Structural movement/cleanup of independent value storage cannot write
     // an owned receiver field. Retain entry pointer identities, not addresses
     // observed after retargeting to storage that might now be retired.
@@ -5838,6 +5970,7 @@ void applyInstructionCore(
       closedCalls == nullptr ? nullptr : &closedCalls->program;
   if (instruction.result) {
     state.stagedMetadata.erase(*instruction.result);
+    state.stagedRelativeMetadata.erase(*instruction.result);
     state.valueAlternatives.erase(*instruction.result);
     state.tagPredicates.erase(*instruction.result);
     state.entryRelativeValues.erase(*instruction.result);
@@ -6218,6 +6351,10 @@ void applyInstructionCore(
       (isMirStructuralValueTransfer(*program, instruction) || metadataMove)) {
     const auto &source = instruction.operands.front();
     auto object = objectForOperand(body, aliases, state, source);
+    auto relative = metadataMove
+                        ? relativeMetadataForOperand(*program, address, body,
+                                                     aliases, state, source)
+                        : EntryRelativeFields{};
 
     if (object) {
       object->scalarPointees.clear();
@@ -6240,6 +6377,8 @@ void applyInstructionCore(
     state.fieldOrigins.erase(*instruction.result);
     state.aggregateOrigins.erase(*instruction.result);
     state.objectValues.erase(*instruction.result);
+    if (!relative.empty() && state.stagedRelativeMetadata.size() < 64)
+      state.stagedRelativeMetadata[*instruction.result] = std::move(relative);
     if (object) {
       if (metadataMove && state.stagedMetadata.size() < 64)
         state.stagedMetadata[*instruction.result] = *object;
@@ -6753,7 +6892,13 @@ void applyInstructionCore(
         arrayForOperand(state, aliases, source);
     std::optional<ObjectFact> sourceObject =
         objectForOperand(body, aliases, state, source);
+    auto sourceRelative =
+        program && source.kind == MirOperandKind::Value
+            ? relativeMetadataForOperand(*program, address, body, aliases,
+                                         state, source)
+            : EntryRelativeFields{};
     state.stagedMetadata.erase(source.value);
+    state.stagedRelativeMetadata.erase(source.value);
     const auto *producer = source.kind == MirOperandKind::Value
                                ? definingInstruction(body, source.value)
                                : nullptr;
@@ -6920,6 +7065,15 @@ void applyInstructionCore(
     if (sourceObject) {
       seedObjectFact(body, aliases, destination, *sourceObject, state);
     }
+    if (program && !sourceRelative.empty())
+      if (const auto origin = metadataCarrierForPlace(*program, address, body,
+                                                      aliases, destination))
+        for (const auto &[path, relative] : sourceRelative) {
+          auto field = *origin;
+          field.path.insert(field.path.end(), path.begin(), path.end());
+          publishRelativeMetadata(*program, address, body, state, field,
+                                  relative);
+        }
     for (auto &[root, prefixes] : retainedPrefixes)
       if (const auto object = state.objects.find(root);
           object != state.objects.end())
@@ -6936,6 +7090,32 @@ void applyInstructionCore(
     return;
   }
   if (instruction.kind == MirInstructionKind::Drop && instruction.destination) {
+    if (program && instruction.lifecycle.size() == 1) {
+      const auto &event = instruction.lifecycle.front();
+      const auto *drop = body.findDropObligation(event.source);
+      const auto *place = body.findPlace(*instruction.destination);
+      if (event.kind == MirLifecycleEventKind::Drop && !event.target && drop &&
+          place && drop->place == place->id &&
+          drop->dropType.type == place->type &&
+          mirDropFollowsDefiniteMove(body, block, drop->id, instruction.id)) {
+        // Verified moved-from cleanup retires the shell but cannot invoke
+        // its destructor. Reuse the lifecycle owner's proof; a live or
+        // partially moved object still takes its ordinary cleanup barrier.
+        const auto *producer = place->root == MirPlaceRootKind::Value
+                                   ? definingInstruction(body, place->value)
+                                   : nullptr;
+        const bool movedResult = producer &&
+                                 producer->kind == MirInstructionKind::Move &&
+                                 producer->info.type == place->type;
+        const auto uncaptured = preserveUncapturedLocals(
+            program, address, body, closedCalls->localCaptures, instruction,
+            state);
+        invalidateValueStorage(program, address, body, aliases, state,
+                               *instruction.destination, true, movedResult);
+        restoreDifferentWidthFields(state, uncaptured);
+        return;
+      }
+    }
     if (program && isMirStructuralValueDrop(*program, instruction)) {
       invalidateValueStorage(program, address, body, aliases, state,
                              *instruction.destination, true);
@@ -7368,6 +7548,21 @@ void joinConstructed(std::map<Key, ConstructedScalar> &target,
   });
   joinEntryRelative(target.entryRelativeFields, incoming.entryRelativeFields);
   joinEntryRelative(target.entryRelativeValues, incoming.entryRelativeValues);
+  joinEntryRelative(target.storedRelativeMetadata,
+                    incoming.storedRelativeMetadata);
+  for (auto entry = target.stagedRelativeMetadata.begin();
+       entry != target.stagedRelativeMetadata.end();) {
+    const auto found = incoming.stagedRelativeMetadata.find(entry->first);
+    if (found == incoming.stagedRelativeMetadata.end()) {
+      entry = target.stagedRelativeMetadata.erase(entry);
+      continue;
+    }
+    joinEntryRelative(entry->second, found->second);
+    if (entry->second.empty())
+      entry = target.stagedRelativeMetadata.erase(entry);
+    else
+      ++entry;
+  }
   joinScalarAddresses(target.scalarAddressValues, incoming.scalarAddressValues);
   joinScalarAddresses(target.scalarAddressPlaces, incoming.scalarAddressPlaces);
   joinScalarAddresses(target.fieldAddresses, incoming.fieldAddresses);

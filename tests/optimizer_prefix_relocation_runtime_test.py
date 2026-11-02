@@ -43,6 +43,30 @@ def main():
                     observations[case] = observation
                 else:
                     assert observation == observations[case], (mode, case, observation, observations[case])
+            endpoint_source = private_source(
+                root / "tests/fixtures/optimizer_prefix_endpoints.gti",
+                Path(directory) / "optimizer_prefix_endpoints.gti",
+                ["detail.memory_storage"])
+            endpoint_binary = Path(directory) / (mode + "-endpoints")
+            command = [str(compiler), str(endpoint_source), *flags, "-o", str(endpoint_binary)]
+            built = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
+            assert built.returncode == 0, (command, built.stdout, built.stderr)
+            for endpoint_case in range(7):
+                result = subprocess.run([str(endpoint_binary), *(["x"] * endpoint_case)],
+                                        env=environment, capture_output=True, text=True, timeout=15)
+                failure = endpoint_case == 2
+                assert result.returncode == (70 if failure else 0), (mode, endpoint_case, result)
+                assert result.stdout == "99\n", (mode, endpoint_case, result)
+                if failure:
+                    assert "runtime error[GTI-R" in result.stderr and "GTI-R0014" not in result.stderr
+                else:
+                    assert not result.stderr, (mode, endpoint_case, result)
+                key = ("endpoint", endpoint_case)
+                observation = result.returncode, result.stdout, result.stderr
+                if mode == "llvm-O0":
+                    observations[key] = observation
+                else:
+                    assert observation == observations[key], (mode, key, observation, observations[key])
             concurrent_source = private_source(
                 root / "tests/fixtures/optimizer_prefix_receiver_concurrent.gti",
                 Path(directory) / "optimizer_prefix_receiver_concurrent.gti",

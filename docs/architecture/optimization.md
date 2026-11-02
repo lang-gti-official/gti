@@ -1288,6 +1288,23 @@ endpoint are republished. Capacity is never initialization evidence. Endpoint me
 independent of element-value coverage: an empty source can publish its exact
 zero endpoint and retire the source without manufacturing an element envelope.
 
+Endpoint scalar publication does not require a known allocation address: its
+exact successful store and distinct carrier roots establish the count alone.
+Address and element-prefix publication still require their independent pointer
+and complete-initialization witnesses. No initialized coverage follows from a
+capacity or a copied count.
+
+Body-local equalities to receiver-entry scalar fields can follow that endpoint
+through an owned replacement and an isolated generated move. These identities
+remain outside ordinary object facts and call contexts; only the existing
+receiver-update summary exports the composed relation. Joins retain identical
+relations, and aliasing writes, unknown effects and unsupported publication
+retire them. A proved-disjoint local initialization cannot change a receiver
+scalar. Cleanup of a definitely moved shell reuses `mirDropFollowsDefiniteMove`
+from the lifecycle owner, retires the old storage, and preserves only separately
+justified scalar facts. Live, conditionally moved and reinitialized cleanup
+retain their ordinary effects; native counter controls observe those cases.
+
 The focused `optimizer_prefix_relocation` and
 `optimizer_prefix_relocation_runtime` controls use an application-owned
 carrier, overwritten values, retired sources, vacant capacity and failed

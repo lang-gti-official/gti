@@ -54,7 +54,8 @@ int main() { mut Shell value{}; value = std::move(value); return 0; }
     std::cerr << "relocation contextual analysis did not converge\n";
     return 1;
   }
-  const auto discharges = [&](const std::string &name) {
+  const auto countDischarges = [&](const auto &frontend, const auto &analysis,
+                                   const std::string &name) {
     std::size_t found = 0;
     for (const auto &function : frontend.hir.functionInstances()) {
       if (!function.source || function.source->name().lexeme != name)
@@ -79,7 +80,76 @@ int main() { mut Shell value{}; value = std::move(value); return 0; }
     }
     return found;
   };
+  const auto discharges = [&](const std::string &name) {
+    return countDischarges(frontend, analysis, name);
+  };
+  std::ifstream endpointFile(root / "fixtures/optimizer_prefix_endpoints.gti");
+  const std::string endpointSource{std::istreambuf_iterator<char>(endpointFile),
+                                   {}};
+  const auto endpoints = gti_test::analyzeTrustedPrivateMemoryFixture(
+      "prefix-endpoints.gti", endpointSource);
+  if (!endpoints.canGenerateCode()) {
+    for (const auto &d : endpoints.diagnostics)
+      std::cerr << d.code << ": " << d.message << '\n';
+    return 1;
+  }
+  const auto selfTransfer = gti_test::analyzeTrustedPrivateMemoryFixture(
+      "prefix-overlapping-carriers.gti",
+      endpointSource.substr(
+          0, endpointSource.find("uint64_t fresh_endpoint_positive")) +
+          "int main() { mut Parcel value{uint64_t(4)}; value.send(value); "
+          "return 0; }");
+  bool rejectedOverlap = false;
+  for (const auto &d : selfTransfer.diagnostics)
+    rejectedOverlap |= d.code == "GTI-S2017";
+  if (selfTransfer.canGenerateCode() || !rejectedOverlap) {
+    std::cerr << "overlapping mutable carrier transfer lost its rejection\n";
+    return 1;
+  }
+  const auto endpointAnalysis =
+      lang::analyzeMirClosedCallSafetyChecks(endpoints.mir);
+  if (!endpointAnalysis.converged)
+    return 1;
+  const auto cleanupStates = [&](const std::string &name) {
+    std::pair<unsigned, unsigned> states{};
+    for (const auto &function : endpoints.hir.functionInstances()) {
+      if (!function.source || function.source->name().lexeme != name)
+        continue;
+      const auto *mir = endpoints.mir.findFunctionInstance(function.id);
+      if (!mir)
+        continue;
+      for (const auto &block : mir->body.blocks)
+        for (const auto &instruction : block.instructions) {
+          if (instruction.kind != lang::MirInstructionKind::Drop ||
+              instruction.lifecycle.size() != 1)
+            continue;
+          const auto &event = instruction.lifecycle.front();
+          const auto *drop = mir->body.findDropObligation(event.source);
+          if (!drop || drop->kind != lang::MirDropObligationKind::Binding ||
+              !drop->dropType.destructor)
+            continue;
+          if (lang::mirDropFollowsDefiniteMove(mir->body, block, drop->id,
+                                               instruction.id))
+            ++states.first;
+          else
+            ++states.second;
+        }
+    }
+    return states;
+  };
+  if (!cleanupStates("moved_cleanup_positive").first ||
+      !cleanupStates("conditional_cleanup").second ||
+      !cleanupStates("reinitialized_cleanup").second) {
+    std::cerr << "moved/live cleanup profile controls were not exercised\n";
+    return 1;
+  }
   const auto empty = discharges("empty_endpoint_positive");
+  const auto fresh =
+      countDischarges(endpoints, endpointAnalysis, "fresh_endpoint_positive");
+  const auto grown =
+      countDischarges(endpoints, endpointAnalysis, "grown_endpoint_positive");
+  const auto grownValue =
+      countDischarges(endpoints, endpointAnalysis, "grown_value_control");
   const auto metadata = discharges("metadata_move_positive");
   const auto metadataCaptured = discharges("metadata_move_captured");
   const auto positive = discharges("transferred_borrow_positive");
@@ -90,11 +160,13 @@ int main() { mut Shell value{}; value = std::move(value); return 0; }
   const auto changed = discharges("changed_destination");
   const auto partial = discharges("partial_transfer");
   const auto failed = discharges("failing_transfer");
-  if (empty != 1 || metadata != 1 || metadataCaptured != 0 || positive != 1 ||
-      view != 1 || changed != 0 || failed != 0 || replaced != 0 ||
-      partial != 0 || scalar != 0) {
+  if (empty != 1 || fresh != 1 || grown != 1 || grownValue != 0 ||
+      metadata != 1 || metadataCaptured != 0 || positive != 1 || view != 1 ||
+      changed != 0 || failed != 0 || replaced != 0 || partial != 0 ||
+      scalar != 0) {
     std::cerr << "prefix relocation proof mismatch: successful=" << positive
-              << " empty=" << empty << " metadata=" << metadata
+              << " empty=" << empty << " fresh=" << fresh << " grown=" << grown
+              << " grown-value=" << grownValue << " metadata=" << metadata
               << " captured=" << metadataCaptured << " raw-view=" << view
               << " replaced=" << replaced << " overwritten=" << changed
               << " scalar-getters=" << scalar << " partial=" << partial
