@@ -110,10 +110,24 @@
         "11e454436b282ddb902d69885a937e76d3dd1402"
       ],
       "merge": "11e454436b282ddb902d69885a937e76d3dd1402"
+    },
+    {
+      "task": "preview-accepted-refresh",
+      "pr": 119,
+      "head": "83a7a5248ce2e54b66564170dd60d6f45dd3a72e",
+      "tests": [
+        "preview_workflow",
+        "agent_workflow",
+        "repository_hosting"
+      ],
+      "contributions": [
+        "fb60b992fd9f5efd3ce2369ece94508160d9bbea"
+      ],
+      "merge": "fb60b992fd9f5efd3ce2369ece94508160d9bbea"
     }
   ],
   "removed": [],
-  "main": "9a74ff17f7c6ab11b31d0e87cec4b6583ffb8c4b",
-  "previous": "d52a2953de43ce39f4d13881d6919fa1edcf6a5d",
-  "candidate": "c690865825aa41c5abc8174e366b5567"
+  "main": "6be28dbe6ef4f5ad050dbdb5ad1d1935e00e6a63",
+  "previous": "ba3b9af9ab8c567b8a02f411252720c7f504fe63",
+  "candidate": "9cc92a1589ac423eb7edd9ca0f17e28f"
 }
