@@ -67,6 +67,28 @@ def main():
                     observations[key] = observation
                 else:
                     assert observation == observations[key], (mode, key, observation, observations[key])
+            cross_source = private_source(
+                root / "tests/fixtures/optimizer_prefix_cross_field.gti",
+                Path(directory) / "optimizer_prefix_cross_field.gti",
+                ["detail.memory_storage"])
+            cross_binary = Path(directory) / (mode + "-cross-field")
+            command = [str(compiler), str(cross_source), *flags, "-o", str(cross_binary)]
+            built = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
+            assert built.returncode == 0, (command, built.stdout, built.stderr)
+            for cross_case in range(2):
+                result = subprocess.run([str(cross_binary), *(["x"] * cross_case)],
+                                        env=environment, capture_output=True, text=True, timeout=15)
+                assert result.returncode == (70 if cross_case else 0), (mode, cross_case, result)
+                assert result.stdout == "99\n", (mode, cross_case, result)
+                if cross_case:
+                    assert "runtime error[GTI-R0001]: integer_overflow in addition" in result.stderr
+                    assert "GTI-R0014" not in result.stderr
+                else:
+                    assert not result.stderr, (mode, cross_case, result)
+                key = ("cross-field", cross_case)
+                observation = result.returncode, result.stdout, result.stderr
+                if mode == "llvm-O0": observations[key] = observation
+                else: assert observation == observations[key], (mode, key, observation, observations[key])
             concurrent_source = private_source(
                 root / "tests/fixtures/optimizer_prefix_receiver_concurrent.gti",
                 Path(directory) / "optimizer_prefix_receiver_concurrent.gti",

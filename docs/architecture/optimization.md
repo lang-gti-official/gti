@@ -1297,7 +1297,9 @@ capacity or a copied count.
 Body-local equalities to receiver-entry scalar fields can follow that endpoint
 through an owned replacement and an isolated generated move. These identities
 remain outside ordinary object facts and call contexts; only the existing
-receiver-update summary exports the composed relation. Joins retain identical
+receiver-update summary exports the composed relation. Replay resolves its named
+entry source separately from the destination; a cross-field copy never reads
+the destination's previous value. Joins retain identical
 relations, and aliasing writes, unknown effects and unsupported publication
 retire them. A proved-disjoint local initialization cannot change a receiver
 scalar. Cleanup of a definitely moved shell reuses `mirDropFollowsDefiniteMove`

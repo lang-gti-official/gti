@@ -55,7 +55,9 @@ int main() { mut Shell value{}; value = std::move(value); return 0; }
     return 1;
   }
   const auto countDischarges = [&](const auto &frontend, const auto &analysis,
-                                   const std::string &name) {
+                                   const std::string &name,
+                                   lang::MirOperation selected =
+                                       lang::MirOperation::Multiply) {
     std::size_t found = 0;
     for (const auto &function : frontend.hir.functionInstances()) {
       if (!function.source || function.source->name().lexeme != name)
@@ -74,7 +76,7 @@ int main() { mut Shell value{}; value = std::move(value); return 0; }
         for (const auto &block : mir->body.blocks)
           for (const auto &instruction : block.instructions)
             if (instruction.id == proof.instruction &&
-                instruction.operation == lang::MirOperation::Multiply)
+                instruction.operation == selected)
               ++found;
       }
     }
@@ -110,6 +112,23 @@ int main() { mut Shell value{}; value = std::move(value); return 0; }
       lang::analyzeMirClosedCallSafetyChecks(endpoints.mir);
   if (!endpointAnalysis.converged)
     return 1;
+  std::ifstream crossFile(root / "fixtures/optimizer_prefix_cross_field.gti");
+  const std::string crossSource{std::istreambuf_iterator<char>(crossFile), {}};
+  const auto cross = gti_test::analyzeTrustedPrivateMemoryFixture(
+      "prefix-cross-field.gti", crossSource);
+  if (!cross.canGenerateCode()) {
+    for (const auto &d : cross.diagnostics)
+      std::cerr << d.code << ": " << d.message << '\n';
+    return 1;
+  }
+  const auto crossAnalysis = lang::analyzeMirClosedCallSafetyChecks(cross.mir);
+  if (!crossAnalysis.converged ||
+      countDischarges(cross, crossAnalysis, "cross_field_failure",
+                      lang::MirOperation::Add) != 0) {
+    std::cerr
+        << "cross-field replay erased the nonzero source endpoint overflow\n";
+    return 1;
+  }
   const auto cleanupStates = [&](const std::string &name) {
     std::pair<unsigned, unsigned> states{};
     for (const auto &function : endpoints.hir.functionInstances()) {

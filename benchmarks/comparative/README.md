@@ -582,3 +582,51 @@ reads in sorting. Their focused execution/cleanup checks and structural code
 evidence are recorded separately; fresh paired and three-language runs must
 establish their performance. Benchmark programs and their work contracts remain
 unchanged, and the corpus remains outside CTest and CI.
+
+### Measured checkpoint `2b55e33d`
+
+A subsequent isolated full-corpus run at
+`2b55e33dde76d3bec702b95a83eb4a67f70be819` again used nine samples and
+150 ms targets. All 34 programs compiled and matched their digests; none was
+noisy or too short. The outcome remains **22 competitive against both and
+12 outside at least one 10% band**. This checkpoint includes scalar-result
+register transport, checked-square bounds, closed storage effects, and the
+first source sorting read changes. It precedes standalone invariant-add loop
+versioning and unchecked restoring swaps.
+
+| Remaining workload | GTI / C++ median | GTI / Rust median |
+| --- | ---: | ---: |
+| `kernel-recursive-tree` | 1.121 | 1.120 |
+| `lib-vector-growth` | 1.659 | 1.724 |
+| `lib-vector-reserved` | 2.305 | 2.252 |
+| `lib-vector-transform` | 1.251 | 1.395 |
+| `lib-sort-random` | 1.484 | 2.465 |
+| `lib-sort-sorted` | 1.306 | 1.151 |
+| `lib-sort-reverse` | 1.066 | 1.237 |
+| `lib-string-growth-search` | 0.426 | 1.403 |
+| `lib-string-substrings` | 1.288 | 2.671 |
+| `lib-hashmap-reserved` | 0.997 | 1.359 |
+| `lib-capturing-predicate` | 1.192 | 1.110 |
+| `lib-interface-dispatch` | 0.746 | 1.588 |
+
+The paired comparison against `858f1715` isolates the later changes from scalar
+register transport. None of its 34 intervals establishes a change beyond the
+separate 5% material band. Random sorting improved by about 2.6% (ratio 0.9738,
+95% interval 0.9631–0.9852), and reverse sorting by about 1.2% (0.9877,
+0.9792–0.9980). Recursive traversal is now about 12% behind both comparison
+languages; the earlier register-transport paired run is retained separately
+rather than attributing a cross-run median difference to this checkpoint.
+
+Summed program-compilation observations were 17.024 s before and 16.764 s after;
+median paired peak compiler RSS was 1.0004 times the baseline. These are build
+cost observations, not a repeated compiler-speed experiment. Instrumented
+allocation API call, success and free counts were unchanged for all 34 programs
+at both diagnostic seeds. Assembly, section sizes, binary sizes, raw samples
+and build records are retained under `closed-storage-mini/Testing` in the same
+manual campaign artifact.
+
+A separate, unaccepted O3 inlining-threshold experiment (400) improved substring
+work by about 11.1% against this checkpoint (ratio 0.8891, 95% interval
+0.8630–0.9124). Its other five sampled workloads showed no material improvement.
+That six-case experiment does not establish whole-corpus performance acceptance;
+a full 34-program comparison is required before changing the default.

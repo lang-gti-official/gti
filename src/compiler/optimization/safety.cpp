@@ -4710,7 +4710,6 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
   }
   const ClosedCallSummary &summary = found->second;
 
-
   const MirPlaceId receiverOrigin =
       instruction.receiver
           ? objectOriginForOperand(body, aliases, state, *instruction.receiver)
@@ -4997,13 +4996,18 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
       const auto origin =
           receiverFieldOrigin(closedCalls->program, address, body, aliases,
                               state, instruction, path);
-      if (!origin)
+      const auto input =
+          receiverFieldOrigin(closedCalls->program, address, body, aliases,
+                              state, instruction, update.field);
+      if (!origin || !input)
         continue;
       if (const auto object =
-              extractObjectFact(body, aliases, origin->root, state))
-        if (const auto field = object->integers.find(origin->path);
+              extractObjectFact(body, aliases, input->root, state))
+        if (const auto field = object->integers.find(input->path);
             field != object->integers.end())
           if (auto fact = applyEntryRelative(field->second, update)) {
+            // The relation reads its named entry field; that need not be
+            // the field it overwrites (for example after an owning transfer).
             // Callee instruction/place identities are body-local. The call is
             // the replay boundary; retain caller input evidence and this call.
             add(fact->evidence, block.id);
@@ -5011,10 +5015,14 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
             updatedFields.emplace_back(*origin, std::move(*fact));
           }
       const auto *root = body.findPlace(origin->root);
-      if (origin->root && (!root || root->root != MirPlaceRootKind::This ||
-                           !root->projections.empty()))
+      const auto *inputRoot = body.findPlace(input->root);
+      if ((origin->root && (!root || root->root != MirPlaceRootKind::This ||
+                            !root->projections.empty())) ||
+          (input->root &&
+           (!inputRoot || inputRoot->root != MirPlaceRootKind::This ||
+            !inputRoot->projections.empty())))
         continue;
-      if (const auto old = state.entryRelativeFields.find(origin->path);
+      if (const auto old = state.entryRelativeFields.find(input->path);
           old != state.entryRelativeFields.end() &&
           old->second.domain == update.domain)
         if (auto composed = shiftEntryRelative(old->second, update.offset)) {
