@@ -183,17 +183,19 @@
     "183-immediate-functions.gti": 11,
     "184-payload-borrow-chains.gti": 11,
     "185-reflected-method-dispatch.gti": 47,
-    "182-bounded-array-borrows.gti": 156
+    "182-bounded-array-borrows.gti": 156,
+    "186-consuming-ranges.gti": 450
   },
-  "total": 28246,
+  "total": 28696,
   "target": "arm64-apple-macos",
   "variants": {
     "x86_64-unknown-linux": {
       "examples": {
         "087-associative-containers.gti": 451,
-        "089-library-workflow.gti": 917
+        "089-library-workflow.gti": 917,
+        "186-consuming-ranges.gti": 449
       },
-      "total": 28244
+      "total": 28693
     }
   }
 }
