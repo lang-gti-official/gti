@@ -5639,6 +5639,23 @@ storedCarrierValueOrigin(const MirProgram &program, const MirBody &body,
   std::vector<SymbolId> prefix;
   for (std::size_t index = first; index < source.projections.size(); ++index) {
     const auto &projection = source.projections[index];
+    if (projection.kind == MirProjectionKind::Dereference &&
+        index + 1 == source.projections.size() &&
+        projected.kind == SemanticType::Reference &&
+        projected.arguments.size() == 1 &&
+        projected.arguments.front() == carrierType &&
+        (carrierType.kind == SemanticType::StringView ||
+         carrierType.kind == SemanticType::CString)) {
+      // Reading a checked text-reference field copies its referent's view,
+      // retaining the entry's external text owner. The terminal indirection
+      // must select one exact declared reference path of that entry.
+      if (std::any_of(
+              rootPaths.begin(), rootPaths.end(), [&](const auto &path) {
+                return path.fields == prefix && path.reference == projected;
+              }))
+        return HirBindingId{0};
+      return std::nullopt;
+    }
     if (projection.kind != MirProjectionKind::Field)
       return std::nullopt;
     const auto owner = std::find_if(
@@ -5694,22 +5711,29 @@ storedCarrierValueOrigin(const MirProgram &program, const MirBody &body,
     const MirBlock *block = nullptr;
     const MirInstruction *initialize = nullptr;
     std::size_t position = 0;
+    SemanticType type = SemanticType::Unknown;
   };
   std::unordered_map<HirBindingId, Publication> publications;
   for (const HirBindingId carrier : entry.carriers) {
     if (std::find(parameterBindings.begin(), parameterBindings.end(),
                   carrier) != parameterBindings.end())
       return false;
-    bool hasStorage = false;
+    std::optional<SemanticType> storageType;
     for (const MirPlace &place : body.places) {
       if (place.root != MirPlaceRootKind::Binding || place.binding != carrier ||
           !place.projections.empty())
         continue;
-      if (place.type != carrierType || place.initiallyAvailable)
+      const bool textCopy = place.traits.containsBorrowedState &&
+                            place.traits.copyable &&
+                            (place.type.kind == SemanticType::StringView ||
+                             place.type.kind == SemanticType::CString);
+      if ((place.type != carrierType && !textCopy) ||
+          place.initiallyAvailable ||
+          (storageType && *storageType != place.type))
         return false;
-      hasStorage = true;
+      storageType = place.type;
     }
-    if (!hasStorage)
+    if (!storageType)
       return false;
     Publication publication;
     for (const MirBlock &block : body.blocks) {
@@ -5728,12 +5752,12 @@ storedCarrierValueOrigin(const MirProgram &program, const MirBody &body,
         if (instruction.kind != MirInstructionKind::Initialize)
           continue;
         if (publication.initialize != nullptr ||
-            destination->type != carrierType ||
+            destination->type != *storageType ||
             instruction.operands.size() != 1 ||
             instruction.operands.front().kind != MirOperandKind::Value ||
-            instruction.operands.front().type != carrierType)
+            instruction.operands.front().type != *storageType)
           return false;
-        publication = {&block, &instruction, index};
+        publication = {&block, &instruction, index, *storageType};
       }
     }
     if (publication.initialize == nullptr ||
@@ -5755,9 +5779,10 @@ storedCarrierValueOrigin(const MirProgram &program, const MirBody &body,
     if (found == publications.end() || !visiting.insert(carrier).second)
       return false;
     const Publication &publication = found->second;
+    const SemanticType &publishedType = publication.type;
     const MirValue *value =
         body.findValue(publication.initialize->operands.front().value);
-    if (value == nullptr || value->info.type != carrierType)
+    if (value == nullptr || value->info.type != publishedType)
       return false;
     const MirBlock *producerBlock = body.findBlock(value->definitionBlock);
     if (producerBlock == nullptr)
@@ -5774,15 +5799,15 @@ storedCarrierValueOrigin(const MirProgram &program, const MirBody &body,
                    publication.position
              : !dominance->dominates(producerBlock->id,
                                      publication.block->id)) ||
-        producer->result != value->id || producer->info.type != carrierType)
+        producer->result != value->id || producer->info.type != publishedType)
       return false;
     // A text relay may publish the exact owner of a reference formal through
     // a checked call result. Its actual argument must be a direct load of that
     // formal's referent; a matching type or declared borrow summary alone is
     // not evidence that the local received the entry's text owner.
     if (producer->kind == MirInstructionKind::Call &&
-        (carrierType.kind == SemanticType::StringView ||
-         carrierType.kind == SemanticType::CString)) {
+        (publishedType.kind == SemanticType::StringView ||
+         publishedType.kind == SemanticType::CString)) {
       const MirLoan *result =
           producer->loan ? body.findLoan(*producer->loan) : nullptr;
       const std::size_t argument = producer->borrowArgument;
@@ -5805,25 +5830,28 @@ storedCarrierValueOrigin(const MirProgram &program, const MirBody &body,
               : nullptr;
       const auto origin = source != nullptr
                               ? storedCarrierValueOrigin(program, body, entry,
-                                                         *source, carrierType)
+                                                         *source, publishedType)
                               : std::nullopt;
       if (result == nullptr || result->kind != MirLoanKind::Stored ||
           result->entry || result->escapes || result->parent != 0 ||
-          result->source != entry.source ||
+          (result->source != entry.source &&
+           !(source != nullptr && result->source == source->id &&
+             result->storedDependency == entry.id)) ||
           result->producedBy != producer->hirValue ||
           !result->designatedFields.empty() ||
           !result->additionalDependencies.empty() ||
           !producer->borrowArguments.empty() ||
           !producer->borrowFields.empty() ||
           argument >= producer->parameterTypes.size() ||
-          producer->parameterTypes[argument] != carrierType ||
+          producer->parameterTypes[argument] != publishedType ||
           stage == nullptr || stage->callSite != producer->callSite ||
           stage->callInputRole != MirCallInputRole::Argument ||
           stage->callInputIndex != argument ||
           stage->callInputKind != HirCallInputKind::Value || load == nullptr ||
           source == nullptr ||
           load->operands.front().kind != MirOperandKind::Copy ||
-          load->operands.front().type != carrierType || !origin || *origin != 0)
+          load->operands.front().type != publishedType || !origin ||
+          *origin != 0)
         return false;
       visiting.erase(carrier);
       proven.insert(carrier);
@@ -5836,13 +5864,13 @@ storedCarrierValueOrigin(const MirProgram &program, const MirBody &body,
     const MirOperand &operand = producer->operands.front();
     const MirPlace *source = body.findPlace(operand.place);
     const bool moved = producer->kind == MirInstructionKind::Move;
-    if (operand.type != carrierType || source == nullptr ||
-        source->type != carrierType ||
+    if (operand.type != publishedType || source == nullptr ||
+        source->type != publishedType ||
         operand.kind != (moved ? MirOperandKind::Move : MirOperandKind::Copy) ||
         !(moved ? source->traits.movable : source->traits.copyable))
       return false;
     const auto origin =
-        storedCarrierValueOrigin(program, body, entry, *source, carrierType);
+        storedCarrierValueOrigin(program, body, entry, *source, publishedType);
     bool received = origin && *origin == 0;
     if (origin && *origin != 0 && self(self, *origin)) {
       const Publication &prior = publications.at(*origin);
@@ -5972,6 +6000,7 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
         loan.escapes && (carrierReferenceField || transformedReferenceField) &&
         isPotentiallyBorrowedCarrier(program, sourceType);
     bool constructedShell = false;
+    bool copiedTextRelay = false;
     if (loan.kind == MirLoanKind::Stored && !loan.entry && !loan.escapes &&
         loan.storedField == 0 &&
         isPotentiallyBorrowedCarrier(program, sourceType)) {
@@ -5992,12 +6021,59 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
         }
       }
     }
+    if (loan.kind == MirLoanKind::Stored && !loan.entry && !loan.escapes &&
+        loan.parent == 0 && loan.storedField == 0 && originalDependency &&
+        originalDependency->entry &&
+        originalDependency->kind == MirLoanKind::Stored &&
+        (sourceType.kind == SemanticType::StringView ||
+         sourceType.kind == SemanticType::CString)) {
+      const auto origin = storedCarrierValueOrigin(
+          program, body, *originalDependency, *source, sourceType);
+      for (const auto &block : body.blocks) {
+        for (const auto &instruction : block.instructions) {
+          const auto argument = instruction.borrowArgument;
+          if (!origin || *origin != 0 ||
+              instruction.kind != MirInstructionKind::Call ||
+              instruction.loan != loan.id ||
+              instruction.hirValue != loan.producedBy ||
+              instruction.info.type != sourceType ||
+              instruction.info.category != ValueCategory::Value ||
+              instruction.borrowOrigin != BorrowOriginKind::Argument ||
+              !instruction.borrowFields.empty() ||
+              !instruction.borrowArguments.empty() ||
+              argument >= instruction.parameterTypes.size() ||
+              instruction.parameterTypes[argument] != sourceType ||
+              argument >= instruction.operands.size() ||
+              instruction.operands[argument].kind != MirOperandKind::Value)
+            continue;
+          const auto *stage =
+              definitionFor(body, instruction.operands[argument].value);
+          const auto *load =
+              stage && stage->kind == MirInstructionKind::CallInput &&
+                      stage->callSite == instruction.callSite &&
+                      stage->callInputRole == MirCallInputRole::Argument &&
+                      stage->callInputIndex == argument &&
+                      stage->callInputKind == HirCallInputKind::Value &&
+                      stage->operands.size() == 1 &&
+                      stage->operands.front().kind == MirOperandKind::Value
+                  ? definitionFor(body, stage->operands.front().value)
+                  : nullptr;
+          copiedTextRelay =
+              load && load->kind == MirInstructionKind::Load &&
+              load->operands.size() == 1 &&
+              load->operands.front().kind == MirOperandKind::Copy &&
+              load->operands.front().type == sourceType &&
+              load->operands.front().place == source->id;
+        }
+      }
+    }
     const bool localShell = publishedShell || constructedShell || returnShell ||
                             ((loan.kind == MirLoanKind::Local ||
                               loan.kind == MirLoanKind::Parameter) &&
                              isPotentiallyBorrowedCarrier(program, sourceType));
     if (loan.kind == MirLoanKind::Stored && loan.parent == 0 &&
-        loan.storedDependency != 0 && !publishedShell && !constructedShell)
+        loan.storedDependency != 0 && !publishedShell && !constructedShell &&
+        !copiedTextRelay)
       return verificationFailure(
           body, owner,
           "stored shell dependency requires an exact "

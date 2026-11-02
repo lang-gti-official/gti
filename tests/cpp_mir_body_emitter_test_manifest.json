@@ -334,6 +334,10 @@
       "suite": "text"
     },
     {
+      "name": "testOwningDeferredFieldStorage",
+      "suite": "text"
+    },
+    {
       "name": "testMovedBorrowedPayloadAfterFallibleSibling",
       "suite": "text"
     },
@@ -855,6 +859,10 @@
     },
     {
       "name": "testNestedClassResultFieldView",
+      "suite": "lifecycle"
+    },
+    {
+      "name": "testDiscardedOwningAssignment",
       "suite": "lifecycle"
     },
     {

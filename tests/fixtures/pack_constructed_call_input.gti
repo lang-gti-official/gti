@@ -1,0 +1,45 @@
+// An owning special-member pack construction has its own result lifetime.
+// Passing that result to a call reparents it rather than moving the pack twice.
+import std.map;
+import std.memory;
+import std.string;
+import std.utility;
+import std.vector;
+
+mut int drops = 0;
+mut bool report = false;
+class Ticket {
+public:
+  int value;
+  Ticket(int value) : value(value) {}
+  ~Ticket() { drops++; if (report) { std::println(this.value); } }
+};
+int consume<T>(T value, int check) { return check; }
+int forward<T, Args...>(int divisor, Args... args) {
+  return consume(T(args...), 8 / divisor); // argument failure
+}
+int main(int argc, std::vector<std::string> argv) {
+  if (argc > 1) {
+    report = true;
+    return forward<Ticket>(0, Ticket(73));
+  }
+  if (forward<Ticket>(2, Ticket(1)) != 4 || drops != 1) { return 1; }
+  if (forward<std::unique_ptr<int>>(2, std::make_unique<int>(7)) != 4) { return 2; }
+  {
+    mut std::map<int, std::unique_ptr<int>> owners{};
+    [[discard]] owners.emplace(1, std::make_unique<int>(7));
+    [[discard]] owners.try_emplace(2, std::make_unique<int>(8));
+    [[discard]] owners.try_emplace(2, std::make_unique<int>(99));
+    int first = 1;
+    int second = 2;
+    if (*owners.at(first) != 7 || *owners.at(second) != 8) { return 3; }
+  }
+  {
+    mut std::map<int, std::string> names{};
+    auto name = std::string("retained");
+    [[discard]] names.try_emplace(1, std::move(name));
+    int key = 1;
+    if (names.at(key) != "retained") { return 4; }
+  }
+  return 0;
+}

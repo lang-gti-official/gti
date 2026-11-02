@@ -325,6 +325,12 @@ when the assignment is an expression statement, a for-loop increment, or a
 comma's left operand, or when it is what a discarded grouping, comma or
 conditional yields.
 
+Discarding a conditional result creates no additional owned result or copy of
+an assignment target. Actual temporary objects produced by its selected arm
+still live until the enclosing full-expression ends, including any following
+comma operands. A moved assignment staging object is retired at its recorded
+cleanup point without destroying the value now owned by the target.
+
 When a plain subscript or dereference assignment forms its target through a
 source-defined operator returning `mut T&`, the selected target call runs
 before the right operand and may fail before any part of that operand runs. A

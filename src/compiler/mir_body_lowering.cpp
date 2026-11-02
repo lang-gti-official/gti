@@ -5174,7 +5174,7 @@ private:
     // Sequenced evaluations, such as a comma's left operand, complete before
     // the value they precede on every path that reads it.
     for (const HirValueId input : value->sequencedInputs) {
-      emitValue(input);
+      emitValue(input, true);
       if (terminated()) {
         return {};
       }
@@ -5584,7 +5584,7 @@ private:
       return;
     }
     for (const HirValueId input : value->sequencedInputs) {
-      emitValue(input);
+      emitValue(input, true);
       if (terminated()) {
         return;
       }
@@ -8597,6 +8597,20 @@ private:
         recordLoanIdentity(loan, *shellContract);
       } else if (textShellOwner != 0) {
         output.loans[loan - 1].storedDependency = textShellOwner;
+      } else if (kind == MirLoanKind::Stored &&
+                 (value.info.type.kind == SemanticType::StringView ||
+                  value.info.type.kind == SemanticType::CString) &&
+                 value.borrowOrigin == BorrowOriginKind::Argument &&
+                 value.borrowArgument < arguments.size() &&
+                 findValue(arguments[value.borrowArgument]) != nullptr &&
+                 findValue(arguments[value.borrowArgument])
+                     ->storedReferenceAccess) {
+        // A copied text value relayed from a stored reference field keeps
+        // that field as its exact call origin and its external entry owner
+        // as a separate dependency. Publishing a local must not flatten the
+        // selected field into the receiver's carrier shell.
+        output.loans[loan - 1].storedDependency =
+            storedDependencyForPlace(origin);
       } else if (kind == MirLoanKind::Stored && shellArgument != nullptr &&
                  (shellArgument->info.traits.containsBorrowedState ||
                   storesCarrierReference(value)) &&
@@ -10614,7 +10628,7 @@ private:
                                  clonePlace(placeForValue(source), value));
   }
 
-  void emitConditional(const HirValue &value) {
+  void emitConditional(const HirValue &value, bool discardResult = false) {
     if (value.operands.size() != 3) {
       valid = false;
       return;
@@ -10633,7 +10647,8 @@ private:
     const std::vector<Scope> incomingScopes = scopes;
     const std::vector<TemporaryDrop> incomingTemporaryDrops = temporaryDrops;
     const auto incomingTransferEndpoints = callTransferredLoanEndpoints;
-    const bool hasResult = value.info.type.kind != SemanticType::Void;
+    const bool hasResult =
+        !discardResult && value.info.type.kind != SemanticType::Void;
     const bool borrowedResult =
         hasResult && value.info.category == ValueCategory::Place;
     // A reference join currently has exactly one normally completing arm.
@@ -10709,7 +10724,7 @@ private:
         }
         (void)appendInstruction(std::move(initialize));
       } else {
-        emitValue(arm);
+        emitValue(arm, true);
       }
       completesNormally = !terminated();
       if (!completesNormally) {
@@ -11303,15 +11318,15 @@ private:
     terminate(endpoint);
   }
 
-  void emitValue(HirValueId id) {
+  void emitValue(HirValueId id, bool discardResult = false) {
     if (terminated()) {
       return;
     }
-    emitValueImpl(id);
+    emitValueImpl(id, discardResult);
     finishTerminalFullExpression(id);
   }
 
-  void emitValueImpl(HirValueId id) {
+  void emitValueImpl(HirValueId id, bool discardResult) {
     if (id == 0 || emittedValues.contains(id)) {
       return;
     }
@@ -11334,11 +11349,28 @@ private:
     }
 
     for (const HirValueId input : value->sequencedInputs) {
-      emitValue(input);
+      emitValue(input, true);
       if (terminated()) {
         emittedValues.insert(id);
         return;
       }
+    }
+
+    // Discarding a grouping or comma also discards its yielded expression.
+    // Calls still create their ordinary result temporaries, but a discarded
+    // conditional must not manufacture an owning copy of an assignment result.
+    if (discardResult && value->kind == HirValueKind::Grouping &&
+        value->operands.size() == 1) {
+      emitValue(value->operands.front(), true);
+      emittedValues.insert(id);
+      return;
+    }
+    if (discardResult && value->kind == HirValueKind::Binary &&
+        value->operation == TokenKind::COMMA && value->operands.size() == 2) {
+      emitValue(value->operands.front(), true);
+      emitValue(value->operands.back(), true);
+      emittedValues.insert(id);
+      return;
     }
 
     if (value->kind == HirValueKind::Propagation) {
@@ -11656,7 +11688,7 @@ private:
       return;
     }
     if (value->kind == HirValueKind::Conditional) {
-      emitConditional(*value);
+      emitConditional(*value, discardResult);
       return;
     }
     if (value->kind == HirValueKind::ScopedResult) {
@@ -11685,7 +11717,7 @@ private:
             isPlaceExpression(left->kind))
           emitPlaceDependencies(left->id);
         else
-          emitValue(left->id);
+          emitValue(left->id, true);
         if (terminated()) {
           return;
         }
@@ -13689,7 +13721,7 @@ private:
         const std::vector<Scope> incomingScopes = scopes;
         const std::vector<TemporaryDrop> incomingTemporaryDrops =
             temporaryDrops;
-        emitValue(*statement->value);
+        emitValue(*statement->value, true);
         endFullExpressionLoans(incomingScopes);
         emitTemporaryDrops(incomingTemporaryDrops, *statement->value,
                            statement->id);
@@ -13910,6 +13942,17 @@ private:
         operands.push_back(std::move(initializer));
         if (binding != nullptr && binding->info.traits.containsBorrowedState) {
           retainedLoan = loanForValue(*statement.value);
+          const auto *value = findValue(*statement.value);
+          if (retainedLoan == 0 && value != nullptr &&
+              value->info.traits.copyable &&
+              (binding->info.type.kind == SemanticType::StringView ||
+               binding->info.type.kind == SemanticType::CString)) {
+            // A value read through a stored text reference retains that
+            // reference's external owner, just as a direct return does. The
+            // projected Load proves which entry supplied the local copy.
+            retainedLoan =
+                storedDependencyForPlace(placeForValue(*statement.value));
+          }
         }
       }
     }
@@ -14758,7 +14801,7 @@ private:
     if (statement.increment) {
       const std::vector<Scope> incrementScopes = scopes;
       const std::vector<TemporaryDrop> incrementTemporaryDrops = temporaryDrops;
-      emitValue(*statement.increment);
+      emitValue(*statement.increment, true);
       endFullExpressionLoans(incrementScopes);
       emitTemporaryDrops(incrementTemporaryDrops, *statement.increment,
                          statement.id);
