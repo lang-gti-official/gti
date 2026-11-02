@@ -1127,7 +1127,10 @@ int main() { return out; }
 }
 
 void testConstantReceiverSubstitutions() {
-  const auto frontend = lang::Frontend().analyze("constant-receivers.gti", R"(
+  const auto standardLibrary =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto frontend = lang::Frontend().analyze(
+      "constant-receivers.gti", R"(
 import std.string_view;
 constexpr std::string_view name = "a\0b";
 static constexpr std::string_view empty = "";
@@ -1143,7 +1146,8 @@ int main() {
          (observe(), name).size() == 3 && calls == 1 &&
          Names::later.size() == 2 && Names::length == 2 ? 0 : 1;
 }
-)");
+)",
+      {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
   expect(frontend.canGenerateCode(),
          "constant receivers lower through direct, grouped, sequenced and "
          "later static-field occurrences");
