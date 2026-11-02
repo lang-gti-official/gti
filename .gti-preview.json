@@ -146,10 +146,24 @@
         "140b931121286628a3eb48e3c2d942ead81cab86"
       ],
       "merge": "140b931121286628a3eb48e3c2d942ead81cab86"
+    },
+    {
+      "task": "source-stdlib-ci",
+      "pr": 125,
+      "head": "da4a24377044c15d137c5ebdd1f4a56b30601677",
+      "tests": [
+        "source_stdlib_ci",
+        "ci_release",
+        "repository_hosting"
+      ],
+      "contributions": [
+        "9c789a001f3048849086db26ca761d5a431916c6"
+      ],
+      "merge": "9c789a001f3048849086db26ca761d5a431916c6"
     }
   ],
   "removed": [],
   "main": "6be28dbe6ef4f5ad050dbdb5ad1d1935e00e6a63",
-  "previous": "fb22c3e1ec6c3fe4c4caf2867700525da50aae70",
-  "candidate": "b7c5177975944ce59c02ee4a4b5646b0"
+  "previous": "096cdd2b407d0d9f9f36b6352c7977f59fdef9f8",
+  "candidate": "da114703faf74070b8d47b555387d90f"
 }
