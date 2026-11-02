@@ -79,10 +79,26 @@
         "836f0473c478240b826d5657cf3870e804d35d61"
       ],
       "merge": "836f0473c478240b826d5657cf3870e804d35d61"
+    },
+    {
+      "task": "gtiup",
+      "pr": 115,
+      "head": "07556701d6781da23dfaa24ef722154004949168",
+      "tests": [
+        "gtiup",
+        "preview_release",
+        "neovim_gtiup",
+        "neovim_lsp_configuration",
+        "ci_release"
+      ],
+      "contributions": [
+        "c99539e1b5a9db6976852e5802e872b653c8f834"
+      ],
+      "merge": "c99539e1b5a9db6976852e5802e872b653c8f834"
     }
   ],
   "removed": [],
-  "main": "bf57099f714547236b384572c82ecc12d7551ef9",
-  "previous": "1cb184543c06531360b47b503faa5f731a679feb",
-  "candidate": "be080e94ade249a59d9ed4caf4f4a1ef"
+  "main": "9a74ff17f7c6ab11b31d0e87cec4b6583ffb8c4b",
+  "previous": "acdc97c55b3149aeb277b9714910b3c5ee447142",
+  "candidate": "05e071e2520d4302a4028c3526556ed9"
 }
