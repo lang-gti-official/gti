@@ -775,6 +775,23 @@ is not a GTI synchronization edge. The summaries let `process_resource` and
 its clients keep precise effects above the runtime; they do not authorize
 removing or reordering a call. [MIR](mir.md) records the representation.
 
+LLVM additionally records the existing process-allocation elision permission
+on exact result-only allocator and matching release call edges: allocation
+family, requested byte count, uninitialized storage, and the released pointer.
+The Windows family also records its alignment argument. The ordinary POSIX
+allocator and Windows aligned allocator can then participate in LLVM's
+allocation-pair removal. The POSIX status-writing allocator remains excluded
+because its status pointee is a separate output. Declarations with the same
+native symbol receive no such attributes, and application resources retain
+their observable calls. Nullable exhaustion and all required object cleanup
+remain intact; only an allocation that LLVM proves unnecessary may disappear,
+as allowed by the language's process-allocation rule.
+
+Region validation skips the address-alignment query for an already non-null
+region reporting alignment one. All byte addresses satisfy that case; larger
+reported alignments still inspect the actual address, and descriptor extent,
+native-size, alignment-shape and rollback checks remain in source.
+
 The old `gti_rt_memory_allocate_v1`/`gti_rt_memory_release_v1` pair has no remaining
 repository consumer and is retired rather than retaining a second validation
 policy. The replacement native ABI in `<gti/memory.h>` exposes only target facts

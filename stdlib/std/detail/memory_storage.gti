@@ -591,7 +591,10 @@ export expected<void, std::alloc_errc> validate_region(
     return unexpected(std::alloc_errc::invalid_region);
   }
   unsafe {
-    if (runtime::gti_rt_address_is_aligned_v1(allocation.address, allocation.alignment) == 0) {
+    // Non-null byte addresses always satisfy unit alignment. Wider reported
+    // alignments still require the actual address observation.
+    if (allocation.alignment != uint64_t(1) &&
+        runtime::gti_rt_address_is_aligned_v1(allocation.address, allocation.alignment) == 0) {
       return unexpected(std::alloc_errc::invalid_alignment);
     }
   }

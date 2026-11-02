@@ -6,6 +6,8 @@
 #include <fstream>
 #include <iterator>
 #include <llvm/Analysis/AliasAnalysis.h>
+#include <llvm/Analysis/MemoryBuiltins.h>
+#include <llvm/Analysis/TargetLibraryInfo.h>
 #include <llvm/Passes/PassBuilder.h>
 
 #include <array>
@@ -132,9 +134,12 @@ void providerContracts() {
       first->hasRetAttr(llvm::Attribute::NoAlias) &&
           second->hasRetAttr(llvm::Attribute::NoAlias),
       "sealed allocation calls preserve the provider's fresh-result contract");
-  expect(!first->onlyReadsMemory() && !first->doesNotThrow() &&
+  expect(!first->onlyReadsMemory() &&
              !first->hasRetAttr(llvm::Attribute::NonNull),
          "freshness does not erase allocation effects or nullable failure");
+  expect(first->doesNotThrow() ==
+             (input->program().mir().target().os == "windows"),
+         "only direct result-only allocation carries the removable contract");
   for (unsigned index = 0; index < first->arg_size(); ++index)
     if (first->getArgOperand(index)->getType()->isPointerTy())
       expect(first->doesNotCapture(index),
@@ -155,12 +160,15 @@ void providerContracts() {
                !ordinaryAllocation->onlyReadsMemory(),
            "fitting target witness selects nullable fresh ordinary allocation");
     expect(tinyAligned->getCalledFunction()->getName() ==
-               "gti_rt_posix_memalign_v1",
-           "tiny aligned storage retains the explicit aligned provider");
+                   "gti_rt_posix_memalign_v1" &&
+               !tinyAligned->hasFnAttr(llvm::Attribute::AllocKind),
+           "status-writing allocation retains its complete output contract");
     auto *unclassified = ir.CreateCall(ordinaryAllocation->getCalledFunction(),
                                        {ir.getInt64(64)});
     expect(
         !unclassified->hasRetAttr(llvm::Attribute::NoAlias) &&
+            !unclassified->hasFnAttr(llvm::Attribute::AllocKind) &&
+            !unclassified->hasFnAttr(llvm::Attribute::AllocSize) &&
             !ordinaryAllocation->getCalledFunction()->hasRetAttribute(
                 llvm::Attribute::NoAlias),
         "ordinary malloc-spelled foreign calls inherit no freshness promise");
@@ -212,6 +220,59 @@ void providerContracts() {
   expect(aliases.alias(location(first), location(derived)) ==
              llvm::AliasResult::MustAlias,
          "freshness does not make later copies of one pointer disjoint");
+
+  // Prove actual optimizer use, including an unknown foreign declaration with
+  // the same symbol and an escaped allocation. Metadata shape alone is not
+  // sufficient evidence that only the permitted allocation pair disappears.
+  std::array<llvm::Function *, 3> probes{};
+  auto *observe = llvm::Function::Create(
+      llvm::FunctionType::get(ir.getVoidTy(), {session.layouts().pointer()},
+                              false),
+      llvm::GlobalValue::ExternalLinkage, "application_observe",
+      session.module());
+  for (unsigned variant = 0; variant < probes.size(); ++variant) {
+    auto *probe = llvm::Function::Create(
+        llvm::FunctionType::get(ir.getInt32Ty(), {}, false),
+        llvm::GlobalValue::ExternalLinkage,
+        "allocation_probe_" + std::to_string(variant), session.module());
+    probes[variant] = probe;
+    llvm::IRBuilder<> body(
+        llvm::BasicBlock::Create(session.context(), "entry", probe));
+    Memory allocation(session, body, {}, {}, {});
+    auto *acquire =
+        llvm::cast<llvm::CallInst>(allocation.allocateStorage(32, 1));
+    allocation.releaseBytes(acquire);
+    auto *release = llvm::cast<llvm::CallInst>(&body.GetInsertBlock()->back());
+    if (variant == 1) {
+      acquire->setAttributes(llvm::AttributeList{});
+      release->setAttributes(llvm::AttributeList{});
+    } else if (variant == 2) {
+      llvm::IRBuilder<> escape(release);
+      escape.CreateCall(observe, {acquire});
+    }
+    llvm::TargetLibraryInfoImpl libraryImpl(session.module().getTargetTriple());
+    llvm::TargetLibraryInfo library(libraryImpl);
+    expect(llvm::isRemovableAlloc(acquire, &library) == (variant != 1),
+           "allocation removability comes from the sealed call edge");
+    expect((llvm::getFreedOperand(release, &library) == acquire) ==
+               (variant != 1),
+           "only sealed release edges identify their freed operand");
+    body.CreateRet(body.getInt32(42));
+  }
+  auto pipeline =
+      builder.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O3);
+  pipeline.run(session.module(), modules);
+  for (unsigned variant = 0; variant < probes.size(); ++variant) {
+    unsigned calls = 0;
+    for (const auto &block : *probes[variant])
+      for (const auto &operation : block)
+        calls += llvm::isa<llvm::CallBase>(operation);
+    expect(calls == (variant == 0   ? 0U
+                     : variant == 1 ? 2U
+                                    : 3U),
+           "only the unused sealed allocation/release pair is removed");
+  }
+  session.verify();
 }
 
 void sourceProviderContracts(const std::filesystem::path &root) {
