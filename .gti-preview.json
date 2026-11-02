@@ -110,10 +110,24 @@
         "11e454436b282ddb902d69885a937e76d3dd1402"
       ],
       "merge": "11e454436b282ddb902d69885a937e76d3dd1402"
+    },
+    {
+      "task": "auto-queue-handoff",
+      "pr": 116,
+      "head": "8076f3e7fab50a3aca3638fdbbcd5e07ad7f65ea",
+      "tests": [
+        "agent_workflow",
+        "rollup",
+        "preview_workflow"
+      ],
+      "contributions": [
+        "0e315446b30d8dd35da6c639221067ce25727a8e"
+      ],
+      "merge": "0e315446b30d8dd35da6c639221067ce25727a8e"
     }
   ],
   "removed": [],
   "main": "9a74ff17f7c6ab11b31d0e87cec4b6583ffb8c4b",
-  "previous": "d52a2953de43ce39f4d13881d6919fa1edcf6a5d",
-  "candidate": "c690865825aa41c5abc8174e366b5567"
+  "previous": "ba3b9af9ab8c567b8a02f411252720c7f504fe63",
+  "candidate": "e72243ebe4e1409d9d3160c091ff9cc3"
 }
