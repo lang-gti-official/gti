@@ -3,9 +3,9 @@ name: Compiler cache
 # GitHub shares an Actions cache across branches only when the default branch
 # saved it. CI runs on pull requests and merge-queue refs, never on main, so
 # without this workflow every PR and every queue entry compiled the whole tree
-# cold. After each merge to main, this builds each CI compile configuration
-# (no tests) and saves its ccache under main, where every later pull request
-# and merge-group run restores it. The configure lines must match ci.yml
+# cold. After each merge to main, this warms compiler/LSP objects with each
+# CI compile configuration (no test executables), saving ccache under main.
+# Every later pull request and merge-group run restores it. The configure lines must match ci.yml
 # exactly (tests/repository_hosting_test.py checks), or the objects miss.
 on:
   push:
@@ -79,8 +79,30 @@ jobs:
           -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
           -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g"
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
-      - name: Build
-        run: cmake --build "${{ matrix.build }}" --parallel "${GTI_JOBS}" -- -k 0
+      - name: Trim restored cache before building
+        run: ccache --cleanup
+      - name: Build compiler cache inputs
+        shell: bash
+        run: |
+          # Linking every instrumented test binary exhausted the runner disk.
+          # CI owns test targets; warm only the compiler's shared dependencies.
+          targets=(gti)
+          if [[ "${{ matrix.profile }}" == native ]]; then
+            targets+=(gti_lsp)
+          fi
+          df -h .
+          cmake --build "${{ matrix.build }}" --parallel "${GTI_JOBS}" --target "${targets[@]}"
+      - name: Release warmup scratch space before cache upload
+        if: always()
+        shell: bash
+        run: |
+          # These fixed matrix paths are disposable scratch, never cache input.
+          du -sh "${{ matrix.build }}" "${CCACHE_DIR:-${RUNNER_TEMP}/gti-ccache/${{ matrix.profile }}}" 2>/dev/null || true
+          rm -rf -- "${{ matrix.build }}"
+          if command -v ccache >/dev/null 2>&1; then
+            ccache --cleanup
+          fi
+          df -h .
       - name: Report compiler cache statistics
         if: always()
         run: ccache --show-stats || true

@@ -734,6 +734,17 @@ In full integration, production packaging builds the pinned bundled LLVM/Clang
 release configuration on both platforms and validates the staged toolchain
 before archiving it. The integration shards reuse its object cache, with the
 same bundled release configuration; the cache never substitutes for validation.
+Compiler object caches use a 2 GB local ccache limit per job, separate from
+GitHub's repository-wide cache quota and the runner's filesystem capacity.
+The main-branch warmup builds only `gti` (plus `gti_lsp` for native profiles),
+using CI's identical compile configuration; it does not link every sanitizer
+test executable. It trims restored caches before compiling and removes its
+scratch build tree before cache archival, leaving room for the upload archive.
+Native and sanitizer CI jobs restore shared main caches and save only when
+running on main, avoiding duplicate PR/merge-queue stores. Release packaging
+still saves its run-specific cache for integration shards. Cache misses merely
+recompile objects: they never relax validation or artifact admission.
+
 `validation_checks.py shard` builds the optimized tree, takes the
 complete CTest inventory, and runs its share of a deterministic partition:
 longest first onto the lightest shard, weighted by `tests/ci_test_durations.json`
