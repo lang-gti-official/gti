@@ -121,7 +121,11 @@ def run_tests(doc, build, stage, jobs, test_jobs):
                     if any(lsp in arg for arg in row.get("command", [])))
     # Changed harnesses are mandatory even if their name lacks the LSP suffix.
     changed = {str(ROOT / p) for p in source.changed(doc["base"]) if p.startswith("tests/")}
+    registered = {arg for row in inventory["tests"] for arg in row.get("command", [])}
+    if changed - registered:
+        raise ValueError("changed LSP harness is not registered: " + ", ".join(sorted(changed - registered)))
     required.update(row["name"] for row in inventory["tests"] if changed.intersection(row.get("command", [])))
+    preview_examples.validate_inventory(inventory, required)
     pattern = "^(" + "|".join(re.escape(n) for n in sorted(required)) + ")$"
     targets = source.consumer_targets(build, pattern, native_roots=(ROOT / "src/lsp",))
     subprocess.run(["cmake", "--build", str(build), "--parallel", str(jobs), "--target", "gti_lsp", *targets], check=True)

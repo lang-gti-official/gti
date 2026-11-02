@@ -379,7 +379,9 @@ packages whose source reached main. It verifies both platform archives and their
 exact source/run/attempt, extracts the already-tested LSP, embeds component
 identity, checksums and attests the archives. No rebuild occurs in publication.
 Tags are `lsp-<compatibility>-<run-id>`; serialized publication rejects divergent
-or older compatible sources. Compiler channel tags remain independent.
+or older compatible sources. Uploads remain hidden in a draft until every
+asset is present with the expected digest; retries resume matching assets
+without overwriting them. Compiler channel tags remain independent.
 
 With a compatible version of gtiup, `gtiup update lsp [channel]` explicitly
 updates only the selected toolchain's LSP. Omitted channel uses the same project,

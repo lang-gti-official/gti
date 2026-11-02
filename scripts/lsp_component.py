@@ -2,6 +2,7 @@
 """Publish compatible LSP components from admitted CI packages, without rebuilding."""
 import argparse
 import io
+import gzip
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -74,7 +75,7 @@ def pack(directory, output, plan):
             metadata = {k: manifest[k] for k in ("schema", "kind", "compatibility", "source", "run_id", "attempt")}
             metadata["platform"] = platform
             asset = f"gti-lsp-{platform}.tar.gz"
-            with tarfile.open(output / asset, "w:gz") as packaged:
+            with (output / asset).open("wb") as raw, gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as zipped, tarfile.open(fileobj=zipped, mode="w") as packaged:
                 entries = {"bin/gti_lsp": binary,
                            "share/gti/LSP_COMPONENT.json": (json.dumps(metadata, sort_keys=True) + "\n").encode()}
                 for member in original.getmembers():
@@ -83,7 +84,7 @@ def pack(directory, output, plan):
                         if ".." in PurePosixPath(name).parts:
                             raise ValueError("unsafe license path")
                         entries[name] = read_member(original, name, 8 * 1024 * 1024)
-                for name, data in entries.items():
+                for name, data in sorted(entries.items()):
                     item = tarfile.TarInfo(name)
                     item.size = len(data)
                     item.mode = 0o755 if name == "bin/gti_lsp" else 0o644
@@ -149,13 +150,36 @@ def publish(directory, plan, api=source.request):
     if {p.name for p in directory.iterdir()} != expected or any(p.is_symlink() for p in directory.iterdir()):
         raise ValueError("unexpected LSP publication files")
     tag = f"lsp-{manifest['compatibility']}-{manifest['run_id']}"
-    # The workflow serializes all component publishers. Releases are immutable
-    # and never alter compiler-channel tags or assets.
-    subprocess.run(["gh", "release", "create", tag, "--repo", REPOSITORY,
-                    "--target", manifest["source"], "--prerelease", "--latest=false",
-                    "--title", "GTI LSP " + manifest["source"][:12], "--notes",
-                    "Compatible LSP update. Install through gtiup; lsp.json records exact shared-input and CI identity.",
-                    *map(str, sorted(directory.iterdir()))], check=True)
+    # Publish only after every immutable asset is present. An interrupted
+    # upload leaves a hidden draft which can resume without clobbering bytes.
+    drafts = [r for r in releases if r["tag_name"] == tag]
+    if len(drafts) > 1 or (drafts and (not drafts[0].get("draft") or
+                                     drafts[0]["target_commitish"] != manifest["source"])):
+        raise ValueError("existing component tag has another publication identity")
+    if not drafts:
+        subprocess.run(["gh", "release", "create", tag, "--repo", REPOSITORY,
+                        "--target", manifest["source"], "--draft", "--prerelease", "--latest=false",
+                        "--title", "GTI LSP " + manifest["source"][:12], "--notes",
+                        "Compatible LSP update. Install through gtiup; lsp.json records exact shared-input and CI identity."], check=True)
+    def inventory():
+        release = api(f"{BASE}/releases/tags/{tag}")
+        if not release.get("draft") or release.get("target_commitish") != manifest["source"]:
+            raise ValueError("component draft changed during publication")
+        rows = release.get("assets", [])
+        assets = {a["name"]: a for a in rows}
+        if len(rows) != len(assets) or set(assets) - expected:
+            raise ValueError("unexpected draft asset inventory")
+        for name, asset in assets.items():
+            if asset.get("digest") != "sha256:" + release_artifacts.digest(directory / name):
+                raise ValueError("draft asset differs from the validated component")
+        return assets
+    assets = inventory()
+    for name in sorted(expected - set(assets)):
+        subprocess.run(["gh", "release", "upload", tag, str(directory / name), "--repo", REPOSITORY], check=True)
+    if set(inventory()) != expected:
+        raise ValueError("incomplete component publication")
+    subprocess.run(["gh", "release", "edit", tag, "--repo", REPOSITORY,
+                    "--draft=false", "--prerelease", "--latest=false"], check=True)
     return True
 
 

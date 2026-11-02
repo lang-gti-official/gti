@@ -86,6 +86,14 @@ class IndependentLSP(unittest.TestCase):
             with self.assertRaises(ValueError):
                 lsp_ci.baseline(REPO, subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD'], text=True).strip(), api_fixture(base), root)
 
+    def test_lsp_gate_requires_the_adapter_job_and_all_lint(self):
+        results = {name:{'result':'success'} for name in validation.LINT_JOBS | {'lsp'}}
+        validation.admission('lsp', results, 'merge_group')
+        for name in results:
+            broken = copy.deepcopy(results); broken[name]['result'] = 'skipped'
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                validation.admission('lsp', broken, 'merge_group')
+
     def test_lsp_evidence_cannot_seed_compiler_sdk(self):
         jobs = [dict(name=n, head_sha=SHA, status='completed', conclusion='success')
                 for n in ['CI gate', 'LSP (linux-x64)', 'LSP (darwin-arm64)']]
@@ -119,6 +127,42 @@ class IndependentLSP(unittest.TestCase):
             archive.write_bytes(archive.read_bytes() + b'altered')
             with self.assertRaisesRegex(ValueError, 'checksum'):
                 component.pack(root / 'input', root / 'corrupt', PLAN)
+
+    def test_draft_publication_resumes_without_overwriting_assets(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); packages(root / 'input')
+            component.pack(root / 'input', root / 'out', PLAN)
+            component.pack(root / 'input', root / 'repeat', PLAN)
+            for file in (root / 'out').iterdir():
+                self.assertEqual(file.read_bytes(), (root / 'repeat' / file.name).read_bytes())
+            releases = []; commands = []; fail = [True]
+            def api(path):
+                if '/releases?' in path: return releases
+                if '/git/ref/' in path: return {'object':{'sha':SHA}}
+                if '/releases/tags/' in path: return releases[0]
+                raise AssertionError(path)
+            def command(args, check):
+                commands.append(args)
+                if args[2] == 'create':
+                    releases.append(dict(tag_name=args[3], target_commitish=SHA, draft=True, assets=[]))
+                elif args[2] == 'upload':
+                    if fail[0] and releases[0]['assets']:
+                        fail[0] = False
+                        raise subprocess.CalledProcessError(1, args)
+                    file = Path(args[4])
+                    releases[0]['assets'].append(dict(name=file.name, digest='sha256:'+artifacts.digest(file)))
+                elif args[2] == 'edit': releases[0]['draft'] = False
+                else: raise AssertionError(args)
+            with patch.object(component.subprocess, 'run', command), patch.object(artifacts, 'release_evidence',
+                    return_value={'run_id':'7','run_attempt':'2'}):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    component.publish(root / 'out', PLAN, api)
+                self.assertTrue(releases[0]['draft'])
+                self.assertTrue(component.publish(root / 'out', PLAN, api))
+                self.assertFalse(releases[0]['draft'])
+                self.assertEqual(sum(c[2] == 'create' for c in commands), 1)
+                self.assertEqual(len(releases[0]['assets']), 5)
+                self.assertFalse(component.publish(root / 'out', PLAN, api))
 
     def test_embedded_source_and_resources_must_match(self):
         for key in ['sha', 'compat']:
