@@ -59,16 +59,6 @@
    "issue": "https://github.com/lang-gti-official/gti/issues/14",
    "reason": "Linux builds produce one fewer MIR body in four examples",
    "since": "2026-10-30"
-  },
-  {
-   "name": "package_registry_cli",
-   "platforms": [
-    "darwin",
-    "linux"
-   ],
-   "issue": "https://github.com/lang-gti-official/gti/issues/12",
-   "reason": "LSP publishes no GTI-I0013 legacy-include advisory for a cached package graph",
-   "since": "2026-10-30"
   }
  ]
 }
