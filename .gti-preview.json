@@ -131,10 +131,23 @@
       ],
       "accepted_in_main": "6be28dbe6ef4f5ad050dbdb5ad1d1935e00e6a63",
       "refresh_reason": "PR115 moved the Python manager into the independently tested and released standalone C++ gtiup repository. Refresh to its merged focused-verified head and require the validated preview publisher, editor integration, hosting, CI and compiler pipeline checks."
+    },
+    {
+      "task": "dynamic-json",
+      "pr": 122,
+      "head": "477028c1f479e25ff7a7196c43acc7a8700ea1d3",
+      "tests": [
+        "json_dynamic_runtime",
+        "json_runtime"
+      ],
+      "contributions": [
+        "403514abbbe151f62d3f0dbf932de91bfba7985a"
+      ],
+      "merge": "403514abbbe151f62d3f0dbf932de91bfba7985a"
     }
   ],
   "removed": [],
   "main": "6be28dbe6ef4f5ad050dbdb5ad1d1935e00e6a63",
-  "previous": "ba3b9af9ab8c567b8a02f411252720c7f504fe63",
-  "candidate": "1672520b7bc94596aa0462dc35a65bb5"
+  "previous": "fb22c3e1ec6c3fe4c4caf2867700525da50aae70",
+  "candidate": "528007d2eeb046628189f9174c1bf179"
 }
