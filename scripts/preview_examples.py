@@ -16,13 +16,13 @@ TESTS = {"owner_chain_runtime", "compiled_type_forwarding", "compiled_namespaces
          "project_cli_workflow", "scoped_configuration_defines", "native_enum_bindgen",
          "native_typedef_bindgen", "native_union_bindgen", "native_variable_bindgen",
          "process_resource_policy", "llvm_embedding_project",
-         "annotated_test_suites", "out_of_class_runtime", "module_system_runtime", "typed_differential_smoke",
+         "annotated_test_suites", "out_of_class_runtime", "module_system_runtime", "module_discovery_runtime", "typed_differential_smoke",
          "llvm_scalar_execution", "llvm_place_execution", "llvm_class_execution",
          "llvm_payload_execution", "llvm_placement_execution", "llvm_dispatch_execution",
          "llvm_native_c_indirect_execution", "llvm_native_c_aggregate_execution",
          "llvm_native_c_storage_execution"}
 NESTED = {"ownership", "compiled-type-forwarding", "compiled-namespaces", "compiled-dependencies", "compiled-value-types", "compiled-borrowing", "compiled-primitive-library", "compiled-libraries", "compiled-scalar-library", "allocator-support", "annotated-tests", "infallible-embedding",
-          "libc-region-provider", "llvm", "module-only", "module-system", "native-callback-slots",
+          "libc-region-provider", "llvm", "module-only", "module-system", "module-discovery", "native-callback-slots",
           "native-enum-bindings", "native-union-bindings", "native-variable-bindings",
           "objective-cpp-bridge", "scoped-configuration",
           "toy-3d-engine", "transit-planner", "window-factory"}

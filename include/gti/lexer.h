@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <iosfwd>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -25,6 +26,12 @@ public:
 
   std::vector<Token> consume(const std::filesystem::path &path);
   std::vector<Token> scan(std::string sourceText, std::string sourceName = {});
+  // Project discovery reads only a leading module declaration, not its body.
+  std::vector<Token> scanModuleHeader(std::string sourceText,
+                                      std::string sourceName = {});
+  // Read a bounded lookahead beyond the header, without loading unused bodies.
+  std::vector<Token> scanModuleHeader(std::istream &input,
+                                      std::string sourceName = {});
   std::vector<Token> scanForCompletion(std::string sourceText,
                                        std::size_t byteOffset,
                                        std::string sourceName = {});

@@ -1,0 +1,6 @@
+export module demo.counter;
+
+namespace demo {
+  export int answer();
+  int adjustment();
+}
