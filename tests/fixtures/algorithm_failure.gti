@@ -27,5 +27,6 @@ int main(int argc, std::vector<std::string> argv) {
     auto absent = std::min_element(empty.begin(), empty.end());
     std::println(*absent);
   }
+  if (argc == 5) { std::copy(input.begin(), input.end(), output.begin_mut()); }
   return 1;
 }

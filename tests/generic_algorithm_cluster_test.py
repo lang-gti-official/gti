@@ -433,6 +433,25 @@ def main() -> int:
                 "for_each blocker probe", "unblocked MIR is not marked valid"
             )
 
+        # The destination carrier crosses the algorithm's module boundary and
+        # a generic move relay. Its input owner can die independently, while
+        # its exclusive destination dependency survives until the result ends.
+        copy_return = fixtures / "generic_algorithm_copy_return.gti"
+        for backend, standard, level in (
+            ("llvm", "c++23", "O0"), ("llvm", "c++23", "O1"),
+            ("llvm", "c++23", "O2"), ("llvm", "c++23", "O3"),
+            ("cpp", "c++20", "O3"), ("cpp", "c++23", "O3"),
+        ):
+            binary = root / f"copy-return-{backend}-{standard}-{level}"
+            built = run([str(compiler), str(copy_return), "--backend", backend,
+                         *(["--std", standard] if backend == "cpp" else []),
+                         f"-{level}", "-o", str(binary)], environment)
+            if built.returncode:
+                return fail("returned copy cursor build", built)
+            executed = run([str(binary)], environment)
+            if executed.returncode or executed.stdout or executed.stderr:
+                return fail("returned copy cursor execution", executed)
+
     return 0
 
 

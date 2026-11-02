@@ -733,6 +733,15 @@ field names must not be projected onto the external owner's storage.
 Whole noncopyable field-mapped call transfers retire the consumed caller loan
 on success, while the returned carrier retains its independently verified
 dependencies. Failure cleanup retains its existing explicit MIR edges.
+When a forwarding call's result is discarded, its temporary loan ends at the
+full-expression boundary. The consumed input's semantic endpoint continues to
+acknowledge the input loan; it must not be redirected onto that temporary and
+attempt to retire it a second time. Retained results continue to transport
+their checked identities and dependencies normally.
+An intermediate moved local can retain a carrier without a distinct semantic
+loan annotation. Lowering records that retention separately from absence of a
+binding, so the input identity continues through such locals while discarded
+temporaries retain their own full-expression endpoints.
 An immediate temporary carrier receiver retains the same complete dependency
 set. Its materialized shell has a distinct call-only loan, while every stored
 dependency survives through full-expression destruction of owned fields.

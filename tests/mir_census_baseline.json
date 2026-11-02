@@ -86,7 +86,7 @@
     "087-associative-containers.gti": 452,
     "088-consuming-builders.gti": 180,
     "089-library-workflow.gti": 918,
-    "090-generic-algorithms.gti": 435,
+    "090-generic-algorithms.gti": 438,
     "091-json-documents.gti": 647,
     "092-json-codecs.gti": 618,
     "093-http-json-client.gti": 716,
@@ -185,7 +185,7 @@
     "185-reflected-method-dispatch.gti": 47,
     "182-bounded-array-borrows.gti": 156
   },
-  "total": 28246,
+  "total": 28249,
   "target": "arm64-apple-macos",
   "variants": {
     "x86_64-unknown-linux": {
@@ -193,7 +193,7 @@
         "087-associative-containers.gti": 451,
         "089-library-workflow.gti": 917
       },
-      "total": 28244
+      "total": 28247
     }
   }
 }

@@ -18,6 +18,7 @@ import std.deque;
 import std.array;
 import std.set;
 import std.string;
+import std.utility;
 """
     negatives = {
         "overlapping-transform": 'int main() { mut std::vector<int> x = {1}; std::transform(x, x, [](int& n) -> int { return n + 1; }); return 0; }',
@@ -31,6 +32,33 @@ import std.string;
         "immutable-keys": 'int main() { mut std::set<int> x = {1}; int old = 1; int replacement = 2; std::replace(x, old, replacement); return 0; }',
         "bad-comparison": 'struct Item { int x = 0;  public: Item() = default; }; int main() { std::vector<Item> x = {Item()}; return std::equal(x.begin(), x.end(), x.begin(), x.end()) ? 1 : 0; }',
     }
+    # A returned output cursor preserves the destination's exclusive loan,
+    # including an empty copy, and movement cannot duplicate its permission.
+    copy_setup = ('std::vector<int> source = {1}; '
+                  'mut std::vector<int> destination = {0, 0}; '
+                  'mut auto next = std::copy(source.begin(), source.end(), destination.begin_mut()); ')
+    for name, operation in {
+        "clear": "destination.clear(); *next = 2;",
+        "read": "int value = destination[std::size_t(0)]; *next = value;",
+        "second-cursor": "mut auto other = destination.begin_mut(); *other = 3; *next = 2;",
+        "move-owner": "auto moved = std::move(destination); *next = 2;",
+        "live-child": ('mut int& element = *next; '
+                       'auto moved = std::copy(source.begin(), source.end(), std::move(next)); element = 2;'),
+    }.items():
+        negatives[f"copy-return-{name}"] = 'int main() { ' + copy_setup + operation + ' return 0; }'
+    negatives["copy-return-empty-clear"] = negatives["copy-return-clear"].replace(
+        'source = {1}', 'source = {}')
+    negatives["copy-return-moved-cursor"] = '''int main() {
+      std::vector<int> source = {1}; mut std::vector<int> destination = {0, 0};
+      mut auto original = destination.begin_mut();
+      mut auto next = std::copy(source.begin(), source.end(), std::move(original));
+      *original = 2; *next = 3; return 0;
+    }'''
+    negatives["copy-return-local-cursor-escape"] = '''std::vector<int>::iterator dangling() {
+      std::vector<int> source = {1}; mut std::vector<int> destination = {0, 0};
+      return std::copy(source.begin(), source.end(), destination.begin_mut());
+    }
+    int main() { return 0; }'''
     for container in ("list", "deque", "array"):
         init = f'mut std::{container}<int> x = {{1, 2}};' if container != "array" else 'mut std::array<int, 2> x{};'
         mutation = 'x.clear();' if container != "array" else 'x.fill(3);'
@@ -48,22 +76,28 @@ import std.string;
                                      env=environment, capture_output=True, text=True, timeout=60)
             assert checked.returncode == 65 and "error[GTI-S" in checked.stderr, (name, checked)
             assert "GTI-B0001" not in checked.stderr, (name, checked.stderr)
+            if name.startswith("copy-return-"):
+                expected = ("GTI-S2045" if name.endswith("-cursor-escape") else
+                            "GTI-S2018" if name.endswith("-moved-cursor") else "GTI-S2017")
+                assert f"error[{expected}]" in checked.stderr, (name, checked.stderr)
             if name.endswith("-cursor-escape"):
                 assert "error[GTI-S2045]" in checked.stderr and "borrowed return" in checked.stderr, checked.stderr
                 assert "GTI-S2024" not in checked.stderr, checked.stderr
             if name == "copy-owner":
                 assert "error[GTI-S2003]" in checked.stderr and "Cannot copy assign" in checked.stderr, checked.stderr
-        for level in ("O0", "O3"):
-            binary = root / level
+        for backend, level in (("cpp", "O0"), ("cpp", "O3"),
+                               ("llvm", "O0"), ("llvm", "O3")):
+            binary = root / f"{backend}-{level}"
             build = subprocess.run([str(compiler), str(repository / "tests/fixtures/algorithm_failure.gti"),
-                                    f"-{level}", "-o", str(binary)], env=environment, capture_output=True, text=True, timeout=120)
+                                    "--backend", backend, f"-{level}", "-o", str(binary)],
+                                   env=environment, capture_output=True, text=True, timeout=120)
             assert build.returncode == 0, build
-            for count in range(4):
+            for count in range(5):
                 result = subprocess.run([str(binary), *(["fail"] * count)], env=environment,
                                         capture_output=True, text=True, timeout=30)
                 assert result.returncode == 70 and result.stdout == "99\n", (count, result)
                 assert "runtime error[GTI-R" in result.stderr, result
-    print(f"generic algorithms: {len(negatives)} semantic rejections and eight failure cleanups passed")
+    print(f"generic algorithms: {len(negatives)} semantic rejections and 20 failure cleanups passed")
 
 
 if __name__ == "__main__":
