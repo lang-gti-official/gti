@@ -13,6 +13,7 @@ public:
   void send(mut Parcel& target) mut { this.slots.relocate_to(target.slots); }
   uint64_t size() { return this.slots.length(); }
   int32_t read(uint64_t index) { return this.slots.read(index); }
+  int32_t& borrow(uint64_t index) { return this.slots.read(index); }
   void overwrite(int32_t value) mut { this.slots.read_mut(uint64_t(0)) = value; }
 };
 
@@ -26,6 +27,16 @@ int32_t transferred_positive() {
   return destination.read(uint64_t(0)) * int32_t(2);
 }
 
+int32_t transferred_borrow_positive() {
+  Audit audit{};
+  mut Parcel source{uint64_t(4)};
+  mut Parcel destination{uint64_t(8)};
+  source.append(int32_t(9));
+  source.send(destination);
+  if (source.size() != uint64_t(0) || destination.size() != uint64_t(1)) { return -1; }
+  return destination.borrow(uint64_t(0)) * int32_t(2);
+}
+
 int32_t changed_destination() {
   Audit audit{};
   mut Parcel source{uint64_t(4)};
@@ -33,7 +44,7 @@ int32_t changed_destination() {
   source.append(int32_t(9));
   source.send(destination);
   destination.overwrite(int32_t(2147483647));
-  return destination.read(uint64_t(0)) * int32_t(2);
+  return destination.borrow(uint64_t(0)) * int32_t(2);
 }
 
 int32_t retired_source() {
@@ -112,6 +123,10 @@ public:
     this.live = other.live;
     other.live = uint64_t(0);
   }
+  int32_t& borrow() {
+    require_cell(this.live == uint64_t(1));
+    unsafe { return std::assume_ref(this.pointer, this); }
+  }
   int32_t read() {
     require_cell(this.live == uint64_t(1));
     unsafe { return std::assume_ref(this.pointer, this); }
@@ -131,6 +146,19 @@ int32_t view_positive() {
     source.append(int32_t(9));
     source.send(destination);
     return destination.read() * int32_t(2);
+  }
+}
+
+int32_t view_borrow_positive() {
+  Audit audit{};
+  mut std::uninitialized<int32_t> first{};
+  mut std::uninitialized<int32_t> second{};
+  {
+    mut CellView source{first.data()};
+    mut CellView destination{second.data()};
+    source.append(int32_t(9));
+    source.send(destination);
+    return destination.borrow() * int32_t(2);
   }
 }
 
@@ -159,7 +187,7 @@ int32_t replaced_base() {
     replacement.append(int32_t(2147483647));
     source.send(destination);
     destination.replace_from(replacement);
-    return destination.read() * int32_t(2);
+    return destination.borrow() * int32_t(2);
   }
 }
 
@@ -171,10 +199,12 @@ int32_t partial_transfer() {
   mut CellView destination{second.data()};
   source.append(int32_t(9));
   source.send_zero(destination);
-  return destination.read() * int32_t(2);
+  return destination.borrow() * int32_t(2);
 }
 
 int main(int argc, std::vector<std::string> argv) {
+  if (argc == 10) { return transferred_borrow_positive() == int32_t(18) ? 0 : 1; }
+  if (argc == 11) { return view_borrow_positive() == int32_t(18) ? 0 : 1; }
   if (argc == 9) { return partial_transfer(); }
   if (argc == 6) { return view_positive() == int32_t(18) ? 0 : 1; }
   if (argc == 7) { return alias_guard_failure(); }

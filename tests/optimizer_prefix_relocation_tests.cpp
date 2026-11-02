@@ -48,25 +48,36 @@ int main() { return 0; }
           {.kind = lang::MirBodyKind::Function, .owner = function.id});
       if (!body)
         continue;
-      for (const auto &proof : body->safety.proofs)
-        if (proof.discharge.family ==
+      const auto *mir = frontend.mir.findFunctionInstance(function.id);
+      if (!mir)
+        continue;
+      for (const auto &proof : body->safety.proofs) {
+        if (proof.discharge.family !=
             lang::MirSafetyCheckFamily::ArithmeticOverflow)
-          ++found;
+          continue;
+        for (const auto &block : mir->body.blocks)
+          for (const auto &instruction : block.instructions)
+            if (instruction.id == proof.instruction &&
+                instruction.operation == lang::MirOperation::Multiply)
+              ++found;
+      }
     }
     return found;
   };
-  const auto positive = discharges("transferred_positive");
-  const auto view = discharges("view_positive");
+  const auto positive = discharges("transferred_borrow_positive");
+  const auto view = discharges("view_borrow_positive");
   const auto replaced = discharges("replaced_base");
+  const auto scalar =
+      discharges("transferred_positive") + discharges("view_positive");
   const auto changed = discharges("changed_destination");
   const auto partial = discharges("partial_transfer");
   const auto failed = discharges("failing_transfer");
   if (positive != 1 || view != 1 || changed != 0 || failed != 0 ||
-      replaced != 0 || partial != 0) {
+      replaced != 0 || partial != 0 || scalar != 0) {
     std::cerr << "prefix relocation proof mismatch: successful=" << positive
               << " raw-view=" << view << " replaced=" << replaced
-              << " overwritten=" << changed << " partial=" << partial
-              << " failed=" << failed << '\n';
+              << " overwritten=" << changed << " scalar-getters=" << scalar
+              << " partial=" << partial << " failed=" << failed << '\n';
     return 1;
   }
   return 0;

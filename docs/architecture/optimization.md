@@ -1276,7 +1276,11 @@ endpoint are republished. Capacity is never initialization evidence.
 The focused `optimizer_prefix_relocation` and
 `optimizer_prefix_relocation_runtime` controls use an application-owned
 carrier, overwritten values, retired sources, vacant capacity and failed
-transfers. Custom move bodies retain their existing source rejection;
+transfers. Owning assertions select the exact downstream multiplication in
+reference-return getter cases; unrelated arithmetic is not evidence. Scalar
+getter controls retain the current precision limit: their shared return
+summary joins different calling contexts, unlike an exact returned reference
+whose load can use the caller's current prefix. Custom move bodies retain their existing source rejection;
 aggregate default movement remains outside this integer-only summary.
 General ownership-shell move/replacement continues to retire prefix snapshots;
 this summary alone does not establish vector-growth optimization or a runtime
