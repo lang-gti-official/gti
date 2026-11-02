@@ -192,10 +192,24 @@
         "947a2207b62a1032bddcf83fb66a18663509ddc7"
       ],
       "merge": "947a2207b62a1032bddcf83fb66a18663509ddc7"
+    },
+    {
+      "task": "constexpr-text-runtime",
+      "pr": 139,
+      "head": "2f892b753e1d2b6c02fa642442fb3c9af2d39b03",
+      "tests": [
+        "mir_program_initialization",
+        "constexpr_text_runtime",
+        "llvm_class_execution"
+      ],
+      "contributions": [
+        "6e780d06122f96ef06d96fe761d056238f2d1f50"
+      ],
+      "merge": "6e780d06122f96ef06d96fe761d056238f2d1f50"
     }
   ],
   "removed": [],
   "main": "e4f231574320d2182654b35de956ae52bb333d63",
-  "previous": "25cbfe66781b2f51e2f2e3d637d4c1522f303d06",
-  "candidate": "e573de57354c477787d812a7549f223e"
+  "previous": "728322d16e9b4768a3c1b5059ba85f817b7469c7",
+  "candidate": "92e7b12c621b44e3baff697875ff0d14"
 }
