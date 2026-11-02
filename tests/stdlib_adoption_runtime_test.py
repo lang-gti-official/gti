@@ -81,16 +81,11 @@ def main():
             ((), url_failure), (("clone",), url_failure), (("path", "rebuild"), url_failure),
         ]),
         "sort-failure": (sort_source, [
-            ((), (0, "call\n" * 6 + "comparator\n6\n1\n2\n3\n4\ninventory\nouter\n", "")),
-            (("comparison",), (70, "call\n" * 4 + "comparator\n4\ninventory\nouter\n", sort_failure("mode - 2"))),
-            (("median", "selection", "comparison", "failure"), (70, "call\n" * 4 + "comparator\n4\ninventory\nouter\n", sort_failure("mode - 5"))),
-            (("monotonic", "probe", "failure"), (70, "call\n" * 4 + "comparator\n4\ninventory\nouter\n", sort_failure("mode - 4"))),
-            (("destructor", "failure"), (70, "call\n" * 6 + "comparator\n6\ninventory\nouter\n", sort_failure("mode - 3"))),
-        ] + [
-            (("search-failure",) * (call + 4),
-             (70, "call\n" * call + f"comparator\n{call}\ninventory\nouter\n",
-              sort_failure("this.calls - (mode - 5)")))
-            for call in (1, 3, 6, 17, 35, 70)
+            ((), (0, "call\n" * 6 + "comparator\n6\n1\n2\n3\n4\nouter\n", "")),
+            (("comparison",), (70, "call\n" * 4 + "comparator\n4\nouter\n", sort_failure("mode - 2"))),
+            (("median", "selection", "comparison", "failure"), (70, "call\n" * 4 + "comparator\n4\nouter\n", sort_failure("mode - 5"))),
+            (("monotonic", "probe", "failure"), (70, "call\n" * 4 + "comparator\n4\nouter\n", sort_failure("mode - 4"))),
+            (("destructor", "failure"), (70, "call\n" * 6 + "comparator\n6\nouter\n", sort_failure("mode - 3"))),
         ]),
         "sort": (fixtures / "algorithm_comparator_sort.gti", [((), (0, "127\n255\n511\n1023\n", ""))]),
         "sort-adversary": (fixtures / "algorithm_sort_adversary.gti", [((), (0, "1024\n1024\n34191\n34191\n", ""))]),

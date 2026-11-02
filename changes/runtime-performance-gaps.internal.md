@@ -1,3 +1,3 @@
-Extend bounded reduction proofs to dynamic nonnegative increments and constant
-nonzero induction starts while preserving checked fallbacks, failure order,
-and cleanup. Evaluate hybrid insertion search for disordered sorting leaves.
+Extend bounded reduction proofs to dynamic nonnegative increments, invariant
+starting sums, nonzero induction starts, and index-weighted sums. Preserve
+checked fallbacks, failure order, observable effects, and cleanup.

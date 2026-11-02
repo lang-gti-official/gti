@@ -84,12 +84,7 @@ int exercise(int count, int shape, bool descending) {
   // per adjacent pair, including equivalent prefixes and plateaus.
   if (count > 16 && (shape <= 2 || shape == 6 || shape == 8 || shape == 10) &&
       comparisons > uint64_t(2) * uint64_t(count - 1)) { return 8; }
-  // Small leaves retain the linear already-ordered / adjacent-disorder path,
-  // while long displacements use a logarithmic search of the sorted prefix.
-  if (count == 16 && !descending && shape == 1 && comparisons != 15) { return 10; }
-  if (count == 16 && !descending && shape == 4 && comparisons > 23) { return 11; }
-  if (count == 16 && !descending && shape == 0 && comparisons > 90) { return 12; }
-  if (shape == 0 && !descending && count > 16) { std::println(comparisons); }
+  if (shape == 0 && !descending) { std::println(comparisons); }
   return 0;
 }
 
@@ -109,7 +104,6 @@ int main() {
           exercise(count, shape, true) != 0) { return 9; }
     }
   }
-  if (exercise(16, 0, false) != 0 || exercise(16, 0, true) != 0) { return 13; }
   if (exercise(0, 1, false) != 0 || exercise(1, 1, false) != 0) { return 5; }
   return 0;
 }

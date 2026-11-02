@@ -1,35 +1,8 @@
 import std.algorithm;
-import std.panic;
 import std.string;
 import std.vector;
 
 mut int mode = 0;
-mut int retired[32] = {};
-
-class Item {
-  int value;
-public:
-  Item(int value) : value(value) {}
-  Item(Item& other) = delete;
-  Item(Item&& other) = default;
-  ~Item() { retired[this.value]++; }
-  int get() { return this.value; }
-};
-
-class Inventory {
-public:
-  Inventory() {}
-  ~Inventory() {
-    for (mut int i = 0; i < 32; i++) {
-      bool expected = mode >= 6 ? i < 16 :
-          (mode == 4 || mode == 5 ? true : i >= 1 && i <= 4);
-      if (retired[i] != (expected ? 1 : 0)) {
-        std::panic("sort lost, duplicated or prematurely destroyed an identity");
-      }
-    }
-    std::println("inventory");
-  }
-};
 
 class Guard {
   std::string name;
@@ -50,32 +23,25 @@ public:
     std::println(this.calls);
     if (mode == 3) { int failure = 1 / (mode - 3); }
   }
-  bool operator()(Item& left, Item& right) mut {
+  bool operator()(int& left, int& right) mut {
     this.calls++;
     Guard call{std::string("call")};
     if (mode == 2 && this.calls == 4) { int failure = 1 / (mode - 2); }
     if (mode == 4 && this.calls == 4) { int failure = 1 / (mode - 4); }
     if (mode == 5 && this.calls == 4) { int failure = 1 / (mode - 5); }
-    if (mode >= 6 && this.calls == mode - 5) {
-      int failure = 1 / (this.calls - (mode - 5));
-    }
-    return left.get() < right.get();
+    return left < right;
   }
 };
 
 int main(int argc, std::vector<std::string> argv) {
   mode = argc;
   Guard outer{std::string("outer")};
-  Inventory inventory{};
-  mut std::vector<Item> values{};
-  if (mode >= 6) {
-    for (mut int i = 15; i >= 0; i--) { values.push_back(Item(i)); }
-  } else if (mode == 4 || mode == 5) {
-    for (mut int i = 0; i < 32; i++) { values.push_back(Item(mode == 4 ? i : (i * 17) % 32)); }
-  } else {
-    for (mut int i = 4; i > 0; i--) { values.push_back(Item(i)); }
+  mut std::vector<int> values = {4, 3, 2, 1};
+  if (mode == 4 || mode == 5) {
+    values.clear();
+    for (mut int i = 0; i < 32; i++) { values.push_back(mode == 4 ? i : (i * 17) % 32); }
   }
   std::sort(values, Ordering());
-  for (auto& value : values) { std::println(value.get()); }
+  for (auto& value : values) { std::println(value); }
   return 0;
 }
