@@ -1295,6 +1295,14 @@ getter controls retain the current precision limit: their shared return
 summary joins different calling contexts, unlike an exact returned reference
 whose load can use the caller's current prefix. Custom move bodies retain their existing source rejection;
 aggregate default movement remains outside this integer-only summary.
+Endpoint export normalizes the outer checked-reference dereference before
+matching its formal parameter; raw dereferences do not qualify. The supporting
+store profile distinguishes local scalar values (including raw pointer values)
+from writes through those values. Initializing an independent compiler scalar
+or boolean temporary preserves existing prefix facts, so conditional-expression
+staging does not erase them. Neither rule permits a nonlocal pointer write or
+an unknown effect to retain a prefix.
+
 General ownership-shell move/replacement continues to retire prefix snapshots;
 this summary alone does not establish vector-growth optimization or a runtime
 gain.

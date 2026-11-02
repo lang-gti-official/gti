@@ -13,8 +13,6 @@
 
 #include <algorithm>
 #include <compare>
-#include <cstdio>
-#include <cstdlib>
 #include <deque>
 #include <iterator>
 #include <limits>
@@ -26,23 +24,6 @@
 
 namespace lang {
 namespace {
-
-// Temporary bounded diagnostics for the owning relocation proof probe.
-void tracePrefix(MirBodyAddress body, unsigned instruction, const char *stage,
-                 unsigned detail = 0) {
-  if (!std::getenv("GTI_TRACE_PREFIX_RELOCATION"))
-    return;
-  static thread_local std::set<
-      std::tuple<unsigned, unsigned, unsigned, std::string, unsigned>>
-      seen;
-  const auto key = std::tuple{unsigned(body.kind), unsigned(body.owner),
-                              instruction, std::string(stage), detail};
-  if (seen.size() >= 4096 || !seen.insert(key).second)
-    return;
-  std::fprintf(stderr, "PREFIX kind=%u body=%u inst=%u stage=%s detail=%u\n",
-               unsigned(body.kind), unsigned(body.owner), instruction, stage,
-               detail);
-}
 
 struct Evidence {
   std::vector<MirBlockId> blocks;
@@ -4460,13 +4441,9 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
     return true;
   }
   const ClosedCallSummary &summary = found->second;
+
   if (!summary.constructedParameters.empty() || summary.relocatedPrefix ||
       summary.returnedBorrow) {
-    tracePrefix(address, instruction.id, "call-target", target->owner);
-    tracePrefix(address, instruction.id, "call-summary",
-                unsigned(summary.constructedParameters.size()) |
-                    (unsigned(bool(summary.relocatedPrefix)) << 16) |
-                    (unsigned(bool(summary.returnedBorrow)) << 17));
   }
   const MirPlaceId receiverOrigin =
       instruction.receiver
@@ -4529,7 +4506,6 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
   };
   std::optional<RelocatedPublication> relocated;
   if (summary.relocatedPrefix && summary.relocatedPrefix->destinationEnd) {
-    tracePrefix(address, instruction.id, "application-enter");
     const auto &transfer = *summary.relocatedPrefix;
     const auto rootFor = [&](const std::optional<std::size_t> &parameter) {
       return parameter ? (*parameter < argumentOrigins.size()
@@ -4551,11 +4527,6 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
     const auto destinationPointer =
         ownedPointerFieldOrigin(&closedCalls->program, address, body, aliases,
                                 destinationRoot, transfer.destination.field);
-    tracePrefix(address, instruction.id, "application-origins",
-                unsigned(bool(sourceEnd)) |
-                    (unsigned(bool(destinationEnd)) << 1) |
-                    (unsigned(bool(sourcePointer)) << 2) |
-                    (unsigned(bool(destinationPointer)) << 3));
     if (sourceEnd && destinationEnd && sourcePointer && destinationPointer &&
         sourceEnd->root == sourcePointer->root &&
         destinationEnd->root == destinationPointer->root &&
@@ -4569,22 +4540,11 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
       const auto pointer =
           inputAddressForCall(closedCalls->program, address, body, aliases,
                               state, instruction, transfer.destination);
-      tracePrefix(address, instruction.id, "application-state",
-                  unsigned(bool(source)) | (unsigned(bool(destination)) << 1) |
-                      (unsigned(bool(pointer)) << 2));
       if (source && destination && pointer) {
         const auto count = source->integers.find(sourceEnd->path);
         const auto empty = destination->integers.find(destinationEnd->path);
         const auto values = source->prefixes.find(
             PrefixField{sourcePointer->path, sourceEnd->path, {}});
-        tracePrefix(address, instruction.id, "source-prefix-count",
-                    source->prefixes.size());
-        tracePrefix(address, instruction.id, "source-integer-count",
-                    source->integers.size());
-        tracePrefix(address, instruction.id, "application-facts",
-                    unsigned(count != source->integers.end()) |
-                        (unsigned(empty != destination->integers.end()) << 1) |
-                        (unsigned(values != source->prefixes.end()) << 2));
         if (count != source->integers.end() &&
             empty != destination->integers.end() && singleton(empty->second) &&
             !empty->second.lower.negative &&
@@ -5006,14 +4966,12 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
         object != state.objects.end())
       object->second.prefixes = std::move(prefixes);
   for (auto &[root, prefix] : appendedPrefixes) {
-    tracePrefix(address, instruction.id, "append-publish", root);
     auto &object = state.objects[root];
     if (object.prefixes.size() < 64 || object.prefixes.contains(prefix.first))
       object.prefixes.insert_or_assign(std::move(prefix.first),
                                        std::move(prefix.second));
   }
   if (relocated) {
-    tracePrefix(address, instruction.id, "application-publish");
     // Successful typed transfer and independently proved endpoint publication
     // establish this destination only. The call's ordinary barrier already
     // retired source/alias snapshots; do not restore general memory purity.
@@ -6286,9 +6244,12 @@ void applyInstructionCore(
         (instruction.kind == MirInstructionKind::Initialize ||
          instruction.kind == MirInstructionKind::Assign) &&
         physicalDestination &&
-        physicalDestination->root == MirPlaceRootKind::Binding &&
+        (physicalDestination->root == MirPlaceRootKind::Binding ||
+         (instruction.kind == MirInstructionKind::Initialize &&
+          physicalDestination->root == MirPlaceRootKind::Temporary)) &&
         physicalDestination->projections.empty() &&
         (constantIntegerDomain(physicalDestination->type) ||
+         physicalDestination->type == SemanticType::Bool ||
          floatingScalar(physicalDestination->type)) &&
         !physicalDestination->traits.containsBorrowedState &&
         instruction.lifecycle.empty() && !instruction.rawMemoryAccess &&
@@ -8972,17 +8933,27 @@ exportedInputAddress(const MirProgram &program, MirBodyAddress address,
 [[nodiscard]] std::optional<InputField> relocationInputField(
     const MirProgram &program, MirBodyAddress address, const MirBody &body,
     const MirPlaceAliasEscapeAnalysis &aliases, const FieldOrigin &field) {
+  FieldOrigin exported = field;
+  if (field.root) {
+    const auto owner = ownedRootPath(body, aliases, field.root);
+    if (!owner)
+      return std::nullopt;
+    exported.root = owner->root;
+    exported.path = owner->path;
+    exported.path.insert(exported.path.end(), field.path.begin(),
+                         field.path.end());
+  }
   if (implicitReceiverType(&program, address) &&
-      field.root == canonicalPlace(aliases, thisRoot(body)))
-    return InputField{std::nullopt, field.path};
+      exported.root == canonicalPlace(aliases, thisRoot(body)))
+    return InputField{std::nullopt, exported.path};
   const auto bindings = parameterBindings(program, address);
   const auto types = parameterTypes(program, address);
   for (std::size_t index = 0; index < bindings.size() && index < types.size();
        ++index)
     if (types[index].kind == SemanticType::Reference)
       if (const auto root = rootForBinding(body, bindings[index]);
-          root && field.root == canonicalPlace(aliases, root))
-        return InputField{index, field.path};
+          root && exported.root == canonicalPlace(aliases, root))
+        return InputField{index, exported.path};
   return std::nullopt;
 }
 
@@ -9028,19 +8999,14 @@ exportedInputAddress(const MirProgram &program, MirBodyAddress address,
     const MirProgram &program, MirBodyAddress address, const MirBody &body,
     const MirPlaceAliasEscapeAnalysis &aliases,
     const std::vector<AbstractState> &incoming, ClosedCallRound &round) {
-  const auto reject =
-      [&](unsigned line) -> std::optional<RelocatedPrefixSummary> {
-    tracePrefix(address, 0, "summary-reject", line);
-    return std::nullopt;
-  };
   if (address.kind != MirBodyKind::Function || body.blocks.size() > 96)
-    return reject(__LINE__);
+    return std::nullopt;
   const auto dominance = computeMirDominance(body);
   if (!dominance)
-    return reject(__LINE__);
+    return std::nullopt;
   const auto loops = analyzeMirLoops(body, *dominance);
   if (!loops.loops.empty() || loops.hasIrreducibleControlFlow)
-    return reject(__LINE__);
+    return std::nullopt;
   const auto precedes = [&](InstructionSite left, InstructionSite right) {
     if (left.block != right.block)
       return dominance->dominates(left.block->id, right.block->id);
@@ -9080,11 +9046,11 @@ exportedInputAddress(const MirProgram &program, MirBodyAddress address,
         // closed.
         if (!domain || domain->width <= 8 ||
             mirTypeRelocationKind(program, element) != RelocationKind::Bitwise)
-          return reject(__LINE__);
+          return std::nullopt;
         auto before = stateBeforeInstruction(body, aliases, incoming, site,
                                              &round, address);
         if (!before)
-          return reject(__LINE__);
+          return std::nullopt;
         const auto destination =
             scalarAddressForOperand(body, *before, instruction.operands[0]);
         const auto source =
@@ -9092,35 +9058,24 @@ exportedInputAddress(const MirProgram &program, MirBodyAddress address,
         const auto count = relocationScalarInput(
             program, address, body, aliases, instruction.operands[2]);
         if (!destination || !source || !count)
-          return reject(__LINE__);
+          return std::nullopt;
         const auto to = exportedInputAddress(program, address, body,
                                              addressKey(*destination));
         const auto from =
             exportedInputAddress(program, address, body, addressKey(*source));
         if (!to || !from)
-          return reject(__LINE__);
+          return std::nullopt;
         selected =
             RelocatedPrefixSummary{*from, *to, *count, std::nullopt, *domain};
       } else if (const auto target = closedCallTarget(program, instruction)) {
         const auto found = round.summaries.find(*target);
-        tracePrefix(address, instruction.id, "callee-target", target->owner);
-        if (found != round.summaries.end()) {
-          const auto &x = found->second;
-          tracePrefix(address, instruction.id, "callee-flags",
-                      unsigned(x.complete) |
-                          (unsigned(x.hasOpaqueEffects) << 1) |
-                          (unsigned(x.mayWriteGlobals) << 2) |
-                          (unsigned(x.scalarStoresOnly) << 3) |
-                          (unsigned(x.scalarStoreWidth.value_or(0)) << 8) |
-                          (unsigned(x.floatingScalarStores) << 16) |
-                          (unsigned(bool(x.relocatedPrefix)) << 17));
-        }
+
         if (found != round.summaries.end() && found->second.complete &&
             found->second.relocatedPrefix) {
           auto before = stateBeforeInstruction(body, aliases, incoming, site,
                                                &round, address);
           if (!before)
-            return reject(__LINE__);
+            return std::nullopt;
           const auto &prior = *found->second.relocatedPrefix;
           const auto mapAddress =
               [&](const InputAddress &input) -> std::optional<InputAddress> {
@@ -9160,7 +9115,7 @@ exportedInputAddress(const MirProgram &program, MirBodyAddress address,
                                     ? mapField(*prior.destinationEnd)
                                     : std::nullopt;
           if (!from || !to || !count || (prior.destinationEnd && !endpoint))
-            return reject(__LINE__);
+            return std::nullopt;
           selected = RelocatedPrefixSummary{*from, *to, *count, endpoint,
                                             prior.domain};
         } else if (found != round.summaries.end() && found->second.complete &&
@@ -9174,7 +9129,7 @@ exportedInputAddress(const MirProgram &program, MirBodyAddress address,
                    (effect.writesPlace || effect.writesUnknownMemory ||
                     effect.invokesUserCode || effect.invokesRuntime ||
                     effect.movesValue || effect.dropsValue || effect.allocates))
-          return reject(__LINE__);
+          return std::nullopt;
       }
       if (selected) {
         if (result || selected->source == selected->destination ||
@@ -9183,9 +9138,7 @@ exportedInputAddress(const MirProgram &program, MirBodyAddress address,
             selected->destination.elementOffset ||
             !selected->source.subobject.empty() ||
             !selected->destination.subobject.empty())
-          return reject(__LINE__);
-        tracePrefix(address, instruction.id, "summary-selected",
-                    selected->destinationEnd.has_value());
+          return std::nullopt;
         result = std::move(selected);
         transfer = site;
         continue;
@@ -9210,27 +9163,27 @@ exportedInputAddress(const MirProgram &program, MirBodyAddress address,
           effect.writesUnknownMemory || effect.maySynchronize ||
           effect.invokesUserCode || effect.invokesRuntime || effect.allocates ||
           effect.movesValue || effect.dropsValue || effect.writesPlace)
-        return reject(__LINE__);
+        return std::nullopt;
     }
   }
   if (!result || exits.empty())
-    return reject(__LINE__);
+    return std::nullopt;
   for (const auto exit : exits) {
     if (dominance->dominates(transfer.block->id, exit))
       continue;
     // Zero-count forwarding may return without touching either address. Only
     // the exact readonly count formal may justify this alternate exit.
     if (!result->count.parameter || !result->count.field.empty())
-      return reject(__LINE__);
+      return std::nullopt;
     const auto bindings = parameterBindings(program, address);
     if (*result->count.parameter >= bindings.size())
-      return reject(__LINE__);
+      return std::nullopt;
     const auto countRoot =
         rootForBinding(body, bindings[*result->count.parameter]);
     const auto count = integerForPlace(body, incoming[exit - 1], countRoot);
     if (!count || !singleton(*count) || count->lower.negative ||
         count->lower.magnitude)
-      return reject(__LINE__);
+      return std::nullopt;
   }
   if (result->destinationEnd)
     return stores.empty() ? result : std::nullopt;
@@ -9240,24 +9193,20 @@ exportedInputAddress(const MirProgram &program, MirBodyAddress address,
   if (result->count.field.empty() || result->source.field.empty() ||
       result->destination.field.empty() ||
       result->source.parameter != result->count.parameter || stores.size() != 2)
-    return reject(__LINE__);
+    return std::nullopt;
   bool retired = false;
   InstructionSite publication, retirement;
   for (const auto site : stores) {
     if (!precedes(transfer, site))
-      return reject(__LINE__);
+      return std::nullopt;
     for (const auto exit : exits)
       if (!dominance->dominates(site.block->id, exit))
-        return reject(__LINE__);
+        return std::nullopt;
     const auto field = fieldOriginForPlace(&program, address, body, aliases,
                                            *site.instruction->destination);
     const auto output = field ? exportField(*field) : std::nullopt;
     if (!output) {
-      tracePrefix(address, site.instruction->id, "endpoint-place",
-                  *site.instruction->destination);
-      tracePrefix(address, site.instruction->id, "endpoint-root",
-                  field ? field->root : ~0u);
-      return reject(__LINE__);
+      return std::nullopt;
     }
     const auto copied = relocationScalarInput(
         program, address, body, aliases, site.instruction->operands.front());
@@ -9275,17 +9224,11 @@ exportedInputAddress(const MirProgram &program, MirBodyAddress address,
                  : std::nullopt;
       if (*output != result->count || !value || !singleton(*value) ||
           value->lower.negative || value->lower.magnitude != 0 || retired)
-        return reject(__LINE__);
+        return std::nullopt;
       retired = true;
       retirement = site;
     }
   }
-  tracePrefix(address, 0, "endpoint-final",
-              unsigned(retired) |
-                  (unsigned(bool(result->destinationEnd)) << 1) |
-                  (unsigned(retired && result->destinationEnd &&
-                            precedes(publication, retirement))
-                   << 2));
   return retired && result->destinationEnd && precedes(publication, retirement)
              ? result
              : std::nullopt;
@@ -9433,7 +9376,7 @@ scalarStoreProfile(const MirProgram &program, MirBodyAddress address,
           destination ? constantIntegerDomain(destination->type) : std::nullopt;
       const bool floating = destination && floatingScalar(destination->type);
       const bool independentScalar =
-          destination && (domain || floating) &&
+          destination && isMirScalarValueType(&program, destination->type) &&
           (destination->root == MirPlaceRootKind::Binding ||
            destination->root == MirPlaceRootKind::Temporary) &&
           destination->projections.empty() &&
@@ -9617,17 +9560,11 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
     exits.push_back(std::move(transferred.output));
   }
   if (exits.empty() || round.incompleteBodies.contains(address)) {
-    tracePrefix(address, 0, "summary-unavailable",
-                unsigned(exits.empty()) |
-                    (unsigned(round.incompleteBodies.contains(address)) << 1));
     return result;
   }
   result.summary.complete = true;
   result.summary.relocatedPrefix = summarizeRelocatedPrefix(
       program, address, *body, aliases, incoming, round);
-  if (result.summary.relocatedPrefix)
-    tracePrefix(address, 0, "summary-admitted",
-                result.summary.relocatedPrefix->destinationEnd.has_value());
   const auto scalarStores = scalarStoreProfile(program, address, *body, round);
   result.summary.scalarStoresOnly = scalarStores.supported;
   result.summary.scalarStoreWidth = scalarStores.width;

@@ -78,10 +78,6 @@ int main() { return 0; }
               << " raw-view=" << view << " replaced=" << replaced
               << " overwritten=" << changed << " scalar-getters=" << scalar
               << " partial=" << partial << " failed=" << failed << '\n';
-    for (const auto &function : frontend.hir.functionInstances())
-      if (function.source)
-        std::cerr << "PREFIX-MAP body=" << function.id << " name="
-                  << function.source->name().lexeme << '\n';
     return 1;
   }
   return 0;

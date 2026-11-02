@@ -931,7 +931,7 @@ int32_t main() {
               functionOperationDischarges(
                   frontend, o2, "recurrence_dynamic_call",
                   lang::MirSafetyCheckFamily::ArithmeticOverflow,
-                  lang::MirOperation::AddAssign),
+                  lang::MirOperation::Add, lang::SemanticType::UInt64),
               1);
   expectCount("successful_signed_to_unsigned addition",
               functionOperationDischarges(
