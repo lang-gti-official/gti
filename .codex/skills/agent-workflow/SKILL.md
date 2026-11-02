@@ -128,7 +128,14 @@ integration is complete contributor work; report it as deferred, never as passed
    For developer-automation-only or source-only GTI stdlib changes,
    `verify --focused --checks-file ...` runs owning checks directly and records
    scope `automation` or `source-stdlib`; its diff guard rejects compiler,
-   native runtime and build-system changes.
+   native runtime and build-system changes. CI independently admits the
+   `source-stdlib` lane only with an ancestor's successful full-CI compiler and
+   identical native inputs. It runs mandatory library owners/consumers and
+   packages the changed stdlib without rebuilding the compiler. Missing artifacts,
+   new CMake registrations, routing/native/build changes or unknown paths use
+   full CI. Register new source cases in an existing owning harness or surface
+   manifest where appropriate; never omit required tests to get the cheaper lane.
+   Combined preview still uses its separate mandatory admission/build policy.
 3. After focused validation passes and the PR is published, submit every completed
    task with `preview submit <task> --tests <exact-owning-ctest-names>`. This is
    the standing default, including fixes and automation work; do not ask again.
