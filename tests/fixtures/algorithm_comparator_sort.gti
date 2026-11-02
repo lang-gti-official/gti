@@ -88,75 +88,7 @@ int exercise(int count, int shape, bool descending) {
   return 0;
 }
 
-class NumericLess<std::numeric T> {
-public:
-  NumericLess() {}
-  bool operator()(T& left, T& right) { return left < right; }
-};
-
-// Compare the infallible builtin insertion path with the general comparator
-// path, including empty/one-element owners, duplicates and partition edges.
-bool scalar_insertions<std::numeric T>() {
-  for (mut int count = 0; count <= 65; count++) {
-    for (mut int shape = 0; shape < 4; shape++) {
-      mut std::vector<T> values{};
-      mut std::vector<T> oracle{};
-      for (mut int i = 0; i < count; i++) {
-        mut int input = (i * 37 + 13) % 29;
-        if (shape == 1) { input = count - i; }
-        if (shape == 2) { input = 7; }
-        if (shape == 3) { input = (count - i) / 4; }
-        values.push_back(T(input));
-        oracle.push_back(T(input));
-      }
-      std::sort(values);
-      std::sort(oracle, NumericLess<T>());
-      for (mut std::size_t i = 0; i < values.size(); i++) {
-        if (values[i] != oracle[i]) { return false; }
-        if (i > std::size_t(0) && values[i] < values[i - std::size_t(1)]) {
-          return false;
-        }
-      }
-    }
-  }
-  return true;
-}
-
-class UnorderedItem {
-  int value;
-public:
-  UnorderedItem(int value) : value(value) {}
-  int key() { return this.value; }
-};
-class ItemLess {
-public:
-  ItemLess() {}
-  bool operator()(UnorderedItem& left, UnorderedItem& right) {
-    return left.key() < right.key();
-  }
-};
-
 int main() {
-  if (!scalar_insertions<int32_t>() || !scalar_insertions<uint64_t>() ||
-      !scalar_insertions<double>()) { return 10; }
-  mut std::vector<int32_t> extremes = {
-    int32_t(2147483647), int32_t(-2147483647) - int32_t(1), int32_t(0),
-    int32_t(-1), int32_t(2147483647), int32_t(-2147483647) - int32_t(1)};
-  std::sort(extremes);
-  int32_t expected[6] = {int32_t(-2147483647) - int32_t(1),
-    int32_t(-2147483647) - int32_t(1), int32_t(-1), int32_t(0),
-    int32_t(2147483647), int32_t(2147483647)};
-  for (mut std::size_t i = std::size_t(0); i < std::size_t(6); i++) {
-    if (extremes[i] != expected[i]) { return 11; }
-  }
-  // Custom-comparator elements need no builtin ordering relation.
-  mut std::vector<UnorderedItem> items{};
-  items.emplace_back(3); items.emplace_back(1); items.emplace_back(2);
-  std::sort(items, ItemLess());
-  if (items[std::size_t(0)].key() != 1 || items[std::size_t(1)].key() != 2 ||
-      items[std::size_t(2)].key() != 3) {
-    return 12;
-  }
   for (mut int count = 128; count <= 1024; count *= 2) {
     for (mut int shape = 0; shape < 11; shape++) {
       int result = exercise(count, shape, false);

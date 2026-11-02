@@ -761,3 +761,35 @@ Evidence is retained under `slp-windows-mini/Testing` (combined, compiler-only,
 library-only and stronger-repeat reports) and `slp-windows-linux` in the
 round-eight campaign artifact. Both runners built clean tracked archives;
 unrelated edits present in the submitted snapshot were not used.
+
+### Measured checkpoint `8f2f30dd`
+
+Bounded rescanning inside a matched string-search window brings the unchanged
+corpus to **27/34 competitive against both comparators, seven slower**. String
+growth/search is now 1.0580 times Rust (95% interval 1.0511–1.0681) and 0.3299
+times C++. Vector growth/reserved/transform, random sorting, substrings,
+reserved hashing and interface dispatch remain outside the target. Every
+digest passes and every classification is conclusive.
+
+The stronger paired repeat against `0a2246d5` measures string growth/search
+at 0.9508 (0.9479–0.9547); holding the compiler fixed gives 0.9492
+(0.9450–0.9535). Compiler-only measurements show no material gain across the
+34 programs. In particular, interface dispatch is unchanged: 0.9979
+(0.9599–1.0425) in the stronger combined repeat. Inspection subsequently found
+that the induction pass ran before a later inlining round created the target
+PHI; the pass placement is being corrected separately. This checkpoint does
+not claim a dispatch improvement.
+
+Summed compilation observations are 17.869 s before and 17.736 s after;
+median paired peak RSS is 0.9970 times baseline and the largest binary-size
+increase is 0.11%. Allocation call, success and free counts remain unchanged.
+Twenty-four focused registered checks and native smoke pass on macOS arm64
+and Linux x64; this is not full integration evidence. Results are retained
+under `inductive-pointers-mini/Testing` and `inductive-pointers-linux`.
+
+The subsequent numeric-insertion experiment in `990c08f1`, measured with the
+same `8f2f30dd` compiler on both sides, does **not** improve random sorting:
+the stronger repeat is 1.0039 (1.0015–1.0060), with no material change to sorted
+or reverse input. Random sorting remains 2.3011 times Rust. The added source
+specialization is removed; its complete reports and passing correctness matrix
+remain under `numeric-insertion-mini`. No additional closed gap is counted.

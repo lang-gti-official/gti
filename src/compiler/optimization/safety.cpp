@@ -9555,17 +9555,25 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
   const auto *constructor = address.kind == MirBodyKind::Constructor
                                 ? program.findConstructorInstance(address.owner)
                                 : nullptr;
-  if ((!function && !constructor) || (function && function->owner) ||
-      body.blocks.size() > 96 || body.instructionCount() > 512)
+  if ((!function && !constructor) || body.blocks.size() > 96 ||
+      body.instructionCount() > 512)
     return result;
+  const auto *receiverClass = function && function->owner
+                                  ? program.findClassInstance(*function->owner)
+                                  : nullptr;
+  if (function && function->owner &&
+      (!receiverClass || receiverClass->cOpaqueHandle ||
+       receiverClass->compilerCapability != CompilerCapabilityTypeKind::None ||
+       receiverClass->unionLayout || receiverClass->abstract ||
+       receiverClass->polymorphic || !receiverClass->bases.empty() ||
+       !receiverClass->structuralBases.empty()))
+    return {};
   const auto bindings = parameterBindings(program, address);
   const auto types = parameterTypes(program, address);
   if (bindings.size() != types.size())
     return result;
-  const auto passiveRecord =
+  const auto recordFor =
       [&](const SemanticType &type) -> const MirClassInstance * {
-    if (type.kind != SemanticType::Class)
-      return nullptr;
     const MirClassInstance *record = nullptr;
     for (const auto &candidate : program.classInstances())
       if (candidate.type == type) {
@@ -9573,19 +9581,61 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
           return nullptr;
         record = &candidate;
       }
-    if (!record || record->destructor || record->cOpaqueHandle ||
-        record->destructorStatus != SpecialMemberStatus::Generated ||
-        record->compilerCapability != CompilerCapabilityTypeKind::None ||
-        record->traits.containsBorrowedState || record->unionLayout ||
-        record->polymorphic || record->abstract || !record->bases.empty() ||
-        !record->structuralBases.empty() ||
-        record->declaredFields.size() > 16 ||
-        mirTypeRelocationKind(program, type) != RelocationKind::Bitwise)
-      return nullptr;
-    for (const auto &field : record->declaredFields)
-      if (!field.symbol || !isMirScalarValueType(&program, field.type))
-        return nullptr;
     return record;
+  };
+  const auto passiveType = [&](auto &&, const SemanticType &type,
+                               unsigned) -> bool {
+    std::size_t remaining = 128;
+    const auto visit = [&](auto &&self, const SemanticType &type,
+                           unsigned depth) -> bool {
+      if (depth > 8 || !remaining)
+        return false;
+      --remaining;
+      if (const auto *sum = program.findPayloadEnum(type)) {
+        if (sum->traits.containsBorrowedState || sum->requiresActiveCleanup ||
+            sum->variants.size() > 16)
+          return false;
+        std::set<SymbolId> symbols;
+        for (const auto &variant : sum->variants) {
+          if (variant.payloadTypes.size() != variant.payloadSymbols.size() ||
+              variant.payloadTypes.size() > 16)
+            return false;
+          for (std::size_t i = 0; i < variant.payloadTypes.size(); ++i)
+            if (!variant.payloadSymbols[i] ||
+                !symbols.insert(variant.payloadSymbols[i]).second ||
+                !self(self, variant.payloadTypes[i], depth + 1))
+              return false;
+        }
+        return true;
+      }
+      if (isMirScalarValueType(&program, type))
+        return true;
+      if (type.kind != SemanticType::Class)
+        return false;
+      const auto *record = recordFor(type);
+      if (!record || record->destructor || record->cOpaqueHandle ||
+          record->destructorStatus != SpecialMemberStatus::Generated ||
+          record->compilerCapability != CompilerCapabilityTypeKind::None ||
+          record->traits.containsBorrowedState || record->unionLayout ||
+          record->polymorphic || record->abstract || !record->bases.empty() ||
+          !record->structuralBases.empty() ||
+          record->declaredFields.size() > 16 ||
+          mirTypeRelocationKind(program, type) != RelocationKind::Bitwise)
+        return false;
+      std::set<SymbolId> symbols;
+      for (const auto &field : record->declaredFields)
+        if (!field.symbol || !symbols.insert(field.symbol).second ||
+            !self(self, field.type, depth + 1))
+          return false;
+      return true;
+    };
+    return visit(visit, type, 0);
+  };
+  const auto passiveRecord =
+      [&](const SemanticType &type) -> const MirClassInstance * {
+    return type.kind == SemanticType::Class && passiveType(passiveType, type, 0)
+               ? recordFor(type)
+               : nullptr;
   };
   const MirClassInstance *constructed =
       constructor ? program.findClassInstance(constructor->owner) : nullptr;
@@ -9602,6 +9652,20 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
                            .owner = constructor->owner}))
       return {};
   }
+  const auto passiveTemporary = [&](const MirPlace &place) {
+    return place.root == MirPlaceRootKind::Temporary &&
+           place.projections.empty() && !place.foreignStorage &&
+           !place.traits.containsBorrowedState &&
+           passiveType(passiveType, place.type, 0);
+  };
+  const auto temporaryCopy = [&](const MirInstruction &instruction) {
+    const auto *destination = instruction.destination
+                                  ? body.findPlace(*instruction.destination)
+                                  : nullptr;
+    return destination && passiveTemporary(*destination) &&
+           instruction.kind == MirInstructionKind::CallInput &&
+           isMirStructuralValueTransfer(program, instruction);
+  };
   const auto dominance = computeMirDominance(body);
   if (!dominance)
     return result;
@@ -9647,7 +9711,8 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
     if (dominance->isReachable(block.id))
       for (const auto &instruction : block.instructions) {
         if (instruction.tombstone || !instruction.destination ||
-            instruction.kind == MirInstructionKind::Drop)
+            instruction.kind == MirInstructionKind::Drop ||
+            temporaryCopy(instruction))
           continue;
         const auto *place = body.findPlace(*instruction.destination);
         if (!place)
@@ -9673,13 +9738,21 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
       [&](const MirInstruction &instruction) -> const FreshStorageProfile * {
     if ((instruction.kind != MirInstructionKind::Call &&
          instruction.kind != MirInstructionKind::Construct) ||
-        instruction.receiver || instruction.destination ||
+        instruction.destination ||
         instruction.dispatch != CallDispatch::Static ||
         instruction.nativeCallbackAdapter || instruction.threadTaskAdapter ||
         instruction.callableInvocation || instruction.callableBoundary ||
         instruction.intrinsic != IntrinsicKind::None)
       return nullptr;
     const auto target = closedCallTarget(program, instruction);
+    if (target) {
+      const auto *callee = target->kind == MirBodyKind::Function
+                               ? program.findFunctionInstance(target->owner)
+                               : nullptr;
+      if ((callee && callee->owner.has_value()) !=
+          instruction.receiver.has_value())
+        return nullptr;
+    }
     const auto found =
         target ? round.summaries.find(*target) : round.summaries.end();
     return found != round.summaries.end() && found->second.complete &&
@@ -9716,19 +9789,56 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
     }
     return false;
   };
+  const auto pointerPaths =
+      [&](const SemanticType &type) -> std::optional<std::vector<FieldPath>> {
+    if (!passiveType(passiveType, type, 0))
+      return std::nullopt;
+    std::vector<FieldPath> paths;
+    const auto collect = [&](auto &&self, const SemanticType &current,
+                             FieldPath path) -> bool {
+      if (path.size() > 8 || paths.size() > 32)
+        return false;
+      if (current.kind == SemanticType::RawPointer ||
+          current.kind == SemanticType::NullPtr) {
+        paths.push_back(std::move(path));
+        return paths.size() <= 32;
+      }
+      if (const auto *sum = program.findPayloadEnum(current)) {
+        for (const auto &variant : sum->variants)
+          for (std::size_t i = 0; i < variant.payloadTypes.size(); ++i) {
+            auto next = path;
+            next.push_back(variant.payloadSymbols[i]);
+            if (!self(self, variant.payloadTypes[i], std::move(next)))
+              return false;
+          }
+      } else if (const auto *record = passiveRecord(current)) {
+        for (const auto &field : record->declaredFields) {
+          auto next = path;
+          next.push_back(field.symbol);
+          if (!self(self, field.type, std::move(next)))
+            return false;
+        }
+      }
+      return true;
+    };
+    if (!collect(collect, type, {}))
+      return std::nullopt;
+    return paths;
+  };
   const auto pointerField = [&](const SemanticType &type,
                                 const FieldPath &path) {
-    if (path.empty())
-      return type.kind == SemanticType::RawPointer ||
-             type.kind == SemanticType::NullPtr;
-    const auto *record = passiveRecord(type);
-    if (!record || path.size() != 1)
+    const auto paths = pointerPaths(type);
+    return paths &&
+           std::find(paths->begin(), paths->end(), path) != paths->end();
+  };
+  const auto receiverPointerField = [&](const FieldPath &path) {
+    if (!receiverClass || path.empty())
       return false;
-    return std::any_of(record->declaredFields.begin(),
-                       record->declaredFields.end(), [&](const auto &field) {
-                         return field.symbol == path.front() &&
-                                field.type.kind == SemanticType::RawPointer;
-                       });
+    for (const auto &field : receiverClass->declaredFields)
+      if (field.symbol == path.front())
+        return pointerField(field.type,
+                            FieldPath(path.begin() + 1, path.end()));
+    return false;
   };
   const auto origins = [&](auto &&self, const MirOperand &operand,
                            FieldPath path, InstructionSite use,
@@ -9743,6 +9853,52 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
       if (!site.instruction || !precedes(site, use))
         return std::nullopt;
       const auto &producer = *site.instruction;
+      if (producer.info.type != operand.type)
+        return std::nullopt;
+      // Payload symbols are validated against the exact concrete enum. An
+      // inactive alternative contributes no address, not an unknown address;
+      // verified extraction still owns tag/lifetime checking.
+      if (producer.operation == MirOperation::PayloadConstruct &&
+          producer.enumVariant) {
+        const auto *sum = program.findPayloadEnum(producer.info.type);
+        if (!sum || path.empty())
+          return std::nullopt;
+        for (const auto &variant : sum->variants)
+          if (variant.variantIndex == *producer.enumVariant) {
+            if (producer.operands.size() != variant.payloadTypes.size())
+              return std::nullopt;
+            for (std::size_t i = 0; i < variant.payloadSymbols.size(); ++i)
+              if (variant.payloadSymbols[i] == path.front()) {
+                if (producer.operands[i].type != variant.payloadTypes[i])
+                  return std::nullopt;
+                path.erase(path.begin());
+                return self(self, producer.operands[i], std::move(path), site,
+                            depth + 1);
+              }
+            return Origins{};
+          }
+        return std::nullopt;
+      }
+      if (isMirStructuralPayloadExtraction(program, producer) &&
+          producer.enumVariant && producer.payloadIndex) {
+        const auto *sum =
+            program.findPayloadEnum(mirInstructionEnumType(producer));
+        if (!sum || producer.operands.front().type != sum->type)
+          return std::nullopt;
+        for (const auto &variant : sum->variants)
+          if (variant.variantIndex == *producer.enumVariant &&
+              *producer.payloadIndex < variant.payloadTypes.size()) {
+            if (producer.info.type !=
+                variant.payloadTypes[*producer.payloadIndex])
+              return std::nullopt;
+            path.insert(path.begin(),
+                        variant.payloadSymbols[*producer.payloadIndex]);
+            return self(self, producer.operands.front(), std::move(path), site,
+                        depth + 1);
+          }
+        return std::nullopt;
+      }
+
       if (path.empty() && producer.kind == MirInstructionKind::Compute &&
           producer.operation == MirOperation::Literal && producer.literal &&
           std::holds_alternative<std::nullptr_t>(*producer.literal))
@@ -9762,12 +9918,16 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
         Origins mapped;
         for (const auto &origin : output->second) {
           if (origin.input) {
-            if (!origin.input->parameter ||
-                *origin.input->parameter >= producer.operands.size())
+            const MirOperand *argument =
+                origin.input->parameter
+                    ? (*origin.input->parameter < producer.operands.size()
+                           ? &producer.operands[*origin.input->parameter]
+                           : nullptr)
+                    : (producer.receiver ? &*producer.receiver : nullptr);
+            if (!argument)
               return std::nullopt;
             const auto input =
-                self(self, producer.operands[*origin.input->parameter],
-                     origin.input->field, site, depth + 1);
+                self(self, *argument, origin.input->field, site, depth + 1);
             if (!input)
               return std::nullopt;
             mapped.insert(input->begin(), input->end());
@@ -9783,7 +9943,8 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
         }
         return mapped;
       }
-      if (!producer.destination && producer.operands.size() == 1 &&
+      if ((!producer.destination || temporaryCopy(producer)) &&
+          producer.operands.size() == 1 &&
           producer.info.type == producer.operands.front().type &&
           (producer.kind == MirInstructionKind::Load ||
            producer.kind == MirInstructionKind::CallInput ||
@@ -9795,6 +9956,16 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
       return std::nullopt;
     }
     const auto *place = body.findPlace(operand.place);
+    if (place && place->root == MirPlaceRootKind::This) {
+      const auto projection = ownFields(*place);
+      if (!projection)
+        return std::nullopt;
+      path.insert(path.begin(), projection->begin(), projection->end());
+      if (!receiverPointerField(path))
+        return std::nullopt;
+      return Origins{
+          {.input = InputField{std::nullopt, std::move(path)}, .calls = {}}};
+    }
     if (!place || place->root != MirPlaceRootKind::Binding ||
         place->traits.containsBorrowedState)
       return std::nullopt;
@@ -9849,12 +10020,15 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
         else
           return {};
         for (const auto &input : obligations) {
-          if (!input.parameter ||
-              *input.parameter >= instruction.operands.size())
+          const MirOperand *argument =
+              input.parameter
+                  ? (*input.parameter < instruction.operands.size()
+                         ? &instruction.operands[*input.parameter]
+                         : nullptr)
+                  : (instruction.receiver ? &*instruction.receiver : nullptr);
+          if (!argument)
             return {};
-          const auto values =
-              origins(origins, instruction.operands[*input.parameter],
-                      input.field, site, 0);
+          const auto values = origins(origins, *argument, input.field, site, 0);
           if (!values)
             return {};
           for (const auto &value : *values) {
@@ -9866,6 +10040,18 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
         }
         continue;
       }
+      const bool passiveTransfer =
+          isMirStructuralValueTransfer(program, instruction) ||
+          isMirStructuralPayloadExtraction(program, instruction);
+      bool privateTransfer = false;
+      if (passiveTransfer && instruction.operands.size() == 1 &&
+          instruction.operands.front().place) {
+        const auto *source = body.findPlace(instruction.operands.front().place);
+        privateTransfer = source && ownedBinding(*source);
+      }
+      if (isMirStructuralPayloadExtraction(program, instruction) &&
+          !privateTransfer)
+        return {};
       const auto effect = effects(program, instruction);
       if (instruction.rawMemoryAccess ||
           instruction.unsafeOperation != UnsafeOperationKind::None ||
@@ -9881,13 +10067,15 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
         const bool receiverField =
             constructor && place->root == MirPlaceRootKind::This &&
             ownFields(*place) && ownFields(*place)->size() == 1 &&
-            isMirScalarValueType(&program, place->type);
-        const bool local = ownedBinding(*place) &&
-                           (isMirScalarValueType(&program, place->type) ||
-                            passiveRecord(place->type));
-        if (!receiverField && !local)
+            passiveType(passiveType, place->type, 0);
+        const bool local =
+            ownedBinding(*place) && passiveType(passiveType, place->type, 0);
+        const bool temporary = passiveTemporary(*place) &&
+                               (temporaryCopy(instruction) ||
+                                isMirStructuralValueDrop(program, instruction));
+        if (!receiverField && !local && !temporary)
           return {};
-      } else if (effect.writesPlace)
+      } else if (effect.writesPlace && !privateTransfer)
         return {};
       if (instruction.kind == MirInstructionKind::Drop &&
           !isMirStructuralValueDrop(program, instruction))
@@ -9899,27 +10087,21 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
     if (!returning)
       continue;
     const auto outputType = constructor ? constructed->type : body.returnType;
-    const auto *record = passiveRecord(outputType);
-    std::vector<FieldPath> paths;
-    if (outputType.kind == SemanticType::RawPointer)
-      paths.push_back({});
-    else if (record) {
-      for (const auto &field : record->declaredFields)
-        if (field.type.kind == SemanticType::RawPointer)
-          paths.push_back({field.symbol});
-    } else if (outputType.kind != SemanticType::Void &&
-               !isMirScalarValueType(&program, outputType))
+    const auto outputPaths = pointerPaths(outputType);
+    if (!outputPaths && outputType.kind != SemanticType::Void)
       return {};
+    const auto paths = outputPaths.value_or(std::vector<FieldPath>{});
     std::map<FieldPath, Origins> fields;
     for (const auto &path : paths) {
       std::optional<Origins> values;
       if (constructor) {
-        const auto store = receiverStores.find(path);
+        const auto store = receiverStores.find(FieldPath{path.front()});
         if (store != receiverStores.end() &&
             precedes(store->second, InstructionSite{&block, nullptr}) &&
             store->second.instruction->operands.size() == 1)
           values = origins(origins, store->second.instruction->operands.front(),
-                           {}, store->second, 0);
+                           FieldPath(path.begin() + 1, path.end()),
+                           store->second, 0);
       } else if (block.terminator.value)
         values = origins(origins, *block.terminator.value, path,
                          InstructionSite{&block, nullptr}, 0);

@@ -1445,25 +1445,36 @@ bindings and repeated releases reject the noninterference profile. A released
 token cannot be published as a fresh return value. Allocation and failure effects remain opaque and
 observable, and no memory fact is restored after invalidation.
 
-The bounded slice admits acyclic ownerless wrappers and constructors of flat,
-passive records with scalar fields. Exact typed pointer-field results transport
+The bounded slice admits acyclic wrappers, passive aggregate constructors and
+read-only receiver methods. Exact typed pointer-field results transport
 provenance through construction, returns, staging and whole-record copies.
-Allocation tokens are rebased by call path, so two fields returned from one
+Allocation tokens are rebased by call path, so fields returned from one
 allocation retain the same token, while separate invocations remain distinct.
-All returning paths must provide a known field result; their origin sets are
-joined conservatively. A token released on any path cannot be exported as a
-fresh result. Unknown incoming fields, mutated records, user cleanup, borrowed
-state, nested records and payload carriers remain outside this slice.
+Receiver fields are input-relative obligations: a caller must establish their
+origins before a release or returned field can participate in this profile.
+Receiver writes and consuming receiver extraction remain excluded.
+
+Passive payload transport uses the concrete MIR enum's variant and field
+identities. An inactive alternative contributes no pointer; an unknown field
+in an alternative that carries it stays unknown. All returning paths contribute
+to a conservative origin union. This transports pointer provenance only:
+effects are still checked on every path, including error alternatives. A token
+released on any path cannot be exported as fresh. Callbacks, unresolved
+incoming fields, mutated records and user cleanup reject the profile.
 
 Store uniqueness is keyed by binding identity, not by a particular MIR place
-view. Writable local bindings must denote their own ordinary storage; reference
+view. Writable locals must denote their own ordinary storage; reference
 parameters, local reference aliases, foreign storage and inconsistent typed
-views are excluded. Constructor publication admits only the exact scalar fields
-of a passive receiver and requires complete non-opaque field initialization.
-No pointee access, capture or ownership fact is inferred from a pointer field.
-POSIX status-output allocation and loop-carried provenance remain unsupported.
-Unrelated initialized-prefix owners prove caller-side noninterference; this
-alone does not establish vector reserve or substring performance gains.
+views are excluded. Structural call-input materialization may use a passive
+compiler-owned temporary; arbitrary temporary writes remain unsupported.
+Consuming payload extraction requires owned local storage. Constructor
+publication admits exact passive fields and complete non-opaque field
+initialization. No pointee access, capture or ownership fact is inferred from
+a pointer field. Aggregate inspection has explicit depth, node and field-path
+budgets. POSIX status-output allocation, mutable receiver publication and
+loop-carried provenance remain unsupported. Unrelated initialized-prefix
+owners prove caller-side noninterference; this alone does not establish vector
+reserve or substring performance gains.
 
 The capture analysis extends the place alias and escape analysis in
 `alias.cpp`. It has two layers.
@@ -1769,8 +1780,11 @@ uses sixteen independent byte comparisons without a loop; counted-string
 search executes the vectorized shape against a scalar oracle at window edges,
 unaligned starts, embedded NUL and high byte values.
 
-After the first O2/O3 pipeline, a bounded induction proof can replace a loop's
-pointer PHI with its common entry constant. Assuming that value for one
+After O2/O3 cold-region outlining and the resulting helper inlining, a bounded
+induction proof can replace a loop's pointer PHI with its common entry constant.
+This placement includes PHIs introduced by that late inlining. A successful
+fold receives one ordinary simplification/optimization round; there is no
+fixed-point retry. Assuming that value for one
 iteration, the proof propagates exact scalar/pointer constants and loads from
 immutable globals with definitive initializers. Unknown conditions retain
 every successor. Every feasible backedge must return the original constant;

@@ -1,5 +1,7 @@
 #include "../src/compiler/llvm/abi.h"
 #include "../src/compiler/llvm/body.h"
+#include "../src/compiler/llvm/loop_invariants.h"
+#include "../src/compiler/llvm/placement.h"
 #include "../src/compiler/llvm/scalar.h"
 #include "gti/frontend.h"
 #include "gti/lowered_program_builder.h"
@@ -1002,7 +1004,72 @@ int main() {
 }
 } // namespace
 
+void verifyLateInductiveDispatch() {
+  const auto frontend = Frontend().analyze("inductive-dispatch.gti", R"(
+extern "C" { uint64_t input(); void observe(uint64_t result); }
+interface operation { int32_t evaluate(); };
+class Square : public operation {
+  int32_t operand;
+public:
+  Square(int32_t operand) : operand(operand) {}
+  int32_t evaluate() override { return this.operand * this.operand; }
+};
+class Weighted : public operation {
+  int32_t operand;
+public:
+  Weighted(int32_t operand) : operand(operand) {}
+  int32_t evaluate() override { return 3 * this.operand * this.operand; }
+};
+uint64_t accumulate(operation& selected, int32_t count) {
+  mut uint64_t result = 0;
+  for (mut int32_t index = 0; index < count; index++) {
+    result += uint64_t(selected.evaluate() + index % 7);
+  }
+  return result;
+}
 int main() {
+  uint64_t count = input();
+  mut uint64_t result = 0;
+  for (mut uint64_t index = 0; index < count; index++) {
+    Square first{int32_t(index % uint64_t(16)) + 1};
+    Weighted second{int32_t(index % uint64_t(7)) + 1};
+    result += accumulate(first, 1000);
+    result += accumulate(second, 1000);
+  }
+  observe(result);
+  return 0;
+}
+)");
+  if (!frontend.canGenerateCode())
+    throw std::runtime_error("invalid inductive dispatch source");
+  const auto optimized = OptimizationPipeline().run(
+      {frontend.hir, frontend.mir, OptimizationLevel::O3});
+  auto lowered = LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, optimized.sourceMir,
+      optimized.mir, optimized.report.transformations, TargetInfo::host());
+  if (!optimized.valid() || !lowered.valid())
+    throw std::runtime_error("invalid inductive dispatch MIR");
+  std::vector<LoweredProgramIssue> issues;
+  const auto input = verifiedLoweredProgram(*lowered.program, issues);
+  if (!input)
+    throw std::runtime_error("unverified inductive dispatch source");
+  HierarchyStorageScope hierarchy(input->program().mir());
+  const LlvmBackendOptions options{.optimization =
+                                       LlvmCodegenOptimization::Aggressive};
+  const auto admission = planLlvmAdmission(*input, options);
+  if (!admission.admitted())
+    throw std::runtime_error(admission.limitation());
+  Session session(*input, options);
+  lowerScalarProgram(session, admission);
+  static_cast<void>(session.emitObject());
+  // Cold-region outlining exposes new inlining and loop PHIs. The final
+  // production pipeline must already have handled those late opportunities.
+  if (foldInductivePointerLoops(session.module()))
+    throw std::runtime_error("inductive loop proof ran before late inlining");
+}
+
+int main() {
+  verifyLateInductiveDispatch();
   verifyCheckedArithmeticReuse();
   verifyRecoveredRangeChecks();
   verifyMergedCheckedArithmetic();

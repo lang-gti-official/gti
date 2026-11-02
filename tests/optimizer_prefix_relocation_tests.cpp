@@ -363,6 +363,123 @@ class CallbackDescriptor { public:
                    "CallbackDescriptor region{fresh_pointer()}; unsafe { "
                    "release_pointer(region.address); }\n",
                    false);
+  const std::string packet = descriptor + R"(
+enum class AllocationPacket { absent, held(Descriptor region) };
+AllocationPacket allocate_packet(bool good) {
+  if (good) { return AllocationPacket::held(fresh_descriptor()); }
+  return AllocationPacket::absent;
+}
+)";
+  const std::string consumePacket = R"(
+  AllocationPacket packet = allocate_packet(true);
+  switch (std::move(packet)) {
+  case AllocationPacket::held(region): unsafe { release_pointer(region.address); } break;
+  case AllocationPacket::absent: break;
+  }
+)";
+  descriptorControls &=
+      freshControl("payload-descriptor.gti", packet, consumePacket, true);
+  descriptorControls &=
+      freshControl("payload-error-alternative.gti", packet,
+                   "AllocationPacket packet = allocate_packet(false); switch "
+                   "(std::move(packet)) { "
+                   "case AllocationPacket::held(region): unsafe { "
+                   "release_pointer(region.address); } break; "
+                   "case AllocationPacket::absent: break; }\n",
+                   true);
+  descriptorControls &=
+      freshControl("payload-incoming-alternative.gti", descriptor + R"(
+mut void* old_pointer = nullptr;
+enum class MixedPacket { held(Descriptor region), absent };
+MixedPacket mixed_packet(bool choose, void* old) {
+  if (choose) { return MixedPacket::held(fresh_descriptor()); }
+  return MixedPacket::held(Descriptor(old));
+}
+)",
+                   "MixedPacket packet = mixed_packet(true, old_pointer); "
+                   "switch (std::move(packet)) { "
+                   "case MixedPacket::held(region): unsafe { "
+                   "release_pointer(region.address); } break; "
+                   "case MixedPacket::absent: break; }\n",
+                   false);
+  descriptorControls &= freshControl(
+      "payload-shared-token.gti", descriptor + R"(
+enum class PairPacket { absent, held(Descriptor left, Descriptor right) };
+PairPacket allocate_pair_packet() {
+  void* p = fresh_pointer();
+  return PairPacket::held(Descriptor(p), Descriptor(p));
+}
+)",
+      "PairPacket packet = allocate_pair_packet(); switch (std::move(packet)) "
+      "{ "
+      "case PairPacket::held(left, right): unsafe { "
+      "release_pointer(left.address); release_pointer(right.address); } break; "
+      "case PairPacket::absent: break; }\n",
+      false);
+  descriptorControls &=
+      freshControl("payload-opaque-error-path.gti", descriptor + R"(
+extern "C" { void packet_callback(); }
+enum class CallbackPacket { absent, held(Descriptor region) };
+CallbackPacket allocate_callback_packet(bool good) {
+  if (good) { return CallbackPacket::held(fresh_descriptor()); }
+  unsafe { packet_callback(); }
+  return CallbackPacket::absent;
+}
+)",
+                   "CallbackPacket packet = allocate_callback_packet(true); "
+                   "switch (std::move(packet)) { "
+                   "case CallbackPacket::held(region): unsafe { "
+                   "release_pointer(region.address); } break; "
+                   "case CallbackPacket::absent: break; }\n",
+                   false);
+  const std::string tokenBox = descriptor + R"(
+class TokenBox {
+  Descriptor region;
+public:
+  TokenBox(Descriptor region) : region(region) {}
+  Descriptor observe() { return this.region; }
+  void release() { unsafe { release_pointer(this.region.address); } }
+};
+)";
+  descriptorControls &=
+      freshControl("readonly-receiver-release.gti", tokenBox,
+                   "TokenBox box{fresh_descriptor()}; box.release();\n", true);
+  descriptorControls &= freshControl(
+      "readonly-receiver-result.gti", tokenBox,
+      "TokenBox box{fresh_descriptor()}; Descriptor region = box.observe(); "
+      "unsafe { release_pointer(region.address); }\n",
+      true);
+  descriptorControls &= freshControl(
+      "readonly-receiver-incoming.gti",
+      tokenBox + "mut void* old_pointer = nullptr;\n",
+      "TokenBox box{Descriptor(old_pointer)}; box.release();\n", false);
+  descriptorControls &=
+      freshControl("readonly-receiver-alias.gti", tokenBox,
+                   "Descriptor region = fresh_descriptor(); TokenBox "
+                   "left{region}; TokenBox right{region}; "
+                   "left.release(); right.release();\n",
+                   false);
+  descriptorControls &=
+      freshControl("receiver-write-remains-opaque.gti", descriptor + R"(
+mut void* old_pointer = nullptr;
+class MutableTokenBox { mut Descriptor region; public:
+  MutableTokenBox(Descriptor region) : region(region) {}
+  void replace(Descriptor region) mut { this.region = region; }
+  void release() { unsafe { release_pointer(this.region.address); } }
+};
+)",
+                   "mut MutableTokenBox box{fresh_descriptor()}; "
+                   "box.replace(Descriptor(old_pointer)); box.release();\n",
+                   false);
+  descriptorControls &= freshControl(
+      "receiver-callback.gti", descriptor + R"(
+extern "C" { void receiver_callback(); }
+class CallbackTokenBox { Descriptor region; public:
+  CallbackTokenBox(Descriptor region) : region(region) {}
+  void release() { unsafe { receiver_callback(); release_pointer(this.region.address); } }
+};
+)",
+      "CallbackTokenBox box{fresh_descriptor()}; box.release();\n", false);
   if (!descriptorControls)
     return 1;
   const auto discharges = [&](const std::string &name) {

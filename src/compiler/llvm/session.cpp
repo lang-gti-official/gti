@@ -989,9 +989,8 @@ BackendArtifact Session::emitObject() {
   pipeline.run(module_, modules);
   if (level == llvm::OptimizationLevel::O2 ||
       level == llvm::OptimizationLevel::O3) {
-    const bool invariant = foldInductivePointerLoops(module_) != 0;
     const bool specialized = specializeBoundedRecursion(module_);
-    if (specialized || invariant)
+    if (specialized)
       modules.invalidate(module_, llvm::PreservedAnalyses::none());
     // Inlining exposes complete checked-failure/cleanup regions only after
     // the ordinary pipeline has simplified their ownership state. Outline
@@ -1000,12 +999,21 @@ BackendArtifact Session::emitObject() {
     // erased or assigned invented likelihood, and there is no retry loop.
     const auto outlined = llvm::HotColdSplittingPass().run(module_, modules);
     modules.invalidate(module_, outlined);
-    if (specialized || invariant || !outlined.areAllPreserved()) {
+    const auto optimizeExposed = [&] {
       auto exposed = builder.buildModuleSimplificationPipeline(
           level, llvm::ThinOrFullLTOPhase::None);
       exposed.addPass(builder.buildModuleOptimizationPipeline(
           level, llvm::ThinOrFullLTOPhase::None));
       exposed.run(module_, modules);
+    };
+    if (specialized || !outlined.areAllPreserved())
+      optimizeExposed();
+    // The smaller helpers above can now inline and create pointer PHIs that
+    // did not exist after the first pipeline. Prove those late loop invariants
+    // before one final ordinary cleanup round; do not retry to a fixed point.
+    if (foldInductivePointerLoops(module_)) {
+      modules.invalidate(module_, llvm::PreservedAnalyses::none());
+      optimizeExposed();
     }
   }
   reuseCheckedArithmeticResults(module_);

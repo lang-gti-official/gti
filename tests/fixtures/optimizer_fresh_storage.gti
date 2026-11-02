@@ -42,7 +42,15 @@ public:
 NativeAllocationDescriptor native_descriptor() {
   return NativeAllocationDescriptor(fresh_pointer());
 }
+class NativeTokenBox {
+  NativeAllocationDescriptor region;
+public:
+  NativeTokenBox(NativeAllocationDescriptor region) : region(region) {}
+  void release() { unsafe { release_pointer(this.region.address); } }
+};
 void descriptor_scratch() {
+  NativeTokenBox box{native_descriptor()};
+  box.release();
   NativeAllocationDescriptor first = native_descriptor();
   NativeAllocationDescriptor second = native_descriptor();
   unsafe {
@@ -50,11 +58,27 @@ void descriptor_scratch() {
     release_pointer(second.address);
   }
 }
+enum class NativeAllocationPacket { absent, held(NativeAllocationDescriptor region) };
+NativeAllocationPacket native_packet(bool good) {
+  if (good) { return NativeAllocationPacket::held(native_descriptor()); }
+  return NativeAllocationPacket::absent;
+}
+void payload_scratch(bool good) {
+  NativeAllocationPacket packet = native_packet(good);
+  switch (std::move(packet)) {
+  case NativeAllocationPacket::held(region):
+    unsafe { release_pointer(region.address); }
+    break;
+  case NativeAllocationPacket::absent: break;
+  }
+}
 int32_t fresh_probe(int32_t value) {
   mut PrefixParcel parcel{};
   parcel.append(value);
   fresh_scratch();
   descriptor_scratch();
+  payload_scratch(true);
+  payload_scratch(false);
   return parcel.borrow() * int32_t(2);
 }
 int main(int argc, std::vector<std::string> argv) {

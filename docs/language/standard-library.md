@@ -983,9 +983,15 @@ traversal carries one exclusive dependency. `map` additionally provides
 `bucket_count`, `load_factor`, and read/write `max_load_factor`; a new finite,
 positive maximum applies to later growth/reserve/rehash without immediately
 rehashing existing elements.
-`reserve(n)` prepares both the bucket array and the owning node-index array for
-at least `n` entries. Entry objects are still allocated separately; reserving
-does not construct keys or values or change the container's size.
+`reserve(n)` prepares the bucket array and owning page index for at least `n`
+entries. Hash nodes share checked typed-storage pages and keep their final
+addresses across page-index growth, rehashing and movement of the owner. A page
+holds 64 nodes of at most 64 bytes, 16 nodes of at most 256 bytes, or one larger
+node; this bounds spare payload storage for large element types. Erased slots
+are reused, and each live node is destroyed exactly once in reverse slot order
+when clearing or dropping the owner. Reserving does not construct keys or
+values or change the container's size. These internal stable addresses do not
+relax the whole-container borrow rules above.
 
 Name a specialized member type through a concrete alias, for example
 `using Dictionary = std::map<int, int>;` followed by `Dictionary::iterator`.
@@ -1082,12 +1088,8 @@ quicksort partitions (a median of three sampled medians for ranges longer
 than 40), insertion sort for ranges of at most 16 elements, and heapsort for
 any range that exhausts 2*floor(log2(n)) partition levels. Comparisons are
 O(n log n) in the worst case, auxiliary storage is a fixed-size stack, and
-general elements move by restoring swaps, without copying a pivot or cloning
-elements. Numeric insertion partitions using the default relation instead keep
-one scalar key and shift its larger predecessors once: scalar copies and builtin
-comparison cannot call user code or fail while the key is displaced. Custom
-comparators and nonnumeric elements retain restoring swaps. Sort is not stable.
-The default relation requires `std::totally_ordered<T>`; an
+elements move only by restoring swaps, without copying a pivot or cloning
+elements. It is not stable. The default relation requires `std::totally_ordered<T>`; an
 explicit comparator must satisfy `std::comparator<Compare, T>` and define a
 strict weak ordering. Each comparison borrows elements read-only, ending those
 loans before any swap. Internal sorting ranges prove every read and exchange
