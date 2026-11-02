@@ -214,6 +214,48 @@
       }
     },
     {
+      "id": "algorithm-search-array",
+      "mode": "run",
+      "source": "tests/fixtures/algorithm_search_array.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "algorithm-search-deque",
+      "mode": "run",
+      "source": "tests/fixtures/algorithm_search_deque.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "algorithm-search-list",
+      "mode": "run",
+      "source": "tests/fixtures/algorithm_search_list.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
       "id": "algorithm-user-types",
       "mode": "run",
       "source": "tests/fixtures/algorithm_user_types.gti",
@@ -2992,6 +3034,9 @@
         "algorithm-boundaries",
         "algorithm-mutation",
         "algorithm-search",
+        "algorithm-search-list",
+        "algorithm-search-deque",
+        "algorithm-search-array",
         "algorithm-user-types",
         "constexpr-library",
         "algorithm-ordered-search",
@@ -3026,7 +3071,10 @@
         "tests/fixtures/ordered_search.gti",
         "tests/fixtures/ordered_search_user_types.gti",
         "examples/139-ordered-search.gti",
-        "stdlib/std/algorithm.gti"
+        "stdlib/std/algorithm.gti",
+        "tests/fixtures/algorithm_search_list.gti",
+        "tests/fixtures/algorithm_search_deque.gti",
+        "tests/fixtures/algorithm_search_array.gti"
       ]
     },
     {
@@ -3109,6 +3157,7 @@
       "case_ids": [
         "array",
         "algorithm-search",
+        "algorithm-search-array",
         "algorithm-mutation",
         "algorithm-user-types",
         "constexpr-operators",
@@ -3126,7 +3175,8 @@
         "tests/fixtures/algorithm_mutation.gti",
         "tests/fixtures/algorithm_user_types.gti",
         "stdlib/std/array.gti",
-        "tests/fixtures/stdlib_surface_container_aliases.gti"
+        "tests/fixtures/stdlib_surface_container_aliases.gti",
+        "tests/fixtures/algorithm_search_array.gti"
       ]
     },
     {
@@ -3597,6 +3647,7 @@
       ],
       "case_ids": [
         "algorithm-search",
+        "algorithm-search-deque",
         "algorithm-mutation",
         "algorithm-user-types",
         "complete-containers-collection",
@@ -3612,7 +3663,8 @@
       "evidence": [
         "tests/complete_containers_test.py",
         "tests/fixtures/complete_containers_ownership.gti",
-        "tests/fixtures/stdlib_surface_container_aliases.gti"
+        "tests/fixtures/stdlib_surface_container_aliases.gti",
+        "tests/fixtures/algorithm_search_deque.gti"
       ]
     },
     {
@@ -4738,6 +4790,7 @@
       ],
       "case_ids": [
         "algorithm-search",
+        "algorithm-search-list",
         "algorithm-mutation",
         "algorithm-user-types",
         "complete-containers-collection",
@@ -4754,7 +4807,8 @@
       "evidence": [
         "tests/complete_containers_test.py",
         "tests/fixtures/complete_containers_ownership.gti",
-        "tests/fixtures/stdlib_surface_container_aliases.gti"
+        "tests/fixtures/stdlib_surface_container_aliases.gti",
+        "tests/fixtures/algorithm_search_list.gti"
       ]
     },
     {
