@@ -65,6 +65,7 @@ tests = [
   "macos_installed_runtime",
   "macro_neovim_syntax",
   "neovim_lsp_configuration",
+  "neovim_gtiup",
   "optimizer_coverage_growth",
   "runtime_synchronization",
   "shared_ownership_instrumented",
@@ -1866,3 +1867,17 @@ reason = "non-gating diagnostic tools for investigating failures; bugs they find
 [[unowned]]
 paths = ["scripts/highlight-inspector/"]
 reason = "interactive Neovim highlight comparison tool run by hand"
+
+[[area]]
+area = "toolchain-manager"
+paths = ["scripts/gtiup.py"]
+owners = ["gtiup", "neovim_gtiup"]
+consumers = ["ci_release", "neovim_lsp_configuration"]
+risk = "system"
+
+[[area]]
+area = "preview-release"
+paths = ["scripts/preview_release.py", ".github/workflows/preview.yml"]
+owners = ["preview_release", "ci_release"]
+consumers = ["preview_workflow", "gtiup"]
+risk = "system"

@@ -1,6 +1,9 @@
 local M = {}
 
 local configured = false
+local configured_parser
+local managed_registered = false
+local reported_parsers = {}
 
 local function start_buffer(buffer)
   local ok = pcall(vim.treesitter.start, buffer, "gti")
@@ -14,12 +17,46 @@ local function start_buffer(buffer)
   end
 end
 
-function M.setup(toolchain)
-  if configured then
+function M.setup(toolchain, opts)
+  if toolchain.managed() and not opts then
+    if not managed_registered then
+      managed_registered = true
+      vim.api.nvim_create_autocmd("FileType", {
+        group = vim.api.nvim_create_augroup("gti_treesitter_managed", { clear = true }),
+        pattern = "gti",
+        callback = function(args)
+          local name = vim.api.nvim_buf_get_name(args.buf)
+          if M.setup(toolchain, { cwd = name ~= "" and vim.fs.dirname(name) or nil }) then
+            start_buffer(args.buf)
+          else
+            pcall(vim.treesitter.stop, args.buf, "gti")
+          end
+        end,
+      })
+      for _, buffer in ipairs(vim.api.nvim_list_bufs()) do
+        if vim.api.nvim_buf_is_loaded(buffer) and vim.bo[buffer].filetype == "gti" then
+          local name = vim.api.nvim_buf_get_name(buffer)
+          if M.setup(toolchain, { cwd = name ~= "" and vim.fs.dirname(name) or nil }) then
+            start_buffer(buffer)
+          end
+        end
+      end
+    end
     return true
   end
-
-  local parser = toolchain.parser()
+  local parser = toolchain.parser(opts)
+  if configured_parser then
+    if parser == configured_parser then return configured end
+    -- Neovim's grammar is process-global; never silently parse another
+    -- toolchain's source using a different grammar already loaded in this UI.
+    local key = parser or "unavailable"
+    if not reported_parsers[key] then
+      reported_parsers[key] = true
+      vim.notify("GTI project selects a different or unavailable Tree-sitter parser; "
+        .. "using regex syntax for this buffer. Open the project in a separate Neovim instance.", vim.log.levels.WARN)
+    end
+    return false
+  end
   if not parser then
     return false
   end
@@ -31,6 +68,8 @@ function M.setup(toolchain)
     end)
     return false
   end
+
+  configured_parser = parser
 
   -- The parser comes from the released toolchain while the queries come from
   -- this checkout, so an update can leave the two disagreeing until Neovim
@@ -58,6 +97,8 @@ function M.setup(toolchain)
   end
 
   configured = true
+  configured_parser = parser
+  if toolchain.managed() then return true end
   vim.api.nvim_create_autocmd("FileType", {
     group = vim.api.nvim_create_augroup("gti_treesitter", { clear = true }),
     pattern = "gti",

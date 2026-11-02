@@ -3524,6 +3524,10 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}"
             --cmake "${CMAKE_COMMAND}"
   )
+  add_test(NAME gtiup
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/gtiup_test.py")
+  add_test(NAME preview_release
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/preview_release_test.py")
   add_test(
     NAME release_train
     COMMAND "${Python3_EXECUTABLE}"
@@ -6016,6 +6020,11 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(lsp_test_target PROPERTIES TIMEOUT 90)
     find_program(GTI_NEOVIM_EXECUTABLE nvim)
     if(GTI_NEOVIM_EXECUTABLE)
+      add_test(NAME neovim_gtiup
+        COMMAND "${CMAKE_COMMAND}" -E env
+                "GTI_TEST_REPOSITORY=${PROJECT_SOURCE_DIR}"
+                "${GTI_NEOVIM_EXECUTABLE}" --headless -u NONE -i NONE
+                -l "${PROJECT_SOURCE_DIR}/tests/nvim_gtiup_test.lua")
       add_test(
         NAME neovim_lsp_configuration
         COMMAND "${CMAKE_COMMAND}" -E env

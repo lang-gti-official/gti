@@ -463,9 +463,102 @@ The host target is used by default. Select `--target` when generating for a
 different supported 64-bit target so C implementation-defined widths such as
 `long` use the correct LP64 or LLP64 model.
 
+## Install and select GTI with gtiup
+
+`gtiup` manages matching compiler, LSP, standard library, runtime and parser
+versions on macOS arm64 and Linux x64. Bootstrap it with Python 3.9 or newer
+from this checkout:
+
+```sh
+python3 scripts/gtiup.py self-install
+export PATH="$HOME/.gtiup/bin:$PATH" # also add this to your shell configuration
+# Choose explicitly; this downloads the selected complete toolchain.
+gtiup default nightly
+```
+
+The bootstrap installs only the manager and command proxies; it does not edit
+shell files or replace existing commands. For a custom location set `GTIUP_HOME`
+before bootstrap and keep it set when using that installation.
+
+```sh
+gtiup install preview       # combined features, before main's full review/CI
+gtiup install beta          # newest published beta
+gtiup install stable        # newest published stable
+gtiup update nightly       # replace this channel's selected build atomically
+gtiup list
+gtiup show
+gti +preview --version
+gtiup run nightly gti_lsp --version
+gtiup which gti             # real executable, useful to editor integrations
+```
+
+A channel must have a published toolchain before it can be installed. There is
+no fallback to another channel if beta/stable/preview is not yet published.
+`gtiup install 0.12.0` pins a published stable version; a beta can be pinned as
+`0.12.0-beta.1`. Put a channel or version on one line in a project's
+`gti-toolchain` file to select it for that directory and its descendants.
+Selection precedence is command `+channel` (or `gtiup run`),
+`GTIUP_TOOLCHAIN`, the nearest `gti-toolchain`, then the user default.
+Commands never download implicitly; install the selected channel first.
+
+Preview downloads come from the rolling `preview` prerelease. Each includes the
+exact combined commit and feature inclusion manifest; preview is separate from
+nightly's successful full-integration requirement. Published archive checksums
+and embedded source/version identity are checked before activation. A failed
+or interrupted update leaves the previous selection intact. Stable yanks and
+beta withdrawals are checked on install/update; offline invocation uses the
+already installed version. These downloads use HTTPS and checksum verification;
+`gtiup` does not independently verify GitHub attestations.
+
+`gtiup uninstall <channel-or-version>` removes that selection (choose another
+default first). Immutable directories are retained so running compiler/LSP
+processes can still access their resources. `gtiup gc` removes unreferenced
+managed directories when you explicitly request it; close running GTI/LSP
+processes before garbage collection. Existing developer builds and Neovim
+configurations are not modified.
+
 ## Neovim and LazyVim
 
-GTI is a standard Lazy plugin. It downloads the matching released compiler,
+Use `gtiup` to install and select the toolchain, and the Lazy plugin to configure
+Neovim. The language server shares the compiler's frontend and standard library;
+`gtiup` installs the compiler, LSP, runtime, standard library and Tree-sitter
+parser together. Neovim does not need a separate LSP installer.
+
+After installing `gtiup` and a toolchain, use:
+
+```lua
+return {
+  {
+    "https://github.com/lang-gti-official/gti.git",
+    name = "gti",
+    version = false,
+    build = false,
+    init = function()
+      vim.g.gti_toolchain = "gtiup"
+    end,
+  },
+}
+```
+
+Keep `gtiup` on Neovim's `PATH`, or set `GTIUP_PATH` to its executable. Managed
+mode resolves `gtiup which gti_lsp` from each LSP project's root, so the manager's
+`GTIUP_TOOLCHAIN`, ancestor `gti-toolchain` file and user default selection apply.
+It never installs a missing channel automatically or falls back to an old
+plugin-local compiler. `:GTIInfo` reports the selected compiler, LSP and parser.
+Restart the LSP after changing a project's selection. Existing `GTI_PATH`,
+`GTI_LSP_PATH` and `GTI_TREE_SITTER_PATH` overrides remain authoritative; remove
+old overrides when migrating if they should no longer pin a developer build.
+
+Old `toolchain/` installations are preserved but ignored in managed mode; the
+plugin no longer prepends their binaries to `PATH`. The editor can launch
+separate LSP versions for separate projects. Neovim loads one GTI Tree-sitter
+grammar per process: a project selecting a different parser uses regex syntax
+and asks you to open it in a separate Neovim instance. Query incompatibility
+also falls back to regex syntax, while compiler-backed LSP features remain
+available.
+
+The legacy self-installing Lazy configuration remains available for existing
+setups. Without managed mode it downloads the matching released compiler,
 language server, standard library, runtime, and native Tree-sitter parser:
 
 ```lua
