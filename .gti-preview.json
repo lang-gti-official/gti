@@ -146,10 +146,29 @@
         "140b931121286628a3eb48e3c2d942ead81cab86"
       ],
       "merge": "140b931121286628a3eb48e3c2d942ead81cab86"
+    },
+    {
+      "task": "lambda-reference-returns",
+      "pr": 133,
+      "head": "b57f0f7526e3a3e9e574d5ddddeb070f73fbeabf",
+      "tests": [
+        "lambda_reference",
+        "borrow_origin",
+        "borrow_origin_syntax",
+        "lambda_formatting",
+        "borrowing_callbacks_lsp",
+        "borrowing_capture_semantics",
+        "borrowing_callbacks_mir",
+        "llvm_callable_execution"
+      ],
+      "contributions": [
+        "b25738bc7c0e7b122cf4757a8c594b907207d010"
+      ],
+      "merge": "b25738bc7c0e7b122cf4757a8c594b907207d010"
     }
   ],
   "removed": [],
-  "main": "6be28dbe6ef4f5ad050dbdb5ad1d1935e00e6a63",
-  "previous": "fb22c3e1ec6c3fe4c4caf2867700525da50aae70",
-  "candidate": "b7c5177975944ce59c02ee4a4b5646b0"
+  "main": "e4f231574320d2182654b35de956ae52bb333d63",
+  "previous": "096cdd2b407d0d9f9f36b6352c7977f59fdef9f8",
+  "candidate": "0e0d9ea8c2a1418c865fb408eb8b69b7"
 }
