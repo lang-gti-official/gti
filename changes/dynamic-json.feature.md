@@ -1,0 +1,1 @@
+Add owned dynamic JSON values for documents whose keys and value kinds are known only at runtime. Build objects and arrays, inspect and update checked values, explicitly clone trees, and parse or serialize them with the existing JSON APIs, including dynamic subtrees inside reflected structs.

@@ -1,0 +1,108 @@
+import std.json;
+import std.string;
+import std.vector;
+import std.utility;
+
+namespace json = std::json;
+
+struct envelope {
+  std::string name{};
+  json::value payload{};
+public:
+  envelope() = default;
+};
+
+bool rejects(std::string_view text, json::errc code) {
+  auto result = json::decode<json::value>(text);
+  return !result && result.error().code == code;
+}
+
+int main() {
+  mut auto row = json::value::object();
+  row.set(std::string("country"), json::value("Australia"));
+  row.set(std::string("count"), json::value(27));
+  row.set(std::string("active"), json::value(true));
+  row.set(std::string("missing"), json::value());
+  row.set(std::string("fraction"), json::value(1.25));
+  mut auto rows = json::value::array();
+  rows.push_back(std::move(row));
+  auto text = json::encode(rows);
+  if (!text || text.value() != "[{\"active\":true,\"count\":27,\"country\":\"Australia\",\"fraction\":1.25,\"missing\":null}]") { return 1; }
+  mut auto parsed = json::decode<json::value>(text.value().view());
+  if (!parsed) { return 2; }
+  std::string country{"country"};
+  std::string count{"count"};
+  if (parsed.value().at(std::size_t(0)).at(country).as_string() != "Australia") { return 3; }
+  mut auto independent = parsed.value().clone();
+  independent.at_mut(std::size_t(0)).set(country.clone(), json::value("France"));
+  independent.at_mut(std::size_t(0)).at_mut(count) = json::value(42);
+  if (parsed.value().at(std::size_t(0)).at(country).as_string() != "Australia" ||
+      independent.at(std::size_t(0)).at(count).as_int64() != int64_t(42)) { return 4; }
+  auto pretty = json::encode_pretty(independent);
+  if (!pretty || !pretty.value().contains("\n")) { return 5; }
+  auto again = json::decode<json::value>(pretty.value().view());
+  if (!again || !again.value().is_array()) { return 6; }
+
+  auto numbers = json::decode<json::value>("[-9223372036854775808,9223372036854775807,18446744073709551615,0,-0,1.5,2e3]");
+  if (!numbers) { return 7; }
+  if (numbers.value().at(std::size_t(0)).as_int64() != (-int64_t(9223372036854775807) - int64_t(1)) ||
+      numbers.value().at(std::size_t(1)).as_int64() != int64_t(9223372036854775807) ||
+      numbers.value().at(std::size_t(2)).as_uint64() != uint64_t(18446744073709551615) ||
+      numbers.value().at(std::size_t(5)).as_double() != 1.5 ||
+      numbers.value().at(std::size_t(6)).as_double() != 2000.0) { return 8; }
+  auto encoded_numbers = json::encode(numbers.value());
+  if (!encoded_numbers || !encoded_numbers.value().contains("18446744073709551615")) { return 9; }
+  if (!rejects("18446744073709551616", json::errc::number_out_of_range) ||
+      !rejects("-9223372036854775809", json::errc::number_out_of_range) ||
+      !rejects("1e9999", json::errc::number_out_of_range)) { return 10; }
+  if (!rejects("[01]", json::errc::invalid_number) ||
+      !rejects("[1,]", json::errc::unexpected_character) ||
+      !rejects("{\"a\":1,}", json::errc::unexpected_character) ||
+      !rejects("null false", json::errc::trailing_characters) ||
+      !rejects("", json::errc::unexpected_end) ||
+      !rejects("{\"a\":1,\"a\":2}", json::errc::duplicate_key) ||
+      !rejects("\"\\uD800\"", json::errc::invalid_unicode) ||
+      !rejects("\"\\q\"", json::errc::invalid_escape)) { return 11; }
+  auto nested_error = json::decode<json::value>("{\"a/b\":[{\"~key\":01}]}");
+  if (nested_error || nested_error.error().path != "/a~1b/0/~0key" ||
+      !nested_error.error().has_source_location()) { return 12; }
+  auto unicode = json::decode<json::value>("{\"\\u0061\":\"\\uD83D\\uDE00\\u0000x\"}");
+  std::string a{"a"};
+  if (!unicode || unicode.value().at(a).as_string().size() != std::size_t(6)) { return 13; }
+  if (!rejects("{\"a\":0,\"\\u0061\":1}", json::errc::duplicate_key)) { return 14; }
+  mut json::decode_options options{};
+  options.set_max_depth(std::size_t(1));
+  if (!json::decode<json::value>("[0]", options) ||
+      json::decode<json::value>("[[]]", options)) { return 15; }
+  options.set_max_document_bytes(std::size_t(2));
+  auto too_big = json::decode<json::value>("null", options);
+  if (too_big || too_big.error().code != json::errc::document_too_large) { return 16; }
+
+  // A reflected struct can contain a dynamic subtree without a custom codec.
+  auto wrapped = json::decode<envelope>("{\"name\":\"csv\",\"payload\":[true,{\"x\":null}]}");
+  if (!wrapped || !wrapped.value().payload.at(std::size_t(0)).as_bool()) { return 17; }
+  auto wrapped_text = json::encode(wrapped.value());
+  if (!wrapped_text || wrapped_text.value() != "{\"name\":\"csv\",\"payload\":[true,{\"x\":null}]}") { return 18; }
+
+  auto written = json::write_file("dynamic.json", independent);
+  if (!written) { return 21; }
+  auto from_file = json::read_file<json::value>("dynamic.json");
+  if (!from_file || from_file.value().at(std::size_t(0)).at(count).as_int64() != int64_t(42)) { return 22; }
+  mut auto deep = json::value::array();
+  for (mut int depth = 0; depth < 128; depth++) {
+    mut auto outer = json::value::array();
+    outer.push_back(std::move(deep));
+    deep = std::move(outer);
+  }
+  auto limited = json::encode(deep);
+  if (limited || limited.error().code != json::errc::nesting_limit) { return 23; }
+
+  // Replacement drops the complete old subtree, and null has no allocation.
+  independent = json::value();
+  if (!independent.is_null()) { return 19; }
+  mut auto empty_object = json::value::object();
+  mut auto empty_array = json::value::array();
+  if (empty_object.as_object().size() != std::size_t(0) ||
+      empty_array.as_array().size() != std::size_t(0)) { return 20; }
+  return 0;
+}
