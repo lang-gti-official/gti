@@ -176,8 +176,8 @@ the checks at any point; cost controls never waive the resulting obligations.
 
 ## Report The Result
 
-Record the focused checks with `verify`, then hand the task to the merge queue
-with `finish`. Report "focused validation passed; complete suite deferred to
+Record the focused checks with `verify`, then hand the task to integration
+with `finish` (rollup, native merge-when-ready, or queue entry). Report "focused validation passed; complete suite deferred to
 the merge queue", with the exact source, risk tier and rationale, tests,
 before-fix evidence, platforms and retained logs. A complete-suite failure in
 the queue is attributed to the change that introduced it; helpers may assist
@@ -206,5 +206,5 @@ Do not call a change verified while a required gate is failing or unrun. State
 evidence outstanding.
 
 The merge queue's `CI gate` is the required integration gate. Do not poll it or
-duplicate it locally; report the PR as queued, and report a queue failure
+duplicate it locally; report the confirmed handoff as awaiting CI or queued, and report a queue failure
 honestly rather than as a pass.

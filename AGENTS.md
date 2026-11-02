@@ -199,9 +199,14 @@ not a C++ wrapper, and neither backend defines its semantics.
 - Use `scripts/agent_workflow.py` for lifecycle operations. `finish` marks the
   PR ready and either labels it for a rollup (phase `rollup`), which the rollup
   bot combines with other green PRs into one queue entry, or, for Risk-system
-  diffs and `--no-rollup`, adds it to the merge queue alone pinned to the
-  verified head (phase `queued`). Both are completion points; the queue merges
-  asynchronously and `sync` advances local `main` once it lands.
+  diffs and `--no-rollup`, registers GitHub merge-when-ready for the verified
+  head. GitHub waits for required PR checks/reviews (`awaiting-ci`) and enters
+  the merge queue (`queued`) automatically. `rollup`, `awaiting-ci` and `queued`
+  are completion points with recorded focused validation; do not poll healthy
+  CI or retry `finish` just to enter the queue. Failures/conflicts still need
+  repair. Use helper checkpoints/reconciliation for later edits: they withdraw
+  pending merge intent before publishing a new head, which needs fresh validation.
+  `sync` advances local `main` once GitHub merges the PR.
   Reconcile only to resolve conflicts: an advancing `main` does not void
   focused evidence. No direct pushes to `main`, rewritten shared history, or
   administrative bypasses. The owner authorizes the helper's
