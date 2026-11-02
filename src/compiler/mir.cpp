@@ -9304,6 +9304,34 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
     const MirBlock *increment = body.findBlock(range.incrementBlock);
     const MirBlock *cleanup = body.findBlock(range.cleanupBlock);
     const MirBlock *exit = body.findBlock(range.exitBlock);
+    if (range.strategy == RangeIterationStrategy::Consuming) {
+      if (range.id != index + 1 || range.hirStatement == 0 ||
+          !sourceRanges.insert(range.hirStatement).second || range.coreLoop == 0 ||
+          !ownerPlace || !iteratorPlace || !elementPlace || !conditionEntry ||
+          !condition || !bodyBlock || !increment || !cleanup || !exit ||
+          ownerPlace->type != range.rangeType ||
+          iteratorPlace->type != range.iteratorType ||
+          ownerPlace->type != iteratorPlace->type ||
+          iteratorPlace->access != AccessMode::Mutable ||
+          elementPlace->type != range.elementType ||
+          elementPlace->type.kind == SemanticType::Reference ||
+          ownerPlace->type.kind == SemanticType::Reference ||
+          !range.ownsRangeTemporary || range.rangeCarrier != 0 ||
+          range.sentinel != 0 || range.rangeLoan != 0 || range.elementLoan != 0 ||
+          range.elementOwner != 0 || range.elementOwnerLoan != 0 ||
+          range.materializesElementValue || range.endpointParking ||
+          range.dereferenceFunction == 0 ||
+          condition->terminator.kind != MirTerminatorKind::Branch ||
+          condition->terminator.target != range.bodyBlock ||
+          increment->terminator.kind != MirTerminatorKind::Goto ||
+          increment->terminator.target != range.conditionEntryBlock ||
+          cleanup->terminator.kind != MirTerminatorKind::Goto ||
+          cleanup->terminator.target != range.exitBlock) {
+        return failure(body, owner,
+                       "consuming range lost its owned cursor/value control flow");
+      }
+      continue;
+    }
     if (range.id != index + 1 || range.hirStatement == 0 ||
         !sourceRanges.insert(range.hirStatement).second ||
         range.coreLoop == 0 || ownerPlace == nullptr || rangePlace == nullptr ||

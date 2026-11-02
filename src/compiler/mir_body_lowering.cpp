@@ -14846,7 +14846,8 @@ private:
                              ? MirPlaceId{0}
                              : placeForBinding(sourceRange.elementOwner),
          .elementOwnerStatement = sourceRange.elementOwnerStatement,
-         .rangeLoan = loanFor(sourceRange.rangeLoan, true),
+         .rangeLoan = loanFor(sourceRange.rangeLoan,
+                             sourceRange.strategy != RangeIterationStrategy::Consuming),
          .elementLoan =
              [&] {
                if (isPhysicalProxyRangeProtocolBinding(sourceRange.element)) {

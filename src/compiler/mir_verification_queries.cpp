@@ -980,6 +980,51 @@ bool objectRelocate(const MirProgram &program,
   return instruction == exact;
 }
 
+bool objectTake(const MirProgram &program, const MirInstruction &instruction) {
+  if (instruction.kind != MirInstructionKind::Call ||
+      instruction.intrinsic != IntrinsicKind::ObjectTake || !instruction.result ||
+      instruction.unsafeOperation != UnsafeOperationKind::ObjectLifetime ||
+      instruction.info.category != ValueCategory::Value ||
+      instruction.info.access != AccessMode::ReadOnly ||
+      instruction.info.traits.containsBorrowedState ||
+      instruction.info.updateArithmeticType != SemanticType::Unknown ||
+      instruction.operands.size() != 1 || instruction.parameterTypes.size() != 1)
+    return false;
+  const auto &pointer = instruction.parameterTypes.front();
+  const auto &element = instruction.info.type;
+  if (pointer != SemanticType::rawPointerTo(element, AccessMode::Mutable) ||
+      !completeObjectType(program, element) ||
+      mirTypeRelocationKind(program, element) == RelocationKind::Unavailable ||
+      !mirTypeRelocationIsDefinedFailureFree(program, element) ||
+      instruction.operands[0].kind != MirOperandKind::Value ||
+      instruction.operands[0].type != pointer)
+    return false;
+  // The result creates one ordinary owned temporary. The general lifecycle
+  // verifier binds its obligation to this exact result and checks every exit;
+  // taking raw storage cannot consume a checked source obligation here.
+  if (instruction.lifecycle.size() > 1 ||
+      std::any_of(instruction.lifecycle.begin(), instruction.lifecycle.end(),
+                  [](const MirLifecycleEvent &event) {
+                    return event.kind != MirLifecycleEventKind::Initialize ||
+                           event.source != 0 || event.target == 0 ||
+                           event.conditional || event.failureCleanup;
+                  }))
+    return false;
+  const MirInstruction exact{.id = instruction.id,
+                             .kind = MirInstructionKind::Call,
+                             .hirValue = instruction.hirValue,
+                             .hirStatement = instruction.hirStatement,
+                             .callSite = instruction.callSite,
+                             .unsafeOperation = UnsafeOperationKind::ObjectLifetime,
+                             .result = instruction.result,
+                             .operands = instruction.operands,
+                             .parameterTypes = instruction.parameterTypes,
+                             .intrinsic = instruction.intrinsic,
+                             .info = instruction.info,
+                             .lifecycle = instruction.lifecycle};
+  return instruction == exact;
+}
+
 bool objectDestroy(const MirProgram &program,
                    const MirInstruction &instruction) {
   if (instruction.kind != MirInstructionKind::Call ||

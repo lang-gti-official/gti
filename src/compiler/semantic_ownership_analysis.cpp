@@ -7325,6 +7325,9 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
     if (name == "object_relocate_range") {
       return IntrinsicKind::ObjectRelocateRange;
     }
+    if (name == "object_take") {
+      return IntrinsicKind::ObjectTake;
+    }
     if (name == "text_view_from_address") {
       return IntrinsicKind::TextViewFromAddress;
     }
@@ -14779,6 +14782,41 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
                                .borrowOrigin = BorrowOriginKind::Argument,
                                .borrowArgument = witness,
                                .borrowAccess = AccessMode::ReadOnly});
+    bindIntrinsicCallDeclaration(expr, declaration);
+    return;
+  }
+  if (intrinsic == IntrinsicKind::ObjectTake) {
+    std::vector<SemanticType> arguments;
+    for (const ExprPtr &argument : expr.arguments())
+      arguments.push_back(analyze(argument));
+    requireUnsafe(expr, UnsafeOperationKind::ObjectLifetime, expr.paren(),
+                  "Taking ownership of a raw object");
+    if (arguments.size() != 1 || !expr.typeArguments().empty() ||
+        arguments[0].kind != SemanticType::RawPointer ||
+        arguments[0].pointerAccess != AccessMode::Mutable ||
+        arguments[0].arguments.size() != 1) {
+      report(expr.paren(),
+             "Taking a raw object requires one writable pointer to its complete "
+             "object type.", "GTI-S2019");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    const auto &element = arguments[0].arguments.front();
+    if (!containsOpenTypeParameter(element) &&
+        (!runtimeObjectLayoutType(element) ||
+         typeTraits(element).containsBorrowedState ||
+         typeTraits(element).relocation == RelocationKind::Unavailable)) {
+      report(expr.paren(),
+             "Taking a raw object requires a complete relocatable type without "
+             "checked borrowed state.", "GTI-S2019");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    currentType = element;
+    semanticModel.record(expr, ResolvedCallInfo{.returnType = currentType,
+                                               .parameterTypes = arguments,
+                                               .typeArguments = {element},
+                                               .intrinsic = intrinsic});
     bindIntrinsicCallDeclaration(expr, declaration);
     return;
   }

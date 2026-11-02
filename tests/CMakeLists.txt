@@ -2743,6 +2743,10 @@ add_executable(gti_structural_relocation_tests structural_relocation_tests.cpp)
 target_link_libraries(gti_structural_relocation_tests PRIVATE gti_cpp_backend)
 add_test(NAME structural_relocation COMMAND gti_structural_relocation_tests)
 
+add_executable(gti_consuming_range_tests consuming_range_tests.cpp)
+target_link_libraries(gti_consuming_range_tests PRIVATE gti_cpp_backend)
+add_test(NAME consuming_range COMMAND gti_consuming_range_tests)
+
 add_executable(gti_compact_owner_layout_tests compact_owner_layout_tests.cpp)
 target_link_libraries(gti_compact_owner_layout_tests PRIVATE gti_cpp_backend)
 add_test(NAME compact_owner_layout COMMAND gti_compact_owner_layout_tests)
@@ -5208,6 +5212,12 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(structural_relocation_runtime PROPERTIES TIMEOUT 600)
+
+  add_test(NAME consuming_range_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/consuming_range_runtime_test.py"
+            "$<TARGET_FILE:gti>" --mode llvm-O0 --mode llvm-O3)
+  set_tests_properties(consuming_range_runtime PROPERTIES TIMEOUT 600)
 
   add_test(NAME compact_owner_layout_runtime
     COMMAND "${Python3_EXECUTABLE}"

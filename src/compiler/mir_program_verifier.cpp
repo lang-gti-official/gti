@@ -18133,12 +18133,15 @@ verifyMirProgramContracts(const MirProgram &program) {
         if ((instruction.intrinsic == IntrinsicKind::ObjectDestroy ||
              instruction.intrinsic == IntrinsicKind::ObjectRelocate ||
              instruction.intrinsic == IntrinsicKind::ObjectRelocateRange ||
+             instruction.intrinsic == IntrinsicKind::ObjectTake ||
              instruction.intrinsic == IntrinsicKind::ObjectConstruct ||
              instruction.unsafeOperation ==
                  UnsafeOperationKind::ObjectLifetime) &&
             !((instruction.intrinsic == IntrinsicKind::ObjectRelocate ||
                instruction.intrinsic == IntrinsicKind::ObjectRelocateRange)
                   ? mir_detail::objectRelocate(program, instruction)
+              : instruction.intrinsic == IntrinsicKind::ObjectTake
+                  ? mir_detail::objectTake(program, instruction)
               : instruction.intrinsic == IntrinsicKind::ObjectConstruct
                   ? mir_detail::objectConstruct(program, instruction)
                   : mir_detail::objectDestroy(program, instruction))) {

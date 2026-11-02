@@ -1286,6 +1286,20 @@ private:
       }
       if (instruction.intrinsic == IntrinsicKind::RestoringExchange)
         return restoringExchange(instruction);
+      if (instruction.intrinsic == IntrinsicKind::ObjectTake) {
+        if (!mir_detail::objectTake(session.program().mir(), instruction))
+          throw std::logic_error("LLVM object take lost its verified ownership transfer");
+        const auto &type = instruction.info.type;
+        auto *source = operand(instruction.operands.front());
+        if (addressValue(session.program().mir(), type)) {
+          auto *result = destination(*instruction.result);
+          objectMemory.transfer(result, source, type);
+          return result;
+        }
+        auto *result = objectMemory.held(type);
+        objectMemory.transfer(result, source, type);
+        return load(result, type);
+      }
       if (Memory::handles(instruction.intrinsic)) {
         std::vector<llvm::Value *> inputs;
         for (const auto &value : instruction.operands)

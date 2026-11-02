@@ -2806,6 +2806,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           semantic == nullptr && deferred.contains(statement.id);
       const HirRangeIteration *range =
           statement.rangeIteration ? &*statement.rangeIteration : nullptr;
+      if (range != nullptr && range->consumingLowering)
+        source = range->consumingLowering.get();
       const auto bindingFor = [&](HirBindingId id) -> const HirBinding * {
         const auto found = std::find_if(
             body.bindings.begin(), body.bindings.end(),
@@ -2849,6 +2851,44 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       const HirStatement *elementOwnerStatement =
           range == nullptr ? nullptr
                            : body.findStatement(range->elementOwnerStatement);
+      if (range != nullptr && range->strategy == RangeIterationStrategy::Consuming) {
+        const auto *condition = body.findValue(range->comparison);
+        const auto *transfer = body.findValue(range->begin);
+        const auto *core = body.findStatement(range->coreLoop);
+        const auto *lowering = statement.body ? body.findStatement(*statement.body) : nullptr;
+        if (!source || !range->consumingLowering || !owner || !iterator || !element ||
+            !condition || !elementAccessValue || !transfer || !core || !lowering ||
+            lowering->source != source->lowered().get() ||
+            core->source != source->coreLoop() || core->kind != HirStatementKind::For ||
+            !exactBinding(range->owner, source->ownerBinding()) ||
+            !exactBinding(range->iterator, source->iteratorBinding()) ||
+            !exactBinding(range->element, source->elementBinding()) ||
+            !exactValue(range->source, source->ownerBinding()->initializer()) ||
+            !exactValue(range->begin, source->iteratorBinding()->initializer()) ||
+            !exactValue(range->comparison, source->coreLoop()->condition()) ||
+            !exactValue(range->elementAccessValue, source->elementBinding()->initializer()) ||
+            range->rangeType != owner->info.type || range->iteratorType != iterator->info.type ||
+            range->elementType != element->info.type ||
+            owner->info.type.kind == SemanticType::Reference ||
+            owner->info.traits.containsBorrowedState ||
+            transfer->intrinsic != IntrinsicKind::Move ||
+            condition->info.type != SemanticType::Bool ||
+            !condition->callPlan || !condition->callPlan->receiver ||
+            condition->callPlan->receiver->kind != HirCallInputKind::ReadBorrow ||
+            !elementAccessValue->callPlan || !elementAccessValue->callPlan->receiver ||
+            elementAccessValue->callPlan->receiver->kind != HirCallInputKind::MutableBorrow ||
+            elementAccessValue->info.category != ValueCategory::Value ||
+            elementAccessValue->info.type != element->info.type ||
+            elementAccessValue->info.traits.containsBorrowedState ||
+            element->info.type.kind == SemanticType::Reference ||
+            range->rangeCarrier != 0 || range->sentinel != 0 || range->rangeLoan != 0 ||
+            range->elementLoan != 0 || range->elementOwner != 0 ||
+            range->increment != 0 || !range->ownsRangeTemporary ||
+            range->compareFunction == 0 || range->dereferenceFunction == 0) {
+          result.errors.emplace_back("consuming range HIR lost its owned cursor/value protocol");
+        }
+        continue;
+      }
       const bool exactConcreteTypes =
           range != nullptr && rangeCarrier != nullptr && iterator != nullptr &&
           sentinel != nullptr && element != nullptr &&

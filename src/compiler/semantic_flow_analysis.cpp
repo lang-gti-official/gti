@@ -4076,6 +4076,7 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::ObjectDestroy:
         case IntrinsicKind::ObjectRelocate:
         case IntrinsicKind::ObjectRelocateRange:
+        case IntrinsicKind::ObjectTake:
         case IntrinsicKind::StringViewSize:
         case IntrinsicKind::StringViewEmpty:
         case IntrinsicKind::ArrayRangeBegin:
