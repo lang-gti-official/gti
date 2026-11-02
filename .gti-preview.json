@@ -192,10 +192,25 @@
         "947a2207b62a1032bddcf83fb66a18663509ddc7"
       ],
       "merge": "947a2207b62a1032bddcf83fb66a18663509ddc7"
+    },
+    {
+      "task": "vector-contains",
+      "pr": 137,
+      "head": "0c6dacb41b49787e1cbe2d22dc2bd92f57be4634",
+      "tests": [
+        "complete_containers",
+        "stdlib_surface_manifest",
+        "stdlib_surface_context_controls",
+        "llvm_readiness_collection_controls"
+      ],
+      "contributions": [
+        "85ff620e0af8d3e67c75038204c22852ae7cdfa8"
+      ],
+      "merge": "85ff620e0af8d3e67c75038204c22852ae7cdfa8"
     }
   ],
   "removed": [],
   "main": "e4f231574320d2182654b35de956ae52bb333d63",
-  "previous": "25cbfe66781b2f51e2f2e3d637d4c1522f303d06",
-  "candidate": "e573de57354c477787d812a7549f223e"
+  "previous": "728322d16e9b4768a3c1b5059ba85f817b7469c7",
+  "candidate": "38663bbf00c34823b1d14b0f2ef02b94"
 }
