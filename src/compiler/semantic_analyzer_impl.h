@@ -5398,6 +5398,8 @@ private:
   [[nodiscard]] SourceUnitId statementSourceUnit(const Stmt &statement) const;
 
   void analyze(const StmtList &statements);
+  void analyzeStatementsInRegion(const StmtList &statements, std::size_t region,
+                                 std::size_t statementOffset);
 
   // Constant loop edges are unreachable for move-state purposes, but the
   // current MIR keeps their structural blocks. Preserve semantic loan uses so

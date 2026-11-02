@@ -2938,7 +2938,12 @@ auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
                                           .order = loanFlow.currentOrder,
                                           .statement = syntax});
   beginScope();
-  analyze(syntax->statements().front());
+  // Protocol selection needs the checked owner type. Keep both parts in the
+  // same statement region so ordinary range loans retain their original
+  // endpoints and source-place identities.
+  const std::size_t region = loanFlow.nextRegion++;
+  recordSourceDebugStatement(*syntax);
+  analyzeStatementsInRegion(StmtList{syntax->statements().front()}, region, 0);
   const BindingInfo *resolvedOwner =
       semanticModel.findBinding(*stmt.ownerBinding());
   SemanticType sourceType =
@@ -3020,8 +3025,7 @@ auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
             StmtList{syntax->statements().front(), cursor, loop}),
         stmt.ownerBinding(), nullptr, cursor.get(), nullptr, element.get(),
         loop.get(), nullptr, stmt.sourceBody());
-    analyze(cursor);
-    analyze(loop);
+    analyzeStatementsInRegion(StmtList{cursor, loop}, region, 1);
     const auto *hasNext =
         semanticModel.findCall(*exprAs<Call>(loop->condition().get()));
     const auto *takeNext =
@@ -3076,8 +3080,9 @@ auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
     loanFlow.statementBoundaries.pop_back();
     return;
   }
-  analyze(
-      StmtList(syntax->statements().begin() + 1, syntax->statements().end()));
+  analyzeStatementsInRegion(
+      StmtList(syntax->statements().begin() + 1, syntax->statements().end()),
+      region, 1);
   endScope();
   loanFlow.statementBoundaries.pop_back();
 

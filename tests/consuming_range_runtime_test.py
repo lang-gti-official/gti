@@ -18,7 +18,8 @@ if __name__ == "__main__":
     main(names=("consuming_range", "consuming_range_failures", "consuming_range_cost",
                 "consuming_range_example"), llvm_modes=True,
          fixture_paths={"consuming_range_example": root / "examples/186-consuming-ranges.gti"},
-         native_inputs_by_name={"consuming_range_cost": [str(fixture.parent / "process_resource_policy_native.cpp")]},
+         native_inputs_by_name={name: [str(fixture.parent / "process_resource_policy_native.cpp")]
+                                for name in ("consuming_range_cost", "consuming_range_failures")},
          cpp_unsupported="raw object extraction and vector consuming iteration require the LLVM backend",
          cases={"consuming_range_example": [((), (0, "Alice\nPerth\nfirst\n", ""))],
                 "consuming_range_cost": [((), (0, "", "")), (("borrowed",), (0, "", ""))],

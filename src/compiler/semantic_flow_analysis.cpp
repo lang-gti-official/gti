@@ -3082,10 +3082,15 @@ auto SemanticVisitor::Impl::statementSourceUnit(const Stmt &statement) const
 }
 
 auto SemanticVisitor::Impl::analyze(const StmtList &statements) -> void {
+  analyzeStatementsInRegion(statements, loanFlow.nextRegion++, 0);
+}
+
+auto SemanticVisitor::Impl::analyzeStatementsInRegion(
+    const StmtList &statements, std::size_t region, std::size_t statementOffset)
+    -> void {
   const std::size_t enclosingRegion = loanFlow.currentRegion;
   const std::size_t enclosingOrder = loanFlow.currentOrder;
   const Stmt *enclosingStatement = loanFlow.currentStatement;
-  const std::size_t region = loanFlow.nextRegion++;
   bool reachable = true;
   bool hasUnreachableTail = false;
   ScopeStack reachableScopes;
@@ -3099,7 +3104,7 @@ auto SemanticVisitor::Impl::analyze(const StmtList &statements) -> void {
   for (std::size_t index = 0; index < statements.size(); ++index) {
     const StmtPtr &statement = statements[index];
     loanFlow.currentRegion = region;
-    loanFlow.currentOrder = index + 1;
+    loanFlow.currentOrder = statementOffset + index + 1;
     loanFlow.currentStatement = statement.get();
     const auto statementStart = measureStatements
                                     ? std::chrono::steady_clock::now()

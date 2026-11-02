@@ -1,5 +1,21 @@
 import std.vector;
 import std.string;
+import std.panic;
+
+extern "C" {
+  void provider_test_mode(int32_t mode);
+  int32_t provider_test_calls();
+  int32_t provider_test_releases();
+}
+class CheckAllocations {
+public:
+  CheckAllocations() { provider_test_mode(0); }
+  ~CheckAllocations() {
+    if (provider_test_calls() != provider_test_releases()) {
+      std::panic("consuming range leaked an allocation");
+    }
+  }
+};
 
 class Mark {
   int id;
@@ -37,6 +53,9 @@ public:
 };
 
 int main(int argc, std::vector<std::string> argv) {
+  // This outer guard runs after normal and first-failure range cleanup.
+  // A second failure terminates under the language's ordinary emergency rule.
+  CheckAllocations allocations{};
   if (argc >= 6) {
     for (auto value : Source(argc)) {}
     return 0;
