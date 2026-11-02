@@ -10548,7 +10548,7 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
     result.summary.liveMemoryBarrier =
         std::max(result.summary.liveMemoryBarrier, state.liveMemoryBarrier);
 
-  if (result.summary.freshStorage.supported &&
+  if (result.summary.hasOpaqueEffects && result.summary.freshStorage.supported &&
       result.summary.freshStorage.releasedParameters.empty())
     result.summary.liveMemoryBarrier = LiveMemoryBarrier::FreshStorage;
 
