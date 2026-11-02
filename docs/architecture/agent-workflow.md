@@ -918,6 +918,20 @@ silently replaced. `preview status [SUBMISSION]` reports progress, or lists
 submissions without contacting the remote build host. Submission success means
 queued, not preview-validated or published.
 
+When an already included feature has a newer, focused-verified head accepted
+into main and its owning test names changed, use `preview refresh my-task
+--tests replacement_check --reason 'Explain the accepted migration'`. This is
+an explicit detached refresh of that same task PR, not admission of a closed,
+unmerged PR. It requires the merged head in current main, retains the previous
+head/tests/contributions in the feature's append-only `history`, and records
+the replacement checks, accepted main identity and reason. The old source must
+be an ancestor of the accepted head. Checks cannot be changed again without a
+new accepted head. The combined source still rebuilds and passes all current
+feature checks and example admission before publication; neither test failures
+nor missing registration are ignored. A pre-merge submission waiting in the
+queue retains its record and becomes superseded; it does not prevent this
+explicit accepted-head refresh. Other features' records are unchanged.
+
 The worker copies its small tooling closure outside the task worktree so normal
 task cleanup is safe. A separate single-slot preview semaphore serializes
 admissions; it consumes no ordinary build slot while waiting. Once selected,
