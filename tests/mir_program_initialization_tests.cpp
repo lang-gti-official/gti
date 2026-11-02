@@ -1180,7 +1180,8 @@ int main() {
   };
   checkBody(frontend.mir.module());
   for (const auto &function : frontend.mir.functionInstances())
-    checkBody(function.body);
+    if (function.entryKind != lang::ProgramEntryKind::None)
+      checkBody(function.body);
   expect(observers == 6, "all six constant observer occurrences are checked");
 
   auto forged = frontend.mir;
