@@ -1,0 +1,89 @@
+import std.algorithm;
+import std.array;
+import std.iterator;
+import std.utility;
+import std.vector;
+
+struct Buffer {
+  mut std::array<int, 4> values{};
+  Buffer() = default;
+};
+
+// A source-defined cursor retains an exclusive borrow of an unrelated owner.
+class Writer {
+  mut Buffer& buffer;
+  mut std::size_t position;
+public:
+  Writer(mut Buffer& buffer, std::size_t position)
+      : buffer(buffer), position(position) {}
+  mut int& operator*() mut { return this.buffer.values[this.position]; }
+  void operator++() mut { ++this.position; }
+};
+
+[[discardable]] Output relay<Output>(Output output) { return std::move(output); }
+
+int transport<Output>(Output initial)
+  requires std::output_iterator<Output> && std::writes_to<Output, int> {
+  auto later = relay(std::move(initial));
+  mut auto final = (relay(std::move(later)));
+  *final = 42;
+  return *final;
+}
+
+class CountDrop {
+  mut int& count;
+public:
+  CountDrop(mut int& count) : count(count) {}
+  ~CountDrop() { this.count += 1; }
+};
+
+// The input owner dies on return; only the destination owns the result's loan.
+std::vector<int>::iterator from_local_source(mut std::vector<int>& destination) {
+  std::vector<int> source = {10, 20};
+  return std::copy(source.begin(), source.end(), destination.begin_mut());
+}
+
+int main() {
+  std::vector<int> source = {30, 40};
+  std::vector<int> empty{};
+  mut std::vector<int> destination = {0, 0, 0, 0, 0};
+  {
+    auto first = from_local_source(destination);
+    auto unchanged = std::copy(empty.begin(), empty.end(), std::move(first));
+    auto next = std::copy(source.begin(), source.end(), relay(std::move(unchanged)));
+    mut auto last = relay(std::move(next));
+    *last = 50;
+  }
+  if (destination[std::size_t(0)] != 10 || destination[std::size_t(1)] != 20 ||
+      destination[std::size_t(2)] != 30 || destination[std::size_t(3)] != 40 ||
+      destination[std::size_t(4)] != 50) { return 1; }
+  destination.clear();
+
+  mut Buffer buffer{};
+  {
+    auto next = std::copy(source.begin(), source.end(), Writer(buffer, std::size_t(0)));
+    mut auto last = std::copy(empty.begin(), empty.end(), std::move(next));
+    *last = 70;
+  }
+  if (buffer.values[std::size_t(0)] != 30 || buffer.values[std::size_t(1)] != 40 ||
+      buffer.values[std::size_t(2)] != 70 || buffer.values[std::size_t(3)] != 0) { return 2; }
+
+  // Discarding the result releases the destination loan at this full expression.
+  std::copy(source.begin(), source.end(), Writer(buffer, std::size_t(2)));
+  if (buffer.values[std::size_t(3)] != 40) { return 3; }
+  auto abandoned = Writer(buffer, std::size_t(0));
+  relay(relay(std::move(abandoned)));
+  buffer.values[std::size_t(0)] = 90;
+
+  int transported = transport(Writer(buffer, std::size_t(0)));
+  if (transported != 42 || buffer.values[std::size_t(0)] != 42) { return 5; }
+  buffer.values[std::size_t(0)] = 90;
+
+  // A cleanup-bearing carrier still drops exactly once at the same boundary.
+  mut int drops = 0;
+  {
+    auto guard = CountDrop(drops);
+    relay(std::move(guard));
+  }
+  return drops == 1 && buffer.values[std::size_t(0)] == 90 ? 0 : 4;
+}

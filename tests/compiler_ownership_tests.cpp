@@ -6972,6 +6972,23 @@ int main() {
   return left.value + right.value - 9;
 }
 )");
+  for (const std::string expression :
+       {"forward_context<Context>(std::move(initial))",
+        "(forward_context<Context>(std::move(initial)))",
+        "forward_context<Context>(forward_context<Context>(std::move(initial))"
+        ")"}) {
+    const auto discarded = analyze("discarded-carrier-forwarding.gti",
+                                   "  [[discard]] " + expression + R"(;
+  left.value = 3;
+  right.value = 4;
+  return left.value + right.value - 7;
+}
+)");
+    expect(discarded.canGenerateCode() &&
+               lang::verifyMirProgram(discarded.mir).valid(),
+           "discarded moved carrier results end their temporary dependencies "
+           "without redirecting the consumed input's semantic endpoint");
+  }
   if (!valid.canGenerateCode())
     for (const auto &diagnostic : valid.diagnostics)
       std::cerr << "Composed forwarding diagnostic: " << diagnostic.code << ' '

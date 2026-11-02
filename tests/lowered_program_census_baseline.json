@@ -1378,8 +1378,8 @@
     },
     "090-generic-algorithms.gti": {
       "declarations": 2084,
-      "bodies": 436,
-      "generated_items": 325,
+      "bodies": 439,
+      "generated_items": 328,
       "generated_kinds": {
         "program_initialization": 0,
         "hosted_entry": 1,
@@ -1388,7 +1388,7 @@
         "lifecycle_cleanup": 9,
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
-        "concrete_instance_adapter": 252,
+        "concrete_instance_adapter": 255,
         "thread_local_storage": 0
       }
     },
@@ -2947,8 +2947,8 @@
   },
   "totals": {
     "declarations": 224982,
-    "bodies": 28368,
-    "generated_items": 16674
+    "bodies": 28371,
+    "generated_items": 16677
   },
   "target": "arm64-apple-macos",
   "variants": {
@@ -2989,8 +2989,8 @@
       },
       "totals": {
         "declarations": 224982,
-        "bodies": 28366,
-        "generated_items": 16672
+        "bodies": 28369,
+        "generated_items": 16675
       }
     }
   }
