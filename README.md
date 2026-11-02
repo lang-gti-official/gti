@@ -466,11 +466,15 @@ different supported 64-bit target so C implementation-defined widths such as
 ## Install and select GTI with gtiup
 
 `gtiup` manages matching compiler, LSP, standard library, runtime and parser
-versions on macOS arm64 and Linux x64. Bootstrap it with Python 3.9 or newer
-from this checkout:
+versions on macOS arm64 and Linux x64. It is a standalone C++ binary with its
+own [repository, CI and downloads](https://github.com/lang-gti-official/gtiup),
+independent of compiler builds. Install it without Python or a GTI checkout:
 
 ```sh
-python3 scripts/gtiup.py self-install
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://raw.githubusercontent.com/lang-gti-official/gtiup/main/install.sh \
+  -o /tmp/gtiup-install.sh
+sh /tmp/gtiup-install.sh
 export PATH="$HOME/.gtiup/bin:$PATH" # also add this to your shell configuration
 # Choose explicitly; this downloads the selected complete toolchain.
 gtiup default nightly
@@ -572,8 +576,12 @@ return {
 ```
 
 Run `:Lazy sync`, restart Neovim, and open a `.gti` file. Mason and
-`nvim-lspconfig` are not required. `:GTIInfo` reports the active plugin,
-toolchain, LSP, and parser versions.
+`nvim-lspconfig` are not required. `:GTIInfo` reports the configured channel,
+selected compiler/server/parser paths, and each running server's command and
+version. Available nightly or preview build identities are captured when the
+server launches (or a custom server attaches), so changing an install or an override does not hide a server
+still using the previous build. Nightly versions may differ from the plugin
+checkout; compiler/server version or build mismatches still produce a warning.
 
 Code completion also offers snippets: type `cl` for a class skeleton, `ct` or
 `dt` inside a class for its constructor or destructor, and `method`/`mutmethod`
@@ -622,7 +630,12 @@ downloads from the frozen Gitea releases. Otherwise build locally and set
 `GTI_PATH` and `GTI_LSP_PATH` to those executables (and `GTI_TREE_SITTER_PATH`
 to the built parser).
 When supplying your own toolchain, set `build = false` in the Lazy spec to
-disable its release-download hook.
+disable its release-download hook. In legacy mode, an explicit `GTI_LSP_PATH`
+or `GTI_PATH`
+selects its sibling installed Tree-sitter parser before a bundled parser;
+`GTI_TREE_SITTER_PATH` always takes precedence. Explicit executable overrides
+remain active when the command-line toolchain on `PATH` changes. Restart
+Neovim after changing toolchains so the server and parser are reloaded together.
 
 ### Local macOS installation without a release runner
 

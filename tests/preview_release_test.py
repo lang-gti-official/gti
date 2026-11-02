@@ -101,8 +101,27 @@ class PreviewTests(unittest.TestCase):
     def test_workflow_admission(self):
         workflow = (ROOT / '.github/workflows/preview.yml').read_text()
         self.assertIn('branches: [preview]', workflow)
-        self.assertIn('releases/download/v0.11.5/', workflow)
-        self.assertIn('shasum -a 256 -c -', workflow)
+        self.assertIn('bash scripts/configure_ci_toolchain.sh', workflow)
+        self.assertNotIn('gtiup_test.py', workflow)
+        self.assertIn("if: needs.select.outputs.available == 'true'", workflow)
+        self.assertEqual(workflow.count("if: steps.publisher.outputs.available == 'true'"), 2)
+        # Simulate initial rollout: missing publisher reports unavailable and
+        # prevents package work; a main checkout carrying it enables admission.
+        import subprocess
+        script = workflow.split('id: publisher\n        run: |\n', 1)[1].split('      - name:', 1)[0]
+        import textwrap
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            output = directory / 'output'
+            for present in (False, True):
+                if present:
+                    (directory / 'scripts').mkdir()
+                    (directory / 'scripts/preview_release.py').touch()
+                output.write_text('')
+                subprocess.run(['bash', '-e', '-c', textwrap.dedent(script)], cwd=directory,
+                               env={**os.environ, 'GITHUB_OUTPUT': str(output)}, check=True,
+                               capture_output=True)
+                self.assertEqual(output.read_text(), f"available={str(present).lower()}\n")
         self.assertIn("hashFiles('source/CMakeLists.txt', 'source/cmake/**')", workflow)
         self.assertIn('cancel-in-progress: false', workflow)
         self.assertIn('needs: [select, package]', workflow)

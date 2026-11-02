@@ -60,3 +60,6 @@ fi
   echo "LLVM_DIR=${llvm_dir}"
 } >> "${GTI_CI_ENV_FILE}"
 echo "CI toolchain: $("${cxx}" --version | head -n 1); LLVM ${llvm_dir}"
+
+# Editor checks must be registered on hosted runners, including PR builds.
+python3 "${repository}/scripts/configure_ci_editor.py"
