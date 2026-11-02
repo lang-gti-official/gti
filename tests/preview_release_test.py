@@ -37,6 +37,19 @@ class PreviewTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'manifest'):
             p.manifest({'schema': 1})
 
+    def test_stage_refuses_changed_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / 'source'; source.mkdir()
+            destination = Path(tmp) / 'stage'; (destination / 'share/gti').mkdir(parents=True)
+            (source / '.gti-preview.json').write_text(json.dumps(MANIFEST))
+            with patch.object(p, 'command', side_effect=[SHA, ' M VERSION']):
+                with self.assertRaisesRegex(ValueError, 'changed during validation'):
+                    p.stage(source, destination, SHA)
+            self.assertFalse((destination / 'share/gti/preview.json').exists())
+            with patch.object(p, 'command', side_effect=[SHA, '']):
+                p.stage(source, destination, SHA)
+            self.assertEqual((destination / 'share/gti/PREVIEW_SOURCE').read_text().strip(), SHA)
+
     def make_packages(self, directory, platform_identity=SHA, inclusion=MANIFEST):
         env = {'GITHUB_SHA': SHA, 'GITHUB_REPOSITORY': p.REPOSITORY,
                'GITHUB_RUN_ID': '123', 'GITHUB_RUN_ATTEMPT': '2'}
@@ -88,6 +101,9 @@ class PreviewTests(unittest.TestCase):
     def test_workflow_admission(self):
         workflow = (ROOT / '.github/workflows/preview.yml').read_text()
         self.assertIn('branches: [preview]', workflow)
+        self.assertIn('releases/download/v0.11.5/', workflow)
+        self.assertIn('shasum -a 256 -c -', workflow)
+        self.assertIn("hashFiles('source/CMakeLists.txt', 'source/cmake/**')", workflow)
         self.assertIn('cancel-in-progress: false', workflow)
         self.assertIn('needs: [select, package]', workflow)
         self.assertIn("-R '^preview_admission$' --no-tests=error", workflow)

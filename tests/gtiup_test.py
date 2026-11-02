@@ -27,7 +27,7 @@ class ManagerTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.manager = g.Manager(self.root / 'home')
-        self.env = patch.dict(os.environ, {'GTIUP_HOME': str(self.manager.home)})
+        self.env = patch.dict(os.environ, {'GTIUP_HOME': str(self.manager.home), 'GTIUP_TOOLCHAIN': ''})
         self.env.start(); self.addCleanup(self.env.stop)
         self.assets = self.root / 'assets'; self.assets.mkdir()
 
@@ -106,7 +106,7 @@ class ManagerTests(unittest.TestCase):
         active = self.manager.which('gti', 'nightly').parent.parent
         old = store / ('nightly-' + '0' * 64); old.mkdir()
         unmanaged = store / 'user-work'; unmanaged.mkdir()
-        with patch.dict(os.environ, {'GTIUP_HOME': str(self.manager.home)}):
+        with patch.dict(os.environ, {'GTIUP_HOME': str(self.manager.home), 'GTIUP_TOOLCHAIN': ''}):
             g.main(['gc'])
         self.assertTrue(active.exists()); self.assertTrue(unmanaged.exists())
         self.assertFalse(old.exists())

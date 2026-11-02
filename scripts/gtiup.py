@@ -308,7 +308,8 @@ def main(argv=None):
         channel = None
         if args and args[0].startswith('+'):
             channel = selector(args.pop(0)[1:])
-        os.execv(str(manager.which(name, channel)), [name, *args])
+        binary = str(manager.which(name, channel))
+        os.execv(binary, [binary, *args])
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
     sub.add_parser('self-install', help='install gtiup and proxies, without editing your shell or downloading a toolchain')

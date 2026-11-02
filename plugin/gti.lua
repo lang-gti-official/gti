@@ -231,12 +231,18 @@ vim.api.nvim_create_user_command("GTIExpandMacro", function()
 end, { desc = "Inspect the checked macro expansion under the cursor (read-only)" })
 
 vim.api.nvim_create_user_command("GTIInfo", function()
-  local name = vim.api.nvim_buf_get_name(0)
-  local info = toolchain.version_info({ cwd = name ~= "" and vim.fs.dirname(name) or nil })
+  local buffer = vim.api.nvim_get_current_buf()
+  local name = vim.api.nvim_buf_get_name(buffer)
+  local clients = vim.lsp.get_clients({ name = "gti_lsp", bufnr = buffer })
+  local attached_root = clients[1] and clients[1].config and clients[1].config.root_dir
+  local project_root = attached_root or vim.fs.root(buffer, { "gti.toml", ".git", "CMakeLists.txt", "gti-toolchain" })
+  local info = toolchain.version_info({
+    cwd = project_root or (name ~= "" and vim.fs.dirname(name) or nil),
+  })
   local active_versions = {}
   local active_profiles = {}
   local problems = vim.deepcopy(info.problems)
-  for _, client in ipairs(vim.lsp.get_clients({ name = "gti_lsp" })) do
+  for _, client in ipairs(clients) do
     local version = client.server_info and client.server_info.version or "unknown"
     table.insert(active_versions, version)
     table.insert(active_profiles, requested_profile(client))

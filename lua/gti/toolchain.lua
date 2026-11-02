@@ -66,11 +66,18 @@ end
 
 function M.managed_executable(name, opts)
   opts = opts or {}
-  local manager = vim.env.GTIUP_PATH or "gtiup"
-  local result = vim.system({ manager, "which", name }, {
-    text = true,
-    cwd = opts.cwd,
-  }):wait(5000)
+  local manager = vim.env.GTIUP_PATH
+  if not manager or manager == "" then manager = "gtiup" end
+  local launched, result = pcall(function()
+    return vim.system({ manager, "which", name }, {
+      text = true,
+      cwd = opts.cwd,
+    }):wait(5000)
+  end)
+  if not launched then
+    error("gtiup could not select " .. name .. ": cannot run " .. manager
+      .. ". Install gtiup on Neovim's PATH or set GTIUP_PATH to its executable. " .. tostring(result))
+  end
   local path = vim.trim(result.stdout or "")
   if result.code ~= 0 or not is_executable(path) then
     local detail = vim.trim(result.stderr or "")

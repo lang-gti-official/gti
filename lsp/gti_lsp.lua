@@ -12,5 +12,7 @@ return {
     })
   end,
   filetypes = { "gti" },
-  root_markers = { "gti-toolchain", "gti.toml", ".git", "CMakeLists.txt" },
+  -- Toolchain selection is inherited; it must not replace a nearer project
+  -- manifest with an ancestor workspace root. Preserve existing marker priority.
+  root_markers = { "gti.toml", ".git", "CMakeLists.txt", "gti-toolchain" },
 }

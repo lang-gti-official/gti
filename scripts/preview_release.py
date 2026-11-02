@@ -46,6 +46,8 @@ def stage(source, destination, sha):
     sha = checked_sha(sha)
     if command('git', '-C', str(source), 'rev-parse', 'HEAD') != sha:
         raise ValueError('preview source identity changed')
+    if command('git', '-C', str(source), 'status', '--porcelain', '--untracked-files=no'):
+        raise ValueError('preview source changed during validation')
     data = manifest(json.loads((source / '.gti-preview.json').read_text()))
     target = destination / 'share/gti'
     (target / 'preview.json').write_text(json.dumps(data, sort_keys=True) + '\n')

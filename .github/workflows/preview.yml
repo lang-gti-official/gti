@@ -25,6 +25,10 @@ jobs:
         with:
           ref: main
           persist-credentials: false
+      - name: Verify publication and manager invariants
+        run: |
+          python3 tests/gtiup_test.py
+          python3 tests/preview_release_test.py
       - name: Select current admitted preview source
         id: source
         env:
@@ -42,8 +46,8 @@ jobs:
         # reviewed linux-aarch64 compiler profile, so configure_ci_toolchain.sh
         # cannot admit a compiler there. See build-and-driver.md.
         include:
-          - {os: ubuntu-24.04, platform: linux-x64, host: Linux-X64}
-          - {os: macos-26, platform: darwin-arm64, host: macOS-ARM64}
+          - {os: ubuntu-24.04, platform: linux-x64, host: Linux-X64, nvim: nvim-linux-x86_64, nvim_sha: b2f91117be5b5ea39edd7297156dc2a4a8df4add6c95a90809a8df19e7ab6f52}
+          - {os: macos-26, platform: darwin-arm64, host: macOS-ARM64, nvim: nvim-macos-arm64, nvim_sha: 79143d3b408f7034f90b7cf59af2276de09ef8a4c2f1a28e4c99581b249d3107}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 360
     defaults:
@@ -68,6 +72,17 @@ jobs:
           test "$(git rev-parse HEAD)" = "${GTI_SOURCE_SHA}"
           test "${RUNNER_OS}-${RUNNER_ARCH}" = "${GTI_EXPECTED_HOST}"
           test -f .gti-preview.json
+      - name: Install pinned Neovim for mandatory editor admission
+        env:
+          GTI_NVIM_ASSET: ${{ matrix.nvim }}
+          GTI_NVIM_SHA: ${{ matrix.nvim_sha }}
+        run: |
+          archive="${RUNNER_TEMP}/${GTI_NVIM_ASSET}.tar.gz"
+          curl --fail --location --retry 3 --output "${archive}" \
+            "https://github.com/neovim/neovim/releases/download/v0.11.5/${GTI_NVIM_ASSET}.tar.gz"
+          printf '%s  %s\n' "${GTI_NVIM_SHA}" "${archive}" | shasum -a 256 -c -
+          tar -xzf "${archive}" -C "${RUNNER_TEMP}"
+          echo "${RUNNER_TEMP}/${GTI_NVIM_ASSET}/bin" >> "${GITHUB_PATH}"
       - name: Configure runner resources
         shell: bash
         env:
@@ -90,9 +105,9 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-${{ github.sha }}-${{ github.run_id }}
+          key: gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('source/CMakeLists.txt', 'source/cmake/**') }}-${{ github.sha }}-${{ github.run_id }}
           restore-keys: |
-            gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-
+            gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('source/CMakeLists.txt', 'source/cmake/**') }}-
             gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-release-
       - name: Check runner sanitizer execution
         run: python3 scripts/check_ci_sanitizers.py --cxx "${CXX}" --sanitizer address,undefined

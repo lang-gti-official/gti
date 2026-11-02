@@ -36,7 +36,10 @@ The opt-in `vim.g.gti_toolchain = "gtiup"` integration delegates installation
 and channel selection to the toolchain manager. Its release prefix contains
 matching compiler, LSP, standard library, runtime and Tree-sitter parser; the
 editor never downloads the LSP separately. `gtiup which gti_lsp` runs from each
-client's project root before the RPC process starts. The real selected binary,
+client's project root before the RPC process starts. Existing `gti.toml`, `.git`
+and `CMakeLists.txt` root-marker priority is preserved; `gti-toolchain` is a
+fallback marker, so an inherited workspace selection does not collapse nested
+projects into one LSP root. The real selected binary,
 rather than a proxy's location, determines the matching parser path. Explicit
 `GTI_*_PATH` overrides continue to take precedence. A failed managed selection
 never falls back to a plugin-local or arbitrary PATH compiler.

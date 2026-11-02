@@ -14,6 +14,11 @@ local saved_language_add = vim.treesitter.language.add
 local saved_query_get = vim.treesitter.query.get
 local saved_notify = vim.notify
 local saved_module = package.loaded["gti.toolchain"]
+local replaced = {}
+local function replace(object, key, value)
+  table.insert(replaced, { object, key, object[key] })
+  object[key] = value
+end
 local ok, problem = xpcall(function()
   local function file(path, lines, executable)
     vim.fn.mkdir(vim.fs.dirname(path), "p")
@@ -38,8 +43,12 @@ local ok, problem = xpcall(function()
   file(manager, {
     "#!/bin/sh",
     '[ "$1" = which ] || exit 9',
-    'test -f gti-toolchain || { echo "no selected toolchain" >&2; exit 1; }',
-    'printf "%s/bin/%s\\n" "$PWD" "$2"',
+    'selected="$PWD"',
+    'while [ ! -f "$selected/gti-toolchain" ]; do',
+    '  [ "$selected" = / ] && { echo "no selected toolchain" >&2; exit 1; }',
+    '  selected=${selected%/*}; [ -n "$selected" ] || selected=/',
+    'done',
+    'printf "%s/bin/%s\\n" "$selected" "$2"',
   }, true)
   vim.env.GTIUP_PATH = manager
   vim.env.GTI_PATH = nil
@@ -65,6 +74,11 @@ local ok, problem = xpcall(function()
   assert(toolchain.parser({ root = temporary, cwd = temporary }) == nil)
   local missing = toolchain.version_info({ cwd = temporary, probe_binaries = false })
   assert(#missing.problems == 2 and missing.compiler == "unavailable")
+  vim.env.GTIUP_PATH = temporary .. "/missing-gtiup"
+  local launched, launch_problem = pcall(toolchain.executable, "gti", { cwd = projects.stable })
+  assert(not launched and launch_problem:find("cannot run", 1, true)
+    and launch_problem:find("GTIUP_PATH", 1, true), "missing manager needs an actionable diagnostic")
+  vim.env.GTIUP_PATH = manager
   vim.env.GTI_PATH = projects.stable .. "/bin/gti"
   vim.env.GTI_LSP_PATH = projects.stable .. "/bin/gti_lsp"
   vim.env.GTI_TREE_SITTER_PATH = projects.stable .. "/share/gti/parser/gti.so"
@@ -86,6 +100,20 @@ local ok, problem = xpcall(function()
   assert(calls[1].cmd[1] == projects.nightly .. "/bin/gti_lsp")
   assert(calls[2].cmd[1] == projects.stable .. "/bin/gti_lsp")
   assert(calls[2].cwd == projects.stable, "selection must use LSP root, not editor cwd")
+  -- Root-marker order is priority order, not nearest-file order in Neovim.
+  -- Two nested projects may inherit one workspace toolchain without sharing
+  -- an LSP root (and therefore accidentally sharing project configuration).
+  for index, project_name in ipairs({ "one", "two" }) do
+    local project = projects.nightly .. "/apps/" .. project_name
+    file(project .. "/gti.toml", { "manifest-version = 1" })
+    file(project .. "/src/main.gti", { "int main() { return 0; }" })
+    local root = vim.fs.root(project .. "/src/main.gti", config.root_markers)
+    assert(root == project, "ancestor gti-toolchain must not override the nested project manifest")
+    config.cmd({}, { root_dir = root })
+    assert(calls[index + 2].cwd == project, "nested projects must retain distinct LSP roots")
+    assert(calls[index + 2].cmd[1] == projects.nightly .. "/bin/gti_lsp",
+      "nested project must still inherit its ancestor's toolchain selection")
+  end
   local parser_loads = 0
   local parser_warning
   vim.treesitter.language.add = function()
@@ -100,6 +128,45 @@ local ok, problem = xpcall(function()
   assert(not treesitter.setup(toolchain, { cwd = projects.stable }))
   assert(parser_loads == 1 and parser_warning:find("different or unavailable", 1, true),
     "a second selected grammar must not reuse the first silently")
+  -- Exercise the user command itself with two projects and an unrelated
+  -- editor cwd. Its selection must agree with the attached client's root.
+  local commands = {}
+  local report
+  local selected_client = {
+    name = "gti_lsp", server_info = { version = "1.2.3" }, settings = {},
+    config = { root_dir = projects.nightly, settings = {} },
+  }
+  local other_client = { name = "gti_lsp", server_info = { version = "9.9.9" }, settings = {}, config = {} }
+  local original_buffer = vim.api.nvim_get_current_buf()
+  local info_buffer = vim.api.nvim_create_buf(false, true)
+  vim.bo[info_buffer].buftype = ""
+  vim.fn.mkdir(projects.stable .. "/src", "p")
+  vim.api.nvim_buf_set_name(info_buffer, projects.stable .. "/src/example.gti")
+  vim.api.nvim_set_current_buf(info_buffer)
+  replace(vim.g, "loaded_gti", nil)
+  replace(vim.api, "nvim_create_user_command", function(name, callback) commands[name] = callback end)
+  replace(vim.api, "nvim_create_autocmd", function() return 1 end)
+  replace(vim.api, "nvim_create_augroup", function() return 1 end)
+  replace(vim.api, "nvim_set_hl", function() end)
+  replace(vim.filetype, "add", function() end)
+  replace(vim.lsp, "enable", function() end)
+  replace(package.loaded, "gti.treesitter", { setup = function() return true end })
+  replace(vim.lsp, "get_clients", function(filter)
+    if filter.bufnr == info_buffer then return { selected_client } end
+    return { selected_client, other_client }
+  end)
+  vim.notify = function(message) report = message end
+  dofile(repository .. "/plugin/gti.lua")
+  commands.GTIInfo()
+  assert(report:find(projects.nightly .. "/bin/gti_lsp", 1, true),
+    "GTIInfo must prefer the current buffer's attached client root")
+  assert(not report:find("9.9.9", 1, true), "GTIInfo must not report other projects' clients")
+  replace(vim.lsp, "get_clients", function() return {} end)
+  commands.GTIInfo()
+  assert(report:find(projects.stable .. "/bin/gti_lsp", 1, true),
+    "without an attached client GTIInfo must resolve the current buffer's project")
+  vim.api.nvim_set_current_buf(original_buffer)
+  vim.api.nvim_buf_delete(info_buffer, { force = true })
   -- The managed build hook is a no-op, including when an obsolete channel
   -- option is left over from the previous plugin installer.
   local saved_channel = vim.g.gti_channel
@@ -110,6 +177,10 @@ local ok, problem = xpcall(function()
   assert(toolchain.executable("gti", { root = temporary }) == temporary .. "/toolchain/bin/gti",
     "legacy mode must remain available")
 end, debug.traceback)
+for index = #replaced, 1, -1 do
+  local entry = replaced[index]
+  entry[1][entry[2]] = entry[3]
+end
 vim.env.PATH = saved_path
 vim.env.GTIUP_PATH = saved_manager
 vim.env.GTI_PATH = saved_compiler
