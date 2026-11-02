@@ -42,14 +42,16 @@ struct Outcome {
 Outcome execute(llvm::Function &function, unsigned bound, unsigned pattern,
                 bool early = false, bool poisonedBound = false,
                 int frozenBound = -1, unsigned initial = 0,
-                int frozenInitial = -1, bool poisonedInitial = false) {
+                int frozenInitial = -1, bool poisonedInitial = false,
+                unsigned externalBase = 0, int frozenBase = -1) {
   llvm::DenseMap<const llvm::Value *, Scalar> values;
   llvm::DenseMap<const llvm::Value *, std::pair<Scalar, Scalar>> pairs;
   for (auto &argument : function.args()) {
     unsigned input = argument.getArgNo() == 0   ? bound
                      : argument.getArgNo() == 1 ? pattern
                      : argument.getArgNo() == 2 ? unsigned(early)
-                                                : initial;
+                     : argument.getArgNo() == 3 ? initial
+                                                : externalBase;
     values[&argument] = {
         llvm::APInt(argument.getType()->getIntegerBitWidth(), input),
         (poisonedBound && argument.getArgNo() == 0) ||
@@ -190,12 +192,17 @@ Outcome execute(llvm::Function &function, unsigned bound, unsigned pattern,
         const bool isBound = freeze->getName().starts_with("reduction.bound");
         const bool isInitial =
             freeze->getName().starts_with("reduction.initial");
-        require(isBound || isInitial, "unknown oracle freeze role");
-        const int forced = isBound ? frozenBound : frozenInitial;
+        const bool isBase = freeze->getName().starts_with("reduction.base");
+        require(isBound || isInitial || isBase, "unknown oracle freeze role");
+        const int forced = isBound     ? frozenBound
+                           : isInitial ? frozenInitial
+                                       : frozenBase;
         if (value.poison || forced >= 0)
           value.bits = llvm::APInt(value.bits.getBitWidth(),
                                    forced >= 0 ? unsigned(forced)
-                                               : (isBound ? bound : initial));
+                                               : (isBound     ? bound
+                                                  : isInitial ? initial
+                                                              : externalBase));
         value.poison = false;
         values[freeze] = value;
       } else if (auto *cast = llvm::dyn_cast<llvm::CastInst>(&instruction)) {
@@ -285,6 +292,8 @@ struct Shape {
   bool indexIncrement = false;
   int boundedTargetBase = -1;
   bool truncatedTarget = false;
+  unsigned ancillaryKind = 0;
+  bool vectorSide = false;
   bool intrinsicAdd = false;
   bool externalOverflow = false;
   bool separateDetector = false;
@@ -299,9 +308,11 @@ llvm::Function *makeLoop(llvm::Module &module, const Shape &shape,
   auto *accType = llvm::IntegerType::get(context, shape.accumulatorWidth);
   auto *i32 = llvm::Type::getInt32Ty(context);
   auto *function = llvm::Function::Create(
-      llvm::FunctionType::get(
-          i32, {indexType, accType, llvm::Type::getInt1Ty(context), accType},
-          false),
+      llvm::FunctionType::get(i32,
+                              {indexType, accType,
+                               llvm::Type::getInt1Ty(context), accType,
+                               accType},
+                              false),
       llvm::GlobalValue::ExternalLinkage, name, module);
   auto record = module.getOrInsertFunction(
       "record",
@@ -340,6 +351,14 @@ llvm::Function *makeLoop(llvm::Module &module, const Shape &shape,
         remainder, llvm::ConstantInt::get(indexType, shape.boundedTargetBase),
         "bounded.target");
   }
+  llvm::Value *ancillaryBase = function->getArg(4);
+  if (shape.ancillaryKind == 2)
+    ancillaryBase = function->getArg(3);
+  if (shape.ancillaryKind == 3)
+    ancillaryBase = boundedTarget ? boundedTarget : function->getArg(0);
+  if (shape.ancillaryKind == 4)
+    ancillaryBase =
+        builder.CreateAnd(ancillaryBase, llvm::ConstantInt::get(accType, 15));
   builder.CreateBr(header);
   builder.SetInsertPoint(header);
   auto *index = builder.CreatePHI(indexType, 2, "index");
@@ -491,6 +510,26 @@ llvm::Function *makeLoop(llvm::Module &module, const Shape &shape,
     // This observable detector is not the recurrence update. Its larger
     // increment can overflow even on a path where the recurrence is safe.
     builder.CreateCall(record, {builder.CreateZExt(overflow, i32)});
+  }
+  if (shape.ancillaryKind) {
+    llvm::Value *base = shape.ancillaryKind == 5 ? accumulator : ancillaryBase;
+    llvm::Value *amount = shape.ancillaryKind == 6
+                              ? static_cast<llvm::Value *>(function->getArg(1))
+                              : builder.CreateZExtOrTrunc(index, accType);
+    auto *pair = builder.CreateBinaryIntrinsic(
+        llvm::Intrinsic::uadd_with_overflow, base, amount);
+    auto *value = builder.CreateExtractValue(pair, 0);
+    auto *overflow = builder.CreateExtractValue(pair, 1, "ancillary.overflow");
+    builder.CreateCall(record, {builder.CreateZExt(value, i32)});
+    builder.CreateCall(record, {builder.CreateZExt(overflow, i32)});
+  }
+  if (shape.vectorSide) {
+    auto *operand = builder.CreateVectorSplat(2, function->getArg(4));
+    auto *pair = builder.CreateBinaryIntrinsic(
+        llvm::Intrinsic::uadd_with_overflow, operand, operand);
+    auto *statuses = builder.CreateExtractValue(pair, 1);
+    auto *status = builder.CreateExtractElement(statuses, builder.getInt32(0));
+    builder.CreateCall(record, {builder.CreateZExt(status, i32)});
   }
   if (shape.selectUpdate)
     nextAccumulator = builder.CreateSelect(selected, nextAccumulator,
@@ -692,6 +731,24 @@ void differential(const Shape &shape, bool expectChange) {
                 execute(*after, 7, 0, false, false, int(chosen)),
             "index envelope and fast latch used different frozen targets");
   }
+  if (shape.ancillaryKind) {
+    for (unsigned base = 0; base < 256; ++base)
+      for (unsigned raw : {0U, 3U, 7U, 127U, 255U})
+        for (unsigned pattern : {0U, 127U, 255U})
+          require(execute(*before, raw, pattern, false, false, -1, base, -1,
+                          false, base) == execute(*after, raw, pattern, false,
+                                                  false, -1, base, -1, false,
+                                                  base),
+                  "ancillary addition changed value/overflow/effect trace");
+    if (shape.ancillaryKind == 1)
+      require(execute(*before, 3, 0, false, false, -1, 0, -1, false, 5) ==
+                  execute(*after, 3, 0, false, false, -1, 0, -1, false, 250, 5),
+              "fast ancillary computation did not use guarded frozen base");
+    if (shape.ancillaryKind == 4)
+      require(execute(*before, 3, 0, false, false, -1, 0, -1, false, 5) ==
+                  execute(*after, 3, 0, false, false, -1, 0, -1, false, 5, 200),
+              "out-of-envelope invariant freeze escaped to fast loop");
+  }
   if (shape.earlyExit)
     for (unsigned frozen = 0; frozen < 256; ++frozen)
       require(execute(*before, frozen, 0, true, true) ==
@@ -880,6 +937,36 @@ int main() {
     uncertainWeighted.intrinsicAdd = true;
     uncertainWeighted.conditional = false;
     differential(uncertainWeighted, false);
+    for (unsigned kind = 1; kind <= 6; ++kind) {
+      Shape ancillary;
+      ancillary.ancillaryKind = kind;
+      ancillary.boundedTargetBase = 16;
+      ancillary.indexInitial = 7;
+      ancillary.intrinsicAdd = true;
+      ancillary.conditional = false;
+      ancillary.signedArithmetic = false;
+      ancillary.variableInitial = kind == 2;
+      differential(ancillary, true);
+    }
+    {
+      Shape vectorSide;
+      vectorSide.vectorSide = true;
+      llvm::LLVMContext context;
+      llvm::Module module("vector-side-detector", context);
+      auto *function = makeLoop(module, vectorSide, "vector_side");
+      optimize(*function);
+      unsigned retained = 0;
+      for (auto &block : *function)
+        for (auto &instruction : block)
+          if (auto *call = llvm::dyn_cast<llvm::IntrinsicInst>(&instruction);
+              call &&
+              call->getIntrinsicID() == llvm::Intrinsic::uadd_with_overflow &&
+              call->getArgOperand(0)->getType()->isVectorTy() &&
+              !call->use_empty())
+            ++retained;
+      require(retained != 0,
+              "scalar reduction erased a vector overflow observation");
+    }
     Shape sideDetector;
     sideDetector.intrinsicAdd = true;
     sideDetector.signedArithmetic = false;

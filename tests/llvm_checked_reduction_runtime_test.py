@@ -130,6 +130,28 @@ def main():
                 raise AssertionError("weighted failure control no longer overflows")
             cases.append((mode, count, 70, "9\n" * visits + "2\n1\n",
                           f"{fixture.name}:{site}: runtime error[GTI-R0001]: integer_overflow in addition\n"))
+    key_site = next(index for index, line in enumerate(lines, 1)
+                    if "// ancillary-key-boundary" in line)
+    for count in (0, 1, 2, 3, 4, 7, 31, 64, 127, 255):
+        finish = 16 + count % 8
+        for mode in (18, 19, 20, 21, 22):
+            base = (finish if mode == 20 else
+                    4294967295 - count % 13 if mode == 21 else
+                    count & 15 if mode == 22 else count % 17)
+            total = base if mode == 19 else 0
+            visits, failed = 0, False
+            for index in range(7, finish):
+                visits += 1
+                if base + index > 4294967295:
+                    failed = True
+                    break
+                total += (base + index) % 7
+            output = "9\n" * visits + "2\n"
+            if failed:
+                cases.append((mode, count, 70, output + "1\n",
+                              f"{fixture.name}:{key_site}: runtime error[GTI-R0001]: integer_overflow in addition\n"))
+            else:
+                cases.append((mode, count, 0, output + f"{total}\n1\n", ""))
     modes = [("llvm-O0", ["--backend", "llvm", "-O0"]),
              ("llvm-O2", ["--backend", "llvm", "-O2"]),
              ("llvm-O3", ["--backend", "llvm", "-O3"]),

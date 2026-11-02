@@ -284,6 +284,11 @@ struct Recurrence {
 };
 
 struct Plan {
+  struct InvariantAdd {
+    llvm::Value *base;
+    uint64_t maximumAmount;
+    std::optional<Offset> baseEnvelope;
+  };
   llvm::Loop *loop = nullptr;
   Traversal traversal;
   uint64_t maximumBackedges = 0;
@@ -295,6 +300,7 @@ struct Plan {
   llvm::Value *initialValue = nullptr;
   uint64_t maximumIncrement = 0;
   std::optional<Offset> boundEnvelope;
+  llvm::SmallVector<InvariantAdd, 4> invariantAdds;
 };
 
 std::optional<Plan> planFor(llvm::Loop &loop, llvm::DominatorTree &dt,
@@ -445,6 +451,58 @@ std::optional<Plan> planFor(llvm::Loop &loop, llvm::DominatorTree &dt,
         plan.comparisons.emplace_back(comparison, false);
     }
     if (!plan.comparisons.empty() || !plan.overflowLanes.empty()) {
+      // A reduction can remain scalar if an independent checked address/key
+      // calculation still exits the loop. Share this loop's existing fallback
+      // with bounded unsigned additions to a dominating invariant base. The
+      // amount uses the same independent bit-level/traversal proof; neither
+      // the detector's success edge nor flagged arithmetic is evidence.
+      for (auto *block : loop.blocks())
+        for (auto &instruction : *block) {
+          auto *add = llvm::dyn_cast<llvm::IntrinsicInst>(&instruction);
+          if (!add ||
+              add->getIntrinsicID() != llvm::Intrinsic::uadd_with_overflow ||
+              !add->getArgOperand(0)->getType()->isIntegerTy() ||
+              add->getArgOperand(0)->getType()->getIntegerBitWidth() > 64)
+            continue;
+          llvm::SmallVector<llvm::ExtractValueInst *, 2> lanes;
+          for (auto *user : add->users())
+            if (auto *lane = llvm::dyn_cast<llvm::ExtractValueInst>(user);
+                lane && loop.contains(lane) && lane->getNumIndices() == 1 &&
+                *lane->idx_begin() == 1 &&
+                !llvm::is_contained(plan.overflowLanes, lane))
+              lanes.push_back(lane);
+          if (lanes.empty())
+            continue;
+          for (unsigned order = 0; order < 2; ++order) {
+            auto *base = add->getArgOperand(order);
+            if (!loop.isLoopInvariant(base) ||
+                (llvm::isa<llvm::Instruction>(base) &&
+                 !dt.dominates(llvm::cast<llvm::Instruction>(base),
+                               loop.getLoopPreheader()->getTerminator())))
+              continue;
+            auto amount =
+                recurrence.increments.get(add->getArgOperand(1 - order));
+            if (!amount)
+              continue;
+            auto found =
+                llvm::find_if(plan.invariantAdds, [&](const auto &item) {
+                  return item.base == base;
+                });
+            if (found == plan.invariantAdds.end()) {
+              if (plan.invariantAdds.size() == 4)
+                continue;
+              IncrementBounds baseBounds;
+              plan.invariantAdds.push_back(
+                  {base, amount->maximum, baseBounds.get(base)});
+            } else {
+              found->maximumAmount =
+                  std::max(found->maximumAmount, amount->maximum);
+            }
+            plan.overflowLanes.append(lanes);
+            plan.unconditional = false;
+            break;
+          }
+        }
       if (recurrence.increments.usedTraversalBounds &&
           !llvm::isa<llvm::ConstantInt>(induction->bound)) {
         // Freezing a poison expression may choose outside its structural
@@ -462,12 +520,20 @@ void apply(Plan &plan, llvm::LoopInfo &loops, llvm::DominatorTree &dt) {
   auto &loop = *plan.loop;
   auto *guard = loop.getLoopPreheader();
   llvm::IRBuilder<> entry(guard->getTerminator());
-  llvm::Value *frozenBound = plan.traversal.bound;
-  if (!llvm::isa<llvm::ConstantInt>(frozenBound))
-    frozenBound = entry.CreateFreeze(frozenBound, "reduction.bound");
+  llvm::DenseMap<llvm::Value *, llvm::Value *> frozen;
+  auto freeze = [&](llvm::Value *value, llvm::StringRef name) {
+    if (auto found = frozen.find(value); found != frozen.end())
+      return found->second;
+    return frozen[value] = llvm::isa<llvm::ConstantInt>(value)
+                               ? value
+                               : entry.CreateFreeze(value, name);
+  };
+  llvm::Value *frozenBound = freeze(plan.traversal.bound, "reduction.bound");
   llvm::Value *frozenInitial = nullptr;
   if (plan.initialValue)
-    frozenInitial = entry.CreateFreeze(plan.initialValue, "reduction.initial");
+    frozenInitial = freeze(plan.initialValue, "reduction.initial");
+  for (const auto &add : plan.invariantAdds)
+    freeze(add.base, "reduction.base");
   if (!plan.unconditional) {
     auto [fast, slow, slowLoop] = cloneCheckedFallback(loop, loops, dt);
     llvm::IRBuilder<> builder(guard->getTerminator());
@@ -519,10 +585,43 @@ void apply(Plan &plan, llvm::LoopInfo &loops, llvm::DominatorTree &dt) {
                                               plan.boundEnvelope->maximum));
       safe = builder.CreateAnd(safe, builder.CreateAnd(low, high));
     }
+    for (const auto &add : plan.invariantAdds) {
+      auto *base = frozen.lookup(add.base);
+      const auto maximum =
+          llvm::APInt::getMaxValue(base->getType()->getIntegerBitWidth())
+              .getZExtValue();
+      safe = builder.CreateAnd(
+          safe, builder.CreateICmpULE(
+                    base, llvm::ConstantInt::get(base->getType(),
+                                                 maximum - add.maximumAmount)));
+      // A freeze of a poison expression need not retain that expression's
+      // structural envelope. Substitution must preserve every such bound
+      // used elsewhere by the reduction proof, including aliased inputs.
+      if (add.baseEnvelope) {
+        auto *low = builder.CreateICmpUGE(
+            base,
+            llvm::ConstantInt::get(base->getType(), add.baseEnvelope->minimum));
+        auto *high = builder.CreateICmpULE(
+            base,
+            llvm::ConstantInt::get(base->getType(), add.baseEnvelope->maximum));
+        safe = builder.CreateAnd(safe, builder.CreateAnd(low, high));
+      }
+    }
     builder.CreateCondBr(safe, fast, slow);
     guard->getTerminator()->eraseFromParent();
     markCheckedLoop(*slowLoop, versionedMarker);
     dt.recalculate(*guard->getParent());
+    // The checked clone still uses the original inputs. All fast uses,
+    // including PHI operands and separate successful arithmetic, must see
+    // the exact invariant value tested by the new unsigned-add guards.
+    for (auto *block : loop.blocks())
+      for (auto &instruction : *block)
+        for (auto &operand : instruction.operands())
+          for (const auto &add : plan.invariantAdds)
+            if (operand.get() == add.base) {
+              operand.set(frozen.lookup(add.base));
+              break;
+            }
   }
   plan.traversal.comparison->setOperand(plan.traversal.boundOperand,
                                         frozenBound);

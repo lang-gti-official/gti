@@ -1550,6 +1550,20 @@ paths. The fast header range is conservatively `[0, signedMax - K]`; exact
 intermediate offsets still need their own proof. This supports sums carried
 from an outer loop without assuming the outer computation is bounded.
 
+The same fallback can also protect scalar unsigned additions of an invariant
+base and a bounded amount inside that reduction loop. An independent bound
+`amount <= K` adds the preheader condition `base <= unsignedMax - K`. This can
+remove an input or index calculation's overflow exit that would otherwise
+prevent vectorization after the sum check was removed. At most four distinct
+bases are admitted; each must already dominate the preheader, and no operand
+computation moves out of the loop. Each base is frozen once, sharing the bound
+or initial-value freeze when they are the same SSA value. All fast-loop uses,
+including separate successful arithmetic and PHI inputs, use that same value.
+A base's structural envelope is checked explicitly before substitution, so
+freezing poison cannot invalidate a bound used elsewhere in the proof. The
+original fallback and outside overflow observations remain intact. Vector
+overflow intrinsics and additions with no independent amount bound are retained.
+
 The guard and fast latch share one frozen bound so `undef` cannot select a
 small bound at entry and a different target each iteration. A dynamic reduction
 initial value has a separate freeze shared by its capacity guard and fast
