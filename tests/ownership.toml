@@ -43,6 +43,7 @@ tests = [
   "include_removal_lsp",
   "lsp_code_snippets",
   "lsp_configuration",
+  "lsp_completion_work",
   "lsp_include_suggestions",
   "lsp_project_facts",
   "lsp_protocol",
@@ -65,6 +66,7 @@ tests = [
   "macos_installed_runtime",
   "macro_neovim_syntax",
   "neovim_lsp_configuration",
+  "neovim_toolchain",
   "optimizer_coverage_growth",
   "runtime_synchronization",
   "shared_ownership_instrumented",
@@ -1444,6 +1446,7 @@ area = "lsp"
 paths = [
   "src/lsp/",
   "tests/module_discovery_lsp_test.py",
+  "tests/lsp_completion_work_test.py",
 ]
 owners = [
   "^(lsp_.*|.*_lsp)$",
@@ -1467,9 +1470,11 @@ paths = [
   "lsp/",
   "lazy.lua",
   "build.lua",
+  "tests/nvim_toolchain_test.lua",
 ]
 owners = [
   "neovim_lsp_configuration",
+  "neovim_toolchain",
   "macro_neovim_syntax",
   "neovim_local_installer",
 ]
