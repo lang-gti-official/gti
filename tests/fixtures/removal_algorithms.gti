@@ -1,0 +1,161 @@
+import std.algorithm;
+import std.iterator;
+import std.array;
+import std.vector;
+import std.deque;
+import std.string;
+import std.list;
+import std.forward_list;
+import std.map;
+import std.set;
+import std.unordered_map;
+import std.unordered_set;
+
+mut int live = 0;
+mut int calls = 0;
+
+struct Item {
+  int id;
+  Item(int id) : id(id) { live++; }
+  Item(Item& other) = delete;
+  Item(Item&& other) = default;
+  ~Item() { live--; }
+};
+
+class CountingPredicate {
+public:
+  CountingPredicate() = default;
+  bool operator()(int& value) mut { calls++; return value % 2 == 0; }
+};
+
+class CollisionHash {
+public:
+  CollisionHash() = default;
+  std::size_t operator()(int& value) { return 0; }
+};
+
+struct Fixed {
+  int id;
+  Fixed(int id) : id(id) { live++; }
+  Fixed(Fixed& other) = delete;
+  Fixed(Fixed&& other) = delete;
+  ~Fixed() { live--; }
+};
+
+// An unrelated client proves the indexed contract is structural. No iterator,
+// standard-container identity, copying, or mutable element loan is required.
+class Samples {
+  mut std::array<int, 4> storage = std::array<int, 4>({1, 0, 2, 0});
+public:
+  Samples() = default;
+  std::size_t size() { return 4; }
+  int& operator[](std::size_t index) { return this.storage[index]; }
+  void swap_elements(std::size_t a, std::size_t b) mut { this.storage.swap_elements(a, b); }
+};
+
+bool is_odd_sequence<Range>(Range& values) requires std::range_of<Range, int> {
+  mut int expected = 1;
+  for (auto& value : values) {
+    if (value != expected) { return false; }
+    expected += 2;
+  }
+  return expected == 7;
+}
+
+int main() {
+  // Exhaust every keep/remove pattern, independently checking the kept prefix.
+  for (mut int mask = 0; mask < 256; mask++) {
+    mut std::vector<int> values{};
+    for (mut int bit = 0; bit < 8; bit++) {
+      values.push_back((mask & (1 << bit)) != 0 ? bit + 1 : 0);
+    }
+    int zero = 0;
+    auto count = std::remove(values, zero);
+    if (values.size() != 8) { return 1; }
+    mut std::size_t position = 0;
+    for (mut int bit = 0; bit < 8; bit++) {
+      if ((mask & (1 << bit)) != 0) {
+        if (values[position] != bit + 1) { return 2; }
+        position++;
+      }
+    }
+    if (position != count || std::erase(values, zero) != 8 - count || values.size() != count) { return 3; }
+  }
+
+  mut std::vector<int> empty{};
+  if (std::remove_if(empty, CountingPredicate()) != 0 || calls != 0) { return 4; }
+  mut std::vector<int> numbers = {0, 1, 2, 3, 4, 5};
+  if (std::erase_if(numbers, CountingPredicate()) != 3 || calls != 6 || !is_odd_sequence(numbers)) { return 5; }
+  int absent = 99;
+  if (std::erase(numbers, absent) != 0) { return 6; }
+  if (std::erase_if(numbers, [](int& value) -> bool { return true; }) != 3 || !numbers.empty()) { return 7; }
+
+  mut Samples samples{};
+  if (std::remove_if(samples, [](int& value) -> bool { return value == 0; }) != 2 ||
+      samples[std::size_t(0)] != 1 || samples[std::size_t(1)] != 2) { return 8; }
+  mut std::array<int, 4> array = std::array<int, 4>({1, 0, 2, 0});
+  int zero = 0;
+  if (std::remove(array, zero) != 2 || array.size() != 4) { return 9; }
+
+  {
+    mut std::vector<Item> items{};
+    for (mut int i = 0; i < 6; i++) { items.push_back(Item(i)); }
+    auto count = std::remove_if(items, [](Item& value) -> bool { return value.id % 2 == 0; });
+    if (count != 3 || live != 6 || items[std::size_t(0)].id != 1 || items[std::size_t(2)].id != 5) { return 10; }
+    auto removed = std::erase_if(items, [](Item& value) -> bool { return value.id % 2 == 0; });
+    if (removed != 3 || live != 3 || items.size() != 3) { return 11; }
+  }
+  if (live != 0) { return 12; }
+
+  mut std::string text{" a b c "};
+  char space = ' ';
+  if (std::erase(text, space) != 4 || text != "abc") { return 13; }
+  text.push_back('\0'); text.push_back('d');
+  if (std::erase_if(text, [](char& c) -> bool { return c == '\0'; }) != 1 || text != "abcd") { return 14; }
+
+  mut std::deque<int> deque = {9, 0, 1, 2, 3, 4, 5};
+  deque.pop_front(); // Exercise a nonzero physical ring origin.
+  if (std::erase_if(deque, CountingPredicate()) != 3 || !is_odd_sequence(deque)) { return 15; }
+  mut std::list<int> list = {0, 1, 2, 3, 4, 5};
+  if (std::erase_if(list, CountingPredicate()) != 3 || !is_odd_sequence(list)) { return 16; }
+  int three = 3;
+  if (std::erase(list, three) != 1 || list.size() != 2) { return 17; }
+  mut std::forward_list<int> forward{};
+  for (mut int i = 5; i >= 0; i--) { forward.push_front(i); }
+  if (std::erase_if(forward, CountingPredicate()) != 3 || !is_odd_sequence(forward)) { return 18; }
+  if (std::erase(forward, three) != 1) { return 19; }
+  {
+    mut std::list<Fixed> fixed_list{};
+    [[discard]] fixed_list.emplace_back(1); [[discard]] fixed_list.emplace_back(2);
+    mut std::forward_list<Fixed> fixed_forward{};
+    [[discard]] fixed_forward.emplace_front(1); [[discard]] fixed_forward.emplace_front(2);
+    if (std::erase_if(fixed_list, [](Fixed& value) -> bool { return value.id == 2; }) != 1 ||
+        std::erase_if(fixed_forward, [](Fixed& value) -> bool { return value.id == 2; }) != 1 || live != 2) { return 30; }
+  }
+  if (live != 0) { return 31; }
+
+  mut std::map<int, Item> map{};
+  // Root and two-child deletions, then slot reuse after filtering.
+  for (mut int i = 0; i < 32; i++) { [[discard]] map.insert(i, Item(i)); }
+  if (std::erase_if(map, [](std::map<int, Item>::value_type& e) -> bool { return e.first % 2 == 0; }) != 16 || live != 16) { return 20; }
+  mut int expected = 1;
+  for (auto& entry : map) { if (entry.first != expected || entry.second.id != expected) { return 21; } expected += 2; }
+  for (mut int i = 0; i < 32; i += 2) { [[discard]] map.insert(i, Item(i)); }
+  if (map.size() != 32 || live != 32) { return 22; }
+  if (std::erase_if(map, [](std::map<int, Item>::value_type& e) -> bool { return true; }) != 32 || !map.empty() || live != 0) { return 23; }
+
+  mut std::unordered_map<int, Item, CollisionHash> hash{};
+  for (mut int i = 0; i < 32; i++) { [[discard]] hash.insert(i, Item(i)); }
+  if (std::erase_if(hash, [](std::unordered_map<int, Item, CollisionHash>::value_type& e) -> bool { return e.second.id % 2 == 0; }) != 16 || live != 16) { return 24; }
+  for (mut int i = 0; i < 32; i++) { if (hash.contains(i) != (i % 2 != 0)) { return 25; } }
+  for (mut int i = 0; i < 32; i += 2) { [[discard]] hash.insert(i, Item(i)); }
+  if (std::erase_if(hash, [](std::unordered_map<int, Item, CollisionHash>::value_type& e) -> bool { return true; }) != 32 || !hash.empty() || live != 0) { return 26; }
+
+  mut std::set<int> keys{};
+  mut std::unordered_set<int> hash_keys{};
+  for (mut int i = 0; i < 6; i++) { [[discard]] keys.insert(i); [[discard]] hash_keys.insert(i); }
+  if (std::erase_if(keys, CountingPredicate()) != 3 || !is_odd_sequence(keys)) { return 27; }
+  if (std::erase_if(hash_keys, CountingPredicate()) != 3 || hash_keys.size() != 3) { return 28; }
+  for (mut int i = 0; i < 6; i++) { if (hash_keys.contains(i) != (i % 2 != 0)) { return 29; } }
+  return 0;
+}

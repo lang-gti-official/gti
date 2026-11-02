@@ -1,0 +1,19 @@
+import std.vector;
+import std.cstdio;
+import std.panic;
+struct Resource {
+  int id;
+  Resource(int id) : id(id) {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  ~Resource() { std::println(this.id); }
+};
+int main() {
+  mut std::vector<Resource> values{};
+  for (mut int i = 0; i < 5; i++) { values.push_back(Resource(i)); }
+  [[discard]] std::erase_if(values, [](Resource& value) -> bool {
+    if (value.id == 3) { std::panic("removal predicate failed"); }
+    return value.id % 2 == 0;
+  });
+  return 0;
+}
