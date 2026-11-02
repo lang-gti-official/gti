@@ -41,6 +41,12 @@ export class unordered_map<K, V, Hash = std::hash<K>, KeyEqual = std::equal_to<K
   }
 
   size_t minimum_buckets(size_t elements) {
+    // The default ratio is exact throughout double's consecutive-integer
+    // domain. Keep those ordinary insertions in integer arithmetic; larger
+    // requests retain the existing floating conversion and failure behavior.
+    if (this.load_limit == 1.0 && uint64_t(elements) <= uint64_t(9007199254740992)) {
+      return elements;
+    }
     double required = double(elements) / double(this.load_limit);
     mut size_t result = size_t(required);
     if (double(result) < required) { result++; }

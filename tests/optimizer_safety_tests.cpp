@@ -729,6 +729,10 @@ uint64_t recurrence_dynamic_call(RecurrenceSource& source) {
   return total;
 }
 
+uint64_t successful_signed_to_unsigned(int32_t value) {
+  return uint64_t(value) + uint64_t(1);
+}
+
 uint64_t exact_loop_bound(uint64_t count) { return count; }
 
 void observe_recurrence(int64_t value) {}
@@ -928,6 +932,12 @@ int32_t main() {
                   frontend, o2, "recurrence_dynamic_call",
                   lang::MirSafetyCheckFamily::ArithmeticOverflow,
                   lang::MirOperation::AddAssign),
+              1);
+  expectCount("successful_signed_to_unsigned addition",
+              functionOperationDischarges(
+                  frontend, o2, "successful_signed_to_unsigned",
+                  lang::MirSafetyCheckFamily::ArithmeticOverflow,
+                  lang::MirOperation::Add),
               1);
   expectCount("contextual_bound_recurrence", contextualRecurrence, 2);
   expectCount("bounded_interval_recurrence", boundedIntervalRecurrence, 2);

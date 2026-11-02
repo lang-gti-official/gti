@@ -401,6 +401,14 @@ Irreducible CFGs and arithmetic used to derive an unrepresentable threshold
 fail closed. This is not a second solver, general recurrence engine, symbolic
 loop optimizer, or call transform.
 
+The normal continuation of a checked integer conversion retains the
+intersection of its source interval and target domain. Thus a signed 32-bit
+value successfully converted to unsigned 64-bit remains at most `INT32_MAX`,
+which can bound a finite sum even when the value comes from a native or dynamic
+call. The conversion's own failure remains enabled, and its failure edge uses
+the pre-instruction state. This rule also applies to the sealed numeric alias
+and type-parameter conversion operations, but never to wrapping arithmetic.
+
 Checked integer interpolation also retains its shared endpoint identity:
 `a + (b - a) / k`, or its commuted addition, lies between `a` and `b` when
 `k` is positive. When `a < b` and `k >= 2`, its result is strictly below `b`.
