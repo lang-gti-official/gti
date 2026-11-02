@@ -9629,6 +9629,12 @@ cache. Sanitizer jobs have their own runner budgets; one job's successful build
 does not satisfy another job's test gate. A failure in any required job keeps
 the CI gate red and prevents its artifacts from qualifying for nightly.
 
+Hosted CI provisions checksum-pinned Neovim 0.11.5 before CMake configuration
+through `configure_ci_editor.py`, so editor tests are registered on both supported
+platforms. T0/T1 declarations name checks available on both platforms; record
+platform-specific checks such as `macos_installed_runtime` separately in the PR
+evidence. Missing or disabled declared tests remain a hard failure.
+
 CI and release jobs use the job's detected available processor count for both
 compilation and CTest. `scripts/configure_ci_resources.sh` uses `nproc` (not
 `nproc --all`), then host-appropriate `sysctl` or `getconf` when unavailable;

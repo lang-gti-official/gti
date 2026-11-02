@@ -121,6 +121,42 @@ def artifact_contract(root):
         assert not list(directory.glob("provenance-*"))
 
 
+def editor_contract(root):
+    # Exercise both platform downloads and fail before execution/PATH publication
+    # for altered archives; no host installation or network access in this test.
+    import io
+    from unittest.mock import patch
+    editor = load_module(root / "scripts/configure_ci_editor.py", "ci_editor")
+    for identity, (asset, _) in editor.ASSETS.items():
+        data = io.BytesIO()
+        with tarfile.open(fileobj=data, mode="w:gz") as archive:
+            entry = tarfile.TarInfo(asset + "/bin/nvim")
+            entry.mode = 0o755
+            payload = b"#!/bin/sh\nexit 0\n"
+            entry.size = len(payload)
+            archive.addfile(entry, io.BytesIO(payload))
+        payload = data.getvalue()
+        with tempfile.TemporaryDirectory() as directory:
+            base = pathlib.Path(directory)
+            env_path = base / "path"
+            with patch.dict(editor.ASSETS, {identity: (asset, hashlib.sha256(payload).hexdigest())}), \
+                 patch.object(editor.urllib.request, "urlopen", return_value=io.BytesIO(payload)):
+                executable = editor.stage(base / "editor", env_path, *identity)
+                assert env_path.read_text() == str(executable.parent) + "\n"
+            env_path.unlink()
+            with patch.object(editor.urllib.request, "urlopen", return_value=io.BytesIO(b"altered")), \
+                 patch.object(editor.subprocess, "run", side_effect=AssertionError("must not execute")):
+                try:
+                    editor.stage(base / "rejected", env_path, *identity)
+                except ValueError as error:
+                    assert "checksum" in str(error)
+                else:
+                    raise AssertionError("accepted altered editor archive")
+            assert not env_path.exists()
+    toolchain = (root / "scripts/configure_ci_toolchain.sh").read_text()
+    assert 'python3 "${repository}/scripts/configure_ci_editor.py"' in toolchain
+
+
 def nightly_contract(root):
     nightly = (root / ".github/workflows/nightly.yml").read_text()
     ci = (root / ".github/workflows/ci.yml").read_text()
@@ -767,6 +803,7 @@ def main():
     root = args.root.resolve()
     workflow_contract(root)
     artifact_contract(root)
+    editor_contract(root)
     nightly_contract(root)
     train_contract(root)
     source_contract(root)
