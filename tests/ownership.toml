@@ -64,6 +64,7 @@ tests = [
   "macos_installed_runtime",
   "macro_neovim_syntax",
   "neovim_lsp_configuration",
+  "neovim_gtiup",
   "optimizer_coverage_growth",
   "runtime_synchronization",
   "shared_ownership_instrumented",
