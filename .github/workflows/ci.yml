@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   # A new push supersedes a PR's run; queue candidates are never cancelled by
@@ -25,6 +26,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       mode: ${{ steps.plan.outputs.mode }}
+      reuse: ${{ steps.plan.outputs.reuse }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -32,6 +34,7 @@ jobs:
       - name: Classify candidate without weakening its merge gate
         id: plan
         env:
+          GH_TOKEN: ${{ github.token }}
           GTI_EVENT_PATH: ${{ github.event_path }}
           GTI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
         run: |
@@ -48,8 +51,9 @@ jobs:
           if [[ -z "${base}" || "${base}" =~ ^0+$ ]]; then
             base="$(git rev-parse origin/main)"
           fi
-          python3 scripts/validation_checks.py ci-mode \
-            --event "${GTI_EVENT_PATH}" --base "${base}" >> "${GITHUB_OUTPUT}"
+          python3 scripts/source_stdlib_ci.py plan \
+            --event "${GTI_EVENT_PATH}" --base "${base}" \
+            --repository "${GITHUB_REPOSITORY}" --output "${RUNNER_TEMP}/source-plan.json" >> "${GITHUB_OUTPUT}"
       - name: Check the declared T0/T1 tests
         if: github.event_name == 'pull_request' && steps.plan.outputs.mode == 'full'
         env:
@@ -84,6 +88,7 @@ jobs:
           python3 tests/ownership_map_test.py
           python3 tests/plan_checks_test.py
           python3 tests/named_test_shards_test.py
+          python3 tests/source_stdlib_ci_test.py
 
   formatting:
     name: Formatting
@@ -214,6 +219,94 @@ jobs:
         with:
           path: ${{ env.CCACHE_DIR }}
           key: gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-native-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-${{ github.sha }}
+
+  source-stdlib:
+    name: Source stdlib (${{ matrix.platform }})
+    if: needs.plan.outputs.mode == 'source-stdlib'
+    needs: [plan, automation-tests, formatting, release-version, tree-sitter]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-24.04, platform: linux-x64}
+          - {os: macos-26, platform: darwin-arm64}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Retain admitted compiler and source identities
+        env:
+          GTI_REUSE_PLAN: ${{ needs.plan.outputs.reuse }}
+        run: python3 -c 'import os,pathlib; pathlib.Path("source-plan.json").write_text(os.environ["GTI_REUSE_PLAN"])'
+      - name: Configure resources
+        env:
+          GTI_CONFIGURED_JOBS: ${{ vars.GTI_JOBS }}
+          GTI_CONFIGURED_TEST_JOBS: ${{ vars.GTI_TEST_JOBS }}
+          GTI_MEMORY_PER_JOB_MIB: 2048
+          GTI_MEMORY_PER_TEST_MIB: 3072
+        run: bash scripts/configure_ci_resources.sh
+      - name: Install reviewed native test prerequisites
+        run: bash scripts/configure_ci_toolchain.sh
+      - name: Download exact full-CI compiler artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ fromJSON(needs.plan.outputs.reuse).compiler_origin.run_id }}
+          name: gti-nightly-${{ matrix.platform }}-${{ fromJSON(needs.plan.outputs.reuse).compiler_origin.attempt }}
+          path: compiler-artifact
+      - name: Verify native identity and replace only library source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python3 scripts/source_stdlib_ci.py prepare --plan source-plan.json
+          --platform "${{ matrix.platform }}" --directory compiler-artifact --stage stage
+      - name: Build test consumers and execute affected library checks
+        run: >-
+          python3 scripts/source_stdlib_ci.py test --plan source-plan.json
+          --stage stage --build build --jobs "${GTI_JOBS}" --test-jobs "${GTI_TEST_JOBS}"
+      - name: Check installed consumers of the updated library
+        run: |
+          python3 tests/cli_smoke_test.py "${PWD}/stage/bin/gti"
+          python3 tests/lsp_smoke_test.py "${PWD}/stage/bin/gti_lsp"
+          python3 tests/project_cli_smoke_test.py "${PWD}/stage/bin/gti"
+          python3 tests/process_resource_policy_test.py "${PWD}/stage/bin/gti" --installed
+      - name: Verify tested source and native payload before packaging
+        run: >-
+          python3 scripts/source_stdlib_ci.py seal --plan source-plan.json
+          --stage stage --platform "${{ matrix.platform }}"
+      - name: Package validated source with unchanged native payload
+        if: github.event_name == 'merge_group'
+        run: |
+          cmake -DGTI_SOURCE_DIR="$PWD" -DGTI_STAGE_DIR="$PWD/stage" -DGTI_OUTPUT_DIR="$PWD/release" \
+            -DGTI_PLATFORM="${{ matrix.platform }}" -DGTI_CHANNEL=nightly -DGTI_BUILD_ID="${GITHUB_SHA}" \
+            -P cmake/PackageRelease.cmake
+          python3 scripts/release_artifacts.py record --directory release --platform "${{ matrix.platform }}" \
+            --compiler-origin stage/share/gti/COMPILER_ORIGIN.json
+      - name: Retain source-library integration evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: source-stdlib-${{ matrix.platform }}-${{ github.run_attempt }}
+          path: |
+            source-plan.json
+            source-native-${{ matrix.platform }}.json
+            build/source-stdlib.xml
+            build/source-stdlib-evidence.json
+            build/Testing/Temporary/LastTest.log
+            build/Testing/Temporary/LastTestsFailed.log
+          retention-days: 30
+          if-no-files-found: error
+      - name: Retain production package for nightly
+        if: github.event_name == 'merge_group'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gti-nightly-${{ matrix.platform }}-${{ github.run_attempt }}
+          path: release/*
+          retention-days: 30
+          if-no-files-found: error
 
   package:
     name: Release package (${{ matrix.platform }})
@@ -573,7 +666,7 @@ jobs:
     # The single required status check: its name is the ruleset's context.
     name: CI gate
     if: always()
-    needs: [plan, automation-tests, formatting, release-version, tree-sitter, fast, package, integration, sanitizers]
+    needs: [plan, automation-tests, formatting, release-version, tree-sitter, fast, package, integration, sanitizers, source-stdlib]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
