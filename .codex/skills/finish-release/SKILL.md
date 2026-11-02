@@ -6,7 +6,8 @@ description: Apply GTI version and release policy to focused-validated work deli
 # Finish A GTI Release
 
 Deliver validated work through [agent-workflow](../agent-workflow/SKILL.md).
-The normal implementation outcome is a PR in the merge queue, then a merged PR
+The normal implementation outcome is a validated PR handed to integration
+(rollup, GitHub merge-when-ready or the merge queue), then a merged PR
 and synchronized local main;
 explicit PR-only/local-only instructions override integration. Apply release
 policy below without bypassing that lifecycle.
@@ -88,10 +89,10 @@ hand, and never move the `nightly` tag yourself.
 ## Finish After Queueing
 
 Respect required reviews and the merge queue; never force a merge or
-administratively bypass them. Once the PR is queued with recorded focused
-validation, report the PR, its changelog fragment when applicable, exactly which
+administratively bypass them. Once GitHub confirms merge-when-ready (`awaiting-ci`),
+queue entry, or a rollup handoff with recorded focused validation, report the PR, its changelog fragment when applicable, exactly which
 checks ran, and that the complete suite is the queue's. After the queue merges
-it and local-main sync succeeds, report the merge and local commit. A queue
-removal or sync failure keeps the task open and visible; a later asynchronous
+it and local-main sync succeeds, report the merge and local commit. Do not poll successful PR CI to enter the queue: GitHub handles that transition.
+A CI failure, conflict, queue removal or sync failure keeps the task open and visible; a later asynchronous
 publication failure can be handled separately. Production packaging failures
 are integration failures and are not deferred to nightly.

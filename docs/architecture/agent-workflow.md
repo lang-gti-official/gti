@@ -146,7 +146,7 @@ local race with other tasks needs closing. Nothing locks ordinary editing.
 | `reconcile <task>` | Merge current main into the task branch to resolve a conflict, preserve conflicts for resolution, invalidate old validation and publish. |
 | `verify <task> --checks-file <json>` | Record the attempt, release the lock, execute nonempty argv arrays without a shell inside a build-window `suite` slot, then record passing focused checks against the published clean head. An advancing main does not void them. |
 | `verify <task> --focused --checks-file <json>` | For a checked automation-only or source-only GTI stdlib diff, run owning checks directly and record scope `automation` or `source-stdlib`; refuse compiler/native/build changes and remote use. Actual broad workloads still use the window. |
-| `finish <task> --body-file <text> [--pr-only] [--no-rollup]` | Publish the final PR description, mark ready, verify identities and the `main` ruleset. A rollup-eligible PR is labelled `rollup=maybe` (`rollup=always` when automation-only) and waits for the rollup bot (phase `rollup`); a Risk-system or `--no-rollup` PR is labelled `rollup=never` and joins the merge queue alone pinned to the verified head (phase `queued`). Once merged, it synchronizes local main. PR-only stops ready for review. |
+| `finish <task> --body-file <text> [--pr-only] [--no-rollup]` | Publish the final PR description, mark ready, verify identities and the `main` ruleset. A rollup-eligible PR is labelled `rollup=maybe` (`rollup=always` when automation-only) and waits for the rollup bot (phase `rollup`); a Risk-system or `--no-rollup` PR is labelled `rollup=never` and registers native GitHub merge-when-ready with an expected-head guard. Required PR checks/reviews may still be pending (phase `awaiting-ci`); GitHub enters the queue automatically once they pass (phase `queued`). Both states are completed contributor handoffs. Once merged, it synchronizes local main. PR-only stops ready for review. |
 | `sync <task>` | Confirm merged-head/merge-commit reachability, or the rollup bot's proof for a member it closed, and fast-forward primary main, preserving unrelated local edits. Never push to a backup. |
 | `rehost <task> --pr <number>` | Explicitly bind a schema-2 GitHub or schema-3 Gitea task to its migrated GitHub PR when the PR head carries the task's published tree; move a clean worktree onto the identical rewritten commit and preserve the original record. Refuse live verification. |
 | `cleanup <task>` | After confirmed merge/sync, remove a plain clean worktree with no ignored files and delete only unchanged integrated branches. |
@@ -473,14 +473,28 @@ record includes executed commands, head, base and time. Any changed commit or
 dirty source requires verifying again; an advancing main does not, because the
 merge queue validates the combination. Failed checks never mark the task ready.
 
-`finish` hands the PR to a rollup (below) or adds it to the merge queue with
-`expectedHeadOid` pinned to the validated head, so a branch that moved is
-refused. The `main` ruleset requires
+`finish` hands the PR to a rollup (below) or registers native GitHub
+`enablePullRequestAutoMerge` with `expectedHeadOid` equal to the validated head.
+A branch that moved before registration is refused. GitHub owns the durable
+wait for required checks/reviews and automatic entry to the required queue;
+no agent polling loop, scheduled waiter or CI bypass is needed. `awaiting-ci`
+means GitHub confirmed that intent, not that CI passed. `status` reports live
+`remote_integration` (awaiting-ci, queued, not-requested, or head-changed) without
+rewriting historical validation. Lost responses can be retried without duplicate
+requests; a refused/unconfirmed request is an error, not completion.
+
+The expected-head guard applies at registration. A later direct push by a
+writer can retain GitHub auto-merge intent, so task authors must publish through
+`checkpoint`/`reconcile`: before pushing a changed head they disable auto-merge,
+dequeue if necessary, confirm cancellation, and invalidate previous verification.
+Failure to confirm cancellation prevents publication. `--pr-only` also withdraws
+intent. New work after a confirmed merge belongs to a new task. The `main` ruleset requires
 pull requests, the merge queue and the `CI gate` status check, denies force
 pushes and deletion, and has no bypass actors, administrators included. The
 queue builds each candidate on the current `main`, runs the complete suite and
 merges it only if `CI gate` passes; it removes a failing PR and rebuilds the
-entries behind it. The task stays `rollup` or `queued` until GitHub reports
+entries behind it. The last handoff record stays `rollup`, `awaiting-ci` or `queued` until refreshed;
+GitHub owns the transition and failures/conflicts still need repair. Once GitHub reports
 the merge, and `sync` (or a repeated `finish`) then advances local main. Do not force a merge
 or bypass a server rule. Release workflows run after integration and need not
 finish before local installation. VERSION follows normal repository policy;

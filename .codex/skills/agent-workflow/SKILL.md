@@ -6,7 +6,7 @@ description: Carry GTI implementation tasks through isolated branches, published
 # GTI Agent Workflow
 
 The normal implementation outcome is a PR that is ready, with its focused
-validation recorded, and handed to integration: labelled for a rollup or in the
+validation recorded, and handed to integration: labelled for a rollup, registered for GitHub merge-when-ready, or in the
 merge queue. The queue merges it, and `sync`
 brings the primary checkout to current `main` for the user's local installer.
 The repository owner's standing authorization is in `AGENTS.md`. Explicit
@@ -163,8 +163,20 @@ integration is complete contributor work; report it as deferred, never as passed
    Risk-system diff (build/toolchain files, workflows, test registration, CI
    configuration scripts, runtime ABI/layout headers), a PR labelled
    `rollup=never` or `rollup-failed`, or `finish --no-rollup` instead joins the
-   merge queue alone pinned to the verified head, and the task becomes
-   `queued`. Both `rollup` and `queued` are normal completion points.
+   merge queue alone through GitHub's native merge-when-ready. The request
+   checks the verified head atomically. Pending required checks/reviews produce
+   `awaiting-ci`; GitHub enters the queue when requirements pass (`queued`).
+   `rollup`, `awaiting-ci` and `queued` are normal completion points. Do not poll
+   healthy PR CI or keep an agent alive to retry queue entry. `status` reports
+   live `remote_integration` separately from the last recorded phase. Failures
+   and conflicts still require repair. A rejected registration is not a handoff;
+   report the error and retry only after its cause is resolved. Lost responses
+   are recoverable by retry: existing remote intent/queue membership is reused.
+   Later changes must use `checkpoint`/`reconcile`, which cancel pending intent
+   and queue membership before pushing and invalidate old validation. GitHub's
+   expected-head guard applies at registration, not to arbitrary later direct
+   pushes; never push around this helper after handing off. `--pr-only`
+   withdraws existing integration intent before stopping ready for review.
    Use `--pr-only` when the user requested review before integration.
 4. The queue merges asynchronously. Run `sync <task>` (or `finish` again) once
    it has merged. A PR merged as part of a rollup counts as merged, including
@@ -224,7 +236,8 @@ synced, and any cleanup exception. State that the checkout is ready for the
 installer only after sync.
 Run the installer automatically only when the user asked for installation.
 After delivering the requested outcome, rename the chat `Complete — <task>`.
-A queued or rollup-labelled task whose focused validation is recorded is
-complete; title it `Complete — <task> (queued)` until it merges. A batch component handed off for
+A task with confirmed GitHub merge-when-ready, queue entry or rollup label and
+recorded focused validation is complete; title it `Complete — <task> (awaiting CI)`
+or `Complete — <task> (queued)` as applicable until it merges. A batch component handed off for
 integration is `Handed off — <task>`.
 Explicit PR-only or local-only requests use their requested delivery boundary.
