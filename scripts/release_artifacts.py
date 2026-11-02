@@ -133,8 +133,10 @@ def release_evidence(repository, sha, request, full_only=False):
                        matches[0].get("head_sha") == sha and matches[0].get("status") == "completed" and
                        matches[0].get("conclusion") == "success" for name in names)
         source_required = {"CI gate", *(f"Source stdlib ({platform})" for platform in PLATFORMS)}
+        lsp_required = {"CI gate", *(f"LSP ({platform})" for platform in PLATFORMS)}
         full = passed(required)
-        if not full and (full_only or event != "merge_group" or not passed(source_required)):
+        lsp = passed(lsp_required)
+        if not full and (full_only or event != "merge_group" or not (passed(source_required) or lsp)):
             continue
         artifacts = request(f"{base}/actions/runs/{run_id}/artifacts?per_page=100")
         if artifacts.get("total_count", 0) > 100:
@@ -145,7 +147,7 @@ def release_evidence(repository, sha, request, full_only=False):
             continue
         result = {"run_id": str(run_id), "run_attempt": str(attempt)}
         if not full:
-            result["validation_mode"] = "source-stdlib"
+            result["validation_mode"] = "lsp" if lsp else "source-stdlib"
         return result
     raise ValueError(f"{sha} has no successful release-producing integration CI with retained packages; run full CI on main")
 

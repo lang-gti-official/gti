@@ -1544,6 +1544,12 @@ paths = [
   ".gitea/",
   "scripts/validation_checks.py",
   "scripts/source_stdlib_ci.py",
+  "scripts/lsp_ci.py",
+  "scripts/lsp_compatibility.py",
+  "scripts/lsp_component.py",
+  "scripts/install_ci_neovim.py",
+  "tests/lsp_release_test.py",
+  "tests/lsp_sdk_test.py",
   "tests/source_stdlib_ci_test.py",
   "cmake/ReuseToolchain.cmake",
   "scripts/configure_ci_*",
@@ -1559,6 +1565,8 @@ owners = [
   "ci_release",
   "ci_sanitizer_capability",
   "source_stdlib_ci",
+  "lsp_release",
+  "lsp_sdk",
   "named_test_shards",
 ]
 consumers = [

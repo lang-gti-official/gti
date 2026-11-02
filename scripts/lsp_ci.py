@@ -23,7 +23,7 @@ def eligible(paths):
     def allowed(path):
         return (adapter(path) or path.startswith(("docs/", "changes/")) or path == "README.md"
                 or (path.startswith("tests/") and "/" not in path[6:] and
-                    (path.endswith("_lsp_test.py") or path.startswith(("tests/lsp_", "tests/nvim_"))))
+                    (path.endswith("_lsp_test.py") or path.startswith(("tests/lsp_", "tests/nvim_")))))
     return bool(paths) and any(adapter(p) for p in paths) and all(allowed(p) for p in paths)
 
 
@@ -87,7 +87,7 @@ def preserved_payload(stage):
     rows = []
     for path in sorted(stage.rglob("*")):
         name = path.relative_to(stage).as_posix()
-        if name in {"bin/gti_lsp", "share/gti/BUILD_ID", "share/gti/COMPILER_ORIGIN.json"}:
+        if name in {"bin/gti_lsp", "share/gti/BUILD_ID", "share/gti/COMPILER_ORIGIN.json", "share/gti/LSP_SOURCE"}:
             continue
         if path.is_symlink():
             rows.append((name, "link", os.readlink(path)))
@@ -106,7 +106,7 @@ def run_tests(doc, build, stage, jobs, test_jobs):
                     "-DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF"], check=True)
     inventory = json.loads(subprocess.check_output(["ctest", "--test-dir", str(build), "--show-only=json-v1"], text=True))
     names = {row["name"] for row in inventory["tests"]}
-    required = {"lsp_smoke", "frontend_cache", "compiler_pipeline", "project_model",
+    required = {"lsp_protocol", "frontend_cache_invalidation", "compiler_pipeline", "project_model",
                 "neovim_gtiup", "neovim_lsp_configuration"}
     declared = doc.get("declared", [])
     if not isinstance(declared, list) or any(not validation_checks.NAME.fullmatch(n) for n in declared):
@@ -129,6 +129,7 @@ def run_tests(doc, build, stage, jobs, test_jobs):
     # Check the installed adapter with the exact reused resources, not a build
     # path that might mask missing runtime dependencies or stdlib discovery.
     shutil.copy2(build / "gti_lsp", stage / "bin/gti_lsp")
+    (stage / "share/gti/LSP_SOURCE").write_text(doc["head"] + "\n")
     subprocess.run(["python3", str(ROOT / "tests/lsp_smoke_test.py"), str(stage / "bin/gti_lsp")], check=True)
     for name, location in (("gti", stage / "bin/gti"), ("libgti_runtime.a", stage / "lib/libgti_runtime.a")):
         (build / name).symlink_to(location)
@@ -141,7 +142,8 @@ def seal(doc, stage, platform, build):
     validate_plan(doc)
     record = json.loads((stage.parent / f"lsp-native-{platform}.json").read_text())
     evidence = json.loads((build / "lsp-evidence.json").read_text())
-    if (record["sha"] != doc["head"] or record["payload"] != [list(row) for row in preserved_payload(stage)]
+    if ((stage / "share/gti/LSP_SOURCE").read_text().strip() != doc["head"]
+            or record["sha"] != doc["head"] or record["payload"] != [list(row) for row in preserved_payload(stage)]
             or evidence["sha"] != doc["head"] or evidence["compatibility"] != doc["compatibility"]
             or evidence["lsp_sha256"] != release_artifacts.digest(stage / "bin/gti_lsp")):
         raise ValueError("tested LSP or immutable compiler resources changed before packaging")

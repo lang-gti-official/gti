@@ -415,7 +415,7 @@ def workflow_contract(root):
     # CI, nightly packaging and the rollup bot run on GitHub; the frozen Gitea
     # release workflow stays as written.
     assert sorted(p.name for p in (root / ".github/workflows").glob("*.yml")) == [
-        "backport.yml", "beta.yml", "cache.yml", "ci.yml", "nightly.yml", "preview.yml", "rollback.yml", "rollup.yml", "train.yml"]
+        "backport.yml", "beta.yml", "cache.yml", "ci.yml", "lsp.yml", "nightly.yml", "preview.yml", "rollback.yml", "rollup.yml", "train.yml"]
     assert not (root / ".gitea/workflows/ci.yml").exists()
     assert "branches:\n      - main" in release and "paths:" not in release
     assert release.count("-DGTI_RELEASE_BUILD=ON") == 1, "channels must share one configure"

@@ -1088,3 +1088,17 @@ even when main advanced, allowing helper reconciliation without first requiring
 an unknown task to reconcile itself. Already merged tasks resume sync; lost
 abandonment responses are confirmed remotely and do not republish closed work.
 Server API rejections are reported without secrets.
+
+### LSP adapter CI classification
+
+Only `src/lsp/`, `lua/gti/`, `lsp/` and `plugin/` adapter changes with allowlisted
+Python LSP/Neovim harnesses and documentation/fragments may use the `lsp` lane.
+`scripts/lsp_ci.py` owns this allowlist. Any shared compiler/stdlib/runtime/parser,
+build, CI, test-registration or unknown path retains full integration. A missing
+full-CI ancestor SDK or unequal shared-input identity also selects full CI.
+Contributors still record focused owning evidence and submit through the normal
+preview/PR lifecycle; this lane is not a local-validation exemption. Both platform
+LSP jobs must pass the CI gate. Reused compiler provenance is mandatory when
+nightly consumes their complete packages. LSP-only evidence cannot seed another
+compiler SDK. Independent component publication is detached after integration
+and does not require an agent to poll publication or install anything.

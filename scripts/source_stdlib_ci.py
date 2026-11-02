@@ -206,7 +206,7 @@ def native_payload(stage):
     rows = []
     for path in sorted(stage.rglob("*")):
         name = path.relative_to(stage).as_posix()
-        if name.startswith("share/gti/stdlib/") or name in {"share/gti/BUILD_ID", "share/gti/COMPILER_ORIGIN.json"}:
+        if name.startswith("share/gti/stdlib/") or name in {"share/gti/BUILD_ID", "share/gti/COMPILER_ORIGIN.json", "share/gti/LSP_COMPATIBILITY.json"}:
             continue
         if path.is_symlink():
             rows.append((name, "link", os.readlink(path)))
@@ -242,6 +242,10 @@ def seal(plan_doc, stage, platform, root=ROOT):
         raise ValueError("native payload changed during testing")
     if source_digest(stage / "share/gti/stdlib") != source_digest(root / "stdlib"):
         raise ValueError("packaged library differs from tested source")
+    import lsp_compatibility
+    if json.loads((stage / "share/gti/LSP_COMPATIBILITY.json").read_text()) != {
+            "schema": 1, "compatibility": lsp_compatibility.identity(root, plan_doc["head"])}:
+        raise ValueError("LSP resource compatibility changed during testing")
     if json.loads((stage / "share/gti/COMPILER_ORIGIN.json").read_text()) != plan_doc["compiler_origin"]:
         raise ValueError("compiler origin changed during testing")
 
@@ -271,6 +275,11 @@ def prepare(plan_doc, platform, directory, stage, root=ROOT):
         if path.is_symlink():
             raise ValueError("source stdlib cannot contain symlinks")
     shutil.copytree(root / "stdlib", metadata / "stdlib")
+    # A library change changes the compatible LSP resource set even when the
+    # native compiler is reused. Never retain the old component identity.
+    import lsp_compatibility
+    (metadata / "LSP_COMPATIBILITY.json").write_text(json.dumps({
+        "schema": 1, "compatibility": lsp_compatibility.identity(root, head)}, sort_keys=True) + "\n")
     (metadata / "COMPILER_ORIGIN.json").write_text(json.dumps(origin, sort_keys=True) + "\n")
     if native_payload(stage) != original_payload:
         raise ValueError("source replacement altered the native payload")
