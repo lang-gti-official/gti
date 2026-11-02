@@ -164,6 +164,7 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   suppressLoanPlaceAccessDepth = 0;
   lambdaUncapturedLocals.clear();
   currentReturnType = SemanticType::Unknown;
+  currentLambdaReturn.reset();
 }
 
 auto SemanticVisitor::Impl::check(const Program &program) -> bool {
@@ -3771,6 +3772,8 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
                std::span(diagnostics).subspan(bodyDiagnosticStart));
   };
   const SemanticType enclosingReturnType = currentReturnType;
+  auto enclosingLambdaReturn = std::move(currentLambdaReturn);
+  currentLambdaReturn.reset();
   const ReceiverMutability enclosingReceiverMutability =
       currentReceiverMutability;
   LoanFlowState enclosingLoanFlow = std::move(loanFlow);
@@ -3893,6 +3896,7 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
   valueFlow.rawPointerLoops = std::move(enclosingRawPointerLoops);
   currentStaticMemberFunction = enclosingStaticMemberFunction;
   currentReturnType = enclosingReturnType;
+  currentLambdaReturn = std::move(enclosingLambdaReturn);
   currentFunctionDeclaration = enclosingFunctionDeclaration;
   currentProgramEffectOwner = enclosingEffectOwner;
   restoreRawProgramStorage(std::move(enclosingRawProgramStorage));
@@ -4029,6 +4033,7 @@ auto SemanticVisitor::Impl::captureBodyLocalState() -> BodyLocalState {
       .structuredBindingElements = std::move(structuredBindingElements),
       .currentType = currentType,
       .currentReturnType = currentReturnType,
+      .currentLambdaReturn = std::move(currentLambdaReturn),
       .currentProgramEffectOwner = currentProgramEffectOwner,
       .rawPointerLoops = std::move(valueFlow.rawPointerLoops),
       .rawProgramStorage = saveRawProgramStorage(),
@@ -4081,6 +4086,7 @@ auto SemanticVisitor::Impl::captureBodyLocalState() -> BodyLocalState {
   structuredBindingElements.clear();
   currentType = SemanticType::Unknown;
   currentReturnType = SemanticType::Unknown;
+  currentLambdaReturn.reset();
   currentProgramEffectOwner = {};
   valueFlow.rawPointerLoops = {};
   measureTopLevelStatements = false;
@@ -4134,6 +4140,7 @@ auto SemanticVisitor::Impl::restoreBodyLocalState(BodyLocalState state)
   structuredBindingElements = std::move(state.structuredBindingElements);
   currentType = state.currentType;
   currentReturnType = state.currentReturnType;
+  currentLambdaReturn = std::move(state.currentLambdaReturn);
   currentProgramEffectOwner = state.currentProgramEffectOwner;
   valueFlow.rawPointerLoops = std::move(state.rawPointerLoops);
   restoreRawProgramStorage(std::move(state.rawProgramStorage));
@@ -10424,9 +10431,9 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
       recordParameterEntryLoan(parameter);
     }
   }
-  // A reference result borrows from exactly one read-only reference
-  // parameter, inferred like a free function's summary. Captures are not
-  // lifetime origins, and a mutable dependency cannot escape.
+  // A checked reference result borrows from one parameter with sufficient
+  // access. A read-only result may weaken an exclusive parameter borrow;
+  // captures never supply the result's lifetime.
   const std::optional<LambdaReturnContext> enclosingLambdaReturn =
       currentLambdaReturn;
   LambdaReturnContext lambdaReturn{.declaration = &expr};
@@ -10435,7 +10442,8 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
                                          parameterType);
   if (returnType.kind == SemanticType::Reference) {
     const FunctionReturnBorrowSummary summary = functionReturnBorrowSummary(
-        returnType, lambdaReturn.parameterTypes, 0, true, IntrinsicKind::None);
+        returnType, lambdaReturn.parameterTypes, 0, true, IntrinsicKind::None,
+        std::nullopt, true);
     // A pack or open parameter type decides the origin only once concrete;
     // the instance's reanalysis reports a missing contract then.
     const bool openParameters = std::any_of(
@@ -10445,8 +10453,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
         });
     lambdaReturn.deferred =
         openParameters || containsOpenTypeParameter(returnType);
-    if (summary.origin == BorrowOriginKind::Argument &&
-        summary.access == AccessMode::ReadOnly) {
+    if (summary.origin == BorrowOriginKind::Argument) {
       lambdaReturn.origin = summary.origin;
       lambdaReturn.parameter = summary.parameter;
       lambdaReturn.access = summary.access;
