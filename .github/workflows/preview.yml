@@ -112,6 +112,10 @@ jobs:
             gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-release-
       - name: Check runner sanitizer execution
         run: python3 scripts/check_ci_sanitizers.py --cxx "${CXX}" --sanitizer address,undefined
+      - name: Request CMake build and installation metadata
+        run: |
+          mkdir -p build/.cmake/api/v1/query
+          touch build/.cmake/api/v1/query/codemodel-v2
       - name: Configure release build
         run: >-
           cmake -S . -B build -G Ninja
@@ -123,11 +127,24 @@ jobs:
           cmake --build build --config Release --parallel "${GTI_JOBS}"
           --target CMakeFiles/gti_driver.dir/src/driver/build.cpp.o
       - name: Build
-        run: python3 scripts/build_window.py --kind build -- cmake --build build --config Release --parallel "${GTI_JOBS}"
-      - name: Validate combined preview on this platform
         run: >-
-          python3 scripts/build_window.py --kind suite --
-          ctest --test-dir build --output-on-failure -R '^preview_admission$' --no-tests=error
+          python3 scripts/build_window.py --kind build --
+          python3 ../control/scripts/preview_build.py --source . --build build --parallel "${GTI_JOBS}"
+      - name: Validate combined preview on this platform
+        run: |
+          # Inherited by the inner CTest in preview_admission. The outer gate
+          # still holds one shared suite slot; CTest honors locks/RUN_SERIAL.
+          export CTEST_PARALLEL_LEVEL="${GTI_TEST_JOBS}"
+          python3 scripts/build_window.py --kind suite -- \
+            ctest --test-dir build --output-on-failure -R '^preview_admission$' --no-tests=error
+      - name: Retain preview selection and nested test timings
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: preview-checks-${{ matrix.platform }}-${{ github.run_attempt }}
+          path: source/build/Testing
+          if-no-files-found: warn
+          retention-days: 14
       - name: Stage toolchain
         run: |
           stage="$(mktemp -d "${RUNNER_TEMP}/gti-stage.XXXXXXXX")"
