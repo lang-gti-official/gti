@@ -26,9 +26,10 @@ def main():
         run('cmake', '--install', build, '--prefix', stage, '--component', 'gti_toolchain')
         query = adapter / '.cmake/api/v1/query'; query.mkdir(parents=True)
         (query / 'codemodel-v2').touch()
+        llvm = next((line.split('=', 1)[1] for line in (build / 'CMakeCache.txt').read_text().splitlines() if line.startswith('LLVM_DIR:')), '')
         run('cmake', '-S', ROOT, '-B', adapter, '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release',
             '-DGTI_REUSE_TOOLCHAIN='+str(stage), '-DGTI_REBUILD_LSP=ON',
-            '-DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF')
+            '-DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF', *(['-DLLVM_DIR='+llvm] if llvm else []))
         pattern = '^(lsp_protocol|frontend_cache_invalidation|lsp_project_facts|lsp_configuration)$'
         targets = source_stdlib_ci.consumer_targets(adapter, pattern, native_roots=(ROOT / 'src/lsp',))
         run('cmake', '--build', adapter, '--parallel', '2', '--target', *targets)
