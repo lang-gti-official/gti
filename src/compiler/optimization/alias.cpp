@@ -1,5 +1,6 @@
 #include "gti/optimization/alias.h"
 
+#include "gti/mir_editor.h"
 #include "gti/mir_effects.h"
 #include "gti/optimization/coverage.h"
 
@@ -701,11 +702,92 @@ public:
     return *slot;
   }
 
+  // This contract belongs to the sealed declaration, not its external symbol.
+  // The status pointer is written but neither retained nor returned, on either
+  // outcome. Ordinary foreign calls and callback adapters remain opaque.
+  [[nodiscard]] bool sealedStatusCall(const MirInstruction &instruction) const {
+    if (instruction.kind != MirInstructionKind::Call ||
+        instruction.dispatch != CallDispatch::Static ||
+        instruction.intrinsic != IntrinsicKind::None || instruction.receiver ||
+        instruction.nativeCallbackAdapter || instruction.threadTaskAdapter ||
+        instruction.callableBoundary || instruction.callableInvocation ||
+        !instruction.functionTarget || instruction.operands.size() != 3)
+      return false;
+    const auto *target =
+        program.findFunctionInstance(*instruction.functionTarget);
+    return target && target->processMemoryOperation ==
+                         ProcessMemoryRuntimeOperation::PosixAllocate;
+  }
+
+  // Address formation normally exposes storage. The sole exception here is a
+  // complete SSA-use chain into the noncapturing status role. No storage,
+  // control-flow argument, pointer view, or other consumer is admitted.
+  [[nodiscard]] bool privateStatusAddress(const MirInstruction &address) const {
+    if (!address.result || address.destination || address.operands.size() != 1)
+      return false;
+    if (!completeUses) {
+      const bool hasStatusCall =
+          std::any_of(targets.begin(), targets.end(), [&](const auto &entry) {
+            return sealedStatusCall(*entry.first);
+          });
+      if (!hasStatusCall || body.values.size() > 8192 ||
+          body.instructionCount() > 8192) {
+        completeUses = false;
+        return false;
+      }
+      MirBody rebuilt = body;
+      completeUses =
+          rebuildMirValueUses(rebuilt) && rebuilt.valueUses == body.valueUses;
+    }
+    if (!*completeUses)
+      return false;
+    std::vector<MirValueId> pending{*address.result};
+    std::set<MirValueId> seen;
+    bool terminal = false;
+    while (!pending.empty()) {
+      const auto value = pending.back();
+      pending.pop_back();
+      if (!seen.insert(value).second || seen.size() > 32 ||
+          body.usesOf(value).empty())
+        return false;
+      for (const auto &use : body.usesOf(value)) {
+        if (use.kind != MirValueUseKind::InstructionOperand)
+          return false;
+        const auto *block = body.findBlock(use.block);
+        if (!block)
+          return false;
+        const auto found =
+            std::find_if(block->instructions.begin(), block->instructions.end(),
+                         [&](const MirInstruction &candidate) {
+                           return candidate.id == use.instruction;
+                         });
+        if (found == block->instructions.end() || found->tombstone ||
+            use.operandIndex >= found->operands.size() ||
+            found->operands[use.operandIndex].value != value)
+          return false;
+        if (use.operandIndex == 2 && sealedStatusCall(*found)) {
+          terminal = true;
+          continue;
+        }
+        const auto *input = body.findValue(value);
+        if (found->kind != MirInstructionKind::CallInput ||
+            found->destination || !found->result ||
+            found->operands.size() != 1 || !input ||
+            found->info.type != input->info.type)
+          return false;
+        pending.push_back(*found->result);
+      }
+    }
+    return terminal;
+  }
+
   [[nodiscard]] InputClasses
   computeInputClasses(const MirInstruction &instruction,
                       CaptureEdge edge) const {
     InputClasses result;
     result.operands.assign(instruction.operands.size(), MirCaptureClass::None);
+    if (sealedStatusCall(instruction))
+      return result;
     const auto cached = targets.find(&instruction);
     if (cached == targets.end() || cached->second.boundary ||
         cached->second.addresses.empty()) {
@@ -831,7 +913,8 @@ public:
 
     if (!instruction.closureCaptureTypes.empty())
       result.merge(all);
-    if (instruction.operation == MirOperation::AddressOf)
+    if (instruction.operation == MirOperation::AddressOf &&
+        !privateStatusAddress(instruction))
       for (const MirOperand &operand : instruction.operands) {
         if (const MirPlace *place = body.findPlace(operand.place))
           if (const auto key = captureKey(*place))
@@ -1074,6 +1157,7 @@ private:
   std::vector<KeySet> origins;
   std::vector<const MirInstruction *> producers;
   std::vector<bool> parameterValues;
+  mutable std::optional<bool> completeUses;
   KeySet everyKey;
   KeySet noKeySet;
   std::unordered_map<const MirInstruction *, MirInvocationTargets> targets;

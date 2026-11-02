@@ -23,11 +23,17 @@ export class unordered_map<K, V, Hash = std::hash<K>, KeyEqual = std::equal_to<K
 
   size_t locate(K& key, size_t hash) {
     if (this.buckets.empty()) { return 0; }
-    mut size_t node = this.buckets[hash % this.buckets.size()];
-    while (node != 0) {
-      if (this.nodes[node - 1]->hash == hash &&
-          this.equal(this.nodes[node - 1]->entry.first, key)) { return node; }
-      node = this.nodes[node - 1]->next;
+    // Buckets and links contain zero or a live node's slot plus one. Insert,
+    // erase and rehash maintain that invariant; this read borrow excludes
+    // structural mutation throughout the traversal. The bucket remainder is
+    // in range because the empty case returned before division.
+    unsafe {
+      mut size_t node = this.buckets.get_unchecked(hash % this.buckets.size());
+      while (node != 0) {
+        detail::unordered_map_node<K, V>& stored = *this.nodes.get_unchecked(node - size_t(1));
+        if (stored.hash == hash && this.equal(stored.entry.first, key)) { return node; }
+        node = stored.next;
+      }
     }
     return 0;
   }

@@ -49,6 +49,8 @@ public:
             16, "invalid_container_argument", "container_argument")
     modes = [(f"{standard}-{level}", ["--std", standard, f"-{level}"], [])
              for standard in ("c++20", "c++23") for level in ("O0", "O1", "O3")]
+    modes += [(f"llvm-{level}", ["--backend", "llvm", f"-{level}"], [])
+              for level in ("O0", "O1", "O2", "O3")]
     modes += [("no-elide", ["--std", "c++23", "-O0"], ["-fno-elide-constructors"]),
               ("sanitized", ["--std", "c++23", "-O1"],
                ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])]

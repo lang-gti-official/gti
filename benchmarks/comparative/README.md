@@ -675,3 +675,46 @@ The largest executable-size increase was 0.21% for reserved hashing. These
 are cost observations, not repeated compiler-speed or peak application-memory
 measurements. The experiment and all raw samples are retained under
 `named-field-mini/Testing/inlining-paired`.
+
+### Measured checkpoint `a4563f80`
+
+Bounded recursive specialization and the measured O3 inlining threshold bring
+the unchanged corpus to **26/34 competitive against both comparators, with
+eight remaining**. All digests pass; no comparison is noisy, too short or
+inconclusive. Recursive traversal, sorted input and reverse input now pass
+the 10% threshold.
+
+| Remaining workload | GTI / C++ median | GTI / Rust median |
+| --- | ---: | ---: |
+| `lib-vector-growth` | 1.689 | 1.740 |
+| `lib-vector-reserved` | 1.587 | 1.520 |
+| `lib-vector-transform` | 1.235 | 1.372 |
+| `lib-sort-random` | 1.418 | 2.344 |
+| `lib-string-growth-search` | 0.438 | 1.400 |
+| `lib-string-substrings` | 1.144 | 2.398 |
+| `lib-hashmap-reserved` | 1.041 | 1.412 |
+| `lib-interface-dispatch` | 0.745 | 1.594 |
+
+The paired run against `6d7a4dd6` measures recursive traversal at 0.6952 times
+its former runtime (95% interval 0.6931–0.7010), sorted input at 0.6456
+(0.6438–0.6549), reverse input at 0.5928 (0.5626–0.6155), substrings at
+0.9069 (0.8981–0.9240), and growing hash tables at 0.9223 (0.9060–0.9387).
+The other 29 cases remain within or inconclusive against the separate 5%
+material band. Stronger 25-sample, 400 ms repeats resolve the earlier
+regression uncertainty: string growth 0.9792 (0.9571–1.0255), reserved hashing
+1.0324 (1.0259–1.0424), and interface dispatch 0.9934 (0.9779–1.0161).
+Reserved hashing is about 3.2% slower than this paired baseline, within that
+5% acceptance band; the improvement is not uniform across workloads.
+
+Summed compilation observations are 16.955 s before and 17.491 s after, with
+median paired peak compiler RSS ratio 0.9973 and largest executable-size
+increase 0.21%. Allocation API call, success and free counts are unchanged
+at both diagnostic seeds. Total requested bytes include startup/path effects
+and are not an application live-memory measurement. Eighteen registered
+focused checks and native smoke pass on both macOS arm64 and Linux x64;
+actual sorting, comparator-failure and adversarial fixtures also pass LLVM
+O0/O3. These are focused checks, not full integration validation.
+
+Raw timings, build costs, allocation observations and generated code are
+retained under `recursive-inline-mini/Testing`, and Linux evidence under
+`recursive-inline-linux`, in the round-eight manual campaign artifact.

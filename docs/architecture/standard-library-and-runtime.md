@@ -240,6 +240,16 @@ and [object-lifetime tests](../../tests/object_lifetime_tests.cpp).
 These links identify existing acceptance evidence; this documentation ledger
 does not claim a new test run.
 
+Hash-table lookup follows the private bucket-chain invariant: each link is zero
+or the slot index plus one of a live, separately owned node. Insertion, erasure
+and rehashing maintain that invariant, and lookup's shared borrow excludes
+structural mutation during traversal. The source lookup therefore uses
+`get_unchecked` for these internal indices and borrows each node once per
+iteration. Public missing-key checks and user hash/equality calls retain their
+order and behavior; no unchecked public lookup is introduced. Collision,
+slot-reuse, rehashing, ownership and failure-cleanup tests cover this boundary
+on both backends.
+
 ### B. Source-Policy Migrations And Remaining Prerequisites
 
 These entries distinguish migration work from complete acceptance. S-ALLOC-09

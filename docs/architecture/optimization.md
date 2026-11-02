@@ -1425,6 +1425,16 @@ effect opaque. A constructed container's live length therefore survives
 building a second container through the opaque process allocator, and a loop
 counter survives printing.
 
+The sealed POSIX allocation adapter supplies one narrow native capture contract:
+its status-output argument is written but never retained or returned, on either
+outcome. Address formation remains exposing unless the complete SSA-use chain
+consists solely of same-type call-input staging into that exact argument role.
+The analysis independently rebuilds and checks the use inventory; storage,
+returns, edge arguments, pointer views, extra consumers and unknown/application
+providers reject the exception. This is a capture fact only: allocation, status
+writes, failure effects and ordinary memory invalidation are unchanged. The
+allocation result does not inherit the status address's provenance.
+
 The capture analysis extends the place alias and escape analysis in
 `alias.cpp`. It has two layers.
 

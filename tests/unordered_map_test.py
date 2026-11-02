@@ -90,4 +90,5 @@ if __name__ == "__main__":
     reject_invalid_sources(pathlib.Path(sys.argv[1]).resolve())
     run_runtime_matrix(names=("unordered_map_core", "unordered_map_iteration",
                               "unordered_map_ownership", "unordered_map_collisions",
-                              "unordered_map_load_factor", "unordered_map_insert_result"))
+                              "unordered_map_load_factor", "unordered_map_insert_result"),
+                       llvm_modes=True)
