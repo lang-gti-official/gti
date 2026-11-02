@@ -1499,36 +1499,85 @@ elimination, alias freedom, or vectorization by itself.
 ### Guarded checked reductions
 
 At LLVM O2/O3, a bounded representation-level pass runs after inlining and
-before vectorization. It recognizes innermost equality-terminated traversals
-whose integer index starts at zero and advances by one. The independent
+before vectorization. It recognizes innermost traversals whose integer index
+starts at a constant and advances by one. The latch continues on inequality
+or a strict signed/unsigned ordering comparison: each stops when the index
+equals the target, and an ordering comparison may stop earlier. The independent
 iteration bound comes from modular unit-step traversal, not an overflow exit,
 `nsw`/`nuw` flags, or a circular scalar-evolution proof. Comparing the current
-index permits at most `bound` backedges; comparing the next index permits
-`bound - 1` in the index's unsigned width, including a full traversal for zero.
+index permits at most `bound - initial` backedges; comparing the next index
+permits `bound - initial - 1`. Both subtractions use the index's modular width
+before widening. A next-index target equal to the initial value can require a
+complete traversal of that domain.
 
-A separate reduction starts at a nonnegative literal and carries only
-nonnegative constant additions, PHIs and selects back to its header. Its
+A separate reduction starts at a nonnegative literal or an invariant input and carries only
+nonnegative bounded additions, PHIs and selects back to its header. Uniform
+increment envelopes come from constants, constant masks, unsigned remainders
+by nonzero constants, constant logical shifts, zero extensions, truncations, nonwrapping
+bounded additions, and complete PHI/select alternatives. The bounded analysis
+uses the operations' bit-level meaning, never nowrap flags or a check that it
+will remove; cyclic or unknown bounds remain unsupported. Its
 maximum addition per iteration bounds every intermediate in that update DAG.
+A separate structural target envelope can prove that the unit-step index
+traverses a nonwrapping segment. The index and its next value can then serve as
+bounded increments, supporting conditional index-weighted sums. A next-index
+latch requires every target to be strictly above the initial index; a
+current-index latch permits equality but includes that final index. Dynamic
+target envelopes add explicit lower/upper checks on the frozen target, so a
+freeze of a poison expression cannot escape the assumed range. Truncation
+retains a narrower source envelope only when it fits the destination; otherwise
+it yields the complete unsigned destination range.
 The initial profile optimizes one reduction per transformed loop.
 The pass uses the conservative nonnegative signed range even for unsigned
 values. If the traversal's whole domain does not fit, one preheader guard
-selects a fast loop or an unchanged checked fallback. Only exit comparisons
-proved constant for the admitted range are replaced. Other checks, calls,
+selects a fast loop or an unchanged checked fallback. Exit comparisons and
+signed/unsigned addition overflow lanes proved constant for the admitted range
+are replaced. An addition's successful value can be separate from its detector,
+as happens when LLVM sinks arithmetic across a PHI join; the proof matches the
+detector's exact operands. Overflow aggregates and extracts outside the fast
+loop remain intact, including observations merged with the fallback. Other checks, calls,
 memory effects and cleanup edges retain their original order. This applies to
 ordinary counters and conditional weighted reductions without recognizing
 library declarations or type names. LLVM can then vectorize eligible loops;
 vectorization and a speedup are not guaranteed for every admitted shape.
 
+For an invariant initial value, the guard first requires its unsigned value to
+be at most the signed maximum. With maximum per-iteration increment `K > 0`,
+it then requires `backedges < (signedMax - initial) / K`. This admits the first
+update without overflowing a `backedges + 1` calculation. Subtraction remains
+unflagged and division has a nonzero constant divisor, including on rejected
+paths. The fast header range is conservatively `[0, signedMax - K]`; exact
+intermediate offsets still need their own proof. This supports sums carried
+from an outer loop without assuming the outer computation is bounded.
+
+The same fallback can also protect scalar unsigned additions of an invariant
+base and a bounded amount inside that reduction loop. An independent bound
+`amount <= K` adds the preheader condition `base <= unsignedMax - K`. This can
+remove an input or index calculation's overflow exit that would otherwise
+prevent vectorization after the sum check was removed. At most four distinct
+bases are admitted; each must already dominate the preheader, and no operand
+computation moves out of the loop. Each base is frozen once, sharing the bound
+or initial-value freeze when they are the same SSA value. All fast-loop uses,
+including separate successful arithmetic and PHI inputs, use that same value.
+A base's structural envelope is checked explicitly before substitution, so
+freezing poison cannot invalidate a bound used elsewhere in the proof. The
+original fallback and outside overflow observations remain intact. Vector
+overflow intrinsics and additions with no independent amount bound are retained.
+
 The guard and fast latch share one frozen bound so `undef` cannot select a
-small bound at entry and a different target each iteration. The first update
-must be safe independently of the bound, preserving paths that exit before a
-poison bound would originally be consumed. Cloning repairs every external PHI,
+small bound at entry and a different target each iteration. A dynamic reduction
+initial value has a separate freeze shared by its capacity guard and fast
+header; the fallback retains the original input. The guard proves the first
+update safe too, preserving paths that exit before a poison input would
+originally be consumed. Cloning repairs every external PHI,
 and each edit invalidates and reacquires function analyses. The pass rejects
 nonduplicable/convergent operations, local allocas, EH/address-taken blocks,
 already-versioned/vectorized loops, and size-optimized functions. It admits at
 most 128 instructions/16 blocks per loop, 1,024 cloned body instructions per
-function, and 32 transformations. Decreasing or dynamic steps, reset recurrences,
-outer loops containing subloops and arbitrary relational bounds remain outside
+function, and 32 transformations. Increment and recurrence tracing each have
+a 128-node work bound. Decreasing or dynamic induction steps, unbounded or
+negative increments, reset recurrences, outer loops containing subloops, and
+non-strict relational latches remain outside
 this profile.
 
 `llvm_checked_reductions` exhaustively compares small-width checked and
