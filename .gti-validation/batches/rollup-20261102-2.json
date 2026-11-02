@@ -1,0 +1,75 @@
+{
+  "schema": 1,
+  "base": "e3532e6715dd6344b0085e367982a8f2d496bda1",
+  "members": [
+    {
+      "pr": 139,
+      "head": "2f892b753e1d2b6c02fa642442fb3c9af2d39b03",
+      "plan": {
+        "tier": "T2",
+        "rationale": "Rollup member #139: its declared Validation T0/T1 tests; the merge queue runs the complete suite on the combined candidate; its tier was not declared, so it is recorded as T2",
+        "regressions": [
+          "mir_program_initialization"
+        ],
+        "owning": [
+          "constexpr_text_runtime",
+          "llvm_class_execution"
+        ],
+        "cross_phase": [],
+        "unaffected": "Not assessed per member by the rollup bot; the merge queue runs every registered test",
+        "targets": [
+          "gti"
+        ],
+        "platforms": [
+          "darwin",
+          "linux"
+        ],
+        "reproduction": {
+          "exception": "Recorded in the description of #139; a rollup reproduces no member failure"
+        },
+        "broader": [
+          "constexpr_text_runtime",
+          "llvm_class_execution"
+        ]
+      }
+    },
+    {
+      "pr": 144,
+      "head": "57e8ef8cda37d3f43691f3c49c373c7f4f877971",
+      "plan": {
+        "tier": "T1",
+        "rationale": "Rollup member #144: its declared Validation T0/T1 tests; the merge queue runs the complete suite on the combined candidate",
+        "regressions": [
+          "include_suggestions",
+          "lsp_include_suggestions",
+          "out_of_class_lsp",
+          "lsp_repair_contract",
+          "lsp_protocol"
+        ],
+        "owning": [
+          "code_snippets",
+          "macro_expansion_queries",
+          "module_queries",
+          "generic_method_tooling",
+          "documentation_index",
+          "frontend_cache_invalidation",
+          "diagnostic_explanations",
+          "raw_pointer_audit_policy",
+          "compiler_pipeline"
+        ],
+        "cross_phase": [],
+        "unaffected": "Not assessed per member by the rollup bot; the merge queue runs every registered test",
+        "targets": [
+          "gti"
+        ],
+        "platforms": [
+          "darwin",
+          "linux"
+        ],
+        "reproduction": {
+          "exception": "Recorded in the description of #144; a rollup reproduces no member failure"
+        }
+      }
+    }
+  ]
+}
