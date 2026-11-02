@@ -1,8 +1,13 @@
 import std.algorithm;
 import std.array;
 import std.list;
+import std.map;
 import std.set;
+import std.string;
 import std.vector;
+
+using ProfitEntry = std::map<std::string, float>::value_type;
+
 int main() {
   // Sequence search is generic; the returned cursor keeps its owner borrowed.
   std::list<int> priorities = {2, 4, 4, 9};
@@ -29,5 +34,16 @@ int main() {
   std::copy_if(weights.begin(), weights.end(), selected.begin_mut(),
                [](int& value) -> bool { return value > 3; });
   for (auto& value : selected) { std::println(value); }
+
+  // Rank dictionary entries by their mapped values, without copying keys.
+  mut std::map<std::string, float> profit_change{};
+  profit_change.insert(std::string("Acme"), float(-4));
+  profit_change.insert(std::string("Beacon"), float(7));
+  auto greatest = std::max_element(profit_change.begin(), profit_change.end(),
+      [](ProfitEntry& left, ProfitEntry& right) -> bool {
+        return left.second < right.second;
+      });
+  // Empty ranges return an end position; ties keep the first in traversal order.
+  if (greatest != profit_change.end()) { std::println((*greatest).first); }
   return 0;
 }

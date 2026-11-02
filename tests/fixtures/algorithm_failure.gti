@@ -11,6 +11,17 @@ public:
 public:
   failing_predicate() = default;
 };
+class failing_order {
+public:
+  failing_order() = default;
+  failing_order(failing_order& other) = delete;
+  failing_order(failing_order&& other) = default;
+  ~failing_order() { std::println(77); }
+  bool operator()(int& left, int& right) mut {
+    int zero = 0;
+    return left / zero < right;
+  }
+};
 int main(int argc, std::vector<std::string> argv) {
   witness cleanup{};
   std::vector<int> input = {1, 2};
@@ -26,6 +37,10 @@ int main(int argc, std::vector<std::string> argv) {
     std::array<int, 0> empty{};
     auto absent = std::min_element(empty.begin(), empty.end());
     std::println(*absent);
+  }
+  if (argc == 5) {
+    auto greatest = std::max_element(input.begin(), input.end(), failing_order());
+    std::println(*greatest);
   }
   return 1;
 }

@@ -97,6 +97,21 @@
       }
     },
     {
+      "id": "algorithm-max-element",
+      "mode": "run",
+      "source": "tests/fixtures/algorithm_max_element.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "backend": "llvm"
+    },
+    {
       "id": "algorithm-mutation",
       "mode": "run",
       "source": "tests/fixtures/algorithm_mutation.gti",
@@ -2958,16 +2973,17 @@
       "case_ids": [
         "algorithm",
         "algorithm-boundaries",
+        "algorithm-max-element",
         "algorithm-mutation",
-        "algorithm-search",
-        "algorithm-user-types",
-        "constexpr-library",
         "algorithm-ordered-search",
         "algorithm-ordered-search-cost",
         "algorithm-ordered-search-example",
         "algorithm-ordered-search-user-types",
-        "algorithm-owned-transform",
         "algorithm-owned-example",
+        "algorithm-owned-transform",
+        "algorithm-search",
+        "algorithm-user-types",
+        "constexpr-library",
         "restoring-indexed",
         "restoring-order",
         "restoring-order-example"
@@ -2981,20 +2997,21 @@
         "forward cursors with owning unordered records and move-only mutable query callbacks"
       ],
       "evidence": [
-        "tests/fixtures/stdlib_surface_algorithm.gti",
+        "examples/139-ordered-search.gti",
+        "stdlib/std/algorithm.gti",
+        "tests/fixtures/algorithm_max_element.gti",
+        "tests/fixtures/complete_range_probe.gti",
         "tests/fixtures/generic_algorithm_find_count.gti",
         "tests/fixtures/generic_algorithm_for_each.gti",
         "tests/fixtures/generic_callable_concepts.gti",
-        "tests/fixtures/complete_range_probe.gti",
-        "tests/generic_algorithm_cluster_test.py",
-        "tests/generic_callable_concepts_runtime_test.py",
-        "tests/generic_algorithm_breadth_test.py",
-        "tests/generic_algorithm_errors_test.py",
-        "tests/ordered_search_runtime_test.py",
         "tests/fixtures/ordered_search.gti",
         "tests/fixtures/ordered_search_user_types.gti",
-        "examples/139-ordered-search.gti",
-        "stdlib/std/algorithm.gti"
+        "tests/fixtures/stdlib_surface_algorithm.gti",
+        "tests/generic_algorithm_breadth_test.py",
+        "tests/generic_algorithm_cluster_test.py",
+        "tests/generic_algorithm_errors_test.py",
+        "tests/generic_callable_concepts_runtime_test.py",
+        "tests/ordered_search_runtime_test.py"
       ]
     },
     {
