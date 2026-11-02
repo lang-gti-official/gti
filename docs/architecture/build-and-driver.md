@@ -313,7 +313,18 @@ managed directories after the user has stopped processes using them.
 current preview source with `.gti-preview.json`, uses the reviewed production
 configuration on Linux x64 and macOS arm64, runs combined `preview_admission`
 (included feature checks and automated examples) and installed-toolchain checks
-on each platform, then packages that validated stage. The separate `preview`
+on each platform, then packages that validated stage. The publisher requests
+CMake's file-API metadata and builds only targets referenced by those checks
+and the complete `gti_toolchain` install component, including bundled LLVM
+archives installed as files. Native dependencies remain CMake-owned. It does
+not build unrelated test executables. Candidate-owned example and manifest
+selection remain unchanged; missing registered checks fail admission.
+
+The nested admission CTest inherits `CTEST_PARALLEL_LEVEL` from the runner's
+CPU/memory-bounded `GTI_TEST_JOBS`, preserving CTest resource locks and serial
+tests. One shared suite reservation covers the aggregate. Selection, build
+scope and nested timings are retained in `preview-checks-<platform>-<attempt>`
+artifacts, including on failure. The separate `preview`
 prerelease uses `gti-preview-<platform>.tar.gz` names, checksums, embedded and
 release `BUILD_ID`, `PREVIEW_SOURCE`, inclusion metadata and run/attempt-bound
 provenance. Publication verifies both platforms, attests archives, and requires
