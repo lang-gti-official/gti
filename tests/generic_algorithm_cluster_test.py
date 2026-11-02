@@ -444,7 +444,8 @@ def main() -> int:
         ):
             binary = root / f"copy-return-{backend}-{standard}-{level}"
             built = run([str(compiler), str(copy_return), "--backend", backend,
-                         "--std", standard, f"-{level}", "-o", str(binary)], environment)
+                         *(["--std", standard] if backend == "cpp" else []),
+                         f"-{level}", "-o", str(binary)], environment)
             if built.returncode:
                 return fail("returned copy cursor build", built)
             executed = run([str(binary)], environment)
