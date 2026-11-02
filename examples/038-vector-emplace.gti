@@ -47,6 +47,11 @@ int main() {
   numbers.push_back(5);
   numbers[std::size_t(0)] = 6;
 
+  // Membership borrows the key and elements; equality is needed only here.
+  int32_t wanted = 5;
+  int32_t missing = 9;
+  if (!numbers.contains(wanted) || numbers.contains(missing)) { return 3; }
+
   // Unsafe access removes the index check only. Prove the index first; the
   // returned reference still prevents growth or mutation while it is live.
   if (numbers.size() >= std::size_t(2)) {

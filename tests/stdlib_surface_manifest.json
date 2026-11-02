@@ -65,7 +65,7 @@
     "stdlib/std/unordered_map.gti": "7e1066725b42affa19324597126a44fb608416b63bfc778d38526ed9b795e1ed",
     "stdlib/std/unordered_set.gti": "beefd607c3c90ac64cae71baec51e9808919b7fe6a5f362ec7c2e29351138da0",
     "stdlib/std/utility.gti": "983e0584b5bf5c1850f0f648ebc579a53586e1e0f5f5d28c23d4fc88155343b5",
-    "stdlib/std/vector.gti": "65d48f1d767a11f2d44606f4748485e0cfb430529db8c8b54d79040b75eeb24c"
+    "stdlib/std/vector.gti": "4b298e9ff302ca64b0ae78137ad46f75a6e4ef8872b25f452fc7e404cc159073"
   },
   "cases": [
     {
@@ -2887,6 +2887,20 @@
       "expected": {
         "exit_code": 0,
         "stdout": "beta\nalpha\n1\n2\n3\nthree\ntwo\n102\n103\n9\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "vector-contains",
+      "mode": "run",
+      "source": "tests/fixtures/vector_contains.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
         "stderr": ""
       }
     },
@@ -7123,6 +7137,28 @@
         "tests/container_iterator_movement_test.py",
         "tests/contiguous_iterator_completion_test.py",
         "examples/143-checked-container-iteration.gti"
+      ]
+    },
+    {
+      "id": "vector.contains",
+      "source": "stdlib/std/vector.gti",
+      "status": "executable",
+      "operations": [
+        "std::vector::contains"
+      ],
+      "case_ids": [
+        "vector-contains"
+      ],
+      "required_instantiations": [
+        "read-only and mutable vector<int>",
+        "empty, missing, duplicate and first/middle/last matches",
+        "owning strings and move-only comparable Key",
+        "early-exit comparison and needle aliasing an element",
+        "non-comparable element with unrelated vector operations"
+      ],
+      "evidence": [
+        "tests/fixtures/vector_contains.gti",
+        "tests/complete_containers_test.py"
       ]
     },
     {
