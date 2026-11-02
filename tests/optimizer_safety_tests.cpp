@@ -1412,6 +1412,10 @@ int32_t replaced(int32_t input, int32_t last) {
   first = last;
   return first + delta / 2;
 }
+int32_t wrapped_delta(int32_t first, int32_t last) {
+  int32_t delta = gti_internal::integer_wrapping_sub(last, first);
+  return first + delta / 2;
+}
 int32_t main() { return 0; }
 )");
   expect(frontend.canGenerateCode(), "interpolation fixture should lower");
@@ -1448,6 +1452,8 @@ int32_t main() { return 0; }
            "delta");
     expect(arithmetic("replaced", lang::MirOperation::Add) == 0,
            "writing the base retires its earlier scalar equivalence");
+    expect(arithmetic("wrapped_delta", lang::MirOperation::Add) == 0,
+           "a modular difference does not obey checked interpolation bounds");
   }
 }
 

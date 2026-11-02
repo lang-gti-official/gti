@@ -15,6 +15,8 @@ DIVISORS = [-2, -1, 0, 1, 2, 3, 7, MAXIMUM]
 
 def expected(first, last, divisor, mode):
     delta = last - first
+    if mode == 3:
+        delta = (delta - MINIMUM) % (1 << 32) + MINIMUM
     if not MINIMUM <= delta <= MAXIMUM:
         return 70, "22\n", "integer_overflow"
     if divisor == 0:
@@ -33,7 +35,7 @@ def expected(first, last, divisor, mode):
 def main():
     compiler = Path(sys.argv[1]).resolve()
     fixture = Path(__file__).parent / "fixtures/optimizer_interpolation.gti"
-    cases = list(product(range(8), range(8), range(8), range(3)))
+    cases = list(product(range(8), range(8), range(8), range(4)))
     baseline = {}
     with tempfile.TemporaryDirectory(prefix="gti-interpolation-") as directory:
         for backend, level in [("llvm", "-O0"), ("llvm", "-O2"),

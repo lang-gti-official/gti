@@ -1,5 +1,6 @@
 import std.string;
 import std.vector;
+import std.numeric;
 
 class InterpolationCleanup {
 public:
@@ -10,6 +11,7 @@ public:
 int interpolate(int first, int last, int divisor, int mode) {
   if (mode == 0) return first + (last - first) / divisor;
   if (mode == 1) return (last - first) / divisor + first;
+  if (mode == 3) return first + std::wrapping_sub(last, first) / divisor;
   mut int current = first;
   int difference = last - current;
   current = last;
