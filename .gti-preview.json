@@ -224,10 +224,29 @@
         "7f264a458230a6355b96b9db6bd7fa72fc7f1ac8"
       ],
       "merge": "7f264a458230a6355b96b9db6bd7fa72fc7f1ac8"
+    },
+    {
+      "task": "copy-returned-cursor",
+      "pr": 118,
+      "head": "4632044c049c4965f3e63ca926565ee0a1a965a8",
+      "tests": [
+        "ephemeral_carrier_mir",
+        "generic_algorithm_cluster",
+        "generic_algorithm_errors",
+        "generic_algorithm_breadth_cpp20",
+        "generic_algorithm_breadth_cpp23",
+        "generic_algorithm_breadth_no_elide",
+        "generic_algorithm_breadth_sanitized",
+        "stdlib_surface_manifest"
+      ],
+      "contributions": [
+        "85a96e81e07dc5e8c7663c6122be6d29d7661c1f"
+      ],
+      "merge": "85a96e81e07dc5e8c7663c6122be6d29d7661c1f"
     }
   ],
   "removed": [],
   "main": "e3532e6715dd6344b0085e367982a8f2d496bda1",
-  "previous": "421f90dc870c39c92f60c3b0b0d684cf2572f1b1",
-  "candidate": "efa9a46feef940418da92570df02fab4"
+  "previous": "1e739f24b8b9e2f8e6da10de9afc1f1fd995263d",
+  "candidate": "af706270c1a84c4cbb849c0128dc61ea"
 }
