@@ -275,7 +275,7 @@ void fill_keys(int limit, int mode) {
 // belongs to the actual selected addition, with the original cleanup order.
 uint32_t clamped_sum(int limit, int mode) {
   ReductionCleanup inner{2};
-  uint32_t finish = std::max(std::min(uint32_t(limit), uint32_t(32)), uint32_t(1));
+  uint32_t finish = std::min(uint32_t(limit), uint32_t(32));
   mut uint32_t total = mode == 28 ? uint32_t(limit % 7)
                                 : uint32_t(4294967295) - uint32_t(limit % 13);
   for (mut uint32_t index = 0; index < finish; index++) {

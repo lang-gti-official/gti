@@ -181,7 +181,7 @@ def main():
         for mode in (28, 29, 30):
             total = count % 7 if mode == 28 else 4294967295 - count % 13
             visits, failed = 0, False
-            for index in range(max(min(count, 32), 1)):
+            for index in range(min(count, 32)):
                 visits += 1
                 if mode == 30 and index == 2:
                     break

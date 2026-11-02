@@ -1976,10 +1976,13 @@ maximum addition per iteration bounds every intermediate in that update DAG.
 A separate structural target envelope can prove that the unit-step index
 traverses a nonwrapping segment. The index and its next value can then serve as
 bounded increments, supporting conditional index-weighted sums. A next-index
-latch requires every target to be strictly above the initial index; a
-current-index latch permits equality but includes that final index. Dynamic
-target envelopes add explicit lower/upper checks on the frozen target, so a
-freeze of a poison expression cannot escape the assumed range. Truncation
+latch requires the fast target to be strictly above the initial index; a
+current-index latch permits equality but includes that final index. An envelope
+that includes empty or backwards segments is intersected with this nonwrapping
+interval, and the guard sends excluded targets to the untouched fallback. A
+next-index traversal starting at the maximum integer has no such interval.
+Dynamic target envelopes add explicit lower/upper checks on the frozen target,
+so a freeze of a poison expression cannot escape the assumed range. Truncation
 retains a narrower source envelope only when it fits the destination; otherwise
 it yields the complete unsigned destination range.
 The initial profile optimizes one reduction per transformed loop.

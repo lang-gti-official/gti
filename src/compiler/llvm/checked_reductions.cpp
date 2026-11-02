@@ -346,16 +346,22 @@ std::optional<Offset> seedTraversalBounds(llvm::Loop &loop,
   IncrementBounds traversalBounds;
   auto targetEnvelope = traversalBounds.get(induction.bound);
   const auto indexStart = induction.initial.getZExtValue();
-  if (targetEnvelope &&
-      (induction.comparesNext ? targetEnvelope->minimum > indexStart
-                              : targetEnvelope->minimum >= indexStart)) {
+  const auto indexLimit =
+      llvm::APInt::getMaxValue(induction.initial.getBitWidth()).getZExtValue();
+  if (!targetEnvelope || (induction.comparesNext && indexStart == indexLimit))
+    return targetEnvelope;
+  // A clamped target may include empty or backwards segments. Prove only its
+  // nonwrapping subset, then require that exact interval in the existing fast
+  // guard. The original checked loop handles every excluded target, including
+  // a complete modular traversal when a next-index bound equals its start.
+  const auto minimumTarget = indexStart + unsigned(induction.comparesNext);
+  if (targetEnvelope->maximum >= minimumTarget) {
+    targetEnvelope->minimum = std::max(targetEnvelope->minimum, minimumTarget);
     const auto indexMaximum =
         targetEnvelope->maximum - unsigned(induction.comparesNext);
     amountBounds.bounds[induction.index] = Offset{indexStart, indexMaximum};
     amountBounds.traversalValues.insert(induction.index);
-    const auto indexLimit =
-        llvm::APInt::getMaxValue(induction.initial.getBitWidth())
-            .getZExtValue();
+
     if (indexMaximum < indexLimit) {
       auto *next =
           induction.index->getIncomingValueForBlock(loop.getLoopLatch());

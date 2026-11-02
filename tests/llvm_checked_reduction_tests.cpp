@@ -12,6 +12,7 @@
 #include <llvm/Passes/PassBuilder.h>
 #include <llvm/Support/raw_ostream.h>
 
+#include <algorithm>
 #include <array>
 #include <iostream>
 #include <stdexcept>
@@ -794,19 +795,30 @@ void differential(const Shape &shape, bool expectChange) {
     // Freeze of a poison bounded expression may choose ANY bit pattern. An
     // out-of-envelope choice must select the untouched fallback, not license
     // the index bounds inferred from the expression's defined values.
+    const auto minimum =
+        std::max(unsigned(shape.boundedTargetBase),
+                 unsigned(shape.indexInitial) + unsigned(!shape.currentIndex));
     for (unsigned raw : {0U, 1U, 7U, 127U, 255U})
-      for (unsigned forced : {0U, 255U})
+      for (unsigned forced : {0U, 255U}) {
+        if (forced >= minimum &&
+            forced <= unsigned(shape.boundedTargetBase + 7))
+          continue;
         for (unsigned initial : {0U, 120U, 250U})
           require(
               execute(*before, raw, 0, false, false, -1, initial) ==
                   execute(*after, raw, 0, false, false, int(forced), initial),
               "out-of-envelope frozen target did not retain fallback");
+      }
     // Defined in-envelope refinement uses a raw argument selecting exactly
     // that target; the other raw argument deliberately selects a different one.
-    const auto chosen = unsigned(shape.boundedTargetBase + 3);
-    require(execute(*before, shape.clampedTarget ? chosen : 3, 0) ==
-                execute(*after, shape.clampedTarget ? chosen + 1 : 7, 0, false,
-                        false, int(chosen)),
+    const auto chosen =
+        std::max(unsigned(shape.boundedTargetBase + 3), minimum);
+    const auto selectedRaw = shape.clampedTarget
+                                 ? chosen
+                                 : chosen - unsigned(shape.boundedTargetBase);
+    require(execute(*before, selectedRaw, 0) ==
+                execute(*after, selectedRaw == 0 ? 7 : 0, 0, false, false,
+                        int(chosen)),
             "index envelope and fast latch used different frozen targets");
   }
   if (shape.ancillaryKind) {
@@ -993,6 +1005,27 @@ int main() {
       clampedIncrement.earlyExit = true;
       differential(clampedIncrement, true);
     }
+    for (bool current : {false, true}) {
+      for (int start : {0, 3}) {
+        Shape possiblyEmpty;
+        possiblyEmpty.indexIncrement = true;
+        possiblyEmpty.boundedTargetBase = 0;
+        possiblyEmpty.clampedTarget = 1;
+        possiblyEmpty.indexInitial = start;
+        possiblyEmpty.currentIndex = current;
+        possiblyEmpty.intrinsicAdd = true;
+        possiblyEmpty.variableInitial = true;
+        possiblyEmpty.earlyExit = true;
+        differential(possiblyEmpty, true);
+      }
+    }
+    Shape maximumStart;
+    maximumStart.indexIncrement = true;
+    maximumStart.boundedTargetBase = 248;
+    maximumStart.clampedTarget = 1;
+    maximumStart.indexInitial = 255;
+    maximumStart.intrinsicAdd = true;
+    differential(maximumStart, false);
     // Narrow accumulation makes a wrongly admitted long frozen traversal
     // overflow, while the defined bounded target has a short safe traversal.
     Shape narrowWeighted;
