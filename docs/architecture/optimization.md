@@ -409,7 +409,17 @@ The admitted operations are deliberately narrow:
   retired, or one still-current owned field. The size may instead be a checked
   addition of a proved nonnegative amount to the ordered size, because that
   addition either produced the larger value or failed before the check. A
-  state keeps at most 64 orders. This is RT-5's body-local slice: the
+  block edge substitutes both endpoints simultaneously into its parameters,
+  including backedges that swap values. Old facts about redefined parameters
+  are retired. A bounded query follows same-domain order chains, requiring at
+  least one strict edge (`index < middle <= size` or
+  `index <= middle < size`); an all-nonstrict chain never proves a bounds
+  check. Mutable scalar equivalence uses the existing alias/write invalidation
+  at every link. The query visits each endpoint at most once per strictness
+  state and retains all contributing evidence, without materializing a
+  transitive closure in the dataflow lattice. A state keeps at most 64 orders;
+  exceeding the retention budget loses precision conservatively.
+  This is RT-5's body-local slice: the
   comparison and the check share a body, so a caller's loop condition does not
   reach the check inside an indexing accessor it calls; and
 - integer remainder whose divisor is an exact nonzero value. The proof removes

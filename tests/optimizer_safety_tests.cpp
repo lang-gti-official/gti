@@ -5,6 +5,7 @@
 #include "gti/mir_printer.h"
 #include "gti/optimization/pass.h"
 #include "gti/optimization/report.h"
+#include "gti/optimization/safety.h"
 #include "gti/optimizer.h"
 #include "gti/support.h"
 #include "private_stdlib_fixture.h"
@@ -1271,6 +1272,112 @@ int32_t main() {
   }
 }
 
+void testRelationalEdgeArguments() {
+  using namespace lang;
+  // Analysis-only scheduling probes use the frontend's actual intrinsic and
+  // failure contract. Unknown entry values keep intervals from deciding the
+  // check; its proof must survive simultaneous SSA edge substitution.
+  const auto frontend = analyzeTrusted("relational-edge-arguments.gti", R"(
+uint64_t checked(uint64_t index, uint64_t size) {
+  gti_internal::index_bounds_check(index, size);
+  return index;
+}
+)");
+  const auto *function = findFunction(frontend, "checked");
+  expect(frontend.canGenerateCode() && function,
+         "relational edge fixture should lower");
+  if (!frontend.canGenerateCode() || !function)
+    return;
+  const MirBodyAddress address{.kind = MirBodyKind::Function,
+                               .owner = function->id};
+  const auto *original = findMirBody(frontend.mir, address);
+  std::optional<MirInstruction> check;
+  for (const auto &block : original->blocks)
+    for (const auto &instruction : block.instructions)
+      if (instruction.intrinsic == IntrinsicKind::StorageBoundsCheck)
+        check = instruction;
+  expect(check.has_value(), "edge probe has a real checked operation");
+  if (!check)
+    return;
+  const auto probe = [&](bool loop, bool swap, bool unprovedPath) {
+    auto program = frontend.mir;
+    auto &body = *findMirBody(program, address);
+    body = {};
+    body.entry = 1;
+    body.returnType = SemanticType::UInt64;
+    for (MirValueId id = 1; id <= 6; ++id)
+      body.values.push_back(
+          {.id = id,
+           .info = {.type = id == 3 || id == 4 ? SemanticType::Bool
+                                               : SemanticType::UInt64},
+           .definitionBlock = id <= 4 ? MirBlockId{1} : MirBlockId{2},
+           .definition = id == 4 ? MirInstructionId{1} : MirInstructionId{0}});
+    const auto value = [](MirValueId id) {
+      return MirOperand{.kind = MirOperandKind::Value,
+                         .value = id,
+                         .type = id == 3 || id == 4 ? SemanticType::Bool
+                                                   : SemanticType::UInt64};
+    };
+    auto site = *check;
+    site.id = 2;
+    site.result.reset();
+    site.operands = {value(5), value(6)};
+    body.blocks = {
+        {.id = 1,
+         .parameters = {{.value = 1, .type = SemanticType::UInt64},
+                        {.value = 2, .type = SemanticType::UInt64},
+                        {.value = 3, .type = SemanticType::Bool}},
+         .instructions = {{.id = 1,
+                            .kind = MirInstructionKind::Compute,
+                            .result = 4,
+                            .operands = {value(1), value(2)},
+                            .operation = MirOperation::Less,
+                            .info = {.type = SemanticType::Bool}}},
+         .terminator = {.kind = MirTerminatorKind::Branch,
+                        .value = value(4),
+                        .target = 2,
+                        .elseTarget = unprovedPath ? MirBlockId{2}
+                                                  : MirBlockId{4},
+                        .targetArguments = {value(swap && !loop ? 2 : 1),
+                                            value(swap && !loop ? 1 : 2)},
+                        .elseArguments = unprovedPath
+                                             ? std::vector{value(1), value(2)}
+                                             : std::vector<MirOperand>{}}},
+        {.id = 2,
+         .parameters = {{.value = 5, .type = SemanticType::UInt64},
+                        {.value = 6, .type = SemanticType::UInt64}},
+         .instructions = {site},
+         .terminator = {.kind = MirTerminatorKind::Goto,
+                        .target = loop ? MirBlockId{3} : MirBlockId{4}}},
+        {.id = 3,
+         .terminator = {.kind = MirTerminatorKind::Branch,
+                        .value = value(3),
+                        .target = 2,
+                        .elseTarget = 4,
+                        .targetArguments = {value(swap ? 6 : 5),
+                                            value(swap ? 5 : 6)}}},
+        {.id = 4, .terminator = {.kind = MirTerminatorKind::Return,
+                                .value = value(1)}}};
+    const auto analysis = analyzeMirSafetyChecks(program, address);
+    return std::any_of(analysis.proofs.begin(), analysis.proofs.end(),
+                       [](const auto &proof) {
+                         return proof.instruction == 2 &&
+                                proof.discharge.family ==
+                                    MirSafetyCheckFamily::Bounds;
+                       });
+  };
+  expect(probe(false, false, false),
+         "forwarded block parameters retain the edge's order");
+  expect(!probe(false, true, false),
+         "reversing forwarded operands cannot preserve the old direction");
+  expect(probe(true, false, false),
+         "identity backedges retain the common order");
+  expect(!probe(true, true, false),
+         "swapped backedges must substitute both endpoints simultaneously");
+  expect(!probe(false, false, true),
+         "one unchecked incoming edge must prevent a relational proof");
+}
+
 void testRelationalBoundsDischarge() {
   // Runtime inputs keep calling-context intervals from proving any check;
   // only a dominating comparison between the check's own operands can.
@@ -1316,6 +1423,58 @@ uint64_t negated_form(uint64_t index, uint64_t live) {
 uint64_t offset_length(uint64_t index, uint64_t live) {
   if (index < live) {
     gti_internal::index_bounds_check(index, live + uint64_t(1));
+  }
+  return index;
+}
+
+uint64_t chain_first_strict(uint64_t index, uint64_t middle, uint64_t live) {
+  if (index < middle && middle <= live) {
+    gti_internal::index_bounds_check(index, live);
+  }
+  return index;
+}
+
+uint64_t chain_last_strict(uint64_t index, uint64_t middle, uint64_t live) {
+  if (index <= middle && middle < live) {
+    gti_internal::index_bounds_check(index, live);
+  }
+  return index;
+}
+
+uint64_t chain_cycle(uint64_t index, uint64_t middle, uint64_t live) {
+  if (index <= middle && middle <= index && middle < live) {
+    gti_internal::index_bounds_check(index, live);
+  }
+  return index;
+}
+
+uint64_t chain_non_strict(uint64_t index, uint64_t middle, uint64_t live) {
+  if (index <= middle && middle <= live) {
+    gti_internal::index_bounds_check(index, live);
+  }
+  return index;
+}
+
+uint64_t chain_reversed(uint64_t index, uint64_t middle, uint64_t live) {
+  if (index < middle && live <= middle) {
+    gti_internal::index_bounds_check(index, live);
+  }
+  return index;
+}
+
+uint64_t chain_changed(uint64_t index, mut uint64_t middle, uint64_t live) {
+  if (index < middle) {
+    middle = uint64_t(0);
+    if (middle <= live) {
+      gti_internal::index_bounds_check(index, live);
+    }
+  }
+  return index;
+}
+
+uint64_t chain_one_path(uint64_t index, uint64_t middle, uint64_t live) {
+  if (index < middle || middle <= live) {
+    gti_internal::index_bounds_check(index, live);
   }
   return index;
 }
@@ -1428,6 +1587,13 @@ int32_t main() {
   seen = greater_form(index, live);
   seen = negated_form(index, live);
   seen = offset_length(index, live);
+  seen = chain_first_strict(index, other, live);
+  seen = chain_last_strict(index, other, live);
+  seen = chain_cycle(index, other, live);
+  seen = chain_non_strict(index, other, live);
+  seen = chain_reversed(index, other, live);
+  seen = chain_changed(index, other, live);
+  seen = chain_one_path(index, other, live);
   seen = non_strict(index, live);
   seen = reversed(index, live);
   seen = index_replaced(index, live, other);
@@ -1469,7 +1635,8 @@ int32_t main() {
   };
   for (const std::string_view name :
        {"guarded", "looped", "greater_form", "negated_form", "offset_length",
-        "unrelated_write"}) {
+        "unrelated_write", "chain_first_strict", "chain_last_strict",
+        "chain_cycle"}) {
     expect(bounds(o2, name) == 1 && bounds(o3, name) == 1,
            std::string(name) +
                " should discharge its check from the dominating comparison "
@@ -1480,7 +1647,9 @@ int32_t main() {
   for (const std::string_view name :
        {"non_strict", "reversed", "index_replaced", "length_replaced",
         "different_length", "global_across_barrier", "one_path",
-        "smaller_length", "index_written_by_call", "length_written_by_call"}) {
+        "smaller_length", "index_written_by_call", "length_written_by_call",
+        "chain_non_strict", "chain_reversed", "chain_changed",
+        "chain_one_path"}) {
     expect(bounds(o2, name) == 0 && bounds(o3, name) == 0,
            std::string(name) + " must retain its bounds check");
   }
@@ -2626,6 +2795,7 @@ int main() {
   testOpaqueRuntimeCallInvalidation();
   testSourcePrefixBoundsRelation();
   testRelationalBoundsDischarge();
+  testRelationalEdgeArguments();
   testClosedIndexedElementEnvelope();
   testClosedIndexedRecordFieldEnvelope();
   testGuardedClosedCallContextWidening();
