@@ -17,6 +17,7 @@ local temporary = vim.fn.tempname()
 vim.fn.mkdir(temporary, "p")
 
 local ok, problem = xpcall(function()
+  dofile(vim.fs.joinpath(repository, "tests", "nvim_gtiup_test.lua"))
   local lazy_spec = dofile(vim.fs.joinpath(repository, "lazy.lua"))
   if lazy_spec[1]
       ~= "https://github.com/lang-gti-official/gti.git"

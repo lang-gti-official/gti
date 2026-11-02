@@ -30,6 +30,30 @@ and navigation continue to follow the compiler-selected library declaration.
 Formatting uses the same generic-type rules as unrelated imported classes; it
 does not reserve these identifiers.
 
+### Toolchain selection in Neovim
+
+The opt-in `vim.g.gti_toolchain = "gtiup"` integration delegates installation
+and channel selection to the toolchain manager. Its release prefix contains
+matching compiler, LSP, standard library, runtime and Tree-sitter parser; the
+editor never downloads the LSP separately. `gtiup which gti_lsp` runs from each
+client's project root before the RPC process starts. Existing `gti.toml`, `.git`
+and `CMakeLists.txt` root-marker priority is preserved; `gti-toolchain` is a
+fallback marker, so an inherited workspace selection does not collapse nested
+projects into one LSP root. The real selected binary,
+rather than a proxy's location, determines the matching parser path. Explicit
+`GTI_*_PATH` overrides continue to take precedence. A failed managed selection
+never falls back to a plugin-local or arbitrary PATH compiler.
+
+The legacy self-installing mode remains compatible. Managed mode disables its
+build hook and PATH prepend, and does not compare the compiler's semantic
+version to the plugin checkout's VERSION. `GTIInfo` reports the manager and
+selected binaries; compiler/LSP version disagreement remains visible.
+Tree-sitter parsers are process-global in Neovim: after one selected parser is
+loaded, buffers selecting another parser fall back to regex syntax with a
+warning. Query compatibility is checked before enabling structural highlights.
+Separate editor instances can use different grammars; separate LSP clients
+can already use different toolchains within one instance.
+
 The LSP is an adapter over compiler-owned semantics:
 
 Typed macro declarations and ordinary-looking calls retain compiler-selected
