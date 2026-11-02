@@ -110,10 +110,29 @@
         "11e454436b282ddb902d69885a937e76d3dd1402"
       ],
       "merge": "11e454436b282ddb902d69885a937e76d3dd1402"
+    },
+    {
+      "task": "lsp-responsiveness",
+      "pr": 120,
+      "head": "332cf70d08e698dcdeb30b525d2ca43b918cb5b1",
+      "tests": [
+        "lsp_completion_work",
+        "frontend_cache_invalidation",
+        "module_preamble_identity",
+        "lsp_protocol",
+        "module_discovery_lsp",
+        "neovim_toolchain",
+        "neovim_gtiup",
+        "neovim_lsp_configuration"
+      ],
+      "contributions": [
+        "a2b2e3d72fe92561707441e4326fc9e0d0b00be5"
+      ],
+      "merge": "a2b2e3d72fe92561707441e4326fc9e0d0b00be5"
     }
   ],
   "removed": [],
-  "main": "9a74ff17f7c6ab11b31d0e87cec4b6583ffb8c4b",
-  "previous": "d52a2953de43ce39f4d13881d6919fa1edcf6a5d",
-  "candidate": "c690865825aa41c5abc8174e366b5567"
+  "main": "6be28dbe6ef4f5ad050dbdb5ad1d1935e00e6a63",
+  "previous": "ba3b9af9ab8c567b8a02f411252720c7f504fe63",
+  "candidate": "f7c37cae14c7432d924ce56200c30d8b"
 }
