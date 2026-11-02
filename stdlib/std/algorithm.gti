@@ -283,6 +283,20 @@ uint64_t sort_integral_key<std::integral T>(T value) {
   }
 }
 
+// Inverse of the natural-order key. Call only for a key observed in this
+// T range: the final narrowing conversion is then representable. Signed
+// reconstruction stays in int64_t's range, including its minimum value.
+T sort_integral_value<std::integral T>(uint64_t key) {
+  if constexpr (std::meta::is_unsigned_integral<T>()) {
+    return T(key);
+  } else {
+    if (key >= (uint64_t(1) << uint64_t(63))) {
+      return T(int64_t(key & uint64_t(9223372036854775807)));
+    }
+    return T((int64_t(key) - int64_t(9223372036854775807)) - int64_t(1));
+  }
+}
+
 // The caller supplies the first address of an exclusively borrowed live
 // array and 0 <= low < high within that array. Histogram totals sum to length;
 // cycling a misplaced value to the next slot of its digit bucket preserves
@@ -317,12 +331,32 @@ unsafe void sort_integral_interval<std::integral T>(T* values, size_t low, size_
     mut uint64_t shift = uint64_t(56);
     while ((differences >> shift) == uint64_t(0)) { shift -= uint64_t(8); }
     mut std::array<size_t, 256> ends{};
-    mut std::array<size_t, 256> next{};
     for (mut size_t i = low; i < high; i++) {
       size_t digit = size_t((sort_integral_key(values[i]) >> shift) & uint64_t(255));
       mut size_t& count = ends.get_unchecked_mut(digit);
       count = gti_internal::integer_wrapping_add(count, size_t(1));
     }
+    if (shift == uint64_t(0)) {
+      // Only the last key byte differs. Each nonempty histogram bucket is
+      // one exact observed value, so emit its run directly. Primitive value
+      // construction and stores have no callbacks, allocation, or failure for
+      // these represented keys; counts preserve the complete input multiset.
+      uint64_t prefix = first & ~uint64_t(255);
+      mut size_t position = low;
+      for (mut size_t digit = size_t(0); digit < size_t(256); digit++) {
+        size_t count = ends.get_unchecked(digit);
+        if (count != size_t(0)) {
+          T value = sort_integral_value<T>(prefix | uint64_t(digit));
+          size_t end = gti_internal::integer_wrapping_add(position, count);
+          while (position < end) {
+            values[position] = value;
+            position++;
+          }
+        }
+      }
+      return;
+    }
+    mut std::array<size_t, 256> next{};
     mut size_t limit = low;
     for (mut size_t digit = size_t(0); digit < size_t(256); digit++) {
       next.get_unchecked_mut(digit) = limit;
@@ -351,7 +385,6 @@ unsafe void sort_integral_interval<std::integral T>(T* values, size_t low, size_
       }
       next.get_unchecked_mut(bucket) = position;
     }
-    if (shift == uint64_t(0)) { return; }
     mut size_t begin = low;
     for (mut size_t bucket = size_t(0); bucket < size_t(256); bucket++) {
       size_t end = ends.get_unchecked(bucket);

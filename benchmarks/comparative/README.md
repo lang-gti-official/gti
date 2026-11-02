@@ -851,3 +851,32 @@ not retained for such a small runtime gain: generic partitioning returns to
 the existing offset queues. The additional input-shape checks remain. Complete
 source fingerprints, timings, assembly and correctness evidence are retained
 under `bitmap-partition-mini`; no additional closed gap is counted.
+
+### Guarded clamped traversals and bounded follow-up
+
+Checkpoint `27f6ea1c`, against `ca374019`, admits unsigned clamped traversal
+bounds only behind the existing frozen-value range guard. Empty or backward
+targets retain the original checked fallback. This lets the substring byte
+sum vectorize without assuming the traversal is nonempty or discarding a
+checked failure. Its stronger paired runtime ratio is **0.6785** (95% interval
+0.6696–0.6986), a 32.2% reduction. The three-language medians are 0.7894 times
+C++ and 1.6626 times Rust: this is a substantial improvement, but does not
+close the Rust gap.
+
+This exact checkpoint's unchanged 34-program report has **28 competitive,
+five slower and one inconclusive**. The uncertain case is scoped workers
+against Rust; optional integers are competitive in this run. Vector growth,
+reserved vectors, vector transforms, random sorting and substrings remain
+slower than at least one comparator. No paired material regression remains
+after the stronger repeats. The source integral-sort work below is not part
+of this checkpoint. Evidence is retained under `clamped-segment-mini/Testing`
+and `clamped-segment-linux` in the round-eight campaign artifact.
+
+The fresh-storage analysis now has tested rules for direct owned descriptors,
+reference carriers and conservative mutable-parameter field effects. These
+are structural proofs with aliasing, conditional publication, cleanup and
+failure counterexamples; they are not benchmark-specific exceptions.
+However, the four motivating container/string programs still produce
+identical optimized MIR with the library held fixed. The remaining receiver
+and release composition is unfinished. No vector speedup is attributed to
+this groundwork, and further expansion is stopped for this round.

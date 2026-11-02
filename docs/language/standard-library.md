@@ -1090,14 +1090,17 @@ longer than 128 elements use an in-place most-significant-byte radix sort.
 Order-preserving unsigned keys cover all eight fixed-width integer types, including signed
 minima and maxima. Equal leading bytes are skipped; ranges of at most 32 values
 finish with primitive insertion sort. Each recursive level fixes a differing
-byte, so depth is at most eight, with two 256-entry counter arrays per level and
+byte, so depth is at most eight, with at most two 256-entry counter arrays per level and
 no allocation. The private helper receives only the live element address and
 range, keeping vector metadata outside the recursive call. Its caller retains
 the exclusive vector borrow. Histogram totals and bucket cursors prove every
 read/write address live; primitive copies and assignments cannot invoke user
 code or fail. A displaced value is carried locally while a permutation cycle
-fills its destinations. This path is unavailable to user comparators and
-user-defined element types.
+fills its destinations. When only the last key byte differs, each nonempty
+histogram bucket identifies one exact input value. That terminal level writes
+the counted runs directly, preserving the multiset without permutation cycles;
+it reconstructs only represented values, including signed minima. This path
+is unavailable to user comparators and user-defined element types.
 
 All other inputs use adaptive iterative introsort with median-of-three
 quicksort partitions (a median of three sampled medians for ranges longer
