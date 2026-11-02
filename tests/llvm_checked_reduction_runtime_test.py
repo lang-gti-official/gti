@@ -102,6 +102,34 @@ def main():
                               f"{fixture.name}:{site}: runtime error[GTI-R0001]: integer_overflow in addition\n"))
             else:
                 cases.append((mode, count, 0, output + f"{total}\n1\n", ""))
+    for count in (0, 1, 2, 3, 4, 7, 31, 64, 127, 255):
+        finish = 16 + count % 8
+        for mode in (14, 17):
+            indices = range(7, min(finish, 10) if mode == 17 else finish)
+            step = sum(index + (index & 3) for index in indices)
+            total = count % 7
+            output = ""
+            for _ in range(4):
+                total += step
+                output += f"{total}\n"
+            cases.append((mode, count, 0,
+                          output + f"{len(indices) * 4}\n2\n{total}\n1\n", ""))
+        for mode in (15, 16):
+            maximum = 4294967295 if mode == 15 else 2147483647
+            total = maximum - count % (13 if mode == 15 else 23)
+            marker = "weighted-unsigned-boundary" if mode == 15 else "weighted-signed-boundary"
+            site = next(index for index, line in enumerate(lines, 1)
+                        if f"// {marker}" in line)
+            visits = 0
+            for index in range(7, finish):
+                visits += 1
+                if total + index > maximum:
+                    break
+                total += index
+            else:
+                raise AssertionError("weighted failure control no longer overflows")
+            cases.append((mode, count, 70, "9\n" * visits + "2\n1\n",
+                          f"{fixture.name}:{site}: runtime error[GTI-R0001]: integer_overflow in addition\n"))
     modes = [("llvm-O0", ["--backend", "llvm", "-O0"]),
              ("llvm-O2", ["--backend", "llvm", "-O2"]),
              ("llvm-O3", ["--backend", "llvm", "-O3"]),

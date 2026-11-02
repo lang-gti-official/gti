@@ -188,13 +188,14 @@ Outcome execute(llvm::Function &function, unsigned bound, unsigned pattern,
                      llvm::dyn_cast<llvm::FreezeInst>(&instruction)) {
         auto value = get(freeze->getOperand(0));
         const bool isBound = freeze->getName().starts_with("reduction.bound");
-        const bool isInitial = freeze->getName().starts_with("reduction.initial");
+        const bool isInitial =
+            freeze->getName().starts_with("reduction.initial");
         require(isBound || isInitial, "unknown oracle freeze role");
         const int forced = isBound ? frozenBound : frozenInitial;
         if (value.poison || forced >= 0)
           value.bits = llvm::APInt(value.bits.getBitWidth(),
-                                  forced >= 0 ? unsigned(forced)
-                                              : (isBound ? bound : initial));
+                                   forced >= 0 ? unsigned(forced)
+                                               : (isBound ? bound : initial));
         value.poison = false;
         values[freeze] = value;
       } else if (auto *cast = llvm::dyn_cast<llvm::CastInst>(&instruction)) {
@@ -281,6 +282,9 @@ struct Shape {
   int constantBound = -1;
   int indexInitial = 0;
   unsigned boundedStep = 0;
+  bool indexIncrement = false;
+  int boundedTargetBase = -1;
+  bool truncatedTarget = false;
   bool intrinsicAdd = false;
   bool externalOverflow = false;
   bool separateDetector = false;
@@ -296,7 +300,8 @@ llvm::Function *makeLoop(llvm::Module &module, const Shape &shape,
   auto *i32 = llvm::Type::getInt32Ty(context);
   auto *function = llvm::Function::Create(
       llvm::FunctionType::get(
-          i32, {indexType, accType, llvm::Type::getInt1Ty(context), accType}, false),
+          i32, {indexType, accType, llvm::Type::getInt1Ty(context), accType},
+          false),
       llvm::GlobalValue::ExternalLinkage, name, module);
   auto record = module.getOrInsertFunction(
       "record",
@@ -318,6 +323,23 @@ llvm::Function *makeLoop(llvm::Module &module, const Shape &shape,
                     ? llvm::BasicBlock::Create(context, "early", function)
                     : nullptr;
   llvm::IRBuilder<> builder(entry);
+  llvm::Value *boundedTarget = nullptr;
+  if (shape.boundedTargetBase >= 0) {
+    llvm::Value *remainder = nullptr;
+    if (shape.truncatedTarget) {
+      auto *wideType = builder.getIntNTy(shape.indexWidth + 8);
+      auto *wide = builder.CreateZExt(function->getArg(0), wideType);
+      remainder = builder.CreateTrunc(
+          builder.CreateURem(wide, llvm::ConstantInt::get(wideType, 8)),
+          indexType);
+    } else {
+      remainder = builder.CreateURem(function->getArg(0),
+                                     llvm::ConstantInt::get(indexType, 8));
+    }
+    boundedTarget = builder.CreateAdd(
+        remainder, llvm::ConstantInt::get(indexType, shape.boundedTargetBase),
+        "bounded.target");
+  }
   builder.CreateBr(header);
   builder.SetInsertPoint(header);
   auto *index = builder.CreatePHI(indexType, 2, "index");
@@ -345,7 +367,8 @@ llvm::Function *makeLoop(llvm::Module &module, const Shape &shape,
   auto *selected = builder.CreateCall(gate, {index, function->getArg(1)});
   llvm::Value *mixedIncrement = nullptr;
   if (shape.mixedIncrementPhi) {
-    require(!shape.conditional, "mixed increment requires an unconditional update");
+    require(!shape.conditional,
+            "mixed increment requires an unconditional update");
     auto *bounded = llvm::BasicBlock::Create(context, "bounded", function);
     auto *unbounded = llvm::BasicBlock::Create(context, "unbounded", function);
     builder.CreateCondBr(selected, bounded, unbounded);
@@ -394,10 +417,35 @@ llvm::Function *makeLoop(llvm::Module &module, const Shape &shape,
   if (shape.boundedStep == 6)
     increment = builder.CreateAdd(
         builder.CreateAnd(function->getArg(1),
-                           llvm::ConstantInt::get(accType, 127)),
+                          llvm::ConstantInt::get(accType, 127)),
         llvm::ConstantInt::get(accType, 200), "wrapping.increment");
+  if (shape.boundedStep >= 7 && shape.boundedStep <= 9) {
+    auto *wideType = builder.getIntNTy(shape.accumulatorWidth + 8);
+    auto *wide = builder.CreateZExt(function->getArg(1), wideType);
+    if (shape.boundedStep == 7) {
+      increment = builder.CreateTrunc(
+          builder.CreateURem(wide, llvm::ConstantInt::get(wideType, 5)),
+          accType);
+    } else if (shape.boundedStep == 8) {
+      // The source may wrap during truncation, but the complete i2 domain
+      // remains a legitimate small nonnegative increment after zero extension.
+      auto *source =
+          builder.CreateURem(wide, llvm::ConstantInt::get(wideType, 7));
+      increment = builder.CreateZExt(
+          builder.CreateTrunc(source, builder.getIntNTy(2)), accType);
+    } else {
+      // [254,257] crosses the i8 boundary. Do not retain a narrow interval
+      // by truncating its endpoints: defined results include 254 and 255.
+      auto *source = builder.CreateAdd(
+          builder.CreateURem(wide, llvm::ConstantInt::get(wideType, 4)),
+          llvm::ConstantInt::get(wideType, 254));
+      increment = builder.CreateTrunc(source, accType);
+    }
+  }
   if (mixedIncrement)
     increment = mixedIncrement;
+  if (shape.indexIncrement)
+    increment = builder.CreateZExtOrTrunc(index, accType);
   // The guard and the value use the same checked operation, including the
   // zero-result lane; this catches accidentally dropping a failure without
   // proving the corresponding intermediate addition.
@@ -459,7 +507,8 @@ llvm::Function *makeLoop(llvm::Module &module, const Shape &shape,
   llvm::Value *bound =
       shape.constantBound >= 0
           ? llvm::ConstantInt::get(indexType, shape.constantBound)
-          : static_cast<llvm::Value *>(function->getArg(0));
+      : boundedTarget ? boundedTarget
+                      : static_cast<llvm::Value *>(function->getArg(0));
   llvm::Value *tested =
       shape.currentIndex ? static_cast<llvm::Value *>(index) : nextIndex;
   if (shape.dependentLatch)
@@ -589,7 +638,7 @@ void differential(const Shape &shape, bool expectChange) {
   // consistently chooses a short traversal; the optimized path must behave as
   // that refinement. For a nonzero initial index, target==initial instead
   // means a complete modular traversal and correctly selects the fallback.
-  if (expectChange && shape.constantBound < 0) {
+  if (expectChange && shape.constantBound < 0 && shape.boundedTargetBase < 0) {
     const auto target = llvm::APInt(64, shape.indexInitial + 3)
                             .zextOrTrunc(shape.indexWidth)
                             .getZExtValue();
@@ -607,10 +656,11 @@ void differential(const Shape &shape, bool expectChange) {
     for (unsigned initial : {0U, 1U, 7U, 120U, 126U, 127U, 128U, 250U, 255U})
       for (unsigned bound = 0; bound < 256; ++bound)
         for (unsigned pattern : {0U, 1U, 3U, 127U, 255U})
-          require(execute(*before, bound, pattern, false, false, -1, initial) ==
-                      execute(*after, bound, pattern, false, false, -1, initial),
-                  "dynamic initial changed result, failure or cleanup");
-    if (expectChange) {
+          require(
+              execute(*before, bound, pattern, false, false, -1, initial) ==
+                  execute(*after, bound, pattern, false, false, -1, initial),
+              "dynamic initial changed result, failure or cleanup");
+    if (expectChange && shape.boundedTargetBase < 0) {
       const auto target = llvm::APInt(64, shape.indexInitial + 3)
                               .zextOrTrunc(shape.indexWidth)
                               .getZExtValue();
@@ -623,6 +673,24 @@ void differential(const Shape &shape, bool expectChange) {
                               int(chosen)),
                   "fast recurrence did not use the frozen initial value");
     }
+  }
+  if (expectChange && shape.boundedTargetBase >= 0) {
+    // Freeze of a poison bounded expression may choose ANY bit pattern. An
+    // out-of-envelope choice must select the untouched fallback, not license
+    // the index bounds inferred from the expression's defined values.
+    for (unsigned raw : {0U, 1U, 7U, 127U, 255U})
+      for (unsigned forced : {0U, 255U})
+        for (unsigned initial : {0U, 120U, 250U})
+          require(
+              execute(*before, raw, 0, false, false, -1, initial) ==
+                  execute(*after, raw, 0, false, false, int(forced), initial),
+              "out-of-envelope frozen target did not retain fallback");
+    // Defined in-envelope refinement uses a raw argument selecting exactly
+    // that target; the other raw argument deliberately selects a different one.
+    const auto chosen = unsigned(shape.boundedTargetBase + 3);
+    require(execute(*before, 3, 0) ==
+                execute(*after, 7, 0, false, false, int(chosen)),
+            "index envelope and fast latch used different frozen targets");
   }
   if (shape.earlyExit)
     for (unsigned frozen = 0; frozen < 256; ++frozen)
@@ -755,6 +823,63 @@ int main() {
     dynamicSigned.intrinsicAdd = true;
     dynamicSigned.conditional = false;
     differential(dynamicSigned, true);
+    for (bool current : {false, true}) {
+      Shape weighted;
+      weighted.indexIncrement = true;
+      weighted.boundedTargetBase = 16;
+      weighted.indexInitial = 7;
+      weighted.accumulatorWidth = 16;
+      weighted.intrinsicAdd = true;
+      weighted.conditional = false;
+      weighted.currentIndex = current;
+      weighted.earlyExit = true;
+      differential(weighted, true);
+      weighted.variableInitial = true;
+      differential(weighted, true);
+    }
+    // Narrow accumulation makes a wrongly admitted long frozen traversal
+    // overflow, while the defined bounded target has a short safe traversal.
+    Shape narrowWeighted;
+    narrowWeighted.indexIncrement = true;
+    narrowWeighted.boundedTargetBase = 4;
+    narrowWeighted.indexInitial = 2;
+    narrowWeighted.intrinsicAdd = true;
+    narrowWeighted.conditional = false;
+    narrowWeighted.variableInitial = true;
+    differential(narrowWeighted, true);
+    for (int target : {0, 2, 7}) {
+      Shape wrappedWeighted;
+      wrappedWeighted.indexIncrement = true;
+      wrappedWeighted.indexInitial = 7;
+      wrappedWeighted.constantBound = target;
+      wrappedWeighted.intrinsicAdd = true;
+      wrappedWeighted.conditional = false;
+      differential(wrappedWeighted, false);
+    }
+    Shape truncatedTarget;
+    truncatedTarget.indexIncrement = true;
+    truncatedTarget.boundedTargetBase = 16;
+    truncatedTarget.truncatedTarget = true;
+    truncatedTarget.indexInitial = 7;
+    truncatedTarget.accumulatorWidth = 16;
+    truncatedTarget.intrinsicAdd = true;
+    truncatedTarget.conditional = false;
+    differential(truncatedTarget, true);
+    for (unsigned kind : {7U, 8U, 9U}) {
+      Shape truncatedIncrement;
+      truncatedIncrement.boundedStep = kind;
+      truncatedIncrement.intrinsicAdd = true;
+      truncatedIncrement.conditional = false;
+      truncatedIncrement.signedArithmetic = false;
+      differential(truncatedIncrement, kind != 9);
+    }
+    Shape uncertainWeighted;
+    uncertainWeighted.indexIncrement = true;
+    uncertainWeighted.indexInitial = 7;
+    uncertainWeighted.boundedTargetBase = 0;
+    uncertainWeighted.intrinsicAdd = true;
+    uncertainWeighted.conditional = false;
+    differential(uncertainWeighted, false);
     Shape sideDetector;
     sideDetector.intrinsicAdd = true;
     sideDetector.signedArithmetic = false;

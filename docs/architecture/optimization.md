@@ -1513,11 +1513,20 @@ complete traversal of that domain.
 A separate reduction starts at a nonnegative literal or an invariant input and carries only
 nonnegative bounded additions, PHIs and selects back to its header. Uniform
 increment envelopes come from constants, constant masks, unsigned remainders
-by nonzero constants, constant logical shifts, zero extensions, nonwrapping
+by nonzero constants, constant logical shifts, zero extensions, truncations, nonwrapping
 bounded additions, and complete PHI/select alternatives. The bounded analysis
 uses the operations' bit-level meaning, never nowrap flags or a check that it
 will remove; cyclic or unknown bounds remain unsupported. Its
 maximum addition per iteration bounds every intermediate in that update DAG.
+A separate structural target envelope can prove that the unit-step index
+traverses a nonwrapping segment. The index and its next value can then serve as
+bounded increments, supporting conditional index-weighted sums. A next-index
+latch requires every target to be strictly above the initial index; a
+current-index latch permits equality but includes that final index. Dynamic
+target envelopes add explicit lower/upper checks on the frozen target, so a
+freeze of a poison expression cannot escape the assumed range. Truncation
+retains a narrower source envelope only when it fits the destination; otherwise
+it yields the complete unsigned destination range.
 The initial profile optimizes one reduction per transformed loop.
 The pass uses the conservative nonnegative signed range even for unsigned
 values. If the traversal's whole domain does not fit, one preheader guard

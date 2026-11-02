@@ -191,6 +191,46 @@ int initial_signed_boundary(int limit) {
   return total;
 }
 
+uint32_t weighted_outer(int limit, bool early) {
+  ReductionCleanup inner{2};
+  uint32_t finish = uint32_t(16) + uint32_t(limit) % uint32_t(8);
+  mut uint32_t total = uint32_t(limit) % uint32_t(7);
+  mut uint32_t visits = 0;
+  for (mut uint32_t round = 0; round < uint32_t(4); round++) {
+    for (mut uint32_t index = 7; index != finish; index++) {
+      if (early && index == uint32_t(10)) break;
+      total += index;
+      total += index & uint32_t(3);
+      visits++;
+    }
+    std::println(total);
+  }
+  std::println(visits);
+  return total;
+}
+
+uint32_t weighted_unsigned_boundary(int limit) {
+  ReductionCleanup inner{2};
+  mut uint32_t total = uint32_t(4294967295) - uint32_t(limit % 13);
+  uint32_t finish = uint32_t(16) + uint32_t(limit) % uint32_t(8);
+  for (mut uint32_t index = 7; index != finish; index++) {
+    ReductionCleanup iteration{9};
+    total += index; // weighted-unsigned-boundary
+  }
+  return total;
+}
+
+int weighted_signed_boundary(int limit) {
+  ReductionCleanup inner{2};
+  mut int total = 2147483647 - limit % 23;
+  uint32_t finish = uint32_t(16) + uint32_t(limit) % uint32_t(8);
+  for (mut uint32_t index = 7; index != finish; index++) {
+    ReductionCleanup iteration{9};
+    total += int(index); // weighted-signed-boundary
+  }
+  return total;
+}
+
 int main(int argc, std::vector<std::string> argv) {
   if (argc != 3) return 10;
   int mode = int(argv[std::size_t(1)].size());
@@ -206,6 +246,9 @@ int main(int argc, std::vector<std::string> argv) {
   else if (mode == 8) std::println(dynamic_signed_boundary(limit));
   else if (mode == 10) std::println(outer_accumulation(limit));
   else if (mode == 11 || mode == 12) std::println(initial_unsigned_boundary(limit, mode == 12));
-  else std::println(initial_signed_boundary(limit));
+  else if (mode == 13) std::println(initial_signed_boundary(limit));
+  else if (mode == 14 || mode == 17) std::println(weighted_outer(limit, mode == 17));
+  else if (mode == 15) std::println(weighted_unsigned_boundary(limit));
+  else std::println(weighted_signed_boundary(limit));
   return 0;
 }

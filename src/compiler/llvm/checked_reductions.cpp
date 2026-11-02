@@ -123,14 +123,18 @@ struct Offset {
 struct IncrementBounds {
   llvm::DenseMap<llvm::Value *, Offset> bounds;
   llvm::SmallPtrSet<llvm::Value *, 32> visiting;
+  llvm::SmallPtrSet<llvm::Value *, 2> traversalValues;
+  bool usedTraversalBounds = false;
   unsigned visited = 0;
 
   std::optional<Offset> get(llvm::Value *value) {
     if (!value->getType()->isIntegerTy() ||
         value->getType()->getIntegerBitWidth() > 64)
       return std::nullopt;
-    if (auto found = bounds.find(value); found != bounds.end())
+    if (auto found = bounds.find(value); found != bounds.end()) {
+      usedTraversalBounds |= traversalValues.contains(value);
       return found->second;
+    }
     if (auto *constant = llvm::dyn_cast<llvm::ConstantInt>(value)) {
       const auto number = constant->getZExtValue();
       return bounds[value] = Offset{number, number};
@@ -170,6 +174,14 @@ struct IncrementBounds {
           0, llvm::APInt::getMaxValue(cast->getSrcTy()->getIntegerBitWidth())
                  .getZExtValue()};
       if (auto source = get(cast->getOperand(0)))
+        result = source;
+    } else if (auto *cast = llvm::dyn_cast<llvm::TruncInst>(value)) {
+      const auto maximum =
+          llvm::APInt::getMaxValue(cast->getDestTy()->getIntegerBitWidth())
+              .getZExtValue();
+      result = Offset{0, maximum};
+      if (auto source = get(cast->getOperand(0));
+          source && source->maximum <= maximum)
         result = source;
     } else {
       llvm::SmallVector<llvm::Value *, 4> alternatives;
@@ -282,6 +294,7 @@ struct Plan {
   llvm::PHINode *reduction = nullptr;
   llvm::Value *initialValue = nullptr;
   uint64_t maximumIncrement = 0;
+  std::optional<Offset> boundEnvelope;
 };
 
 std::optional<Plan> planFor(llvm::Loop &loop, llvm::DominatorTree &dt,
@@ -300,8 +313,7 @@ std::optional<Plan> planFor(llvm::Loop &loop, llvm::DominatorTree &dt,
         phi.getType()->getIntegerBitWidth() > 64 ||
         phi.getNumIncomingValues() != 2)
       continue;
-    auto *initialValue =
-        phi.getIncomingValueForBlock(loop.getLoopPreheader());
+    auto *initialValue = phi.getIncomingValueForBlock(loop.getLoopPreheader());
     auto *initial = llvm::dyn_cast<llvm::ConstantInt>(initialValue);
     if ((initial && initial->getValue().isNegative()) ||
         !loop.isLoopInvariant(initialValue))
@@ -310,6 +322,30 @@ std::optional<Plan> planFor(llvm::Loop &loop, llvm::DominatorTree &dt,
     const auto limit = llvm::APInt::getSignedMaxValue(width).getZExtValue();
     const auto start = initial ? initial->getZExtValue() : 0;
     Recurrence recurrence{phi, loop, limit};
+    // A target wholly above the initial index defines a nonwrapping segment.
+    // Its envelope comes from bit-level operations, independently of removed
+    // checks. This also bounds weighted sums whose increment IS the index.
+    IncrementBounds traversalBounds;
+    auto targetEnvelope = traversalBounds.get(induction->bound);
+    const auto indexStart = induction->initial.getZExtValue();
+    if (targetEnvelope &&
+        (induction->comparesNext ? targetEnvelope->minimum > indexStart
+                                 : targetEnvelope->minimum >= indexStart)) {
+      const auto indexMaximum =
+          targetEnvelope->maximum - unsigned(induction->comparesNext);
+      recurrence.increments.bounds[induction->index] =
+          Offset{indexStart, indexMaximum};
+      recurrence.increments.traversalValues.insert(induction->index);
+      const auto indexLimit =
+          llvm::APInt::getMaxValue(induction->initial.getBitWidth())
+              .getZExtValue();
+      if (indexMaximum < indexLimit) {
+        auto *next = induction->index->getIncomingValueForBlock(latch);
+        recurrence.increments.bounds[next] =
+            Offset{indexStart + 1, indexMaximum + 1};
+        recurrence.increments.traversalValues.insert(next);
+      }
+    }
     auto delta = recurrence.trace(phi.getIncomingValueForBlock(latch));
     if (!delta || delta->maximum == 0 || delta->maximum > limit - start)
       continue;
@@ -337,9 +373,8 @@ std::optional<Plan> planFor(llvm::Loop &loop, llvm::DominatorTree &dt,
     // A dynamic initial value gets its own guarded capacity. The guard admits
     // at least one complete update, so every fast-loop header is at most
     // signedMax - maximumIncrement, even across an outer-loop accumulation.
-    const auto rootMaximum = initial
-                                 ? start + maximumBackedges * delta->maximum
-                                 : limit - delta->maximum;
+    const auto rootMaximum = initial ? start + maximumBackedges * delta->maximum
+                                     : limit - delta->maximum;
     Plan plan{&loop, *induction, threshold, unconditional, *cost, {}, {}};
     if (!initial) {
       plan.reduction = &phi;
@@ -409,8 +444,16 @@ std::optional<Plan> planFor(llvm::Loop &loop, llvm::DominatorTree &dt,
       else if (range.icmp(llvm::CmpInst::getInversePredicate(predicate), bound))
         plan.comparisons.emplace_back(comparison, false);
     }
-    if (!plan.comparisons.empty() || !plan.overflowLanes.empty())
+    if (!plan.comparisons.empty() || !plan.overflowLanes.empty()) {
+      if (recurrence.increments.usedTraversalBounds &&
+          !llvm::isa<llvm::ConstantInt>(induction->bound)) {
+        // Freezing a poison expression may choose outside its structural
+        // envelope. Check that envelope explicitly before using these facts.
+        plan.boundEnvelope = targetEnvelope;
+        plan.unconditional = false;
+      }
       return plan;
+    }
   }
   return std::nullopt;
 }
@@ -424,8 +467,7 @@ void apply(Plan &plan, llvm::LoopInfo &loops, llvm::DominatorTree &dt) {
     frozenBound = entry.CreateFreeze(frozenBound, "reduction.bound");
   llvm::Value *frozenInitial = nullptr;
   if (plan.initialValue)
-    frozenInitial =
-        entry.CreateFreeze(plan.initialValue, "reduction.initial");
+    frozenInitial = entry.CreateFreeze(plan.initialValue, "reduction.initial");
   if (!plan.unconditional) {
     auto [fast, slow, slowLoop] = cloneCheckedFallback(loop, loops, dt);
     llvm::IRBuilder<> builder(guard->getTerminator());
@@ -447,8 +489,9 @@ void apply(Plan &plan, llvm::LoopInfo &loops, llvm::DominatorTree &dt) {
     llvm::Value *safe;
     if (frozenInitial) {
       const auto initialWidth = frozenInitial->getType()->getIntegerBitWidth();
-      auto *limit = llvm::ConstantInt::get(
-          frozenInitial->getType(), llvm::APInt::getSignedMaxValue(initialWidth));
+      auto *limit =
+          llvm::ConstantInt::get(frozenInitial->getType(),
+                                 llvm::APInt::getSignedMaxValue(initialWidth));
       auto *nonnegative = builder.CreateICmpULE(frozenInitial, limit);
       // Deliberately unflagged: subtraction may wrap on the rejected path.
       // Division is total because the proven increment bound is nonzero.
@@ -466,6 +509,15 @@ void apply(Plan &plan, llvm::LoopInfo &loops, llvm::DominatorTree &dt) {
       safe = builder.CreateICmpULE(
           wide, llvm::ConstantInt::get(wide->getType(), plan.maximumBackedges),
           "reduction.fits");
+    }
+    if (plan.boundEnvelope) {
+      auto *low = builder.CreateICmpUGE(
+          frozenBound, llvm::ConstantInt::get(frozenBound->getType(),
+                                              plan.boundEnvelope->minimum));
+      auto *high = builder.CreateICmpULE(
+          frozenBound, llvm::ConstantInt::get(frozenBound->getType(),
+                                              plan.boundEnvelope->maximum));
+      safe = builder.CreateAnd(safe, builder.CreateAnd(low, high));
     }
     builder.CreateCondBr(safe, fast, slow);
     guard->getTerminator()->eraseFromParent();
