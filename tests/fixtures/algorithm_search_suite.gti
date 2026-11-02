@@ -1,0 +1,43 @@
+export module algorithm_search_suite;
+import std.algorithm;
+import std.iterator;
+import std.vector;
+
+export bool search_suite<I, S>(I first, S last)
+  requires std::forward_iterator<I> && std::sentinel_for<S, I> &&
+           std::dereferences_to<I, int> {
+  int two = 2;
+  int absent = 9;
+  if (!std::contains(first, last, two) || std::contains(first, last, absent)) { return false; }
+  if (std::count(first, last, two) != 2) { return false; }
+  auto found = std::find(first, last, two);
+  if (*found != 2) { return false; }
+  auto adjacent = std::adjacent_find(first, last);
+  if (*adjacent != 2) { return false; }
+  auto low = std::lower_bound(first, last, two);
+  auto high = std::upper_bound(first, last, two);
+  if (*low != 2 || *high != 4) { return false; }
+  auto missing = std::lower_bound(first, last, absent);
+  if (missing != last) { return false; }
+  auto minimum = std::min_element(first, last);
+  auto maximum = std::max_element(first, last);
+  if (*minimum != 1 || *maximum != 7) { return false; }
+  if (!std::is_sorted(first, last)) { return false; }
+  auto sorted_end = std::is_sorted_until(first, last);
+  if (sorted_end != last) { return false; }
+  auto run = std::search_n(first, last, std::size_t(2), two);
+  if (*run != 2) { return false; }
+  auto no_run = std::search_n(first, last, std::size_t(3), two);
+  if (no_run != last) { return false; }
+  std::vector<int> needle = {2, 4};
+  auto subsequence = std::search(first, last, needle.begin(), needle.end());
+  if (*subsequence != 2 || *std::next(subsequence) != 4) { return false; }
+  auto member = std::find_first_of(first, last, needle.begin(), needle.end());
+  if (*member != 2) { return false; }
+  std::vector<int> reference = {1, 2, 2, 4, 7};
+  if (!std::equal(first, last, reference.begin(), reference.end())) { return false; }
+  std::vector<int> prefix = {1, 2};
+  if (!std::starts_with(first, last, prefix.begin(), prefix.end())) { return false; }
+  if (!std::lexicographical_compare(prefix.begin(), prefix.end(), first, last)) { return false; }
+  return true;
+}

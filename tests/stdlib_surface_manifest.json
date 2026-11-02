@@ -3,7 +3,7 @@
   "source_fingerprints": {
     "stdlib/prelude.gti": "ff426a31d12405cd7a6f09ad46cf76c14f7d3b0a1fadef595c6ad7a4d4d3f831",
     "stdlib/std.gti": "6bf76540ce1d32024871a3fce4b9512fd6fd494511f919db63450e2b4796a0f7",
-    "stdlib/std/algorithm.gti": "0b11f6332b1aa9cb3f0b5be90680a81e5f5e7fcd6cc38322f65263e87d6f7f2b",
+    "stdlib/std/algorithm.gti": "d9be6f3856506765a2d99c65e88d013c3530fcd14c5063a806d0e43d90c2c25a",
     "stdlib/std/array.gti": "affed4f1d587a71a098ef7c9b381e6c255d8b639492abbe9a46b31e00115adde",
     "stdlib/std/assert.gti": "c34ddabb3ce77983232aa13452cf036dba6202cdbd8d2bb7e1c0d9f0a8b6d78d",
     "stdlib/std/atomic.gti": "d51045256225848941363200bff10a2fe1bf30b66915a06b89e1fce546d1aed1",
@@ -13,11 +13,12 @@
     "stdlib/std/cmath.gti": "dd5dd0b3f8005e4aa02da9e4cacf958269ac392ae8ad28e1ded8a756b65dad83",
     "stdlib/std/cstdio.gti": "5e76cfb1de246b3793166886bb8c2dc07abaa7218d87950b1a168ce7d27c3492",
     "stdlib/std/cthread.gti": "18dad8820d74e9caed0d11aca7e4e4bc970304e9fe52ae5908832a1d0ab88d30",
-    "stdlib/std/deque.gti": "733408fd8d0e2922772b2e3fc6d594273961479afd1672f7b397496a7f1e993e",
+    "stdlib/std/deque.gti": "ae8bd76f5c0020edfa76281eabfa4d82e013eadb54c90c4268c8d29eaf1714c7",
     "stdlib/std/detail/charconv_parse.gti": "fd7c40e70656ba6525d9ef03caf622ff3df739f9b07d786296f4a0a7a0415940",
     "stdlib/std/detail/charconv_types.gti": "f95bc5d90d09bec1fc814eb2a463bd781a2f78777f1bcc214050f58577298afd",
     "stdlib/std/detail/function_pointer.gti": "e50ccd32727edd5436ae961d9a22e3c4cc7be9674a224493ac6a24ea32856fd4",
     "stdlib/std/detail/iterator.gti": "3b40fd44d87c647be20245b57e670c460547a3b9808438aee0333d7864d4d491",
+    "stdlib/std/detail/key_removal.gti": "92657213e44731a8c4824aafd21550cb1e6f95c95323ab598e55a8bac0c41b7e",
     "stdlib/std/detail/map_entry.gti": "18d397281e03301cf5cb9758b7c6b55415720a6cf346bf14660667ee869d62d6",
     "stdlib/std/detail/map_iterators.gti": "1865894665173a692f71381a1190056f1c6f8f1d868590c8a84de887045f5047",
     "stdlib/std/detail/memory_capabilities.gti": "f4add458d438acc7f60ab55c981fd046db11d3fb51b8d81f371892f86243702f",
@@ -26,20 +27,21 @@
     "stdlib/std/detail/panic.gti": "c78f8a45be7af44e0379ff3c9c77448f5271538859789f252b658abb4b950154",
     "stdlib/std/detail/resource_core.gti": "3af137631b16e0c323850cafa4e43bcbb25eb168cb332d95fbecdd4301e53135",
     "stdlib/std/detail/resource_lease.gti": "f1a66da927f3a040de99b66c55cf2af1bb76779cb75f541c719d06a45c2443f4",
+    "stdlib/std/detail/sequence_removal.gti": "944f2d78c975da503ed192e70c18d1bf07f0f76f5242bceb4135c2f126fcb3c2",
     "stdlib/std/detail/unordered_map_iterators.gti": "42bbf9226971876d0388a6a32ebed8e82c7ccbfdcd1f0f1404960da2fdd7bf96",
     "stdlib/std/encoding.gti": "36608d332ccdc334f6834f07188e123609576122ee51894c298bc9e520dd5a77",
     "stdlib/std/environment.gti": "3a8c583446b14f97b3c3f3b1ae9dad7c206c830222bd31e8b1650e6f4d0cd826",
     "stdlib/std/experimental/optional.gti": "9ef1e87987c636fa141de4f844c264f07147e816db9c365d98f334f32689c083",
     "stdlib/std/filesystem.gti": "a579044390fadec9e7854eccd4d5901f13ab85288bf71a19ee97cadad2693de6",
     "stdlib/std/format.gti": "6bb96b2a640689505878eeafc4ed2b75989c5821638e12114d5661ecdbe0ea67",
-    "stdlib/std/forward_list.gti": "8d39227073b9f98eb6bc83a7a7103bc630497345830bc7e618dcc01fccb917ef",
+    "stdlib/std/forward_list.gti": "e11368b070d60292d98dc66fbb4c83e1e055d827fbca4fe6a66c82d0bd459810",
     "stdlib/std/functional.gti": "094c1baa47c93162e8ad139c30e5bd0070cff7c5e2343fb3fd32ca880f8437ac",
     "stdlib/std/http.gti": "7810cf7acaee803670f346e0103fa6c0cdfca62aca8edda538cfa880e8ae3521",
     "stdlib/std/io.gti": "8c28bff6f539a82e47f507db2cff429e74307b0dbe6128de48c0b47fd329c0b3",
     "stdlib/std/iterator.gti": "586855579c50031612b0136d001e21dd31c4387dcf115c9fe4485bd12d2577e3",
     "stdlib/std/json.gti": "85e0213cd253a521937160a0cac1d3e5be1eaa622f34442831a4d2dbffe7b812",
-    "stdlib/std/list.gti": "d8c0a951c3ef5a9fefb8fd69882c8d2b313c9b502d32df906e8e38da809f7923",
-    "stdlib/std/map.gti": "73bbf9e8c529c923f3391b94b83e330b90c02b933a7b2cfd9f3c171ee01a6955",
+    "stdlib/std/list.gti": "b1f7f178a6fa1bc0e6e08fb864f397d441e7e1f154a475bc0745ff3747e6ae54",
+    "stdlib/std/map.gti": "4e090ff5743aa663fa307976347e87af10a16c15a025ac37b92fb893b2f5bc13",
     "stdlib/std/memory.gti": "cf4a99569c5e3d3ddd352ae4a6019586a64ff5fe27e2d637a6bf1c91e4bd62c1",
     "stdlib/std/meta.gti": "a551c06adbe68e4d6240146db6259483dc95899feee10aa3bfdf7f8de93732fa",
     "stdlib/std/mutex.gti": "d761ef5ca158c5da39f60c2c6c2d66004f6a02a9ea5903bbf4db015e9a77eb11",
@@ -53,19 +55,19 @@
     "stdlib/std/random.gti": "41d83ba6833118988fcc0559abde9042cd423a201b468c77b6f33da3cd2eabec",
     "stdlib/std/resource.gti": "dbc11a50bbad24af5830001cb8d99025e21e1054bde19c2fc43ab0338234370c",
     "stdlib/std/resource_vector.gti": "8858e551fbebd2e2e9806a71f6ee97b39a9acb43cc8b9584f681fd9b1d811f77",
-    "stdlib/std/set.gti": "51dda8c0219afea2cca82160d7f3a062f1eefac41b5959455b887dfcd277f1ae",
+    "stdlib/std/set.gti": "6f7d24674a9c72daa9469dce2f1d47a812bb988b514b7de2b7ffc8f12efa8d0c",
     "stdlib/std/simd.gti": "c525bc03c27ff0f3921aaaa7ff03931dacad40578895dac142b0863f1b5fb9ce",
     "stdlib/std/source_location.gti": "c748203afe96c27c06465ffd6b38728becb85bcceca6e8097f75a8460eb74f95",
     "stdlib/std/span.gti": "effe13ba9bd0beeb1f04c84f17b5bd4458686ff713e3eb6756a65a8b0e8a7409",
-    "stdlib/std/string.gti": "0beeddb811310b50821c9df0d71f50258ceec61a761ddffa909f33a53ae79cfb",
+    "stdlib/std/string.gti": "3b2ba7e2b7376093781dcebc38b2c7f5f7567f42224fac1f8e018806755db6b3",
     "stdlib/std/string_view.gti": "3a96eeaa90719fdc5c2202f5cbd4ee81ef215f702a848767d2a4c2cf82a94cd6",
     "stdlib/std/tcp.gti": "23022069c0f430cf86fa3c0bd567aa44cde7ef638d7bcb821148a0ac77959c04",
     "stdlib/std/testing.gti": "03e0324d888081b1ee77a626f73c45170a94aa337a214732ba829880204af618",
     "stdlib/std/thread.gti": "3fc42f30db431e05b406379bfc24999dc499a1105bee59c07fc1e794b350e77a",
-    "stdlib/std/unordered_map.gti": "7e1066725b42affa19324597126a44fb608416b63bfc778d38526ed9b795e1ed",
-    "stdlib/std/unordered_set.gti": "beefd607c3c90ac64cae71baec51e9808919b7fe6a5f362ec7c2e29351138da0",
+    "stdlib/std/unordered_map.gti": "9f7cbac73404bf1101a7f33eb317aca0827406710334396d0cc38f12da98f9a3",
+    "stdlib/std/unordered_set.gti": "49f4e2d95926cfcfc75be282370862d66569dac6d4e5337d3601f6cb12e24065",
     "stdlib/std/utility.gti": "983e0584b5bf5c1850f0f648ebc579a53586e1e0f5f5d28c23d4fc88155343b5",
-    "stdlib/std/vector.gti": "65d48f1d767a11f2d44606f4748485e0cfb430529db8c8b54d79040b75eeb24c"
+    "stdlib/std/vector.gti": "972ebe0f2977838ca5339febfcb37b0c039eb355452dc5f8a5238605c856f96f"
   },
   "cases": [
     {
@@ -201,6 +203,48 @@
       "id": "algorithm-search",
       "mode": "run",
       "source": "tests/fixtures/algorithm_search.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "algorithm-search-array",
+      "mode": "run",
+      "source": "tests/fixtures/algorithm_search_array.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "algorithm-search-deque",
+      "mode": "run",
+      "source": "tests/fixtures/algorithm_search_deque.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "algorithm-search-list",
+      "mode": "run",
+      "source": "tests/fixtures/algorithm_search_list.gti",
       "optimizations": [
         "O0",
         "O3"
@@ -2111,6 +2155,36 @@
       }
     },
     {
+      "id": "removal-algorithms",
+      "mode": "run",
+      "source": "tests/fixtures/removal_algorithms.gti",
+      "backend": "llvm",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "removal-example",
+      "mode": "run",
+      "source": "examples/090-generic-algorithms.gti",
+      "backend": "llvm",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "present\n9\n4\npermitted\n9\n9\n0\n0\n",
+        "stderr": ""
+      }
+    },
+    {
       "id": "resource-allocator-example",
       "mode": "run",
       "source": "examples/121-programmable-allocators.gti",
@@ -2960,6 +3034,9 @@
         "algorithm-boundaries",
         "algorithm-mutation",
         "algorithm-search",
+        "algorithm-search-list",
+        "algorithm-search-deque",
+        "algorithm-search-array",
         "algorithm-user-types",
         "constexpr-library",
         "algorithm-ordered-search",
@@ -2994,7 +3071,31 @@
         "tests/fixtures/ordered_search.gti",
         "tests/fixtures/ordered_search_user_types.gti",
         "examples/139-ordered-search.gti",
-        "stdlib/std/algorithm.gti"
+        "stdlib/std/algorithm.gti",
+        "tests/fixtures/algorithm_search_list.gti",
+        "tests/fixtures/algorithm_search_deque.gti",
+        "tests/fixtures/algorithm_search_array.gti"
+      ]
+    },
+    {
+      "id": "algorithm.removal",
+      "source": "stdlib/std/algorithm.gti",
+      "status": "executable",
+      "operations": [
+        "std::remove",
+        "std::remove_if"
+      ],
+      "case_ids": [
+        "removal-algorithms",
+        "removal-example"
+      ],
+      "required_instantiations": [
+        "stable indexed compaction; owned/immovable values; read and mutable predicates; collision chains"
+      ],
+      "evidence": [
+        "tests/fixtures/removal_algorithms.gti",
+        "tests/removal_algorithms_test.py",
+        "examples/090-generic-algorithms.gti"
       ]
     },
     {
@@ -3056,6 +3157,7 @@
       "case_ids": [
         "array",
         "algorithm-search",
+        "algorithm-search-array",
         "algorithm-mutation",
         "algorithm-user-types",
         "constexpr-operators",
@@ -3073,7 +3175,8 @@
         "tests/fixtures/algorithm_mutation.gti",
         "tests/fixtures/algorithm_user_types.gti",
         "stdlib/std/array.gti",
-        "tests/fixtures/stdlib_surface_container_aliases.gti"
+        "tests/fixtures/stdlib_surface_container_aliases.gti",
+        "tests/fixtures/algorithm_search_array.gti"
       ]
     },
     {
@@ -3544,6 +3647,7 @@
       ],
       "case_ids": [
         "algorithm-search",
+        "algorithm-search-deque",
         "algorithm-mutation",
         "algorithm-user-types",
         "complete-containers-collection",
@@ -3559,7 +3663,70 @@
       "evidence": [
         "tests/complete_containers_test.py",
         "tests/fixtures/complete_containers_ownership.gti",
-        "tests/fixtures/stdlib_surface_container_aliases.gti"
+        "tests/fixtures/stdlib_surface_container_aliases.gti",
+        "tests/fixtures/algorithm_search_deque.gti"
+      ]
+    },
+    {
+      "id": "deque.removal",
+      "source": "stdlib/std/deque.gti",
+      "status": "executable",
+      "operations": [
+        "std::deque::swap_elements",
+        "std::erase(std::deque)",
+        "std::erase_if(std::deque)"
+      ],
+      "case_ids": [
+        "removal-algorithms",
+        "removal-example"
+      ],
+      "required_instantiations": [
+        "stable indexed compaction; owned/immovable values; read and mutable predicates; collision chains"
+      ],
+      "evidence": [
+        "tests/fixtures/removal_algorithms.gti",
+        "tests/removal_algorithms_test.py",
+        "examples/090-generic-algorithms.gti"
+      ]
+    },
+    {
+      "id": "detail-key_removal.removal",
+      "source": "stdlib/std/detail/key_removal.gti",
+      "status": "executable",
+      "operations": [
+        "std::detail::key_removal_predicate"
+      ],
+      "case_ids": [
+        "removal-algorithms",
+        "removal-example"
+      ],
+      "required_instantiations": [
+        "stable indexed compaction; owned/immovable values; read and mutable predicates; collision chains"
+      ],
+      "evidence": [
+        "tests/fixtures/removal_algorithms.gti",
+        "tests/removal_algorithms_test.py",
+        "examples/090-generic-algorithms.gti"
+      ]
+    },
+    {
+      "id": "detail-sequence_removal.removal",
+      "source": "stdlib/std/detail/sequence_removal.gti",
+      "status": "executable",
+      "operations": [
+        "std::detail::compact_remove"
+      ],
+      "case_ids": [
+        "removal-algorithms",
+        "removal-example"
+      ],
+      "required_instantiations": [
+        "stable indexed compaction; owned/immovable values; read and mutable predicates; collision chains"
+      ],
+      "evidence": [
+        "tests/fixtures/removal_algorithms.gti",
+        "tests/removal_algorithms_test.py",
+        "examples/090-generic-algorithms.gti"
       ]
     },
     {
@@ -4039,6 +4206,28 @@
         "tests/fixtures/container_swap.gti",
         "tests/fixtures/container_swap_cleanup.gti",
         "tests/container_swap_runtime_test.py"
+      ]
+    },
+    {
+      "id": "forward_list.removal",
+      "source": "stdlib/std/forward_list.gti",
+      "status": "executable",
+      "operations": [
+        "std::erase(std::forward_list)",
+        "std::erase_if(std::forward_list)",
+        "std::forward_list::remove_if"
+      ],
+      "case_ids": [
+        "removal-algorithms",
+        "removal-example"
+      ],
+      "required_instantiations": [
+        "stable indexed compaction; owned/immovable values; read and mutable predicates; collision chains"
+      ],
+      "evidence": [
+        "tests/fixtures/removal_algorithms.gti",
+        "tests/removal_algorithms_test.py",
+        "examples/090-generic-algorithms.gti"
       ]
     },
     {
@@ -4601,6 +4790,7 @@
       ],
       "case_ids": [
         "algorithm-search",
+        "algorithm-search-list",
         "algorithm-mutation",
         "algorithm-user-types",
         "complete-containers-collection",
@@ -4617,7 +4807,30 @@
       "evidence": [
         "tests/complete_containers_test.py",
         "tests/fixtures/complete_containers_ownership.gti",
-        "tests/fixtures/stdlib_surface_container_aliases.gti"
+        "tests/fixtures/stdlib_surface_container_aliases.gti",
+        "tests/fixtures/algorithm_search_list.gti"
+      ]
+    },
+    {
+      "id": "list.removal",
+      "source": "stdlib/std/list.gti",
+      "status": "executable",
+      "operations": [
+        "std::erase(std::list)",
+        "std::erase_if(std::list)",
+        "std::list::remove_if"
+      ],
+      "case_ids": [
+        "removal-algorithms",
+        "removal-example"
+      ],
+      "required_instantiations": [
+        "stable indexed compaction; owned/immovable values; read and mutable predicates; collision chains"
+      ],
+      "evidence": [
+        "tests/fixtures/removal_algorithms.gti",
+        "tests/removal_algorithms_test.py",
+        "examples/090-generic-algorithms.gti"
       ]
     },
     {
@@ -4742,6 +4955,27 @@
         "tests/container_iterator_movement_test.py",
         "tests/map_mutable_entry_projection_test.py",
         "examples/087-associative-containers.gti"
+      ]
+    },
+    {
+      "id": "map.removal",
+      "source": "stdlib/std/map.gti",
+      "status": "executable",
+      "operations": [
+        "std::erase_if(std::map)",
+        "std::map::erase_if"
+      ],
+      "case_ids": [
+        "removal-algorithms",
+        "removal-example"
+      ],
+      "required_instantiations": [
+        "stable indexed compaction; owned/immovable values; read and mutable predicates; collision chains"
+      ],
+      "evidence": [
+        "tests/fixtures/removal_algorithms.gti",
+        "tests/removal_algorithms_test.py",
+        "examples/090-generic-algorithms.gti"
       ]
     },
     {
@@ -6274,6 +6508,27 @@
       ]
     },
     {
+      "id": "set.removal",
+      "source": "stdlib/std/set.gti",
+      "status": "executable",
+      "operations": [
+        "std::erase_if(std::set)",
+        "std::set::erase_if"
+      ],
+      "case_ids": [
+        "removal-algorithms",
+        "removal-example"
+      ],
+      "required_instantiations": [
+        "stable indexed compaction; owned/immovable values; read and mutable predicates; collision chains"
+      ],
+      "evidence": [
+        "tests/fixtures/removal_algorithms.gti",
+        "tests/removal_algorithms_test.py",
+        "examples/090-generic-algorithms.gti"
+      ]
+    },
+    {
       "id": "simd.checked-lane-iteration",
       "source": "stdlib/std/simd.gti",
       "status": "executable",
@@ -6722,6 +6977,28 @@
       ]
     },
     {
+      "id": "string.removal",
+      "source": "stdlib/std/string.gti",
+      "status": "executable",
+      "operations": [
+        "std::erase(std::string)",
+        "std::erase_if(std::string)",
+        "std::string::swap_elements"
+      ],
+      "case_ids": [
+        "removal-algorithms",
+        "removal-example"
+      ],
+      "required_instantiations": [
+        "stable indexed compaction; owned/immovable values; read and mutable predicates; collision chains"
+      ],
+      "evidence": [
+        "tests/fixtures/removal_algorithms.gti",
+        "tests/removal_algorithms_test.py",
+        "examples/090-generic-algorithms.gti"
+      ]
+    },
+    {
       "id": "string.swap",
       "source": "stdlib/std/string.gti",
       "status": "executable",
@@ -6944,6 +7221,27 @@
       ]
     },
     {
+      "id": "unordered_map.removal",
+      "source": "stdlib/std/unordered_map.gti",
+      "status": "executable",
+      "operations": [
+        "std::erase_if(std::unordered_map)",
+        "std::unordered_map::erase_if"
+      ],
+      "case_ids": [
+        "removal-algorithms",
+        "removal-example"
+      ],
+      "required_instantiations": [
+        "stable indexed compaction; owned/immovable values; read and mutable predicates; collision chains"
+      ],
+      "evidence": [
+        "tests/fixtures/removal_algorithms.gti",
+        "tests/removal_algorithms_test.py",
+        "examples/090-generic-algorithms.gti"
+      ]
+    },
+    {
       "id": "unordered_set.checked-iteration",
       "source": "stdlib/std/unordered_set.gti",
       "status": "executable",
@@ -7011,6 +7309,27 @@
         "tests/complete_containers_test.py",
         "tests/fixtures/complete_containers_ownership.gti",
         "tests/fixtures/stdlib_surface_container_aliases.gti"
+      ]
+    },
+    {
+      "id": "unordered_set.removal",
+      "source": "stdlib/std/unordered_set.gti",
+      "status": "executable",
+      "operations": [
+        "std::erase_if(std::unordered_set)",
+        "std::unordered_set::erase_if"
+      ],
+      "case_ids": [
+        "removal-algorithms",
+        "removal-example"
+      ],
+      "required_instantiations": [
+        "stable indexed compaction; owned/immovable values; read and mutable predicates; collision chains"
+      ],
+      "evidence": [
+        "tests/fixtures/removal_algorithms.gti",
+        "tests/removal_algorithms_test.py",
+        "examples/090-generic-algorithms.gti"
       ]
     },
     {
@@ -7214,6 +7533,27 @@
         "tests/fixtures/restoring_algorithm_order.gti",
         "tests/restoring_indexed_runtime_test.py",
         "tests/restoring_exchange_tests.cpp"
+      ]
+    },
+    {
+      "id": "vector.removal",
+      "source": "stdlib/std/vector.gti",
+      "status": "executable",
+      "operations": [
+        "std::erase(std::vector)",
+        "std::erase_if(std::vector)"
+      ],
+      "case_ids": [
+        "removal-algorithms",
+        "removal-example"
+      ],
+      "required_instantiations": [
+        "stable indexed compaction; owned/immovable values; read and mutable predicates; collision chains"
+      ],
+      "evidence": [
+        "tests/fixtures/removal_algorithms.gti",
+        "tests/removal_algorithms_test.py",
+        "examples/090-generic-algorithms.gti"
       ]
     },
     {

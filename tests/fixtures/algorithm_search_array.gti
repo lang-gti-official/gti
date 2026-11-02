@@ -1,0 +1,6 @@
+import std.array;
+import "algorithm_search_suite.gti";
+int main() {
+  std::array<int, 5> values = std::array<int, 5>({1, 2, 2, 4, 7});
+  return search_suite(values.begin(), values.end()) ? 0 : 4;
+}

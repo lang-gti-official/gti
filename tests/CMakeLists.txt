@@ -3693,7 +3693,12 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}"
   )
   set_tests_properties(stdlib_modules PROPERTIES TIMEOUT 600)
-  # Preserve the complete four-fixture/eight-mode matrix without an outer
+  add_test(NAME removal_algorithms
+           COMMAND "${Python3_EXECUTABLE}"
+                   "${PROJECT_SOURCE_DIR}/tests/removal_algorithms_test.py"
+                   "$<TARGET_FILE:gti>")
+  set_tests_properties(removal_algorithms PROPERTIES TIMEOUT 900)
+  # Preserve the complete seven-fixture/eight-mode matrix without an outer
   # deadline shorter than one of its permitted sanitized compilations.
   foreach(standard IN ITEMS 20 23)
     add_test(
