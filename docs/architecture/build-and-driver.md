@@ -283,7 +283,10 @@ normal output both report the selected parallelism.
 
 ### Managed toolchains and preview distribution
 
-`scripts/gtiup.py` is a standalone Python 3.9+ toolchain manager. Its bootstrap
+[`gtiup`](https://github.com/lang-gti-official/gtiup) is a standalone C++
+toolchain manager maintained, tested and released in its own repository. Its
+manager binaries and installer need neither Python nor a compiler. Its CI never
+builds GTI or LLVM; compiler archive publication stays in this repository. The bootstrap
 places `gtiup`, `gti` and `gti_lsp` proxies in `$GTIUP_HOME/bin` (default
 `~/.gtiup/bin`). Installation is explicit; neither compiler invocation nor
 Neovim downloads a missing selection. The manager resolves command overrides,

@@ -466,11 +466,15 @@ different supported 64-bit target so C implementation-defined widths such as
 ## Install and select GTI with gtiup
 
 `gtiup` manages matching compiler, LSP, standard library, runtime and parser
-versions on macOS arm64 and Linux x64. Bootstrap it with Python 3.9 or newer
-from this checkout:
+versions on macOS arm64 and Linux x64. It is a standalone C++ binary with its
+own [repository, CI and downloads](https://github.com/lang-gti-official/gtiup),
+independent of compiler builds. Install it without Python or a GTI checkout:
 
 ```sh
-python3 scripts/gtiup.py self-install
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://raw.githubusercontent.com/lang-gti-official/gtiup/main/install.sh \
+  -o /tmp/gtiup-install.sh
+sh /tmp/gtiup-install.sh
 export PATH="$HOME/.gtiup/bin:$PATH" # also add this to your shell configuration
 # Choose explicitly; this downloads the selected complete toolchain.
 gtiup default nightly

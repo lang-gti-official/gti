@@ -41,6 +41,10 @@ class GitHub:
         self.lose_close_response = False
         self.before_enqueue = None
         self.ready_calls = []
+        self.pending_checks = False
+        self.auto_calls = []
+        self.lose_auto_response = False
+        self.reject_disable = False
 
     def effective_rules(self):
         return [rule for ruleset in self.rulesets if ruleset["enforcement"] == "active"
@@ -133,16 +137,41 @@ class GitHub:
 
     def graphql(self, query, variables):
         pr = self.pr(int(variables["id"].split("_")[1]))
+        if "node(id:" in query:
+            return {"node": {"headRefOid": pr["head"]["sha"], "merged": pr["merged"],
+                             "isInMergeQueue": bool(pr.get("in_queue")),
+                             "autoMergeRequest": pr.get("auto_merge")}}
+        if "disablePullRequestAutoMerge" in query:
+            if self.reject_disable:
+                raise Error("disable refused")
+            pr["auto_merge"] = None
+            return {"disablePullRequestAutoMerge": {"clientMutationId": None}}
+        if "dequeuePullRequest" in query:
+            pr["in_queue"] = False
+            return {"dequeuePullRequest": {"clientMutationId": None}}
         if "markPullRequestReadyForReview" in query:
             self.ready_calls.append(pr["number"])
             pr["draft"] = False
             return {"markPullRequestReadyForReview": {"clientMutationId": None}}
-        if "enqueuePullRequest" not in query:
+        if "enablePullRequestAutoMerge" in query:
+            if self.reject_enqueue or variables["head"] != pr["head"]["sha"]:
+                raise Error("server rejected the merge queue entry")
+            self.auto_calls.append(variables["head"])
+            pr["auto_merge"] = {"enabledAt": "now"}
+            if self.lose_auto_response:
+                self.lose_auto_response = False
+                raise Error("lost auto-merge response")
+            if self.pending_checks:
+                return {"enablePullRequestAutoMerge": {"clientMutationId": None}}
+        elif "enqueuePullRequest" not in query:
             raise AssertionError(query)
+        elif self.pending_checks:
+            raise Error('Required status check "CI gate" is expected')
         if (self.reject_enqueue or pr["draft"] or variables["head"] != pr["head"]["sha"]
                 or not {"merge_queue", "required_status_checks"} <= {r["type"] for r in self.effective_rules()}):
             raise Error("server rejected the merge queue entry")
         self.enqueued.append((pr["number"], variables["head"]))
+        pr["in_queue"] = True
         if self.before_enqueue:
             self.before_enqueue()
         if not self.queue_async:
@@ -157,7 +186,7 @@ class GitHub:
         tree = git(self.remote, "merge-tree", "--write-tree", base, head).splitlines()[0]
         commit = git(self.remote, "commit-tree", tree, "-p", base, "-p", head, "-m", "Merge queue candidate")
         git(self.remote, "update-ref", "refs/heads/main", commit)
-        pr.update(merged=True, state="closed", merge_commit_sha=commit)
+        pr.update(merged=True, state="closed", merge_commit_sha=commit, in_queue=False, auto_merge=None)
 
 
 class DeclaredTests(unittest.TestCase):
@@ -397,6 +426,87 @@ class Lifecycle(unittest.TestCase):
         self.assertEqual(len(self.api.enqueued), 1)
         self.api.merge_queue_head()
         self.assertEqual(self.flow.finish("task", "description", rollup=False)["phase"], "synced")
+
+    def test_pending_ci_is_a_durable_handoff_not_an_enqueue_error(self):
+        self.ready()
+        self.api.pending_checks = True
+        state = self.flow.finish("task", "description", rollup=False)
+        self.assertEqual(state["phase"], "awaiting-ci")
+        self.assertEqual(state["handoff"]["head"], state["verified"]["head"])
+        self.assertEqual(self.api.enqueued, [])
+        self.flow.finish("task", "description", rollup=False)
+        self.assertEqual(len(self.api.auto_calls), 1)
+        self.assertEqual(self.flow.status("task")[0]["remote_integration"], "awaiting-ci")
+        # GitHub observes a passing check and queues it without another helper call.
+        self.api.pending_checks = False
+        self.api.queue_async = True
+        self.api.graphql(module.Workflow.ENQUEUE, {"id": "PR_1", "head": state["verified"]["head"]})
+        self.assertEqual(self.flow.status("task")[0]["remote_integration"], "queued")
+        self.assertEqual(self.flow.finish("task", "description", rollup=False)["phase"], "queued")
+        self.assertEqual(len(self.api.auto_calls), 1)
+
+    def test_lost_auto_response_recovers_without_rearming(self):
+        self.ready()
+        self.api.pending_checks = True
+        self.api.lose_auto_response = True
+        with self.assertRaisesRegex(Error, "lost auto-merge"):
+            self.flow.finish("task", "description", rollup=False)
+        self.assertEqual(self.flow.finish("task", "description", rollup=False)["phase"], "awaiting-ci")
+        self.assertEqual(len(self.api.auto_calls), 1)
+
+    def test_checkpoint_cancels_handoff_before_publishing_a_new_head(self):
+        self.ready()
+        self.api.pending_checks = True
+        self.flow.finish("task", "description", rollup=False)
+        self.checkpoint("changed after handoff\n")
+        self.assertIsNone(self.api.prs[0]["auto_merge"])
+        self.assertNotIn("handoff", self.flow.load("task"))
+        self.assertNotIn("verified", self.flow.load("task"))
+        with self.assertRaisesRegex(Error, "recorded validation"):
+            self.flow.finish("task", "description", rollup=False)
+
+    def test_cancellation_failure_prevents_push(self):
+        self.ready()
+        self.api.pending_checks = True
+        state = self.flow.finish("task", "description", rollup=False)
+        self.api.reject_disable = True
+        with self.assertRaisesRegex(Error, "disable refused"):
+            self.checkpoint("changed after handoff\n")
+        self.assertEqual(self.api.pr(1)["head"]["sha"], state["verified"]["head"])
+
+    def test_reconcile_and_pr_only_withdraw_pending_intent(self):
+        self.ready()
+        self.api.pending_checks = True
+        self.flow.finish("task", "description", rollup=False)
+        self.flow.finish("task", "description", pr_only=True)
+        self.assertIsNone(self.api.prs[0]["auto_merge"])
+        self.flow.finish("task", "description", rollup=False)
+        self.advance_remote()
+        self.flow.reconcile("task")
+        self.assertIsNone(self.api.prs[0]["auto_merge"])
+        self.assertNotIn("verified", self.flow.load("task"))
+
+    def test_new_checkpoint_withdraws_existing_queue_entry(self):
+        self.ready()
+        self.api.queue_async = True
+        self.flow.finish("task", "description", rollup=False)
+        self.checkpoint("new head after queue entry\n")
+        self.assertFalse(self.api.prs[0]["in_queue"])
+        self.assertIsNone(self.api.prs[0]["auto_merge"])
+        self.assertNotIn("queued", self.flow.load("task"))
+
+    def test_changed_head_cannot_arm_auto_merge(self):
+        self.ready()
+        self.api.pending_checks = True
+        graphql = self.api.graphql
+        def raced(query, variables):
+            if "enablePullRequestAutoMerge" in query:
+                variables = {**variables, "head": "0" * 40}
+            return graphql(query, variables)
+        self.api.graphql = raced
+        with self.assertRaisesRegex(Error, "server rejected"):
+            self.flow.finish("task", "description", rollup=False)
+        self.assertEqual(self.api.auto_calls, [])
 
     def test_new_commit_and_dirty_files_refuse_merge(self):
         self.ready()
