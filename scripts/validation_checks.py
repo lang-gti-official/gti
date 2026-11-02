@@ -232,6 +232,9 @@ def ci_mode(event, paths):
         return "automation"
     if source_stdlib_scope(own):
         return "source-stdlib"
+    from lsp_ci import eligible as lsp_scope
+    if lsp_scope(own):
+        return "lsp"
     return "full"
 
 
@@ -252,6 +255,8 @@ def admission(mode, results, event="pull_request"):
         required |= {"fast"} if event == "pull_request" else {"fast", "package", "integration", "sanitizers"}
     elif mode == "source-stdlib":
         required |= {"source-stdlib"}
+    elif mode == "lsp":
+        required |= {"lsp"}
     elif mode == "draft":
         if event != "pull_request":
             raise ValueError("A draft cannot enter the merge queue")
