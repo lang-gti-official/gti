@@ -240,7 +240,7 @@ def select_nightly(repository: str, event: str, ref: str, requested: str,
     version = git("show", f"{sha}:VERSION")
     if VERSION.fullmatch(version) is None:
         raise ValueError("VERSION must contain a semantic version")
-    print(f"Nightly candidate {sha} (full CI evidence {run}); main {head}; "
+    print(f"Nightly candidate {sha} (integration CI evidence {run}); main {head}; "
           f"published nightly {published or 'none'} ({relation}); build={str(build).lower()}")
     return {"sha": sha, "version": version, "build": str(build).lower(),
             "head": str(sha == head).lower(), **(run if isinstance(run, dict) else {})}

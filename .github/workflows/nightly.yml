@@ -1,6 +1,6 @@
 name: Nightly toolchain
 
-# Publishes the exact production archives retained by successful full CI on
+# Publishes the exact production archives retained by successful release-producing integration CI on
 # current main. No compiler build or full suite runs here. Missing/expired
 # artifacts require a fresh full CI dispatch on main, never a validation bypass.
 on:
@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   select:
-    name: Select a full-CI-validated main commit
+    name: Select an integration-validated main commit
     if: github.repository == 'lang-gti-official/gti'
     runs-on: ubuntu-24.04
     permissions:
@@ -32,6 +32,7 @@ jobs:
       head: ${{ steps.select.outputs.head }}
       run_id: ${{ steps.select.outputs.run_id }}
       run_attempt: ${{ steps.select.outputs.run_attempt }}
+      validation_mode: ${{ steps.select.outputs.validation_mode }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -40,7 +41,7 @@ jobs:
           persist-credentials: false
       - name: Verify release orchestration before publishing
         run: python3 tests/ci_release_test.py .
-      - name: Select the commit and verify its full CI and retained packages
+      - name: Select the commit and verify its integration CI and retained packages
         id: select
         env:
           GTI_GITHUB_TOKEN: ${{ github.token }}
@@ -90,10 +91,15 @@ jobs:
         env:
           GTI_SOURCE_RUN: ${{ needs.select.outputs.run_id }}
           GTI_SOURCE_ATTEMPT: ${{ needs.select.outputs.run_attempt }}
-        run: >-
-          python3 scripts/release_artifacts.py verify --directory dist
-          --sha "${GTI_NIGHTLY_SHA}" --run-id "${GTI_SOURCE_RUN}"
-          --attempt "${GTI_SOURCE_ATTEMPT}" --repository "${GITHUB_REPOSITORY}" --consume
+          GTI_VALIDATION_MODE: ${{ needs.select.outputs.validation_mode }}
+        run: |
+          extra=()
+          if [[ "${GTI_VALIDATION_MODE}" == "source-stdlib" ]]; then
+            extra=(--require-compiler-origin)
+          fi
+          python3 scripts/release_artifacts.py verify --directory dist \
+          --sha "${GTI_NIGHTLY_SHA}" --run-id "${GTI_SOURCE_RUN}" \
+          --attempt "${GTI_SOURCE_ATTEMPT}" --repository "${GITHUB_REPOSITORY}" --consume "${extra[@]}"
       - name: Verify the complete asset set and record BUILD_ID
         run: |
           expected=()

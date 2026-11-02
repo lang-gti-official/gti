@@ -55,6 +55,12 @@ include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
+
+set(GTI_REUSE_TOOLCHAIN "" CACHE PATH "Admitted production toolchain for source-only library CI")
+if(GTI_REUSE_TOOLCHAIN)
+  include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/ReuseToolchain.cmake")
+  return()
+endif()
 if(Python3_Interpreter_FOUND)
   add_custom_target(
     format

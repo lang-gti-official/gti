@@ -34,7 +34,7 @@ AUTOMATION_WORKFLOWS = {".github/workflows/rollup.yml", ".github/workflows/train
                         ".github/workflows/backport.yml", ".github/workflows/rollback.yml"}
 FULL_VALIDATION_FILES = {"scripts/validation_checks.py", "scripts/validation_batch.py",
                          "scripts/named_test_shards.py", "tests/ci_release_test.py",
-                         "tests/preview_release_test.py"}
+                         "tests/preview_release_test.py", "scripts/source_stdlib_ci.py", "tests/source_stdlib_ci_test.py"}
 AUTOMATION_FILES = {"AGENTS.md", "CLAUDE.md", "README.md"}
 AUTOMATION_SCRIPTS = {"agent_workflow.py", "validation_batch.py", "validation_checks.py",
                       "preview_workflow.py", "preview_submit.py", "build_window.py", "bounded_log.py",
@@ -46,7 +46,7 @@ AUTOMATION_TESTS = {"agent_workflow_test.py", "preview_workflow_test.py", "build
                     "repository_hosting_test.py", "cut_release_test.py",
                     "ownership_map_test.py", "plan_checks_test.py", "rollup_test.py",
                     "release_train_test.py", "named_test_shards_test.py", "ci_release_test.py",
-                    "preview_release_test.py"}
+                    "preview_release_test.py", "source_stdlib_ci_test.py"}
 # A rollup's membership record lists queue-validated members; unlike a degraded-
 # mode batch manifest it adds no admission obligation, so it leaves the
 # classification of the members' own paths unchanged.
@@ -73,16 +73,8 @@ def focused_scope(paths):
     """Classify local focused eligibility, independently of advisory CI policy."""
     if ci_mode({}, paths) == "automation":
         return "automation"
-    metadata = {"VERSION", "CHANGELOG.md", "README.md", "stdlib/README.md", "examples/README.md",
-                "tests/stdlib_surface_manifest.json", "tests/mir_census_baseline.json",
-                "tests/lowered_program_census_baseline.json"}
-    def library(path):
-        return path.startswith("stdlib/std/") and path.endswith(".gti")
-    def allowed(path):
-        return (library(path) or path in metadata or path.startswith("docs/") and path.endswith(".md") or
-                path.startswith(("examples/", "tests/fixtures/")) and path.endswith(".gti") or
-                re.fullmatch(r"tests/[A-Za-z0-9_]+_test\.py", path) is not None)
-    if paths and any(library(path) for path in paths) and all(allowed(path) for path in paths):
+    from source_stdlib_ci import eligible
+    if eligible(paths):
         return "source-stdlib"
     return None
 
@@ -224,6 +216,9 @@ def ci_mode(event, paths):
                    path in {"scripts/" + name for name in AUTOMATION_SCRIPTS} or
                    path in {"tests/" + name for name in AUTOMATION_TESTS} for path in own):
         return "automation"
+    from source_stdlib_ci import eligible
+    if eligible(own):
+        return "source-stdlib"
     return "full"
 
 
@@ -242,6 +237,8 @@ def admission(mode, results, event="pull_request"):
     if mode == "full":
         # System-LLVM checks run in fast; production package and full shards gate integration.
         required |= {"fast"} if event == "pull_request" else {"fast", "package", "integration", "sanitizers"}
+    elif mode == "source-stdlib":
+        required |= {"source-stdlib"}
     elif mode == "draft":
         if event != "pull_request":
             raise ValueError("A draft cannot enter the merge queue")

@@ -1234,15 +1234,15 @@ def batch_plan(**changes):
 
 
 class ValidationChecks(unittest.TestCase):
-    def test_source_library_focused_scope_is_narrow_and_does_not_change_ci(self):
+    def test_source_library_focused_scope_matches_ci_candidate_eligibility(self):
         source = ["stdlib/std/encoding.gti"]
         allowed = ["stdlib/std/encoding.gti", "tests/fixtures/encoding.gti",
                    "tests/encoding_runtime_test.py", "examples/094-encoding.gti",
                    "examples/README.md", "stdlib/README.md", "docs/language/encoding.md",
-                   "VERSION", "CHANGELOG.md", "tests/stdlib_surface_manifest.json",
+                   "changes/encoding.feature.md", "tests/stdlib_surface_manifest.json",
                    "tests/mir_census_baseline.json", "tests/lowered_program_census_baseline.json"]
         self.assertEqual(validation.focused_scope(source + allowed), "source-stdlib")
-        self.assertEqual(validation.ci_mode({}, source + allowed), "full")
+        self.assertEqual(validation.ci_mode({}, source + allowed), "source-stdlib")
         self.assertEqual(validation.focused_scope(["docs/index.md"]), "automation")
         self.assertIsNone(validation.focused_scope(["tests/encoding_runtime_test.py"]))
         for path in ("src/compiler/foo.cpp", "include/gti/type.h", "runtime/host.cpp",

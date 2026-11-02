@@ -208,3 +208,13 @@ evidence outstanding.
 The merge queue's `CI gate` is the required integration gate. Do not poll it or
 duplicate it locally; report the confirmed handoff as awaiting CI or queued, and report a queue failure
 honestly rather than as a pass.
+
+### Source-only standard library CI
+
+For a diff confined to GTI stdlib sources and allowed source tests/metadata/docs,
+local focused checks use an existing optimized compiler. CI additionally requires
+a compatible retained full-CI compiler, verifies its native inputs, and runs the
+owning/consumer checks against the candidate stdlib on both platforms. Unknown
+paths, native/build/test-routing changes and missing artifacts fall back to full
+CI. This does not waive runtime, rejection, performance or example evidence.
+See `docs/architecture/agent-workflow.md#required-ci-and-the-merge-queue`.

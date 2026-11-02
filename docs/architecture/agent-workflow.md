@@ -713,6 +713,7 @@ advisory-CI policy. `.github/workflows/ci.yml` reports one required check,
 | `pull_request` (draft) | draft | lint and workflow regressions only; a draft cannot enter the queue |
 | `merge_group` | full | lint, workflow regressions, system-LLVM `fast` checks, production packaging and installed checks, every bundled-release `integration` shard on both platforms, and `sanitizers` |
 | `workflow_dispatch` on main | full | the same full integration and production packaging gates, for release commissioning/recovery |
+| PR or merge group | source-stdlib | lint, workflow regressions, source-library owners and consumers, declared PR regressions and native smoke on both platforms using an admitted full-CI compiler; merge groups also package the new source library |
 | PR or merge group | automation | lint and workflow regressions only |
 | PR or merge group | component | always fails: a batch component cannot merge directly |
 
@@ -729,6 +730,45 @@ combined with an allowed workflow. Mixed candidates inherit full coverage from
 any non-automation path; adding a new workflow does not automatically exempt it. The
 classification step binds `github.event_path` to `GTI_EVENT_PATH` and rejects
 missing or non-file payloads before running the classifier.
+
+Source-only standard-library CI is a separate, fail-closed optimization
+(`scripts/source_stdlib_ci.py`). A candidate must change `stdlib/std/*.gti` and
+may accompany it with GTI fixtures/examples, registered Python harnesses,
+explicit surface/census metadata, Markdown docs and changelog fragments. Changes
+to compiler/runtime/native tests, CMake/test registration, ownership or validation
+policy, prelude/module routing, VERSION and unknown paths retain full coverage.
+Unregistered changed harnesses or fixtures with no registered consumer fall back
+to full CI. Adding a new CMake test therefore deliberately takes the full lane;
+extending an existing registered harness or source surface manifest can reuse.
+
+Planning searches retained successful **full** integration builds of an ancestor
+with identical native-input Git identities (including native build/configuration
+scripts and VERSION). No compatible retained compiler means `mode=full`; the
+first library change after a native/build change may need that baseline build.
+PR-only, automation-only, failed, expired and derived source-library artifacts
+cannot seed reuse. Manual main dispatches always remain full recovery builds.
+
+The source lane verifies the exact run/attempt, source, platform, release profile
+and archive checksums again before use. It replaces the entire staged stdlib,
+including deletions, and verifies that the native payload is unchanged.
+`GTI_REUSE_TOOLCHAIN` imports the optimized production libraries and binaries;
+only test consumer targets are built. The CMake target graph rejects dependencies
+that would rebuild compiler/runtime sources. Ownership-map T1 owners and T2
+consumers, changed registered harnesses/fixtures, compiler_pipeline, native O0/O3
+smoke and affected example gates must execute without missing/disabled/skipped
+results. This includes runtime and rejection coverage, not compilation alone.
+PR-declared tests add to this mandatory selection. Installed CLI/LSP/project and
+resource checks exercise the updated packaged library without source overrides.
+
+On a merge group, the resulting production archives retain the candidate BUILD_ID
+and `share/gti/COMPILER_ORIGIN.json` (original compiler source/run/attempt and native
+input digest). Their provenance repeats that origin. A successful source-library
+integration can supply nightly artifacts; it is not described as a new full
+compiler build. Compiler sanitizer binaries are not rebuilt: their native inputs
+are unchanged, while generated-program sanitizer checks selected by the library
+ownership map still run. The separate combined preview admission/publication
+continues its existing build-and-test policy; this lane does not waive preview
+checks or publish a PR as nightly.
 
 In full integration, production packaging builds the pinned bundled LLVM/Clang
 release configuration on both platforms and validates the staged toolchain
@@ -861,7 +901,7 @@ Automation-only and source-only GTI stdlib local owning checks may use
 `verify --focused`, which checks the actual diff and does not reserve a
 broad-suite slot. The source-library path requires a change under `stdlib/std/`
 ending in `.gti`; accompanying GTI fixtures/examples,
-Python test harnesses, explicit surface/census metadata, release metadata and
+Python test harnesses, explicit surface/census metadata, changelog fragments and
 Markdown documentation are permitted. Compiler, native runtime, CMake and
 other implementation changes cannot use that path. Its checks require a named
 `tests/*_test.py` harness or CTest with one anchored exact test name, such as
