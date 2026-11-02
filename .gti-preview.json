@@ -110,10 +110,30 @@
         "11e454436b282ddb902d69885a937e76d3dd1402"
       ],
       "merge": "11e454436b282ddb902d69885a937e76d3dd1402"
+    },
+    {
+      "task": "runtime-performance-gaps",
+      "pr": 117,
+      "head": "c6809de8fb0cb6c4838609dda0f9d43222df51ae",
+      "tests": [
+        "compiler_pipeline",
+        "llvm_checked_reductions",
+        "llvm_checked_reduction_runtime",
+        "llvm_checked_ranges",
+        "llvm_checked_range_runtime",
+        "llvm_optimization_pipeline",
+        "llvm_scalar_execution",
+        "llvm_place_execution",
+        "llvm_hosted_cleanup_execution"
+      ],
+      "contributions": [
+        "79e775827c2490e8e3c7faa05ba619cf60d7ef4f"
+      ],
+      "merge": "79e775827c2490e8e3c7faa05ba619cf60d7ef4f"
     }
   ],
   "removed": [],
-  "main": "9a74ff17f7c6ab11b31d0e87cec4b6583ffb8c4b",
-  "previous": "d52a2953de43ce39f4d13881d6919fa1edcf6a5d",
-  "candidate": "c690865825aa41c5abc8174e366b5567"
+  "main": "340a87ffbade296655138fa70e2624f721adf680",
+  "previous": "ba3b9af9ab8c567b8a02f411252720c7f504fe63",
+  "candidate": "bf54453ab51c431bb415b42830d31912"
 }
