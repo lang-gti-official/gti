@@ -1,5 +1,6 @@
 import std.algorithm;
 import std.array;
+import std.iterator;
 import std.utility;
 import std.vector;
 
@@ -20,6 +21,14 @@ public:
 };
 
 [[discardable]] Output relay<Output>(Output output) { return std::move(output); }
+
+int transport<Output>(Output initial)
+  requires std::output_iterator<Output> && std::writes_to<Output, int> {
+  auto later = relay(std::move(initial));
+  mut auto final = (relay(std::move(later)));
+  *final = 42;
+  return *final;
+}
 
 class CountDrop {
   mut int& count;
@@ -64,6 +73,10 @@ int main() {
   if (buffer.values[std::size_t(3)] != 40) { return 3; }
   auto abandoned = Writer(buffer, std::size_t(0));
   relay(relay(std::move(abandoned)));
+  buffer.values[std::size_t(0)] = 90;
+
+  int transported = transport(Writer(buffer, std::size_t(0)));
+  if (transported != 42 || buffer.values[std::size_t(0)] != 42) { return 5; }
   buffer.values[std::size_t(0)] = 90;
 
   // A cleanup-bearing carrier still drops exactly once at the same boundary.
