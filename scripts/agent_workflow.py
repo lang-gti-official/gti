@@ -430,6 +430,8 @@ class Workflow:
         existing = self.pull(state) if state.get("pr") else self.find_pr(state["branch"])
         if existing and existing["state"] != "open":
             raise WorkflowError("PR is closed; do not publish more work to this branch")
+        if existing and existing["head"]["sha"] != git(root, "rev-parse", "HEAD"):
+            self.cancel_handoff(state, existing)
         ref = "refs/heads/" + state["branch"]
         remote = git(root, "ls-remote", "origin", ref)
         if not remote:
@@ -451,6 +453,8 @@ class Workflow:
         root = self.tree(state)
         clean(root)
         base = self.fetch()
+        if state.get("pr"):
+            self.cancel_handoff(state, self.pull(state))
         state.pop("verified", None)
         self.save(state, "reconciling")
         result = git(root, "merge", "--no-edit", "origin/main", check=False)
@@ -627,6 +631,72 @@ class Workflow:
                "{pullRequestId: $id, expectedHeadOid: $head}) { mergeQueueEntry { position } } }")
     READY = "mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { clientMutationId } }"
 
+    MERGE_WHEN_READY = ("mutation($id: ID!, $head: GitObjectID!) { enablePullRequestAutoMerge(input: "
+                        "{pullRequestId: $id, expectedHeadOid: $head}) { clientMutationId } }")
+    INTEGRATION = ("query($id: ID!) { node(id: $id) { ... on PullRequest { "
+                   "headRefOid merged isInMergeQueue autoMergeRequest { enabledAt } } } }")
+    CANCEL_AUTO = ("mutation($id: ID!) { disablePullRequestAutoMerge(input: "
+                   "{pullRequestId: $id}) { clientMutationId } }")
+    DEQUEUE = ("mutation($id: ID!) { dequeuePullRequest(input: "
+               "{pullRequestId: $id}) { clientMutationId } }")
+
+    def integration(self, pr):
+        result = self.api.graphql(self.INTEGRATION, {"id": pr["node_id"]}).get("node")
+        if (not isinstance(result, dict) or not result.get("headRefOid") or
+                not isinstance(result.get("isInMergeQueue"), bool) or
+                not isinstance(result.get("merged"), bool) or "autoMergeRequest" not in result):
+            raise WorkflowError("GitHub did not return the PR integration state; use status and retry")
+        return result
+
+    @staticmethod
+    def integration_phase(remote):
+        if remote["merged"]:
+            return "merged"
+        if remote["isInMergeQueue"]:
+            return "queued"
+        return "awaiting-ci" if remote["autoMergeRequest"] else "not-requested"
+
+    def cancel_handoff(self, state, pr):
+        # A new checkpoint must not inherit an older head's merge intent.
+        # Fail before pushing if either cancellation cannot be confirmed.
+        remote = self.integration(pr)
+        if remote["merged"]:
+            raise WorkflowError("PR merged during handoff cancellation; preserve new work in a new task")
+        had_handoff = bool(remote["autoMergeRequest"] or remote["isInMergeQueue"])
+        if remote["autoMergeRequest"]:
+            self.api.graphql(self.CANCEL_AUTO, {"id": pr["node_id"]})
+            remote = self.integration(pr)
+        if remote["isInMergeQueue"]:
+            self.api.graphql(self.DEQUEUE, {"id": pr["node_id"]})
+        if had_handoff:
+            if self.integration_phase(self.integration(pr)) != "not-requested":
+                raise WorkflowError("PR handoff cancellation was not confirmed; do not publish a new head")
+        state.pop("handoff", None)
+        state.pop("queued", None)
+        self.save(state, "active")
+
+    def handoff(self, state, pr, head):
+        remote = self.integration(pr)
+        if remote["headRefOid"] != head:
+            raise WorkflowError("PR head changed before integration handoff; checkpoint and verify again")
+        if self.integration_phase(remote) == "not-requested":
+            # GitHub owns the durable wait for required checks/reviews, then
+            # enters the required merge queue. No polling worker or bypass.
+            self.api.graphql(self.MERGE_WHEN_READY, {"id": pr["node_id"], "head": head})
+            remote = self.integration(pr)
+        if remote["headRefOid"] != head:
+            self.cancel_handoff(state, pr)
+            raise WorkflowError("PR head changed during integration handoff; checkpoint and verify again")
+        phase = self.integration_phase(remote)
+        if phase == "not-requested":
+            raise WorkflowError("GitHub did not retain merge-when-ready; use status and retry")
+        state["handoff"] = {"head": head, "at": self.now()}
+        if phase == "queued":
+            state["queued"] = {"head": head, "at": self.now()}
+        else:
+            state.pop("queued", None)
+        self.save(state, phase)
+
     def rollup_label(self, state, pr, root, base, head):
         """`rollup=always`/`rollup=maybe` for a PR a rollup may carry, else None (validate alone)."""
         if state.get("batch") or label_names(pr) & {ROLLUP_NEVER, ROLLUP_FAILED}:
@@ -652,7 +722,8 @@ class Workflow:
 
         An eligible PR is labelled for a rollup (phase `rollup`): the rollup bot
         composes it with other green PRs into one queue entry. Otherwise, or
-        with `rollup=False`, it joins the queue alone (phase `queued`). The
+        with `rollup=False`, GitHub waits for CI then queues it alone
+        (phase `awaiting-ci` or `queued`). The
         queue validates the exact candidate against current main, so the task's
         own evidence binds to its head. `sync` advances local main once merged.
         """
@@ -699,22 +770,20 @@ class Workflow:
                 if pr.get("draft"):
                     raise WorkflowError("GitHub still reports the PR as a draft")
             if pr_only:
+                self.cancel_handoff(state, pr)
                 self.save(state, "ready")
                 return state
             self.protection()
-            if state.get("queued", {}).get("head") != head:
-                label = self.rollup_label(state, pr, root, base, head) if rollup else None
-                if label:
-                    self.set_rollup_label(pr, label)
-                    if state.get("rollup", {}).get("head") != head or state["rollup"].get("label") != label:
-                        state["rollup"] = {"head": head, "label": label, "at": self.now()}
-                    self.save(state, "rollup")
-                    return state
-                self.set_rollup_label(pr, ROLLUP_NEVER)
-                # The expected head pins the validated commit; a push meanwhile is refused.
-                self.api.graphql(self.ENQUEUE, {"id": pr["node_id"], "head": head})
-                state["queued"] = {"head": head, "at": self.now()}
-                self.save(state, "queued")
+            label = self.rollup_label(state, pr, root, base, head) if rollup else None
+            if label:
+                self.cancel_handoff(state, pr)
+                self.set_rollup_label(pr, label)
+                if state.get("rollup", {}).get("head") != head or state["rollup"].get("label") != label:
+                    state["rollup"] = {"head": head, "label": label, "at": self.now()}
+                self.save(state, "rollup")
+                return state
+            self.set_rollup_label(pr, ROLLUP_NEVER)
+            self.handoff(state, pr, head)
             pr = self.pull(state)
             if not pr.get("merged"):
                 return state
@@ -958,6 +1027,11 @@ class Workflow:
             elif state.get("pr"):
                 pr = self.pull(state)
                 state["remote_state"] = "merged" if pr.get("merged") else pr["state"]
+                if pr["state"] == "open" and (state.get("handoff") or state.get("queued")):
+                    remote = self.integration(pr)
+                    state["remote_integration"] = self.integration_phase(remote)
+                    if remote["headRefOid"] != state.get("verified", {}).get("head"):
+                        state["remote_integration"] = "head-changed"
         return records
 
 
