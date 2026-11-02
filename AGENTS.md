@@ -124,7 +124,13 @@ not a C++ wrapper, and neither backend defines its semantics.
   and installed-toolchain checks, produces the production archives, and proves
   the shards covered every registered test. Explicitly allowlisted orchestration-only changes run lint and workflow
   regressions instead; compiler/runtime, build/packaging, validation selection,
-  mixed and unknown changes retain full integration coverage. See the CI
+  mixed and unknown changes retain full integration coverage. A source-only
+  `stdlib/std/*.gti` candidate with allowed source tests/docs/metadata may reuse
+  an ancestor's full-CI compiler with identical native inputs. Both platforms run
+  owning/consumer tests, native smoke and installed checks, then the queue
+  packages the updated stdlib while retaining original compiler provenance.
+  Missing compatible artifacts or changed native/build/test-routing inputs
+  fall back to full CI; this never means compile-only validation. See the CI
   classification contract in `docs/architecture/agent-workflow.md`.
   A failure in the queue belongs to the change that introduced it: its
   owner repairs it, and other agents never weaken unrelated expectations to
@@ -329,10 +335,12 @@ on Gitea and is unaffected. See "Published Toolchain Channels" in
   matching compiler/LSP/parser without downloading its own tools. Installation
   remains opt-in. Never move the rolling preview tag by hand.
 - **Nightly** republishes one rolling `nightly` prerelease, daily, from the
-  selected `main` commit with successful full CI and retained production
+  selected `main` commit with successful release-producing integration CI and retained production
   artifacts. It verifies exact source/run/attempt, platform, configuration and
   checksums before publication; it does not compile or rerun the full suite.
-  Merge-queue CI normally supplies this evidence. A full CI dispatch on main
+  Full merge-queue CI normally supplies this evidence. Admitted source-only
+  stdlib integration can also supply archives, with unchanged native payload and
+  explicit compiler-origin identity; it is not a new full compiler build. A full CI dispatch on main
   supplies commissioning/recovery evidence after a merge exception or missing
   artifacts. PR-only or automation-only passes cannot qualify. Missing evidence
   stops publication rather than relabelling an older compiler. Nightly replaces

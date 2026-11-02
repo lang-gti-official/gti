@@ -1577,6 +1577,9 @@ paths = [
   ".github/",
   ".gitea/",
   "scripts/validation_checks.py",
+  "scripts/source_stdlib_ci.py",
+  "tests/source_stdlib_ci_test.py",
+  "cmake/ReuseToolchain.cmake",
   "scripts/configure_ci_*",
   "scripts/check_ci_sanitizers.py",
   "scripts/named_test_shards.py",
@@ -1589,6 +1592,7 @@ owners = [
   "ci_cache",
   "ci_release",
   "ci_sanitizer_capability",
+  "source_stdlib_ci",
   "named_test_shards",
 ]
 consumers = [
