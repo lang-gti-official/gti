@@ -211,7 +211,7 @@ jobs:
           cmake --build "${RUNNER_TEMP}/gti-system-library-smoke" --config Release --parallel "${GTI_JOBS}"
           ctest --test-dir "${RUNNER_TEMP}/gti-system-library-smoke" -C Release \
             --parallel "${GTI_TEST_JOBS}" --output-on-failure
-          python3 tests/process_resource_policy_test.py "${RUNNER_TEMP}/gti-system-"${PWD}/stage/bin/gti" --installed
+          python3 tests/process_resource_policy_test.py "${RUNNER_TEMP}/gti-system-stage/bin/gti" --installed
       - name: Save compiler object cache
         if: always() && steps.cache.outputs.cache-hit != 'true'
         continue-on-error: true

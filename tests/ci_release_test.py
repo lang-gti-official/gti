@@ -453,6 +453,36 @@ def workflow_contract(root):
         assert "${{ github." not in contents and "GH_TOKEN" not in contents and "gh release" not in contents
 
 
+def installed_system_command_contract(root):
+    """Parse and execute the actual Linux step with inert command stand-ins."""
+    workflow = (root / ".github/workflows/ci.yml").read_text()
+    step = workflow.split("      - name: Test the installed toolchain against system LLVM\n", 1)[1]
+    step = step.split("      - name:", 1)[0]
+    body = step.split("        run: |\n", 1)[1]
+    script = "\n".join(line[10:] if line.startswith("          ") else line
+                       for line in body.splitlines()) + "\n"
+    syntax = subprocess.run(["bash", "-n"], input=script, text=True,
+                            capture_output=True, timeout=10)
+    assert syntax.returncode == 0, syntax.stderr
+    with tempfile.TemporaryDirectory(prefix="gti workflow path ") as directory:
+        base = pathlib.Path(directory)
+        runner_temp = base / "runner temp"
+        recorded = base / "argv"
+        environment = dict(os.environ, RUNNER_TEMP=str(runner_temp), GTI_JOBS="2",
+                           GTI_TEST_JOBS="2", GTI_TEST_ARGV=str(recorded))
+        # Exercise shell expansion without installing or compiling anything.
+        stubs = ('cmake() { :; }\nctest() { :; }\n'
+                 'python3() { printf "%s\\0" "$@" > "$GTI_TEST_ARGV"; }\n')
+        result = subprocess.run(["bash", "-e", "-u", "-o", "pipefail"],
+                                input=stubs + script, cwd=base, env=environment,
+                                text=True, capture_output=True, timeout=10)
+        assert result.returncode == 0, result.stderr
+        assert recorded.read_bytes().split(b"\0") == [
+            b"tests/process_resource_policy_test.py",
+            str(runner_temp / "gti-system-stage/bin/gti").encode(),
+            b"--installed", b""], "resource test must use the installed compiler, preserving spaces"
+
+
 def source_contract(root):
     script = root / "scripts/resolve_release_source.py"
     with tempfile.TemporaryDirectory(prefix="gti-release-source-") as temporary:
@@ -802,6 +832,7 @@ def main():
     args = parser.parse_args()
     root = args.root.resolve()
     workflow_contract(root)
+    installed_system_command_contract(root)
     artifact_contract(root)
     editor_contract(root)
     nightly_contract(root)
