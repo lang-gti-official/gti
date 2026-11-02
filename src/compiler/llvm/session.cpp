@@ -9,6 +9,7 @@
 #include "private_atomics.h"
 
 #include <llvm/ADT/DenseMap.h>
+#include <llvm/ADT/SmallVector.h>
 #include <llvm/CodeGen/TargetLowering.h>
 #include <llvm/CodeGen/TargetSubtargetInfo.h>
 #include <llvm/Config/llvm-config.h>
@@ -31,7 +32,9 @@
 #include <llvm/TargetParser/Host.h>
 #include <llvm/TargetParser/Triple.h>
 #include <llvm/Transforms/IPO/HotColdSplitting.h>
+#include <llvm/Transforms/Utils/BasicBlockUtils.h>
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <functional>
@@ -41,6 +44,164 @@
 #include <stdexcept>
 
 namespace lang::native_llvm {
+
+void promotePrivateScalarResults(llvm::Module &module) {
+  const auto nextInstruction = [](llvm::Instruction *instruction) {
+    do {
+      instruction = instruction->getNextNode();
+    } while (llvm::isa_and_nonnull<llvm::DbgInfoIntrinsic>(instruction));
+    return instruction;
+  };
+  const auto previousInstruction = [](llvm::Instruction *instruction) {
+    do {
+      instruction = instruction->getPrevNode();
+    } while (llvm::isa_and_nonnull<llvm::DbgInfoIntrinsic>(instruction));
+    return instruction;
+  };
+  llvm::SmallVector<llvm::Function *> candidates;
+  for (auto &function : module)
+    if (!function.isDeclaration() && function.hasLocalLinkage() &&
+        !function.isVarArg() && function.arg_size() > 0 &&
+        function.getReturnType()->isIntegerTy(1) &&
+        function.getAttributes().hasParamAttr(0, "gti.scalar-result"))
+      candidates.push_back(&function);
+  for (auto *function : candidates) {
+    llvm::SmallVector<llvm::CallInst *> calls;
+    bool eligible = !function->use_empty();
+    for (auto &use : function->uses()) {
+      auto *call = llvm::dyn_cast<llvm::CallInst>(use.getUser());
+      if (!call || !call->isCallee(&use) ||
+          call->getFunctionType() != function->getFunctionType() ||
+          call->isMustTailCall() || call->getNumOperandBundles() != 0 ||
+          call->isConvergent()) {
+        eligible = false;
+        break;
+      }
+      calls.push_back(call);
+    }
+    if (!eligible)
+      continue;
+    llvm::Type *scalar = nullptr;
+    llvm::Align alignment(1);
+    llvm::SmallVector<llvm::StoreInst *> stores;
+    llvm::SmallVector<llvm::ReturnInst *> returns;
+    auto *destination = function->getArg(0);
+    // The result address never participates in the computation or escapes.
+    // Each write is the final operation of a successful return, so moving it
+    // to the caller cannot reorder it with another observable callee action,
+    // even if the caller's destination aliases an ordinary input.
+    for (auto *user : destination->users()) {
+      auto *store = llvm::dyn_cast<llvm::StoreInst>(user);
+      auto *returned =
+          store
+              ? llvm::dyn_cast_or_null<llvm::ReturnInst>(nextInstruction(store))
+              : nullptr;
+      auto *status =
+          returned
+              ? llvm::dyn_cast<llvm::ConstantInt>(returned->getReturnValue())
+              : nullptr;
+      auto *type = store ? store->getValueOperand()->getType() : nullptr;
+      if (!store || store->getPointerOperand() != destination ||
+          store->isVolatile() || store->isAtomic() || !status ||
+          !status->isOne() ||
+          (!type->isIntegerTy() && !type->isFloatTy() && !type->isDoubleTy()) ||
+          (type->isIntegerTy() && type->getIntegerBitWidth() > 64) ||
+          (scalar && scalar != type)) {
+        eligible = false;
+        break;
+      }
+      alignment = stores.empty() ? store->getAlign()
+                                 : std::min(alignment, store->getAlign());
+      scalar = type;
+      stores.push_back(store);
+    }
+    if (!eligible || stores.empty())
+      continue;
+    for (auto &block : *function)
+      if (auto *returned =
+              llvm::dyn_cast<llvm::ReturnInst>(block.getTerminator())) {
+        auto *status =
+            llvm::dyn_cast<llvm::ConstantInt>(returned->getReturnValue());
+        auto *store = llvm::dyn_cast_or_null<llvm::StoreInst>(
+            previousInstruction(returned));
+        if (!status ||
+            (status->isOne() &&
+             (!store || store->getPointerOperand() != destination))) {
+          eligible = false;
+          break;
+        }
+        returns.push_back(returned);
+      }
+    if (!eligible)
+      continue;
+    auto &context = module.getContext();
+    auto *resultType =
+        llvm::StructType::get(scalar, llvm::Type::getInt1Ty(context));
+    llvm::SmallVector<llvm::Type *> parameterTypes;
+    llvm::SmallVector<llvm::AttributeSet> parameterAttributes;
+    for (unsigned index = 1; index < function->arg_size(); ++index) {
+      parameterTypes.push_back(function->getArg(index)->getType());
+      parameterAttributes.push_back(
+          function->getAttributes().getParamAttrs(index));
+    }
+    auto *promoted = llvm::Function::Create(
+        llvm::FunctionType::get(resultType, parameterTypes, false),
+        function->getLinkage(), function->getName() + ".scalar", module);
+    promoted->copyAttributesFrom(function);
+    promoted->setAttributes(llvm::AttributeList::get(
+        context, function->getAttributes().getFnAttrs(), {},
+        parameterAttributes));
+    promoted->copyMetadata(function, 0);
+    promoted->setSubprogram(function->getSubprogram());
+    for (unsigned index = 1; index < function->arg_size(); ++index) {
+      auto *argument = promoted->getArg(index - 1);
+      argument->takeName(function->getArg(index));
+      function->getArg(index)->replaceAllUsesWith(argument);
+    }
+    promoted->splice(promoted->begin(), function);
+    for (auto *returned : returns) {
+      auto *status = llvm::cast<llvm::ConstantInt>(returned->getReturnValue());
+      llvm::Value *value = llvm::PoisonValue::get(scalar);
+      if (status->isOne()) {
+        auto *store =
+            llvm::cast<llvm::StoreInst>(previousInstruction(returned));
+        value = store->getValueOperand();
+        store->eraseFromParent();
+      }
+      llvm::IRBuilder<> builder(returned);
+      llvm::Value *result = builder.CreateInsertValue(
+          llvm::PoisonValue::get(resultType), value, 0);
+      result = builder.CreateInsertValue(result, status, 1);
+      builder.CreateRet(result);
+      returned->eraseFromParent();
+    }
+    for (auto *call : calls) {
+      llvm::SmallVector<llvm::Value *> arguments;
+      llvm::SmallVector<llvm::AttributeSet> attributes;
+      for (unsigned index = 1; index < call->arg_size(); ++index) {
+        arguments.push_back(call->getArgOperand(index));
+        attributes.push_back(call->getAttributes().getParamAttrs(index));
+      }
+      llvm::IRBuilder<> builder(call);
+      auto *result = builder.CreateCall(promoted, arguments);
+      result->setCallingConv(call->getCallingConv());
+      result->setAttributes(llvm::AttributeList::get(
+          context, call->getAttributes().getFnAttrs(), {}, attributes));
+      result->setDebugLoc(call->getDebugLoc());
+      auto *status = builder.CreateExtractValue(result, 1);
+      call->replaceAllUsesWith(status);
+      auto *publication =
+          llvm::SplitBlockAndInsertIfThen(status, call->getNextNode(), false);
+      builder.SetInsertPoint(publication);
+      builder.CreateAlignedStore(builder.CreateExtractValue(result, 0),
+                                 call->getArgOperand(0), alignment);
+      call->eraseFromParent();
+    }
+    promoted->takeName(function);
+    function->eraseFromParent();
+  }
+}
+
 namespace {
 
 class Diagnostics final : public llvm::DiagnosticHandler {
@@ -654,6 +815,8 @@ BackendArtifact Session::emitObject() {
     }
   }
   const auto mode = diagnosticMode(options_.instrumentation);
+  if (options_.optimization != LlvmCodegenOptimization::None)
+    promotePrivateScalarResults(module_);
   if (instrumentsUndefinedMemory(mode)) {
     instrumentUndefinedMemory(module_);
     verify();

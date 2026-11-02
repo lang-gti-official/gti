@@ -202,7 +202,56 @@ int32_t partial_transfer() {
   return destination.borrow() * int32_t(2);
 }
 
+
+class MetadataShell {
+  mut int32_t value;
+public:
+  MetadataShell(int32_t value) : value(value) {}
+  MetadataShell(MetadataShell& other) = delete;
+  MetadataShell(MetadataShell&& other) = default;
+  int32_t read() { return this.value; }
+  ~MetadataShell() { require_cell(this.value != int32_t(7)); }
+};
+
+mut int32_t* captured_metadata = nullptr;
+class CapturedMetadataShell {
+  mut int32_t value;
+public:
+  CapturedMetadataShell(int32_t value) : value(value) {
+    unsafe { captured_metadata = &this.value; }
+  }
+  CapturedMetadataShell(CapturedMetadataShell& other) = delete;
+  CapturedMetadataShell(CapturedMetadataShell&& other) = default;
+  int32_t read() { return this.value; }
+  ~CapturedMetadataShell() {}
+};
+
+int32_t metadata_move_positive() {
+  Audit audit{};
+  mut MetadataShell destination{int32_t(3)};
+  mut MetadataShell source{int32_t(9)};
+  destination = std::move(source);
+  return destination.read() * int32_t(2);
+}
+int32_t metadata_move_cleanup_failure() {
+  Audit audit{};
+  mut MetadataShell destination{int32_t(7)};
+  mut MetadataShell source{int32_t(9)};
+  destination = std::move(source);
+  return destination.read() * int32_t(2);
+}
+int32_t metadata_move_captured() {
+  Audit audit{};
+  mut CapturedMetadataShell destination{int32_t(3)};
+  mut CapturedMetadataShell source{int32_t(9)};
+  destination = std::move(source);
+  return destination.read() * int32_t(2);
+}
+
 int main(int argc, std::vector<std::string> argv) {
+  if (argc == 12) { return metadata_move_positive() == int32_t(18) ? 0 : 1; }
+  if (argc == 13) { return metadata_move_cleanup_failure(); }
+  if (argc == 14) { return metadata_move_captured() == int32_t(18) ? 0 : 1; }
   if (argc == 10) { return transferred_borrow_positive() == int32_t(18) ? 0 : 1; }
   if (argc == 11) { return view_borrow_positive() == int32_t(18) ? 0 : 1; }
   if (argc == 9) { return partial_transfer(); }

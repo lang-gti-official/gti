@@ -13,6 +13,10 @@ extern "C" std::int32_t recurrence_mode() {
 extern "C" std::int32_t recurrence_value() {
   return recurrence_mode() == 1 ? -1 : 2147483647;
 }
+extern "C" std::int64_t recurrence_leaf() {
+  return recurrence_mode() == 6 ? std::numeric_limits<std::int64_t>::max() / 2
+                                : 7;
+}
 extern "C" void recurrence_barrier() {
   if (retained)
     *retained = std::numeric_limits<std::int64_t>::max();

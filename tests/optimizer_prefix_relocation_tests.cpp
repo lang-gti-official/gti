@@ -34,6 +34,20 @@ int main() { return 0; }
         << "custom move support changed; review relocation proof exclusion\n";
     return 1;
   }
+  const auto selfMove = gti_test::analyzeTrustedPrivateMemoryFixture(
+      "metadata-self-move.gti", std::string(R"(
+import std.memory;
+class Shell { public: Shell() {} Shell(Shell& other) = delete;
+  Shell(Shell&& other) = default; ~Shell() {} };
+int main() { mut Shell value{}; value = std::move(value); return 0; }
+)"));
+  bool rejectedSelfMove = false;
+  for (const auto &diagnostic : selfMove.diagnostics)
+    rejectedSelfMove |= diagnostic.code == "GTI-S2018";
+  if (selfMove.canGenerateCode() || !rejectedSelfMove) {
+    std::cerr << "self replacement must retain its ownership rejection\n";
+    return 1;
+  }
   const auto analysis = lang::analyzeMirClosedCallSafetyChecks(frontend.mir);
   if (!analysis.converged) {
     std::cerr << "relocation contextual analysis did not converge\n";
@@ -64,6 +78,8 @@ int main() { return 0; }
     }
     return found;
   };
+  const auto metadata = discharges("metadata_move_positive");
+  const auto metadataCaptured = discharges("metadata_move_captured");
   const auto positive = discharges("transferred_borrow_positive");
   const auto view = discharges("view_borrow_positive");
   const auto replaced = discharges("replaced_base");
@@ -72,9 +88,11 @@ int main() { return 0; }
   const auto changed = discharges("changed_destination");
   const auto partial = discharges("partial_transfer");
   const auto failed = discharges("failing_transfer");
-  if (positive != 1 || view != 1 || changed != 0 || failed != 0 ||
-      replaced != 0 || partial != 0 || scalar != 0) {
+  if (metadata != 1 || metadataCaptured != 0 || positive != 1 || view != 1 ||
+      changed != 0 || failed != 0 || replaced != 0 || partial != 0 ||
+      scalar != 0) {
     std::cerr << "prefix relocation proof mismatch: successful=" << positive
+              << " metadata=" << metadata << " captured=" << metadataCaptured
               << " raw-view=" << view << " replaced=" << replaced
               << " overwritten=" << changed << " scalar-getters=" << scalar
               << " partial=" << partial << " failed=" << failed << '\n';

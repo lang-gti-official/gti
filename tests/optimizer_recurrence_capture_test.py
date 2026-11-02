@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Native/dynamic calls cannot mutate unexposed scalar loop state."""
+"""Unexposed recurrence state and success-only recursive scalar publication."""
 
 import os
 from pathlib import Path
@@ -29,7 +29,7 @@ def main():
             command += ["--", str(native)]
             built = subprocess.run(command, capture_output=True, text=True, timeout=180)
             assert built.returncode == 0, (command, built.stdout, built.stderr)
-            for mode in range(5):
+            for mode in range(8):
                 result = subprocess.run([str(binary)], capture_output=True, text=True,
                                         env=dict(os.environ, GTI_RECURRENCE_CASE=str(mode)),
                                         timeout=15)
@@ -37,6 +37,15 @@ def main():
                 if mode in (0, 4):
                     assert observed == (0, f"{214748364700 if mode == 0 else 100}\n99\n", ""), (
                         backend, level, mode, observed)
+                elif mode == 5:
+                    assert observed == (0, "55\n" * 63 + "256\n99\n", ""), (
+                        backend, level, mode, observed)
+                elif mode == 6:
+                    assert observed[:2] == (70, "55\n" * 7 + "99\n"), (
+                        backend, level, mode, observed)
+                    assert "integer_overflow" in result.stderr, (backend, level, mode, observed)
+                elif mode == 7:
+                    assert observed == (0, "15\n99\n", ""), (backend, level, mode, observed)
                 else:
                     assert observed[:2] == (70, "99\n"), (backend, level, mode, observed)
                     assert "integer_overflow" in result.stderr if mode >= 2 else (
@@ -46,7 +55,7 @@ def main():
                 else:
                     assert observed == baseline[mode], (backend, level, mode, observed,
                                                        baseline[mode])
-            print(f"Uncaptured recurrence: {backend} {level} passed 5 cases", flush=True)
+            print(f"Recurrence and scalar publication: {backend} {level} passed 8 cases", flush=True)
 
 
 if __name__ == "__main__":

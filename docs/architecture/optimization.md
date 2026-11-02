@@ -1307,6 +1307,17 @@ General ownership-shell move/replacement continues to retire prefix snapshots;
 this summary alone does not establish vector-growth optimization or a runtime
 gain.
 
+Generated movement of an ordinary cleanup-owning record can retain its integer
+field values separately from memory observations when the source is an
+uncaptured local binding and the staged value has exactly one distinct
+Initialize/Assign consumer. The verified generated move executes no user move
+body. Its fresh staging storage is not exposed, so an unrelated old-destination
+destructor cannot alter that value snapshot; cleanup failure never reaches
+publication. Snapshots are intersected at control-flow joins and retired on
+redefinition or consumption. Captured constructor self-addresses, self-move,
+borrowed/native/overlapping layouts, and other value uses are excluded. No
+pointer, pointee, allocation, or initialized-prefix fact crosses this path.
+
 ### Capture Analysis
 
 An unknown effect can reach only storage whose identity reached it. The

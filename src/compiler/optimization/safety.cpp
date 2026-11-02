@@ -380,6 +380,9 @@ struct AbstractState {
   std::map<MirPlaceId, ObjectFact> objects;
   std::map<MirValueId, MirPlaceId> aggregateOrigins;
   std::map<MirValueId, ObjectFact> objectValues;
+  // Unexposed generated move values, containing only scalar field snapshots.
+  // Unlike memory observations these survive unrelated cleanup effects.
+  std::map<MirValueId, ObjectFact> stagedMetadata;
   ValueOrders orders;
   // Payload-enum alternatives of immutable values and of root places (key
   // zero is the analysis-only implicit receiver), and boolean tag tests.
@@ -3053,6 +3056,9 @@ objectForOperand(const MirBody &body,
       value != state.objectValues.end()) {
     return value->second;
   }
+  if (const auto staged = state.stagedMetadata.find(operand.value);
+      staged != state.stagedMetadata.end())
+    return staged->second;
   const MirPlaceId origin =
       objectOriginForOperand(body, aliases, state, operand);
   return origin == 0 ? std::nullopt
@@ -5474,6 +5480,114 @@ void invalidateValueStorage(const MirProgram *program, MirBodyAddress address,
     publishConstructedScalar(state, pointer, std::move(fact));
 }
 
+// A generated move may stage a cleanup-owning shell without executing its
+// destructor. Only inaccessible scalar value metadata crosses that staging;
+// neither the raw pointers nor any storage they designate acquire a fact.
+[[nodiscard]] bool
+isolatedMetadataMove(const MirProgram &program, const MirBody &body,
+                     const MirPlaceAliasEscapeAnalysis &aliases,
+                     const MirInstruction &instruction,
+                     const ClosedCallRound *round) {
+  if (!round || !round->localCaptures || !round->localCaptures->valid ||
+      instruction.tombstone || instruction.kind != MirInstructionKind::Move ||
+      !instruction.result || instruction.destination || instruction.receiver ||
+      instruction.operands.size() != 1 || instruction.rawMemoryAccess ||
+      instruction.unsafeOperation != UnsafeOperationKind::None ||
+      instruction.operation != MirOperation::None ||
+      (instruction.intrinsic != IntrinsicKind::None &&
+       instruction.intrinsic != IntrinsicKind::Move) ||
+      instruction.synchronization.kind != SynchronizationOperationKind::None ||
+      instruction.hostedStartupOperation ||
+      instruction.operands.front().kind != MirOperandKind::Move ||
+      instruction.operands.front().type != instruction.info.type ||
+      instruction.info.type.kind != SemanticType::Class ||
+      std::any_of(instruction.lifecycle.begin(), instruction.lifecycle.end(),
+                  [](const MirLifecycleEvent &event) {
+                    return event.kind != MirLifecycleEventKind::Initialize &&
+                           event.kind != MirLifecycleEventKind::Move &&
+                           event.kind != MirLifecycleEventKind::Reparent &&
+                           event.kind != MirLifecycleEventKind::TransferOut;
+                  }))
+    return false;
+  const auto *source = body.findPlace(instruction.operands.front().place);
+  if (!source || source->root != MirPlaceRootKind::Binding ||
+      !source->binding || !source->projections.empty() ||
+      source->traits.containsBorrowedState ||
+      round->localCaptures->mayBeCapturedBefore(source->binding,
+                                                instruction.id))
+    return false;
+  // Restrict the already verified generated relocation to ordinary records.
+  // Native capabilities, inline manual storage and open layouts need their
+  // own storage/capture analysis and are not inferred from a move trait.
+  std::set<HirClassInstanceId> visiting;
+  std::size_t budget = 64;
+  const auto plain = [&](const auto &self, const SemanticType &type) -> bool {
+    if (budget == 0)
+      return false;
+    --budget;
+    if (isMirScalarValueType(&program, type))
+      return true;
+    if (type.kind != SemanticType::Class)
+      return false;
+    const MirClassInstance *owner = nullptr;
+    for (const auto &candidate : program.classInstances())
+      if (candidate.type == type) {
+        if (owner)
+          return false;
+        owner = &candidate;
+      }
+    if (!owner ||
+        owner->compilerCapability != CompilerCapabilityTypeKind::None ||
+        owner->moveConstructor != SpecialMemberStatus::Generated ||
+        owner->traits.containsBorrowedState || owner->unionLayout ||
+        owner->polymorphic || owner->abstract || owner->cOpaqueHandle ||
+        !owner->bases.empty() || !owner->structuralBases.empty() ||
+        !visiting.insert(owner->id).second)
+      return false;
+    const bool result = std::all_of(
+        owner->declaredFields.begin(), owner->declaredFields.end(),
+        [&](const auto &field) {
+          return field.field && field.symbol && self(self, field.type);
+        });
+    visiting.erase(owner->id);
+    return result;
+  };
+  if (!plain(plain, instruction.info.type) ||
+      mirTypeMoveRelocationKind(program, instruction.info.type) ==
+          RelocationKind::Unavailable)
+    return false;
+  const MirInstruction *publication = nullptr;
+  std::size_t usesRemaining = 4096;
+  for (const auto &block : body.blocks) {
+    if (block.terminator.value &&
+        block.terminator.value->kind == MirOperandKind::Value &&
+        block.terminator.value->value == *instruction.result)
+      return false;
+    for (const auto &use : block.instructions) {
+      if (usesRemaining == 0)
+        return false;
+      --usesRemaining;
+      if (use.receiver && use.receiver->kind == MirOperandKind::Value &&
+          use.receiver->value == *instruction.result)
+        return false;
+      for (const auto &operand : use.operands)
+        if (operand.kind == MirOperandKind::Value &&
+            operand.value == *instruction.result) {
+          if (publication || !use.destination || use.operands.size() != 1 ||
+              (use.kind != MirInstructionKind::Initialize &&
+               use.kind != MirInstructionKind::Assign) ||
+              use.rawMemoryAccess ||
+              use.unsafeOperation != UnsafeOperationKind::None ||
+              aliases.relation(source->id, *use.destination) !=
+                  MirAliasRelation::NoAlias)
+            return false;
+          publication = &use;
+        }
+    }
+  }
+  return publication != nullptr;
+}
+
 [[nodiscard]] bool scalarResultMove(const MirProgram *program,
                                     const MirInstruction &instruction,
                                     const MirBody &body) {
@@ -5561,6 +5675,7 @@ void applyInstructionCore(
   const MirProgram *program =
       closedCalls == nullptr ? nullptr : &closedCalls->program;
   if (instruction.result) {
+    state.stagedMetadata.erase(*instruction.result);
     state.valueAlternatives.erase(*instruction.result);
     state.tagPredicates.erase(*instruction.result);
     state.entryRelativeValues.erase(*instruction.result);
@@ -5908,12 +6023,20 @@ void applyInstructionCore(
           *fact, block.id, instruction.id, *instruction.result, source.place);
     return;
   }
-  if (program && isMirStructuralValueTransfer(*program, instruction)) {
+  const bool metadataMove =
+      program &&
+      isolatedMetadataMove(*program, body, aliases, instruction, closedCalls);
+  if (program &&
+      (isMirStructuralValueTransfer(*program, instruction) || metadataMove)) {
     const auto &source = instruction.operands.front();
     auto object = objectForOperand(body, aliases, state, source);
     if (object) {
       object->scalarPointees.clear();
       object->prefixes.clear();
+      if (metadataMove) {
+        object->elements.reset();
+        object->elementIntegers.clear();
+      }
     }
     // Prepared values own an independent snapshot. In particular a later
     // argument may modify the source without modifying this earlier copy.
@@ -5929,6 +6052,8 @@ void applyInstructionCore(
     state.aggregateOrigins.erase(*instruction.result);
     state.objectValues.erase(*instruction.result);
     if (object) {
+      if (metadataMove && state.stagedMetadata.size() < 64)
+        state.stagedMetadata[*instruction.result] = *object;
       state.objectValues[*instruction.result] = *object;
       if (instruction.destination)
         seedObjectFact(body, aliases, *instruction.destination, *object, state);
@@ -6421,6 +6546,7 @@ void applyInstructionCore(
         arrayForOperand(state, aliases, source);
     std::optional<ObjectFact> sourceObject =
         objectForOperand(body, aliases, state, source);
+    state.stagedMetadata.erase(source.value);
     const auto *producer = source.kind == MirOperandKind::Value
                                ? definingInstruction(body, source.value)
                                : nullptr;
@@ -7097,6 +7223,16 @@ void joinConstructed(std::map<Key, ConstructedScalar> &target,
     if (found == incoming.objectValues.end() ||
         found->second != iterator->second) {
       iterator = target.objectValues.erase(iterator);
+    } else {
+      ++iterator;
+    }
+  }
+  for (auto iterator = target.stagedMetadata.begin();
+       iterator != target.stagedMetadata.end();) {
+    const auto found = incoming.stagedMetadata.find(iterator->first);
+    if (found == incoming.stagedMetadata.end() ||
+        found->second != iterator->second) {
+      iterator = target.stagedMetadata.erase(iterator);
     } else {
       ++iterator;
     }

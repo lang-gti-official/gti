@@ -543,6 +543,108 @@ llvm::Function *addColdRegionFixture(llvm::Module &module) {
   return function;
 }
 
+void verifyPrivateScalarResultPromotion() {
+  llvm::LLVMContext context;
+  llvm::Module module("private-scalar-results", context);
+  auto *integer = llvm::Type::getInt64Ty(context);
+  auto *boolean = llvm::Type::getInt1Ty(context);
+  auto *pointer = llvm::PointerType::getUnqual(context);
+  auto *signature =
+      llvm::FunctionType::get(boolean, {pointer, integer, boolean}, false);
+  auto fixture = [&](llvm::StringRef name, unsigned boundary) {
+    auto *function = llvm::Function::Create(
+        signature,
+        boundary == 1 ? llvm::GlobalValue::ExternalLinkage
+                      : llvm::GlobalValue::InternalLinkage,
+        name, module);
+    if (boundary != 2)
+      function->addParamAttr(
+          0, llvm::Attribute::get(context, "gti.scalar-result"));
+    auto *entry = llvm::BasicBlock::Create(context, "entry", function);
+    auto *success = llvm::BasicBlock::Create(context, "success", function);
+    auto *failure = llvm::BasicBlock::Create(context, "failure", function);
+    llvm::IRBuilder<> builder(entry);
+    if (boundary == 3)
+      builder.CreateLoad(integer, function->getArg(0));
+    builder.CreateCondBr(function->getArg(2), success, failure);
+    builder.SetInsertPoint(success);
+    if (boundary != 4) {
+      auto *store =
+          builder.CreateStore(function->getArg(1), function->getArg(0));
+      if (boundary == 5)
+        store->setVolatile(true);
+      if (boundary == 6)
+        builder.CreateStore(builder.getInt64(3), function->getArg(0));
+    }
+    builder.CreateRet(builder.getTrue());
+    builder.SetInsertPoint(failure);
+    builder.CreateRet(builder.getFalse());
+    auto *caller =
+        llvm::Function::Create(signature, llvm::GlobalValue::ExternalLinkage,
+                               name + ".caller", module);
+    builder.SetInsertPoint(llvm::BasicBlock::Create(context, "entry", caller));
+    auto *call = builder.CreateCall(
+        function, {caller->getArg(0), caller->getArg(1), caller->getArg(2)});
+    builder.CreateRet(call);
+    if (boundary == 7)
+      llvm::appendToUsed(module, {function});
+  };
+  fixture("eligible", 0);
+  fixture("open", 1);
+  fixture("unmarked", 2);
+  fixture("reads_output", 3);
+  fixture("missing_publication", 4);
+  fixture("volatile_publication", 5);
+  fixture("early_publication", 6);
+  fixture("address_taken", 7);
+  promotePrivateScalarResults(module);
+  if (llvm::verifyModule(module))
+    throw std::runtime_error(
+        "private result promotion produced invalid LLVM IR");
+  auto *promoted = module.getFunction("eligible");
+  auto *type = llvm::dyn_cast<llvm::StructType>(promoted->getReturnType());
+  if (!type || type->getNumElements() != 2 ||
+      type->getElementType(0) != integer ||
+      type->getElementType(1) != boolean || promoted->arg_size() != 2)
+    throw std::runtime_error(
+        "private scalar result did not move into registers");
+  for (auto name :
+       {"open", "unmarked", "reads_output", "missing_publication",
+        "volatile_publication", "early_publication", "address_taken"})
+    if (module.getFunction(name)->getFunctionType() != signature)
+      throw std::runtime_error(
+          "private result promotion crossed a rejection boundary");
+  auto *caller = module.getFunction("eligible.caller");
+  unsigned publications = 0;
+  for (auto &block : *caller)
+    for (auto &instruction : block)
+      if (auto *store = llvm::dyn_cast<llvm::StoreInst>(&instruction)) {
+        ++publications;
+        auto *edge = block.getSinglePredecessor();
+#if LLVM_VERSION_MAJOR >= 23
+        auto *branch =
+            edge ? llvm::dyn_cast<llvm::CondBrInst>(edge->getTerminator())
+                 : nullptr;
+#else
+        auto *branch =
+            edge ? llvm::dyn_cast<llvm::BranchInst>(edge->getTerminator())
+                 : nullptr;
+#endif
+        auto *status =
+            branch
+                ? llvm::dyn_cast<llvm::ExtractValueInst>(branch->getCondition())
+                : nullptr;
+        if (!branch || branch->getSuccessor(0) != &block || !status ||
+            status->getIndices() != llvm::ArrayRef<unsigned>{1} ||
+            store->getPointerOperand() != caller->getArg(0))
+          throw std::runtime_error(
+              "scalar result published outside the successful call edge");
+      }
+  if (publications != 1)
+    throw std::runtime_error(
+        "scalar result publication was lost or duplicated");
+}
+
 void verifyDischargedCheckFacts() {
   const auto frontend = Frontend().analyze("discharged-check-facts.gti", R"(
 extern "C" { int opaque_input(); }
@@ -624,6 +726,7 @@ int main() {
   verifyRecoveredRangeChecks();
   verifyMergedCheckedArithmetic();
   verifyRecoveryExecutionFrequency();
+  verifyPrivateScalarResultPromotion();
   verifyDischargedCheckFacts();
   FrontendOptions frontendOptions;
   frontendOptions.requireEntryPoint = true;
@@ -923,12 +1026,26 @@ int main() {
       const auto added =
           effective->getFeatureBits() & ~baseline.getFeatureBits();
       const auto attribute = function.getFnAttribute("tune-cpu");
-      if ((requestedTune.empty()
-               ? attribute.isValid() ||
-                     effective->getTuneCPU() != baseline.getCPU()
-               : !attribute.isStringAttribute() ||
-                     attribute.getValueAsString() != requestedTune ||
-                     effective->getTuneCPU() == baseline.getCPU()) ||
+      // LLVM's late machine outliner copies already-selected machine
+      // instructions into a helper represented here by a synthetic ret-void
+      // shell. That shell has no IR to tune and LLVM does not copy tune-cpu.
+      // Keep the instruction-feature checks for it; every real IR body still
+      // requires the requested tuning, including IR-level cold outlines.
+      const bool machineShell =
+          function.getName().starts_with("OUTLINED_FUNCTION_") &&
+          !function.getMetadata("gti.source") && function.arg_empty() &&
+          function.getReturnType()->isVoidTy() && function.hasLocalLinkage() &&
+          function.hasFnAttribute(llvm::Attribute::MinSize) &&
+          function.hasFnAttribute(llvm::Attribute::OptimizeForSize) &&
+          function.size() == 1 && function.front().size() == 1 &&
+          llvm::isa<llvm::ReturnInst>(function.front().front());
+      if ((!machineShell &&
+           (requestedTune.empty()
+                ? attribute.isValid() ||
+                      effective->getTuneCPU() != baseline.getCPU()
+                : !attribute.isStringAttribute() ||
+                      attribute.getValueAsString() != requestedTune ||
+                      effective->getTuneCPU() == baseline.getCPU())) ||
           effective->getCPU() != baseline.getCPU() ||
           (added & ~tuningOf(effective->getTuneCPU())).any() ||
           (atomics && effective->getFeatureBits()[*atomics] !=
@@ -936,7 +1053,7 @@ int main() {
         throw std::runtime_error("emitted body " + function.getName().str() +
                                  " lost its tuning or gained an instruction "
                                  "feature");
-      ++tuned;
+      tuned += !machineShell;
     }
     if (tuned == 0 || (host.os == "macos" && host.arch == "arm64" &&
                        (requestedTune != "apple-m1" || !atomics ||

@@ -37,6 +37,11 @@ makeMachine(const TargetInfo &target, LlvmBackendOptions options);
 // Kept testable for operand, range-equivalence and dominance negatives.
 void reuseCheckedArithmeticResults(llvm::Module &module);
 
+// Promote only private, direct-call scalar result slots whose publication is
+// immediately followed by a successful return. Open/address-taken signatures
+// and failure publication retain the ordinary private ABI.
+void promotePrivateScalarResults(llvm::Module &module);
+
 class Session final {
 public:
   explicit Session(VerifiedLoweredProgram program, LlvmBackendOptions options);

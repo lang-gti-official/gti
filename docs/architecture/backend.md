@@ -5577,6 +5577,18 @@ remain obligations before O-LLVM-10 can complete.
 | Caller attribution | Exact site index and pinned artifact pointer, after receiver. This is attribution, not permission to originate a failure. |
 | Ordinary arguments | Source order, scalars/addresses directly and address-only values through already-staged storage. MIR owns moves, loans, cleanup and publication. |
 
+For optimized whole-program code, a private direct-call function may transport
+an integer (up to 64 bits), `float`, or `double` result alongside its success
+flag in an LLVM aggregate return. The ABI planner marks eligible scalar result
+destinations; the transformation independently requires every result-address
+use to be an ordinary store immediately followed by a successful return, with
+a store on every successful return. It rejects result-address reads, escapes,
+early/volatile/atomic publication, indirect/address-taken targets, and open
+signatures. Callers store the returned value only on the successful edge;
+failure leaves their destination untouched. This removes private scalar
+out-parameter traffic without changing MIR failure, cleanup, or public/native
+calling contracts. O0 retains the original convention.
+
 This table describes the **implemented** convention, not a final long-term
 failure-transport decision. The reviewed
 [C04 evaluation](../plans/implementation-sequence.md#c04-failure-transport-evaluation)
