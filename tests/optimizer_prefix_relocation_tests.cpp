@@ -36,6 +36,21 @@ int main() { return 0; }
         << "custom move support changed; review relocation proof exclusion\n";
     return 1;
   }
+  const auto customCopy = lang::Frontend().analyze(
+      "prefix-custom-copy-negative.gti", std::string(R"(
+class Changed { int value; public:
+  Changed(int value) : value(value) {}
+  Changed(Changed& other) : value(7) {}
+};
+int main() { return 0; }
+)"));
+  bool rejectedCustomCopy = false;
+  for (const auto &diagnostic : customCopy.diagnostics)
+    rejectedCustomCopy |= diagnostic.code == "GTI-S2020";
+  if (customCopy.canGenerateCode() || !rejectedCustomCopy) {
+    std::cerr << "custom copy support changed; review provenance exclusion\n";
+    return 1;
+  }
   const auto selfMove = gti_test::analyzeTrustedPrivateMemoryFixture(
       "metadata-self-move.gti", std::string(R"(
 import std.memory;
@@ -119,7 +134,8 @@ int main() { mut Shell value{}; value = std::move(value); return 0; }
   const auto freshControl = [&](std::string name, std::string declarations,
                                 std::string scratch, bool shouldProve,
                                 bool duplicatePlace = false,
-                                bool referenceWrite = false) {
+                                bool referenceWrite = false,
+                                unsigned markerControl = 0) {
     auto source = freshSource.substr(0, freshSource.find("int main"));
     source.insert(0, "import \"../std/detail/memory_capabilities.gti\"; " +
                          declarations);
@@ -167,6 +183,47 @@ int main() { mut Shell value{}; value = std::move(value); return 0; }
       }
       if (!changed) {
         std::cerr << "duplicate-place control did not mutate assignment\n";
+        return false;
+      }
+    }
+    if (markerControl) {
+      bool changed = false;
+      for (const auto &function : fixture.hir.functionInstances()) {
+        if (!function.source ||
+            function.source->name().lexeme != "fresh_scratch")
+          continue;
+        auto *instance = const_cast<lang::MirFunctionInstance *>(
+            fixture.mir.findFunctionInstance(function.id));
+        for (auto &block : instance->body.blocks)
+          for (auto &instruction : block.instructions) {
+            if (changed)
+              continue;
+            if (markerControl == 4 &&
+                instruction.kind == lang::MirInstructionKind::Construct &&
+                instruction.constructorTarget) {
+              instruction.callableInvocation =
+                  lang::CallableInvocationCapability::Once;
+              changed = true;
+              continue;
+            }
+            if (instruction.kind != lang::MirInstructionKind::Call ||
+                !instruction.functionTarget)
+              continue;
+            if (markerControl == 1 && !instruction.receiver) {
+              instruction.callableInvocation =
+                  lang::CallableInvocationCapability::Once;
+              changed = true;
+            } else if (markerControl == 2 && instruction.receiver) {
+              instruction.nativeCallbackAdapter = 1;
+              changed = true;
+            } else if (markerControl == 3 && !instruction.receiver) {
+              instruction.constructorTarget = 1;
+              changed = true;
+            }
+          }
+      }
+      if (!changed) {
+        std::cerr << "marker control did not find target\n";
         return false;
       }
     }
@@ -589,6 +646,152 @@ void* selected_pointer(bool choose) {
                                      "void* pointer = selected_pointer(true); "
                                      "unsafe { release_pointer(pointer); }\n",
                                      false);
+  descriptorControls &= freshControl("fresh-layout-query.gti", R"(
+void layout_scratch() {
+  auto request = std::layout_of<uint64_t>();
+  if (request.bytes == uint64_t(0) || request.alignment == uint64_t(0)) { return; }
+  void* pointer = fresh_pointer();
+  unsafe { release_pointer(pointer); }
+}
+)",
+                                     "layout_scratch();\n", true);
+  descriptorControls &= freshControl("fresh-opaque-layout-query.gti", R"(
+extern "C" { uint64_t application_layout_query(); }
+void layout_scratch() {
+  mut uint64_t request = 0;
+  unsafe { request = application_layout_query(); }
+  if (request == uint64_t(0)) { return; }
+  void* pointer = fresh_pointer();
+  unsafe { release_pointer(pointer); }
+}
+)",
+                                     "layout_scratch();\n", false);
+  const std::string wrappedPacket = packet + R"(
+class PacketEnvelope { public:
+  mut AllocationPacket packet;
+  PacketEnvelope(AllocationPacket packet) : packet(std::move(packet)) {}
+};
+PacketEnvelope wrapped_packet(bool good) {
+  return PacketEnvelope(allocate_packet(good));
+}
+)";
+  descriptorControls &=
+      freshControl("payload-record-wrapper.gti", wrappedPacket,
+                   "mut PacketEnvelope envelope = wrapped_packet(true); "
+                   "AllocationPacket extracted = envelope.packet; switch "
+                   "(std::move(extracted)) { "
+                   "case AllocationPacket::held(region): unsafe { "
+                   "release_pointer(region.address); } break; "
+                   "case AllocationPacket::absent: break; }\n",
+                   true);
+  descriptorControls &=
+      freshControl("payload-record-cleanup.gti", packet + R"(
+extern "C" { void envelope_cleanup(); }
+class CleanupEnvelope { public:
+  mut AllocationPacket packet;
+  CleanupEnvelope(AllocationPacket packet) : packet(std::move(packet)) {}
+  ~CleanupEnvelope() { unsafe { envelope_cleanup(); } }
+};
+)",
+                   "CleanupEnvelope envelope{allocate_packet(true)};\n", false);
+  descriptorControls &=
+      freshControl("payload-record-move-only.gti", packet + R"(
+class MoveEnvelope { public:
+  mut AllocationPacket packet;
+  MoveEnvelope(AllocationPacket packet) : packet(std::move(packet)) {}
+  MoveEnvelope(MoveEnvelope& other) = delete;
+  MoveEnvelope(MoveEnvelope&& other) = default;
+};
+MoveEnvelope move_packet() { return MoveEnvelope(allocate_packet(true)); }
+)",
+                   "mut MoveEnvelope envelope = move_packet(); "
+                   "AllocationPacket extracted = envelope.packet; switch "
+                   "(std::move(extracted)) { "
+                   "case AllocationPacket::held(region): unsafe { "
+                   "release_pointer(region.address); } break; "
+                   "case AllocationPacket::absent: break; }\n",
+                   true);
+  descriptorControls &=
+      freshControl("fresh-consuming-receiver.gti", descriptor + R"(
+class ConsumedEnvelope {
+  mut Descriptor region;
+public:
+  ConsumedEnvelope(Descriptor region) : region(std::move(region)) {}
+  Descriptor take() && { return std::move(this.region); }
+};
+)",
+                   "ConsumedEnvelope envelope{fresh_descriptor()}; Descriptor "
+                   "region = std::move(envelope).take(); unsafe { "
+                   "release_pointer(region.address); }\n",
+                   true);
+  descriptorControls &= freshControl(
+      "fresh-mutable-receiver-move.gti", descriptor + R"(
+class MutableEnvelope {
+  mut Descriptor region;
+public:
+  MutableEnvelope(Descriptor region) : region(std::move(region)) {}
+  Descriptor take() mut { Descriptor old = std::move(this.region); this.region = Descriptor(nullptr); return old; }
+};
+)",
+      "mut MutableEnvelope envelope{fresh_descriptor()}; Descriptor region = "
+      "envelope.take(); unsafe { release_pointer(region.address); }\n",
+      false);
+  descriptorControls &=
+      freshControl("fresh-consuming-incoming.gti", descriptor + R"(
+mut void* incoming_region = nullptr;
+class ConsumedEnvelope {
+  mut Descriptor region;
+public:
+  ConsumedEnvelope(Descriptor region) : region(std::move(region)) {}
+  Descriptor take() && { return std::move(this.region); }
+};
+)",
+                   "ConsumedEnvelope envelope{Descriptor(incoming_region)}; "
+                   "Descriptor region = std::move(envelope).take(); unsafe { "
+                   "release_pointer(region.address); }\n",
+                   false);
+  descriptorControls &= freshControl(
+      "fresh-nonmember-once.gti", "",
+      "void* pointer = fresh_pointer(); unsafe { release_pointer(pointer); }\n",
+      false, false, false, 1);
+  descriptorControls &= freshControl(
+      "fresh-mismatched-target.gti", "",
+      "void* pointer = fresh_pointer(); unsafe { release_pointer(pointer); }\n",
+      false, false, false, 3);
+  descriptorControls &=
+      freshControl("fresh-consuming-adapter.gti", descriptor + R"(
+class ConsumedEnvelope {
+  mut Descriptor region;
+public:
+  ConsumedEnvelope(Descriptor region) : region(std::move(region)) {}
+  Descriptor take() && { return std::move(this.region); }
+};
+)",
+                   "ConsumedEnvelope envelope{fresh_descriptor()}; Descriptor "
+                   "region = std::move(envelope).take(); unsafe { "
+                   "release_pointer(region.address); }\n",
+                   false, false, false, 2);
+  descriptorControls &=
+      freshControl("fresh-constructor-once.gti", descriptor,
+                   "Descriptor region{fresh_pointer()}; unsafe { "
+                   "release_pointer(region.address); }\n",
+                   false, false, false, 4);
+  descriptorControls &=
+      freshControl("fresh-null-descriptor.gti", descriptor + R"(
+Descriptor nullable_descriptor(bool allocate) {
+  if (allocate) { return fresh_descriptor(); }
+  return Descriptor(nullptr);
+}
+)",
+                   "Descriptor region = nullable_descriptor(false); unsafe { "
+                   "release_pointer(region.address); }\n",
+                   true);
+  descriptorControls &=
+      freshControl("fresh-pointer-cast.gti", "",
+                   "void* address = fresh_pointer(); int32_t* typed = "
+                   "std::typed_address<int32_t>(address); unsafe { "
+                   "release_pointer(std::erase_address(typed)); }\n",
+                   false);
   if (!descriptorControls)
     return 1;
   const auto discharges = [&](const std::string &name) {

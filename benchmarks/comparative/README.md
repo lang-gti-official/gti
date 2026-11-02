@@ -793,3 +793,61 @@ the stronger repeat is 1.0039 (1.0015–1.0060), with no material change to sort
 or reverse input. Random sorting remains 2.3011 times Rust. The added source
 specialization is removed; its complete reports and passing correctness matrix
 remain under `numeric-insertion-mini`. No additional closed gap is counted.
+
+### Measured checkpoint `e8043add`
+
+Moving the pointer-induction proof after late inlining closes the interface
+dispatch gap. Its GTI/Rust ratio is 1.0205 (95% interval 1.0126–1.0316), and
+GTI/C++ is 0.4704. Typed hash-node pages also close reserved hashing: GTI/Rust
+is 0.7339 (0.7225–0.7433), and GTI/C++ is 0.5324. Both changes preserve the
+existing execution and ownership contracts.
+
+This run classifies **28/34 competitive, five slower, one inconclusive**.
+Previously competitive `lib-optional-int` has a noisy C++ interval
+(0.9650–1.1020), so this report does not round the total up to 29. The five
+clear gaps are:
+
+| Workload | GTI / C++ median | GTI / Rust median |
+| --- | ---: | ---: |
+| `lib-vector-growth` | 1.686 | 1.718 |
+| `lib-vector-reserved` | 1.583 | 1.505 |
+| `lib-vector-transform` | 1.240 | 1.370 |
+| `lib-sort-random` | 1.402 | 2.301 |
+| `lib-string-substrings` | 1.144 | 2.358 |
+
+Against `8f2f30dd`, stronger paired repeats measure dispatch at 0.6304 times
+its previous runtime (0.6211–0.6509), and reserved hashing at 0.5285
+(0.5215–0.5398). The compiler-only run attributes the dispatch improvement to
+the later proof placement; hashing does not materially change with the
+stdlib held fixed. The library-only run measures reserved hashing at 0.5294
+(0.5242–0.5349), and growing hashing at 0.6636 (0.6546–0.6744).
+Reserved hashing's outer `malloc` request count falls from 16,413 to 541 at
+diagnostic seed 17; growing hashing falls from 16,438 to 560. These counters
+include process startup and do not measure peak or live allocation memory.
+Every instrumented and uninstrumented result digest agrees.
+
+Reverse sorting remains uncertain against the separate 5% paired regression
+band: the stronger repeat is 1.0292 (0.9667–1.0561). It needs a further repeat
+on the final candidate; an inconclusive interval is not proof of no regression.
+The optional comparison also remains pending a stronger three-language repeat.
+Summed compilation observations increase from 17.404 s to 18.085 s, median
+paired peak compiler RSS is 0.9990 times baseline, and the largest executable
+increase is 1.58%. The largest peak compiler RSS increase is 12.76% for growing
+hashing.
+
+Twenty-four focused registered checks, native smoke, and affected sort/hash
+ownership, cleanup and failure checks pass on macOS arm64 and Linux x64.
+These are focused checks; full integration belongs to the merge queue.
+Exact tracked sources, attribution runs, allocation counts, code and logs are
+retained under `late-pool-mini/Testing` and `late-pool-linux` in the round-eight
+campaign artifact. The later bitmap-partition experiment is not included here.
+
+The bitmap-partition source experiment in `ba88b70e` passes its complete
+sort/comparator-failure/adversarial matrix, but its stronger random-sort ratio
+is only 0.9952 (0.9897–0.9981). It remains 2.2698 times Rust. Its largest GTI
+function's fixed stack subtraction shrinks from 2,176 to 1,904 bytes, while
+sorted/reverse executables grow from 143,160 to 159,672 bytes. That tradeoff is
+not retained for such a small runtime gain: generic partitioning returns to
+the existing offset queues. The additional input-shape checks remain. Complete
+source fingerprints, timings, assembly and correctness evidence are retained
+under `bitmap-partition-mini`; no additional closed gap is counted.

@@ -1452,7 +1452,17 @@ Allocation tokens are rebased by call path, so fields returned from one
 allocation retain the same token, while separate invocations remain distinct.
 Receiver fields are input-relative obligations: a caller must establish their
 origins before a release or returned field can participate in this profile.
-Receiver writes and consuming receiver extraction remain excluded.
+Receiver stores remain excluded. Exact generated extraction of a passive own
+field from a consuming receiver is permitted, retaining caller-side retirement
+and origin obligations. Mutable/read-only receivers do not gain this exception.
+A `Once` marker is accepted only on an exact static source consuming member
+with the matching receiver type; dynamic adapters and mismatched target kinds
+remain excluded. Passive
+records enclosing payload enums need not be bytewise relocatable: their
+eligibility reuses the MIR effect owner's operation-specific generated-value
+classifier. The profile requires passive drop; each actual copy or move keeps
+its separate structural instruction proof, so deleted copy does not prohibit
+generated move. User copy/move and cleanup are not inferred passive.
 
 Passive payload transport uses the concrete MIR enum's variant and field
 identities. An inactive alternative contributes no pointer; an unknown field
@@ -1475,7 +1485,9 @@ initialization. No pointee access, capture or ownership fact is inferred from
 a pointer field. Aggregate inspection has explicit depth, node and field-path
 budgets. Plain local raw-pointer stores conservatively union every written
 origin, retaining parameter entry origins; an unknown store rejects provenance.
-Aggregate fields still require one dominating store.
+Aggregate fields still require one dominating store. Exact `NullPtr` to raw-pointer
+value staging transports the empty origin set; arbitrary pointer conversions
+do not acquire a null or fresh origin.
 
 POSIX allocation is admitted only with an ordinary private local `int32_t`
 status slot and the capture analysis's complete exclusive status-use proof.
@@ -1483,7 +1495,9 @@ Later address escapes, unknown callbacks and incoming status slots reject it;
 a slot used exclusively by multiple sealed allocations is permitted. The sealed
 alignment query inspects address bits without accessing pointed storage, as
 specified by its existing MIR effect contract. This does not make arbitrary
-queries pure or removable. Mutable receiver publication and loop-carried
+queries pure or removable. Exact zero-operand type size/alignment queries reuse
+the existing inert layout-query predicate from body safety transfer; ordinary
+application queries remain opaque. Mutable receiver publication and loop-carried
 provenance remain unsupported. Unrelated initialized-prefix
 owners prove caller-side noninterference; this alone does not establish vector
 reserve or substring performance gains.

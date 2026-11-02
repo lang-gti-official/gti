@@ -25,6 +25,18 @@
 namespace lang {
 namespace {
 
+// Verified target-layout queries inspect a type, not any live object. Reuse
+// the effect owner's exact inert-query contract in both body and call profiles.
+[[nodiscard]] bool independentLayoutQuery(const MirInstruction &instruction,
+                                          const MirEffectTraits &effect) {
+  return (instruction.intrinsic == IntrinsicKind::ObjectSize ||
+          instruction.intrinsic == IntrinsicKind::ObjectAlignment) &&
+         instruction.result && instruction.operands.empty() &&
+         !instruction.receiver && !instruction.destination &&
+         effect.speculatable && effect.removableWhenUnused &&
+         effect.reorderable;
+}
+
 struct Evidence {
   std::vector<MirBlockId> blocks;
   std::vector<MirInstructionId> instructions;
@@ -7246,11 +7258,7 @@ void applyInstructionCore(
     return;
   }
 
-  if ((instruction.intrinsic == IntrinsicKind::ObjectSize ||
-       instruction.intrinsic == IntrinsicKind::ObjectAlignment) &&
-      instruction.result && instruction.operands.empty() &&
-      !instruction.receiver && !instruction.destination &&
-      effect.speculatable && effect.removableWhenUnused && effect.reorderable) {
+  if (independentLayoutQuery(instruction, effect)) {
     // Target layout queries compute values without touching existing objects.
     // Do not infer the queried size or alignment here; their value owner is
     // still the layout/backend contract.
@@ -9620,7 +9628,8 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
           record->polymorphic || record->abstract || !record->bases.empty() ||
           !record->structuralBases.empty() ||
           record->declaredFields.size() > 16 ||
-          mirTypeRelocationKind(program, type) != RelocationKind::Bitwise)
+          !isMirStructuralValueType(program, type,
+                                    MirStructuralValueOperation::Drop))
         return false;
       std::set<SymbolId> symbols;
       for (const auto &field : record->declaredFields)
@@ -9747,10 +9756,13 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
     if ((instruction.kind != MirInstructionKind::Call &&
          instruction.kind != MirInstructionKind::Construct) ||
         instruction.destination ||
+        (instruction.kind == MirInstructionKind::Call &&
+         instruction.constructorTarget) ||
+        (instruction.kind == MirInstructionKind::Construct &&
+         instruction.functionTarget) ||
         instruction.dispatch != CallDispatch::Static ||
         instruction.lambdaTarget || instruction.nativeCallbackAdapter ||
-        instruction.threadTaskAdapter || instruction.callableInvocation ||
-        instruction.callableBoundary ||
+        instruction.threadTaskAdapter || instruction.callableBoundary ||
         instruction.intrinsic != IntrinsicKind::None)
       return nullptr;
     const auto target = closedCallTarget(program, instruction);
@@ -9760,6 +9772,18 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
                                : nullptr;
       if ((callee && callee->owner.has_value()) !=
           instruction.receiver.has_value())
+        return nullptr;
+      // Once is also the verified consumption marker of an ordinary static
+      // consuming member; it does not imply a dynamic callable adapter.
+      const auto *owner = callee && callee->owner
+                              ? program.findClassInstance(*callee->owner)
+                              : nullptr;
+      if (instruction.callableInvocation &&
+          (target->kind != MirBodyKind::Function || !callee || !owner ||
+           !instruction.receiver || instruction.receiver->type != owner->type ||
+           callee->receiverMutability != ReceiverMutability::Consuming ||
+           *instruction.callableInvocation !=
+               CallableInvocationCapability::Once))
         return nullptr;
     }
     const auto found =
@@ -9964,8 +9988,12 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
           producer.operation == MirOperation::Literal && producer.literal &&
           std::holds_alternative<std::nullptr_t>(*producer.literal))
         return Origins{};
-      if (path.empty() && producer.kind == MirInstructionKind::Compute &&
-          producer.operation == MirOperation::Convert &&
+      if (path.empty() &&
+          ((producer.kind == MirInstructionKind::Compute &&
+            producer.operation == MirOperation::Convert) ||
+           (producer.kind == MirInstructionKind::CallInput &&
+            producer.callInputKind == HirCallInputKind::Value &&
+            !producer.destination && !producer.receiver)) &&
           producer.operands.size() == 1 &&
           producer.operands.front().type.kind == SemanticType::NullPtr &&
           producer.info.type.kind == SemanticType::RawPointer)
@@ -10086,6 +10114,8 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
       if (instruction.tombstone || inertLifecycleMarker(instruction))
         continue;
       const InstructionSite site{&block, &instruction};
+      if (independentLayoutQuery(instruction, effects(program, instruction)))
+        continue;
       if (instruction.kind == MirInstructionKind::Call ||
           instruction.kind == MirInstructionKind::Construct) {
         const auto op = operation(instruction);
@@ -10139,7 +10169,17 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
       if (passiveTransfer && instruction.operands.size() == 1 &&
           instruction.operands.front().place) {
         const auto *source = body.findPlace(instruction.operands.front().place);
-        privateTransfer = source && ownedBinding(*source);
+        const bool consumedReceiverField =
+            source && function && receiverClass &&
+            function->receiverMutability == ReceiverMutability::Consuming &&
+            source->root == MirPlaceRootKind::This && !source->foreignStorage &&
+            !source->traits.containsBorrowedState &&
+            passiveType(passiveType, receiverClass->type, 0) &&
+            ownFields(*source) && !ownFields(*source)->empty();
+        // A generated move retires only this consumed shell's exact field.
+        // Caller input invalidation and returned pointer obligations remain.
+        privateTransfer =
+            source && (ownedBinding(*source) || consumedReceiverField);
       }
       if (isMirStructuralPayloadExtraction(program, instruction) &&
           !privateTransfer)

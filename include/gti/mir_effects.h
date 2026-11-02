@@ -34,6 +34,14 @@ inline constexpr std::size_t atomicMemoryOrderCount =
 // enums when the program is supplied: the scalar leaves of generated records.
 [[nodiscard]] bool isMirScalarValueType(const MirProgram *program,
                                         const SemanticType &type);
+// Type-level eligibility for generated record/enum operations below, including
+// integral enums. Non-enum scalars return false; use isMirScalarValueType.
+// Query the actual operation: a deleted copy does not prohibit generated move.
+// This is an effect classification, not a bytewise-relocation or alias proof.
+enum class MirStructuralValueOperation { Copy, Move, Drop };
+[[nodiscard]] bool
+isMirStructuralValueType(const MirProgram &program, const SemanticType &type,
+                         MirStructuralValueOperation operation);
 // Exact scalar final-address construction (integer, floating, bool, char,
 // null or raw pointer pointee) has no selected constructor, cleanup or
 // adapter. It still writes raw storage and requires the ordinary

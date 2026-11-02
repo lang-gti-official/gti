@@ -371,21 +371,6 @@ int sort_monotonic_direction<std::relocatable T, Compare>(std::vector<T>& values
   }
 }
 
-// Count the bits below the lowest set bit; zero has all 32 low bits below it.
-// This total, portable source form exposes the standard popcount/cttz idiom.
-// The loop clears one bit per iteration, so its wrapping count never exceeds
-// 32. Partition callers supply nonzero masks with only window bits set.
-size_t sort_first_set_bit(uint32_t bits) {
-  uint32_t lowest = bits & gti_internal::integer_wrapping_sub(uint32_t(0), bits);
-  mut uint32_t remaining = gti_internal::integer_wrapping_sub(lowest, uint32_t(1));
-  mut uint32_t count = uint32_t(0);
-  while (remaining != uint32_t(0)) {
-    remaining &= gti_internal::integer_wrapping_sub(remaining, uint32_t(1));
-    count = gti_internal::integer_wrapping_add(count, uint32_t(1));
-  }
-  return size_t(count);
-}
-
 // Safety: low < high <= values.size(), high-low > 16, and the live range
 // remains fixed. Sample indices stay inside the range; block scans read only
 // the disjoint 32-element windows, and scalar scans test their bounds before
@@ -436,48 +421,59 @@ unsafe size_t sort_partition<std::relocatable T, Compare>(mut std::vector<T>& va
       // Compare whole disjoint windows before moving elements. Every recorded
       // index names a misplaced element; paired restoring swaps classify both.
       // The pivot stays at low and all comparator borrows end before mutation.
-      // One bit records each position instead of writing an offset array.
-      // The window-distance guard proves all addresses stay in [left,right].
-      // Only bits 0..31 are set; consuming the lowest bit visits exactly the
-      // same positions, in the same order, as the previous offset queues.
-      mut uint32_t left_mask = uint32_t(0);
-      mut uint32_t right_mask = uint32_t(0);
+      // The window-distance guard proves every address sum/subtraction stays
+      // in [left, right]. Counts start at zero and grow by at most one per
+      // iteration, so they never exceed 32. Wrapping arithmetic is exact under
+      // these invariants and avoids per-element overflow failure paths.
+      mut std::array<size_t, 32> left_offsets{};
+      mut std::array<size_t, 32> right_offsets{};
+      mut size_t left_count = size_t(0);
+      mut size_t right_count = size_t(0);
+      mut size_t left_used = size_t(0);
+      mut size_t right_used = size_t(0);
       while (right - left >= size_t(64)) {
-        if (left_mask == uint32_t(0)) {
-          for (mut uint32_t index = uint32_t(0); index < uint32_t(32); index++) {
+        if (left_used == left_count) {
+          left_used = size_t(0);
+          left_count = size_t(0);
+          for (mut size_t index = size_t(0); index < size_t(32); index++) {
+            // Before this iteration, count <= index < the window width.
+            left_offsets.get_unchecked_mut(left_count) = index;
             {
               std::vector<T>& readable = values;
-              before = compare(readable.get_unchecked(gti_internal::integer_wrapping_add(left, size_t(index))),
+              before = compare(readable.get_unchecked(gti_internal::integer_wrapping_add(left, index)),
                                readable.get_unchecked(low));
             }
-            left_mask |= (before ? uint32_t(0) : uint32_t(1)) << index;
+            left_count = gti_internal::integer_wrapping_add(left_count, before ? size_t(0) : size_t(1));
           }
         }
-        if (right_mask == uint32_t(0)) {
-          for (mut uint32_t index = uint32_t(0); index < uint32_t(32); index++) {
+        if (right_used == right_count) {
+          right_used = size_t(0);
+          right_count = size_t(0);
+          for (mut size_t index = size_t(0); index < size_t(32); index++) {
+            right_offsets.get_unchecked_mut(right_count) = index;
             {
               std::vector<T>& readable = values;
               before = compare(readable.get_unchecked(low),
-                               readable.get_unchecked(gti_internal::integer_wrapping_sub(right, size_t(index))));
+                               readable.get_unchecked(gti_internal::integer_wrapping_sub(right, index)));
             }
-            right_mask |= (before ? uint32_t(0) : uint32_t(1)) << index;
+            right_count = gti_internal::integer_wrapping_add(right_count, before ? size_t(0) : size_t(1));
           }
         }
-        while (left_mask != uint32_t(0) && right_mask != uint32_t(0)) {
-          // Nonzero 32-bit masks give offsets strictly below 32.
+        while (left_used < left_count && right_used < right_count) {
+          // used < count <= 32; every stored offset is inside its window.
           values.swap_elements_unchecked(
-              gti_internal::integer_wrapping_add(left, sort_first_set_bit(left_mask)),
-              gti_internal::integer_wrapping_sub(right, sort_first_set_bit(right_mask)));
-          left_mask &= left_mask - uint32_t(1);
-          right_mask &= right_mask - uint32_t(1);
+              gti_internal::integer_wrapping_add(left, left_offsets.get_unchecked(left_used)),
+              gti_internal::integer_wrapping_sub(right, right_offsets.get_unchecked(right_used)));
+          left_used++;
+          right_used++;
         }
         // At least one window is complete. Never move an unfinished window's
         // boundary: its remaining recorded offsets must stay valid.
-        if (left_mask == uint32_t(0)) { left += size_t(32); }
-        if (right_mask == uint32_t(0)) { right -= size_t(32); }
+        if (left_used == left_count) { left += size_t(32); }
+        if (right_used == right_count) { right -= size_t(32); }
       }
       // Rescan the small residual interval, including any unfinished window.
-      // Discarding its mask metadata cannot discard unclassified elements.
+      // Discarding its offset metadata cannot discard unclassified elements.
     }
     while (true) {
       while (left <= right) {

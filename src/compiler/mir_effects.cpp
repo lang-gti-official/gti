@@ -908,11 +908,9 @@ bool isMirScalarFinalAddressConstruction(const MirInstruction &instruction) {
   return pointee && isMirScalarValueType(nullptr, *pointee);
 }
 
-namespace {
-enum class StructuralValueOperation { Copy, Move, Drop };
-
-bool structuralScalarRecord(const MirProgram &program, const SemanticType &type,
-                            StructuralValueOperation operation) {
+bool isMirStructuralValueType(const MirProgram &program,
+                              const SemanticType &type,
+                              MirStructuralValueOperation operation) {
   std::unordered_set<HirClassInstanceId> visiting;
   std::size_t remaining = 1024;
   const auto structural = [&](const auto &self,
@@ -929,9 +927,9 @@ bool structuralScalarRecord(const MirProgram &program, const SemanticType &type,
                                         ? program.findPayloadEnum(type)
                                         : nullptr) {
       const bool available =
-          operation == StructuralValueOperation::Copy   ? sum->traits.copyable
-          : operation == StructuralValueOperation::Move ? sum->traits.movable
-                                                        : true;
+          operation == MirStructuralValueOperation::Copy ? sum->traits.copyable
+          : operation == MirStructuralValueOperation::Move ? sum->traits.movable
+                                                           : true;
       return available && !sum->traits.containsBorrowedState &&
              !sum->requiresActiveCleanup &&
              std::all_of(sum->variants.begin(), sum->variants.end(),
@@ -959,12 +957,14 @@ bool structuralScalarRecord(const MirProgram &program, const SemanticType &type,
         !visiting.insert(owner->id).second)
       return false;
     const SpecialMemberStatus member =
-        operation == StructuralValueOperation::Copy   ? owner->copyConstructor
-        : operation == StructuralValueOperation::Move ? owner->moveConstructor
-                                                      : owner->destructorStatus;
+        operation == MirStructuralValueOperation::Copy ? owner->copyConstructor
+        : operation == MirStructuralValueOperation::Move
+            ? owner->moveConstructor
+            : owner->destructorStatus;
     const bool fields =
         member == SpecialMemberStatus::Generated &&
-        (operation != StructuralValueOperation::Drop || !owner->destructor) &&
+        (operation != MirStructuralValueOperation::Drop ||
+         !owner->destructor) &&
         std::all_of(owner->declaredFields.begin(), owner->declaredFields.end(),
                     [&](const auto &field) {
                       return field.field && field.symbol &&
@@ -977,7 +977,6 @@ bool structuralScalarRecord(const MirProgram &program, const SemanticType &type,
           type.kind == SemanticType::Enum) &&
          structural(structural, type);
 }
-} // namespace
 
 bool isMirStructuralFinalAddressConstruction(
     const MirProgram &program, const MirInstruction &instruction) {
@@ -993,11 +992,11 @@ bool isMirStructuralFinalAddressConstruction(
                     return event.kind != MirLifecycleEventKind::TransferOut;
                   }))
     return false;
-  return structuralScalarRecord(program, instruction.operands.back().type,
+  return isMirStructuralValueType(program, instruction.operands.back().type,
                                 instruction.constructorKind ==
                                         ConstructorKind::Copy
-                                    ? StructuralValueOperation::Copy
-                                    : StructuralValueOperation::Move);
+                                    ? MirStructuralValueOperation::Copy
+                                    : MirStructuralValueOperation::Move);
 }
 
 bool isMirStructuralValueTransfer(const MirProgram &program,
@@ -1032,9 +1031,9 @@ bool isMirStructuralValueTransfer(const MirProgram &program,
        (instruction.destination ||
         instruction.operands.front().kind != MirOperandKind::Move)))
     return false;
-  return structuralScalarRecord(program, instruction.info.type,
-                                copy ? StructuralValueOperation::Copy
-                                     : StructuralValueOperation::Move);
+  return isMirStructuralValueType(program, instruction.info.type,
+                                copy ? MirStructuralValueOperation::Copy
+                                     : MirStructuralValueOperation::Move);
 }
 
 bool isMirStructuralPayloadExtraction(const MirProgram &program,
@@ -1054,8 +1053,8 @@ bool isMirStructuralPayloadExtraction(const MirProgram &program,
          instruction.synchronization.kind ==
              SynchronizationOperationKind::None &&
          program.findPayloadEnum(mirInstructionEnumType(instruction)) &&
-         structuralScalarRecord(program, mirInstructionEnumType(instruction),
-                                StructuralValueOperation::Move);
+         isMirStructuralValueType(program, mirInstructionEnumType(instruction),
+                                MirStructuralValueOperation::Move);
 }
 
 bool isMirStructuralValueDrop(const MirProgram &program,
@@ -1074,8 +1073,8 @@ bool isMirStructuralValueDrop(const MirProgram &program,
                      [](const MirLifecycleEvent &event) {
                        return event.kind == MirLifecycleEventKind::Drop;
                      }) &&
-         structuralScalarRecord(program, instruction.info.type,
-                                StructuralValueOperation::Drop);
+         isMirStructuralValueType(program, instruction.info.type,
+                                MirStructuralValueOperation::Drop);
 }
 
 namespace {
