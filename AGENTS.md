@@ -321,6 +321,13 @@ publish toolchain releases to Gitea. The `gti add` package registry stays
 on Gitea and is unaffected. See "Published Toolchain Channels" in
 `docs/architecture/build-and-driver.md`.
 
+- **Preview** distributes the separately admitted combined `preview` source through
+  `preview.yml`, with focused combined admission, installed checks, source and
+  inclusion identity on both packaged platforms. It is not full-main CI or
+  nightly evidence and never promotes into main. `gtiup` manages preview,
+  nightly, beta and stable toolchains; Neovim managed mode uses the selected
+  matching compiler/LSP/parser without downloading its own tools. Installation
+  remains opt-in. Never move the rolling preview tag by hand.
 - **Nightly** republishes one rolling `nightly` prerelease, daily, from the
   selected `main` commit with successful full CI and retained production
   artifacts. It verifies exact source/run/attempt, platform, configuration and

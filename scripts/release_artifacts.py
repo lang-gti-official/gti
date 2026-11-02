@@ -18,21 +18,27 @@ def digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def record(directory, platform, env):
+def record(directory, platform, env, channel="nightly"):
+    if channel not in ("nightly", "preview"):
+        raise ValueError("invalid rolling channel")
     if platform not in PLATFORMS:
         raise ValueError("unreviewed release platform")
     sha = env["GITHUB_SHA"]
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise ValueError("invalid source commit")
-    names = [f"gti-nightly-{platform}.tar.gz", f"gti-nightly-{platform}.tar.gz.sha256"]
+    names = [f"gti-{channel}-{platform}.tar.gz", f"gti-{channel}-{platform}.tar.gz.sha256"]
     manifest = {"schema": 1, "sha": sha, "platform": platform, "profile": PROFILE,
                 "repository": env["GITHUB_REPOSITORY"],
                 "run_id": int(env["GITHUB_RUN_ID"]), "attempt": int(env["GITHUB_RUN_ATTEMPT"]),
                 "files": {name: digest(directory / name) for name in names}}
+    if channel == "preview":
+        manifest["channel"] = "preview"
     (directory / f"provenance-{platform}.json").write_text(json.dumps(manifest, sort_keys=True) + "\n")
 
 
-def verify(directory, sha, run_id, attempt, repository, consume=False):
+def verify(directory, sha, run_id, attempt, repository, consume=False, channel="nightly"):
+    if channel not in ("nightly", "preview"):
+        raise ValueError("invalid rolling channel")
     expected = set()
     manifests = []
     for platform in PLATFORMS:
@@ -41,9 +47,11 @@ def verify(directory, sha, run_id, attempt, repository, consume=False):
         manifest = json.loads(path.read_text())
         identity = {"schema": 1, "sha": sha, "platform": platform, "profile": PROFILE,
                     "repository": repository, "run_id": run_id, "attempt": attempt}
+        if channel == "preview":
+            identity["channel"] = "preview"
         if any(manifest.get(key) != value for key, value in identity.items()):
             raise ValueError(f"{platform}: package provenance does not match accepted CI")
-        files = {f"gti-nightly-{platform}.tar.gz", f"gti-nightly-{platform}.tar.gz.sha256"}
+        files = {f"gti-{channel}-{platform}.tar.gz", f"gti-{channel}-{platform}.tar.gz.sha256"}
         if set(manifest.get("files", {})) != files:
             raise ValueError("unexpected package file inventory")
         for item in files:
@@ -118,11 +126,12 @@ def main():
     parser.add_argument("--attempt", type=int)
     parser.add_argument("--repository")
     parser.add_argument("--consume", action="store_true")
+    parser.add_argument("--channel", choices=("nightly", "preview"), default="nightly")
     args = parser.parse_args()
     if args.mode == "record":
-        record(args.directory, args.platform, os.environ)
+        record(args.directory, args.platform, {**os.environ, "GITHUB_SHA": args.sha or os.environ["GITHUB_SHA"]}, args.channel)
     else:
-        verify(args.directory, args.sha, args.run_id, args.attempt, args.repository, args.consume)
+        verify(args.directory, args.sha, args.run_id, args.attempt, args.repository, args.consume, args.channel)
 
 
 if __name__ == "__main__":

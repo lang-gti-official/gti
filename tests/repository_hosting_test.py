@@ -26,6 +26,7 @@ FORBIDDEN = (
 ACTION_USE = re.compile(r"^\s*(?:-\s+)?uses:\s*(\S+)@([^\s#]+)", re.MULTILINE)
 CI = ".github/workflows/ci.yml"
 NIGHTLY = ".github/workflows/nightly.yml"
+PREVIEW = ".github/workflows/preview.yml"
 ROLLUP = ".github/workflows/rollup.yml"
 CACHE = ".github/workflows/cache.yml"
 TRAIN = ".github/workflows/train.yml"
@@ -63,9 +64,9 @@ def main():
     workflows = sorted(p for p in tracked if p.startswith((".github/workflows/", ".gitea/workflows/")))
     # CI, nightly toolchain releases and the rollup bot run on GitHub. The frozen
     # Gitea release workflow stays as the record of the contract it replaces.
-    expect(set(workflows) == {CI, NIGHTLY, RELEASE, ROLLUP, CACHE, *RELEASE_TRAIN},
+    expect(set(workflows) == {CI, NIGHTLY, PREVIEW, RELEASE, ROLLUP, CACHE, *RELEASE_TRAIN},
            f"unexpected live workflows: {workflows}")
-    for relative in (CI, NIGHTLY, RELEASE, ROLLUP, CACHE, *RELEASE_TRAIN, ".github/README.md", ".gitea/README.md",
+    for relative in (CI, NIGHTLY, PREVIEW, RELEASE, ROLLUP, CACHE, *RELEASE_TRAIN, ".github/README.md", ".gitea/README.md",
                      ".gitea/ISSUE_TEMPLATE/bug_report.md",
                      "docs/plans/archive/github-actions-20261024/README.md"):
         text(root, relative)
@@ -109,6 +110,11 @@ def main():
            and "GITEA_TOKEN" not in helper and "MIRROR_REMOTE" not in helper,
            "lifecycle must use GitHub, the merge queue and explicit rehosting, never Gitea credentials")
 
+    preview = text(root, PREVIEW)
+    expect("branches: [preview]" in preview and "preview_release.py check" in preview
+           and "preview_admission" in preview and "needs: [select, package]" in preview
+           and preview.count("contents: write") == 1,
+           "preview must retain combined admission, exact package checks and isolated publication")
     ci, nightly, release = text(root, CI), text(root, NIGHTLY), text(root, RELEASE)
     expect("merge_group:" in ci and "ready_for_review" in ci and "name: CI gate" in ci
            and "GTI_EVENT_PATH: ${{ github.event_path }}" in ci

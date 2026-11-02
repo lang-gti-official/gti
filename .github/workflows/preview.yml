@@ -1,0 +1,232 @@
+name: Preview toolchain
+
+# Preview is a combined-source channel, separate from full-CI nightly admission.
+on:
+  push:
+    branches: [preview]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gti-preview-toolchain
+  cancel-in-progress: false
+
+jobs:
+  select:
+    if: github.repository == 'lang-gti-official/gti'
+    runs-on: ubuntu-24.04
+    outputs:
+      available: ${{ steps.publisher.outputs.available }}
+      sha: ${{ steps.source.outputs.sha }}
+      control: ${{ steps.source.outputs.control }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Check publisher has reached main
+        id: publisher
+        run: |
+          if test -f scripts/preview_release.py; then
+            echo "available=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "available=false" >> "${GITHUB_OUTPUT}"
+            echo "Preview publisher is awaiting main integration; no packages will be published."
+          fi
+      - name: Verify publication invariants
+        if: steps.publisher.outputs.available == 'true'
+        run: |
+          python3 tests/preview_release_test.py
+      - name: Select current admitted preview source
+        if: steps.publisher.outputs.available == 'true'
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/preview_release.py select
+          echo "control=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+  package:
+    name: Preview package (${{ matrix.platform }})
+    needs: select
+    if: needs.select.outputs.available == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        # linux-arm64 is not packaged: runtime/src/atomic_lane.h has no
+        # reviewed linux-aarch64 compiler profile, so configure_ci_toolchain.sh
+        # cannot admit a compiler there. See build-and-driver.md.
+        include:
+          - {os: ubuntu-24.04, platform: linux-x64, host: Linux-X64}
+          - {os: macos-26, platform: darwin-arm64, host: macOS-ARM64}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 360
+    defaults:
+      run:
+        working-directory: source
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.select.outputs.control }}
+          path: control
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.select.outputs.sha }}
+          path: source
+          persist-credentials: false
+      - name: Check source and runner identity
+        env:
+          GTI_SOURCE_SHA: ${{ needs.select.outputs.sha }}
+          GTI_EXPECTED_HOST: ${{ matrix.host }}
+        run: |
+          test "$(git rev-parse HEAD)" = "${GTI_SOURCE_SHA}"
+          test "${RUNNER_OS}-${RUNNER_ARCH}" = "${GTI_EXPECTED_HOST}"
+          test -f .gti-preview.json
+      - name: Configure runner resources
+        shell: bash
+        env:
+          GTI_CONFIGURED_JOBS: ${{ vars.GTI_JOBS }}
+          GTI_CONFIGURED_TEST_JOBS: ${{ vars.GTI_TEST_JOBS }}
+          # The bundled LLVM/Clang build compiles its large units beside GTI's.
+          GTI_MEMORY_PER_JOB_MIB: 3072
+          GTI_MEMORY_PER_TEST_MIB: 3072
+        run: bash scripts/configure_ci_resources.sh
+      - name: Install the reviewed compiler, Ninja and LLVM
+        run: bash scripts/configure_ci_toolchain.sh
+      - name: Configure compiler object cache
+        env:
+          GTI_CACHE_DIRECTORY: ${{ runner.temp }}/gti-ccache/release
+        run: bash scripts/configure_ci_cache.sh
+      - name: Restore compiler and LLVM/Clang object cache
+        id: cache
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('source/CMakeLists.txt', 'source/cmake/**') }}-${{ github.sha }}-${{ github.run_id }}
+          restore-keys: |
+            gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('source/CMakeLists.txt', 'source/cmake/**') }}-
+            gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-release-
+      - name: Check runner sanitizer execution
+        run: python3 scripts/check_ci_sanitizers.py --cxx "${CXX}" --sanitizer address,undefined
+      - name: Configure release build
+        run: >-
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DGTI_RELEASE_BUILD=ON
+          -DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF
+      - name: Check native driver compilation before LLVM/Clang
+        run: >-
+          cmake --build build --config Release --parallel "${GTI_JOBS}"
+          --target CMakeFiles/gti_driver.dir/src/driver/build.cpp.o
+      - name: Build
+        run: python3 scripts/build_window.py --kind build -- cmake --build build --config Release --parallel "${GTI_JOBS}"
+      - name: Validate combined preview on this platform
+        run: >-
+          python3 scripts/build_window.py --kind suite --
+          ctest --test-dir build --output-on-failure -R '^preview_admission$' --no-tests=error
+      - name: Stage toolchain
+        run: |
+          stage="$(mktemp -d "${RUNNER_TEMP}/gti-stage.XXXXXXXX")"
+          printf 'GTI_STAGE_DIRECTORY=%s\n' "${stage}" >> "${GITHUB_ENV}"
+          cmake --install build --config Release --prefix "${stage}" --component gti_toolchain
+      - name: Test installed toolchain
+        run: |
+          export PATH="${GTI_STAGE_DIRECTORY}/bin:${PATH}"
+          source="${GITHUB_WORKSPACE}/source"
+          cd "${RUNNER_TEMP}"
+          python3 "${source}/tests/lsp_smoke_test.py" gti_lsp
+          python3 "${source}/tests/cli_smoke_test.py" gti
+          python3 "${source}/tests/project_cli_smoke_test.py" gti
+          python3 "${source}/tests/process_resource_policy_test.py" gti --installed
+          python3 "${source}/tests/managed_thread_runtime_test.py" gti
+          python3 "${source}/tests/atomic_runtime_test.py" gti \
+            "${source}/tests/fixtures/atomic_scalar.gti" \
+            "${source}/tests/fixtures/atomic_concurrent.gti" \
+            "${source}/tests/fixtures/atomic_orders.gti" \
+            "${source}/tests/fixtures/atomic_fetch.gti" \
+            "${source}/tests/fixtures/atomic_fetch_overflow.gti"
+          cmake -S "${source}/tests/installed_library_smoke" \
+            -B "${RUNNER_TEMP}/gti-installed-library-smoke" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="${GTI_STAGE_DIRECTORY}"
+          cmake --build "${RUNNER_TEMP}/gti-installed-library-smoke" \
+            --config Release --parallel "${GTI_JOBS}"
+          ctest --test-dir "${RUNNER_TEMP}/gti-installed-library-smoke" \
+            -C Release --parallel "${GTI_TEST_JOBS}" --output-on-failure
+      - name: Preserve the combined source inclusion record
+        env:
+          GTI_SOURCE_SHA: ${{ needs.select.outputs.sha }}
+        run: >-
+          python3 ../control/scripts/preview_release.py stage --source .
+          --directory "${GTI_STAGE_DIRECTORY}" --sha "${GTI_SOURCE_SHA}"
+      - name: Create preview archive from the validated stage
+        env:
+          GTI_NIGHTLY_SHA: ${{ needs.select.outputs.sha }}
+          GTI_PLATFORM: ${{ matrix.platform }}
+        run: >-
+          cmake
+          -DGTI_SOURCE_DIR="${GITHUB_WORKSPACE}/source"
+          -DGTI_STAGE_DIR="${GTI_STAGE_DIRECTORY}"
+          -DGTI_OUTPUT_DIR="${GITHUB_WORKSPACE}/source/dist/preview"
+          -DGTI_PLATFORM="${GTI_PLATFORM}"
+          -DGTI_CHANNEL=preview
+          -DGTI_EXPECTED_TAG=preview
+          -DGTI_BUILD_ID="${GTI_NIGHTLY_SHA}"
+          -P ../control/cmake/PackageRelease.cmake
+      - name: Record package identity and checksums
+        env:
+          GTI_SOURCE_SHA: ${{ needs.select.outputs.sha }}
+          GTI_PLATFORM: ${{ matrix.platform }}
+        run: python3 ../control/scripts/release_artifacts.py record --directory dist/preview --platform "${GTI_PLATFORM}" --channel preview --sha "${GTI_SOURCE_SHA}"
+      - name: Upload preview archive
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gti-preview-${{ matrix.platform }}-${{ github.run_attempt }}
+          path: source/dist/preview/*
+          if-no-files-found: error
+          retention-days: 30
+      - name: Report compiler cache statistics
+        if: always()
+        run: if command -v ccache >/dev/null 2>&1; then ccache --show-stats; fi
+      # Retain compatible object files for later preview builds.
+      - name: Save compiler and LLVM/Clang cache, including partial builds
+        if: always() && steps.cache.outputs.cache-primary-key != '' && steps.cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
+  publish:
+    needs: [select, package]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.select.outputs.control }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: gti-preview-*-${{ github.run_attempt }}
+          path: dist/preview
+          merge-multiple: true
+      - name: Verify source, attempt, platforms, checksums and inclusion identity
+        env:
+          GTI_SOURCE_SHA: ${{ needs.select.outputs.sha }}
+        run: python3 scripts/preview_release.py check --directory dist/preview --sha "${GTI_SOURCE_SHA}"
+      - name: Attest the preview archives
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/preview/gti-preview-*.tar.gz
+      - name: Publish only if preview is still current
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GTI_SOURCE_SHA: ${{ needs.select.outputs.sha }}
+        run: python3 scripts/preview_release.py publish --directory dist/preview --sha "${GTI_SOURCE_SHA}"

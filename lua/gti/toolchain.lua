@@ -60,6 +60,35 @@ local function parser_beside_executable(executable)
   return is_file(parser) and parser or nil
 end
 
+-- Managed mode delegates selection and installation to gtiup. It never falls
+-- back to an unrelated plugin-local or PATH toolchain after selection fails.
+function M.managed()
+  return vim.g.gti_toolchain == "gtiup"
+end
+
+function M.managed_executable(name, opts)
+  opts = opts or {}
+  local manager = vim.env.GTIUP_PATH
+  if not manager or manager == "" then manager = "gtiup" end
+  local launched, result = pcall(function()
+    return vim.system({ manager, "which", name }, {
+      text = true,
+      cwd = opts.cwd,
+    }):wait(5000)
+  end)
+  if not launched then
+    error("gtiup could not select " .. name .. ": cannot run " .. manager
+      .. ". Install gtiup on Neovim's PATH or set GTIUP_PATH to its executable. " .. tostring(result))
+  end
+  local path = vim.trim(result.stdout or "")
+  if result.code ~= 0 or not is_executable(path) then
+    local detail = vim.trim(result.stderr or "")
+    error("gtiup could not select " .. name .. ": "
+      .. (detail ~= "" and detail or "install the project's selected toolchain with gtiup"))
+  end
+  return path
+end
+
 function M.root()
   return repository_root()
 end
@@ -96,6 +125,10 @@ function M.executable(name, opts)
     return vim.env.GTI_PATH
   end
 
+  if M.managed() then
+    return M.managed_executable(name, opts)
+  end
+
   local root = opts.root or M.root()
   local bundled = vim.fs.joinpath(M.bin_dir(root), name)
   if is_executable(bundled) then
@@ -119,6 +152,11 @@ function M.parser(opts)
   opts = opts or {}
   if is_file(vim.env.GTI_TREE_SITTER_PATH) then
     return vim.env.GTI_TREE_SITTER_PATH
+  end
+
+  if M.managed() then
+    local ok, executable = pcall(M.executable, "gti_lsp", opts)
+    return ok and parser_beside_executable(executable) or nil
   end
 
   -- An explicit external server/compiler selection owns its syntax resources.
@@ -150,7 +188,7 @@ function M.parser(opts)
 end
 
 -- Read metadata from the executable's own installation, following command
--- symlinks. Capture this at LspAttach: a later install/configuration change
+-- symlinks. Capture this at launch/attachment: a later install/configuration change
 -- does not change the identity of the process that is already running.
 function M.binary_info(executable)
   if not executable or executable == "" then return {} end
@@ -210,25 +248,34 @@ function M.version_info(opts)
   opts = opts or {}
   local root = opts.root or M.root()
   local expected = opts.expected_version or M.expected_version(root)
-  local installed = M.installed_version(root)
-  local compiler = M.executable("gti", { root = root })
-  local language_server = M.executable("gti_lsp", { root = root })
-  local compiler_info = M.binary_info(compiler)
-  local language_server_info = M.binary_info(language_server)
+  local managed = M.managed()
+  local resolve_options = { root = root, cwd = opts.cwd }
+  local compiler_ok, compiler = pcall(M.executable, "gti", resolve_options)
+  local server_ok, language_server = pcall(M.executable, "gti_lsp", resolve_options)
+  local problems = {}
+  if not compiler_ok then table.insert(problems, compiler); compiler = "unavailable" end
+  if not server_ok then table.insert(problems, language_server); language_server = "unavailable" end
+  local compiler_info = compiler_ok and M.binary_info(compiler) or {}
+  local language_server_info = server_ok and M.binary_info(language_server) or {}
+  local installed
+  if managed then installed = language_server_info.version
+  else installed = M.installed_version(root) end
   local compiler_version = compiler_info.version
   local compiler_problem
   local language_server_version = language_server_info.version
   local language_server_problem
 
   if opts.probe_binaries ~= false then
-    compiler_version, compiler_problem = executable_version(compiler)
-    language_server_version, language_server_problem = executable_version(language_server)
+    if compiler_ok then compiler_version, compiler_problem = executable_version(compiler) end
+    if server_ok then language_server_version, language_server_problem = executable_version(language_server) end
   end
 
   local info = {
+    managed = managed,
     expected = expected,
     channel = opts.channel or M.channel(),
-    enforce_expected = opts.expected_version ~= nil or (opts.channel or M.channel()) == "stable",
+    enforce_expected = not managed
+      and (opts.expected_version ~= nil or (opts.channel or M.channel()) == "stable"),
     probe_binaries = opts.probe_binaries ~= false,
     installed = installed,
     compiler = compiler,
@@ -239,13 +286,15 @@ function M.version_info(opts)
     language_server_info = language_server_info,
     language_server_version = language_server_version,
     language_server_problem = language_server_problem,
-    parser = M.parser({ root = root }),
+    parser = M.parser(resolve_options),
+    problems = problems,
   }
-  info.problems = M.version_problems(info)
+  vim.list_extend(info.problems, M.version_problems(info))
   return info
 end
 
 function M.prepend_path(root)
+  if M.managed() then return false end
   local bin = M.bin_dir(root)
   if not is_executable(vim.fs.joinpath(bin, "gti")) then
     return false

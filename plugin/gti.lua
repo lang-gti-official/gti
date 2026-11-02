@@ -25,7 +25,8 @@ local function report_version_problems(info)
 end
 
 local function capture_running_toolchain(client)
-  local command = client.config and client.config.cmd
+  local launched = client.config and client.config._gti_toolchain_launch
+  local command = launched and launched.command or (client.config and client.config.cmd)
   local executable = type(command) == "table" and type(command[1]) == "string" and command[1] or nil
   local arguments = {}
   if type(command) == "table" then
@@ -33,15 +34,18 @@ local function capture_running_toolchain(client)
   end
   return {
     command = #arguments > 0 and table.concat(arguments, " ") or "custom command",
-    binary = toolchain.binary_info(executable),
+    binary = launched and vim.deepcopy(launched.binary) or toolchain.binary_info(executable),
+    compiler = launched and vim.deepcopy(launched.compiler) or nil,
   }
 end
 
 -- Avoid synchronous process probes on startup or attachment. Installed metadata
 -- and the server's initialize response suffice here; GTIInfo probes on demand.
-vim.schedule(function()
-  report_version_problems(toolchain.version_info({ probe_binaries = false }))
-end)
+if not toolchain.managed() then
+  vim.schedule(function()
+    report_version_problems(toolchain.version_info({ probe_binaries = false }))
+  end)
+end
 
 if vim.lsp and vim.lsp.enable then
   vim.lsp.enable("gti_lsp")
@@ -61,7 +65,15 @@ vim.api.nvim_create_autocmd("LspAttach", {
     end
     local running = running_toolchains[client.id] or capture_running_toolchain(client)
     running_toolchains[client.id] = running
-    local info = toolchain.version_info({ probe_binaries = false })
+    local info
+    if toolchain.managed() then
+      -- Managed selection already ran from this client's root at launch.
+      -- Do not run another manager process from the editor's current cwd.
+      local compiler = running.compiler or toolchain.binary_info(vim.env.GTI_PATH)
+      info = { compiler_info = compiler, compiler_version = compiler.version }
+    else
+      info = toolchain.version_info({ probe_binaries = false })
+    end
     info.language_server_info = running.binary
     info.language_server_version = client.server_info and client.server_info.version or running.binary.version
     report_version_problems(info)
@@ -226,7 +238,14 @@ vim.api.nvim_create_user_command("GTIExpandMacro", function()
 end, { desc = "Inspect the checked macro expansion under the cursor (read-only)" })
 
 vim.api.nvim_create_user_command("GTIInfo", function()
-  local info = toolchain.version_info()
+  local buffer = vim.api.nvim_get_current_buf()
+  local name = vim.api.nvim_buf_get_name(buffer)
+  local clients = vim.lsp.get_clients({ name = "gti_lsp", bufnr = buffer })
+  local attached_root = clients[1] and clients[1].config and clients[1].config.root_dir
+  local project_root = attached_root or vim.fs.root(buffer, { "gti.toml", ".git", "CMakeLists.txt", "gti-toolchain" })
+  local info = toolchain.version_info({
+    cwd = project_root or (name ~= "" and vim.fs.dirname(name) or nil),
+  })
   local active_servers = {}
   local active_profiles = {}
   local problems = vim.deepcopy(info.problems)
@@ -240,7 +259,7 @@ vim.api.nvim_create_user_command("GTIInfo", function()
     end
     return details
   end
-  for _, client in ipairs(vim.lsp.get_clients({ name = "gti_lsp" })) do
+  for _, client in ipairs(clients) do
     local version = client.server_info and client.server_info.version or "unknown"
     local running = running_toolchains[client.id] or capture_running_toolchain(client)
     table.insert(active_servers, string.format("#%s %s (%s%s)",
@@ -258,9 +277,11 @@ vim.api.nvim_create_user_command("GTIInfo", function()
   end
 
   local lines = {
+    "Toolchain manager: " .. (info.managed and "gtiup" or "legacy plugin installer"),
     "Plugin version: " .. (info.expected or "unknown"),
-    "Configured channel: " .. info.channel,
-    "Bundled toolchain: " .. (info.installed or "not installed by Lazy"),
+    info.managed and "Channel selection: gtiup project setting" or ("Configured channel: " .. info.channel),
+    (info.managed and "Selected toolchain: " or "Bundled toolchain: ")
+      .. (info.installed or (info.managed and "unavailable" or "not installed by Lazy")),
     string.format(
       "Compiler: %s (%s%s)",
       info.compiler,

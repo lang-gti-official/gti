@@ -68,6 +68,11 @@ run/attempt, platform, configuration and checksums; it never rebuilds or repeats
 the complete suite. An automation-only pass or an approved merge exception
 does not supply those artifacts: commissioning/recovery uses a full CI dispatch
 on main, not a release-gate bypass. Missing or expired artifacts stop publication.
+The separate `preview.yml` packages current combined preview source after its
+focused admission and installed checks on both platforms. It never qualifies
+nightly or changes main. `gtiup` consumes these channels, and Neovim managed
+mode resolves the selected complete toolchain; installation remains opt-in.
+Do not move the rolling preview tag by hand.
 The release train publishes versioned releases on its own: every 48
 hours `train.yml` cuts the published nightly into a `Release-Cut:` PR,
 `beta.yml` builds and fully validates the versioned cut before publishing

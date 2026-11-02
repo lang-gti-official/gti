@@ -121,6 +121,42 @@ def artifact_contract(root):
         assert not list(directory.glob("provenance-*"))
 
 
+def editor_contract(root):
+    # Exercise both platform downloads and fail before execution/PATH publication
+    # for altered archives; no host installation or network access in this test.
+    import io
+    from unittest.mock import patch
+    editor = load_module(root / "scripts/configure_ci_editor.py", "ci_editor")
+    for identity, (asset, _) in editor.ASSETS.items():
+        data = io.BytesIO()
+        with tarfile.open(fileobj=data, mode="w:gz") as archive:
+            entry = tarfile.TarInfo(asset + "/bin/nvim")
+            entry.mode = 0o755
+            payload = b"#!/bin/sh\nexit 0\n"
+            entry.size = len(payload)
+            archive.addfile(entry, io.BytesIO(payload))
+        payload = data.getvalue()
+        with tempfile.TemporaryDirectory() as directory:
+            base = pathlib.Path(directory)
+            env_path = base / "path"
+            with patch.dict(editor.ASSETS, {identity: (asset, hashlib.sha256(payload).hexdigest())}), \
+                 patch.object(editor.urllib.request, "urlopen", return_value=io.BytesIO(payload)):
+                executable = editor.stage(base / "editor", env_path, *identity)
+                assert env_path.read_text() == str(executable.parent) + "\n"
+            env_path.unlink()
+            with patch.object(editor.urllib.request, "urlopen", return_value=io.BytesIO(b"altered")), \
+                 patch.object(editor.subprocess, "run", side_effect=AssertionError("must not execute")):
+                try:
+                    editor.stage(base / "rejected", env_path, *identity)
+                except ValueError as error:
+                    assert "checksum" in str(error)
+                else:
+                    raise AssertionError("accepted altered editor archive")
+            assert not env_path.exists()
+    toolchain = (root / "scripts/configure_ci_toolchain.sh").read_text()
+    assert 'python3 "${repository}/scripts/configure_ci_editor.py"' in toolchain
+
+
 def nightly_contract(root):
     nightly = (root / ".github/workflows/nightly.yml").read_text()
     ci = (root / ".github/workflows/ci.yml").read_text()
@@ -379,7 +415,7 @@ def workflow_contract(root):
     # CI, nightly packaging and the rollup bot run on GitHub; the frozen Gitea
     # release workflow stays as written.
     assert sorted(p.name for p in (root / ".github/workflows").glob("*.yml")) == [
-        "backport.yml", "beta.yml", "cache.yml", "ci.yml", "nightly.yml", "rollback.yml", "rollup.yml", "train.yml"]
+        "backport.yml", "beta.yml", "cache.yml", "ci.yml", "nightly.yml", "preview.yml", "rollback.yml", "rollup.yml", "train.yml"]
     assert not (root / ".gitea/workflows/ci.yml").exists()
     assert "branches:\n      - main" in release and "paths:" not in release
     assert release.count("-DGTI_RELEASE_BUILD=ON") == 1, "channels must share one configure"
@@ -694,6 +730,11 @@ def archive_contract(root, cmake):
         assert stable_archive.read_bytes() == stable_bytes, "nightly rewrote the immutable archive"
         assert stable["lib/gti/llvm/libclang.so.20"] == ("symlink", "libclang.so.20.1")
         rejected = work / "rejected"
+        preview_directory = work / "preview"
+        package("preview", "preview", preview_directory, sha)
+        preview = contents(preview_directory / "gti-preview-linux-x64.tar.gz")
+        assert preview["share/gti/BUILD_ID"] == (sha + "\n").encode()
+        package("preview", "nightly", rejected, sha, success=False)
         # The nightly stamp lives in the stage; a stable archive refuses it.
         package("stable", f"v{version}", rejected, success=False)
         assert not rejected.exists(), "a nightly-stamped stage produced a stable archive"
@@ -762,6 +803,7 @@ def main():
     root = args.root.resolve()
     workflow_contract(root)
     artifact_contract(root)
+    editor_contract(root)
     nightly_contract(root)
     train_contract(root)
     source_contract(root)

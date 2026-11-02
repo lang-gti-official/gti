@@ -825,7 +825,8 @@ def test_dependency_chain_reanalysis_count(executable, root):
             record
             for record in (
                 json.loads(line)
-                for line in trace_path.read_text(encoding="utf-8").splitlines()
+                for line in trace_path.read_text(encoding="utf-8").splitlines(keepends=True)
+                if line.endswith("\n")
             )
             if record["kind"] == "analysis"
         ]
@@ -903,7 +904,11 @@ def test_dependency_chain_reanalysis_count(executable, root):
             }
         )
         session.receive_until(lambda message: message.get("id") == 2)
-        # Shutdown drains every pending analysis, including retries.
+        # Observe completion of the background dependency wave before shutting
+        # down; shutdown cancels any work that has not finished yet.
+        deadline = time.monotonic() + 60
+        while len(analyses()) < 2 * len(paths) and time.monotonic() < deadline:
+            time.sleep(0.01)
         session.close()
         closed = True
         reanalyzed = analyses()[len(paths):]
@@ -1195,6 +1200,19 @@ def test_opening_unchanged_dependencies_keeps_dependants(executable, root):
     trace_path = root / "open-trace.jsonl"
     trace_path.unlink(missing_ok=True)
 
+    def analyses():
+        if not trace_path.exists():
+            return []
+        return [
+            pathlib.Path(record["uri"]).stem
+            for record in (
+                json.loads(line)
+                for line in trace_path.read_text(encoding="utf-8").splitlines(keepends=True)
+                if line.endswith("\n")
+            )
+            if record["kind"] == "analysis"
+        ]
+
     def open_text(name, text):
         session.send(
             {
@@ -1246,13 +1264,17 @@ def test_opening_unchanged_dependencies_keeps_dependants(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uris["open-e"]
         )
+        # The unchanged dependent's diagnostics need not be republished.
+        # Observe both completed analyses before shutdown cancels pending work.
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            analysed = analyses()
+            if analysed.count("open-e") >= 1 and analysed.count("open-c") >= 2:
+                break
+            time.sleep(0.01)
         session.close()
         closed = True
-        analysed = [
-            pathlib.Path(json.loads(line)["uri"]).stem
-            for line in trace_path.read_text(encoding="utf-8").splitlines()
-            if json.loads(line)["kind"] == "analysis"
-        ]
+        analysed = analyses()
         assert sorted(analysed) == sorted(burst + ["open-e", "open-c"]), analysed
     finally:
         if not closed:
@@ -11917,27 +11939,27 @@ def main():
         {"jsonrpc": "2.0", "method": "exit", "params": None},
     ]
 
-    # This preframed batch does not model an interactive client. A seekable
-    # input avoids bidirectional pipe backpressure in Python's blocking
-    # communicate() writes on macOS; the separate LspSession cases retain
-    # interactive pipes, cancellation, and generation ordering coverage.
-    with tempfile.TemporaryFile() as batch_input:
-        batch_input.write(b"".join(frame(request) for request in requests))
-        batch_input.seek(0)
-        process = subprocess.run(
-            [sys.argv[1]],
-            stdin=batch_input,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-            timeout=15,
-        )
-    if process.returncode != 0:
-        raise AssertionError(
-            f"gti_lsp exited with {process.returncode}: {process.stderr.decode()}"
-        )
+    # Await replies before shutdown, as an interactive client does. Shutdown
+    # cancels pending work; it is not a request to finish diagnostic analysis.
+    # Reading each response also avoids bidirectional pipe backpressure when
+    # the recovery fixture's formatting response exceeds the pipe capacity.
+    session = LspSession(sys.argv[1])
+    messages = []
+    try:
+        for request in requests:
+            session.send(request)
+            if "id" in request:
+                def collect(message):
+                    messages.append(message)
+                    return message.get("id") == request["id"]
 
-    messages = decode_messages(process.stdout)
+                session.receive_until(collect, timeout=30)
+        session.process.wait(timeout=5)
+        assert session.process.returncode == 0
+    finally:
+        if session.process.poll() is None:
+            session.process.kill()
+            session.process.wait()
     by_id = {message.get("id"): message for message in messages if "id" in message}
     initialization = by_id[1]["result"]["capabilities"]
     assert "semanticTokensProvider" in initialization
