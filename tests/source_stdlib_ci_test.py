@@ -83,6 +83,8 @@ class SourceStdlibCI(unittest.TestCase):
         for name in ['compiler_pipeline', 'stdlib_surface', 'stdlib_surface_manifest',
                      'generic_algorithm_cluster', 'generic_algorithm_errors', 'practical_examples']:
             self.assertIn(name, names)
+        with patch.object(source, 'git', return_value='examples/unregistered/new.gti\0'), self.assertRaisesRegex(ValueError, 'nested example coverage'):
+            source.test_entries(['stdlib/std/algorithm.gti', 'examples/unregistered/new.gti'])
         with self.assertRaisesRegex(ValueError, 'not registered'):
             source.test_entries(['stdlib/std/algorithm.gti', 'tests/unregistered_new_test.py'])
         with self.assertRaisesRegex(ValueError, 'no registered consumer'):

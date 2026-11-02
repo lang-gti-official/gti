@@ -95,6 +95,8 @@ def planner(root=ROOT):
 
 
 def test_entries(paths, root=ROOT):
+    if any(p.startswith("examples/") and p.endswith(".gti") for p in paths):
+        preview_examples.validate_sources(git("ls-files", "-z", "--", "examples", root=root).split("\0"))
     policy = planner(root)
     # Library owners + all their consumers are mandatory, regardless of PR body.
     plan = policy.plan([p for p in paths if library(p)], policy.load_map(root / "tests/ownership.toml"), root)
