@@ -1,0 +1,49 @@
+import std.atomic;
+import std.string;
+import std.vector;
+import std.numeric;
+
+class AtomicCleanup {
+  int identity;
+public:
+  AtomicCleanup(int identity) : identity(identity) {}
+  ~AtomicCleanup() { std::println(this.identity); }
+};
+
+uint64_t update_private<uint64_t Mode>(uint64_t initial, uint64_t delta, int count) {
+  AtomicCleanup cleanup{22};
+  std::atomic<uint64_t> value{uint64_t(0)};
+  value.store(initial, std::memory_order_relaxed());
+  for (mut int index = 0; index < count; index++) {
+    mut uint64_t previous = uint64_t(0);
+    if constexpr (Mode == 0) previous = value.fetch_add_wrapping(delta, std::memory_order_relaxed());
+    else if constexpr (Mode == 1) previous = value.fetch_sub_wrapping(delta, std::memory_order_relaxed());
+    else if constexpr (Mode == 2) previous = value.fetch_and(delta, std::memory_order_relaxed());
+    else if constexpr (Mode == 3) previous = value.fetch_or(delta, std::memory_order_relaxed());
+    else if constexpr (Mode == 4) previous = value.fetch_xor(delta, std::memory_order_relaxed());
+    else if constexpr (Mode == 5) previous = value.exchange(delta, std::memory_order_relaxed());
+    else if constexpr (Mode == 6) previous = value.fetch_add_wrapping(delta);
+    else previous = value.fetch_add(delta, std::memory_order_relaxed());
+    std::println(previous);
+  }
+  return value.load(std::memory_order_relaxed());
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc != 5) return 10;
+  int mode = int(argv[std::size_t(1)].size());
+  mut uint64_t initial = uint64_t(argv[std::size_t(2)].size());
+  if (initial >= uint64_t(128)) initial = std::MAX_UINT64 - (uint64_t(255) - initial);
+  uint64_t delta = uint64_t(argv[std::size_t(3)].size());
+  int count = int(argv[std::size_t(4)].size());
+  AtomicCleanup outer{11};
+  if (mode == 0) std::println(update_private<uint64_t(0)>(initial, delta, count));
+  else if (mode == 1) std::println(update_private<uint64_t(1)>(initial, delta, count));
+  else if (mode == 2) std::println(update_private<uint64_t(2)>(initial, delta, count));
+  else if (mode == 3) std::println(update_private<uint64_t(3)>(initial, delta, count));
+  else if (mode == 4) std::println(update_private<uint64_t(4)>(initial, delta, count));
+  else if (mode == 5) std::println(update_private<uint64_t(5)>(initial, delta, count));
+  else if (mode == 6) std::println(update_private<uint64_t(6)>(initial, delta, count));
+  else if (mode == 7) std::println(update_private<uint64_t(7)>(initial, delta, count));
+  return 0;
+}

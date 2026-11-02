@@ -8,10 +8,11 @@ import tempfile
 
 def expected(mode, low, high):
     events = ["7"]
-    maximum = 255
+    maximum = (1 << 64) - 1
     if mode == 4:
-        maximum = (1 << 64) - 1
         low, high = maximum - low, maximum - high
+    else:
+        low, high = low * (maximum // 255), high * (maximum // 255)
     if high < low:
         return 70, "\n".join(events + ["22", "11", ""])
     distance = high - low

@@ -520,6 +520,7 @@ uint64_t non_strict(uint64_t index, uint64_t live) {
 
 class ChainCleanup {
 public:
+  ChainCleanup() {}
   ~ChainCleanup() { std::println(77); }
 };
 

@@ -180,7 +180,15 @@ class CheckedOffsetPass : public llvm::PassInfoMixin<CheckedOffsetPass> {
 public:
   llvm::PreservedAnalyses run(llvm::Function &function,
                               llvm::FunctionAnalysisManager &analyses) {
-    return optimizeCheckedOffsets(function, analyses);
+    auto result = optimizeCheckedOffsets(function, analyses);
+    if (result.areAllPreserved())
+      return result;
+    analyses.invalidate(function, result);
+    llvm::FunctionPassManager cleanup;
+    cleanup.addPass(llvm::InstCombinePass());
+    cleanup.addPass(llvm::SimplifyCFGPass());
+    cleanup.run(function, analyses);
+    return llvm::PreservedAnalyses::none();
   }
 };
 } // namespace
@@ -255,8 +263,6 @@ void registerCheckedOffsetPass(llvm::PassBuilder &builder) {
             level != llvm::OptimizationLevel::O3)
           return;
         pipeline.addPass(CheckedOffsetPass());
-        pipeline.addPass(llvm::InstCombinePass());
-        pipeline.addPass(llvm::SimplifyCFGPass());
       });
 }
 } // namespace lang::native_llvm

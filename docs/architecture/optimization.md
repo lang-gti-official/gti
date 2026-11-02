@@ -367,6 +367,17 @@ envelope independent of the changing dividend; the mask contributes
 `[0, mask]`. Dynamic fixed-array writes join their scalar value into the root
 envelope and never create per-element truth.
 
+Division by one exact nonzero integer transports a result interval by evaluating
+both endpoints with GTI's checked, truncating division rules. Negative divisors
+reverse the order; zero and signed-minimum divided by minus one fail closed.
+This transports successful-result facts without removing division failures.
+Add/subtract can compose both operands' existing stable envelopes, and constant
+division carries a valid composed envelope onward. This preserves bounds through
+averaging and normalization of array values. A widening edge still discards an
+envelope that expands beyond its previous bound; growing recurrences cannot
+justify removing their own overflow checks. Intermediate arithmetic must itself
+fit, so `(x + x) / 2` does not excuse an overflowing addition.
+
 For one bounded loop-carried accumulator family, safety analysis first solves
 the ordinary lattice, then derives a threshold from the existing reducible
 natural-loop forest and alias/effect facts. Every containing loop must have one
@@ -1510,6 +1521,30 @@ The backend contract and wrapping/poison boundary are documented under
 [LLVM scalar execution](backend.md#llvm-scalar-execution). Broader benefits must
 be measured per workload; neither mechanism establishes general bounds-check
 elimination, alias freedom, or vectorization by itself.
+
+### Private atomic storage
+
+LLVM O2/O3 can promote integer atomic read-modify-write operations on completely
+private stack storage before checked-reduction analysis. The pass validates the
+entire alloca use graph before changing any operation: fixed entry storage in
+the ordinary address space, zero-offset views, compatible integer-cell accesses
+and lifetime/debug markers. It admits nonvolatile monotonic add, subtract,
+and/or/xor and exchange. A pointer-consuming call (even `nocapture`), address
+escape, incompatible access, dynamic/nonzero offset, compare-exchange, volatile
+operation or stronger atomic ordering rejects the whole allocation.
+
+LLVM's existing RMW lowering utility preserves returned old values and ordinary
+wrapping arithmetic. SROA then promotes the private cell; this cleanup runs only
+on changed functions. Shared atomics, fences and other allocations retain their
+operations. This does not alter GTI's concurrent execution profile or relax any
+source synchronization promise. The privacy query has a 512-use budget and
+fails closed when exhausted.
+
+`llvm_private_atomics` checks exhaustive small-width values and rejected privacy,
+ordering and storage shapes. `llvm_private_atomic_runtime` explicitly compiles
+the concurrent profile at LLVM O0/O2/O3 and C++ O3, comparing values, wrapping,
+checked failures and cleanup. A private atomic benchmark measures this storage
+optimization; it is not evidence about shared or contended atomics.
 
 ### Bounded relative-index arithmetic
 

@@ -9,14 +9,14 @@ public:
   ~OffsetCleanup() { std::println(this.identity); }
 };
 
-uint8_t select_byte(uint8_t low, uint8_t high, int mode) {
+uint64_t select_word(uint64_t low, uint64_t high, int mode) {
   OffsetCleanup cleanup{22};
   std::println(7);
-  uint8_t distance = high - low;
-  mut uint8_t offset = distance / uint8_t(2);
-  if (mode == 1) offset = (distance / uint8_t(8)) * uint8_t(2);
-  if (mode == 2) offset = distance / uint8_t(2) + distance / uint8_t(8);
-  if (mode == 3) offset = distance + distance / uint8_t(2);
+  uint64_t distance = high - low;
+  mut uint64_t offset = distance / uint64_t(2);
+  if (mode == 1) offset = (distance / uint64_t(8)) * uint64_t(2);
+  if (mode == 2) offset = distance / uint64_t(2) + distance / uint64_t(8);
+  if (mode == 3) offset = distance + distance / uint64_t(2);
   std::println(8);
   return low + offset;
 }
@@ -39,7 +39,8 @@ int main(int argc, std::vector<std::string> argv) {
   if (mode == 4) {
     std::println(select_wide(std::MAX_UINT64 - low, std::MAX_UINT64 - high));
   } else {
-    std::println(int(select_byte(uint8_t(low), uint8_t(high), mode)));
+    uint64_t unit = std::MAX_UINT64 / uint64_t(255);
+    std::println(select_word(low * unit, high * unit, mode));
   }
   return 0;
 }

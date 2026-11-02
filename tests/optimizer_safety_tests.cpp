@@ -1272,6 +1272,87 @@ int32_t main() {
   }
 }
 
+void testDivisionAndComposedEnvelopes() {
+  const auto frontend = lang::Frontend().analyze("division-envelopes.gti", R"(
+uint64_t normalized(uint64_t input) {
+  return input / uint64_t(4) + uint64_t(13835058055282163712);
+}
+int32_t negative_divisor(int32_t input) {
+  return input / int32_t(-2) + int32_t(1073741823);
+}
+uint64_t too_large(uint64_t input) {
+  return input / uint64_t(2) + uint64_t(9223372036854775809);
+}
+int32_t signed_edge(int32_t input) { return input / int32_t(-1) + 1; }
+uint64_t intermediate_overflow(uint64_t input) {
+  return (input + input) / uint64_t(2);
+}
+uint64_t unknown_divisor(uint64_t input, uint64_t divisor) {
+  return input / divisor + uint64_t(1);
+}
+uint64_t average(uint64_t seed, mut uint64_t rounds) {
+  mut uint64_t first[3] = {seed % uint64_t(251), seed % uint64_t(127),
+                           seed % uint64_t(17)};
+  mut uint64_t second[3] = {};
+  while (rounds > uint64_t(0)) {
+    second[0] = (first[0] + first[1] + first[2]) / uint64_t(3);
+    first[0] = second[0];
+    rounds--;
+  }
+  return first[0] + uint64_t(18446744073709551365);
+}
+uint64_t growing(mut uint64_t rounds) {
+  mut uint64_t values[1] = {uint64_t(1)};
+  while (rounds > uint64_t(0)) {
+    values[0] = values[0] + values[0];
+    rounds--;
+  }
+  return values[0];
+}
+int32_t descending(uint64_t seed, mut uint64_t rounds) {
+  int32_t step = int32_t(seed % uint64_t(5)) + 1;
+  mut int32_t values[1] = {-1};
+  while (rounds > uint64_t(0)) {
+    values[0] = values[0] - step;
+    rounds--;
+  }
+  return values[0];
+}
+)");
+  expect(frontend.canGenerateCode(), "division envelope fixture lowers");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  for (const auto level :
+       {lang::OptimizationLevel::O2, lang::OptimizationLevel::O3}) {
+    const auto optimized = lang::OptimizationPipeline().run(
+        {.hir = frontend.hir, .mir = frontend.mir, .level = level});
+    expect(optimized.valid(), "division envelopes retain replayable proofs");
+    const auto additions = [&](std::string_view name) {
+      return functionOperationDischarges(
+          frontend, optimized, name,
+          lang::MirSafetyCheckFamily::ArithmeticOverflow,
+          lang::MirOperation::Add);
+    };
+    expect(additions("normalized") == 1 && additions("negative_divisor") == 1,
+           "constant division transports unsigned and reversed signed ranges");
+    expect(additions("average") == 3,
+           "composed stable envelopes survive averaging through array loops");
+    for (const auto name : {"too_large", "signed_edge", "unknown_divisor",
+                            "growing", "intermediate_overflow"})
+      expect(additions(name) == 0,
+             std::string(name) + " retains a potentially overflowing addition");
+    expect(
+        functionOperationDischarges(
+            frontend, optimized, "descending",
+            lang::MirSafetyCheckFamily::ArithmeticOverflow,
+            lang::MirOperation::Subtract) == 0,
+        "an expanding lower envelope must retain signed subtraction failure");
+  }
+}
+
 void testRelationalEdgeArguments() {
   using namespace lang;
   // Analysis-only scheduling probes use the frontend's actual intrinsic and
@@ -2807,6 +2888,7 @@ int main() {
   testSourcePrefixBoundsRelation();
   testRelationalBoundsDischarge();
   testRelationalEdgeArguments();
+  testDivisionAndComposedEnvelopes();
   testClosedIndexedElementEnvelope();
   testClosedIndexedRecordFieldEnvelope();
   testGuardedClosedCallContextWidening();

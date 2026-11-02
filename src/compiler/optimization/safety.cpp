@@ -699,6 +699,15 @@ binaryFact(CheckedIntegerOperation operation, const IntegerFact &left,
     return remainderFact(left, right);
   case CheckedIntegerOperation::BitwiseAnd:
     return bitwiseAndFact(left, right);
+  case CheckedIntegerOperation::Divide:
+    // Division by one exact nonzero value is monotone (possibly reversed),
+    // including GTI's truncation toward zero. Evaluate both endpoints with
+    // the canonical fixed-width rules; signed-minimum / -1 fails closed.
+    if (right.lower != right.upper || right.lower.magnitude == 0)
+      return std::nullopt;
+    safe =
+        evaluate(left.lower, right.lower) && evaluate(left.upper, right.lower);
+    break;
   case CheckedIntegerOperation::Add:
     safe =
         evaluate(left.lower, right.lower) && evaluate(left.upper, right.upper);
@@ -755,13 +764,17 @@ binaryFact(CheckedIntegerOperation operation, const IntegerFact &left,
   bool stable = true;
   switch (operation) {
   case CheckedIntegerOperation::Add:
-    stable = (left.lower == left.upper || right.lower == right.upper) &&
-             evaluateEnvelope(leftBounds->first, rightBounds->first) &&
+    stable = evaluateEnvelope(leftBounds->first, rightBounds->first) &&
              evaluateEnvelope(leftBounds->second, rightBounds->second);
     break;
   case CheckedIntegerOperation::Subtract:
-    stable = (left.lower == left.upper || right.lower == right.upper) &&
-             evaluateEnvelope(leftBounds->first, rightBounds->second) &&
+    stable = evaluateEnvelope(leftBounds->first, rightBounds->second) &&
+             evaluateEnvelope(leftBounds->second, rightBounds->first);
+    break;
+  case CheckedIntegerOperation::Divide:
+    stable = rightBounds->first == rightBounds->second &&
+             rightBounds->first.magnitude != 0 &&
+             evaluateEnvelope(leftBounds->first, rightBounds->first) &&
              evaluateEnvelope(leftBounds->second, rightBounds->first);
     break;
   case CheckedIntegerOperation::Multiply:

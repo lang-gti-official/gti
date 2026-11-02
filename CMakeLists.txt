@@ -620,6 +620,7 @@ add_library(
   "src/compiler/llvm/checked_reductions.cpp"
   "src/compiler/llvm/checked_ranges.cpp"
   "src/compiler/llvm/checked_offsets.cpp"
+  "src/compiler/llvm/private_atomics.cpp"
   "src/compiler/llvm/debug_info.cpp"
   "src/compiler/llvm/instrumentation.cpp"
   "src/compiler/llvm/layout.cpp"
