@@ -458,11 +458,13 @@ struct ClosedCallSummary {
   // A bounded typed-MIR mutation profile, not a replacement effect summary.
   // All writes to existing nonlocal objects are checked non-byte integers of
   // one width or checked floating scalars. Vacant structural construction is
-  // independent; pointer, aggregate, byte, raw/native and destructive
-  // lifecycle writes reject it.
+  // independent. A separate declaration-bound process-memory profile keeps
+  // its opaque effects and excludes all raw-storage/prefix snapshots. Other
+  // pointer, aggregate, byte, raw/native and destructive writes reject it.
   bool scalarStoresOnly = false;
   std::optional<unsigned> scalarStoreWidth;
   bool floatingScalarStores = false;
+  bool processMemoryEffects = false;
   std::map<InputAddress, ConstructedScalar> constructedParameters;
   ObservedFact<ObjectFact> receiver;
   EntryRelativeFields receiverUpdates;
@@ -3861,6 +3863,44 @@ struct DisjointScalarFields {
   ConstructedScalars pointees;
 };
 
+// Only declaration-bound process adapters have this contract. Their ordering,
+// allocation and failure effects are unchanged; this profile describes writes
+// to already-live non-byte scalar objects, not arbitrary storage bytes.
+[[nodiscard]] std::optional<unsigned>
+processScalarWriteWidth(const MirProgram *program,
+                        const MirInstruction &instruction) {
+  if (!program || instruction.kind != MirInstructionKind::Call ||
+      instruction.dispatch != CallDispatch::Static || instruction.receiver ||
+      instruction.nativeCallbackAdapter || instruction.threadTaskAdapter ||
+      instruction.lambdaTarget || !instruction.functionTarget ||
+      instruction.intrinsic != IntrinsicKind::None)
+    return std::nullopt;
+  const auto *target =
+      program->findFunctionInstance(*instruction.functionTarget);
+  if (!target)
+    return std::nullopt;
+  switch (target->processMemoryOperation) {
+  case ProcessMemoryRuntimeOperation::PosixAllocate:
+    return 32; // Only its int32 status pointee is written.
+  case ProcessMemoryRuntimeOperation::NativeSizeMax:
+  case ProcessMemoryRuntimeOperation::AddressIsAligned:
+  case ProcessMemoryRuntimeOperation::PosixPointerSize:
+  case ProcessMemoryRuntimeOperation::PosixOutOfMemoryStatus:
+  case ProcessMemoryRuntimeOperation::PosixInvalidArgumentStatus:
+  case ProcessMemoryRuntimeOperation::PosixMalloc:
+  case ProcessMemoryRuntimeOperation::AlignedAllocate:
+  case ProcessMemoryRuntimeOperation::PosixRelease:
+  case ProcessMemoryRuntimeOperation::AlignedRelease:
+    // Release requires retired storage with no live object. This does not
+    // retain any fact about pointees, initialized prefixes or raw addresses.
+    return 0;
+  case ProcessMemoryRuntimeOperation::None:
+  case ProcessMemoryRuntimeOperation::Count:
+    return std::nullopt;
+  }
+  return std::nullopt;
+}
+
 [[nodiscard]] DisjointScalarFields
 preserveDifferentWidthFields(const MirProgram *program, MirBodyAddress address,
                              const MirBody &body, const AbstractState &state,
@@ -4448,9 +4488,6 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
   }
   const ClosedCallSummary &summary = found->second;
 
-  if (!summary.constructedParameters.empty() || summary.relocatedPrefix ||
-      summary.returnedBorrow) {
-  }
   const MirPlaceId receiverOrigin =
       instruction.receiver
           ? objectOriginForOperand(body, aliases, state, *instruction.receiver)
@@ -4469,17 +4506,19 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
   std::optional<IntegerFact> currentResultField;
   const auto invocation =
       exactMirInvocationSummary(closedCalls->program, body, instruction);
-  const auto untouchedFields =
+  auto untouchedFields =
       summary.scalarStoresOnly && invocation &&
               !invocation->traits.maySynchronize
           ? preserveDifferentWidthFields(&closedCalls->program, address, body,
                                          state, summary.scalarStoreWidth)
           : DisjointScalarFields{};
+  if (summary.processMemoryEffects)
+    untouchedFields.pointees.clear();
   // A store profile without a store width admits only callee-frame writes:
   // independent locals, local transfers/drops and equally closed callees.
-  const bool frameLocalWrites = summary.scalarStoresOnly &&
-                                !summary.scalarStoreWidth &&
-                                !summary.floatingScalarStores;
+  const bool frameLocalWrites =
+      summary.scalarStoresOnly && !summary.processMemoryEffects &&
+      !summary.scalarStoreWidth && !summary.floatingScalarStores;
   const bool pointerRelayOnly =
       (summary.returnedPointer || summary.returnedBorrow) &&
       !summary.hasOpaqueEffects && !summary.mayWriteGlobals && invocation &&
@@ -4508,7 +4547,7 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
     FieldOrigin destinationPointer;
     ScalarAddress pointer;
     IntegerFact count;
-    IntegerFact values;
+    std::optional<IntegerFact> values;
   };
   std::optional<RelocatedPublication> relocated;
   if (summary.relocatedPrefix && summary.relocatedPrefix->destinationEnd) {
@@ -4555,13 +4594,18 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
             empty != destination->integers.end() && singleton(empty->second) &&
             !empty->second.lower.negative &&
             empty->second.lower.magnitude == 0 &&
-            values != source->prefixes.end() &&
-            values->second.domain == transfer.domain &&
             !count->second.lower.negative && count->second.domain.width == 64 &&
             !count->second.domain.signedValue)
-          relocated = RelocatedPublication{*sourceEnd,          *destinationEnd,
-                                           *destinationPointer, *pointer,
-                                           count->second,       values->second};
+          relocated = RelocatedPublication{*sourceEnd,
+                                           *destinationEnd,
+                                           *destinationPointer,
+                                           *pointer,
+                                           count->second,
+                                           values != source->prefixes.end() &&
+                                                   values->second.domain ==
+                                                       transfer.domain
+                                               ? std::optional{values->second}
+                                               : std::nullopt};
       }
     }
   }
@@ -4632,8 +4676,8 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
         destination.elementOffset == 0 && destination.index &&
         !destination.index->parameter && !destination.index->offset.negative &&
         destination.index->offset.magnitude == 0 && summary.scalarStoresOnly &&
-        !summary.mayWriteGlobals && invocation &&
-        !invocation->traits.maySynchronize &&
+        !summary.processMemoryEffects && !summary.mayWriteGlobals &&
+        invocation && !invocation->traits.maySynchronize &&
         summary.liveMemoryBarrier != LiveMemoryBarrier::Unknown &&
         value.domain.width > 8 &&
         (!summary.scalarStoreWidth ||
@@ -4982,15 +5026,15 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
     // establish this destination only. The call's ordinary barrier already
     // retired source/alias snapshots; do not restore general memory purity.
     auto count = rebased(relocated->count, block.id, instruction.id);
-    auto values = rebased(relocated->values, block.id, instruction.id);
     auto &destination = state.objects[relocated->destinationEnd.root];
     destination.integers.insert_or_assign(relocated->destinationEnd.path,
                                           count);
-    destination.prefixes.insert_or_assign(
-        PrefixField{relocated->destinationPointer.path,
-                    relocated->destinationEnd.path,
-                    {}},
-        values);
+    if (relocated->values)
+      destination.prefixes.insert_or_assign(
+          PrefixField{relocated->destinationPointer.path,
+                      relocated->destinationEnd.path,
+                      {}},
+          rebased(*relocated->values, block.id, instruction.id));
     state.fieldAddresses.insert_or_assign(relocated->destinationPointer,
                                           relocated->pointer);
     auto zero = count;
@@ -5946,6 +5990,15 @@ void applyInstructionCore(
     state.aggregateOrigins.erase(*instruction.result);
     return;
   }
+  if (const auto width = processScalarWriteWidth(program, instruction)) {
+    auto saved = preserveDifferentWidthFields(program, address, body, state,
+                                              *width ? width : std::nullopt);
+    saved.pointees.clear();
+    unknownEffectBarrier();
+    restoreDifferentWidthFields(state, saved);
+    return;
+  }
+
   if (instruction.unsafeOperation == UnsafeOperationKind::DeclaredUnsafeCall &&
       !instruction.rawMemoryAccess &&
       applyClosedCall(body, aliases, block, instruction, state, closedCalls,
@@ -6030,6 +6083,7 @@ void applyInstructionCore(
       (isMirStructuralValueTransfer(*program, instruction) || metadataMove)) {
     const auto &source = instruction.operands.front();
     auto object = objectForOperand(body, aliases, state, source);
+
     if (object) {
       object->scalarPointees.clear();
       object->prefixes.clear();
@@ -6375,6 +6429,7 @@ void applyInstructionCore(
         physicalDestination->projections.empty() &&
         (constantIntegerDomain(physicalDestination->type) ||
          physicalDestination->type == SemanticType::Bool ||
+         physicalDestination->type.kind == SemanticType::RawPointer ||
          floatingScalar(physicalDestination->type)) &&
         !physicalDestination->traits.containsBorrowedState &&
         instruction.lifecycle.empty() && !instruction.rawMemoryAccess &&
@@ -9033,6 +9088,7 @@ struct ContextualBodyResult {
 
 struct ScalarStoreProfile {
   bool supported = false;
+  bool processMemoryEffects = false;
   std::optional<unsigned> width;
   bool floating = false;
 };
@@ -9393,6 +9449,7 @@ scalarStoreProfile(const MirProgram &program, MirBodyAddress address,
         (callee->second.scalarStoreWidth &&
          !addWidth(*callee->second.scalarStoreWidth)))
       return false;
+    result.processMemoryEffects |= callee->second.processMemoryEffects;
     result.floating = result.floating || callee->second.floatingScalarStores;
     return true;
   };
@@ -9483,6 +9540,12 @@ scalarStoreProfile(const MirProgram &program, MirBodyAddress address,
           continue;
       }
       const auto effect = effects(program, instruction);
+      if (const auto width = processScalarWriteWidth(&program, instruction)) {
+        if (*width && !addWidth(*width))
+          return {};
+        result.processMemoryEffects = true;
+        continue;
+      }
       if (instruction.kind == MirInstructionKind::Call &&
           instruction.intrinsic == IntrinsicKind::None) {
         const auto target = closedCallTarget(program, instruction);
@@ -9495,6 +9558,7 @@ scalarStoreProfile(const MirProgram &program, MirBodyAddress address,
             (callee->second.scalarStoreWidth &&
              !addWidth(*callee->second.scalarStoreWidth)))
           return {};
+        result.processMemoryEffects |= callee->second.processMemoryEffects;
         result.floating =
             result.floating || callee->second.floatingScalarStores;
         continue;
@@ -9703,6 +9767,7 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
       program, address, *body, aliases, incoming, round);
   const auto scalarStores = scalarStoreProfile(program, address, *body, round);
   result.summary.scalarStoresOnly = scalarStores.supported;
+  result.summary.processMemoryEffects = scalarStores.processMemoryEffects;
   result.summary.scalarStoreWidth = scalarStores.width;
   result.summary.floatingScalarStores = scalarStores.floating;
   result.summary.hasOpaqueEffects =

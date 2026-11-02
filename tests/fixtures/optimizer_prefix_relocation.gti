@@ -112,6 +112,7 @@ public:
     destination.live = this.live;
     this.live = uint64_t(0);
   }
+  uint64_t size() { return this.live; }
   void send_zero(mut CellView& destination) mut {
     unsafe { std::relocate_range_at(destination.pointer, this.pointer, uint64_t(0)); }
   }
@@ -135,6 +136,16 @@ public:
     if (this.live != uint64_t(0)) { unsafe { std::destroy_at(this.pointer); } }
   }
 };
+
+uint64_t empty_endpoint_positive() {
+  Audit audit{};
+  mut std::uninitialized<int32_t> first{};
+  mut std::uninitialized<int32_t> second{};
+  mut CellView source{first.data()};
+  mut CellView destination{second.data()};
+  source.send(destination);
+  return destination.size() * uint64_t(2);
+}
 
 int32_t view_positive() {
   Audit audit{};
@@ -249,6 +260,7 @@ int32_t metadata_move_captured() {
 }
 
 int main(int argc, std::vector<std::string> argv) {
+  if (argc == 15) { return empty_endpoint_positive() == uint64_t(0) ? 0 : 1; }
   if (argc == 12) { return metadata_move_positive() == int32_t(18) ? 0 : 1; }
   if (argc == 13) { return metadata_move_cleanup_failure(); }
   if (argc == 14) { return metadata_move_captured() == int32_t(18) ? 0 : 1; }

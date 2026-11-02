@@ -1275,7 +1275,7 @@ followed by source endpoint retirement to zero, on every successful path.
 Other writes, arbitrary count expressions, multiple/looped transfers,
 user-defined or aggregate movement and unsupported effects reject this
 summary. At the caller, publication additionally requires existing complete
-source-prefix coverage, an empty destination, exact matching integer domains
+source-prefix coverage for element values, an empty destination, exact matching integer domains
 and independently nonaliasing carrier roots for the endpoint metadata. That
 last condition does **not** prove separation of the pointed-to regions:
 nonoverlap and live-source/vacant-destination requirements are the existing
@@ -1284,7 +1284,9 @@ checks the typed bitwise operation, while the caller remains responsible for
 these address/lifetime obligations. Defined guarded-overlap failure and
 subsequent pointer replacement are explicit controls. Ordinary call invalidation still
 retires source and alias snapshots; only the proved destination prefix and
-endpoint are republished. Capacity is never initialization evidence.
+endpoint are republished. Capacity is never initialization evidence. Endpoint metadata is
+independent of element-value coverage: an empty source can publish its exact
+zero endpoint and retire the source without manufacturing an element envelope.
 
 The focused `optimizer_prefix_relocation` and
 `optimizer_prefix_relocation_runtime` controls use an application-owned
@@ -1302,6 +1304,18 @@ from writes through those values. Initializing an independent compiler scalar
 or boolean temporary preserves existing prefix facts, so conditional-expression
 staging does not erase them. Neither rule permits a nonlocal pointer write or
 an unknown effect to retain a prefix.
+
+Declaration-bound process-memory calls retain only live non-byte scalar fields
+and places across their ordinary opaque effect barrier. Allocation and queries
+write no existing live scalar; release requires retired storage without live
+objects; POSIX aligned allocation may overwrite its `int32_t` status argument,
+so same-width scalar facts are discarded. Raw pointee, prefix and address
+snapshots are never restored by this profile. Its marker propagates through
+supported source wrappers and excludes them from frame-local and append-prefix
+proofs. Ordinary foreign/custom allocator calls gain no such contract from a
+symbol name. Allocation, failure, ordering and general invalidation remain
+unchanged. Focused controls cover allocation/release, a foreign allocator and
+a status pointer overlapping a tracked field.
 
 General ownership-shell move/replacement continues to retire prefix snapshots;
 this summary alone does not establish vector-growth optimization or a runtime
