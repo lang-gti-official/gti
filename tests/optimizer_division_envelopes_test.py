@@ -50,7 +50,9 @@ def main():
         for backend, level in modes:
             binary = Path(directory) / (backend + level)
             command = [str(compiler), str(source), "--backend", backend,
-                       "--std", "c++23", level, "-o", str(binary)]
+                       level, "-o", str(binary)]
+            if backend == "cpp":
+                command += ["--std", "c++23"]
             built = subprocess.run(command, capture_output=True, text=True, timeout=180)
             assert built.returncode == 0, (command, built.stdout, built.stderr)
             for case in cases:

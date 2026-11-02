@@ -2080,6 +2080,7 @@ computeIntegerFact(const MirBody &body, const AbstractState &state,
   case MirOperation::Add:
   case MirOperation::Subtract:
   case MirOperation::Multiply:
+  case MirOperation::Divide:
   case MirOperation::Remainder:
   case MirOperation::BitwiseAnd: {
     if (instruction.operands.size() != 2) {
@@ -2100,6 +2101,9 @@ computeIntegerFact(const MirBody &body, const AbstractState &state,
       break;
     case MirOperation::Multiply:
       operation = CheckedIntegerOperation::Multiply;
+      break;
+    case MirOperation::Divide:
+      operation = CheckedIntegerOperation::Divide;
       break;
     case MirOperation::Remainder:
       operation = CheckedIntegerOperation::Remainder;
@@ -2904,6 +2908,8 @@ compoundCheckedOperation(MirOperation operation) {
     return CheckedIntegerOperation::Subtract;
   case MirOperation::MultiplyAssign:
     return CheckedIntegerOperation::Multiply;
+  case MirOperation::DivideAssign:
+    return CheckedIntegerOperation::Divide;
   case MirOperation::RemainderAssign:
     return CheckedIntegerOperation::Remainder;
   case MirOperation::BitwiseAndAssign:

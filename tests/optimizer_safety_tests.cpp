@@ -103,11 +103,11 @@ std::size_t functionDischarges(const lang::FrontendResult &frontend,
   return count;
 }
 
-std::size_t functionOperationDischarges(const lang::FrontendResult &frontend,
-                                        const lang::OptimizedProgram &optimized,
-                                        std::string_view name,
-                                        lang::MirSafetyCheckFamily family,
-                                        lang::MirOperation operation) {
+std::size_t functionOperationDischarges(
+    const lang::FrontendResult &frontend,
+    const lang::OptimizedProgram &optimized, std::string_view name,
+    lang::MirSafetyCheckFamily family, lang::MirOperation operation,
+    std::optional<lang::SemanticType> type = std::nullopt) {
   const lang::HirFunctionInstance *hir = findFunction(frontend, name);
   const lang::MirFunctionInstance *function =
       hir == nullptr ? nullptr : optimized.mir.findFunctionInstance(hir->id);
@@ -117,7 +117,8 @@ std::size_t functionOperationDischarges(const lang::FrontendResult &frontend,
   std::size_t count = 0;
   for (const lang::MirBlock &block : function->body.blocks) {
     for (const lang::MirInstruction &instruction : block.instructions) {
-      if (instruction.operation != operation) {
+      if (instruction.operation != operation ||
+          (type && instruction.info.type != *type)) {
         continue;
       }
       count += static_cast<std::size_t>(
@@ -1277,6 +1278,10 @@ void testDivisionAndComposedEnvelopes() {
 uint64_t normalized(uint64_t input) {
   return input / uint64_t(4) + uint64_t(13835058055282163712);
 }
+uint64_t normalized_assign(mut uint64_t input) {
+  input /= uint64_t(4);
+  return input + uint64_t(13835058055282163712);
+}
 int32_t negative_divisor(int32_t input) {
   return input / int32_t(-2) + int32_t(1073741823);
 }
@@ -1336,10 +1341,15 @@ int32_t descending(uint64_t seed, mut uint64_t rounds) {
           lang::MirSafetyCheckFamily::ArithmeticOverflow,
           lang::MirOperation::Add);
     };
-    expect(additions("normalized") == 1 && additions("negative_divisor") == 1,
-           "constant division transports unsigned and reversed signed ranges");
+    expect(
+        additions("normalized") == 1 && additions("normalized_assign") == 1 &&
+            additions("negative_divisor") == 1,
+        "constant division transports unsigned and reversed signed ranges (" +
+            std::to_string(additions("normalized")) + ", " +
+            std::to_string(additions("negative_divisor")) + ")");
     expect(additions("average") == 3,
-           "composed stable envelopes survive averaging through array loops");
+           "composed stable envelopes survive averaging through array loops (" +
+               std::to_string(additions("average")) + ")");
     for (const auto name : {"too_large", "signed_edge", "unknown_divisor",
                             "growing", "intermediate_overflow"})
       expect(additions(name) == 0,
@@ -1348,7 +1358,7 @@ int32_t descending(uint64_t seed, mut uint64_t rounds) {
         functionOperationDischarges(
             frontend, optimized, "descending",
             lang::MirSafetyCheckFamily::ArithmeticOverflow,
-            lang::MirOperation::Subtract) == 0,
+            lang::MirOperation::Subtract, lang::SemanticType::Int32) == 0,
         "an expanding lower envelope must retain signed subtraction failure");
   }
 }

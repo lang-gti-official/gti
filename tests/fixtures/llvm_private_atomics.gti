@@ -37,13 +37,13 @@ int main(int argc, std::vector<std::string> argv) {
   uint64_t delta = uint64_t(argv[std::size_t(3)].size());
   int count = int(argv[std::size_t(4)].size());
   AtomicCleanup outer{11};
-  if (mode == 0) std::println(update_private<uint64_t(0)>(initial, delta, count));
-  else if (mode == 1) std::println(update_private<uint64_t(1)>(initial, delta, count));
-  else if (mode == 2) std::println(update_private<uint64_t(2)>(initial, delta, count));
-  else if (mode == 3) std::println(update_private<uint64_t(3)>(initial, delta, count));
-  else if (mode == 4) std::println(update_private<uint64_t(4)>(initial, delta, count));
-  else if (mode == 5) std::println(update_private<uint64_t(5)>(initial, delta, count));
-  else if (mode == 6) std::println(update_private<uint64_t(6)>(initial, delta, count));
-  else if (mode == 7) std::println(update_private<uint64_t(7)>(initial, delta, count));
+  if (mode == 0) std::println(update_private<0>(initial, delta, count));
+  else if (mode == 1) std::println(update_private<1>(initial, delta, count));
+  else if (mode == 2) std::println(update_private<2>(initial, delta, count));
+  else if (mode == 3) std::println(update_private<3>(initial, delta, count));
+  else if (mode == 4) std::println(update_private<4>(initial, delta, count));
+  else if (mode == 5) std::println(update_private<5>(initial, delta, count));
+  else if (mode == 6) std::println(update_private<6>(initial, delta, count));
+  else if (mode == 7) std::println(update_private<7>(initial, delta, count));
   return 0;
 }
