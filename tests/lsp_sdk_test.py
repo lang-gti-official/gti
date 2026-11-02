@@ -38,7 +38,9 @@ def main():
         # the installed discovery path as well as the build-tree adapter.
         import shutil
         shutil.copy2(adapter / 'gti_lsp', stage / 'bin/gti_lsp')
-        run(sys.executable, ROOT / 'tests/lsp_smoke_test.py', stage / 'bin/gti_lsp')
+        relocated = work / 'relocated'
+        stage.rename(relocated)
+        run(sys.executable, ROOT / 'tests/lsp_smoke_test.py', relocated / 'bin/gti_lsp')
         print('Installed SDK adapter rebuild and protocol/frontend/project checks passed')
 
 
