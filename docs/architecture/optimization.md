@@ -1447,7 +1447,11 @@ observable, and no memory fact is restored after invalidation.
 
 The first slice admits acyclic ownerless scalar/pointer wrappers with unique
 dominating local definitions, ordinary SSA staging and exact sealed malloc or
-aligned-allocation operations. Typed record/payload fields, receiver publication,
+aligned-allocation operations. Store uniqueness is keyed by binding identity,
+not by a particular MIR place view. A writable binding must denote its own
+ordinary scalar storage; reference parameters, local reference aliases, foreign
+storage and inconsistent typed views are excluded. Typed record/payload fields,
+receiver publication,
 POSIX status-output allocation and loop-carried provenance remain outside this
 slice. An unrelated initialized-prefix owner proves the caller-side benefit;
 this does not yet establish vector reserve or substring performance gains.
@@ -1729,7 +1733,8 @@ application's failure path.
 
 At O2/O3, one late LLVM hot/cold splitting pass separates profitable cold
 regions after ordinary inlining has exposed and simplified their cleanup state.
-If outlining or bounded recursive specialization changes the module, one further standard LLVM module
+If outlining, bounded recursive specialization or inductive pointer folding
+changes the module, one further standard LLVM module
 simplification/optimization round can inline the smaller hot helpers and
 optimize their exposed storage. There is no fixed-point retry or forced
 inlining. The pass uses LLVM's existing cost model and cold evidence; it adds
@@ -1754,6 +1759,25 @@ checked failure paths. O0/O1 retain their previous setting. The pipeline test
 uses sixteen independent byte comparisons without a loop; counted-string
 search executes the vectorized shape against a scalar oracle at window edges,
 unaligned starts, embedded NUL and high byte values.
+
+After the first O2/O3 pipeline, a bounded induction proof can replace a loop's
+pointer PHI with its common entry constant. Assuming that value for one
+iteration, the proof propagates exact scalar/pointer constants and loads from
+immutable globals with definitive initializers. Unknown conditions retain
+every successor. Every feasible backedge must return the original constant;
+otherwise the PHI remains unchanged. The loop body without header backedges
+must be acyclic, with at most 96 blocks and 2,048 instructions; a module admits
+at most 32 proof attempts and 16 successful folds. Nested/irreducible bodies,
+mutable or volatile/atomic loads, unknown entries, poison/undefined constants
+and unresolved values do not establish the proof.
+
+This resolves a circular dataflow limitation where an opaque fallback could
+change a pointer, but the pointer's proved initial value makes that fallback
+unreachable on every iteration. It does not assert vptr immutability, a closed
+set of virtual targets, extra memory effects or branch probabilities. A
+reachable callback or replacement that can change the next pointer rejects
+the fold. The pass only substitutes the proved value; ordinary LLVM passes
+simplify the resulting branches without moving observable effects or cleanup.
 
 After the first O2/O3 pipeline, a private recursive function can receive one
 additional body specialized for its recursive inputs. Every direct self call

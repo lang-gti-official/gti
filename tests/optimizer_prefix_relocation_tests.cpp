@@ -1,4 +1,5 @@
 #include "gti/frontend.h"
+#include "gti/mir_editor.h"
 #include "gti/mir_effects.h"
 #include "gti/optimization/safety.h"
 #include "private_stdlib_fixture.h"
@@ -54,34 +55,33 @@ int main() { mut Shell value{}; value = std::move(value); return 0; }
     std::cerr << "relocation contextual analysis did not converge\n";
     return 1;
   }
-  const auto countDischarges = [&](const auto &frontend, const auto &analysis,
-                                   const std::string &name,
-                                   lang::MirOperation selected =
-                                       lang::MirOperation::Multiply) {
-    std::size_t found = 0;
-    for (const auto &function : frontend.hir.functionInstances()) {
-      if (!function.source || function.source->name().lexeme != name)
-        continue;
-      const auto *body = analysis.find(
-          {.kind = lang::MirBodyKind::Function, .owner = function.id});
-      if (!body)
-        continue;
-      const auto *mir = frontend.mir.findFunctionInstance(function.id);
-      if (!mir)
-        continue;
-      for (const auto &proof : body->safety.proofs) {
-        if (proof.discharge.family !=
-            lang::MirSafetyCheckFamily::ArithmeticOverflow)
-          continue;
-        for (const auto &block : mir->body.blocks)
-          for (const auto &instruction : block.instructions)
-            if (instruction.id == proof.instruction &&
-                instruction.operation == selected)
-              ++found;
-      }
-    }
-    return found;
-  };
+  const auto countDischarges =
+      [&](const auto &frontend, const auto &analysis, const std::string &name,
+          lang::MirOperation selected = lang::MirOperation::Multiply) {
+        std::size_t found = 0;
+        for (const auto &function : frontend.hir.functionInstances()) {
+          if (!function.source || function.source->name().lexeme != name)
+            continue;
+          const auto *body = analysis.find(
+              {.kind = lang::MirBodyKind::Function, .owner = function.id});
+          if (!body)
+            continue;
+          const auto *mir = frontend.mir.findFunctionInstance(function.id);
+          if (!mir)
+            continue;
+          for (const auto &proof : body->safety.proofs) {
+            if (proof.discharge.family !=
+                lang::MirSafetyCheckFamily::ArithmeticOverflow)
+              continue;
+            for (const auto &block : mir->body.blocks)
+              for (const auto &instruction : block.instructions)
+                if (instruction.id == proof.instruction &&
+                    instruction.operation == selected)
+                  ++found;
+          }
+        }
+        return found;
+      };
   std::ifstream equalFile(root / "fixtures/optimizer_equal_scalar_store.gti");
   const std::string equalSource{std::istreambuf_iterator<char>(equalFile), {}};
   const auto equal = gti_test::analyzeTrustedPrivateMemoryFixture(
@@ -117,7 +117,9 @@ int main() { mut Shell value{}; value = std::move(value); return 0; }
   std::ifstream freshFile(root / "fixtures/optimizer_fresh_storage.gti");
   const std::string freshSource{std::istreambuf_iterator<char>(freshFile), {}};
   const auto freshControl = [&](std::string name, std::string declarations,
-                                std::string scratch, bool shouldProve) {
+                                std::string scratch, bool shouldProve,
+                                bool duplicatePlace = false,
+                                bool referenceWrite = false) {
     auto source = freshSource.substr(0, freshSource.find("int main"));
     source.insert(0, "import \"../std/detail/memory_capabilities.gti\"; " +
                          declarations);
@@ -125,12 +127,48 @@ int main() { mut Shell value{}; value = std::move(value); return 0; }
     const auto last = source.find("  // scratch-end");
     source.replace(first, last - first, std::move(scratch));
     source += "int main() { return fresh_probe(int32_t(9)); }";
-    const auto fixture =
-        gti_test::analyzeTrustedPrivateMemoryFixture(name, source);
+    if (referenceWrite) {
+      const auto method = source.find("  int32_t& borrow()");
+      source.insert(method, "  mut int32_t& edit() mut { return "
+                            "this.slots.read_mut(uint64_t(0)); }\n");
+      const auto call = source.find("  fresh_scratch();");
+      source.replace(call, std::string("  fresh_scratch();").size(),
+                     "  write_reference(parcel.edit());");
+    }
+    auto fixture = gti_test::analyzeTrustedPrivateMemoryFixture(name, source);
     if (!fixture.canGenerateCode()) {
       for (const auto &d : fixture.diagnostics)
         std::cerr << d.code << ": " << d.message << '\n';
       return false;
+    }
+    if (duplicatePlace) {
+      bool changed = false;
+      for (const auto &function : fixture.hir.functionInstances()) {
+        if (!function.source ||
+            function.source->name().lexeme != "overwrite_pointer")
+          continue;
+        auto *instance = const_cast<lang::MirFunctionInstance *>(
+            fixture.mir.findFunctionInstance(function.id));
+        auto &body = instance->body;
+        for (auto &block : body.blocks)
+          for (auto &instruction : block.instructions)
+            if (instruction.kind == lang::MirInstructionKind::Assign &&
+                instruction.destination) {
+              auto copy = *body.findPlace(*instruction.destination);
+              copy.id = 1;
+              for (const auto &place : body.places)
+                copy.id = std::max(copy.id, place.id + 1);
+              instruction.destination = copy.id;
+              body.places.push_back(copy);
+              changed = true;
+            }
+        if (!lang::rebuildMirValueUses(body))
+          return false;
+      }
+      if (!changed) {
+        std::cerr << "duplicate-place control did not mutate assignment\n";
+        return false;
+      }
     }
     const auto analysis = lang::analyzeMirClosedCallSafetyChecks(fixture.mir);
     const auto count = countDischarges(fixture, analysis, "fresh_probe");
@@ -200,6 +238,26 @@ int main() { mut Shell value{}; value = std::move(value); return 0; }
                     "void* pointer = fresh_pointer(); old_pointer = pointer; "
                     "unsafe { release_pointer(pointer); }\n",
                     false))
+    return 1;
+  const bool duplicateStore =
+      freshControl("duplicated-store-view.gti",
+                   "mut void* old_pointer = nullptr; void "
+                   "overwrite_pointer(void* incoming) { "
+                   "mut void* pointer = fresh_pointer(); pointer = incoming; "
+                   "unsafe { release_pointer(pointer); } }\n",
+                   "overwrite_pointer(old_pointer);\n", false, true);
+  const bool referenceStore = freshControl(
+      "mutable-reference-write.gti",
+      "void write_reference(mut int32_t& value) { void* p = fresh_pointer(); "
+      "value = int32_t(2147483647); unsafe { release_pointer(p); } }\n",
+      "", false, false, true);
+  const bool referenceAliasStore = freshControl(
+      "local-reference-write.gti",
+      "void write_reference(mut int32_t& value) { void* p = fresh_pointer(); "
+      "mut int32_t& alias = value; alias = int32_t(2147483647); "
+      "unsafe { release_pointer(p); } }\n",
+      "", false, false, true);
+  if (!duplicateStore || !referenceStore || !referenceAliasStore)
     return 1;
   const auto discharges = [&](const std::string &name) {
     return countDischarges(frontend, analysis, name);
@@ -592,7 +650,8 @@ int main() {
   mut ScalarBox sixth{}; uint64_t f = constructor_replaces(sixth);
   return 0;
 }
-)"), processOptions);
+)"),
+      processOptions);
   if (!process.canGenerateCode()) {
     for (const auto &diagnostic : process.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
@@ -655,8 +714,10 @@ int main() {
               << " status=" << processProofs("status_overlap") << '\n';
     return 1;
   }
-  std::ifstream concurrentFile(root / "fixtures/optimizer_prefix_receiver_concurrent.gti");
-  std::string concurrentSource{std::istreambuf_iterator<char>(concurrentFile), {}};
+  std::ifstream concurrentFile(
+      root / "fixtures/optimizer_prefix_receiver_concurrent.gti");
+  std::string concurrentSource{std::istreambuf_iterator<char>(concurrentFile),
+                               {}};
   std::ifstream queryFile(root / "fixtures/optimizer_prefix_query_probe.gti");
   std::string querySource{std::istreambuf_iterator<char>(queryFile), {}};
   const auto replaceText = [](std::string &text, const std::string &from,
@@ -669,20 +730,23 @@ int main() {
   };
   if (!replaceText(concurrentSource, "import std.prefix_query_probe;", "") ||
       !replaceText(querySource, "export module prefix_query_probe;", "") ||
-      !replaceText(querySource, "export int repeated_alignment", "int repeated_alignment") ||
+      !replaceText(querySource, "export int repeated_alignment",
+                   "int repeated_alignment") ||
       !replaceText(querySource, "\"detail/memory_capabilities.gti\"",
                    "\"../std/detail/memory_capabilities.gti\"")) {
     std::cerr << "repeated-observation fixture assembly changed\n";
     return 1;
   }
   const auto repeated = gti_test::analyzeTrustedPrivateMemoryFixture(
-      "repeated-observations.gti", querySource + concurrentSource, processOptions);
+      "repeated-observations.gti", querySource + concurrentSource,
+      processOptions);
   if (!repeated.canGenerateCode()) {
     for (const auto &diagnostic : repeated.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
     return 1;
   }
-  const auto repeatedAnalysis = lang::analyzeMirClosedCallSafetyChecks(repeated.mir);
+  const auto repeatedAnalysis =
+      lang::analyzeMirClosedCallSafetyChecks(repeated.mir);
   if (countDischarges(repeated, repeatedAnalysis,
                       "synchronized_receiver_postcondition") != 0) {
     std::cerr << "synchronizing receiver call synthesized an unproved "
@@ -701,20 +765,24 @@ int main() {
         atomicLoad |= instruction.synchronization.kind ==
                       lang::SynchronizationOperationKind::AtomicLoad;
         if (instruction.functionTarget)
-          if (const auto *target = repeated.mir.findFunctionInstance(*instruction.functionTarget))
-            alignmentQuery |= target->processMemoryOperation ==
-                              lang::ProcessMemoryRuntimeOperation::AddressIsAligned;
+          if (const auto *target = repeated.mir.findFunctionInstance(
+                  *instruction.functionTarget))
+            alignmentQuery |=
+                target->processMemoryOperation ==
+                lang::ProcessMemoryRuntimeOperation::AddressIsAligned;
         if (!function.source ||
             (function.source->name().lexeme != "repeated_atomic" &&
              function.source->name().lexeme != "repeated_alignment") ||
             instruction.operation != lang::MirOperation::Add)
           continue;
-        const auto isMaximum = [&](const auto &self, const lang::MirOperand &operand,
-                                    unsigned remaining) -> bool {
+        const auto isMaximum = [&](const auto &self,
+                                   const lang::MirOperand &operand,
+                                   unsigned remaining) -> bool {
           if (!remaining)
             return false;
           if (operand.literal)
-            if (const auto *value = std::get_if<std::uint64_t>(&*operand.literal))
+            if (const auto *value =
+                    std::get_if<std::uint64_t>(&*operand.literal))
               return *value == 2147483647;
           if (operand.kind != lang::MirOperandKind::Value)
             return false;
@@ -722,13 +790,16 @@ int main() {
             for (const auto &definition : defBlock.instructions)
               if (definition.result == operand.value) {
                 if (definition.literal)
-                  if (const auto *value = std::get_if<std::uint64_t>(&*definition.literal))
+                  if (const auto *value =
+                          std::get_if<std::uint64_t>(&*definition.literal))
                     return *value == 2147483647;
                 if (definition.operands.size() == 1 &&
                     (definition.operation == lang::MirOperation::Convert ||
                      definition.operation == lang::MirOperation::Identity ||
-                     definition.intrinsic == lang::IntrinsicKind::NumericAliasConversion ||
-                     definition.intrinsic == lang::IntrinsicKind::NumericTypeParameterConversion))
+                     definition.intrinsic ==
+                         lang::IntrinsicKind::NumericAliasConversion ||
+                     definition.intrinsic ==
+                         lang::IntrinsicKind::NumericTypeParameterConversion))
                   return self(self, definition.operands.front(), remaining - 1);
               }
           return false;
@@ -740,8 +811,10 @@ int main() {
         if (const auto *summary = repeatedAnalysis.find(
                 {.kind = lang::MirBodyKind::Function, .owner = function.id}))
           for (const auto &proof : summary->safety.proofs)
-            dischargedAdds += proof.instruction == instruction.id &&
-                              proof.discharge.family == lang::MirSafetyCheckFamily::ArithmeticOverflow;
+            dischargedAdds +=
+                proof.instruction == instruction.id &&
+                proof.discharge.family ==
+                    lang::MirSafetyCheckFamily::ArithmeticOverflow;
       }
   }
   if (!repeatedAnalysis.converged || checkedAdds != 2 || dischargedAdds ||

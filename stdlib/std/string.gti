@@ -694,7 +694,16 @@ namespace std {
             matched |= this.data.read_unchecked(selected) == needle ? uint8_t(1) : uint8_t(0);
           }
         }
-        if (matched != uint8_t(0)) { break; }
+        if (matched != uint8_t(0)) {
+          // The first match is inside this complete window. Keep its rescan
+          // bounded as well, without a dynamic string-length check per byte.
+          unsafe {
+            for (mut size_t lane = size_t(0); lane < size_t(16); lane++) {
+              size_t selected = gti_internal::integer_wrapping_add(index, lane);
+              if (this.data.read_unchecked(selected) == needle) { return selected; }
+            }
+          }
+        }
         // The full-window guard proves this addition remains <= length.
         index = gti_internal::integer_wrapping_add(index, size_t(16));
       }

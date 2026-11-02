@@ -9556,16 +9556,44 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
   using Origin =
       std::pair<bool, std::uint64_t>; // incoming parameter / local call
   using Origins = std::set<Origin>;
-  std::map<MirPlaceId, InstructionSite> stores;
-  std::set<MirPlaceId> multipleStores;
+  // Place IDs are views, not storage identities. All ordinary views of one
+  // local binding participate in the same store inventory.
+  std::map<HirBindingId, InstructionSite> stores;
+  std::set<HirBindingId> multipleStores;
+  const auto ownedBinding = [&](const MirPlace &place) {
+    if (place.root != MirPlaceRootKind::Binding || !place.binding ||
+        !place.projections.empty() || place.foreignStorage ||
+        place.traits.containsBorrowedState)
+      return false;
+    const auto *root = body.findPlace(rootForBinding(body, place.binding));
+    if (!root || !root->projections.empty() || root->foreignStorage ||
+        root->type != place.type || root->type.kind == SemanticType::Reference)
+      return false;
+    for (const auto &view : body.places)
+      if (view.root == MirPlaceRootKind::Binding &&
+          view.binding == place.binding && view.projections.empty() &&
+          (view.type != place.type || view.foreignStorage ||
+           view.traits.containsBorrowedState))
+        return false;
+    for (std::size_t index = 0; index < function->parameterBindings.size();
+         ++index)
+      if (function->parameterBindings[index] == place.binding &&
+          function->parameterTypes[index] != place.type)
+        return false;
+    return true;
+  };
   for (const auto &block : body.blocks)
     if (dominance->isReachable(block.id))
       for (const auto &instruction : block.instructions)
         if (!instruction.tombstone && instruction.destination) {
-          const auto place = *instruction.destination;
-          if (!stores.emplace(place, InstructionSite{&block, &instruction})
+          const auto *place = body.findPlace(*instruction.destination);
+          if (place && place->root == MirPlaceRootKind::Binding &&
+              place->binding &&
+              !stores
+                   .emplace(place->binding,
+                            InstructionSite{&block, &instruction})
                    .second)
-            multipleStores.insert(place);
+            multipleStores.insert(place->binding);
         }
   const auto sourceProfile =
       [&](const MirInstruction &instruction) -> const FreshStorageProfile * {
@@ -9652,11 +9680,10 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
       return std::nullopt;
     }
     const auto *place = body.findPlace(operand.place);
-    if (!place || place->root != MirPlaceRootKind::Binding ||
-        !place->projections.empty() || place->traits.containsBorrowedState ||
-        multipleStores.contains(place->id))
+    if (!place || !ownedBinding(*place) ||
+        multipleStores.contains(place->binding))
       return std::nullopt;
-    if (const auto store = stores.find(place->id); store != stores.end()) {
+    if (const auto store = stores.find(place->binding); store != stores.end()) {
       if (!precedes(store->second, use) ||
           store->second.instruction->operands.size() != 1)
         return std::nullopt;
@@ -9730,9 +9757,7 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
         return {};
       if (instruction.destination) {
         const auto *place = body.findPlace(*instruction.destination);
-        if (!place || place->root != MirPlaceRootKind::Binding ||
-            !place->projections.empty() ||
-            place->traits.containsBorrowedState ||
+        if (!place || !ownedBinding(*place) ||
             !isMirScalarValueType(&program, place->type))
           return {};
       } else if (effect.writesPlace)

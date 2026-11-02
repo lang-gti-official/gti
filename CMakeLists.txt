@@ -617,6 +617,7 @@ add_library(
   "src/compiler/llvm/admission.cpp"
   "src/compiler/llvm/coverage.cpp"
   "src/compiler/llvm/session.cpp"
+  "src/compiler/llvm/loop_invariants.cpp"
   "src/compiler/llvm/checked_reductions.cpp"
   "src/compiler/llvm/checked_ranges.cpp"
   "src/compiler/llvm/checked_offsets.cpp"
