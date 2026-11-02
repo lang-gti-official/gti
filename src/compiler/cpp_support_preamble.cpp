@@ -1560,6 +1560,43 @@ inline void mir_missing_drop_v1() noexcept {
 template <typename T>
 [[nodiscard]] inline T mir_empty_state_v1() noexcept;
 
+// A constructor can publish an owning reference-bearing field only after
+// earlier MIR work succeeds. No T exists while this cell is disengaged.
+// MIR still owns semantic cleanup; this cell retires the remaining native
+// representation, including the inert shell left by rollback cleanup.
+template <typename T>
+class mir_deferred_field {
+  union { unsigned char inactive_ = 0; T value_; };
+  bool engaged_ = false;
+public:
+  mir_deferred_field() noexcept {}
+  explicit mir_deferred_field(T &&value) { emplace(std::move(value)); }
+  mir_deferred_field(const mir_deferred_field &other)
+      requires std::is_copy_constructible_v<T> {
+    if (other.engaged_) emplace(other.value_);
+  }
+  mir_deferred_field(const mir_deferred_field &)
+      requires (!std::is_copy_constructible_v<T>) = delete;
+  mir_deferred_field(mir_deferred_field &&other) noexcept {
+    if (other.engaged_) emplace(std::move(other.value_));
+  }
+  mir_deferred_field &operator=(const mir_deferred_field &) = delete;
+  mir_deferred_field &operator=(mir_deferred_field &&) = delete;
+  ~mir_deferred_field() {
+    if (engaged_ && !mir_cleanup_emergency_abandonment())
+      std::destroy_at(std::addressof(value_));
+  }
+  // Forming an address/reference to this storage does not read a T. MIR
+  // permits its value to be accessed only after the publication below.
+  T &storage() noexcept { return value_; }
+  const T &storage() const noexcept { return value_; }
+  template <typename... Args> void emplace(Args &&...args) {
+    if (engaged_) storage_error("verified MIR deferred field published twice");
+    construct_representation_at(std::addressof(value_), std::forward<Args>(args)...);
+    engaged_ = true;
+  }
+};
+
 template <typename T, bool DestroyRepresentationAtScopeExit = false,
           bool ExternalStorage = false, bool RestoreExternalStorage = false>
 class mir_lifetime_slot {

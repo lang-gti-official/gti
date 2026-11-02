@@ -13464,6 +13464,35 @@ int main() {
   return entry.value - 31;
 }
 )"},
+      {"stored-reference-field-compound.gti", R"(
+class Writer {
+public:
+  mut int& target;
+  Writer(mut int& target) : target(target) {}
+};
+int main() {
+  mut int target = 30;
+  { mut Writer writer{target}; writer.target += 1; }
+  return target - 31;
+}
+)"},
+      {"nested-stored-reference-field-compound.gti", R"(
+class Writer {
+public:
+  mut int& target;
+  Writer(mut int& target) : target(target) {}
+};
+class Outer {
+public:
+  mut Writer writer;
+  Outer(mut int& target) : writer(Writer(target)) {}
+};
+int main() {
+  mut int target = 30;
+  { mut Outer outer{target}; outer.writer.target += 1; }
+  return target - 31;
+}
+)"},
   };
   for (const auto &[name, fixtureSource] : sources) {
     const auto frontend = analyzeWithStandardLibrary(name, fixtureSource);
@@ -13505,6 +13534,12 @@ int main() {
               place->projections.front().kind ==
                   lang::MirProjectionKind::Dereference &&
               place->projections.back().kind == lang::MirProjectionKind::Field;
+          const bool storedReferenceField =
+              place && place->root == lang::MirPlaceRootKind::Binding &&
+              place->projections.size() >= 2 &&
+              place->projections.front().kind == lang::MirProjectionKind::Field &&
+              place->projections.back().kind ==
+                  lang::MirProjectionKind::Dereference;
           const auto *loan =
               place && place->root == lang::MirPlaceRootKind::Loan
                   ? function.body.findLoan(place->loan)
@@ -13513,7 +13548,7 @@ int main() {
               loan && place->projections.empty() &&
               loan->kind == lang::MirLoanKind::CallResult &&
               loan->access == lang::AccessMode::Mutable;
-          if (!projectedField && !accessorReferent)
+          if (!projectedField && !storedReferenceField && !accessorReferent)
             continue;
           const auto *sum =
               definition(function.body, instruction.operands.front().value);
@@ -13553,6 +13588,8 @@ int main() {
               malformed, {lang::MirBodyKind::Function, function.id});
           if (projectedField)
             body->places[place->id - 1].projections.back().field = 0;
+          else if (storedReferenceField)
+            body->places[place->id - 1].projections.front().field = 0;
           else
             body->loans[loan->id - 1].access = lang::AccessMode::ReadOnly;
           expect(!lang::verifyMirProgram(malformed).valid(),

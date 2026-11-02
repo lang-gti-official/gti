@@ -274,6 +274,8 @@ void testGeneralTextStepMatchesProductionEmission() {
     // them; the native corpus oracle executes both LLVM endpoints.
     const bool generalLayout =
         source.filename() == "181-general-object-layout.gti";
+    const bool boundedArray =
+        source.filename() == "182-bounded-array-borrows.gti";
     const bool aggregateConstant =
         source.filename() == "183-immediate-functions.gti";
     if (source.filename() == "066-managed-threads.gti" ||
@@ -281,7 +283,7 @@ void testGeneralTextStepMatchesProductionEmission() {
         source.filename() == "178-wrapping-atomic-counters.gti" ||
         source.filename() == "179-weak-ownership.gti" ||
         source.filename() == "180-compact-source-owners.gti" || generalLayout ||
-        aggregateConstant) {
+        boundedArray || aggregateConstant) {
       bool unsupported = false;
       try {
         static_cast<void>(gti_test::emitCpp(frontend, frontend.mir,
@@ -289,6 +291,7 @@ void testGeneralTextStepMatchesProductionEmission() {
       } catch (const lang::BackendUnsupportedError &error) {
         const std::string limitation =
             generalLayout       ? "general sizeof/alignof"
+            : boundedArray      ? "generic fixed-array reference signatures"
             : aggregateConstant ? "aggregate constant publication"
                                 : "wrapping atomic read-modify-write";
         unsupported =

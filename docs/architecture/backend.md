@@ -5110,7 +5110,12 @@ or constructor-field final destinations, selected base initialization and static
 cleanup. "Static" describes the
 representation, not permission for global or thread-local storage.
 `NativeBorrowedDispatchView` describes checked selected class/base/interface
-addresses with preserved access; `NativeVirtualInvocation` requires the exact
+addresses with preserved access. A selected plain base alias is classified by its
+presented place, even when its provenance loan protects a larger derived object;
+forwarding that alias does not repeat the original base adjustment. A retained
+owned receiver may invoke a readonly or mutable member as well as a consuming
+member: the caller retains its existing cleanup obligation through the full
+expression, including failure. `NativeVirtualInvocation` requires the exact
 sealed root, one evaluated receiver and physical adjustment, through the
 root's shared ABI and MIR failure edge. Its signature is otherwise general:
 arguments, results and their loans keep their own proofs, a reference result

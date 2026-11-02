@@ -286,6 +286,14 @@ struct TextReader {
   TextReader(std::string_view& input) : text(input) {}
   std::string_view view() { return this.text; }
   std::size_t size() { return this.text.size(); }
+  std::size_t copied_size() {
+    std::string_view copy = this.text;
+    return copy.size();
+  }
+  std::size_t relayed_size() {
+    std::string_view copy = relay(this.text);
+    return copy.size();
+  }
 };
 std::size_t copied_size(std::string_view& input) {
   std::string_view copy = input;
@@ -308,7 +316,7 @@ int main() {
   TextReader reader{view};
   std::string_view read = reader.view();
   return int(read.size() + copied_size(view) + relayed_size(view) +
-             reader.size()) - 20;
+             reader.size() + reader.copied_size() + reader.relayed_size()) - 30;
 }
 )gti");
   expect(frontend.canGenerateCode(),
@@ -327,7 +335,33 @@ int main() {
     expect(false, std::string("text-reference reads backend: ") + error.what());
   }
   bool checkedReturn = false;
+  bool checkedFieldRelay = false;
   for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &loan : function.body.loans) {
+      const auto *dependency =
+          function.body.findLoan(loan.storedDependency);
+      const auto *origin = function.body.findPlace(loan.source);
+      if (loan.kind != lang::MirLoanKind::Stored || loan.entry ||
+          loan.producedBy == 0 || !dependency || !dependency->entry ||
+          !origin || origin->root != lang::MirPlaceRootKind::This ||
+          origin->type.kind != lang::SemanticType::StringView ||
+          origin->projections.empty())
+        continue;
+      for (int mutation = 0; mutation != 2; ++mutation) {
+        auto malformed = frontend.mir;
+        auto *changed = const_cast<lang::MirFunctionInstance *>(
+            malformed.findFunctionInstance(function.id));
+        auto &result = changed->body.loans[loan.id - 1];
+        if (mutation == 0)
+          result.storedDependency = 0;
+        else
+          result.source = dependency->source;
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "copied text relay preserves both the exact field and its "
+               "independent external owner");
+      }
+      checkedFieldRelay = true;
+    }
     // Only a receiver whose own text reference supplies a stored owner entry;
     // ordinary owning-text relays keep their existing receiver loans.
     if (function.returnType.kind != lang::SemanticType::StringView ||
@@ -367,6 +401,7 @@ int main() {
     }
   }
   expect(checkedReturn, "a receiver text reference return is exercised");
+  expect(checkedFieldRelay, "a copied reference-field relay is exercised");
   for (const std::string invalid :
        {"struct Holder { std::string_view& text; "
         "Holder(std::string_view& input) : text(input) {} "

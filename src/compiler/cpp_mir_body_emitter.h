@@ -491,6 +491,9 @@ cppMirFailureConstructorEmptyFieldsEligible(const MirProgram &program,
 [[nodiscard]] bool cppMirDeferredFieldStorage(const MirProgram &program,
                                               HirClassInstanceId owner,
                                               SymbolId field);
+[[nodiscard]] bool cppMirEngagedDeferredFieldStorage(const MirProgram &program,
+                                                     HirClassInstanceId owner,
+                                                     SymbolId field);
 
 // An exact selected base initializer. Native fusion preserves observation-free
 // scalar parameter copy-loads/literals. A prepared binding instead selects
