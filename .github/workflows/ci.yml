@@ -208,7 +208,7 @@ jobs:
             --parallel "${GTI_TEST_JOBS}" --output-on-failure
           python3 tests/process_resource_policy_test.py "${RUNNER_TEMP}/gti-system-stage/bin/gti" --installed
       - name: Save compiler object cache
-        if: always() && steps.cache.outputs.cache-hit != 'true'
+        if: always() && github.ref == 'refs/heads/main' && steps.cache.outputs.cache-hit != 'true'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -562,7 +562,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
       - name: Save compiler object cache
-        if: always() && steps.cache.outputs.cache-hit != 'true'
+        if: always() && github.ref == 'refs/heads/main' && steps.cache.outputs.cache-hit != 'true'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
