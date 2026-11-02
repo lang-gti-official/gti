@@ -59,7 +59,7 @@ int main() {
             command = [str(compiler), str(fresh_source), *flags, "-o", str(fresh_binary)]
             built = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
             assert built.returncode == 0, (command, built.stdout, built.stderr)
-            for fresh_case in range(4):
+            for fresh_case in range(5):
                 result = subprocess.run([str(fresh_binary), *(["x"] * fresh_case)],
                                         env=environment, capture_output=True, text=True, timeout=15)
                 assert result.returncode == (70 if fresh_case else 0), (mode, fresh_case, result)

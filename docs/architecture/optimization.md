@@ -1489,6 +1489,17 @@ Aggregate fields still require one dominating store. Exact `NullPtr` to raw-poin
 value staging transports the empty origin set; arbitrary pointer conversions
 do not acquire a null or fresh origin.
 
+Mutable source members can export a bounded own-field write footprint separately
+from returned or released entry origins. For a passive exact field assignment,
+a successful return publishes the pointer-origin inventory of that field; the
+source-level mutation still invalidates caller facts aliasing the receiver.
+A later read of an owned local descriptor uses the latest dominating mutation,
+while a call's returned/released inputs are resolved immediately before that
+call. Conditional or unordered publications, later whole-object replacement,
+projected loan views without a composed path, nested external receiver mutation,
+and mutable reference-parameter receivers remain excluded. This transports
+allocation origins only, not initialized payload, capacity or lifetime facts.
+
 The all-path scan also admits exact operand-free terminal failure origins whose
 existing MIR contract has no memory or runtime effects; panic and all cleanup
 instructions retain their ordinary effects. Creating an ordinary local carrier
@@ -1951,8 +1962,12 @@ complete traversal of that domain.
 A separate reduction starts at a nonnegative literal or an invariant input and carries only
 nonnegative bounded additions, PHIs and selects back to its header. Uniform
 increment envelopes come from constants, constant masks, unsigned remainders
-by nonzero constants, constant logical shifts, zero extensions, truncations, nonwrapping
-bounded additions and products, and complete PHI/select alternatives. Products
+by nonzero constants, constant logical shifts, zero extensions, truncations,
+unsigned `min`/`max`, nonwrapping bounded additions and products, and complete
+PHI/select alternatives. Unsigned clamps use the full bit domain for an unknown
+operand, so `max(min(length, 32), 1)` independently establishes `[1, 32]` even
+when `length` has no other proof. Signed clamps do not acquire unsigned bounds;
+freezes still require the existing explicit target/base envelope checks. Products
 and left shifts require independently bounded inputs whose complete unsigned
 range fits the destination; nowrap flags never supply that proof. The bounded analysis
 uses the operations' bit-level meaning, never nowrap flags or a check that it

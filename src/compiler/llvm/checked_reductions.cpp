@@ -186,6 +186,25 @@ struct IncrementBounds {
         if (source && amount < width && source->maximum <= (maximum >> amount))
           result = Offset{source->minimum << amount, source->maximum << amount};
       }
+    } else if (auto *intrinsic = llvm::dyn_cast<llvm::IntrinsicInst>(value);
+               intrinsic &&
+               (intrinsic->getIntrinsicID() == llvm::Intrinsic::umin ||
+                intrinsic->getIntrinsicID() == llvm::Intrinsic::umax)) {
+      // A clamp bounds even an otherwise unknown operand. Unknown inputs
+      // contribute the full unsigned bit domain, never a guessed sign or a
+      // nowrap-derived range. The existing frozen-target/base envelope guards
+      // still constrain any value substituted into the optimized loop.
+      const Offset full{
+          0, llvm::APInt::getMaxValue(value->getType()->getIntegerBitWidth())
+                 .getZExtValue()};
+      const auto left = get(intrinsic->getArgOperand(0)).value_or(full);
+      const auto right = get(intrinsic->getArgOperand(1)).value_or(full);
+      if (intrinsic->getIntrinsicID() == llvm::Intrinsic::umin)
+        result = Offset{std::min(left.minimum, right.minimum),
+                        std::min(left.maximum, right.maximum)};
+      else
+        result = Offset{std::max(left.minimum, right.minimum),
+                        std::max(left.maximum, right.maximum)};
     } else if (auto *cast = llvm::dyn_cast<llvm::ZExtInst>(value)) {
       result = Offset{
           0, llvm::APInt::getMaxValue(cast->getSrcTy()->getIntegerBitWidth())

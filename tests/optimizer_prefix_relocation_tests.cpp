@@ -851,8 +851,73 @@ void callback_scratch() {
 }
 )",
                                      "callback_scratch();\n", false);
+  const std::string mutableDescriptor = R"(
+extern "C" { void* external_pointer(); }
+void* unsafe_external_pointer() { unsafe { return external_pointer(); } }
+class MutableDescriptor {
+  mut void* address = nullptr;
+public:
+  MutableDescriptor(void* address) : address(address) {}
+  void attach(void* address) mut { this.address = address; }
+  void* take() mut {
+    void* previous = this.address;
+    this.address = nullptr;
+    return previous;
+  }
+};
+)";
+  descriptorControls &= freshControl(
+      "fresh-mutable-descriptor.gti", mutableDescriptor,
+      "mut MutableDescriptor slot{nullptr}; slot.attach(fresh_pointer()); "
+      "void* pointer = slot.take(); unsafe { release_pointer(pointer); } "
+      "void* empty = slot.take(); unsafe { release_pointer(empty); }\n",
+      true);
+  descriptorControls &= freshControl(
+      "fresh-mutable-descriptor-overwrite.gti", mutableDescriptor,
+      "mut MutableDescriptor slot{fresh_pointer()}; "
+      "slot = MutableDescriptor(unsafe_external_pointer()); "
+      "void* pointer = slot.take(); unsafe { release_pointer(pointer); }\n",
+      false);
+  descriptorControls &= freshControl(
+      "fresh-mutable-descriptor-incoming.gti", mutableDescriptor,
+      "mut MutableDescriptor slot{nullptr}; "
+      "slot.attach(unsafe_external_pointer()); "
+      "void* pointer = slot.take(); unsafe { release_pointer(pointer); }\n",
+      false);
+  descriptorControls &= freshControl(
+      "fresh-mutable-descriptor-alias.gti", mutableDescriptor + R"(
+void mutate_descriptor(mut MutableDescriptor& slot) {
+  slot.attach(unsafe_external_pointer());
+}
+)",
+      "mut MutableDescriptor slot{fresh_pointer()}; mutate_descriptor(slot); "
+      "void* pointer = slot.take(); unsafe { release_pointer(pointer); }\n",
+      false);
+  descriptorControls &= freshControl("fresh-mutable-descriptor-conditional.gti",
+                                     mutableDescriptor + R"(
+void conditional_descriptor(bool choose) {
+  mut MutableDescriptor slot{fresh_pointer()};
+  if (choose) { slot.attach(unsafe_external_pointer()); }
+  void* pointer = slot.take();
+  unsafe { release_pointer(pointer); }
+}
+)",
+                                     "conditional_descriptor(false);\n", false);
   if (!descriptorControls)
     return 1;
+  const auto sameReceiver = gti_test::analyzeTrustedPrivateMemoryFixture(
+      "fresh-mutated-receiver-metadata.gti",
+      "import \"../std/detail/memory_capabilities.gti\"; " +
+          freshSource.substr(0, freshSource.find("int main")) +
+          "int main() { return mutable_same_receiver_probe(); }");
+  const auto sameReceiverAnalysis =
+      lang::analyzeMirClosedCallSafetyChecks(sameReceiver.mir);
+  if (!sameReceiver.canGenerateCode() || !sameReceiverAnalysis.converged ||
+      countDischarges(sameReceiver, sameReceiverAnalysis,
+                      "mutable_same_receiver_probe") != 0) {
+    std::cerr << "mutated receiver metadata was incorrectly retained\n";
+    return 1;
+  }
   const auto returnedWrite = gti_test::analyzeTrustedPrivateMemoryFixture(
       "returned-reference-write.gti",
       "import \"../std/detail/memory_capabilities.gti\"; " +

@@ -175,6 +175,28 @@ def main():
             else:
                 output += "".join(f"{key}\n" for key in values)
                 cases.append((mode, count, 0, output + "2\n1\n", ""))
+    clamp_site = next(index for index, line in enumerate(lines, 1)
+                      if "// clamped-boundary" in line)
+    for count in (0, 1, 2, 3, 4, 7, 12, 13, 31, 32, 33, 63, 127, 255):
+        for mode in (28, 29, 30):
+            total = count % 7 if mode == 28 else 4294967295 - count % 13
+            visits, failed = 0, False
+            for index in range(max(min(count, 32), 1)):
+                visits += 1
+                if mode == 30 and index == 2:
+                    break
+                if (index + count) % 3 != 1:
+                    increment = max(min(index + 1, 5), 1)
+                    if total + increment > 4294967295:
+                        failed = True
+                        break
+                    total += increment
+            output = "9\n" * visits + "2\n"
+            if failed:
+                cases.append((mode, count, 70, output + "1\n",
+                              f"{fixture.name}:{clamp_site}: runtime error[GTI-R0001]: integer_overflow in addition\n"))
+            else:
+                cases.append((mode, count, 0, output + f"{total}\n1\n", ""))
     modes = [("llvm-O0", ["--backend", "llvm", "-O0"]),
              ("llvm-O2", ["--backend", "llvm", "-O2"]),
              ("llvm-O3", ["--backend", "llvm", "-O3"]),

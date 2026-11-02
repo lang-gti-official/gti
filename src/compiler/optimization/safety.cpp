@@ -481,6 +481,9 @@ using FreshPointerOrigins = std::set<FreshPointerOrigin>;
 struct FreshStorageProfile {
   bool supported = false;
   std::map<FieldPath, FreshPointerOrigins> pointerResults;
+  // Exact own-field writes; returned/released inputs always denote entry state.
+  std::set<FieldPath> receiverWrites;
+  std::map<FieldPath, FreshPointerOrigins> receiverPointerResults;
   std::set<InputField> releasedParameters;
   friend bool operator==(const FreshStorageProfile &,
                          const FreshStorageProfile &) = default;
@@ -9782,13 +9785,17 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
         const auto *place = body.findPlace(*instruction.destination);
         if (!place)
           return {};
-        if (constructor && place->root == MirPlaceRootKind::This) {
+        if ((constructor || (function && function->receiverMutability ==
+                                             ReceiverMutability::Mutable)) &&
+            place->root == MirPlaceRootKind::This) {
           const auto path = ownFields(*place);
           if (!path || path->size() != 1 ||
               !receiverStores
                    .emplace(*path, InstructionSite{&block, &instruction})
                    .second)
             return {};
+          if (!constructor)
+            result.receiverWrites.insert(*path);
         } else {
           if (place->root != MirPlaceRootKind::Binding || !place->binding)
             return {};
@@ -9868,6 +9875,65 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
     }
     return false;
   };
+  // Mutating source members publish only their explicit own-field footprint.
+  // Resolve checked receiver identities, never raw-pointer address guesses.
+  struct ReceiverMutation {
+    MirPlaceId root;
+    FieldPath path;
+    InstructionSite site;
+    const FreshStorageProfile *profile;
+  };
+  std::vector<ReceiverMutation> receiverMutations;
+  const auto receiverPlace = [&](auto &&self, const MirOperand &operand,
+                                 unsigned depth) -> const MirPlace * {
+    if (depth > 16)
+      return nullptr;
+    if (operand.value) {
+      const auto *producer = definingInstruction(body, operand.value);
+      if (!producer || producer->operands.size() != 1 ||
+          producer->destination || producer->rawMemoryAccess ||
+          (producer->kind != MirInstructionKind::CallInput &&
+           producer->kind != MirInstructionKind::Load))
+        return nullptr;
+      return self(self, producer->operands.front(), depth + 1);
+    }
+    const auto *place = body.findPlace(operand.place);
+    if (place && place->root == MirPlaceRootKind::Loan) {
+      // A projected loan view needs a composed path; never discard it.
+      if (!place->projections.empty())
+        return nullptr;
+      const auto *loan = body.findLoan(place->loan);
+      place = loan ? body.findPlace(loan->source) : nullptr;
+    }
+    return place && !place->foreignStorage && ownFields(*place) &&
+                   (place->root == MirPlaceRootKind::This ||
+                    (place->root == MirPlaceRootKind::Binding &&
+                     body.findPlace(rootForBinding(body, place->binding)) &&
+                     ownedBinding(*body.findPlace(
+                         rootForBinding(body, place->binding)))))
+               ? place
+               : nullptr;
+  };
+  for (const auto &block : body.blocks)
+    if (dominance->isReachable(block.id))
+      for (const auto &instruction : block.instructions)
+        if (const auto *profile = sourceProfile(instruction);
+            profile && !profile->receiverWrites.empty()) {
+          const auto *place =
+              instruction.receiver
+                  ? receiverPlace(receiverPlace, *instruction.receiver, 0)
+                  : nullptr;
+          if (!place || place->root == MirPlaceRootKind::This)
+            return {}; // Nested receiver mutation needs its own exported
+                       // footprint.
+          receiverMutations.push_back(
+              {place->root == MirPlaceRootKind::This
+                   ? thisRoot(body)
+                   : rootForBinding(body, place->binding),
+               *ownFields(*place),
+               {&block, &instruction},
+               profile});
+        }
   // The capture owner already verifies the complete SSA use chain into the
   // sealed status role. Here only locate that role's exact private int32 slot.
   std::set<MirInstructionId> privateStatusCalls, privateStatusAddresses;
@@ -10100,6 +10166,20 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
       path.insert(path.begin(), projection->begin(), projection->end());
       if (!receiverPointerField(path))
         return std::nullopt;
+      if (!path.empty())
+        if (const auto store = receiverStores.find(FieldPath{path.front()});
+            store != receiverStores.end()) {
+          if (precedes(store->second, use)) {
+            if (store->second.instruction->operands.size() != 1)
+              return std::nullopt;
+            return self(self, store->second.instruction->operands.front(),
+                        FieldPath(path.begin() + 1, path.end()), store->second,
+                        depth + 1);
+          }
+          if (store->second.instruction != use.instruction &&
+              !precedes(use, store->second))
+            return std::nullopt;
+        }
       return Origins{
           {.input = InputField{std::nullopt, std::move(path)}, .calls = {}}};
     }
@@ -10114,6 +10194,71 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
     const auto *root = body.findPlace(rootId);
     if (!root || !ownedBinding(*root) || !pointerField(root->type, path))
       return std::nullopt;
+    const ReceiverMutation *latest = nullptr;
+    FieldPath latestPath;
+    for (const auto &mutation : receiverMutations) {
+      if (mutation.root != rootId || mutation.path.size() > path.size() ||
+          !std::equal(mutation.path.begin(), mutation.path.end(), path.begin()))
+        continue;
+      const FieldPath relative(path.begin() + mutation.path.size(), path.end());
+      const bool affected = std::any_of(
+          mutation.profile->receiverWrites.begin(),
+          mutation.profile->receiverWrites.end(),
+          [&](const FieldPath &written) {
+            return written.size() <= relative.size() &&
+                   std::equal(written.begin(), written.end(), relative.begin());
+          });
+      if (!affected || mutation.site.instruction == use.instruction ||
+          precedes(use, mutation.site))
+        continue;
+      if (!precedes(mutation.site, use))
+        return std::nullopt; // A conditional publication cannot replace entry.
+      if (!latest || precedes(latest->site, mutation.site)) {
+        latest = &mutation;
+        latestPath = relative;
+      } else if (!precedes(mutation.site, latest->site))
+        return std::nullopt;
+    }
+    if (latest) {
+      const auto output =
+          latest->profile->receiverPointerResults.find(latestPath);
+      if (output == latest->profile->receiverPointerResults.end())
+        return std::nullopt;
+      Origins mapped;
+      for (const auto &origin : output->second) {
+        if (origin.input) {
+          const auto &call = *latest->site.instruction;
+          const MirOperand *argument =
+              origin.input->parameter
+                  ? (*origin.input->parameter < call.operands.size()
+                         ? &call.operands[*origin.input->parameter]
+                         : nullptr)
+                  : (call.receiver ? &*call.receiver : nullptr);
+          if (!argument)
+            return std::nullopt;
+          const auto prior = self(self, *argument, origin.input->field,
+                                  latest->site, depth + 1);
+          if (!prior)
+            return std::nullopt;
+          mapped.insert(prior->begin(), prior->end());
+        } else {
+          if (origin.calls.empty() || origin.calls.size() >= 32)
+            return std::nullopt;
+          auto rebased = origin;
+          rebased.calls.insert(rebased.calls.begin(),
+                               latest->site.instruction->id);
+          mapped.insert(std::move(rebased));
+        }
+        if (mapped.size() > 32)
+          return std::nullopt;
+      }
+      // A later local whole-value assignment is not described by this call.
+      if (const auto found = stores.find(root->binding); found != stores.end())
+        for (const auto store : found->second)
+          if (!precedes(store, latest->site))
+            return std::nullopt;
+      return mapped;
+    }
     Origins joined;
     bool known = false;
     // A pointer parameter may still carry its entry value on a path. Keep
@@ -10269,7 +10414,9 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
         if (!place || place->traits.containsBorrowedState)
           return {};
         const bool receiverField =
-            constructor && place->root == MirPlaceRootKind::This &&
+            (constructor || (function && function->receiverMutability ==
+                                             ReceiverMutability::Mutable)) &&
+            place->root == MirPlaceRootKind::This &&
             ownFields(*place) && ownFields(*place)->size() == 1 &&
             passiveType(passiveType, place->type, 0);
         const bool local =
@@ -10291,6 +10438,29 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
         (constructor && block.terminator.kind == MirTerminatorKind::Exit);
     if (!returning)
       continue;
+    if (!constructor)
+      for (const auto &written : result.receiverWrites) {
+        const auto store = receiverStores.find(written);
+        if (store == receiverStores.end() ||
+            !precedes(store->second, InstructionSite{&block, nullptr}) ||
+            store->second.instruction->operands.size() != 1)
+          return {};
+        const auto &value = store->second.instruction->operands.front();
+        const auto fieldPaths = pointerPaths(value.type);
+        if (!fieldPaths)
+          return {};
+        for (const auto &path : *fieldPaths) {
+          const auto values = origins(origins, value, path, store->second, 0);
+          if (!values)
+            return {};
+          auto full = written;
+          full.insert(full.end(), path.begin(), path.end());
+          const auto [slot, inserted] =
+              result.receiverPointerResults.emplace(std::move(full), *values);
+          if (!inserted && slot->second != *values)
+            return {};
+        }
+      }
     const auto outputType = constructor ? constructed->type : body.returnType;
     const auto outputPaths = pointerPaths(outputType);
     if (!outputPaths && outputType.kind != SemanticType::Void &&
@@ -10342,6 +10512,13 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
       it = result.pointerResults.erase(it);
     else
       ++it;
+  for (const auto &[path, values] : result.receiverPointerResults) {
+    (void)path;
+    if (std::any_of(values.begin(), values.end(), [&](const auto &origin) {
+          return released.contains(origin);
+        }))
+      return {};
+  }
   result.supported = true;
   return result;
 }

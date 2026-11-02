@@ -98,6 +98,41 @@ void status_and_join_scratch(bool alternate) {
   }
   unsafe { release_pointer(pointer); }
 }
+class NativeMutableDescriptor {
+  mut void* address = nullptr;
+public:
+  NativeMutableDescriptor(void* address) : address(address) {}
+  void attach(void* address) mut { this.address = address; }
+  void* take() mut {
+    void* previous = this.address;
+    this.address = nullptr;
+    return previous;
+  }
+};
+void mutable_descriptor_scratch() {
+  mut NativeMutableDescriptor slot{nullptr};
+  slot.attach(fresh_pointer());
+  void* first = slot.take();
+  unsafe { release_pointer(first); }
+  void* empty = slot.take();
+  unsafe { release_pointer(empty); }
+}
+class MutableMetadata {
+public:
+  mut int32_t length;
+  MutableMetadata(int32_t value) : length(value) {}
+  void overwrite() mut {
+    void* scratch = fresh_pointer();
+    unsafe { release_pointer(scratch); }
+    this.length = int32_t(2147483647);
+  }
+};
+int32_t mutable_same_receiver_probe() {
+  mut MutableMetadata owner{int32_t(9)};
+  owner.overwrite();
+  return owner.length * int32_t(2);
+}
+
 class NativeReferenceBox {
   mut int32_t value;
 public:
@@ -130,6 +165,7 @@ int32_t fresh_probe(int32_t value) {
   parcel.append(value);
   fresh_scratch();
   reference_scratch();
+  mutable_descriptor_scratch();
   descriptor_scratch();
   payload_scratch(true);
   payload_scratch(false);
@@ -139,6 +175,7 @@ int32_t fresh_probe(int32_t value) {
 int main(int argc, std::vector<std::string> argv) {
   FreshAudit audit{};
   if (argc == 3) { NativeReferenceBox box{int32_t(9)}; return box.read(true); }
+  if (argc == 5) { return mutable_same_receiver_probe(); }
   if (argc == 4) { return mutated_reference_probe(); }
   int32_t result = fresh_probe(argc > 1 ? int32_t(2147483647) : int32_t(9));
   return result == int32_t(18) ? 0 : 2;
