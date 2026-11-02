@@ -2,6 +2,7 @@
 """Private atomic old/new values, wrapping, and checked-failure cleanup."""
 from pathlib import Path
 import subprocess
+import re
 import sys
 import tempfile
 
@@ -48,6 +49,17 @@ def main():
             command = [str(compiler), str(fixture), "-o", str(binary),
                        "--execution-profile", "concurrent", *flags]
             built = subprocess.run(command, capture_output=True, text=True, timeout=120)
+            if name == "cpp-O3":
+                # Wrapping atomic RMW is an existing LLVM-only operation.
+                # Assert that boundary explicitly; C++ supplies no execution
+                # oracle for this fixture. Supported C++ atomic operations are
+                # covered separately by llvm_atomic_execution.
+                message = "wrapping atomic read-modify-write operations require the LLVM backend"
+                codes = set(re.findall(r"error\[(GTI-[A-Z][0-9]+)\]", built.stderr))
+                assert built.returncode != 0 and codes == {"GTI-B0003"} and message in built.stderr, (
+                    command, built.returncode, built.stdout, built.stderr)
+                print("Private atomics: cpp-O3 known GTI-B0003 boundary verified", flush=True)
+                continue
             assert built.returncode == 0, (command, built.stdout, built.stderr)
             for case in cases:
                 result = subprocess.run([str(binary), *("x" * n for n in case)],

@@ -1542,8 +1542,12 @@ fails closed when exhausted.
 
 `llvm_private_atomics` checks exhaustive small-width values and rejected privacy,
 ordering and storage shapes. `llvm_private_atomic_runtime` explicitly compiles
-the concurrent profile at LLVM O0/O2/O3 and C++ O3, comparing values, wrapping,
-checked failures and cleanup. A private atomic benchmark measures this storage
+the concurrent profile at LLVM O0/O2/O3, comparing values, wrapping,
+checked failures and cleanup. The C++ backend currently rejects wrapping atomic
+RMW; that exact admission diagnostic is asserted instead of claiming a C++
+execution comparison for this fixture. An independent integer model supplies
+the expected values and cleanup, alongside LLVM O0 differential execution.
+A private atomic benchmark measures this storage
 optimization; it is not evidence about shared or contended atomics.
 
 ### Bounded relative-index arithmetic
