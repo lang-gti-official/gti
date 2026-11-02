@@ -2080,6 +2080,10 @@ add_executable(gti_llvm_checked_range_tests llvm_checked_range_tests.cpp)
 target_include_directories(gti_llvm_checked_range_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
 target_link_libraries(gti_llvm_checked_range_tests PRIVATE gti_llvm_backend)
 add_test(NAME llvm_checked_ranges COMMAND gti_llvm_checked_range_tests)
+add_executable(gti_llvm_checked_offset_tests llvm_checked_offset_tests.cpp)
+target_include_directories(gti_llvm_checked_offset_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_llvm_checked_offset_tests PRIVATE gti_llvm_backend)
+add_test(NAME llvm_checked_offsets COMMAND gti_llvm_checked_offset_tests)
 add_executable(gti_llvm_session_tests llvm_session_tests.cpp)
 target_include_directories(gti_llvm_session_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
 target_link_libraries(gti_llvm_session_tests PRIVATE gti_llvm_backend gti_driver gti_runtime)
@@ -2353,6 +2357,10 @@ add_test(NAME llvm_memory_mechanisms COMMAND gti_llvm_memory_mechanism_tests)
 set_tests_properties(llvm_memory_mechanisms PROPERTIES TIMEOUT 120)
 
 if(Python3_Interpreter_FOUND)
+  add_test(NAME llvm_checked_offset_runtime
+           COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_checked_offset_runtime_test.py"
+                   "$<TARGET_FILE:gti>")
+  set_tests_properties(llvm_checked_offset_runtime PROPERTIES TIMEOUT 600)
   add_test(NAME llvm_checked_reduction_runtime
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_checked_reduction_runtime_test.py"
                    "$<TARGET_FILE:gti>")
@@ -2917,7 +2925,7 @@ set_tests_properties(
 add_executable("gti_optimizer_safety_native_evidence"
                "${PROJECT_SOURCE_DIR}/tests/optimizer_safety_native_evidence.cpp")
 target_link_libraries("gti_optimizer_safety_native_evidence"
-                      PRIVATE gti_cpp_backend)
+                      PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME optimizer_safety_native_evidence
          COMMAND gti_optimizer_safety_native_evidence
                  "${CMAKE_CXX_COMPILER}")

@@ -1,5 +1,6 @@
 #include "gti/cpp_backend.h"
 #include "gti/frontend.h"
+#include "gti/llvm_backend.h"
 #include "gti/optimization/safety.h"
 #include "gti/optimizer.h"
 
@@ -517,13 +518,54 @@ uint64_t non_strict(uint64_t index, uint64_t live) {
   return index;
 }
 
+class ChainCleanup {
+public:
+  ~ChainCleanup() { std::println(77); }
+};
+
+uint64_t chain(uint64_t index, uint64_t middle, uint64_t live) {
+  ChainCleanup cleanup{};
+  if (index <= middle) {
+    if (middle < live) {
+      gti_internal::index_bounds_check(index, live);
+    }
+  }
+  return index;
+}
+
+uint64_t inclusive_chain(uint64_t index, uint64_t middle, uint64_t live) {
+  ChainCleanup cleanup{};
+  if (index <= middle) {
+    if (middle <= live) {
+      gti_internal::index_bounds_check(index, live);
+    }
+  }
+  return index;
+}
+
+uint64_t changed_chain(uint64_t index, mut uint64_t middle, uint64_t live) {
+  ChainCleanup cleanup{};
+  if (index < middle) {
+    middle = uint64_t(0);
+    if (middle <= live) {
+      gti_internal::index_bounds_check(index, live);
+    }
+  }
+  return index;
+}
+
 int main(int argc, std::vector<std::string> argv) {
   uint64_t phase = uint64_t(argc) - uint64_t(1);
   uint64_t live = uint64_t(argc) * uint64_t(5);
   std::println(looped(live));
   std::println(guarded(live - uint64_t(1), live));
+  std::println(chain(live - uint64_t(2), live - uint64_t(1), live));
   if (phase == uint64_t(1)) {
     std::println(non_strict(live, live));
+  } else if (phase == uint64_t(2)) {
+    std::println(inclusive_chain(live, live, live));
+  } else if (phase == uint64_t(3)) {
+    std::println(changed_chain(live, live + uint64_t(1), live));
   }
   return 0;
 }
@@ -560,8 +602,31 @@ void testRelationalBoundsEmission(const std::string &compiler,
       build(compiler, o0.artifact, directory, "relational-o0");
   const std::filesystem::path o2Binary =
       build(compiler, o2.artifact, directory, "relational-o2");
-  for (const std::string_view arguments : {"", " fail"}) {
-    const std::string suffix = arguments.empty() ? "pass" : "fail";
+  // The same verified MIR proofs feed the primary backend as well as the
+  // existing oracle. Native failure and cleanup are compared independently
+  // of the structural discharge-count assertions above.
+  std::vector<std::filesystem::path> llvmBinaries;
+  for (const auto *program : {&o0.optimized, &o2.optimized}) {
+    const bool optimized = program == &o2.optimized;
+    const std::string label =
+        optimized ? "relational-llvm-o3" : "relational-llvm-o0";
+    auto lowered = gti_test::lowerProgram(
+        frontend, program->sourceMir, program->mir, lang::TargetInfo::host(),
+        program->report.transformations);
+    const auto artifact =
+        lang::LlvmBackend(
+            {.optimization = optimized
+                                 ? lang::LlvmCodegenOptimization::Aggressive
+                                 : lang::LlvmCodegenOptimization::None})
+            .generate(std::move(lowered));
+    expect(!artifact.contents.empty(), "LLVM accepts relational proof fixture");
+    const auto object = directory / (label + ".o");
+    std::ofstream(object, std::ios::binary) << artifact.contents;
+    llvmBinaries.push_back(build(compiler, object, directory, label));
+  }
+  for (const std::string_view arguments :
+       {"", " fail", " fail chain", " fail changed chain"}) {
+    const std::string suffix = std::to_string(arguments.size());
     const RunResult baseline =
         run(o0Binary, directory, "relational-o0-" + suffix, arguments);
     const RunResult optimized =
@@ -575,6 +640,26 @@ void testRelationalBoundsEmission(const std::string &compiler,
            "relationally discharged checks should preserve native O0 "
            "behavior, including the retained check's failure (" +
                suffix + ")");
+    const unsigned argc = 1 + static_cast<unsigned>(std::count(
+                                  arguments.begin(), arguments.end(), ' '));
+    const unsigned live = argc * 5;
+    const std::string expected = std::to_string(live * (live - 1) / 2) + "\n" +
+                                 std::to_string(live - 1) + "\n77\n" +
+                                 std::to_string(live - 2) + "\n" +
+                                 (argc > 2 ? "77\n" : "");
+    expect(baseline.stdoutText == expected,
+           "relational native fixture preserves the independent value/cleanup "
+           "oracle");
+    for (std::size_t index = 0; index < llvmBinaries.size(); ++index) {
+      const auto native = run(
+          llvmBinaries[index], directory,
+          "relational-llvm-" + std::to_string(index) + "-" + suffix, arguments);
+      expect(
+          native.built && native.exitStatus == baseline.exitStatus &&
+              native.stdoutText == expected &&
+              native.stderrText == baseline.stderrText,
+          "LLVM relational proofs preserve values, first failure and cleanup");
+    }
   }
 }
 

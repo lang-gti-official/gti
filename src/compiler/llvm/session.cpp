@@ -1,5 +1,6 @@
 #include "session.h"
 #include "abi.h"
+#include "checked_offsets.h"
 #include "checked_ranges.h"
 #include "checked_reductions.h"
 #include "debug_info.h"
@@ -667,6 +668,7 @@ BackendArtifact Session::emitObject() {
   llvm::CGSCCAnalysisManager cgscc;
   llvm::ModuleAnalysisManager modules;
   llvm::PassBuilder builder(machine_.get());
+  registerCheckedOffsetPass(builder);
   registerCheckedReductionPass(builder);
   registerCheckedRangePass(builder);
   builder.registerModuleAnalyses(modules);

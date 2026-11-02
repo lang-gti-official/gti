@@ -419,6 +419,11 @@ The admitted operations are deliberately narrow:
   state and retains all contributing evidence, without materializing a
   transitive closure in the dataflow lattice. A state keeps at most 64 orders;
   exceeding the retention budget loses precision conservatively.
+  The chain must survive as dominating comparison edges. Boolean block
+  parameters produced by short-circuit joins do not yet carry conditional
+  order sets, so equivalent `&&` expressions may retain a check that nested
+  comparisons discharge; ordinary CFG reachability alone cannot establish
+  those conditional facts.
   This is RT-5's body-local slice: the
   comparison and the check share a body, so a caller's loop condition does not
   reach the check inside an indexing accessor it calls; and
@@ -1505,6 +1510,35 @@ The backend contract and wrapping/poison boundary are documented under
 [LLVM scalar execution](backend.md#llvm-scalar-execution). Broader benefits must
 be measured per workload; neither mechanism establishes general bounds-check
 elimination, alias freedom, or vectorization by itself.
+
+### Bounded relative-index arithmetic
+
+At LLVM O2/O3, `checked_offsets` removes redundant unsigned-add overflow
+observations in relative-index expressions such as `low + (high - low) / 2`
+and `low + (high - low) / 2 + (high - low) / 8`. The endpoints must be stable,
+same-width integers. An independently dominating unsigned comparison proves
+`low <= high`, or an existing LLVM `sub nuw` supplies the representation-level
+poison contract. The latter is an LLVM refinement, not a new source-level MIR
+proof: if the subtraction would poison, the admitted expression propagates
+that poison into the old overflow observation. No source failure is reclassified
+as undefined behavior.
+
+A bounded structural query proves the offset is a nonnegative dyadic multiple
+of the difference, with total coefficient at most one. It handles logical
+right shifts, constant scales, sums and nested rebasing; every intermediate
+must satisfy its envelope. Freezing a potentially poisoned difference or
+offset, uncorrelated undef endpoints, signed-only ordering, a nondominating
+success edge, mixed widths and unsupported expressions retain their checks.
+The pass neither clones loops nor moves effects or removes bounds checks.
+It leaves the arithmetic result and unrelated failures intact, replacing only
+proved redundant overflow observations. Queries have 128-node/24-depth limits
+and at most 4,096 candidate/difference pairs per function.
+
+`llvm_checked_offsets` independently interprets all small-width endpoint pairs
+for admitted and rejected shapes, including event order and poison controls.
+`llvm_checked_offset_runtime` checks values, first failures and cleanup at LLVM
+O0/O2/O3 and against the existing C++ oracle, including near-maximum 64-bit
+offsets. Comparative programs remain manual performance evidence.
 
 ### Guarded checked reductions
 

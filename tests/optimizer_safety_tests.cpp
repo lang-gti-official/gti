@@ -1314,8 +1314,8 @@ uint64_t checked(uint64_t index, uint64_t size) {
            .definition = id == 4 ? MirInstructionId{1} : MirInstructionId{0}});
     const auto value = [](MirValueId id) {
       return MirOperand{.kind = MirOperandKind::Value,
-                         .value = id,
-                         .type = id == 3 || id == 4 ? SemanticType::Bool
+                        .value = id,
+                        .type = id == 3 || id == 4 ? SemanticType::Bool
                                                    : SemanticType::UInt64};
     };
     auto site = *check;
@@ -1328,16 +1328,16 @@ uint64_t checked(uint64_t index, uint64_t size) {
                         {.value = 2, .type = SemanticType::UInt64},
                         {.value = 3, .type = SemanticType::Bool}},
          .instructions = {{.id = 1,
-                            .kind = MirInstructionKind::Compute,
-                            .result = 4,
-                            .operands = {value(1), value(2)},
-                            .operation = MirOperation::Less,
-                            .info = {.type = SemanticType::Bool}}},
+                           .kind = MirInstructionKind::Compute,
+                           .result = 4,
+                           .operands = {value(1), value(2)},
+                           .operation = MirOperation::Less,
+                           .info = {.type = SemanticType::Bool}}},
          .terminator = {.kind = MirTerminatorKind::Branch,
                         .value = value(4),
                         .target = 2,
-                        .elseTarget = unprovedPath ? MirBlockId{2}
-                                                  : MirBlockId{4},
+                        .elseTarget =
+                            unprovedPath ? MirBlockId{2} : MirBlockId{4},
                         .targetArguments = {value(swap && !loop ? 2 : 1),
                                             value(swap && !loop ? 1 : 2)},
                         .elseArguments = unprovedPath
@@ -1356,15 +1356,14 @@ uint64_t checked(uint64_t index, uint64_t size) {
                         .elseTarget = 4,
                         .targetArguments = {value(swap ? 6 : 5),
                                             value(swap ? 5 : 6)}}},
-        {.id = 4, .terminator = {.kind = MirTerminatorKind::Return,
-                                .value = value(1)}}};
+        {.id = 4,
+         .terminator = {.kind = MirTerminatorKind::Return, .value = value(1)}}};
     const auto analysis = analyzeMirSafetyChecks(program, address);
-    return std::any_of(analysis.proofs.begin(), analysis.proofs.end(),
-                       [](const auto &proof) {
-                         return proof.instruction == 2 &&
-                                proof.discharge.family ==
-                                    MirSafetyCheckFamily::Bounds;
-                       });
+    return std::any_of(
+        analysis.proofs.begin(), analysis.proofs.end(), [](const auto &proof) {
+          return proof.instruction == 2 &&
+                 proof.discharge.family == MirSafetyCheckFamily::Bounds;
+        });
   };
   expect(probe(false, false, false),
          "forwarded block parameters retain the edge's order");
@@ -1428,36 +1427,48 @@ uint64_t offset_length(uint64_t index, uint64_t live) {
 }
 
 uint64_t chain_first_strict(uint64_t index, uint64_t middle, uint64_t live) {
-  if (index < middle && middle <= live) {
-    gti_internal::index_bounds_check(index, live);
+  if (index < middle) {
+    if (middle <= live) {
+      gti_internal::index_bounds_check(index, live);
+    }
   }
   return index;
 }
 
 uint64_t chain_last_strict(uint64_t index, uint64_t middle, uint64_t live) {
-  if (index <= middle && middle < live) {
-    gti_internal::index_bounds_check(index, live);
+  if (index <= middle) {
+    if (middle < live) {
+      gti_internal::index_bounds_check(index, live);
+    }
   }
   return index;
 }
 
 uint64_t chain_cycle(uint64_t index, uint64_t middle, uint64_t live) {
-  if (index <= middle && middle <= index && middle < live) {
-    gti_internal::index_bounds_check(index, live);
+  if (index <= middle) {
+    if (middle <= index) {
+      if (middle < live) {
+        gti_internal::index_bounds_check(index, live);
+      }
+    }
   }
   return index;
 }
 
 uint64_t chain_non_strict(uint64_t index, uint64_t middle, uint64_t live) {
-  if (index <= middle && middle <= live) {
-    gti_internal::index_bounds_check(index, live);
+  if (index <= middle) {
+    if (middle <= live) {
+      gti_internal::index_bounds_check(index, live);
+    }
   }
   return index;
 }
 
 uint64_t chain_reversed(uint64_t index, uint64_t middle, uint64_t live) {
-  if (index < middle && live <= middle) {
-    gti_internal::index_bounds_check(index, live);
+  if (index < middle) {
+    if (live <= middle) {
+      gti_internal::index_bounds_check(index, live);
+    }
   }
   return index;
 }

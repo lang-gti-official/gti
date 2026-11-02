@@ -6746,7 +6746,8 @@ void bindEdgeArguments(const MirBody &body, MirBlockId target,
                        const std::vector<MirOperand> &arguments,
                        AbstractState &state) {
   const MirBlock *block = body.findBlock(target);
-  if (block == nullptr || block->parameters.size() != arguments.size()) {
+  if (block == nullptr || block->parameters.size() != arguments.size() ||
+      arguments.empty()) {
     return;
   }
   // Block arguments are simultaneous assignments. In particular, a backedge
@@ -6785,10 +6786,9 @@ void bindEdgeArguments(const MirBody &body, MirBlockId target,
   // bounded graph before changing any origins or parameter facts, retaining
   // only endpoints that still denote the old value on this edge.
   const auto isParameter = [&](MirValueId value) {
-    return std::any_of(block->parameters.begin(), block->parameters.end(),
-                       [&](const auto &parameter) {
-                         return parameter.value == value;
-                       });
+    return std::any_of(
+        block->parameters.begin(), block->parameters.end(),
+        [&](const auto &parameter) { return parameter.value == value; });
   };
   ValueOrders rebound;
   for (const auto &[key, fact] : state.orders) {
@@ -6828,8 +6828,8 @@ void bindEdgeArguments(const MirBody &body, MirBlockId target,
         if (left == right || rebound.size() >= maxValueOrders)
           continue;
         OrderFact mapped = fact;
-        mapped.evidence = merged(merged(mapped.evidence, leftEvidence),
-                                 rightEvidence);
+        mapped.evidence =
+            merged(merged(mapped.evidence, leftEvidence), rightEvidence);
         const auto [entry, inserted] =
             rebound.emplace(std::pair{left, right}, mapped);
         if (!inserted && entry->second.domain == mapped.domain) {
