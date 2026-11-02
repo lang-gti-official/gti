@@ -1882,7 +1882,7 @@ reason = "interactive Neovim highlight comparison tool run by hand"
 
 [[area]]
 area = "preview-release"
-paths = ["scripts/preview_release.py", ".github/workflows/preview.yml"]
+paths = ["scripts/preview_release.py", "scripts/preview_build.py", ".github/workflows/preview.yml"]
 owners = ["preview_release", "ci_release"]
 consumers = ["preview_workflow", "neovim_gtiup"]
 risk = "system"

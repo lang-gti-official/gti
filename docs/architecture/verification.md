@@ -7523,6 +7523,12 @@ explicit `--local` installation and activation behavior. These orchestration tes
 preview admission separately requires its optimized build and automated
 example gates on the combined source. Workflow changes do not themselves
 claim that a preview candidate or installed toolchain has been validated.
+`preview_release` also configures a small real CMake project, builds the exact
+installed/test target closure, installs its component, and confirms unrelated
+test binaries stay unbuilt. A nested CTest rendezvous verifies that the bounded
+parallel budget reaches the inner tests even when the aggregate is RUN_SERIAL.
+The production preview still runs every included feature and example gate;
+these orchestration fixtures do not replace candidate validation.
 
 `build_window` exercises `scripts/build_window.py` in a temporary directory:
 slot files record owner pid, time, kind and command and disappear on release;
