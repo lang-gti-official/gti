@@ -1064,11 +1064,17 @@ distinct and unborrowed. `std::array` and `std::vector` expose
 indices are checked against the initialized length before mutation. Equal
 **valid** indices are a no-op; equal invalid indices still fail. Bounds failure
 uses ordinary defined-failure cleanup and leaves the sequence unchanged.
+`std::vector::swap_elements_unchecked(left, right) mut` provides the same
+restoring exchange inside an unsafe context when the caller proves both
+indices are below `size()`, even if they are equal. The operation still requires
+relocatable elements and an exclusive mutable borrow; it does not permit a
+live element loan across the swap. It moves each value without copying or
+running its destructor.
 
 Whole-vector `std::reverse` and both `std::sort` overloads accept relocatable
 move-only elements. Sort uses adaptive iterative introsort. Whole inputs longer
 than 16 elements first receive a monotonic-order probe: a nondecreasing range
-is already finished, and a nonincreasing range is reversed with checked swaps.
+is already finished, and a nonincreasing range is reversed with restoring swaps.
 Equivalent prefixes and plateaus are supported. The probe stops at the first
 change in strict direction, without moving any element; ordered inputs need
 at most two comparisons per adjacent pair. Other inputs use median-of-three
@@ -1076,18 +1082,21 @@ quicksort partitions (a median of three sampled medians for ranges longer
 than 40), insertion sort for ranges of at most 16 elements, and heapsort for
 any range that exhausts 2*floor(log2(n)) partition levels. Comparisons are
 O(n log n) in the worst case, auxiliary storage is a fixed-size stack, and
-elements move only by checked swaps, without copying a pivot or cloning
+elements move only by restoring swaps, without copying a pivot or cloning
 elements. It is not stable. The default relation requires `std::totally_ordered<T>`; an
 explicit comparator must satisfy `std::comparator<Compare, T>` and define a
 strict weak ordering. Each comparison borrows elements read-only, ending those
-loans before any swap. A failed comparator leaves a valid permutation, not a
+loans before any swap. Internal sorting ranges prove every read and exchange
+index live, so the unsafe implementation uses unchecked accesses and swaps
+without repeated index checks. A failed comparator leaves a valid permutation, not a
 promised partially sorted order, and normal cleanup destroys each remaining
 element exactly once. Empty and singleton inputs perform no comparisons.
 The source implementation uses `get_unchecked` only where its subrange,
 window, or loop bounds establish a live element. Internal range-taking helpers
 are explicitly unsafe; the safe sort entry point establishes and preserves
 their range preconditions. These bounds do not depend on a comparator returning
-a particular answer. Restoring swaps retain their checks and cleanup behavior.
+a particular answer. Public checked swaps retain both index checks; every
+restoring exchange retains the same move and cleanup behavior.
 See [move-only ordering](../../examples/104-move-only-ordering.gti).
 
 `std::string(begin, end, other)` copies the code units in the half-open interval

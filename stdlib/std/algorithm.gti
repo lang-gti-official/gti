@@ -262,7 +262,7 @@ unsafe void sort_insertion<std::relocatable T, Compare>(mut std::vector<T>& valu
         if (!before) {
           break;
         }
-        values.swap_elements(position, position - size_t(1));
+        values.swap_elements_unchecked(position, position - size_t(1));
         position--;
       }
     }
@@ -287,7 +287,7 @@ unsafe void sort_heap<std::relocatable T, Compare>(mut std::vector<T>& values,
         root = start;
       } else {
         end--;
-        values.swap_elements(low, low + end);
+        values.swap_elements_unchecked(low, low + end);
       }
       while (root < end / size_t(2)) {
         mut size_t child = root * size_t(2) + size_t(1);
@@ -310,7 +310,7 @@ unsafe void sort_heap<std::relocatable T, Compare>(mut std::vector<T>& values,
         if (!before) {
           break;
         }
-        values.swap_elements(low + root, low + child);
+        values.swap_elements_unchecked(low + root, low + child);
         root = child;
       }
     }
@@ -413,7 +413,7 @@ unsafe size_t sort_partition<std::relocatable T, Compare>(mut std::vector<T>& va
                                   compare, low, middle, last);
       }
     }
-    values.swap_elements(low, pivot);
+    values.swap_elements_unchecked(low, pivot);
     mut size_t left = low + size_t(1);
     mut size_t right = last;
     if (count > size_t(128)) {
@@ -452,7 +452,7 @@ unsafe size_t sort_partition<std::relocatable T, Compare>(mut std::vector<T>& va
           }
         }
         while (left_used < left_count && right_used < right_count) {
-          values.swap_elements(left + left_offsets[left_used],
+          values.swap_elements_unchecked(left + left_offsets[left_used],
                                right - right_offsets[right_used]);
           left_used++;
           right_used++;
@@ -489,11 +489,11 @@ unsafe size_t sort_partition<std::relocatable T, Compare>(mut std::vector<T>& va
       if (left >= right) {
         break;
       }
-      values.swap_elements(left, right);
+      values.swap_elements_unchecked(left, right);
       left++;
       right--;
     }
-    values.swap_elements(low, right);
+    values.swap_elements_unchecked(low, right);
     return right;
   }
 }
@@ -504,11 +504,12 @@ unsafe size_t sort_partition<std::relocatable T, Compare>(mut std::vector<T>& va
 // partition levels finishes with heapsort, so comparisons stay O(n log n) for
 // every input. Each split leaves the larger side on a fixed stack and
 // continues with the smaller side, so at most log2(n) < 64 ranges wait at
-// once and sorting never allocates. Only checked restoring swaps move
+// once and sorting never allocates. Only restoring swaps move
 // elements, so an interrupted sort leaves a permutation of the original
 // elements. Every pending interval is a subrange of the original live prefix;
 // splitting at the returned in-range pivot preserves the unsafe helper
-// preconditions. Comparator borrows end before each restoring swap.
+// preconditions for reads and restoring swaps. Comparator borrows end before
+// each swap, and no comparator can resize the exclusively borrowed vector.
 void introsort<std::relocatable T, Compare>(mut std::vector<T>& values,
                                             mut Compare& compare)
   requires std::vector_element<T> && std::comparator<Compare, T> {
@@ -523,7 +524,7 @@ void introsort<std::relocatable T, Compare>(mut std::vector<T>& values,
     if (direction != 0) {
       if (direction < 0) {
         for (mut size_t left = size_t(0); left < high / size_t(2); left++) {
-          values.swap_elements(left, high - left - size_t(1));
+          unsafe { values.swap_elements_unchecked(left, high - left - size_t(1)); }
         }
       }
       return;
