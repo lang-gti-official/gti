@@ -17,6 +17,7 @@ public:
 interface NumberSource { int32_t next(); };
 class NativeNumber : public NumberSource {
 public:
+  NativeNumber() = default;
   int32_t next() override { return recurrence_value(); }
 };
 

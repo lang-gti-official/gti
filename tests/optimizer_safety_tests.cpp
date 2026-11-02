@@ -473,12 +473,12 @@ int main() {
     const auto local =
         functionDischarges(frontend, optimized, "synchronized_loop",
                            lang::MirSafetyCheckFamily::ArithmeticOverflow);
-    // The loop counter is a local no other thread can reach, so its bound
-    // survives. The accumulator still needs recurrence invariance, which
-    // the call's opaque effects block.
-    expect(local == 1, "an uncaptured loop counter keeps its bound across "
-                       "synchronization: " +
-                           std::to_string(local) + " actual, 1 expected");
+    // Neither local's identity reaches another thread. Capture analysis now
+    // supplies the same independence for the finite recurrence proof.
+    expect(local == 2,
+           "an uncaptured loop counter and sum keep their bounds across "
+           "synchronization: " +
+               std::to_string(local) + " actual, 2 expected");
   }
 }
 
@@ -574,7 +574,7 @@ int main() {
                       .outcome = outcome});
         }
   expect(!accumulatorChecks.empty(),
-         "the opaque-loop negative must identify the accumulator's actual "
+         "the opaque-loop fixture must identify the accumulator's actual "
          "MIR instruction and original integer-overflow outcome by source");
   for (const auto level :
        {lang::OptimizationLevel::O2, lang::OptimizationLevel::O3}) {
@@ -592,9 +592,9 @@ int main() {
                  retained->definedFailure.localOrigins.size() > check.origin &&
                  retained->definedFailure.localOrigins[check.origin].line ==
                      accumulatorLine &&
-                 !lang::hasMirSafetyDischarge(*retained, check),
-             "opaque runtime synchronization must retain the exact accumulator "
-             "overflow check even when the independent counter is provable");
+                 lang::hasMirSafetyDischarge(*retained, check),
+             "opaque runtime synchronization cannot change an unexposed local; "
+             "the exact finite accumulator overflow check should be proved");
     }
     expect(functionOperationDischarges(
                frontend, optimized, "transport_result",
@@ -717,6 +717,7 @@ int64_t recurrence_captured_call() {
 interface RecurrenceSource { int32_t next(); };
 class FixedRecurrenceSource : public RecurrenceSource {
 public:
+  FixedRecurrenceSource() = default;
   int32_t next() override { return 7; }
 };
 
