@@ -210,10 +210,26 @@
         "43aa7072cc974632e612758c8f16ba191f2dcd69"
       ],
       "merge": "43aa7072cc974632e612758c8f16ba191f2dcd69"
+    },
+    {
+      "task": "preview-publication-speed",
+      "pr": 140,
+      "head": "62b4b680e1b5cddd4162b05a2d82b9974361adf7",
+      "tests": [
+        "preview_release",
+        "preview_workflow",
+        "ci_release",
+        "ci_resources",
+        "repository_hosting"
+      ],
+      "contributions": [
+        "d0e086faba3daa7b79aa1ff77be880cd9f0302b8"
+      ],
+      "merge": "d0e086faba3daa7b79aa1ff77be880cd9f0302b8"
     }
   ],
   "removed": [],
   "main": "e4f231574320d2182654b35de956ae52bb333d63",
-  "previous": "728322d16e9b4768a3c1b5059ba85f817b7469c7",
-  "candidate": "1524fba3f64b417f93c30827bef3b32a"
+  "previous": "421f90dc870c39c92f60c3b0b0d684cf2572f1b1",
+  "candidate": "6b2eabbc332c43c4b81217329738f8a6"
 }
