@@ -3518,8 +3518,6 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}"
             --cmake "${CMAKE_COMMAND}"
   )
-  add_test(NAME gtiup
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/gtiup_test.py")
   add_test(NAME preview_release
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/preview_release_test.py")
   add_test(

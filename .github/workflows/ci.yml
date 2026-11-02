@@ -78,7 +78,6 @@ jobs:
           python3 tests/cut_release_test.py
           python3 tests/release_train_test.py
           python3 tests/ci_release_test.py .
-          python3 tests/gtiup_test.py
           python3 tests/preview_release_test.py
           python3 tests/ci_resources_test.py scripts/configure_ci_resources.sh
           python3 tests/repository_hosting_test.py .

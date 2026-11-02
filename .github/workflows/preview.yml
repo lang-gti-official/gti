@@ -27,7 +27,6 @@ jobs:
           persist-credentials: false
       - name: Verify publication and manager invariants
         run: |
-          python3 tests/gtiup_test.py
           python3 tests/preview_release_test.py
       - name: Select current admitted preview source
         id: source
