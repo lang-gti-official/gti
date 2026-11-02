@@ -38,7 +38,9 @@ An owned range can yield independent values through an exact read-only
 `bool has_next()` and exact mutable `T take_next() mut`, both with no
 parameters. This protocol applies when the class has neither `begin` nor
 `begin_mut`; existing iterator/sentinel ranges keep their existing protocol.
-The range and yielded values cannot contain checked borrowed state. A value
+The range and yielded values cannot contain checked borrowed state. Legacy
+non-owning text handles (`string_view` and `c_string`) cannot be yielded by this
+protocol because their type traits do not prove expression-independent ownership. A value
 binding is required; reference bindings are rejected. `T` may be move-only
 and need not support default construction or assignment.
 

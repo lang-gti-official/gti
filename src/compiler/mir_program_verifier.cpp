@@ -22113,6 +22113,35 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
       check(iteration.iteratorType);
       check(iteration.sentinelType);
       check(iteration.elementType);
+      if (iteration.strategy == RangeIterationStrategy::Consuming) {
+        const auto *value = body->findValue(iteration.elementAccessValue);
+        const MirInstruction *producer = nullptr;
+        if (value)
+          if (const auto *block = body->findBlock(value->definitionBlock))
+            for (const auto &instruction : block->instructions)
+              if (instruction.id == value->definition)
+                producer = &instruction;
+        const auto *selected =
+            producer && producer->functionTarget
+                ? program.findFunctionInstance(*producer->functionTarget)
+                : nullptr;
+        if (!selected ||
+            selected->declaration != iteration.dereferenceFunction ||
+            selected->receiverMutability != ReceiverMutability::Mutable ||
+            selected->staticMember || !selected->parameterTypes.empty() ||
+            selected->returnType != producer->info.type ||
+            selected->returnBorrowOrigin != BorrowOriginKind::None ||
+            !selected->returnBorrowFields.empty() ||
+            !selected->returnBorrowParameters.empty() ||
+            selected->returnBorrowPlace || selected->dependentTextReturn)
+          result.errors.push_back(
+              {.bodyKind = address.kind,
+               .owner = address.owner,
+               .instruction = producer ? producer->id : 0,
+               .message = "consuming iteration has no exact independent "
+                          "mutable take declaration"});
+        continue;
+      }
       if (!iteration.materializesElementValue) {
         const auto *element = body->findLoan(iteration.elementLoan);
         if (iteration.strategy != RangeIterationStrategy::Structural ||

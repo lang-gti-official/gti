@@ -982,13 +982,15 @@ bool objectRelocate(const MirProgram &program,
 
 bool objectTake(const MirProgram &program, const MirInstruction &instruction) {
   if (instruction.kind != MirInstructionKind::Call ||
-      instruction.intrinsic != IntrinsicKind::ObjectTake || !instruction.result ||
+      instruction.intrinsic != IntrinsicKind::ObjectTake ||
+      !instruction.result ||
       instruction.unsafeOperation != UnsafeOperationKind::ObjectLifetime ||
       instruction.info.category != ValueCategory::Value ||
       instruction.info.access != AccessMode::ReadOnly ||
       instruction.info.traits.containsBorrowedState ||
       instruction.info.updateArithmeticType != SemanticType::Unknown ||
-      instruction.operands.size() != 1 || instruction.parameterTypes.size() != 1)
+      instruction.operands.size() != 1 ||
+      instruction.parameterTypes.size() != 1)
     return false;
   const auto &pointer = instruction.parameterTypes.front();
   const auto &element = instruction.info.type;
@@ -1015,7 +1017,8 @@ bool objectTake(const MirProgram &program, const MirInstruction &instruction) {
                              .hirValue = instruction.hirValue,
                              .hirStatement = instruction.hirStatement,
                              .callSite = instruction.callSite,
-                             .unsafeOperation = UnsafeOperationKind::ObjectLifetime,
+                             .unsafeOperation =
+                                 UnsafeOperationKind::ObjectLifetime,
                              .result = instruction.result,
                              .operands = instruction.operands,
                              .parameterTypes = instruction.parameterTypes,

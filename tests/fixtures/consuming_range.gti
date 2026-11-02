@@ -42,6 +42,11 @@ int early_return() {
   return 0;
 }
 
+Ticket first_ticket() {
+  for (auto ticket : tickets().into_range()) { return std::move(ticket); }
+  return Ticket(0);
+}
+
 concept produces<R, T> = std::move_constructible<R> &&
     std::meta::is_borrow_free<R>() &&
     requires(R& source) { { source.has_next() } -> bool; } &&
@@ -91,6 +96,39 @@ int main() {
   }
   if (consume<Countdown, Ticket>(Countdown(3)) != 3 || drops != 15) { return 9; }
   if (consume_vector(tickets()) != 3 || drops != 18) { return 10; }
+  {
+    mut std::uninitialized<int> slot{};
+    mut std::uninitialized<Ticket> resource{};
+    unsafe {
+      std::construct_at(slot.data(), 21);
+      auto first = std::take_at(slot.data());
+      // A transferred slot is vacant and may be constructed again.
+      std::construct_at(slot.data(), 34);
+      auto second = std::take_at(slot.data());
+      if (first != 21 || second != 34) { return 11; }
+      std::construct_at(resource.data(), 55);
+      auto ticket = std::take_at(resource.data());
+      if (ticket.value() != 55) { return 12; }
+    }
+    if (drops != 19) { return 13; }
+  }
+  {
+    auto ticket = first_ticket();
+    if (ticket.value() != 1 || drops != 21) { return 14; }
+  }
+  if (drops != 22) { return 15; }
+  {
+    mut std::vector<int> numbers{};
+    numbers.emplace_back(1);
+    numbers.emplace_back(2);
+    numbers.emplace_back(3);
+    mut int64_t sum = 0;
+    for (mut int64_t number : std::move(numbers).into_range()) {
+      number++;
+      sum += number;
+    }
+    if (sum != 9) { return 16; }
+  }
   {
     mut std::vector<std::string> words{};
     words.emplace_back("one");

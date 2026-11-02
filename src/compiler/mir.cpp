@@ -9305,10 +9305,89 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
     const MirBlock *cleanup = body.findBlock(range.cleanupBlock);
     const MirBlock *exit = body.findBlock(range.exitBlock);
     if (range.strategy == RangeIterationStrategy::Consuming) {
+      const auto *take = linearValueDefinition(body, range.elementAccessValue);
+      const auto *test =
+          condition && condition->terminator.value &&
+                  condition->terminator.value->kind == MirOperandKind::Value
+              ? linearValueDefinition(body, condition->terminator.value->value)
+              : nullptr;
+      const auto receiverIsCursor = [&](const MirInstruction *call,
+                                        bool write) {
+        if (!call || call->kind != MirInstructionKind::Call ||
+            !call->receiver || !call->parameterTypes.empty() ||
+            !call->operands.empty())
+          return false;
+        MirOperand receiver = *call->receiver;
+        if (receiver.kind == MirOperandKind::Value) {
+          const auto *stage = linearValueDefinition(body, receiver.value);
+          if (!stage || stage->kind != MirInstructionKind::CallInput ||
+              stage->callSite != call->callSite ||
+              stage->callInputRole != MirCallInputRole::Receiver ||
+              stage->callInputKind != (write ? HirCallInputKind::MutableBorrow
+                                             : HirCallInputKind::ReadBorrow) ||
+              stage->operands.size() != 1)
+            return false;
+          receiver = stage->operands.front();
+        }
+        const auto *place = body.findPlace(receiver.place);
+        return receiver.kind == (write ? MirOperandKind::BorrowWrite
+                                       : MirOperandKind::BorrowRead) &&
+               iteratorPlace && place &&
+               place->root == MirPlaceRootKind::Binding &&
+               place->binding == iteratorPlace->binding &&
+               place->projections.empty();
+      };
+      const auto initializer =
+          [&](MirPlaceId destination) -> const MirInstruction * {
+        const MirInstruction *found = nullptr;
+        for (const auto &block : body.blocks)
+          for (const auto &instruction : block.instructions)
+            if (instruction.kind == MirInstructionKind::Initialize &&
+                instruction.destination == destination) {
+              if (found)
+                return nullptr;
+              found = &instruction;
+            }
+        return found;
+      };
+      const auto *cursorInit = initializer(range.iterator);
+      const auto *move =
+          cursorInit && cursorInit->operands.size() == 1 &&
+                  cursorInit->operands.front().kind == MirOperandKind::Value
+              ? linearValueDefinition(body, cursorInit->operands.front().value)
+              : nullptr;
+      const auto *movedPlace =
+          move && move->operands.size() == 1
+              ? body.findPlace(move->operands.front().place)
+              : nullptr;
+      const auto *elementInit = initializer(range.element);
+      const auto originatesAtTake = [&](MirOperand value) {
+        // Ordinary scalar conversion is permitted by the written value binding.
+        for (std::size_t depth = 0; depth < body.values.size(); ++depth) {
+          if (value.kind == MirOperandKind::Value) {
+            if (value.value == range.elementAccessValue)
+              return true;
+            const auto *conversion = linearValueDefinition(body, value.value);
+            if (!conversion ||
+                conversion->kind != MirInstructionKind::Compute ||
+                conversion->operation != MirOperation::Convert ||
+                conversion->operands.size() != 1)
+              return false;
+            value = conversion->operands.front();
+          } else {
+            const auto *place = body.findPlace(value.place);
+            return value.kind == MirOperandKind::Move && place &&
+                   place->sourceValue == range.elementAccessSource &&
+                   place->projections.empty();
+          }
+        }
+        return false;
+      };
       if (range.id != index + 1 || range.hirStatement == 0 ||
-          !sourceRanges.insert(range.hirStatement).second || range.coreLoop == 0 ||
-          !ownerPlace || !iteratorPlace || !elementPlace || !conditionEntry ||
-          !condition || !bodyBlock || !increment || !cleanup || !exit ||
+          !sourceRanges.insert(range.hirStatement).second ||
+          range.coreLoop == 0 || !ownerPlace || !iteratorPlace ||
+          !elementPlace || !conditionEntry || !condition || !bodyBlock ||
+          !increment || !cleanup || !exit ||
           ownerPlace->type != range.rangeType ||
           iteratorPlace->type != range.iteratorType ||
           ownerPlace->type != iteratorPlace->type ||
@@ -9316,19 +9395,38 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
           elementPlace->type != range.elementType ||
           elementPlace->type.kind == SemanticType::Reference ||
           ownerPlace->type.kind == SemanticType::Reference ||
+          ownerPlace->traits.containsBorrowedState ||
+          elementPlace->traits.containsBorrowedState ||
+          range.owner == range.iterator || range.owner == range.element ||
+          range.iterator == range.element || !cursorInit || !move ||
+          move->kind != MirInstructionKind::Move || !movedPlace ||
+          move->operands.front().kind != MirOperandKind::Move ||
+          movedPlace->root != MirPlaceRootKind::Binding ||
+          movedPlace->binding != ownerPlace->binding ||
+          !movedPlace->projections.empty() || !receiverIsCursor(test, false) ||
+          !receiverIsCursor(take, true) ||
+          test->info.type != SemanticType::Bool ||
+          take->hirValue != range.elementAccessSource ||
+          take->info.category != ValueCategory::Value ||
+          take->info.type.kind == SemanticType::Reference ||
+          take->info.traits.containsBorrowedState || !elementInit ||
+          elementInit->operands.size() != 1 ||
+          !originatesAtTake(elementInit->operands.front()) ||
           !range.ownsRangeTemporary || range.rangeCarrier != 0 ||
-          range.sentinel != 0 || range.rangeLoan != 0 || range.elementLoan != 0 ||
-          range.elementOwner != 0 || range.elementOwnerLoan != 0 ||
-          range.materializesElementValue || range.endpointParking ||
-          range.dereferenceFunction == 0 ||
+          range.sentinel != 0 || range.rangeLoan != 0 ||
+          range.elementLoan != 0 || range.elementOwner != 0 ||
+          range.elementOwnerLoan != 0 || range.materializesElementValue ||
+          range.endpointParking || range.dereferenceFunction == 0 ||
           condition->terminator.kind != MirTerminatorKind::Branch ||
           condition->terminator.target != range.bodyBlock ||
+          condition->terminator.elseTarget != range.cleanupBlock ||
           increment->terminator.kind != MirTerminatorKind::Goto ||
           increment->terminator.target != range.conditionEntryBlock ||
           cleanup->terminator.kind != MirTerminatorKind::Goto ||
           cleanup->terminator.target != range.exitBlock) {
-        return failure(body, owner,
-                       "consuming range lost its owned cursor/value control flow");
+        return failure(
+            body, owner,
+            "consuming range lost its owned cursor/value control flow");
       }
       continue;
     }

@@ -20,9 +20,9 @@
     "stdlib/std/detail/iterator.gti": "3b40fd44d87c647be20245b57e670c460547a3b9808438aee0333d7864d4d491",
     "stdlib/std/detail/map_entry.gti": "18d397281e03301cf5cb9758b7c6b55415720a6cf346bf14660667ee869d62d6",
     "stdlib/std/detail/map_iterators.gti": "1865894665173a692f71381a1190056f1c6f8f1d868590c8a84de887045f5047",
-    "stdlib/std/detail/memory_capabilities.gti": "f4add458d438acc7f60ab55c981fd046db11d3fb51b8d81f371892f86243702f",
-    "stdlib/std/detail/memory_core.gti": "4fbde597a84587a8108230d8ee58d8b62d7e4cd6c0791a4b22a3ea16b3ed4e37",
-    "stdlib/std/detail/memory_storage.gti": "e548b028aa64ee6b36fa66fbf87f731eb284cdc88cd4c4fa00c0ae95d6e8b3ca",
+    "stdlib/std/detail/memory_capabilities.gti": "c5c604a369766d38435c160c0c00c7bc943ff4962cf6785ed02dc05ba054438c",
+    "stdlib/std/detail/memory_core.gti": "092d5a6894d1a86926bfd5ad9b694c9e8afcb900012dc5afcaca6ed4c27e3218",
+    "stdlib/std/detail/memory_storage.gti": "60c62ef9fa9dca6787763b9aaaa6eee9fc2bc269b8cb6c89126009b2e067123e",
     "stdlib/std/detail/panic.gti": "c78f8a45be7af44e0379ff3c9c77448f5271538859789f252b658abb4b950154",
     "stdlib/std/detail/resource_core.gti": "3af137631b16e0c323850cafa4e43bcbb25eb168cb332d95fbecdd4301e53135",
     "stdlib/std/detail/resource_lease.gti": "f1a66da927f3a040de99b66c55cf2af1bb76779cb75f541c719d06a45c2443f4",
@@ -65,7 +65,7 @@
     "stdlib/std/unordered_map.gti": "7e1066725b42affa19324597126a44fb608416b63bfc778d38526ed9b795e1ed",
     "stdlib/std/unordered_set.gti": "beefd607c3c90ac64cae71baec51e9808919b7fe6a5f362ec7c2e29351138da0",
     "stdlib/std/utility.gti": "983e0584b5bf5c1850f0f648ebc579a53586e1e0f5f5d28c23d4fc88155343b5",
-    "stdlib/std/vector.gti": "65d48f1d767a11f2d44606f4748485e0cfb430529db8c8b54d79040b75eeb24c"
+    "stdlib/std/vector.gti": "7612e85e60b91f498dc765d06cd49e3c9e2568d9d65c569d270a325287ace954"
   },
   "cases": [
     {
@@ -728,6 +728,21 @@
       "id": "constexpr-readonly-references",
       "mode": "run",
       "source": "tests/fixtures/constexpr_readonly_references.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "consuming-range",
+      "mode": "run",
+      "source": "tests/fixtures/consuming_range.gti",
+      "backend": "llvm",
       "optimizations": [
         "O0",
         "O3"
@@ -5028,6 +5043,30 @@
       ]
     },
     {
+      "id": "memory.object-extraction",
+      "source": "stdlib/std/detail/memory_core.gti",
+      "status": "executable",
+      "operations": [
+        "std::take_at"
+      ],
+      "case_ids": [
+        "consuming-range"
+      ],
+      "required_instantiations": [
+        "move-only non-default-constructible values",
+        "empty/full/early-exit cleanup",
+        "independent structural generic ranges",
+        "raw source reuse and owned scalar results"
+      ],
+      "evidence": [
+        "tests/consuming_range_tests.cpp",
+        "tests/consuming_range_runtime_test.py",
+        "tests/fixtures/consuming_range.gti",
+        "tests/fixtures/consuming_range_failures.gti",
+        "examples/186-consuming-ranges.gti"
+      ]
+    },
+    {
       "id": "memory.shared-ptr",
       "source": "stdlib/std/memory.gti",
       "status": "executable",
@@ -7121,6 +7160,30 @@
         "tests/container_iterator_movement_test.py",
         "tests/contiguous_iterator_completion_test.py",
         "examples/143-checked-container-iteration.gti"
+      ]
+    },
+    {
+      "id": "vector.consuming-iteration",
+      "source": "stdlib/std/vector.gti",
+      "status": "executable",
+      "operations": [
+        "std::vector::into_range"
+      ],
+      "case_ids": [
+        "consuming-range"
+      ],
+      "required_instantiations": [
+        "move-only non-default-constructible values",
+        "empty/full/early-exit cleanup",
+        "independent structural generic ranges",
+        "raw source reuse and owned scalar results"
+      ],
+      "evidence": [
+        "tests/consuming_range_tests.cpp",
+        "tests/consuming_range_runtime_test.py",
+        "tests/fixtures/consuming_range.gti",
+        "tests/fixtures/consuming_range_failures.gti",
+        "examples/186-consuming-ranges.gti"
       ]
     },
     {

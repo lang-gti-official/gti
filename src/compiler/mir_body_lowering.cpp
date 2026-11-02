@@ -14846,8 +14846,9 @@ private:
                              ? MirPlaceId{0}
                              : placeForBinding(sourceRange.elementOwner),
          .elementOwnerStatement = sourceRange.elementOwnerStatement,
-         .rangeLoan = loanFor(sourceRange.rangeLoan,
-                             sourceRange.strategy != RangeIterationStrategy::Consuming),
+         .rangeLoan =
+             loanFor(sourceRange.rangeLoan,
+                     sourceRange.strategy != RangeIterationStrategy::Consuming),
          .elementLoan =
              [&] {
                if (isPhysicalProxyRangeProtocolBinding(sourceRange.element)) {
@@ -14882,9 +14883,11 @@ private:
                return loanFor(sourceRange.elementOwnerLoan,
                               sourceRange.elementOwnerLoan != 0);
              }(),
-         .elementAccessValue = sourceRange.materializesElementValue
-                                   ? mirValueFor(sourceRange.elementAccessValue)
-                                   : MirValueId{0},
+         .elementAccessValue =
+             (sourceRange.materializesElementValue ||
+              sourceRange.strategy == RangeIterationStrategy::Consuming)
+                 ? mirValueFor(sourceRange.elementAccessValue)
+                 : MirValueId{0},
          .elementAccessSource = sourceRange.elementAccessValue,
          .dereferenceFunction = sourceRange.dereferenceFunction,
          .elementOwnerDrop =

@@ -158,13 +158,20 @@ BackendArtifact CppBackend::generate(LoweredProgram program) {
             "aggregate constant publication requires the LLVM backend",
             row.identity.source);
     for (const auto &block : body->blocks)
-      for (const auto &instruction : block.instructions)
+      for (const auto &instruction : block.instructions) {
+        if (!instruction.tombstone &&
+            instruction.intrinsic == IntrinsicKind::ObjectTake)
+          throw BackendUnsupportedError(
+              "raw object extraction and vector consuming iteration require "
+              "the LLVM backend",
+              row.identity.source);
         if (!instruction.tombstone &&
             (instruction.intrinsic == IntrinsicKind::AtomicFetchAddWrapping ||
              instruction.intrinsic == IntrinsicKind::AtomicFetchSubWrapping))
           throw BackendUnsupportedError("wrapping atomic read-modify-write "
                                         "operations require the LLVM backend",
                                         row.identity.source);
+      }
   }
   const PhaseTimeScope timeScope("backend-emit");
   return {.kind = BackendArtifactKind::Source,

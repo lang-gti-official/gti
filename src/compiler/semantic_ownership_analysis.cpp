@@ -14795,9 +14795,11 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
         arguments[0].kind != SemanticType::RawPointer ||
         arguments[0].pointerAccess != AccessMode::Mutable ||
         arguments[0].arguments.size() != 1) {
-      report(expr.paren(),
-             "Taking a raw object requires one writable pointer to its complete "
-             "object type.", "GTI-S2019");
+      report(
+          expr.paren(),
+          "Taking a raw object requires one writable pointer to its complete "
+          "object type.",
+          "GTI-S2019");
       currentType = SemanticType::Unknown;
       return;
     }
@@ -14808,15 +14810,16 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
          typeTraits(element).relocation == RelocationKind::Unavailable)) {
       report(expr.paren(),
              "Taking a raw object requires a complete relocatable type without "
-             "checked borrowed state.", "GTI-S2019");
+             "checked borrowed state.",
+             "GTI-S2019");
       currentType = SemanticType::Unknown;
       return;
     }
     currentType = element;
     semanticModel.record(expr, ResolvedCallInfo{.returnType = currentType,
-                                               .parameterTypes = arguments,
-                                               .typeArguments = {element},
-                                               .intrinsic = intrinsic});
+                                                .parameterTypes = arguments,
+                                                .typeArguments = {element},
+                                                .intrinsic = intrinsic});
     bindIntrinsicCallDeclaration(expr, declaration);
     return;
   }

@@ -170,6 +170,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Build URLs, GET JSON, or POST a JSON body | [93: HTTP/JSON client](093-http-json-client.gti), [local demo below](#http-and-json-without-an-external-service) |
 | Encode counted bytes as Base64 or hex; decode UTF-8 scalars | [94: text encoding](094-binary-text-encoding.gti) |
 | Duplicate a vector of strings or constrain a generic member call | [95: explicit cloning](095-explicit-cloning.gti) |
+| Consume owned vector elements into a record without cloning values | [186: consuming ranges](186-consuming-ranges.gti) |
 | Translate library errors into application errors | [96: error mapping](096-error-mapping.gti) |
 | Build and validate data at compile time | [97: constexpr tables](097-constexpr-tables.gti) |
 | Build constants with mutable helpers, result composition, constructors, enum states and reflection | [142: constexpr builders](142-constexpr-builders.gti) |

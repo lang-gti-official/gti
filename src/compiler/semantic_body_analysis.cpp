@@ -2941,9 +2941,8 @@ auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
   analyze(syntax->statements().front());
   const BindingInfo *resolvedOwner =
       semanticModel.findBinding(*stmt.ownerBinding());
-  SemanticType sourceType = resolvedOwner == nullptr
-                                ? SemanticType::Unknown
-                                : resolvedOwner->type;
+  SemanticType sourceType =
+      resolvedOwner == nullptr ? SemanticType::Unknown : resolvedOwner->type;
   const bool ownedSource = sourceType.kind != SemanticType::Reference;
   if (!ownedSource && sourceType.arguments.size() == 1) {
     SemanticType referent = sourceType.arguments.front();
@@ -2970,15 +2969,16 @@ auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
           "GTI-S2083", DiagnosticPhase::Semantics, stmt.colon(),
           "Consuming range iteration requires an owned value without stored "
           "borrows.");
-      diagnostic.hints.emplace_back(
-          "Transfer a named range with std::move(range); it becomes unavailable "
-          "after the transfer.");
+      diagnostic.hints.emplace_back("Transfer a named range with "
+                                    "std::move(range); it becomes unavailable "
+                                    "after the transfer.");
       diagnostics.emplace_back(std::move(diagnostic));
     }
     if (stmt.bindingType().reference) {
       report(stmt.bindingName(),
              "A consuming range yields owned values; use a value binding "
-             "without '&'.", "GTI-S2083");
+             "without '&'.",
+             "GTI-S2083");
     }
     const Token cursorName = generated(
         TokenKind::IDENTIFIER, stmt.ownerBinding()->name().lexeme + "_consume");
@@ -2999,9 +2999,9 @@ auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
         Mutability::Mutable, TypeRef(generated(TokenKind::AUTO, "auto")),
         cursorName,
         std::make_unique<Call>(
-            std::make_unique<QualifiedName>(NamePath(std::vector<Token>{
-                generated(TokenKind::IDENTIFIER, "std"),
-                generated(TokenKind::IDENTIFIER, "move")})),
+            std::make_unique<QualifiedName>(NamePath(
+                std::vector<Token>{generated(TokenKind::IDENTIFIER, "std"),
+                                   generated(TokenKind::IDENTIFIER, "move")})),
             std::vector<TypeRef>{}, generated(TokenKind::RIGHT_PAREN, ")"),
             std::move(moveArguments)));
     auto element = std::make_shared<VariableDecl>(
@@ -3029,7 +3029,7 @@ auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
     const BindingInfo *cursorInfo = semanticModel.findBinding(*cursor);
     const BindingInfo *elementInfo = semanticModel.findBinding(*element);
     const auto exactCall = [&](const ResolvedCallInfo *call,
-                              CallReceiverMode receiver) {
+                               CallReceiverMode receiver) {
       return call != nullptr &&
              (call->function != 0 || containsOpenTypeParameter(sourceType)) &&
              call->parameterTypes.empty() && call->defaultArguments.empty() &&
@@ -3045,30 +3045,39 @@ auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
         takeNext->returnType == SemanticType::Void ||
         takeNext->returnType == SemanticType::Unknown ||
         takeNext->returnType.kind == SemanticType::Reference ||
-        typeTraits(takeNext->returnType).containsBorrowedState) {
-      report(stmt.colon(),
-             "A consuming range requires an exact mutable take_next() returning "
-             "an independent owned value.", "GTI-S2083");
+        takeNext->returnType.kind == SemanticType::StringView ||
+        takeNext->returnType.kind == SemanticType::CString ||
+        typeTraits(takeNext->returnType).containsBorrowedState ||
+        takeNext->borrowOrigin != BorrowOriginKind::None ||
+        !takeNext->borrowFields.empty() || !takeNext->borrowArguments.empty() ||
+        takeNext->borrowPlace || takeNext->dependentTextReturn ||
+        takeNext->dependentTextPublication) {
+      report(
+          stmt.colon(),
+          "A consuming range requires an exact mutable take_next() returning "
+          "an independent owned value.",
+          "GTI-S2083");
     }
     semanticModel.record(
-        stmt, {.consumingLowering = std::move(lowering),
-               .strategy = RangeIterationStrategy::Consuming,
-               .rangeType = sourceType,
-               .iteratorType = sourceType,
-               .elementType = elementInfo == nullptr ? SemanticType::Unknown
-                                                    : elementInfo->type,
-               .owner = semanticModel.findBinding(*stmt.ownerBinding())->symbol,
-               .iterator = cursorInfo == nullptr ? 0 : cursorInfo->symbol,
-               .element = elementInfo == nullptr ? 0 : elementInfo->symbol,
-               .compareFunction = hasNext == nullptr ? 0 : hasNext->function,
-               .dereferenceFunction = takeNext == nullptr ? 0 : takeNext->function,
-               .ownsRangeTemporary = true});
+        stmt,
+        {.consumingLowering = std::move(lowering),
+         .strategy = RangeIterationStrategy::Consuming,
+         .rangeType = sourceType,
+         .iteratorType = sourceType,
+         .elementType =
+             elementInfo == nullptr ? SemanticType::Unknown : elementInfo->type,
+         .owner = semanticModel.findBinding(*stmt.ownerBinding())->symbol,
+         .iterator = cursorInfo == nullptr ? 0 : cursorInfo->symbol,
+         .element = elementInfo == nullptr ? 0 : elementInfo->symbol,
+         .compareFunction = hasNext == nullptr ? 0 : hasNext->function,
+         .dereferenceFunction = takeNext == nullptr ? 0 : takeNext->function,
+         .ownsRangeTemporary = true});
     endScope();
     loanFlow.statementBoundaries.pop_back();
     return;
   }
-  analyze(StmtList(syntax->statements().begin() + 1,
-                   syntax->statements().end()));
+  analyze(
+      StmtList(syntax->statements().begin() + 1, syntax->statements().end()));
   endScope();
   loanFlow.statementBoundaries.pop_back();
 

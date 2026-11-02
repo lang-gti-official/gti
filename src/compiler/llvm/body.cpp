@@ -1288,7 +1288,8 @@ private:
         return restoringExchange(instruction);
       if (instruction.intrinsic == IntrinsicKind::ObjectTake) {
         if (!mir_detail::objectTake(session.program().mir(), instruction))
-          throw std::logic_error("LLVM object take lost its verified ownership transfer");
+          throw std::logic_error(
+              "LLVM object take lost its verified ownership transfer");
         const auto &type = instruction.info.type;
         auto *source = operand(instruction.operands.front());
         if (addressValue(session.program().mir(), type)) {

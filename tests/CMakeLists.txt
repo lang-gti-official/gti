@@ -5218,6 +5218,20 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/consuming_range_runtime_test.py"
             "$<TARGET_FILE:gti>" --mode llvm-O0 --mode llvm-O3)
   set_tests_properties(consuming_range_runtime PROPERTIES TIMEOUT 600)
+  add_test(NAME consuming_range_cpp_boundary
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/consuming_range_runtime_test.py"
+            "$<TARGET_FILE:gti>" --mode c++20-O0 --mode c++23-O0)
+  set_tests_properties(consuming_range_cpp_boundary PROPERTIES TIMEOUT 180)
+  add_test(NAME consuming_range_performance
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/consuming_range_performance_test.py"
+            "$<TARGET_FILE:gti>")
+  set_tests_properties(consuming_range_performance PROPERTIES TIMEOUT 180)
+  if(TARGET gti_lsp)
+    add_test(NAME consuming_range_lsp
+      COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/consuming_range_lsp_test.py"
+              "$<TARGET_FILE:gti_lsp>")
+    set_tests_properties(consuming_range_lsp PROPERTIES TIMEOUT 120)
+  endif()
 
   add_test(NAME compact_owner_layout_runtime
     COMMAND "${Python3_EXECUTABLE}"

@@ -1,0 +1,55 @@
+import std.vector;
+import std.string;
+
+class Mark {
+  int id;
+  bool fail;
+public:
+  Mark(int id, bool fail = false) : id(id), fail(fail) {}
+  Mark(Mark& other) = delete;
+  Mark(Mark&& other) = default;
+  ~Mark() {
+    std::println(this.id);
+    if (this.fail) { int zero = 0; int checked = 1 / zero; } // destructor failure
+  }
+};
+
+class Source {
+  mut int position = 0;
+  int mode;
+public:
+  Source(int mode) : mode(mode) {}
+  bool has_next() {
+    if (this.position == 1 && this.mode == 6) {
+      int zero = 0; int checked = 1 / zero; // condition failure
+    }
+    return this.position < 3;
+  }
+  Mark take_next() mut {
+    this.position++;
+    Mark result{this.position};
+    if (this.position == 2 && this.mode == 7) {
+      int zero = 0; int checked = 1 / zero; // producer failure
+    }
+    return std::move(result);
+  }
+  ~Source() { std::println(90); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc >= 6) {
+    for (auto value : Source(argc)) {}
+    return 0;
+  }
+  mut std::vector<Mark> values{};
+  values.emplace_back(1, argc == 3);
+  values.emplace_back(2, argc == 5);
+  values.emplace_back(3, argc >= 4);
+  for (auto value : std::move(values).into_range()) {
+    if (argc == 2) {
+      int zero = 0; int checked = 1 / zero; // body failure
+    }
+    break;
+  }
+  return 0;
+}
