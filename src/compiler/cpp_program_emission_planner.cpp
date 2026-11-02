@@ -4090,8 +4090,8 @@ public:
             if (storage != nullptr &&
                 storage->symbol == step.uniqueOwnerField) {
               receiver = "this->" + field->name;
-              if (cppMirEngagedDeferredFieldStorage(mir, descriptor.classInstance.value(),
-                                                     storage->symbol))
+              if (cppMirEngagedDeferredFieldStorage(
+                      mir, descriptor.classInstance.value(), storage->symbol))
                 receiver += ".storage()";
               break;
             }
@@ -4380,12 +4380,10 @@ public:
         if (!storage->staticStorage && deferralOwner != nullptr &&
             cppMirDeferredFieldStorage(mir, deferralOwner->id,
                                        storage->symbol)) {
-          emitLoweredDeferredFieldDeclaration(*member, concreteStorage,
-                                              initializers ? &*initializers
-                                                           : nullptr,
-                                              cppMirEngagedDeferredFieldStorage(
-                                                  mir, deferralOwner->id,
-                                                  storage->symbol));
+          emitLoweredDeferredFieldDeclaration(
+              *member, concreteStorage, initializers ? &*initializers : nullptr,
+              cppMirEngagedDeferredFieldStorage(mir, deferralOwner->id,
+                                                storage->symbol));
           continue;
         }
         emitLoweredStorageDeclaration(*member, concreteStorage, true,

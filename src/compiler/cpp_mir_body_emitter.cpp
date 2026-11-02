@@ -14781,7 +14781,7 @@ formalEntryGroupPayloadMove(const MirConstructorInstance &constructor,
     const bool deferredMove =
         !dropFreeMove &&
         cppMirDeferredFieldStorage(program, owner->id, initializer.field) &&
-        !cppMirEngagedDeferredFieldStorage(program, owner->id, initializer.field);
+        !field->requiresActiveCleanup;
     if (dropFreeOnly && !dropFreeMove) {
       return false;
     }
@@ -25063,13 +25063,29 @@ bool cppMirDeferredFieldStorage(const MirProgram &program,
       owner->cAbiRecord || owner->unionLayout ||
       owner->compilerCapability != CompilerCapabilityTypeKind::None)
     return false;
+  const auto needsEngagement = [&](SymbolId fieldSymbol) {
+    for (const auto &instance : program.classInstances())
+      if (instance.declaration == owner->declaration)
+        for (const auto &member : instance.declaredFields)
+          if (member.symbol == fieldSymbol && member.requiresActiveCleanup)
+            return true;
+    return false;
+  };
   const auto eligible = [&](const MirClassFieldInfo &candidate,
                             HirClassInstanceId candidateOwner) {
     std::unordered_set<HirClassInstanceId> visiting;
     const auto *typeOwner = uniqueClassInstanceForType(program, candidate.type);
-    const bool owning = typeOwner && !typeOwner->destructor &&
-                        failureConstructorRetainedCleanupType(program, candidate.type);
-    if (owning) {
+    const bool owning =
+        typeOwner && !typeOwner->destructor &&
+        failureConstructorRetainedCleanupType(program, candidate.type);
+    if (owning || needsEngagement(candidate.symbol)) {
+      if (!typeOwner ||
+          typeOwner->moveConstructor != SpecialMemberStatus::Generated ||
+          !typeOwner->traits.movable ||
+          !fixedArrayElementTransferIsDefinedFailureFree(program,
+                                                         candidate.type))
+        return false;
+      bool witnessed = false;
       for (const auto &constructor : program.constructorInstances()) {
         if (constructor.owner != candidateOwner ||
             constructor.definitionKind != MirDefinitionKind::Source)
@@ -25080,13 +25096,18 @@ bool cppMirDeferredFieldStorage(const MirProgram &program,
         if (initializer == constructor.initializers.end() ||
             !initializer->ownedParameter)
           return false;
+        witnessed = true;
       }
+      if (!witnessed)
+        return false;
     }
     return candidate.type.kind == SemanticType::Class &&
-           (owning || failureConstructorPassiveBoundField(program, candidate, true)) &&
+           (owning ||
+            failureConstructorPassiveBoundField(program, candidate, true)) &&
            !failureConstructorEmptyDefaultFieldType(
                program, candidate.type, EmptyFieldUse::Construction) &&
-           (owning || deferredShellLeavesTrivial(program, candidate.type, visiting));
+           (owning ||
+            deferredShellLeavesTrivial(program, candidate.type, visiting));
   };
   if (!eligible(*field, ownerId))
     return false;
@@ -25103,8 +25124,7 @@ bool cppMirDeferredFieldStorage(const MirProgram &program,
           return candidate.symbol == symbol;
         });
     if (corresponding == instance.declaredFields.end() ||
-        !eligible(*corresponding, instance.id) ||
-        corresponding->requiresActiveCleanup != field->requiresActiveCleanup)
+        !eligible(*corresponding, instance.id))
       return false;
     const bool precedingState = std::any_of(
         instance.bases.begin(), instance.bases.end(),
@@ -25123,22 +25143,25 @@ bool cppMirDeferredFieldStorage(const MirProgram &program,
   const bool stateBase =
       std::any_of(owner->bases.begin(), owner->bases.end(),
                   [](const HirBaseInstance &base) { return !base.interface; });
-  return stateBase || std::any_of(std::next(owner->declaredFields.begin()),
-                                  owner->declaredFields.end(), [&](const auto &entry) {
-                                    return eligible(entry, ownerId);
-                                  });
+  return stateBase ||
+         std::any_of(std::next(owner->declaredFields.begin()),
+                     owner->declaredFields.end(), [&](const auto &entry) {
+                       return eligible(entry, ownerId);
+                     });
 }
 
 bool cppMirEngagedDeferredFieldStorage(const MirProgram &program,
-                                        HirClassInstanceId ownerId,
-                                        SymbolId symbol) {
+                                       HirClassInstanceId ownerId,
+                                       SymbolId symbol) {
   const auto *owner = program.findClassInstance(ownerId);
   if (!owner || !cppMirDeferredFieldStorage(program, ownerId, symbol))
     return false;
-  return std::any_of(owner->declaredFields.begin(), owner->declaredFields.end(),
-                     [&](const auto &field) {
-                       return field.symbol == symbol && field.requiresActiveCleanup;
-                     });
+  for (const auto &instance : program.classInstances())
+    if (instance.declaration == owner->declaration)
+      for (const auto &field : instance.declaredFields)
+        if (field.symbol == symbol && field.requiresActiveCleanup)
+          return true;
+  return false;
 }
 
 namespace {
@@ -27899,8 +27922,9 @@ valueRootedClassMoveFieldSlot(const MirProgram &program,
 
 // Move-assignment into an existing mutable active-cleanup binding, or into one
 // direct mutable receiver field holding a closed owning payload enum, stages
-// the moved value in a Value-rooted obligation. The Move constructs the slot,
-// the paired Assign replaces the cleaned destination, and its adjacent Drop
+// the moved value in a Value-rooted or conditional temporary obligation. The
+// Move constructs the slot, the paired Assign replaces the cleaned destination,
+// and its full-expression Drop
 // destroys only the moved-from staging shell. A binding reparents into its
 // persistent Binding obligation; a receiver field records target zero because
 // the owning class's verified reverse-field schedule remains its cleanup
@@ -28223,8 +28247,7 @@ valueRootedMoveAssignmentSlot(const MirProgram &program,
             instruction.destination == slot->id &&
             event.kind == MirLifecycleEventKind::Drop &&
             event.source == drop->id && event.target == 0 &&
-            event.failureCleanup &&
-            block.activeFailure != 0 &&
+            event.failureCleanup && block.activeFailure != 0 &&
             instruction.info.type == value->info.type &&
             instruction.lifecycle.size() == 1) {
           continue;
@@ -28332,10 +28355,10 @@ invokeProducerBlock(const MirBody &body, const MirInstruction &producer) {
 // binding or exact mutable owned field stages the temporary in a Value-rooted
 // obligation: the Construct
 // publishes into that staging slot, the adjacent Assign move-assigns the
-// destination binding — dropping the value it replaces — and the adjacent
-// Drop destroys only the moved-from staging shell. This is the prvalue
-// sibling of the named move-assignment shape: MIR contains no Move, and a
-// raising constructor arms the staging obligation on its invoke success edge
+// destination binding — dropping the value it replaces — and the scheduled
+// full-expression Drop destroys only the moved-from staging shell. This is the
+// prvalue sibling of the named move-assignment shape: MIR contains no Move, and
+// a raising constructor arms the staging obligation on its invoke success edge
 // instead of on the instruction, which splits the Construct from its
 // publication. Replacement preparation may add another verified success edge;
 // the value stays in its slot until commit or failure cleanup. Unproved
@@ -28699,10 +28722,9 @@ valueRootedClassPrvalueAssignmentSlot(
     }
     if (retiredInputs.size() != inputLoans->size())
       return {};
-    if (destroyPosition == publicationBlock->instructions.end() ||
-        destroyPosition->id != destroy->id) {
-      return {};
-    }
+    // Publication consumes this exact result once. Its moved-from native
+    // shell remains in the guarded slot until the independently verified
+    // full-expression Drop, including after comma sequencing or a merge.
     return {.value = value,
             .producer = producer,
             .consumer = consumer,
@@ -33902,7 +33924,8 @@ private:
   }
 
   [[nodiscard]] std::string fieldSpelling(const ScalarBodyFacts &facts,
-                                          SymbolId field, bool storage = false) {
+                                          SymbolId field,
+                                          bool storage = false) {
     if (!facts.owner) {
       throw std::logic_error(
           "general MIR body emission lost the receiver class instance");
@@ -33919,7 +33942,8 @@ private:
   }
 
   [[nodiscard]] std::string fieldSpelling(HirClassInstanceId owner,
-                                          SymbolId field, bool storage = false) {
+                                          SymbolId field,
+                                          bool storage = false) {
     const auto found = std::find_if(
         representations.symbols().begin(), representations.symbols().end(),
         [&](const CppMirSymbolRepresentation &row) {
@@ -33930,8 +33954,12 @@ private:
       throw std::logic_error(
           "general MIR body emission lost an exact field symbol row");
     }
-    return found->spelling + (storage ? "" : found->bytePreservingFieldCell ? ".get()" :
-        cppMirEngagedDeferredFieldStorage(program, owner, field) ? ".storage()" : "");
+    return found->spelling +
+           (storage                          ? ""
+            : found->bytePreservingFieldCell ? ".get()"
+            : cppMirEngagedDeferredFieldStorage(program, owner, field)
+                ? ".storage()"
+                : "");
   }
 
   [[nodiscard]] std::string fieldProjectionChainSpelling(
@@ -36353,7 +36381,10 @@ private:
       const bool retainedField =
           field != nullptr && rollback != nullptr &&
           field->projections.size() == 1 &&
-          ((ownedFields &&
+          ((facts.owner &&
+            cppMirEngagedDeferredFieldStorage(
+                program, *facts.owner, field->projections.front().field)) ||
+           (ownedFields &&
             std::any_of(ownedFields->begin(), ownedFields->end(),
                         [&](const CppMirOwnedParameterFieldBinding &binding) {
                           return binding.field ==
@@ -37190,10 +37221,13 @@ private:
                 ClassSsaSlotConsumerKind::FieldInitialization) {
           const auto destination = destinationSpelling(facts, slot->id);
           if (facts.owner && deferredFieldPlace(program, facts.body, *slot) &&
-              cppMirEngagedDeferredFieldStorage(program, *facts.owner,
-                                                slot->projections.front().field)) {
-            output << "(*this)." << fieldSpelling(facts, slot->projections.front().field, true)
-                   << ".emplace(std::move(__gti_mir_v_" << staged.value->id << ".get()));\n";
+              cppMirEngagedDeferredFieldStorage(
+                  program, *facts.owner, slot->projections.front().field)) {
+            output << "(*this)."
+                   << fieldSpelling(facts, slot->projections.front().field,
+                                    true)
+                   << ".emplace(std::move(__gti_mir_v_" << staged.value->id
+                   << ".get()));\n";
             writeIndent();
             output << "__gti_mir_v_" << staged.value->id << ".destroy();\n";
             return;
@@ -37881,9 +37915,10 @@ private:
         instruction.kind == MirInstructionKind::Initialize &&
         rawDestination != nullptr &&
         deferredFieldPlace(program, facts.body, *rawDestination);
-    const bool engagedPublication = deferredPublication && facts.owner &&
-        cppMirEngagedDeferredFieldStorage(program, *facts.owner,
-                                         rawDestination->projections.front().field);
+    const bool engagedPublication =
+        deferredPublication && facts.owner &&
+        cppMirEngagedDeferredFieldStorage(
+            program, *facts.owner, rawDestination->projections.front().field);
     const bool reconstructedPublication =
         instruction.kind == MirInstructionKind::Initialize && rawDestination &&
         facts.kind == MirBodyKind::Constructor &&
@@ -37894,12 +37929,15 @@ private:
         failureConstructorEmptyDefaultFieldType(program, rawDestination->type,
                                                 EmptyFieldUse::Construction);
     if (engagedPublication) {
-      output << "(*this)." << fieldSpelling(facts, rawDestination->projections.front().field, true)
+      output << "(*this)."
+             << fieldSpelling(facts, rawDestination->projections.front().field,
+                              true)
              << ".emplace(";
     } else if (deferredPublication || reconstructedPublication) {
       if (reconstructedPublication) {
         output << "std::destroy_at(std::addressof("
-               << destinationSpelling(facts, *instruction.destination) << "));\n";
+               << destinationSpelling(facts, *instruction.destination)
+               << "));\n";
         writeIndent();
       }
       output << "std::construct_at(std::addressof("
@@ -37915,7 +37953,8 @@ private:
     if (movedOperand) {
       output << ')';
     }
-    output << ((deferredPublication || reconstructedPublication) ? ");\n" : ";\n");
+    output << ((deferredPublication || reconstructedPublication) ? ");\n"
+                                                                 : ";\n");
     if (const MirPlace *handedOff =
             movedTemporaryHandedOff(facts.body, instruction);
         handedOff != nullptr && slotPlace(facts.body, *handedOff)) {

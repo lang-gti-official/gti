@@ -338,8 +338,7 @@ int main() {
   bool checkedFieldRelay = false;
   for (const auto &function : frontend.mir.functionInstances()) {
     for (const auto &loan : function.body.loans) {
-      const auto *dependency =
-          function.body.findLoan(loan.storedDependency);
+      const auto *dependency = function.body.findLoan(loan.storedDependency);
       const auto *origin = function.body.findPlace(loan.source);
       if (loan.kind != lang::MirLoanKind::Stored || loan.entry ||
           loan.producedBy == 0 || !dependency || !dependency->entry ||

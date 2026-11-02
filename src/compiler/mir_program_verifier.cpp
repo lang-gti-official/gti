@@ -5649,11 +5649,10 @@ storedCarrierValueOrigin(const MirProgram &program, const MirBody &body,
       // Reading a checked text-reference field copies its referent's view,
       // retaining the entry's external text owner. The terminal indirection
       // must select one exact declared reference path of that entry.
-      if (std::any_of(rootPaths.begin(), rootPaths.end(),
-                      [&](const auto &path) {
-                        return path.fields == prefix &&
-                               path.reference == projected;
-                      }))
+      if (std::any_of(
+              rootPaths.begin(), rootPaths.end(), [&](const auto &path) {
+                return path.fields == prefix && path.reference == projected;
+              }))
         return HirBindingId{0};
       return std::nullopt;
     }
@@ -5724,11 +5723,12 @@ storedCarrierValueOrigin(const MirProgram &program, const MirBody &body,
       if (place.root != MirPlaceRootKind::Binding || place.binding != carrier ||
           !place.projections.empty())
         continue;
-      const bool textCopy =
-          place.traits.containsBorrowedState && place.traits.copyable &&
-          (place.type.kind == SemanticType::StringView ||
-           place.type.kind == SemanticType::CString);
-      if ((place.type != carrierType && !textCopy) || place.initiallyAvailable ||
+      const bool textCopy = place.traits.containsBorrowedState &&
+                            place.traits.copyable &&
+                            (place.type.kind == SemanticType::StringView ||
+                             place.type.kind == SemanticType::CString);
+      if ((place.type != carrierType && !textCopy) ||
+          place.initiallyAvailable ||
           (storageType && *storageType != place.type))
         return false;
       storageType = place.type;
@@ -5850,7 +5850,8 @@ storedCarrierValueOrigin(const MirProgram &program, const MirBody &body,
           stage->callInputKind != HirCallInputKind::Value || load == nullptr ||
           source == nullptr ||
           load->operands.front().kind != MirOperandKind::Copy ||
-          load->operands.front().type != publishedType || !origin || *origin != 0)
+          load->operands.front().type != publishedType || !origin ||
+          *origin != 0)
         return false;
       visiting.erase(carrier);
       proven.insert(carrier);
@@ -6045,8 +6046,8 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
               argument >= instruction.operands.size() ||
               instruction.operands[argument].kind != MirOperandKind::Value)
             continue;
-          const auto *stage = definitionFor(
-              body, instruction.operands[argument].value);
+          const auto *stage =
+              definitionFor(body, instruction.operands[argument].value);
           const auto *load =
               stage && stage->kind == MirInstructionKind::CallInput &&
                       stage->callSite == instruction.callSite &&

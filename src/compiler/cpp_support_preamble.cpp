@@ -1580,8 +1580,26 @@ public:
   mir_deferred_field(mir_deferred_field &&other) noexcept {
     if (other.engaged_) emplace(std::move(other.value_));
   }
-  mir_deferred_field &operator=(const mir_deferred_field &) = delete;
-  mir_deferred_field &operator=(mir_deferred_field &&) = delete;
+  mir_deferred_field &operator=(const mir_deferred_field &other)
+      requires (std::is_copy_constructible_v<T> && std::is_copy_assignable_v<T>) {
+    if (this == &other) return *this;
+    if (engaged_ && other.engaged_) value_ = other.value_;
+    else if (other.engaged_) emplace(other.value_);
+    else reset();
+    return *this;
+  }
+  mir_deferred_field &operator=(const mir_deferred_field &)
+      requires (!(std::is_copy_constructible_v<T> && std::is_copy_assignable_v<T>)) = delete;
+  mir_deferred_field &operator=(mir_deferred_field &&other)
+      requires (std::is_move_constructible_v<T> && std::is_move_assignable_v<T>) {
+    if (this == &other) return *this;
+    if (engaged_ && other.engaged_) value_ = std::move(other.value_);
+    else if (other.engaged_) emplace(std::move(other.value_));
+    else reset();
+    return *this;
+  }
+  mir_deferred_field &operator=(mir_deferred_field &&)
+      requires (!(std::is_move_constructible_v<T> && std::is_move_assignable_v<T>)) = delete;
   ~mir_deferred_field() {
     if (engaged_ && !mir_cleanup_emergency_abandonment())
       std::destroy_at(std::addressof(value_));
@@ -1590,6 +1608,12 @@ public:
   // permits its value to be accessed only after the publication below.
   T &storage() noexcept { return value_; }
   const T &storage() const noexcept { return value_; }
+  void reset() {
+    if (engaged_) {
+      engaged_ = false;
+      std::destroy_at(std::addressof(value_));
+    }
+  }
   template <typename... Args> void emplace(Args &&...args) {
     if (engaged_) storage_error("verified MIR deferred field published twice");
     construct_representation_at(std::addressof(value_), std::forward<Args>(args)...);

@@ -11430,6 +11430,66 @@ void testFailureCapableClassReturnFieldRead() {
   checkFailureCapableClassReturnFieldRead(true);
 }
 
+void testDiscardedOwningAssignment() {
+  const auto frontend =
+      analyzeWithStandardLibrary("discarded-owning-assignment.gti", R"(
+import std.utility;
+class Ticket {
+public:
+  int value;
+  Ticket(int value) : value(value) {}
+  ~Ticket() {}
+};
+int choose(bool condition, mut Ticket target, Ticket first, Ticket second) {
+  condition ? (target = std::move(first)) : (target = std::move(second));
+  (condition ? Ticket(19) : Ticket(20)), 3;
+  return target.value;
+}
+int main() { return choose(true, Ticket(1), Ticket(5), Ticket(7)) - 5; }
+)");
+  expect(frontend.canGenerateCode(), "discarded owning assignments verify");
+  if (!frontend.canGenerateCode())
+    return;
+  expect(!gti_test::emitCpp(frontend).contents.empty(),
+         "conditional moved assignments and discarded real objects emit");
+  std::size_t checked = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Move ||
+            !instruction.destination || instruction.lifecycle.size() != 1)
+          continue;
+        const auto *slot = function.body.findPlace(*instruction.destination);
+        if (!slot || slot->root != lang::MirPlaceRootKind::Temporary)
+          continue;
+        ++checked;
+        for (int mutation = 0; mutation != 3; ++mutation) {
+          auto malformed = frontend.mir;
+          auto *body = lang::findMirBody(
+              malformed, {lang::MirBodyKind::Function, function.id});
+          if (mutation == 0) {
+            body->places[slot->id - 1].sourceValue = 0;
+          } else {
+            for (auto &changedBlock : body->blocks)
+              for (auto &changed : changedBlock.instructions)
+                if (changed.kind == lang::MirInstructionKind::Drop &&
+                    changed.destination == slot->id) {
+                  if (mutation == 1)
+                    changed.lifecycle.front().conditional = false;
+                  else
+                    changed.lifecycle.front().source = 0;
+                }
+          }
+          expect(!lang::verifyMirProgram(malformed).valid(),
+                 "conditional staging cannot forge its source, activation "
+                 "guard, or retirement obligation");
+        }
+      }
+    }
+  }
+  expect(checked == 2, "both conditional move staging slots are exercised");
+}
+
 void testDiscardedCleanupFreeClassResult() {
   const auto frontend = analyze("discarded-class-result.gti", R"(
 struct Packet {
@@ -13537,7 +13597,8 @@ int main() {
           const bool storedReferenceField =
               place && place->root == lang::MirPlaceRootKind::Binding &&
               place->projections.size() >= 2 &&
-              place->projections.front().kind == lang::MirProjectionKind::Field &&
+              place->projections.front().kind ==
+                  lang::MirProjectionKind::Field &&
               place->projections.back().kind ==
                   lang::MirProjectionKind::Dereference;
           const auto *loan =
@@ -17104,6 +17165,7 @@ constexpr NamedTest kTests[] = {
     {"testCheckedArrayElementFieldAccess", testCheckedArrayElementFieldAccess},
     {"testAssignmentResultWholeValue", testAssignmentResultWholeValue},
     {"testNestedClassResultFieldView", testNestedClassResultFieldView},
+    {"testDiscardedOwningAssignment", testDiscardedOwningAssignment},
     {"testDiscardedCleanupFreeClassResult",
      testDiscardedCleanupFreeClassResult},
     {"testNestedCleanupFreeClassResult", testNestedCleanupFreeClassResult},

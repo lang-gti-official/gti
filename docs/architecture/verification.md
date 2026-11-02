@@ -1190,6 +1190,13 @@ no-elide and sanitizer modes plus LLVM O0–O3. `carrier_shell_references` rejec
 forged text-relay origins and missing external owner dependencies, while
 `testBorrowedFieldCompoundAssignment` rejects forged stored-field projections.
 
+`owning_expression_transfers` checks discarded conditional and comma
+assignments with exact destructor counts, both branches, loop increments,
+failure ordering, and genuine temporary arms that remain live until the full
+expression ends. `testDiscardedOwningAssignment` independently rejects forged
+temporary identities, unconditional drops of inactive conditional slots, and
+missing cleanup obligations.
+
 `cpp_mir_body_emitter_text`:
 - `testMovedPassiveFieldAfterFallibleSibling` now requires the moved `Cursor`
   after a fallible ledger to use deferred storage, to be refused by the
