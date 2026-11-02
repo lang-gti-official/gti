@@ -1078,12 +1078,28 @@ live element loan across the swap. It moves each value without copying or
 running its destructor.
 
 Whole-vector `std::reverse` and both `std::sort` overloads accept relocatable
-move-only elements. Sort uses adaptive iterative introsort. Whole inputs longer
-than 16 elements first receive a monotonic-order probe: a nondecreasing range
+move-only elements. Whole inputs longer than 16 elements first receive a
+monotonic-order probe: a nondecreasing range
 is already finished, and a nonincreasing range is reversed with restoring swaps.
 Equivalent prefixes and plateaus are supported. The probe stops at the first
 change in strict direction, without moving any element; ordered inputs need
-at most two comparisons per adjacent pair. Other inputs use median-of-three
+at most two comparisons per adjacent pair.
+
+For the default ordering of builtin signed/unsigned integers, unordered ranges
+longer than 128 elements use an in-place most-significant-byte radix sort.
+Order-preserving unsigned keys cover all eight fixed-width integer types, including signed
+minima and maxima. Equal leading bytes are skipped; ranges of at most 32 values
+finish with primitive insertion sort. Each recursive level fixes a differing
+byte, so depth is at most eight, with two 256-entry counter arrays per level and
+no allocation. The private helper receives only the live element address and
+range, keeping vector metadata outside the recursive call. Its caller retains
+the exclusive vector borrow. Histogram totals and bucket cursors prove every
+read/write address live; primitive copies and assignments cannot invoke user
+code or fail. A displaced value is carried locally while a permutation cycle
+fills its destinations. This path is unavailable to user comparators and
+user-defined element types.
+
+All other inputs use adaptive iterative introsort with median-of-three
 quicksort partitions (a median of three sampled medians for ranges longer
 than 40), insertion sort for ranges of at most 16 elements, and heapsort for
 any range that exhausts 2*floor(log2(n)) partition levels. Comparisons are
