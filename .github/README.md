@@ -166,12 +166,15 @@ reason, and approve the `stable` deployment. A backport is a pull request into
 
 ## Rollup bot
 
-`workflows/rollup.yml` runs `scripts/rollup.py` every 30 minutes, on manual
+`workflows/rollup.yml` runs `scripts/rollup.py` after CI completes, every 30 minutes, on manual
 dispatch, and when someone with write, maintain or admin permission comments
 exactly `/rollup` on an issue or pull request. It composes green PRs labelled
 `rollup=maybe` or `rollup=always` into one `rollup/<date>-<n>` PR, queues that
 PR once its `CI gate` passes, and reconciles the result, so one complete queue
-run covers up to six PRs. Labels: `rollup=never` validates a PR alone, `p=N`
+run covers up to six PRs. A lone eligible PR queues individually rather than
+waiting for another contributor. CI completion only wakes the bot: it verifies
+the canonical CI workflow identity and re-reads current heads and gates.
+Labels: `rollup=never` validates a PR alone, `p=N`
 raises its priority, and the bot manages `rollup-failed` and `needs-rebase`.
 The bot runs only `main`'s code; it never checks out or executes PR content,
 and merges with Git plumbing with hooks disabled.
