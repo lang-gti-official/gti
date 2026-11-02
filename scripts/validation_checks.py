@@ -34,7 +34,7 @@ AUTOMATION_WORKFLOWS = {".github/workflows/rollup.yml", ".github/workflows/train
                         ".github/workflows/backport.yml", ".github/workflows/rollback.yml"}
 FULL_VALIDATION_FILES = {"scripts/validation_checks.py", "scripts/validation_batch.py",
                          "scripts/named_test_shards.py", "tests/ci_release_test.py",
-                         "tests/preview_release_test.py", "scripts/source_stdlib_ci.py", "tests/source_stdlib_ci_test.py", "tests/lsp_release_test.py",
+                         "tests/preview_release_test.py", "scripts/source_stdlib_ci.py", "tests/source_stdlib_ci_test.py", "tests/lsp_release_test.py", "tests/lsp_sdk_test.py",
                          "scripts/lsp_ci.py", "scripts/lsp_component.py", "scripts/lsp_compatibility.py"}
 AUTOMATION_FILES = {"AGENTS.md", "CLAUDE.md", "README.md"}
 AUTOMATION_SCRIPTS = {"agent_workflow.py", "validation_batch.py", "validation_checks.py",

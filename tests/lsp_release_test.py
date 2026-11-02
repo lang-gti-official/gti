@@ -57,6 +57,7 @@ class IndependentLSP(unittest.TestCase):
         for path in ['src/compiler/frontend.cpp', 'include/gti/frontend.h', 'stdlib/std/string.gti',
                      'runtime/src/thread.cpp', 'tree-sitter-gti/src/parser.c', 'CMakeLists.txt',
                      'tests/CMakeLists.txt', 'tests/ownership.toml', 'scripts/lsp_ci.py',
+                     'tests/lsp_sdk_test.py', 'tests/lsp_release_test.py',
                      '.github/workflows/ci.yml', 'unknown.txt', 'tests/native.cpp']:
             with self.subTest(path=path):
                 self.assertEqual(validation.ci_mode({}, paths + [path]), 'full')

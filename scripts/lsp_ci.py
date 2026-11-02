@@ -21,6 +21,8 @@ def eligible(paths):
     def adapter(path):
         return path.startswith(("src/lsp/", "lua/gti/", "lsp/", "plugin/"))
     def allowed(path):
+        if path in {"tests/lsp_release_test.py", "tests/lsp_sdk_test.py"}:
+            return False
         return (adapter(path) or path.startswith(("docs/", "changes/")) or path == "README.md"
                 or (path.startswith("tests/") and "/" not in path[6:] and
                     (path.endswith("_lsp_test.py") or path.startswith(("tests/lsp_", "tests/nvim_")))))
