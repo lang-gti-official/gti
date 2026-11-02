@@ -86,6 +86,167 @@ int alternative(int limit) {
   return decreasing + dynamic;
 }
 
+// All bounds below come from source operations, not from an overflow check.
+// The traversal starts at seven and uses equality to exercise modular distance.
+uint32_t bounded_dynamic(int limit, bool early) {
+  ReductionCleanup inner{2};
+  uint32_t seed = uint32_t(limit);
+  uint32_t finish = uint32_t(7) + seed;
+  mut uint32_t masked = 3;
+  mut uint32_t remainder = 5;
+  mut uint32_t extended = 7;
+  mut uint32_t selected = 11;
+  mut uint32_t choice = 13;
+  mut uint32_t visits = 0;
+  for (mut uint32_t index = 7; index != finish; index++) {
+    if (early && index == uint32_t(10)) break;
+    uint32_t input = index * uint32_t(17) + seed;
+    uint8_t narrow = uint8_t(input % uint32_t(251));
+    masked += input & uint32_t(15);
+    remainder += input % uint32_t(7);
+    extended += uint32_t(narrow);
+    if ((index & uint32_t(1)) == uint32_t(0)) {
+      selected += (input & uint32_t(7)) + uint32_t(1);
+    } else {
+      selected += input % uint32_t(5);
+      selected += uint32_t(narrow);
+    }
+    choice += (index & uint32_t(1)) == uint32_t(0)
+        ? input & uint32_t(3) : input % uint32_t(11);
+    visits++;
+  }
+  std::println(visits);
+  std::println(masked);
+  std::println(remainder);
+  std::println(extended);
+  std::println(choice);
+  return selected;
+}
+
+uint32_t dynamic_unsigned_boundary(int limit, bool early) {
+  ReductionCleanup inner{2};
+  mut uint32_t total = uint32_t(4294967291);
+  uint32_t finish = uint32_t(7) + uint32_t(limit);
+  for (mut uint32_t index = 7; index != finish; index++) {
+    ReductionCleanup iteration{9};
+    if (early && index == uint32_t(9)) break;
+    uint32_t increment = (index + uint32_t(limit)) % uint32_t(3) + uint32_t(1);
+    total += increment; // dynamic-unsigned-boundary
+  }
+  return total;
+}
+
+int dynamic_signed_boundary(int limit) {
+  ReductionCleanup inner{2};
+  mut int total = 2147483640;
+  uint32_t finish = uint32_t(7) + uint32_t(limit);
+  for (mut uint32_t index = 7; index != finish; index++) {
+    ReductionCleanup iteration{9};
+    int increment = int((index + uint32_t(limit)) % uint32_t(5));
+    total += increment; // dynamic-signed-boundary
+  }
+  return total;
+}
+
+// The inner header starts with the result of the previous outer traversal.
+uint32_t outer_accumulation(int limit) {
+  ReductionCleanup inner{2};
+  mut uint32_t total = uint32_t(limit) & uint32_t(7);
+  mut uint32_t visits = 0;
+  uint32_t finish = uint32_t(7) + uint32_t(limit);
+  for (mut uint32_t round = 0; round < uint32_t(4); round++) {
+    for (mut uint32_t index = 7; index != finish; index++) {
+      if (((index + round) & uint32_t(1)) != uint32_t(0)) {
+        total += (index + round + uint32_t(limit)) % uint32_t(7);
+        total += index & uint32_t(3);
+      }
+      visits++;
+    }
+    std::println(total);
+  }
+  std::println(visits);
+  return total;
+}
+
+uint32_t initial_unsigned_boundary(int limit, bool early) {
+  ReductionCleanup inner{2};
+  mut uint32_t total = uint32_t(4294967290) + uint32_t(limit % 5);
+  uint32_t finish = uint32_t(7) + uint32_t(limit);
+  for (mut uint32_t index = 7; index != finish; index++) {
+    ReductionCleanup iteration{9};
+    if (early && index == uint32_t(9)) break;
+    total += (index + uint32_t(limit)) % uint32_t(3) + uint32_t(1); // initial-unsigned-boundary
+  }
+  return total;
+}
+
+int initial_signed_boundary(int limit) {
+  ReductionCleanup inner{2};
+  mut int total = 2147483640 + limit % 6;
+  uint32_t finish = uint32_t(7) + uint32_t(limit);
+  for (mut uint32_t index = 7; index != finish; index++) {
+    ReductionCleanup iteration{9};
+    total += int((index + uint32_t(limit)) % uint32_t(3) + uint32_t(1)); // initial-signed-boundary
+  }
+  return total;
+}
+
+uint32_t weighted_outer(int limit, bool early) {
+  ReductionCleanup inner{2};
+  uint32_t finish = uint32_t(16) + uint32_t(limit) % uint32_t(8);
+  mut uint32_t total = uint32_t(limit) % uint32_t(7);
+  mut uint32_t visits = 0;
+  for (mut uint32_t round = 0; round < uint32_t(4); round++) {
+    for (mut uint32_t index = 7; index != finish; index++) {
+      if (early && index == uint32_t(10)) break;
+      total += index;
+      total += index & uint32_t(3);
+      visits++;
+    }
+    std::println(total);
+  }
+  std::println(visits);
+  return total;
+}
+
+uint32_t weighted_unsigned_boundary(int limit) {
+  ReductionCleanup inner{2};
+  mut uint32_t total = uint32_t(4294967295) - uint32_t(limit % 13);
+  uint32_t finish = uint32_t(16) + uint32_t(limit) % uint32_t(8);
+  for (mut uint32_t index = 7; index != finish; index++) {
+    ReductionCleanup iteration{9};
+    total += index; // weighted-unsigned-boundary
+  }
+  return total;
+}
+
+int weighted_signed_boundary(int limit) {
+  ReductionCleanup inner{2};
+  mut int total = 2147483647 - limit % 23;
+  uint32_t finish = uint32_t(16) + uint32_t(limit) % uint32_t(8);
+  for (mut uint32_t index = 7; index != finish; index++) {
+    ReductionCleanup iteration{9};
+    total += int(index); // weighted-signed-boundary
+  }
+  return total;
+}
+
+uint32_t indexed_key_sum(int limit, int mode) {
+  ReductionCleanup inner{2};
+  uint32_t finish = uint32_t(16) + uint32_t(limit) % uint32_t(8);
+  mut uint32_t base = uint32_t(limit) % uint32_t(17);
+  if (mode == 20) base = finish;
+  if (mode == 21) base = uint32_t(4294967295) - uint32_t(limit % 13);
+  if (mode == 22) base = uint32_t(limit) & uint32_t(15);
+  mut uint32_t total = mode == 19 ? base : uint32_t(0);
+  for (mut uint32_t index = 7; index != finish; index++) {
+    ReductionCleanup iteration{9};
+    uint32_t key = base + index; // ancillary-key-boundary
+    total += key % uint32_t(7);
+  }
+  return total;
+}
+
 int main(int argc, std::vector<std::string> argv) {
   if (argc != 3) return 10;
   int mode = int(argv[std::size_t(1)].size());
@@ -95,6 +256,16 @@ int main(int argc, std::vector<std::string> argv) {
   else if (mode == 1) std::println(signed_boundary(limit));
   else if (mode == 2) std::println(unsigned_boundary(limit));
   else if (mode == 3) std::println(narrow_boundary(limit));
-  else std::println(alternative(limit));
+  else if (mode == 4) std::println(alternative(limit));
+  else if (mode == 5 || mode == 6) std::println(bounded_dynamic(limit, mode == 6));
+  else if (mode == 7 || mode == 9) std::println(dynamic_unsigned_boundary(limit, mode == 9));
+  else if (mode == 8) std::println(dynamic_signed_boundary(limit));
+  else if (mode == 10) std::println(outer_accumulation(limit));
+  else if (mode == 11 || mode == 12) std::println(initial_unsigned_boundary(limit, mode == 12));
+  else if (mode == 13) std::println(initial_signed_boundary(limit));
+  else if (mode == 14 || mode == 17) std::println(weighted_outer(limit, mode == 17));
+  else if (mode == 15) std::println(weighted_unsigned_boundary(limit));
+  else if (mode == 16) std::println(weighted_signed_boundary(limit));
+  else std::println(indexed_key_sum(limit, mode));
   return 0;
 }
