@@ -229,6 +229,12 @@ invalidating unrelated graphs. A missing source, token-stream, or dependency
 digest forces a miss. Dirty lexical overlays also require an exact
 byte-for-byte source match.
 
+Executable entry validation, library-export selection and test-dispatch
+synthesis run after parsing, so their policies do not partition lexical or
+parsed cache rows. Opening an executable root and an imported source fragment
+can reuse the same unchanged library syntax. Semantic reuse identities still
+include these policies, and each analysis applies its own program request.
+
 The cache uses one process-local, thread-safe least-recently-used policy across
 lexical and parsed rows. The default limits are 256 rows and 64 MiB of
 conservatively estimated storage. Coordinators advance only changed source

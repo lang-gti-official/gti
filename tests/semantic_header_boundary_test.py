@@ -75,6 +75,9 @@ def main() -> None:
         # prove collection preserves symbol identities and diagnostics;
         # separate Frontend snapshots would reparse into different trees.
         "tests/lowered_program_tests.cpp",
+        # Calls buildPreamble directly to prove cancellation returns no partial
+        # state; the Frontend facade can cancel before entering that builder.
+        "tests/module_preamble_tests.cpp",
     }
     actual: set[str] = set()
     for directory in ("include", "src", "tests"):

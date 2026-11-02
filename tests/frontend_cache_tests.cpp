@@ -547,6 +547,91 @@ void testDefinitionClosureReanalyzedWithWarmSyntax() {
   }
 }
 
+void testProgramPoliciesShareSyntax() {
+  TemporaryProject project;
+  const auto path = project.path("program-policy.gti");
+  const std::string source =
+      "[[test]] void check() {}\nint value() { return 42; }\n";
+  auto cache = std::make_shared<lang::FrontendCache>();
+  for (unsigned policy = 0; policy != 6; ++policy) {
+    lang::FrontendOptions options;
+    options.stopAfter = lang::FrontendPhase::Semantics;
+    options.cache = cache;
+    if (policy == 1)
+      options.requireEntryPoint = true;
+    if (policy == 2 || policy == 3) {
+      options.program.kind = lang::ProgramKind::Library;
+      options.program.exports.push_back(
+          {.function = "value",
+           .symbol = policy == 2 ? "export_value" : "another_export"});
+    }
+    if (policy == 4 || policy == 5) {
+      options.program.testSuite = true;
+      options.requireEntryPoint = true;
+      options.synthesizeTestEntry = policy == 5;
+      // Dispatcher synthesis consumes the parsed program after this boundary;
+      // compiler_pipeline covers its complete standard-library-backed run.
+      if (policy == 5)
+        options.stopAfter = lang::FrontendPhase::Parsing;
+    }
+    lang::FrontendWorkMetrics metrics;
+    options.workMetrics = &metrics;
+    const auto cached = lang::Frontend(options).analyze(path, source);
+    options.cache.reset();
+    options.workMetrics = nullptr;
+    const auto uncached = lang::Frontend(options).analyze(path, source);
+    expect(resultFingerprint(cached) == resultFingerprint(uncached) &&
+               cached.testCases == uncached.testCases,
+           "entry, test and export policies must be checked identically with "
+           "warm or cold syntax");
+    if (policy != 0)
+      expect(metrics.lexedUnits.empty() && metrics.parsedUnits.empty() &&
+                 metrics.lexCacheHits.size() == 1 &&
+                 metrics.parseCacheHits.size() == 1,
+             "post-parse program policies must reuse identical syntax");
+    if (policy == 0 || policy == 4)
+      expect(cached.semanticValid,
+             "fragments and source-only annotated suites remain valid");
+    if (policy == 1)
+      expect(!cached.semanticValid &&
+                 std::any_of(
+                     cached.diagnostics.begin(), cached.diagnostics.end(),
+                     [](const auto &item) { return item.code == "GTI-S2094"; }),
+             "a warm executable request still rejects a missing main");
+  }
+}
+
+void testTargetContextInvalidatesSyntax() {
+  TemporaryProject project;
+  const auto path = project.path("target-context.gti");
+  const std::string source = "#if target.os == \"linux\"\n"
+                             "int selected() { return 1; }\n"
+                             "#else\n"
+                             "int selected() { return 2; }\n"
+                             "#endif\n";
+  auto cache = std::make_shared<lang::FrontendCache>();
+  for (unsigned round = 0; round != 3; ++round) {
+    lang::FrontendOptions options;
+    options.stopAfter = lang::FrontendPhase::Semantics;
+    options.cache = cache;
+    if (round == 1)
+      options.target.os = options.target.os == "linux" ? "macos" : "linux";
+    lang::FrontendWorkMetrics metrics;
+    options.workMetrics = &metrics;
+    const auto cached = lang::Frontend(options).analyze(path, source);
+    options.cache.reset();
+    options.workMetrics = nullptr;
+    const auto uncached = lang::Frontend(options).analyze(path, source);
+    expect(cached.semanticValid &&
+               resultFingerprint(cached) == resultFingerprint(uncached),
+           "target-selected syntax must retain cached/uncached equivalence");
+    expect((metrics.lexedUnits.size() == 1 &&
+            metrics.parsedUnits.size() == 1) == (round != 2),
+           "target changes invalidate syntax while returning to an unchanged "
+           "target reuses its rows");
+  }
+}
+
 } // namespace
 
 void testProcessedSourceUnitReplay() {
@@ -670,6 +755,8 @@ int main() {
   testDependencyConfigurationChangesParsedIdentity();
   testDeclaredInactiveConfigurationFlags();
   testDefinitionClosureReanalyzedWithWarmSyntax();
+  testProgramPoliciesShareSyntax();
+  testTargetContextInvalidatesSyntax();
   testProcessedSourceUnitReplay();
 
   if (failures != 0) {

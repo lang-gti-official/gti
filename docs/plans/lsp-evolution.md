@@ -501,6 +501,34 @@ Record the campaign in `implementation-sequence.md`
 before starting; it touches semantic analysis and HIR ownership, so the
 compiler-architecture review applies.
 
+### Completion reuse and cancellation — delivered repair
+
+Release builds on arm64 macOS, 2026-11-02, with the same saved three-file
+statistics project and vector/numeric standard-library imports. The source-equivalent
+parent and repaired server received the same open, repeated completion, obsolete
+completion cancellation, repair and three real body-edit messages. Reply times
+were observed independently, so waiting for a cancelled completion did not hide
+an earlier diagnostic publication.
+
+| Operation | Parent | Repaired |
+| --- | ---: | ---: |
+| Cold open | 1,601 ms | 1,584 ms |
+| Two repeated completions | 796 / 794 ms | 80 / 67 ms |
+| Cancel active obsolete completion | 749 ms | 13 ms |
+| Corrected diagnostic publication | 238 ms | 226 ms |
+| Three warm edits | 224 / 157 / 157 ms | 222 / 145 / 141 ms |
+| Peak server resident memory during the probe | 1,053 MB | 939 MB |
+
+These are single-run observations, not cross-platform latency guarantees.
+The dominant gain is completion's adoption of the compatible trusted preamble;
+cancellation now reaches both ordinary and cold-prefix semantic work. The
+`lsp_completion_work` regression checks reuse counters, active cancellation,
+supersession, close/reopen, changed and newly opened import dependencies, and
+diagnostic repair without a machine-speed threshold. A separate open-main then
+open-library probe reduces the second file's lex/parse work from 25 units to one
+and estimated syntax-cache storage from 162 MB to 81 MB. Discovery itself was
+only a few milliseconds, so this repair adds no project-discovery cache.
+
 ## Deferred clangd Complexity
 
 Preambles/PCH, compile-command borrowing, macro expansion locations, per-file
