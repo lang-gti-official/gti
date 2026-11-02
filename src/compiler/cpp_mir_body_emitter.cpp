@@ -21889,12 +21889,16 @@ conditionalTemporaryViewedResult(const MirProgram &program,
   }
   const MirPlace *temporary =
       drop == nullptr ? nullptr : body.findPlace(drop->place);
+  // Even an unused SSA result must identify the exact HIR lifetime whose
+  // success publication and full-expression drop govern this temporary.
   if (drop == nullptr || temporary == nullptr ||
       drop->kind != MirDropObligationKind::Value || drop->initiallyActive ||
       drop->dropType.type != value->info.type ||
       temporary->root != MirPlaceRootKind::Temporary ||
       temporary->temporary == 0 || !temporary->projections.empty() ||
-      temporary->type != value->info.type || temporary->initiallyAvailable)
+      temporary->type != value->info.type || temporary->initiallyAvailable ||
+      value->sourceValue == 0 || temporary->sourceValue != value->sourceValue ||
+      drop->value != value->sourceValue)
     return nullptr;
   for (const MirValueUse &use : body.usesOf(value->id)) {
     const MirPlace *view = use.kind == MirValueUseKind::PlaceRoot

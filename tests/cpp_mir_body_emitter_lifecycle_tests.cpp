@@ -3251,7 +3251,9 @@ void testCopiedBorrowedArgumentAcrossInvoke() {
                 expect(!lang::CppMirBodyEmitter(malformed, map)
                             .supportsFailureBodyText(address),
                        "observer storage proof must reject missing publication "
-                       "or pre-live storage");
+                       "or pre-live storage " +
+                           std::to_string(mutation) + " for producer " +
+                           std::to_string(producer.id));
             }
           }
         }
@@ -12710,20 +12712,36 @@ void testPassiveBorrowedConstructedFieldPrefix() {
 
 void testNestedConstructorArgumentPublication() {
   // A forged native tree must be refused. When the owner declares the field
-  // in deferred storage, the verified body may publish it in MIR order
-  // instead; that route trusts verified MIR, so MIR verification must then
-  // reject the forgery before emission.
-  const auto refusedOrUnverified = [](const lang::MirProgram &malformed,
-                                      const lang::CppMirBodyEmissionMap &map,
-                                      lang::MirBodyAddress address,
-                                      lang::SymbolId field) {
-    const auto *constructor = malformed.findConstructorInstance(address.owner);
+  // in deferred storage, or its type has a proved private empty state (which
+  // may recursively contain deferred fields), the verified body may publish
+  // it in MIR order instead. Those routes trust verified MIR, so MIR
+  // verification must then reject the forgery before emission.
+  const auto bodyStagedField = [](const lang::MirProgram &program,
+                                  lang::MirBodyAddress address,
+                                  lang::SymbolId field) {
+    const auto *constructor = program.findConstructorInstance(address.owner);
+    const auto *owner = constructor == nullptr
+                            ? nullptr
+                            : program.findClassInstance(constructor->owner);
+    if (owner == nullptr)
+      return false;
+    const auto member = std::find_if(
+        owner->declaredFields.begin(), owner->declaredFields.end(),
+        [&](const auto &candidate) { return candidate.symbol == field; });
+    return member != owner->declaredFields.end() &&
+           (lang::cppMirDeferredFieldStorage(program, constructor->owner,
+                                             field) ||
+            lang::cppMirFailureConstructorEmptyStateTypeEligible(program,
+                                                                 member->type));
+  };
+  const auto refusedOrUnverified = [&](const lang::MirProgram &malformed,
+                                       const lang::CppMirBodyEmissionMap &map,
+                                       lang::MirBodyAddress address,
+                                       lang::SymbolId field) {
     if (!lang::CppMirBodyEmitter(malformed, map)
              .supportsFailureBodyText(address))
       return true;
-    return constructor != nullptr &&
-           lang::cppMirDeferredFieldStorage(malformed, constructor->owner,
-                                            field) &&
+    return bodyStagedField(malformed, address, field) &&
            !lang::verifyMirProgram(malformed).valid();
   };
   std::size_t checked = 0;
@@ -12841,14 +12859,40 @@ void testNestedConstructorArgumentPublication() {
                     *prepared->preparedParameterDrop));
             drop->initiallyActive = true;
           }
-          expect(lang::cppMirConstructedFieldInitializerBindings(malformed,
-                                                                 *changed)
-                         .empty() &&
-                     refusedOrUnverified(malformed, map, address, field.field),
+          const bool nativeRefused =
+              lang::cppMirConstructedFieldInitializerBindings(malformed,
+                                                              *changed)
+                  .empty();
+          const bool bodyRefused =
+              refusedOrUnverified(malformed, map, address, field.field);
+          if (lang::CppMirBodyEmitter(malformed, map)
+                  .supportsFailureBodyText(address)) {
+            expect(bodyStagedField(frontend.mir, address, field.field),
+                   "body fallback has the same proved storage route before "
+                   "mutation");
+            // The text vocabulary operates on verified MIR. Production goes
+            // through the immutable LoweredProgram seal, so this alternate
+            // representation must never turn a failed proof into emitted C++.
+            const auto lowered = lang::LoweredProgramBuilder().build(
+                frontend.program, frontend.semantics, frontend.hir, malformed,
+                malformed, {}, lang::TargetInfo::host());
+            expect(!lowered.valid() &&
+                       std::any_of(lowered.issues.begin(), lowered.issues.end(),
+                                   [](const auto &issue) {
+                                     return issue.kind ==
+                                            lang::LoweredProgramIssueKind::
+                                                InvalidSourceMir;
+                                   }),
+                   "production admission rejects the malformed body-staged "
+                   "constructor even when its storage is representable");
+          }
+          expect(nativeRefused && bodyRefused,
                  "nested tree rejects lost types, input order, transfer, "
                  "publication, "
                  "rollback and lifetime activation " +
-                     std::to_string(mutation) + " in " + name);
+                     std::to_string(mutation) + " in " + name +
+                     " (native=" + std::to_string(nativeRefused) +
+                     ", body=" + std::to_string(bodyRefused) + ")");
         }
         if (tree) {
           auto malformed = frontend.mir;
