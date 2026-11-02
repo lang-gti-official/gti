@@ -1246,6 +1246,42 @@ transformation. No public or trusted-source unchecked-container spelling grants
 a discharge. Source-defined raw access keeps its unsafe obligations and actual
 load/store even when separately proved downstream arithmetic is discharged.
 
+### Successful Typed Prefix Relocation
+
+Closed-call value analysis has a separate successful-region transfer summary
+for one acyclic, verified bitwise relocation of non-byte integer elements.
+It records exact source/destination input addresses and an exact readonly
+count origin, including forwarding through source wrappers. This does not
+change the operation's native effects, unsafe nonoverlap obligations or
+failure behavior. A zero-count return is admitted only when that exact count
+is independently proved zero on the alternate exit.
+
+A raw region transfer alone supplies no initialized-prefix fact. Publication
+requires the destination endpoint to receive the original source endpoint,
+followed by source endpoint retirement to zero, on every successful path.
+Other writes, arbitrary count expressions, multiple/looped transfers,
+user-defined or aggregate movement and unsupported effects reject this
+summary. At the caller, publication additionally requires existing complete
+source-prefix coverage, an empty destination, exact matching integer domains
+and independently nonaliasing carrier roots for the endpoint metadata. That
+last condition does **not** prove separation of the pointed-to regions:
+nonoverlap and live-source/vacant-destination requirements are the existing
+unsafe relocation contract, not inferred from carrier identity. The verifier
+checks the typed bitwise operation, while the caller remains responsible for
+these address/lifetime obligations. Defined guarded-overlap failure and
+subsequent pointer replacement are explicit controls. Ordinary call invalidation still
+retires source and alias snapshots; only the proved destination prefix and
+endpoint are republished. Capacity is never initialization evidence.
+
+The focused `optimizer_prefix_relocation` and
+`optimizer_prefix_relocation_runtime` controls use an application-owned
+carrier, overwritten values, retired sources, vacant capacity and failed
+transfers. Custom move bodies retain their existing source rejection;
+aggregate default movement remains outside this integer-only summary.
+General ownership-shell move/replacement continues to retire prefix snapshots;
+this summary alone does not establish vector-growth optimization or a runtime
+gain.
+
 ### Capture Analysis
 
 An unknown effect can reach only storage whose identity reached it. The

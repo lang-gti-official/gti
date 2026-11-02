@@ -1175,6 +1175,14 @@ add_test(NAME optimizer_interpolation
                  "${PROJECT_SOURCE_DIR}/tests/optimizer_interpolation_test.py"
                  "$<TARGET_FILE:gti>")
 set_tests_properties(optimizer_interpolation PROPERTIES TIMEOUT 300)
+add_executable(gti_optimizer_prefix_relocation_tests optimizer_prefix_relocation_tests.cpp)
+target_link_libraries(gti_optimizer_prefix_relocation_tests PRIVATE gti_compiler)
+add_test(NAME optimizer_prefix_relocation COMMAND gti_optimizer_prefix_relocation_tests)
+add_test(NAME optimizer_prefix_relocation_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/optimizer_prefix_relocation_runtime_test.py"
+                 "$<TARGET_FILE:gti>")
+set_tests_properties(optimizer_prefix_relocation_runtime PROPERTIES TIMEOUT 300)
 add_executable(gti_optimizer_raw_context_tests optimizer_raw_context_tests.cpp)
 target_link_libraries(gti_optimizer_raw_context_tests PRIVATE gti_compiler)
 add_test(NAME optimizer_raw_context COMMAND gti_optimizer_raw_context_tests)
