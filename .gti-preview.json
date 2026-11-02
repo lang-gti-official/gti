@@ -146,10 +146,46 @@
         "140b931121286628a3eb48e3c2d942ead81cab86"
       ],
       "merge": "140b931121286628a3eb48e3c2d942ead81cab86"
+    },
+    {
+      "task": "removal-algorithms",
+      "pr": 124,
+      "head": "01665b5eb36dbaba2efa187173eacbea2a596117",
+      "tests": [
+        "removal_algorithms",
+        "associative_map",
+        "complete_containers",
+        "compiler_pipeline",
+        "documentation_index",
+        "stdlib_modules",
+        "stdlib_module_boundaries",
+        "generic_algorithm_breadth_cpp23",
+        "generic_algorithm_errors",
+        "generic_algorithm_cluster",
+        "forward_list_runtime",
+        "unordered_map",
+        "container_swap_runtime",
+        "map_mutable_entry_projection",
+        "stdlib_surface_manifest",
+        "cmake_test_ownership",
+        "test_ownership_map",
+        "mir_census_profile_controls",
+        "generic_algorithm_breadth_cpp20",
+        "generic_algorithm_breadth_no_elide",
+        "generic_algorithm_breadth_sanitized",
+        "test_case_jobs",
+        "test_throughput_registration",
+        "stdlib_surface_context_controls",
+        "plan_checks"
+      ],
+      "contributions": [
+        "70e645b7904adb0aaf746a54828d6a691464644f"
+      ],
+      "merge": "70e645b7904adb0aaf746a54828d6a691464644f"
     }
   ],
   "removed": [],
-  "main": "6be28dbe6ef4f5ad050dbdb5ad1d1935e00e6a63",
-  "previous": "fb22c3e1ec6c3fe4c4caf2867700525da50aae70",
-  "candidate": "b7c5177975944ce59c02ee4a4b5646b0"
+  "main": "e4f231574320d2182654b35de956ae52bb333d63",
+  "previous": "096cdd2b407d0d9f9f36b6352c7977f59fdef9f8",
+  "candidate": "aca72e6eccf24f9b916222b8c837fa47"
 }
