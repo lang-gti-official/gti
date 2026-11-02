@@ -98,22 +98,43 @@
     {
       "task": "gtiup",
       "pr": 115,
-      "head": "07556701d6781da23dfaa24ef722154004949168",
+      "head": "e8d936e35ddf79f29148579f921f587573f93c8b",
       "tests": [
-        "gtiup",
         "preview_release",
         "neovim_gtiup",
         "neovim_lsp_configuration",
-        "ci_release"
+        "ci_release",
+        "repository_hosting",
+        "compiler_pipeline"
       ],
       "contributions": [
         "11e454436b282ddb902d69885a937e76d3dd1402"
       ],
-      "merge": "11e454436b282ddb902d69885a937e76d3dd1402"
+      "merge": "11e454436b282ddb902d69885a937e76d3dd1402",
+      "history": [
+        {
+          "task": "gtiup",
+          "pr": 115,
+          "head": "07556701d6781da23dfaa24ef722154004949168",
+          "tests": [
+            "gtiup",
+            "preview_release",
+            "neovim_gtiup",
+            "neovim_lsp_configuration",
+            "ci_release"
+          ],
+          "contributions": [
+            "11e454436b282ddb902d69885a937e76d3dd1402"
+          ],
+          "merge": "11e454436b282ddb902d69885a937e76d3dd1402"
+        }
+      ],
+      "accepted_in_main": "6be28dbe6ef4f5ad050dbdb5ad1d1935e00e6a63",
+      "refresh_reason": "PR115 moved the Python manager into the independently tested and released standalone C++ gtiup repository. Refresh to its merged focused-verified head and require the validated preview publisher, editor integration, hosting, CI and compiler pipeline checks."
     }
   ],
   "removed": [],
-  "main": "9a74ff17f7c6ab11b31d0e87cec4b6583ffb8c4b",
-  "previous": "d52a2953de43ce39f4d13881d6919fa1edcf6a5d",
-  "candidate": "c690865825aa41c5abc8174e366b5567"
+  "main": "6be28dbe6ef4f5ad050dbdb5ad1d1935e00e6a63",
+  "previous": "ba3b9af9ab8c567b8a02f411252720c7f504fe63",
+  "candidate": "1672520b7bc94596aa0462dc35a65bb5"
 }
