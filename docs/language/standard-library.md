@@ -1097,6 +1097,12 @@ are explicitly unsafe; the safe sort entry point establishes and preserves
 their range preconditions. These bounds do not depend on a comparator returning
 a particular answer. Public checked swaps retain both index checks; every
 restoring exchange retains the same move and cleanup behavior.
+Partition offset arrays and the pending-range stack also use internally
+proved indices: a window records at most 32 offsets, and continuing with the
+smaller partition bounds pending ranges by the bit width of `size_t`. Within
+the complete windows, bounded counter and address arithmetic is exact even
+when expressed with wrapping operations; it cannot wrap for an admitted
+range. Comparator failures and public index checks are unchanged.
 See [move-only ordering](../../examples/104-move-only-ordering.gti).
 
 `std::string(begin, end, other)` copies the code units in the half-open interval
@@ -1108,6 +1114,11 @@ precede endpoint subtraction, allocation of the copied range, and source reads.
 The source is borrowed only during construction. Later mutations of either
 string do not affect the other, and the result may outlive its source. Indices
 count code units, not Unicode characters, and embedded zero bytes are copied.
+
+Single-character `string::find` scans complete 16-code-unit windows with an
+independent comparison reduction, then locates the first match or scans the
+short tail. It never reads the terminator or bytes outside the counted string.
+Positions at or past the length return `npos`, including `npos` itself.
 
 `std.memory` exposes `std::layout_of<T>()`, returning an ordinary
 `std::layout` with `size_t bytes` and `size_t alignment` fields. These are the

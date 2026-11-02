@@ -515,6 +515,29 @@ void verifyRecoveryExecutionFrequency() {
     throw std::runtime_error("frequency recovery broke LLVM IR");
 }
 
+llvm::Function *addIndependentLaneFixture(llvm::Module &module) {
+  auto &context = module.getContext();
+  llvm::IRBuilder<> builder(context);
+  auto *function = llvm::Function::Create(
+      llvm::FunctionType::get(builder.getInt1Ty(),
+                              {builder.getPtrTy(), builder.getInt8Ty()}, false),
+      llvm::GlobalValue::ExternalLinkage, "independent_byte_lanes", module);
+  builder.SetInsertPoint(llvm::BasicBlock::Create(context, "entry", function));
+  llvm::Value *found = builder.getFalse();
+  // No loop: only the SLP pass can combine these independent adjacent loads.
+  // The fixture has no alignment, aliasing, no-wrap or fast-math assumptions.
+  for (unsigned lane = 0; lane < 16; ++lane) {
+    auto *address = builder.CreateGEP(builder.getInt8Ty(), function->getArg(0),
+                                      builder.getInt64(lane));
+    auto *value =
+        builder.CreateAlignedLoad(builder.getInt8Ty(), address, llvm::Align(1));
+    found = builder.CreateOr(found,
+                             builder.CreateICmpEQ(value, function->getArg(1)));
+  }
+  builder.CreateRet(found);
+  return function;
+}
+
 llvm::Function *addColdRegionFixture(llvm::Module &module) {
   auto &context = module.getContext();
   auto *integer = llvm::Type::getInt32Ty(context);
@@ -1054,6 +1077,7 @@ int main() {
     Session session(*input, options);
     lowerScalarProgram(session, admission);
     const auto *coldClient = addColdRegionFixture(session.module());
+    const auto *independentLanes = addIndependentLaneFixture(session.module());
     llvm::Function *promote = nullptr, *checked = nullptr, *strict = nullptr,
                    *step = nullptr, *drive = nullptr, *guarded = nullptr,
                    *passive = nullptr;
@@ -1228,6 +1252,17 @@ int main() {
     floating();
     session.verify();
     const auto artifact = session.emitObject();
+    bool vectorComparison = false;
+    for (const auto &block : *independentLanes)
+      for (const auto &instruction : block)
+        if (llvm::isa<llvm::ICmpInst>(instruction) &&
+            instruction.getType()->isVectorTy())
+          vectorComparison = true;
+    if ((level == LlvmCodegenOptimization::Default ||
+         level == LlvmCodegenOptimization::Aggressive) &&
+        !vectorComparison)
+      throw std::runtime_error("independent adjacent byte operations were not "
+                               "SLP-vectorized at O2/O3");
     unsigned directColdCalls = 0, allColdCalls = 0;
     for (const auto &function : session.module())
       for (const auto &block : function)

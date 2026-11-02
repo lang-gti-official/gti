@@ -959,7 +959,13 @@ BackendArtifact Session::emitObject() {
   llvm::FunctionAnalysisManager functions;
   llvm::CGSCCAnalysisManager cgscc;
   llvm::ModuleAnalysisManager modules;
+  const auto level = pipelineLevel(options_.optimization);
   llvm::PipelineTuningOptions tuning;
+  // LLVM's library defaults enable the loop vectorizer but leave SLP off.
+  // Independent adjacent scalar operations need the latter even without a
+  // loop. Keep its ordinary target cost model and all checked/strict semantics.
+  tuning.SLPVectorization = level == llvm::OptimizationLevel::O2 ||
+                            level == llvm::OptimizationLevel::O3;
   if (options_.optimization == LlvmCodegenOptimization::Aggressive)
     tuning.InlinerThreshold = 400;
   llvm::PassBuilder builder(machine_.get(), tuning);
@@ -973,7 +979,6 @@ BackendArtifact Session::emitObject() {
   builder.registerFunctionAnalyses(functions);
   builder.registerLoopAnalyses(loops);
   builder.crossRegisterProxies(loops, functions, cgscc, modules);
-  const auto level = pipelineLevel(options_.optimization);
   if (level == llvm::OptimizationLevel::O2 ||
       level == llvm::OptimizationLevel::O3)
     (void)promoteGuardedDispatchCalls(module_);

@@ -8,6 +8,7 @@ export module algorithm;
 import std.iterator;
 import std.functional;
 import std.vector;
+import std.array;
 namespace std {
 export constexpr T min<std::totally_ordered T>(T left, T right) {
   if (right < left) {
@@ -420,8 +421,12 @@ unsafe size_t sort_partition<std::relocatable T, Compare>(mut std::vector<T>& va
       // Compare whole disjoint windows before moving elements. Every recorded
       // index names a misplaced element; paired restoring swaps classify both.
       // The pivot stays at low and all comparator borrows end before mutation.
-      mut size_t left_offsets[32] = {};
-      mut size_t right_offsets[32] = {};
+      // The window-distance guard proves every address sum/subtraction stays
+      // in [left, right]. Counts start at zero and grow by at most one per
+      // iteration, so they never exceed 32. Wrapping arithmetic is exact under
+      // these invariants and avoids per-element overflow failure paths.
+      mut std::array<size_t, 32> left_offsets{};
+      mut std::array<size_t, 32> right_offsets{};
       mut size_t left_count = size_t(0);
       mut size_t right_count = size_t(0);
       mut size_t left_used = size_t(0);
@@ -431,29 +436,34 @@ unsafe size_t sort_partition<std::relocatable T, Compare>(mut std::vector<T>& va
           left_used = size_t(0);
           left_count = size_t(0);
           for (mut size_t index = size_t(0); index < size_t(32); index++) {
-            left_offsets[left_count] = index;
+            // Before this iteration, count <= index < the window width.
+            left_offsets.get_unchecked_mut(left_count) = index;
             {
               std::vector<T>& readable = values;
-              before = compare(readable.get_unchecked(left + index), readable.get_unchecked(low));
+              before = compare(readable.get_unchecked(gti_internal::integer_wrapping_add(left, index)),
+                               readable.get_unchecked(low));
             }
-            left_count += before ? size_t(0) : size_t(1);
+            left_count = gti_internal::integer_wrapping_add(left_count, before ? size_t(0) : size_t(1));
           }
         }
         if (right_used == right_count) {
           right_used = size_t(0);
           right_count = size_t(0);
           for (mut size_t index = size_t(0); index < size_t(32); index++) {
-            right_offsets[right_count] = index;
+            right_offsets.get_unchecked_mut(right_count) = index;
             {
               std::vector<T>& readable = values;
-              before = compare(readable.get_unchecked(low), readable.get_unchecked(right - index));
+              before = compare(readable.get_unchecked(low),
+                               readable.get_unchecked(gti_internal::integer_wrapping_sub(right, index)));
             }
-            right_count += before ? size_t(0) : size_t(1);
+            right_count = gti_internal::integer_wrapping_add(right_count, before ? size_t(0) : size_t(1));
           }
         }
         while (left_used < left_count && right_used < right_count) {
-          values.swap_elements_unchecked(left + left_offsets[left_used],
-                               right - right_offsets[right_used]);
+          // used < count <= 32; every stored offset is inside its window.
+          values.swap_elements_unchecked(
+              gti_internal::integer_wrapping_add(left, left_offsets.get_unchecked(left_used)),
+              gti_internal::integer_wrapping_sub(right, right_offsets.get_unchecked(right_used)));
           left_used++;
           right_used++;
         }
@@ -530,9 +540,9 @@ void introsort<std::relocatable T, Compare>(mut std::vector<T>& values,
       return;
     }
   }
-  mut size_t lows[64] = {};
-  mut size_t highs[64] = {};
-  mut size_t depths[64] = {};
+  mut std::array<size_t, 64> lows{};
+  mut std::array<size_t, 64> highs{};
+  mut std::array<size_t, 64> depths{};
   mut size_t waiting = size_t(0);
   mut size_t depth = sort_depth_limit(high);
   while (true) {
@@ -545,15 +555,21 @@ void introsort<std::relocatable T, Compare>(mut std::vector<T>& values,
       mut size_t pivot = size_t(0);
       unsafe { pivot = sort_partition(values, compare, low, high); }
       if (pivot - low < high - pivot - size_t(1)) {
-        lows[waiting] = pivot + size_t(1);
-        highs[waiting] = high;
-        depths[waiting] = depth;
+        // Continuing with the smaller side bounds pending ranges by
+        // floor(log2(original length)); size_t has at most 64 value bits.
+        unsafe {
+          lows.get_unchecked_mut(waiting) = pivot + size_t(1);
+          highs.get_unchecked_mut(waiting) = high;
+          depths.get_unchecked_mut(waiting) = depth;
+        }
         waiting++;
         high = pivot;
       } else {
-        lows[waiting] = low;
-        highs[waiting] = pivot;
-        depths[waiting] = depth;
+        unsafe {
+          lows.get_unchecked_mut(waiting) = low;
+          highs.get_unchecked_mut(waiting) = pivot;
+          depths.get_unchecked_mut(waiting) = depth;
+        }
         waiting++;
         low = pivot + size_t(1);
       }
@@ -563,9 +579,11 @@ void introsort<std::relocatable T, Compare>(mut std::vector<T>& values,
       break;
     }
     waiting--;
-    low = lows[waiting];
-    high = highs[waiting];
-    depth = depths[waiting];
+    unsafe {
+      low = lows.get_unchecked(waiting);
+      high = highs.get_unchecked(waiting);
+      depth = depths.get_unchecked(waiting);
+    }
   }
 }
 }

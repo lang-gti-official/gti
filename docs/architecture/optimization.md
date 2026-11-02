@@ -1728,6 +1728,16 @@ gains for monotonic sorting and a smaller gain for substring construction;
 code size, compilation cost and noisy comparisons remain separate acceptance
 evidence. The comparative corpus is not registered with CTest or CI.
 
+O2/O3 explicitly enable LLVM's SLP vectorizer as well as its loop vectorizer.
+LLVM's library defaults leave SLP disabled. SLP combines independent adjacent
+scalar operations, including unrolled byte comparisons and fixed-size numeric
+operations, using the target's ordinary profitability model. This adds no
+alignment, aliasing, no-wrap or fast-math assumptions and does not remove
+checked failure paths. O0/O1 retain their previous setting. The pipeline test
+uses sixteen independent byte comparisons without a loop; counted-string
+search executes the vectorized shape against a scalar oracle at window edges,
+unaligned starts, embedded NUL and high byte values.
+
 After the first O2/O3 pipeline, a private recursive function can receive one
 additional body specialized for its recursive inputs. Every direct self call
 must independently bound the selected integer argument through a constant
