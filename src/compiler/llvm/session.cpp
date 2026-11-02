@@ -30,6 +30,7 @@
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/TargetParser/Host.h>
 #include <llvm/TargetParser/Triple.h>
+#include <llvm/Transforms/IPO/HotColdSplitting.h>
 
 #include <array>
 #include <bit>
@@ -687,6 +688,23 @@ BackendArtifact Session::emitObject() {
                       ? builder.buildO0DefaultPipeline(level)
                       : builder.buildPerModuleDefaultPipeline(level);
   pipeline.run(module_, modules);
+  if (level == llvm::OptimizationLevel::O2 ||
+      level == llvm::OptimizationLevel::O3) {
+    // Inlining exposes complete checked-failure/cleanup regions only after
+    // the ordinary pipeline has simplified their ownership state. Outline
+    // LLVM's profitable cold regions, then give the now-smaller hot helpers
+    // one ordinary simplification/optimization round. No failure edge is
+    // erased or assigned invented likelihood, and there is no retry loop.
+    const auto outlined = llvm::HotColdSplittingPass().run(module_, modules);
+    modules.invalidate(module_, outlined);
+    if (!outlined.areAllPreserved()) {
+      auto exposed = builder.buildModuleSimplificationPipeline(
+          level, llvm::ThinOrFullLTOPhase::None);
+      exposed.addPass(builder.buildModuleOptimizationPipeline(
+          level, llvm::ThinOrFullLTOPhase::None));
+      exposed.run(module_, modules);
+    }
+  }
   reuseCheckedArithmeticResults(module_);
   modules.invalidate(module_, llvm::PreservedAnalyses::none());
   if (instrumentsAddress(mode))

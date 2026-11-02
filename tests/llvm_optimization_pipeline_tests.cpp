@@ -514,6 +514,35 @@ void verifyRecoveryExecutionFrequency() {
     throw std::runtime_error("frequency recovery broke LLVM IR");
 }
 
+llvm::Function *addColdRegionFixture(llvm::Module &module) {
+  auto &context = module.getContext();
+  auto *integer = llvm::Type::getInt32Ty(context);
+  auto *sink = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(context), {integer}, false),
+      llvm::GlobalValue::ExternalLinkage, "cold_region_observe", module);
+  sink->addFnAttr(llvm::Attribute::Cold);
+  auto *function = llvm::Function::Create(
+      llvm::FunctionType::get(integer, {integer}, false),
+      llvm::GlobalValue::ExternalLinkage, "cold_region_client", module);
+  auto *entry = llvm::BasicBlock::Create(context, "entry", function);
+  auto *cold = llvm::BasicBlock::Create(context, "rare", function);
+  auto *hot = llvm::BasicBlock::Create(context, "ordinary", function);
+  llvm::IRBuilder<> builder(entry);
+  builder.CreateCondBr(
+      builder.CreateICmpSLT(function->getArg(0),
+                            llvm::ConstantInt::get(integer, 0)),
+      cold, hot);
+  builder.SetInsertPoint(hot);
+  builder.CreateRet(function->getArg(0));
+  builder.SetInsertPoint(cold);
+  for (unsigned index = 0; index < 20; ++index)
+    builder.CreateCall(
+        sink, {builder.CreateAdd(function->getArg(0),
+                                 llvm::ConstantInt::get(integer, index))});
+  builder.CreateRet(llvm::ConstantInt::getSigned(integer, -1));
+  return function;
+}
+
 void verifyDischargedCheckFacts() {
   const auto frontend = Frontend().analyze("discharged-check-facts.gti", R"(
 extern "C" { int opaque_input(); }
@@ -521,6 +550,7 @@ int bounded(int value) {
   int reduced = value % 1000;
   return reduced * 17 + 3;
 }
+
 int unbounded(int value) { return value + 7; }
 uint64_t bits(uint64_t value) { return value & uint64_t(255); }
 int main() {
@@ -659,6 +689,7 @@ int main() {
       throw std::runtime_error(admission.limitation());
     Session session(*input, options);
     lowerScalarProgram(session, admission);
+    const auto *coldClient = addColdRegionFixture(session.module());
     llvm::Function *promote = nullptr, *checked = nullptr, *strict = nullptr,
                    *step = nullptr, *drive = nullptr, *guarded = nullptr,
                    *passive = nullptr;
@@ -833,6 +864,22 @@ int main() {
     floating();
     session.verify();
     const auto artifact = session.emitObject();
+    unsigned directColdCalls = 0, allColdCalls = 0;
+    for (const auto &function : session.module())
+      for (const auto &block : function)
+        for (const auto &instruction : block)
+          if (const auto *call = llvm::dyn_cast<llvm::CallBase>(&instruction))
+            if (const auto *callee = call->getCalledFunction();
+                callee && callee->getName() == "cold_region_observe") {
+              ++allColdCalls;
+              directColdCalls += &function == coldClient;
+            }
+    const bool outlines = level == LlvmCodegenOptimization::Default ||
+                          level == LlvmCodegenOptimization::Aggressive;
+    if (allColdCalls != 20 || directColdCalls != (outlines ? 0U : 20U))
+      throw std::runtime_error(
+          "cold outlining must move the cold region only at O2/O3 and retain "
+          "every observable call");
     // Every emitted body is tuned for the target's selected processor while
     // its instruction features stay at the machine baseline. LLVM records
     // tuning knobs (fusion pairs, interleave factor, zero-cycle moves) in the
@@ -944,18 +991,25 @@ int main() {
             throw std::runtime_error("a body stores a whole failure record "
                                      "outside the cold originator");
     unsigned originations = 0, stepCalls = 0;
-    for (const auto &block : *drive)
-      for (const auto &row : block)
-        if (const auto *call = llvm::dyn_cast<llvm::CallBase>(&row)) {
-          const auto *callee = call->getCalledFunction();
-          originations += callee == originator;
-          stepCalls += callee == step;
-          if (callee &&
-              (callee->getName() == "gti_rt_failure_cleanup_enter_v1" ||
-               callee->getName() == "gti_rt_failure_cleanup_leave_v1"))
-            throw std::runtime_error("a propagate-only failure chain entered "
-                                     "the incoming-cleanup context");
-        }
+    for (const auto &function : session.module()) {
+      // Outlining may move the propagation-only tail into a private cold
+      // helper. It still belongs to this checked source call chain.
+      if (&function != drive &&
+          !function.getName().starts_with(drive->getName().str() + ".cold."))
+        continue;
+      for (const auto &block : function)
+        for (const auto &row : block)
+          if (const auto *call = llvm::dyn_cast<llvm::CallBase>(&row)) {
+            const auto *callee = call->getCalledFunction();
+            originations += callee == originator;
+            stepCalls += callee == step;
+            if (callee &&
+                (callee->getName() == "gti_rt_failure_cleanup_enter_v1" ||
+                 callee->getName() == "gti_rt_failure_cleanup_leave_v1"))
+              throw std::runtime_error("a propagate-only failure chain entered "
+                                       "the incoming-cleanup context");
+          }
+    }
     const bool inlines = level == LlvmCodegenOptimization::Default ||
                          level == LlvmCodegenOptimization::Aggressive;
     if (inlines && (stepCalls != 0 || originations == 0))

@@ -1587,6 +1587,18 @@ Native callable and cleanup regressions exercise failing inputs as well as
 successful execution. Performance remains a measured acceptance obligation:
 this preference is not a claim about the frequency or speed of every
 application's failure path.
+
+At O2/O3, one late LLVM hot/cold splitting pass separates profitable cold
+regions after ordinary inlining has exposed and simplified their cleanup state.
+If outlining changes the module, one further standard LLVM module
+simplification/optimization round can inline the smaller hot helpers and
+optimize their exposed storage. There is no fixed-point retry or forced
+inlining. The pass uses LLVM's existing cost model and cold evidence; it adds
+no failure-likelihood hints or semantic assumptions. O0/O1 retain their
+original pipelines. Cold-path extraction retains failure records, cleanup
+order, side effects and return values. Focused runtime and code-size/build-cost
+measurements remain required before accepting this pipeline change.
+
 LLVM lowering preserves two kinds of successful-execution facts for its normal
 optimization pipeline: explicit verified safety discharges become assumptions
 on their exact detector, and checked scalar arithmetic yields a no-wrap result
