@@ -1634,7 +1634,8 @@ class CIEnvironment(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="gti-ci-context-") as temporary:
             root = Path(temporary) / "runner workspace"
             (root / "scripts").mkdir(parents=True)
-            shutil.copy2(ROOT / "scripts/validation_checks.py", root / "scripts/validation_checks.py")
+            for name in ("validation_checks.py", "source_stdlib_ci.py", "release_artifacts.py", "preview_examples.py"):
+                shutil.copy2(ROOT / "scripts" / name, root / "scripts" / name)
             git(root, "init", "-b", "main")
             git(root, "config", "user.name", "CI Test")
             git(root, "config", "user.email", "test@example.invalid")
@@ -1650,7 +1651,8 @@ class CIEnvironment(unittest.TestCase):
             env = {key: value for key, value in os.environ.items()
                    if key not in {"GITEA_EVENT_PATH", "GITHUB_EVENT_PATH"}}
             env.update(GTI_EVENT_PATH=str(payload), GTI_BASE_SHA=base, GITHUB_OUTPUT=str(output),
-                       GITHUB_EVENT_NAME="pull_request", GITHUB_REF="refs/pull/1/merge")
+                       GITHUB_EVENT_NAME="pull_request", GITHUB_REF="refs/pull/1/merge",
+                       GITHUB_REPOSITORY="lang-gti-official/gti", RUNNER_TEMP=str(root))
 
             def execute(success):
                 output.write_text("")
@@ -1664,7 +1666,10 @@ class CIEnvironment(unittest.TestCase):
                 with self.subTest(event=event):
                     payload.write_text(json.dumps(event))
                     env["GTI_BASE_SHA"] = before
-                    self.assertEqual(execute(True), f"mode={expected}\n")
+                    lines = execute(True).splitlines()
+                    self.assertEqual(lines[0], f"mode={expected}")
+                    document = json.loads(lines[1].removeprefix("reuse="))
+                    self.assertEqual(document, {"mode": expected, "base": base, "head": git(root, "rev-parse", "HEAD")})
             for path in ("", str(root), str(root / "missing.json")):
                 with self.subTest(invalid_event_path=path):
                     env["GTI_EVENT_PATH"] = path

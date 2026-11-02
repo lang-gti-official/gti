@@ -69,12 +69,26 @@ def system_risk(paths):
                    or Path(path).name == "CMakeLists.txt" or path.endswith((".cmake", ".cmake.in"))})
 
 
+def source_stdlib_scope(paths):
+    """Strict source-library eligibility; artifact admission is a separate step."""
+    metadata = {"README.md", "stdlib/README.md", "examples/README.md",
+                "tests/stdlib_surface_manifest.json", "tests/mir_census_baseline.json",
+                "tests/lowered_program_census_baseline.json"}
+    def library(path):
+        return path.startswith("stdlib/std/") and path.endswith(".gti")
+    def allowed(path):
+        return (library(path) or path in metadata or
+                path.startswith(("docs/", "changes/")) and path.endswith(".md") or
+                path.startswith(("examples/", "tests/fixtures/")) and path.endswith(".gti") or
+                re.fullmatch(r"tests/[A-Za-z0-9_]+_test\.py", path) is not None)
+    return bool(paths) and any(map(library, paths)) and all(map(allowed, paths))
+
+
 def focused_scope(paths):
     """Classify local focused eligibility, independently of advisory CI policy."""
     if ci_mode({}, paths) == "automation":
         return "automation"
-    from source_stdlib_ci import eligible
-    if eligible(paths):
+    if source_stdlib_scope(paths):
         return "source-stdlib"
     return None
 
@@ -216,8 +230,7 @@ def ci_mode(event, paths):
                    path in {"scripts/" + name for name in AUTOMATION_SCRIPTS} or
                    path in {"tests/" + name for name in AUTOMATION_TESTS} for path in own):
         return "automation"
-    from source_stdlib_ci import eligible
-    if eligible(own):
+    if source_stdlib_scope(own):
         return "source-stdlib"
     return "full"
 

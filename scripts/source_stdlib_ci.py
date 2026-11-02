@@ -25,9 +25,6 @@ import preview_examples
 
 ROOT = Path(__file__).resolve().parents[1]
 SHA = re.compile(r"[0-9a-f]{40}\Z")
-METADATA = {"README.md", "stdlib/README.md", "examples/README.md",
-            "tests/stdlib_surface_manifest.json", "tests/mir_census_baseline.json",
-            "tests/lowered_program_census_baseline.json"}
 
 
 def library(path):
@@ -35,14 +32,7 @@ def library(path):
 
 
 def eligible(paths):
-    # Test registration, ownership/selection policy, prelude/module routing,
-    # VERSION, native tests, runtime and unknown files deliberately stay full.
-    def allowed(path):
-        return (library(path) or path in METADATA or
-                path.startswith(("docs/", "changes/")) and path.endswith(".md") or
-                path.startswith(("examples/", "tests/fixtures/")) and path.endswith(".gti") or
-                re.fullmatch(r"tests/[A-Za-z0-9_]+_test\.py", path) is not None)
-    return bool(paths) and any(map(library, paths)) and all(map(allowed, paths))
+    return validation_checks.source_stdlib_scope(paths)
 
 
 def git(*args, root=ROOT):
