@@ -1,1 +1,1 @@
-Reduce unnecessary ordinary-allocation and repeated bounds-check overhead while preserving alignment, failure and cleanup contracts.
+Reduce ordinary allocation, scalar-result transport, redundant arithmetic and bounds checks, guarded dispatch, and source-library sorting overhead while preserving failure, ownership, alignment, and cleanup contracts.

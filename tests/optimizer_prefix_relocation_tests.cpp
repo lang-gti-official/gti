@@ -161,9 +161,12 @@ int main() {
     std::cerr << "passive enum controls did not exercise all move shapes\n";
     return 1;
   }
+  lang::FrontendOptions processOptions;
+  processOptions.target.executionProfile = lang::ExecutionProfile::Concurrent;
   const auto process = gti_test::analyzeTrustedPrivateMemoryFixture(
       "process-scalar-profile.gti", std::string(R"(
 import "../std/detail/memory_capabilities.gti";
+import std.atomic;
 extern "C" { void* ordinary_allocator(uint64_t bytes); void mutate_address(uint64_t* address); }
 class ScalarBox { public: mut uint64_t value; mut int32_t status;
   ScalarBox() : value(9), status(9) {} };
@@ -252,6 +255,26 @@ class PointerPacket { mut uint64_t value; void* pointer = nullptr; public:
   PointerPacket() : value(9), pointer(nullptr) {}
   uint64_t take() && { return std::move(this.value); }
 };
+class WritingPointerPacket { uint64_t* pointer = nullptr; public:
+  WritingPointerPacket(uint64_t* pointer) : pointer(pointer) {}
+  void replace() && { unsafe { *this.pointer = uint64_t(18446744073709551615); } }
+  uint64_t* release() && { return this.pointer; }
+};
+uint64_t prepared_pointer_write(mut ScalarBox& box) {
+  unsafe {
+    mut WritingPointerPacket packet{&box.value};
+    std::move(packet).replace();
+  }
+  return box.value * uint64_t(2);
+}
+uint64_t prepared_pointer_escape(mut ScalarBox& box) {
+  unsafe {
+    mut WritingPointerPacket packet{&box.value};
+    uint64_t* pointer = std::move(packet).release();
+    mutate_address(pointer);
+  }
+  return box.value * uint64_t(2);
+}
 class CleanupPacket { mut uint64_t value; public:
   CleanupPacket() : value(9) {}
   uint64_t take() && { return std::move(this.value); }
@@ -296,6 +319,21 @@ uint64_t payload_replaces(mut ScalarBox& box) {
       return box.value * uint64_t(2);
   }
 }
+uint64_t allocated_owner_preserves(mut ScalarBox& box) {
+  mut std::detail::prefix_owner<uint64_t> storage{uint64_t(4)};
+  return box.value * uint64_t(2);
+}
+uint64_t allocated_owner_synchronizes(mut ScalarBox& box) {
+  mut std::detail::prefix_owner<uint64_t> storage{uint64_t(4)};
+  std::atomic<uint64_t> signal{uint64_t(0)};
+  uint64_t observed = signal.load(std::memory_order_acquire());
+  return box.value * uint64_t(2);
+}
+uint64_t allocated_owner_opaque(mut ScalarBox& box) {
+  mut std::detail::prefix_owner<uint64_t> storage{uint64_t(4)};
+  unsafe { void* ignored = ordinary_allocator(uint64_t(16)); }
+  return box.value * uint64_t(2);
+}
 uint64_t constructor_preserves(mut ScalarBox& box) {
   AllocatedShell storage{};
   return box.value * uint64_t(2);
@@ -319,14 +357,19 @@ int main() {
   mut ScalarBox eighth{}; uint64_t h = prepared_argument_replaces(eighth);
   mut ScalarBox ninth{}; uint64_t i = prepared_pointer(ninth);
   mut ScalarBox tenth{}; uint64_t j = prepared_cleanup(tenth);
+  mut ScalarBox pointerWrite{}; uint64_t pw = prepared_pointer_write(pointerWrite);
+  mut ScalarBox pointerEscape{}; uint64_t pe = prepared_pointer_escape(pointerEscape);
   mut ScalarBox payload{}; uint64_t p = payload_preserves(payload);
   mut ScalarBox replacedPayload{}; uint64_t q = payload_replaces(replacedPayload);
+  mut ScalarBox allocated{}; uint64_t ao = allocated_owner_preserves(allocated);
+  mut ScalarBox synchronized{}; uint64_t as = allocated_owner_synchronizes(synchronized);
+  mut ScalarBox opaque{}; uint64_t ax = allocated_owner_opaque(opaque);
   mut ScalarBox fourth{}; uint64_t d = constructor_preserves(fourth);
   mut ScalarBox fifth{}; uint64_t e = constructor_foreign(fifth);
   mut ScalarBox sixth{}; uint64_t f = constructor_replaces(sixth);
   return 0;
 }
-)"));
+)"), processOptions);
   if (!process.canGenerateCode()) {
     for (const auto &diagnostic : process.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
@@ -360,11 +403,16 @@ int main() {
       processProofs("status_overlap") != 0 ||
       processProofs("layout_preserves") != 1 ||
       processProofs("constructor_preserves") != 1 ||
+      processProofs("allocated_owner_preserves") != 1 ||
+      processProofs("allocated_owner_synchronizes") != 0 ||
+      processProofs("allocated_owner_opaque") != 0 ||
       processProofs("constructor_foreign") != 0 ||
       processProofs("constructor_replaces") != 0 ||
       processProofs("prepared_preserves") != 1 ||
       processProofs("prepared_argument_replaces") != 0 ||
-      processProofs("prepared_pointer") != 0 ||
+      processProofs("prepared_pointer") != 1 ||
+      processProofs("prepared_pointer_write") != 0 ||
+      processProofs("prepared_pointer_escape") != 0 ||
       processProofs("prepared_cleanup") != 0 ||
       processProofs("transport_preserves") != 1 ||
       processProofs("transport_then_write") != 0 ||
@@ -373,9 +421,105 @@ int main() {
     std::cerr << "process scalar profile: sealed="
               << processProofs("sealed_allocate")
               << " foreign=" << processProofs("foreign_allocate")
+              << " owner=" << processProofs("allocated_owner_preserves")
+              << " sync=" << processProofs("allocated_owner_synchronizes")
+              << " opaque=" << processProofs("allocated_owner_opaque")
+              << " pointer=" << processProofs("prepared_pointer")
+              << " pointer-write=" << processProofs("prepared_pointer_write")
+              << " pointer-escape=" << processProofs("prepared_pointer_escape")
               << " payload=" << processProofs("payload_preserves")
               << " payload-replaced=" << processProofs("payload_replaces")
               << " status=" << processProofs("status_overlap") << '\n';
+    return 1;
+  }
+  std::ifstream concurrentFile(root / "fixtures/optimizer_prefix_receiver_concurrent.gti");
+  std::string concurrentSource{std::istreambuf_iterator<char>(concurrentFile), {}};
+  std::ifstream queryFile(root / "fixtures/optimizer_prefix_query_probe.gti");
+  std::string querySource{std::istreambuf_iterator<char>(queryFile), {}};
+  const auto replaceText = [](std::string &text, const std::string &from,
+                              const std::string &to) {
+    const auto where = text.find(from);
+    if (where == std::string::npos)
+      return false;
+    text.replace(where, from.size(), to);
+    return true;
+  };
+  if (!replaceText(concurrentSource, "import std.prefix_query_probe;", "") ||
+      !replaceText(querySource, "export module prefix_query_probe;", "") ||
+      !replaceText(querySource, "export int repeated_alignment", "int repeated_alignment") ||
+      !replaceText(querySource, "\"detail/memory_capabilities.gti\"",
+                   "\"../std/detail/memory_capabilities.gti\"")) {
+    std::cerr << "repeated-observation fixture assembly changed\n";
+    return 1;
+  }
+  const auto repeated = gti_test::analyzeTrustedPrivateMemoryFixture(
+      "repeated-observations.gti", querySource + concurrentSource, processOptions);
+  if (!repeated.canGenerateCode()) {
+    for (const auto &diagnostic : repeated.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return 1;
+  }
+  const auto repeatedAnalysis = lang::analyzeMirClosedCallSafetyChecks(repeated.mir);
+  unsigned checkedAdds = 0;
+  unsigned dischargedAdds = 0;
+  bool atomicLoad = false, alignmentQuery = false;
+  for (const auto &function : repeated.hir.functionInstances()) {
+    const auto *mir = repeated.mir.findFunctionInstance(function.id);
+    if (!mir)
+      continue;
+    for (const auto &block : mir->body.blocks)
+      for (const auto &instruction : block.instructions) {
+        atomicLoad |= instruction.synchronization.kind ==
+                      lang::SynchronizationOperationKind::AtomicLoad;
+        if (instruction.functionTarget)
+          if (const auto *target = repeated.mir.findFunctionInstance(*instruction.functionTarget))
+            alignmentQuery |= target->processMemoryOperation ==
+                              lang::ProcessMemoryRuntimeOperation::AddressIsAligned;
+        if (!function.source ||
+            (function.source->name().lexeme != "repeated_atomic" &&
+             function.source->name().lexeme != "repeated_alignment") ||
+            instruction.operation != lang::MirOperation::Add)
+          continue;
+        const auto isMaximum = [&](const auto &self, const lang::MirOperand &operand,
+                                    unsigned remaining) -> bool {
+          if (!remaining)
+            return false;
+          if (operand.literal)
+            if (const auto *value = std::get_if<std::uint64_t>(&*operand.literal))
+              return *value == 2147483647;
+          if (operand.kind != lang::MirOperandKind::Value)
+            return false;
+          for (const auto &defBlock : mir->body.blocks)
+            for (const auto &definition : defBlock.instructions)
+              if (definition.result == operand.value) {
+                if (definition.literal)
+                  if (const auto *value = std::get_if<std::uint64_t>(&*definition.literal))
+                    return *value == 2147483647;
+                if (definition.operands.size() == 1 &&
+                    (definition.operation == lang::MirOperation::Convert ||
+                     definition.operation == lang::MirOperation::Identity ||
+                     definition.intrinsic == lang::IntrinsicKind::NumericAliasConversion ||
+                     definition.intrinsic == lang::IntrinsicKind::NumericTypeParameterConversion))
+                  return self(self, definition.operands.front(), remaining - 1);
+              }
+          return false;
+        };
+        if (instruction.operands.size() != 2 ||
+            !isMaximum(isMaximum, instruction.operands.back(), 4))
+          continue; // The loop's increment is unrelated to the observation.
+        ++checkedAdds;
+        if (const auto *summary = repeatedAnalysis.find(
+                {.kind = lang::MirBodyKind::Function, .owner = function.id}))
+          for (const auto &proof : summary->safety.proofs)
+            dischargedAdds += proof.instruction == instruction.id &&
+                              proof.discharge.family == lang::MirSafetyCheckFamily::ArithmeticOverflow;
+      }
+  }
+  if (!repeatedAnalysis.converged || checkedAdds != 2 || dischargedAdds ||
+      !atomicLoad || !alignmentQuery) {
+    std::cerr << "repeated observation checks: adds=" << checkedAdds
+              << " discharged=" << dischargedAdds << " atomic=" << atomicLoad
+              << " query=" << alignmentQuery << '\n';
     return 1;
   }
   return 0;

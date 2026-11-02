@@ -838,6 +838,7 @@ BackendArtifact Session::emitObject() {
   registerCheckedOffsetPass(builder);
   registerCheckedReductionPass(builder);
   registerCheckedRangePass(builder);
+  registerCheckedInvariantAddPass(builder);
   builder.registerModuleAnalyses(modules);
   builder.registerCGSCCAnalyses(cgscc);
   builder.registerFunctionAnalyses(functions);

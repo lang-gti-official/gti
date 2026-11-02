@@ -1327,8 +1327,23 @@ storage or erases a constructor effect.
 A closed consuming call can preserve unrelated caller fields when its receiver
 is an exact prepared structural value containing only independent scalar fields,
 with no pointer, reference, resource, custom cleanup or receiver escape. Facts
-for that consumed value are retired. Pointer-bearing receivers remain outside
-this profile. A closed frame-local address relay may copy an address without
+for that consumed value are retired. Pointer-bearing receivers require a separate closed body profile proving every
+write remains in owned receiver fields or independent local/temporary storage.
+That profile rejects raw/reference dereferences, opaque or synchronizing calls,
+active cleanup, foreign storage and captured-place writes. An exact owning
+prepared receiver may then retire its own fields without invalidating unrelated
+caller storage. Returning a stored pointer does not grant pointee immutability:
+ordinary capture summaries and subsequent writer invalidation remain in force. The
+process-storage success profile is independent of a coarser whole-invocation
+synchronization flag: every actual MIR synchronization operation marks the
+success state Unknown before specialized transfer, and that state is monotone
+through calls and joins. Only a completed non-Unknown process-storage profile
+can preserve its limited scalar fields; it stays opaque for recurrence proofs.
+Concurrent atomic-load and opaque-call controls retain their checks. Synchronization and sealed process-query definitions retire their old scalar,
+array and object result facts before returning from transfer: a loop's new
+atomic load or alignment observation cannot reuse a previous iteration's
+refined SSA result. Repeated changing observations retain their checked
+additions and defined overflow cleanup. A closed frame-local address relay may copy an address without
 writing its pointee; capture tracking remains unchanged, so a subsequent opaque
 writer still invalidates those facts.
 
@@ -1749,7 +1764,9 @@ A separate reduction starts at a nonnegative literal or an invariant input and c
 nonnegative bounded additions, PHIs and selects back to its header. Uniform
 increment envelopes come from constants, constant masks, unsigned remainders
 by nonzero constants, constant logical shifts, zero extensions, truncations, nonwrapping
-bounded additions, and complete PHI/select alternatives. The bounded analysis
+bounded additions and products, and complete PHI/select alternatives. Products
+and left shifts require independently bounded inputs whose complete unsigned
+range fits the destination; nowrap flags never supply that proof. The bounded analysis
 uses the operations' bit-level meaning, never nowrap flags or a check that it
 will remove; cyclic or unknown bounds remain unsupported. Its
 maximum addition per iteration bounds every intermediate in that update DAG.
@@ -1798,6 +1815,15 @@ A base's structural envelope is checked explicitly before substitution, so
 freezing poison cannot invalidate a bound used elsewhere in the proof. The
 original fallback and outside overflow observations remain intact. Vector
 overflow intrinsics and additions with no independent amount bound are retained.
+
+A later standalone pass applies the same unsigned-add proof to loops without
+an accumulating sum, including buffer fills and indexed stores. It runs after
+the reduction and range passes so their stronger combined proofs take priority.
+It shares the traversal-envelope, invariant-base and fallback machinery above:
+only independently bounded amounts are admitted, and every original overflow
+observation remains on the fallback. Its clone and analysis budgets are the
+same as the reduction pass, applied separately. It does not recognize a
+container, string API or workload name.
 
 The guard and fast latch share one frozen bound so `undef` cannot select a
 small bound at entry and a different target each iteration. A dynamic reduction

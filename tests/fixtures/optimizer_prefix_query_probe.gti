@@ -1,0 +1,18 @@
+export module prefix_query_probe;
+import "detail/memory_capabilities.gti";
+namespace std::detail {
+using QueryErased = void*;
+export int repeated_alignment(bool changed) {
+  mut uint64_t storage = uint64_t(0);
+  mut void* address = nullptr;
+  for (mut int32_t iteration = 0; iteration < 2; iteration++) {
+    unsafe {
+      int32_t aligned = gti_internal::runtime::gti_rt_address_is_aligned_v1(address, uint64_t(1));
+      int32_t checked = aligned + int32_t(2147483647);
+      if (checked != int32_t(2147483647)) { return 2; }
+      if (changed) { address = QueryErased(&storage); }
+    }
+  }
+  return 0;
+}
+}

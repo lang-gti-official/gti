@@ -1,6 +1,7 @@
 import std.memory;
 import std.vector;
 import std.string;
+import std.atomic;
 
 class Audit { public: Audit() {} ~Audit() { std::println(99); } };
 
@@ -273,11 +274,38 @@ class AddressRelay { public:
   mut int32_t* address = nullptr;
   AddressRelay(mut int32_t* address) : address(address) {}
 };
+class PointerScalarPacket {
+  mut int32_t* pointer = nullptr;
+  int32_t value;
+public:
+  PointerScalarPacket(mut int32_t* pointer) : pointer(pointer), value(3) {}
+  int32_t take() && { return this.value; }
+  void write() && { unsafe { *this.pointer = int32_t(2147483647); } }
+  int32_t* release() && { return this.pointer; }
+};
 enum ScalarVariant { number(int32_t value), other(int32_t value) };
 int32_t scalar_transport(int32_t mode) {
   Audit audit{};
   mut int32_t value = int32_t(9);
-  if (mode == int32_t(0)) {
+  if (mode == int32_t(8)) {
+    mut Parcel storage{uint64_t(4)};
+    std::atomic<int32_t> signal{int32_t(0)};
+    int32_t observed = signal.load(std::memory_order_acquire());
+    require_cell(observed == int32_t(0));
+  } else if (mode >= int32_t(5)) {
+    unsafe {
+      mut PointerScalarPacket packet{&value};
+      if (mode == int32_t(5)) {
+        int32_t taken = std::move(packet).take();
+        require_cell(taken == int32_t(3));
+      } else if (mode == int32_t(6)) {
+        std::move(packet).write();
+      } else {
+        mut int32_t* pointer = std::move(packet).release();
+        *pointer = int32_t(2147483647);
+      }
+    }
+  } else if (mode == int32_t(0)) {
     mut ScalarPacket packet{int32_t(3)};
     int32_t taken = std::move(packet).take();
     require_cell(taken == int32_t(3));
@@ -304,6 +332,10 @@ int32_t scalar_transport(int32_t mode) {
 }
 
 int main(int argc, std::vector<std::string> argv) {
+  if (argc == 24) { return scalar_transport(int32_t(8)) == int32_t(18) ? 0 : 1; }
+  if (argc == 21) { return scalar_transport(int32_t(5)) == int32_t(18) ? 0 : 1; }
+  if (argc == 22) { return scalar_transport(int32_t(6)); }
+  if (argc == 23) { return scalar_transport(int32_t(7)); }
   if (argc == 16) { return scalar_transport(int32_t(0)) == int32_t(18) ? 0 : 1; }
   if (argc == 17) { return scalar_transport(int32_t(1)); }
   if (argc == 18) { return scalar_transport(int32_t(2)); }

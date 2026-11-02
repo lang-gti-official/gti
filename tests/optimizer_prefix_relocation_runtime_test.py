@@ -5,7 +5,7 @@ import os
 import subprocess
 import sys
 import tempfile
-from internal_module_fixture import private_library, private_source
+from internal_module_fixture import private_library, private_source, register_modules
 
 
 def main():
@@ -20,18 +20,21 @@ def main():
         root = Path(__file__).resolve().parent.parent
         library = private_library(root, Path(directory) / "stdlib", ["detail.memory_storage"])
         source = private_source(source, Path(directory) / source.name, ["detail.memory_storage"])
+        (library / "std/prefix_query_probe.gti").write_text(
+            (root / "tests/fixtures/optimizer_prefix_query_probe.gti").read_text())
+        register_modules(library, {"prefix_query_probe": "std/prefix_query_probe.gti"})
         environment = dict(os.environ, GTI_STDLIB_PATH=str(library))
         for mode, flags in modes:
             binary = Path(directory) / mode
             command = [str(compiler), str(source), *flags, "-o", str(binary)]
             built = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
             assert built.returncode == 0, (command, built.stdout, built.stderr)
-            for case in range(20):
+            for case in range(24):
                 result = subprocess.run([str(binary), *(["x"] * case)],
                                         env=environment, capture_output=True, text=True, timeout=15)
-                assert result.returncode == (0 if case in (0, 5, 9, 10, 11, 13, 14, 15, 18) else 70), (mode, case, result)
+                assert result.returncode == (0 if case in (0, 5, 9, 10, 11, 13, 14, 15, 18, 20, 23) else 70), (mode, case, result)
                 assert result.stdout == "99\n", (mode, case, result.stdout, result.stderr)
-                if case not in (0, 5, 9, 10, 11, 13, 14, 15, 18):
+                if case not in (0, 5, 9, 10, 11, 13, 14, 15, 18, 20, 23):
                     assert "runtime error[GTI-R" in result.stderr and "GTI-R0014" not in result.stderr, (mode, case, result.stderr)
                 else:
                     assert not result.stderr, (mode, result.stderr)
@@ -40,6 +43,31 @@ def main():
                     observations[case] = observation
                 else:
                     assert observation == observations[case], (mode, case, observation, observations[case])
+            concurrent_source = private_source(
+                root / "tests/fixtures/optimizer_prefix_receiver_concurrent.gti",
+                Path(directory) / "optimizer_prefix_receiver_concurrent.gti",
+                ["detail.memory_storage"])
+            concurrent_binary = Path(directory) / (mode + "-concurrent")
+            command = [str(compiler), str(concurrent_source), *flags,
+                       "--execution-profile", "concurrent", "-o", str(concurrent_binary)]
+            built = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
+            assert built.returncode == 0, (command, built.stdout, built.stderr)
+            for concurrent_case in range(6):
+                failure = concurrent_case in (1, 3, 5)
+                result = subprocess.run([str(concurrent_binary), *(["x"] * concurrent_case)],
+                                        env=environment, capture_output=True, text=True, timeout=15)
+                assert result.returncode == (70 if failure else 0), (mode, failure, result)
+                assert result.stdout == "99\n", (mode, failure, result)
+                if failure:
+                    assert "runtime error[GTI-R" in result.stderr and "GTI-R0014" not in result.stderr
+                else:
+                    assert not result.stderr, (mode, result)
+                key = ("concurrent", concurrent_case)
+                observation = result.returncode, result.stdout, result.stderr
+                if mode == "llvm-O0":
+                    observations[key] = observation
+                else:
+                    assert observation == observations[key], (mode, observation, observations[key])
             print(f"{mode}: successful transfer, changed value, retired source, vacant capacity and failure controls passed", flush=True)
 
 

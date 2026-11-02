@@ -476,6 +476,7 @@ struct ClosedCallSummary {
   std::optional<unsigned> scalarStoreWidth;
   bool floatingScalarStores = false;
   bool processMemoryEffects = false;
+  bool receiverLocalWritesOnly = false;
   std::map<InputAddress, ConstructedScalar> constructedParameters;
   ObservedFact<ObjectFact> receiver;
   EntryRelativeFields receiverUpdates;
@@ -4055,7 +4056,8 @@ mayAliasRepresentedGlobal(const MirBody &body,
 // active cleanup; a nominally generated move alone also permits pointers.
 [[nodiscard]] bool independentPreparedReceiver(const MirProgram &program,
                                                const MirBody &body,
-                                               const MirOperand &operand) {
+                                               const MirOperand &operand,
+                                               bool receiverLocalWritesOnly = false) {
   if (operand.kind != MirOperandKind::Value || !operand.value)
     return false;
   const auto *input = definingInstruction(body, operand.value);
@@ -4064,6 +4066,8 @@ mayAliasRepresentedGlobal(const MirBody &body,
       input->info.type != operand.type ||
       !isMirStructuralValueTransfer(program, *input))
     return false;
+  if (receiverLocalWritesOnly)
+    return true; // The exact callee cannot follow an address-bearing field.
   std::set<HirClassInstanceId> visiting;
   std::size_t budget = 64;
   const auto scalarInventory = [&](const auto &self,
@@ -4107,6 +4111,7 @@ void invalidateClosedCallInputs(const MirProgram &program, const MirBody &body,
                                 LiveMemoryBarrier liveMemoryBarrier,
                                 bool pointerRelayOnly,
                                 bool frameLocalWritesOnly,
+                                bool receiverLocalWritesOnly,
                                 const MirLocalCaptureAnalysis *captures,
                                 AbstractState &state) {
   const auto killUnknownMemory = [&](const MirBody &body,
@@ -4123,7 +4128,7 @@ void invalidateClosedCallInputs(const MirProgram &program, const MirBody &body,
   const bool processStorageOnly =
       opaqueEffects && processStorageBarrier(liveMemoryBarrier);
   if (!summary || (opaqueEffects &&
-                   (summary->traits.maySynchronize ||
+                   ((summary->traits.maySynchronize && !processStorageOnly) ||
                     (summary->traits.writesUnknownMemory &&
                      !structuralConstructionOnly && !processStorageOnly)))) {
     killUnknownMemory(body, state);
@@ -4185,8 +4190,10 @@ void invalidateClosedCallInputs(const MirProgram &program, const MirBody &body,
       (summary->traits.writesPlace || summary->receiverEscapes ||
        function->receiverMutability == ReceiverMutability::Consuming)) {
     if (function->receiverMutability == ReceiverMutability::Consuming &&
-        !opaqueEffects && !summary->receiverEscapes &&
-        independentPreparedReceiver(program, body, *instruction.receiver)) {
+        !opaqueEffects &&
+        (!summary->receiverEscapes || receiverLocalWritesOnly) &&
+        independentPreparedReceiver(program, body, *instruction.receiver,
+                                    receiverLocalWritesOnly)) {
       // Only the consumed prepared value dies. No borrowed/caller place has
       // been proved independent, and all ordinary arguments are still visited.
       const auto value = instruction.receiver->value;
@@ -4594,6 +4601,7 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
   }
   const ClosedCallSummary &summary = found->second;
 
+
   const MirPlaceId receiverOrigin =
       instruction.receiver
           ? objectOriginForOperand(body, aliases, state, *instruction.receiver)
@@ -4920,6 +4928,8 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
       closedCalls->program, body, aliases, instruction, address, *target,
       summary.hasOpaqueEffects, summary.liveMemoryBarrier, pointerRelayOnly,
       frameLocalWrites && !summary.hasOpaqueEffects && !summary.mayWriteGlobals,
+      summary.receiverLocalWritesOnly && !summary.hasOpaqueEffects &&
+          !summary.mayWriteGlobals,
       closedCalls->localCaptures, state);
   if (summary.mayWriteGlobals) {
     // A checked reference or receiver can denote a callee-only global whose
@@ -5840,6 +5850,15 @@ void applyInstructionCore(
       state.borrowedRegions.erase(*instruction.loan);
     }
   }
+  const auto retireResultFacts = [&] {
+    if (!instruction.result)
+      return;
+    // The same SSA definition executes again on a loop backedge. Facts from
+    // its earlier observation do not constrain a new opaque/query result.
+    state.integers.erase(*instruction.result);
+    state.arrayValues.erase(*instruction.result);
+    state.objectValues.erase(*instruction.result);
+  };
   const auto unknownEffectBarrier = [&] {
     const auto uncaptured = preserveUncapturedLocals(
         program, address, body,
@@ -5861,6 +5880,14 @@ void applyInstructionCore(
                   })) {
     state.mayWriteGlobals = true;
     killGlobalAliases(body, state);
+  }
+  // A completed process-storage success profile never hides an actual
+  // synchronization operation. Mark it before specialized transfer handlers;
+  // Unknown is monotone through subsequent calls, process operations and joins.
+  if (instruction.synchronization.kind != SynchronizationOperationKind::None) {
+    unknownEffectBarrier();
+    retireResultFacts();
+    return;
   }
   // The empty full-expression marker can inherit the source expression's
   // unsafe classification. It does not repeat that expression's operation;
@@ -6103,6 +6130,7 @@ void applyInstructionCore(
         program, address, body, state,
         *width ? LiveMemoryBarrier::ProcessStorageWithStatus32
                : LiveMemoryBarrier::ProcessStorage);
+    retireResultFacts();
     return;
   }
 
@@ -9743,6 +9771,82 @@ scalarStoreProfile(const MirProgram &program, MirBodyAddress address,
   return result;
 }
 
+// This describes mutation locations, independently of pointer capture/return
+// summaries. A prepared owning receiver has private shell storage even when
+// its fields contain addresses; none of those addresses may be followed here.
+[[nodiscard]] bool receiverLocalWriteProfile(const MirProgram &program,
+                                             MirBodyAddress address,
+                                             const MirBody &body) {
+  const auto *function = address.kind == MirBodyKind::Function
+                             ? program.findFunctionInstance(address.owner)
+                             : nullptr;
+  if (!function || !function->owner ||
+      function->receiverMutability != ReceiverMutability::Consuming)
+    return false;
+  const auto ownedStorage = [&](MirPlaceId id) {
+    const auto *place = body.findPlace(id);
+    if (!place || place->foreignStorage || place->capture ||
+        place->traits.containsBorrowedState ||
+        place->type.kind == SemanticType::Reference ||
+        !std::all_of(place->projections.begin(), place->projections.end(),
+                     [](const MirPlaceProjection &projection) {
+                       return projection.kind == MirProjectionKind::Field;
+                     }))
+      return false;
+    if (place->root == MirPlaceRootKind::This)
+      return true;
+    return (place->root == MirPlaceRootKind::Binding ||
+            place->root == MirPlaceRootKind::Temporary) &&
+           (!place->initiallyAvailable ||
+            independentValueParameter(&program, address, *place));
+  };
+  std::size_t budget = 256;
+  for (const auto &block : body.blocks)
+    for (const auto &instruction : block.instructions) {
+      if (!budget)
+        return false;
+      --budget;
+      if (instruction.tombstone || inertLifecycleMarker(instruction) ||
+          nonMutatingLoanBoundary(body, instruction))
+        continue;
+      const auto effect = effects(program, body, instruction);
+      if (instruction.rawMemoryAccess ||
+          instruction.unsafeOperation != UnsafeOperationKind::None ||
+          effect.writesUnknownMemory || effect.invokesUserCode ||
+          effect.maySynchronize || effect.allocates)
+        return false;
+      if (!effect.writesPlace && !effect.movesValue && !effect.dropsValue)
+        continue;
+      const bool passive =
+          isMirStructuralValueTransfer(program, instruction) ||
+          isMirStructuralValueDrop(program, instruction) ||
+          isMirStructuralPayloadExtraction(program, instruction) ||
+          scalarResultMove(&program, instruction, body) ||
+          ((instruction.kind == MirInstructionKind::Initialize ||
+            instruction.kind == MirInstructionKind::Assign) &&
+           instruction.operands.size() == 1 && instruction.destination &&
+           !effect.invokesRuntime &&
+           std::all_of(instruction.lifecycle.begin(), instruction.lifecycle.end(),
+                       [](const MirLifecycleEvent &event) {
+                         return event.kind == MirLifecycleEventKind::Initialize ||
+                                event.kind == MirLifecycleEventKind::Reparent;
+                       }));
+      if (!passive ||
+          (instruction.destination && !ownedStorage(*instruction.destination)))
+        return false;
+      bool writeLocated = instruction.destination.has_value();
+      for (const auto &operand : instruction.operands)
+        if (operand.kind == MirOperandKind::Move) {
+          if (!ownedStorage(operand.place))
+            return false;
+          writeLocated = true;
+        }
+      if (!writeLocated)
+        return false;
+    }
+  return true;
+}
+
 [[nodiscard]] ContextualBodyResult
 analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
                       const ClosedCallContext &context,
@@ -9910,10 +10014,13 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
     return result;
   }
   result.summary.complete = true;
+
   result.summary.relocatedPrefix = summarizeRelocatedPrefix(
       program, address, *body, aliases, incoming, round);
   const auto scalarStores = scalarStoreProfile(program, address, *body, round);
   result.summary.scalarStoresOnly = scalarStores.supported;
+  result.summary.receiverLocalWritesOnly =
+      receiverLocalWriteProfile(program, address, *body);
   result.summary.processMemoryEffects = scalarStores.processMemoryEffects;
   result.summary.scalarStoreWidth = scalarStores.width;
   result.summary.floatingScalarStores = scalarStores.floating;

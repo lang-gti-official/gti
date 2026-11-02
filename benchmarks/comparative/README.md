@@ -101,8 +101,9 @@ Percentages report both the comparable-case denominator and the entire corpus.
 Never erase unsupported/failed/noisy cases to improve a headline. Per-comparator
 summaries exclude noisy/too-short/failing cases. Bootstrap intervals do not
 account for all systematic host/compiler bias or multiple-comparison effects.
-The 10% band is a declared study convention, not an owner-approved performance
-acceptance threshold. Inspect raw results and rerun marginal cases.
+The owner adopted the 10% band as the comparative workload target on
+2026-11-02. Runtime regression acceptance remains separately governed by
+ADR 012. Inspect raw results and rerun marginal cases.
 
 ## Mac mini execution and evidence
 
@@ -529,3 +530,55 @@ designated local integrator owns reconciliation and final combined validation;
 these exact-source results must not be relabeled as combined-main evidence.
 Benchmarks remain manual and outside CTest/CI; VERSION is unchanged, and no
 publication or installation occurred.
+
+## Remaining workload campaign: 2026-11-02
+
+This completed full-corpus measurement uses compiler
+`78eef535321e379e8bb7de07727863fc32bdf986`, nine interleaved samples targeting
+150 ms each, and the unchanged 34-program corpus on the M4 Pro Mac mini.
+Timing held the host's suite reservation and all build reservations. Every
+program compiled and passed the digest checks; none was noisy or too short.
+The 95% bootstrap upper bound was within 1.10 against both comparators for
+22/34 programs (64.7%). Twelve remained slower than at least one comparator.
+
+| Remaining workload | GTI / C++ median | GTI / Rust median |
+| --- | ---: | ---: |
+| `kernel-recursive-tree` | 1.493 | 1.492 |
+| `lib-vector-growth` | 1.659 | 1.732 |
+| `lib-vector-reserved` | 2.307 | 2.226 |
+| `lib-vector-transform` | 1.237 | 1.381 |
+| `lib-sort-random` | 1.534 | 2.609 |
+| `lib-sort-sorted` | 1.296 | 1.101 |
+| `lib-sort-reverse` | 1.060 | 1.179 |
+| `lib-string-growth-search` | 0.415 | 1.417 |
+| `lib-string-substrings` | 1.315 | 2.806 |
+| `lib-hashmap-reserved` | 0.910 | 1.214 |
+| `lib-capturing-predicate` | 1.191 | 1.116 |
+| `lib-interface-dispatch` | 0.761 | 1.561 |
+
+The sorted-input Rust comparison straddled 1.10 (95% interval 1.088–1.112);
+its C++ comparison remained clearly slower. A median alone does not establish
+parity. Binary search and owned allocation were within the band against both
+comparators in this snapshot.
+
+A paired comparison isolates cold-path outlining from its parent
+`381928e1ab9e8336530f00f33205d9018384f648`: result propagation improved by
+about 8.0% (ratio 0.9204, 95% interval 0.9194–0.9207). Substrings regressed
+by about 4.1% (ratio 1.0413, interval 1.0369–1.0647), so the upper bound
+crossed the campaign's separate 5% material-regression band. That tradeoff
+remains under investigation; no additional 10% gap closed from outlining alone.
+
+Raw timing, build-cost, code-size, allocation-request, and assembly evidence is
+retained in the manual campaign artifact `gti-optimization-round8-2026-11-02`,
+under `cold-paths-mini/Testing`. Its `performance-window.json`,
+`paired/paired.json`, `three-language/report.json`, `text-sizes.json`, and
+`allocation-requests.json` identify the sources, tools, isolation, measurements
+and limitations. Allocation observations are separately instrumented and are
+not runtime timings or peak/live-memory measurements.
+
+Later checkpoints add private scalar-result register transport, more precise
+closed-call effects, successful checked-square bounds, and source-proven live
+reads in sorting. Their focused execution/cleanup checks and structural code
+evidence are recorded separately; fresh paired and three-language runs must
+establish their performance. Benchmark programs and their work contracts remain
+unchanged, and the corpus remains outside CTest and CI.

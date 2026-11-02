@@ -105,6 +105,10 @@ Outcome execute(llvm::Function &function, unsigned bound, unsigned pattern,
           result = left.bits.usub_ov(right.bits, unsignedOverflow);
           static_cast<void>(left.bits.ssub_ov(right.bits, signedOverflow));
           break;
+        case llvm::Instruction::Mul:
+          result = left.bits.umul_ov(right.bits, unsignedOverflow);
+          static_cast<void>(left.bits.smul_ov(right.bits, signedOverflow));
+          break;
         case llvm::Instruction::And:
           result = left.bits & right.bits;
           break;
@@ -126,6 +130,12 @@ Outcome execute(llvm::Function &function, unsigned bound, unsigned pattern,
           require(right.bits.ult(left.bits.getBitWidth()),
                   "oracle invalid shift");
           result = left.bits.lshr(right.bits);
+          break;
+        case llvm::Instruction::Shl:
+          require(right.bits.ult(left.bits.getBitWidth()),
+                  "oracle invalid shift");
+          result = left.bits.ushl_ov(right.bits, unsignedOverflow);
+          static_cast<void>(left.bits.sshl_ov(right.bits, signedOverflow));
           break;
         default:
           throw std::runtime_error("unknown oracle binary operation");
@@ -293,6 +303,9 @@ struct Shape {
   int boundedTargetBase = -1;
   bool truncatedTarget = false;
   unsigned ancillaryKind = 0;
+  bool standaloneAdds = false;
+  unsigned ancillaryScale = 0;
+  bool ancillaryShift = false, flaggedAmount = false;
   bool vectorSide = false;
   bool intrinsicAdd = false;
   bool externalOverflow = false;
@@ -516,6 +529,16 @@ llvm::Function *makeLoop(llvm::Module &module, const Shape &shape,
     llvm::Value *amount = shape.ancillaryKind == 6
                               ? static_cast<llvm::Value *>(function->getArg(1))
                               : builder.CreateZExtOrTrunc(index, accType);
+    if (shape.ancillaryScale)
+      amount = shape.ancillaryShift
+                   ? builder.CreateShl(
+                         amount,
+                         llvm::ConstantInt::get(accType, shape.ancillaryScale),
+                         "scaled.amount", shape.flaggedAmount)
+                   : builder.CreateMul(
+                         amount,
+                         llvm::ConstantInt::get(accType, shape.ancillaryScale),
+                         "scaled.amount", shape.flaggedAmount);
     auto *pair = builder.CreateBinaryIntrinsic(
         llvm::Intrinsic::uadd_with_overflow, base, amount);
     auto *value = builder.CreateExtractValue(pair, 0);
@@ -639,7 +662,7 @@ std::string printed(llvm::Function &function) {
   function.print(stream);
   return output;
 }
-void optimize(llvm::Function &function) {
+void optimize(llvm::Function &function, bool standaloneAdds = false) {
   llvm::LoopAnalysisManager loops;
   llvm::FunctionAnalysisManager functions;
   llvm::CGSCCAnalysisManager cgscc;
@@ -650,12 +673,16 @@ void optimize(llvm::Function &function) {
   builder.registerCGSCCAnalyses(cgscc);
   builder.registerModuleAnalyses(modules);
   builder.crossRegisterProxies(loops, functions, cgscc, modules);
-  auto preserved = optimizeCheckedReductions(function, functions);
+  const auto run = [&](llvm::Function &target) {
+    return standaloneAdds ? optimizeCheckedInvariantAdds(target, functions)
+                          : optimizeCheckedReductions(target, functions);
+  };
+  auto preserved = run(function);
   functions.invalidate(function, preserved);
   require(!llvm::verifyFunction(function, &llvm::errs()),
           "reduction pass produced invalid IR");
   const auto once = printed(function);
-  preserved = optimizeCheckedReductions(function, functions);
+  preserved = run(function);
   functions.invalidate(function, preserved);
   require(printed(function) == once,
           "reduction pass repeatedly versions a loop");
@@ -667,7 +694,12 @@ void differential(const Shape &shape, bool expectChange) {
   auto *before = makeLoop(module, shape, "reference");
   auto *after = makeLoop(module, shape, "optimized");
   const auto original = printed(*after);
-  optimize(*after);
+  if (shape.standaloneAdds) {
+    optimize(*after);
+    require(printed(*after) == original,
+            "standalone fixture unexpectedly qualified as a reduction");
+  }
+  optimize(*after, shape.standaloneAdds);
   require((printed(*after) != original) == expectChange,
           "unexpected reduction admission decision");
   // A version selector must constrain the same chosen value used by the
@@ -740,11 +772,11 @@ void differential(const Shape &shape, bool expectChange) {
                                                   false, -1, base, -1, false,
                                                   base),
                   "ancillary addition changed value/overflow/effect trace");
-    if (shape.ancillaryKind == 1)
+    if (shape.ancillaryKind == 1 && expectChange)
       require(execute(*before, 3, 0, false, false, -1, 0, -1, false, 5) ==
                   execute(*after, 3, 0, false, false, -1, 0, -1, false, 250, 5),
               "fast ancillary computation did not use guarded frozen base");
-    if (shape.ancillaryKind == 4)
+    if (shape.ancillaryKind == 4 && expectChange)
       require(execute(*before, 3, 0, false, false, -1, 0, -1, false, 5) ==
                   execute(*after, 3, 0, false, false, -1, 0, -1, false, 5, 200),
               "out-of-envelope invariant freeze escaped to fast loop");
@@ -947,6 +979,44 @@ int main() {
       ancillary.signedArithmetic = false;
       ancillary.variableInitial = kind == 2;
       differential(ancillary, true);
+    }
+    // No reduction: the only useful checked addition computes a stored key.
+    // Exhaustive 8-bit invariant inputs exercise both versions, including
+    // overflow observations and effects before an early exit.
+    for (unsigned kind = 1; kind <= 6; ++kind) {
+      Shape fill;
+      fill.standaloneAdds = true;
+      fill.step = 0;
+      fill.ancillaryKind = kind;
+      fill.boundedTargetBase = 16;
+      fill.indexInitial = 7;
+      fill.conditional = false;
+      fill.signedArithmetic = false;
+      differential(fill, kind <= 4);
+      if (kind == 1) {
+        fill.earlyExit = true;
+        differential(fill, true);
+        fill.earlyExit = false;
+        for (unsigned scale : {3U, 11U, 17U}) {
+          fill.ancillaryScale = scale;
+          differential(fill, scale != 17);
+        }
+        fill.ancillaryShift = true;
+        for (unsigned shift : {1U, 3U, 4U}) {
+          fill.ancillaryScale = shift;
+          differential(fill, shift != 4);
+        }
+        fill.ancillaryShift = false;
+        fill.ancillaryScale = 17;
+        fill.flaggedAmount = true;
+        llvm::LLVMContext context;
+        llvm::Module module("unproved-flagged-amount", context);
+        auto *function = makeLoop(module, fill, "fill");
+        const auto original = printed(*function);
+        optimize(*function, true);
+        require(printed(*function) == original,
+                "standalone addition trusted nowrap flags as bounds");
+      }
     }
     {
       Shape vectorSide;

@@ -247,6 +247,30 @@ uint32_t indexed_key_sum(int limit, int mode) {
   return total;
 }
 
+// Stores need the same bounded-key proof even when there is no reduction.
+void fill_keys(int limit, int mode) {
+  ReductionCleanup inner{2};
+  uint32_t finish = uint32_t(limit) % uint32_t(32);
+  bool early = mode == 25;
+  bool shifted = mode >= 26;
+  uint32_t base = mode == 24 || mode == 27
+                    ? uint32_t(4294967295) - uint32_t(limit % 31)
+                    : uint32_t(limit % 17);
+  mut uint32_t keys[32] = {};
+  for (mut uint32_t index = 0; index < finish; index++) {
+    ReductionCleanup iteration{9};
+    if (early && index == uint32_t(2)) break;
+    uint32_t offset = shifted ? index << uint32_t(2) : index * uint32_t(7);
+    uint32_t key = base + offset; // standalone-key-boundary
+    keys[index] = key;
+    std::println(key);
+  }
+  for (mut uint32_t index = 0; index < finish; index++) {
+    if (early && index == uint32_t(2)) break;
+    std::println(keys[index]);
+  }
+}
+
 int main(int argc, std::vector<std::string> argv) {
   if (argc != 3) return 10;
   int mode = int(argv[std::size_t(1)].size());
@@ -266,6 +290,7 @@ int main(int argc, std::vector<std::string> argv) {
   else if (mode == 14 || mode == 17) std::println(weighted_outer(limit, mode == 17));
   else if (mode == 15) std::println(weighted_unsigned_boundary(limit));
   else if (mode == 16) std::println(weighted_signed_boundary(limit));
+  else if (mode >= 23) fill_keys(limit, mode);
   else std::println(indexed_key_sum(limit, mode));
   return 0;
 }
