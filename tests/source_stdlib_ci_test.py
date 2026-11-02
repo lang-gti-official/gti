@@ -205,6 +205,33 @@ class SourceStdlibCI(unittest.TestCase):
                 with self.subTest(path=path):
                     self.assertNotEqual(source.native_identity(commit(path, 'changed'), root), initial)
 
+    def test_baseline_requires_matching_native_ancestor_and_full_artifacts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            subprocess.run(['git', 'init', '-q', str(root)], check=True)
+            def commit(path, text):
+                p = root / path; p.parent.mkdir(parents=True, exist_ok=True); p.write_text(text)
+                subprocess.run(['git', '-C', str(root), 'add', '.'], check=True)
+                subprocess.run(['git', '-C', str(root), '-c', 'user.name=Test', '-c', 'user.email=test@example.org',
+                                'commit', '-qm', path], check=True)
+                return source.git('rev-parse', 'HEAD', root=root)
+            native = commit('src/compiler.cpp', 'unchanged optimized compiler')
+            head = commit('stdlib/std/algorithm.gti', 'new library source')
+            origin = source.baseline(REPO, head, api_fixture(native), root)
+            self.assertEqual(origin['sha'], native)
+            self.assertEqual(origin['native_inputs'], source.native_identity(head, root))
+            for api in [api_fixture(native, source_lane=True), api_fixture(native, assets=[]),
+                        api_fixture(native, run={'event': 'pull_request'})]:
+                with self.assertRaises(ValueError):
+                    source.baseline(REPO, head, api, root)
+            changed = commit('src/compiler.cpp', 'different compiler')
+            with self.assertRaises(ValueError):
+                source.baseline(REPO, changed, api_fixture(native), root)
+            subprocess.run(['git', '-C', str(root), 'checkout', '-q', '--detach', native], check=True)
+            sibling = commit('stdlib/std/unrelated.gti', 'unrelated history')
+            with self.assertRaises(ValueError):
+                source.baseline(REPO, head, api_fixture(sibling), root)
+
     def test_planning_falls_back_when_artifacts_or_routing_unavailable(self):
         with patch.object(source, 'changed', return_value=['stdlib/std/algorithm.gti']), \
              patch.object(source, 'git', return_value='c' * 40), \
