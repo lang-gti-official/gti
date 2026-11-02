@@ -43,6 +43,7 @@ Outcome execute(llvm::Function &function, unsigned bound, unsigned pattern,
                 bool early = false, bool poisonedBound = false,
                 int frozenBound = -1) {
   llvm::DenseMap<const llvm::Value *, Scalar> values;
+  llvm::DenseMap<const llvm::Value *, std::pair<Scalar, Scalar>> pairs;
   for (auto &argument : function.args()) {
     unsigned input = argument.getArgNo() == 0   ? bound
                      : argument.getArgNo() == 1 ? pattern
@@ -64,13 +65,23 @@ Outcome execute(llvm::Function &function, unsigned bound, unsigned pattern,
   llvm::BasicBlock *block = &function.getEntryBlock(), *predecessor = nullptr;
   for (unsigned visits = 0; visits < 200000; ++visits) {
     std::vector<std::pair<const llvm::PHINode *, Scalar>> incoming;
+    std::vector<std::pair<const llvm::PHINode *, std::pair<Scalar, Scalar>>>
+        incomingPairs;
     for (auto &phi : block->phis()) {
       require(predecessor != nullptr, "entry PHI unsupported");
+      if (phi.getType()->isStructTy()) {
+        auto found = pairs.find(phi.getIncomingValueForBlock(predecessor));
+        require(found != pairs.end(), "oracle read an unavailable aggregate");
+        incomingPairs.emplace_back(&phi, found->second);
+        continue;
+      }
       incoming.emplace_back(&phi,
                             get(phi.getIncomingValueForBlock(predecessor)));
     }
     for (const auto &[phi, value] : incoming)
       values[phi] = value;
+    for (const auto &[phi, value] : incomingPairs)
+      pairs[phi] = value;
     llvm::BasicBlock *next = nullptr;
     for (auto &instruction : *block) {
       if (llvm::isa<llvm::PHINode>(instruction))
@@ -98,6 +109,15 @@ Outcome execute(llvm::Function &function, unsigned bound, unsigned pattern,
         case llvm::Instruction::Xor:
           result = left.bits ^ right.bits;
           break;
+        case llvm::Instruction::URem:
+          require(!right.bits.isZero(), "oracle remainder by zero");
+          result = left.bits.urem(right.bits);
+          break;
+        case llvm::Instruction::LShr:
+          require(right.bits.ult(left.bits.getBitWidth()),
+                  "oracle invalid shift");
+          result = left.bits.lshr(right.bits);
+          break;
         default:
           throw std::runtime_error("unknown oracle binary operation");
         }
@@ -105,6 +125,13 @@ Outcome execute(llvm::Function &function, unsigned bound, unsigned pattern,
             result, left.poison || right.poison ||
                         (binary->hasNoSignedWrap() && signedOverflow) ||
                         (binary->hasNoUnsignedWrap() && unsignedOverflow)};
+      } else if (auto *lane =
+                     llvm::dyn_cast<llvm::ExtractValueInst>(&instruction)) {
+        require(lane->getNumIndices() == 1 && *lane->idx_begin() <= 1 &&
+                    pairs.contains(lane->getAggregateOperand()),
+                "unknown oracle aggregate extraction");
+        const auto &pair = pairs.find(lane->getAggregateOperand())->second;
+        values[lane] = *lane->idx_begin() ? pair.second : pair.first;
       } else if (auto *compare = llvm::dyn_cast<llvm::ICmpInst>(&instruction)) {
         auto a = get(compare->getOperand(0)), b = get(compare->getOperand(1));
         bool result;
@@ -170,7 +197,19 @@ Outcome execute(llvm::Function &function, unsigned bound, unsigned pattern,
       } else if (auto *call = llvm::dyn_cast<llvm::CallInst>(&instruction)) {
         auto *callee = call->getCalledFunction();
         require(callee != nullptr, "indirect oracle call");
-        if (callee->getName() == "record") {
+        if (callee->getIntrinsicID() == llvm::Intrinsic::uadd_with_overflow ||
+            callee->getIntrinsicID() == llvm::Intrinsic::sadd_with_overflow) {
+          auto left = get(call->getArgOperand(0)),
+               right = get(call->getArgOperand(1));
+          bool overflow = false;
+          auto result =
+              callee->getIntrinsicID() == llvm::Intrinsic::uadd_with_overflow
+                  ? left.bits.uadd_ov(right.bits, overflow)
+                  : left.bits.sadd_ov(right.bits, overflow);
+          pairs[call] = {
+              {result, left.poison || right.poison},
+              {llvm::APInt(1, overflow), left.poison || right.poison}};
+        } else if (callee->getName() == "record") {
           auto value = get(call->getArgOperand(0));
           require(!value.poison, "poison effect operand");
           outcome.events.push_back(value.bits.getZExtValue());
@@ -229,6 +268,12 @@ struct Shape {
   bool noDuplicate = false, swappedCompare = false;
   bool sharedExit = false, nestedOuter = false;
   int constantBound = -1;
+  int indexInitial = 0;
+  unsigned boundedStep = 0;
+  bool intrinsicAdd = false;
+  bool externalOverflow = false;
+  bool separateDetector = false;
+  llvm::CmpInst::Predicate latchPredicate = llvm::CmpInst::ICMP_NE;
 };
 
 llvm::Function *makeLoop(llvm::Module &module, const Shape &shape,
@@ -265,7 +310,8 @@ llvm::Function *makeLoop(llvm::Module &module, const Shape &shape,
   builder.SetInsertPoint(header);
   auto *index = builder.CreatePHI(indexType, 2, "index");
   auto *accumulator = builder.CreatePHI(accType, 2, "accumulator");
-  index->addIncoming(llvm::ConstantInt::get(indexType, 0), entry);
+  index->addIncoming(llvm::ConstantInt::get(indexType, shape.indexInitial),
+                     entry);
   accumulator->addIncoming(
       shape.variableInitial
           ? static_cast<llvm::Value *>(function->getArg(1))
@@ -295,17 +341,54 @@ llvm::Function *makeLoop(llvm::Module &module, const Shape &shape,
       shape.signedArithmetic
           ? llvm::APInt::getSignedMaxValue(shape.accumulatorWidth)
           : llvm::APInt::getMaxValue(shape.accumulatorWidth);
-  auto *condition = builder.CreateICmpUGT(
-      accumulator, llvm::ConstantInt::get(accType, maximum - delta),
-      "overflow.guard");
-  builder.CreateCondBr(condition, failed, update);
-  builder.SetInsertPoint(update);
   llvm::Value *increment =
       shape.variableStep ? static_cast<llvm::Value *>(function->getArg(1))
                          : llvm::ConstantInt::getSigned(accType, shape.step);
+  if (shape.boundedStep == 1)
+    increment = builder.CreateAnd(function->getArg(1),
+                                  llvm::ConstantInt::get(accType, 3));
+  if (shape.boundedStep == 2)
+    increment = builder.CreateURem(function->getArg(1),
+                                   llvm::ConstantInt::get(accType, 5));
+  if (shape.boundedStep == 3)
+    increment = builder.CreateLShr(
+        function->getArg(1),
+        llvm::ConstantInt::get(accType, shape.accumulatorWidth - 2));
+  if (shape.boundedStep == 4)
+    increment = builder.CreateZExt(
+        builder.CreateTrunc(function->getArg(1), builder.getIntNTy(2)),
+        accType);
+  if (shape.boundedStep == 5)
+    increment =
+        builder.CreateSelect(selected, llvm::ConstantInt::get(accType, 3),
+                             llvm::ConstantInt::get(accType, 7));
+  // The guard and the value use the same checked operation, including the
+  // zero-result lane; this catches accidentally dropping a failure without
+  // proving the corresponding intermediate addition.
+  llvm::Value *checkedResult = nullptr;
+  llvm::Value *checkedPair = nullptr;
+  llvm::Value *condition = nullptr;
+  if (shape.intrinsicAdd) {
+    auto *pair = builder.CreateBinaryIntrinsic(
+        shape.signedArithmetic ? llvm::Intrinsic::sadd_with_overflow
+                               : llvm::Intrinsic::uadd_with_overflow,
+        accumulator, increment);
+    checkedResult = builder.CreateExtractValue(pair, 0);
+    checkedPair = pair;
+    condition = builder.CreateExtractValue(pair, 1, "overflow.guard");
+    if (shape.separateDetector)
+      checkedResult = nullptr;
+  } else {
+    condition = builder.CreateICmpUGT(
+        accumulator, llvm::ConstantInt::get(accType, maximum - delta),
+        "overflow.guard");
+  }
+  builder.CreateCondBr(condition, failed, update);
+  builder.SetInsertPoint(update);
   llvm::Value *nextAccumulator =
-      shape.subtract ? builder.CreateSub(accumulator, increment, "decrease")
-                     : builder.CreateAdd(accumulator, increment, "increase");
+      checkedResult    ? checkedResult
+      : shape.subtract ? builder.CreateSub(accumulator, increment, "decrease")
+                       : builder.CreateAdd(accumulator, increment, "increase");
   if (shape.multipleUpdates)
     nextAccumulator =
         builder.CreateAdd(nextAccumulator, increment, "increase.again");
@@ -341,7 +424,8 @@ llvm::Function *makeLoop(llvm::Module &module, const Shape &shape,
   if (shape.equalityExit)
     builder.CreateCondBr(builder.CreateICmpEQ(tested, bound), done, header);
   else
-    builder.CreateCondBr(builder.CreateICmpNE(tested, bound), header, done);
+    builder.CreateCondBr(
+        builder.CreateICmp(shape.latchPredicate, tested, bound), header, done);
   index->addIncoming(nextIndex, latch);
   accumulator->addIncoming(carried, latch);
   const auto finish = [&](llvm::BasicBlock *block, llvm::BasicBlock *from,
@@ -349,10 +433,25 @@ llvm::Function *makeLoop(llvm::Module &module, const Shape &shape,
     builder.SetInsertPoint(block);
     auto *exitValue = builder.CreatePHI(accType, 1, "exit.value");
     exitValue->addIncoming(value, from);
+    llvm::Value *exportedStatus = nullptr;
+    if (shape.externalOverflow) {
+      require(checkedPair && !shape.conditional && !shape.earlyExit,
+              "aggregate fixture requires a dominating checked addition");
+      auto *aggregate =
+          builder.CreatePHI(checkedPair->getType(), 1, "exit.aggregate");
+      aggregate->addIncoming(checkedPair, from);
+      exportedStatus =
+          builder.CreateExtractValue(aggregate, 1, "exported.overflow");
+    }
     builder.CreateCall(record, {llvm::ConstantInt::get(i32, tag)});
-    builder.CreateRet(
-        builder.CreateAdd(builder.CreateZExt(exitValue, i32),
-                          llvm::ConstantInt::get(i32, tag << 16)));
+    auto *result = builder.CreateAdd(builder.CreateZExt(exitValue, i32),
+                                     llvm::ConstantInt::get(i32, tag << 16));
+    if (exportedStatus)
+      result = builder.CreateAdd(result,
+                                 builder.CreateSelect(exportedStatus,
+                                                      builder.getInt32(1 << 15),
+                                                      builder.getInt32(0)));
+    builder.CreateRet(result);
   };
   finish(done, latch, carried, 2);
   finish(failed, check, accumulator, 3);
@@ -442,14 +541,20 @@ void differential(const Shape &shape, bool expectChange) {
   // optimized latch. An undef argument can otherwise choose a small selector
   // value and a different target at each latch, invalidating the trip proof.
   // Here the oracle gives the raw bound a conflicting value while every freeze
-  // consistently chooses 7; the optimized path must behave as that refinement.
-  if (expectChange && shape.constantBound < 0)
-    for (unsigned pattern : {0U, 1U, 2U, 3U})
-      require(execute(*before, 7, pattern) ==
-                  execute(*after, 200, pattern, false, false, 7),
+  // consistently chooses a short traversal; the optimized path must behave as
+  // that refinement. For a nonzero initial index, target==initial instead
+  // means a complete modular traversal and correctly selects the fallback.
+  if (expectChange && shape.constantBound < 0) {
+    const auto target = llvm::APInt(64, shape.indexInitial + 3)
+                            .zextOrTrunc(shape.indexWidth)
+                            .getZExtValue();
+    for (unsigned pattern : {0U, 1U, 2U, 3U, 127U, 255U})
+      require(execute(*before, target, pattern) ==
+                  execute(*after, 200, pattern, false, false, target),
               "optimized latch did not use the frozen traversal target");
+  }
   for (unsigned bound = shape.indexWidth > 8 ? 1 : 0; bound < 256; ++bound)
-    for (unsigned pattern : {0U, 1U, 2U, 3U})
+    for (unsigned pattern : {0U, 1U, 2U, 3U, 127U, 255U})
       require(execute(*before, bound, pattern) ==
                   execute(*after, bound, pattern),
               "reduction changed result, failure, or executed cleanup trace");
@@ -524,6 +629,49 @@ int main() {
     Shape wideIndex;
     wideIndex.indexWidth = 16;
     differential(wideIndex, true);
+    for (unsigned kind = 1; kind <= 5; ++kind) {
+      Shape dynamic;
+      dynamic.boundedStep = kind;
+      dynamic.intrinsicAdd = true;
+      dynamic.conditional = false;
+      differential(dynamic, true);
+      dynamic.signedArithmetic = false;
+      dynamic.conditional = true;
+      dynamic.earlyExit = true;
+      differential(dynamic, true);
+      dynamic.indexInitial = 7;
+      differential(dynamic, true);
+      dynamic.multipleUpdates = true;
+      differential(dynamic, true);
+      dynamic.separateDetector = true;
+      differential(dynamic, true);
+    }
+    Shape aggregate;
+    aggregate.intrinsicAdd = true;
+    aggregate.boundedStep = 2;
+    aggregate.conditional = false;
+    aggregate.externalOverflow = true;
+    differential(aggregate, true);
+    aggregate.signedArithmetic = false;
+    differential(aggregate, true);
+    for (auto predicate : {llvm::CmpInst::ICMP_ULT, llvm::CmpInst::ICMP_SLT,
+                           llvm::CmpInst::ICMP_UGT, llvm::CmpInst::ICMP_SGT})
+      for (int initial : {0, 2, 127, 255}) {
+        Shape ordered;
+        ordered.latchPredicate = predicate;
+        ordered.indexInitial = initial;
+        ordered.intrinsicAdd = true;
+        ordered.boundedStep = 2;
+        ordered.separateDetector = true;
+        differential(ordered, true);
+      }
+    for (int initial : {1, 7, 127, 255}) {
+      Shape started;
+      started.indexInitial = initial;
+      differential(started, true);
+      started.currentIndex = true;
+      differential(started, true);
+    }
     for (unsigned kind = 0; kind < 11; ++kind) {
       Shape negative;
       if (kind == 0)

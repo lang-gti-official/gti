@@ -1499,21 +1499,34 @@ elimination, alias freedom, or vectorization by itself.
 ### Guarded checked reductions
 
 At LLVM O2/O3, a bounded representation-level pass runs after inlining and
-before vectorization. It recognizes innermost equality-terminated traversals
-whose integer index starts at zero and advances by one. The independent
+before vectorization. It recognizes innermost traversals whose integer index
+starts at a constant and advances by one. The latch continues on inequality
+or a strict signed/unsigned ordering comparison: each stops when the index
+equals the target, and an ordering comparison may stop earlier. The independent
 iteration bound comes from modular unit-step traversal, not an overflow exit,
 `nsw`/`nuw` flags, or a circular scalar-evolution proof. Comparing the current
-index permits at most `bound` backedges; comparing the next index permits
-`bound - 1` in the index's unsigned width, including a full traversal for zero.
+index permits at most `bound - initial` backedges; comparing the next index
+permits `bound - initial - 1`. Both subtractions use the index's modular width
+before widening. A next-index target equal to the initial value can require a
+complete traversal of that domain.
 
 A separate reduction starts at a nonnegative literal and carries only
-nonnegative constant additions, PHIs and selects back to its header. Its
+nonnegative bounded additions, PHIs and selects back to its header. Uniform
+increment envelopes come from constants, constant masks, unsigned remainders
+by nonzero constants, constant logical shifts, zero extensions, nonwrapping
+bounded additions, and complete PHI/select alternatives. The bounded analysis
+uses the operations' bit-level meaning, never nowrap flags or a check that it
+will remove; cyclic or unknown bounds remain unsupported. Its
 maximum addition per iteration bounds every intermediate in that update DAG.
 The initial profile optimizes one reduction per transformed loop.
 The pass uses the conservative nonnegative signed range even for unsigned
 values. If the traversal's whole domain does not fit, one preheader guard
-selects a fast loop or an unchanged checked fallback. Only exit comparisons
-proved constant for the admitted range are replaced. Other checks, calls,
+selects a fast loop or an unchanged checked fallback. Exit comparisons and
+signed/unsigned addition overflow lanes proved constant for the admitted range
+are replaced. An addition's successful value can be separate from its detector,
+as happens when LLVM sinks arithmetic across a PHI join; the proof matches the
+detector's exact operands. Overflow aggregates and extracts outside the fast
+loop remain intact, including observations merged with the fallback. Other checks, calls,
 memory effects and cleanup edges retain their original order. This applies to
 ordinary counters and conditional weighted reductions without recognizing
 library declarations or type names. LLVM can then vectorize eligible loops;
@@ -1527,8 +1540,10 @@ and each edit invalidates and reacquires function analyses. The pass rejects
 nonduplicable/convergent operations, local allocas, EH/address-taken blocks,
 already-versioned/vectorized loops, and size-optimized functions. It admits at
 most 128 instructions/16 blocks per loop, 1,024 cloned body instructions per
-function, and 32 transformations. Decreasing or dynamic steps, reset recurrences,
-outer loops containing subloops and arbitrary relational bounds remain outside
+function, and 32 transformations. Increment and recurrence tracing each have
+a 128-node work bound. Decreasing or dynamic induction steps, unbounded or
+negative increments, reset recurrences, outer loops containing subloops, and
+non-strict relational latches remain outside
 this profile.
 
 `llvm_checked_reductions` exhaustively compares small-width checked and

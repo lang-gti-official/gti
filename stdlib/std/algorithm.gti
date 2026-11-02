@@ -261,6 +261,29 @@ void sort_insertion<std::relocatable T, Compare>(mut std::vector<T>& values,
       }
       values.swap_elements(position, position - size_t(1));
       position--;
+      // Keep the inexpensive adjacent path for nearly ordered input. After
+      // two moves, search the remaining ordered prefix before mutating it.
+      // The element stays in live storage throughout every comparator call.
+      if (next - position == size_t(2) && position > low) {
+        mut size_t first = low;
+        mut size_t limit = position;
+        while (first < limit) {
+          size_t middle = first + (limit - first) / size_t(2);
+          {
+            std::vector<T>& readable = values;
+            before = compare(readable[position], readable[middle]);
+          }
+          if (before) { limit = middle; }
+          else { first = middle + size_t(1); }
+        }
+        // Upper-bound insertion retains equivalent-element order. Restoring
+        // swaps keep a complete permutation even if comparison failed above.
+        while (position > first) {
+          values.swap_elements(position, position - size_t(1));
+          position--;
+        }
+        break;
+      }
     }
   }
 }

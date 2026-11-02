@@ -1718,6 +1718,13 @@ uninitialized storage. Reverse and introsort
 are ordinary GTI over these APIs, with read-only comparison scopes ending
 before each mutation. No public container or algorithm name grants compiler
 authority, and neither the library nor backend adds a copy/clone pivot.
+Introsort's insertion leaves retain two adjacent moves for nearly ordered
+input, then use an upper-bound binary search through the remaining ordered
+prefix. Comparison finishes with every element still in live storage; checked
+restoring swaps perform the subsequent insertion. Comparator failure therefore
+preserves a complete permutation and ordinary exactly-once cleanup. The
+partitioning, depth limit, heapsort fallback and monotonic fast paths retain
+their existing contracts.
 
 **Current gap:** The generated C++ support prelude still contains terminal
 integrity and low-level capability helpers that call `std::abort()`. These are

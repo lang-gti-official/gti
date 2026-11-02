@@ -40,11 +40,13 @@ ConditionalBranch *conditional(llvm::BasicBlock *block) {
   return branch;
 }
 
-// A unit-step equality traversal visits every integer bit pattern at most
-// once before its independent latch exits. This bound uses wrapping arithmetic,
+// A unit-step traversal whose latch stops at equality visits every integer bit
+// pattern at most once. Strict order comparisons may stop sooner, but never
+// pass the equality target. This bound uses wrapping arithmetic,
 // not nsw/nuw flags or an exit limit inferred from the checks being removed.
 struct Traversal {
   llvm::Value *bound = nullptr;
+  llvm::APInt initial;
   llvm::PHINode *index = nullptr;
   llvm::ICmpInst *comparison = nullptr;
   unsigned boundOperand = 0;
@@ -62,9 +64,17 @@ std::optional<Traversal> traversal(llvm::Loop &loop, llvm::DominatorTree &dt) {
       loop.contains(branch->getSuccessor(trueBackedge ? 1 : 0)))
     return std::nullopt;
   auto *comparison = llvm::dyn_cast<llvm::ICmpInst>(branch->getCondition());
-  if (!comparison ||
-      comparison->getPredicate() !=
-          (trueBackedge ? llvm::CmpInst::ICMP_NE : llvm::CmpInst::ICMP_EQ))
+  if (!comparison)
+    return std::nullopt;
+  const auto continues =
+      trueBackedge
+          ? comparison->getPredicate()
+          : llvm::CmpInst::getInversePredicate(comparison->getPredicate());
+  if (continues != llvm::CmpInst::ICMP_NE &&
+      continues != llvm::CmpInst::ICMP_ULT &&
+      continues != llvm::CmpInst::ICMP_UGT &&
+      continues != llvm::CmpInst::ICMP_SLT &&
+      continues != llvm::CmpInst::ICMP_SGT)
     return std::nullopt;
   for (auto &phi : loop.getHeader()->phis()) {
     if (!phi.getType()->isIntegerTy() ||
@@ -75,8 +85,7 @@ std::optional<Traversal> traversal(llvm::Loop &loop, llvm::DominatorTree &dt) {
         phi.getIncomingValueForBlock(loop.getLoopPreheader()));
     auto *next = llvm::dyn_cast<llvm::BinaryOperator>(
         phi.getIncomingValueForBlock(latch));
-    if (!initial || !initial->isZero() || !next ||
-        next->getOpcode() != llvm::Instruction::Add)
+    if (!initial || !next || next->getOpcode() != llvm::Instruction::Add)
       continue;
     auto *step = llvm::dyn_cast<llvm::ConstantInt>(next->getOperand(1));
     auto *base = next->getOperand(0);
@@ -95,7 +104,8 @@ std::optional<Traversal> traversal(llvm::Loop &loop, llvm::DominatorTree &dt) {
         if (!dt.dominates(instruction,
                           loop.getLoopPreheader()->getTerminator()))
           continue;
-      return Traversal{bound, &phi, comparison, 1 - operand, tested == next};
+      return Traversal{bound,      initial->getValue(), &phi,
+                       comparison, 1 - operand,         tested == next};
     }
   }
   return std::nullopt;
@@ -106,6 +116,86 @@ struct Offset {
   uint64_t maximum = 0;
 };
 
+// Uniform value bounds from the operation's bit-level meaning alone. Do not
+// consult nowrap flags, control-flow facts, assumptions, or the overflow exit
+// this pass may remove. Even a loop-dependent input can have a fixed envelope
+// after masking/remainder; no operand evaluation moves out of the loop.
+struct IncrementBounds {
+  llvm::DenseMap<llvm::Value *, Offset> bounds;
+  llvm::SmallPtrSet<llvm::Value *, 32> visiting;
+  unsigned visited = 0;
+
+  std::optional<Offset> get(llvm::Value *value) {
+    if (!value->getType()->isIntegerTy() ||
+        value->getType()->getIntegerBitWidth() > 64)
+      return std::nullopt;
+    if (auto found = bounds.find(value); found != bounds.end())
+      return found->second;
+    if (auto *constant = llvm::dyn_cast<llvm::ConstantInt>(value)) {
+      const auto number = constant->getZExtValue();
+      return bounds[value] = Offset{number, number};
+    }
+    if (++visited > 128 || !visiting.insert(value).second)
+      return std::nullopt;
+    std::optional<Offset> result;
+    if (auto *binary = llvm::dyn_cast<llvm::BinaryOperator>(value)) {
+      auto *constant = llvm::dyn_cast<llvm::ConstantInt>(binary->getOperand(1));
+      if (!constant && binary->getOpcode() == llvm::Instruction::And)
+        constant = llvm::dyn_cast<llvm::ConstantInt>(binary->getOperand(0));
+      if (constant) {
+        const auto amount = constant->getZExtValue();
+        if (binary->getOpcode() == llvm::Instruction::And)
+          result = Offset{0, amount};
+        else if (binary->getOpcode() == llvm::Instruction::URem && amount)
+          result = Offset{0, amount - 1};
+        else if (binary->getOpcode() == llvm::Instruction::LShr &&
+                 amount < value->getType()->getIntegerBitWidth())
+          result = Offset{0, llvm::APInt::getMaxValue(
+                                 value->getType()->getIntegerBitWidth())
+                                 .lshr(amount)
+                                 .getZExtValue()};
+      }
+      if (binary->getOpcode() == llvm::Instruction::Add) {
+        auto left = get(binary->getOperand(0)),
+             right = get(binary->getOperand(1));
+        const auto maximum =
+            llvm::APInt::getMaxValue(value->getType()->getIntegerBitWidth())
+                .getZExtValue();
+        if (left && right && left->maximum <= maximum - right->maximum)
+          result = Offset{left->minimum + right->minimum,
+                          left->maximum + right->maximum};
+      }
+    } else if (auto *cast = llvm::dyn_cast<llvm::ZExtInst>(value)) {
+      result = Offset{
+          0, llvm::APInt::getMaxValue(cast->getSrcTy()->getIntegerBitWidth())
+                 .getZExtValue()};
+      if (auto source = get(cast->getOperand(0)))
+        result = source;
+    } else {
+      llvm::SmallVector<llvm::Value *, 4> alternatives;
+      if (auto *select = llvm::dyn_cast<llvm::SelectInst>(value))
+        alternatives = {select->getTrueValue(), select->getFalseValue()};
+      else if (auto *phi = llvm::dyn_cast<llvm::PHINode>(value))
+        for (auto &incoming : phi->incoming_values())
+          alternatives.push_back(incoming);
+      for (auto *alternative : alternatives) {
+        auto bound = get(alternative);
+        if (!bound) {
+          result.reset();
+          break;
+        }
+        result = result ? Offset{std::min(result->minimum, bound->minimum),
+                                 std::max(result->maximum, bound->maximum)}
+                        : bound;
+      }
+    }
+    visiting.erase(value);
+    if (result)
+      bounds[value] = *result;
+    return result;
+  }
+};
+
 struct Recurrence {
   llvm::PHINode &root;
   llvm::Loop &loop;
@@ -113,6 +203,7 @@ struct Recurrence {
   llvm::DenseMap<llvm::Value *, Offset> offsets;
   llvm::SmallPtrSet<llvm::Value *, 32> visiting;
   unsigned visited = 0;
+  IncrementBounds increments;
 
   Recurrence(llvm::PHINode &root, llvm::Loop &loop, uint64_t limit)
       : root(root), loop(loop), limit(limit) {}
@@ -128,20 +219,32 @@ struct Recurrence {
         !visiting.insert(value).second)
       return std::nullopt;
     std::optional<Offset> result;
+    llvm::Value *left = nullptr, *right = nullptr;
     if (auto *add = llvm::dyn_cast<llvm::BinaryOperator>(instruction);
         add && add->getOpcode() == llvm::Instruction::Add) {
-      auto *constant = llvm::dyn_cast<llvm::ConstantInt>(add->getOperand(1));
-      auto *base = add->getOperand(0);
-      if (!constant) {
-        constant = llvm::dyn_cast<llvm::ConstantInt>(add->getOperand(0));
-        base = add->getOperand(1);
+      left = add->getOperand(0);
+      right = add->getOperand(1);
+    } else if (auto *lane = llvm::dyn_cast<llvm::ExtractValueInst>(instruction);
+               lane && lane->getNumIndices() == 1 && *lane->idx_begin() == 0) {
+      if (auto *add =
+              llvm::dyn_cast<llvm::IntrinsicInst>(lane->getAggregateOperand());
+          add &&
+          (add->getIntrinsicID() == llvm::Intrinsic::uadd_with_overflow ||
+           add->getIntrinsicID() == llvm::Intrinsic::sadd_with_overflow)) {
+        left = add->getArgOperand(0);
+        right = add->getArgOperand(1);
       }
-      if (constant && !constant->getValue().isNegative())
-        if (auto previous = trace(base)) {
-          const auto step = constant->getZExtValue();
-          if (step <= limit && previous->maximum <= limit - step)
-            result = Offset{previous->minimum + step, previous->maximum + step};
-        }
+    }
+    if (left) {
+      for (unsigned order = 0; order < 2 && !result; ++order) {
+        auto amount = increments.get(right);
+        if (amount && amount->maximum <= limit)
+          if (auto previous = trace(left);
+              previous && previous->maximum <= limit - amount->maximum)
+            result = Offset{previous->minimum + amount->minimum,
+                            previous->maximum + amount->maximum};
+        std::swap(left, right);
+      }
     } else {
       llvm::SmallVector<llvm::Value *, 4> alternatives;
       if (auto *phi = llvm::dyn_cast<llvm::PHINode>(instruction)) {
@@ -175,6 +278,7 @@ struct Plan {
   bool unconditional = false;
   unsigned cost = 0;
   llvm::SmallVector<std::pair<llvm::ICmpInst *, bool>, 4> comparisons;
+  llvm::SmallVector<llvm::ExtractValueInst *, 4> overflowLanes;
 };
 
 std::optional<Plan> planFor(llvm::Loop &loop, llvm::DominatorTree &dt,
@@ -208,7 +312,7 @@ std::optional<Plan> planFor(llvm::Loop &loop, llvm::DominatorTree &dt,
     auto maximumBackedges = threshold;
     bool unconditional = false;
     if (auto *bound = llvm::dyn_cast<llvm::ConstantInt>(induction->bound)) {
-      auto backedges = bound->getValue();
+      auto backedges = bound->getValue() - induction->initial;
       if (induction->comparesNext)
         --backedges; // Deliberate modulo-width distance, including bound zero.
       if (backedges.getZExtValue() > threshold)
@@ -226,7 +330,39 @@ std::optional<Plan> planFor(llvm::Loop &loop, llvm::DominatorTree &dt,
     // The division above guarantees this multiplication fits, without relying
     // on IR poison flags. Every intermediate belongs to the traced update DAG.
     const auto rootMaximum = start + maximumBackedges * delta->maximum;
-    Plan plan{&loop, *induction, threshold, unconditional, *cost, {}};
+    Plan plan{&loop, *induction, threshold, unconditional, *cost, {}, {}};
+    // LLVM may sink a successful add into a PHI join while leaving each
+    // predecessor's overflow intrinsic in place. Prove the exact operands of
+    // each detector, rather than requiring its lane zero to be the recurrence.
+    // Only replace lane-one observations INSIDE the fast loop: outside
+    // aggregate PHIs may also carry slow-loop values.
+    for (auto *block : loop.blocks())
+      for (auto &instruction : *block) {
+        auto *add = llvm::dyn_cast<llvm::IntrinsicInst>(&instruction);
+        if (!add ||
+            (add->getIntrinsicID() != llvm::Intrinsic::uadd_with_overflow &&
+             add->getIntrinsicID() != llvm::Intrinsic::sadd_with_overflow) ||
+            add->getArgOperand(0)->getType() != phi.getType())
+          continue;
+        bool safe = false;
+        for (unsigned order = 0; order < 2 && !safe; ++order) {
+          auto offset = recurrence.offsets.find(add->getArgOperand(order));
+          auto amount =
+              recurrence.increments.get(add->getArgOperand(1 - order));
+          safe =
+              offset != recurrence.offsets.end() && amount &&
+              amount->maximum <= limit &&
+              offset->second.maximum <= limit - amount->maximum &&
+              rootMaximum <= limit - amount->maximum - offset->second.maximum;
+        }
+        if (!safe)
+          continue;
+        for (auto *user : add->users())
+          if (auto *lane = llvm::dyn_cast<llvm::ExtractValueInst>(user);
+              lane && loop.contains(lane) && lane->getNumIndices() == 1 &&
+              *lane->idx_begin() == 1)
+            plan.overflowLanes.push_back(lane);
+      }
     for (auto *block : loop.blocks()) {
       auto *branch = conditional(block);
       auto *comparison =
@@ -258,7 +394,7 @@ std::optional<Plan> planFor(llvm::Loop &loop, llvm::DominatorTree &dt,
       else if (range.icmp(llvm::CmpInst::getInversePredicate(predicate), bound))
         plan.comparisons.emplace_back(comparison, false);
     }
-    if (!plan.comparisons.empty())
+    if (!plan.comparisons.empty() || !plan.overflowLanes.empty())
       return plan;
   }
   return std::nullopt;
@@ -278,7 +414,10 @@ void apply(Plan &plan, llvm::LoopInfo &loops, llvm::DominatorTree &dt) {
     // different target at each comparison and evade the finite traversal.
     // Freeze also avoids a new poison observation on an earlier-exit path.
     // The first iteration is safe independently of this target.
-    auto *bound = frozenBound;
+    auto *bound = builder.CreateSub(
+        frozenBound,
+        llvm::ConstantInt::get(frozenBound->getType(), plan.traversal.initial),
+        "reduction.distance");
     if (plan.traversal.comparesNext)
       bound =
           builder.CreateSub(bound, llvm::ConstantInt::get(bound->getType(), 1),
@@ -299,6 +438,8 @@ void apply(Plan &plan, llvm::LoopInfo &loops, llvm::DominatorTree &dt) {
   for (auto [comparison, value] : plan.comparisons)
     comparison->replaceAllUsesWith(
         llvm::ConstantInt::getBool(comparison->getContext(), value));
+  for (auto *lane : plan.overflowLanes)
+    lane->replaceAllUsesWith(llvm::ConstantInt::getFalse(lane->getContext()));
 }
 
 class CheckedReductionPass : public llvm::PassInfoMixin<CheckedReductionPass> {
