@@ -29,5 +29,16 @@ int main() {
   std::copy_if(weights.begin(), weights.end(), selected.begin_mut(),
                [](int& value) -> bool { return value > 3; });
   for (auto& value : selected) { std::println(value); }
+
+  // Compaction returns the kept prefix length and leaves all slots alive.
+  auto retained = std::remove_if(selected, [](int& value) -> bool { return value == 0; });
+  if (retained != 2 || selected.size() != 4) { return 1; }
+  int zero = 0;
+  if (std::remove(selected, zero) != 2) { return 2; }
+
+  // Erasure also destroys matches and shrinks the owner, returning the count.
+  if (std::erase(selected, zero) != 2 || selected.size() != 2) { return 3; }
+  if (std::erase_if(selected, [](int& value) -> bool { return value > 8; }) != 2 ||
+      !selected.empty()) { return 4; }
   return 0;
 }

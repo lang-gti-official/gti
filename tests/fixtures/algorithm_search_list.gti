@@ -1,0 +1,6 @@
+import std.list;
+import "algorithm_search_suite.gti";
+int main() {
+  std::list<int> values = {1, 2, 2, 4, 7};
+  return search_suite(values.begin(), values.end()) ? 0 : 2;
+}
