@@ -259,6 +259,112 @@ int main() { mut Shell value{}; value = std::move(value); return 0; }
       "", false, false, true);
   if (!duplicateStore || !referenceStore || !referenceAliasStore)
     return 1;
+  const std::string descriptor = R"(
+class Descriptor { public:
+  mut void* address = nullptr;
+  Descriptor(void* address) : address(address) {}
+};
+Descriptor fresh_descriptor() { return Descriptor(fresh_pointer()); }
+)";
+  const std::string pairDescriptor = R"(
+class PairDescriptor { public:
+  void* left = nullptr; void* right = nullptr;
+  PairDescriptor(void* left, void* right) : left(left), right(right) {}
+};
+)";
+  bool descriptorControls = true;
+  descriptorControls &=
+      freshControl("descriptor-storage.gti", descriptor,
+                   "Descriptor region = fresh_descriptor(); unsafe { "
+                   "release_pointer(region.address); }\n",
+                   true);
+  descriptorControls &= freshControl(
+      "descriptor-distinct-calls.gti", descriptor,
+      "Descriptor a = fresh_descriptor(); Descriptor b = fresh_descriptor(); "
+      "unsafe { release_pointer(a.address); release_pointer(b.address); }\n",
+      true);
+  descriptorControls &= freshControl(
+      "descriptor-shared-fields.gti",
+      pairDescriptor + "PairDescriptor shared_descriptor() { void* p = "
+                       "fresh_pointer(); return PairDescriptor(p, p); }\n",
+      "PairDescriptor pair = shared_descriptor(); unsafe { "
+      "release_pointer(pair.left); release_pointer(pair.right); }\n",
+      false);
+  descriptorControls &= freshControl(
+      "descriptor-distinct-fields.gti",
+      pairDescriptor + "PairDescriptor pair_descriptor() { return "
+                       "PairDescriptor(fresh_pointer(), fresh_pointer()); }\n",
+      "PairDescriptor pair = pair_descriptor(); unsafe { "
+      "release_pointer(pair.left); release_pointer(pair.right); }\n",
+      true);
+  descriptorControls &=
+      freshControl("descriptor-replaced-field.gti",
+                   descriptor + "mut void* old_pointer = nullptr;\n",
+                   "mut Descriptor region = fresh_descriptor(); region.address "
+                   "= old_pointer; "
+                   "unsafe { release_pointer(region.address); }\n",
+                   false);
+  descriptorControls &= freshControl(
+      "descriptor-incoming-field.gti",
+      descriptor + "mut void* old_pointer = nullptr; Descriptor "
+                   "incoming_descriptor(void* p) { return Descriptor(p); }\n",
+      "Descriptor region = incoming_descriptor(old_pointer); unsafe { "
+      "release_pointer(region.address); }\n",
+      false);
+  descriptorControls &= freshControl(
+      "descriptor-released-return.gti",
+      descriptor +
+          "Descriptor released_descriptor() { Descriptor region = "
+          "fresh_descriptor(); "
+          "unsafe { release_pointer(region.address); } return region; }\n",
+      "Descriptor region = released_descriptor(); unsafe { "
+      "release_pointer(region.address); }\n",
+      false);
+  descriptorControls &=
+      freshControl("descriptor-user-cleanup.gti", R"(
+extern "C" { void unknown_cleanup(); }
+class DirtyDescriptor { public:
+  void* address = nullptr;
+  DirtyDescriptor(void* address) : address(address) {}
+  ~DirtyDescriptor() { unsafe { unknown_cleanup(); } }
+};
+)",
+                   "DirtyDescriptor region{fresh_pointer()}; unsafe { "
+                   "release_pointer(region.address); }\n",
+                   false);
+  descriptorControls &=
+      freshControl("descriptor-mixed-return.gti",
+                   descriptor + "mut void* old_pointer = nullptr; Descriptor "
+                                "mixed_descriptor(bool pick, void* incoming) { "
+                                "if (pick) { return Descriptor(incoming); } "
+                                "return fresh_descriptor(); }\n",
+                   "Descriptor region = mixed_descriptor(false, old_pointer); "
+                   "unsafe { release_pointer(region.address); }\n",
+                   false);
+  descriptorControls &= freshControl(
+      "descriptor-alias-copy.gti",
+      descriptor +
+          "Descriptor alias_descriptor(Descriptor region) { return region; }\n",
+      "Descriptor first = fresh_descriptor(); Descriptor second = "
+      "alias_descriptor(first); "
+      "unsafe { release_pointer(first.address); "
+      "release_pointer(second.address); }\n",
+      false);
+  descriptorControls &=
+      freshControl("descriptor-constructor-callback.gti", R"(
+extern "C" { void descriptor_callback(); }
+class CallbackDescriptor { public:
+  void* address = nullptr;
+  CallbackDescriptor(void* address) : address(address) {
+    unsafe { descriptor_callback(); }
+  }
+};
+)",
+                   "CallbackDescriptor region{fresh_pointer()}; unsafe { "
+                   "release_pointer(region.address); }\n",
+                   false);
+  if (!descriptorControls)
+    return 1;
   const auto discharges = [&](const std::string &name) {
     return countDischarges(frontend, analysis, name);
   };

@@ -1082,8 +1082,12 @@ quicksort partitions (a median of three sampled medians for ranges longer
 than 40), insertion sort for ranges of at most 16 elements, and heapsort for
 any range that exhausts 2*floor(log2(n)) partition levels. Comparisons are
 O(n log n) in the worst case, auxiliary storage is a fixed-size stack, and
-elements move only by restoring swaps, without copying a pivot or cloning
-elements. It is not stable. The default relation requires `std::totally_ordered<T>`; an
+general elements move by restoring swaps, without copying a pivot or cloning
+elements. Numeric insertion partitions using the default relation instead keep
+one scalar key and shift its larger predecessors once: scalar copies and builtin
+comparison cannot call user code or fail while the key is displaced. Custom
+comparators and nonnumeric elements retain restoring swaps. Sort is not stable.
+The default relation requires `std::totally_ordered<T>`; an
 explicit comparator must satisfy `std::comparator<Compare, T>` and define a
 strict weak ordering. Each comparison borrows elements read-only, ending those
 loans before any swap. Internal sorting ranges prove every read and exchange

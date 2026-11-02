@@ -1445,16 +1445,25 @@ bindings and repeated releases reject the noninterference profile. A released
 token cannot be published as a fresh return value. Allocation and failure effects remain opaque and
 observable, and no memory fact is restored after invalidation.
 
-The first slice admits acyclic ownerless scalar/pointer wrappers with unique
-dominating local definitions, ordinary SSA staging and exact sealed malloc or
-aligned-allocation operations. Store uniqueness is keyed by binding identity,
-not by a particular MIR place view. A writable binding must denote its own
-ordinary scalar storage; reference parameters, local reference aliases, foreign
-storage and inconsistent typed views are excluded. Typed record/payload fields,
-receiver publication,
-POSIX status-output allocation and loop-carried provenance remain outside this
-slice. An unrelated initialized-prefix owner proves the caller-side benefit;
-this does not yet establish vector reserve or substring performance gains.
+The bounded slice admits acyclic ownerless wrappers and constructors of flat,
+passive records with scalar fields. Exact typed pointer-field results transport
+provenance through construction, returns, staging and whole-record copies.
+Allocation tokens are rebased by call path, so two fields returned from one
+allocation retain the same token, while separate invocations remain distinct.
+All returning paths must provide a known field result; their origin sets are
+joined conservatively. A token released on any path cannot be exported as a
+fresh result. Unknown incoming fields, mutated records, user cleanup, borrowed
+state, nested records and payload carriers remain outside this slice.
+
+Store uniqueness is keyed by binding identity, not by a particular MIR place
+view. Writable local bindings must denote their own ordinary storage; reference
+parameters, local reference aliases, foreign storage and inconsistent typed
+views are excluded. Constructor publication admits only the exact scalar fields
+of a passive receiver and requires complete non-opaque field initialization.
+No pointee access, capture or ownership fact is inferred from a pointer field.
+POSIX status-output allocation and loop-carried provenance remain unsupported.
+Unrelated initialized-prefix owners prove caller-side noninterference; this
+alone does not establish vector reserve or substring performance gains.
 
 The capture analysis extends the place alias and escape analysis in
 `alias.cpp`. It has two layers.

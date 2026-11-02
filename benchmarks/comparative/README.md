@@ -718,3 +718,46 @@ O0/O3. These are focused checks, not full integration validation.
 Raw timings, build costs, allocation observations and generated code are
 retained under `recursive-inline-mini/Testing`, and Linux evidence under
 `recursive-inline-linux`, in the round-eight manual campaign artifact.
+
+### Measured checkpoint `0a2246d5`
+
+Explicit LLVM SLP vectorization and bounded source string-search windows leave
+**26/34 competitive against both comparators, eight slower**, with all digests
+valid and no uncertain classifications. String growth/search improves by about
+19%, but its ratio to Rust is still 1.113 (95% interval 1.104–1.119), outside
+the 1.10 acceptance boundary. A faster result is not counted as a closed gap
+until both comparator intervals pass.
+
+| Remaining workload | GTI / C++ median | GTI / Rust median |
+| --- | ---: | ---: |
+| `lib-vector-growth` | 1.690 | 1.732 |
+| `lib-vector-reserved` | 1.588 | 1.526 |
+| `lib-vector-transform` | 1.236 | 1.372 |
+| `lib-sort-random` | 1.382 | 2.288 |
+| `lib-string-growth-search` | 0.348 | 1.113 |
+| `lib-string-substrings` | 1.138 | 2.368 |
+| `lib-hashmap-reserved` | 1.012 | 1.378 |
+| `lib-interface-dispatch` | 0.730 | 1.580 |
+
+The combined paired run against `93a06f39` has one material improvement and
+33 results within or inconclusive against the separate 5% regression band.
+The stronger repeat measures string growth/search at 0.8089 times its former
+runtime (0.7972–0.8215); substrings resolve to 0.9961 (0.9881–1.0110).
+Holding the stdlib fixed, enabling SLP alone produces no material improvement
+across these 34 programs. Holding the compiler fixed, the new source windows
+measure 0.7978 (0.7757–0.8241) for string growth/search and 0.9645
+(0.9571–0.9766) for random sorting. The source changes expose useful work to
+the optimizer; these measurements do not attribute the full gain to enabling
+SLP alone.
+
+Summed compilation observations are 17.479 s before and 17.812 s after;
+median paired peak compiler RSS is 1.0131 times baseline, and the largest
+executable-size increase is 0.31%. Allocation call, success and free counts
+are unchanged at both diagnostic seeds. Twenty-two focused registered checks,
+native smoke and the affected sort/hash cleanup and failure checks pass on
+macOS arm64 and Linux x64. Full integration remains the merge queue's job.
+
+Evidence is retained under `slp-windows-mini/Testing` (combined, compiler-only,
+library-only and stronger-repeat reports) and `slp-windows-linux` in the
+round-eight campaign artifact. Both runners built clean tracked archives;
+unrelated edits present in the submitted snapshot were not used.

@@ -34,10 +34,27 @@ void fresh_scratch() {
   unsafe { release_pointer(pointer); }
   // scratch-end
 }
+class NativeAllocationDescriptor {
+public:
+  void* address = nullptr;
+  NativeAllocationDescriptor(void* address) : address(address) {}
+};
+NativeAllocationDescriptor native_descriptor() {
+  return NativeAllocationDescriptor(fresh_pointer());
+}
+void descriptor_scratch() {
+  NativeAllocationDescriptor first = native_descriptor();
+  NativeAllocationDescriptor second = native_descriptor();
+  unsafe {
+    release_pointer(first.address);
+    release_pointer(second.address);
+  }
+}
 int32_t fresh_probe(int32_t value) {
   mut PrefixParcel parcel{};
   parcel.append(value);
   fresh_scratch();
+  descriptor_scratch();
   return parcel.borrow() * int32_t(2);
 }
 int main(int argc, std::vector<std::string> argv) {

@@ -9,6 +9,7 @@ import std.iterator;
 import std.functional;
 import std.vector;
 import std.array;
+import std.meta;
 namespace std {
 export constexpr T min<std::totally_ordered T>(T left, T right) {
   if (right < left) {
@@ -252,6 +253,28 @@ unsafe void sort_insertion<std::relocatable T, Compare>(mut std::vector<T>& valu
                                                  size_t low, size_t high)
   requires std::vector_element<T> && std::comparator<Compare, T> {
   unsafe {
+    if (high - low < size_t(2)) { return; }
+    if constexpr (std::meta::is_numeric<T>()) {
+      if constexpr (std::meta::is_same<Compare, sort_less<T>>()) {
+        // Builtin scalar copies and the default numeric relation cannot invoke
+        // user code or fail. Keep the insertion key once and shift each larger
+        // predecessor once, instead of exchanging the key at every position.
+        // Custom comparators retain the restoring-swap path below: a failure
+        // there must leave every original element live in the owner.
+        for (mut size_t next = low + size_t(1); next < high; next++) {
+          T key = values.get_unchecked(next);
+          mut size_t position = next;
+          while (position > low) {
+            T previous = values.get_unchecked(position - size_t(1));
+            if (!(key < previous)) { break; }
+            values.get_unchecked_mut(position) = previous;
+            position--;
+          }
+          values.get_unchecked_mut(position) = key;
+        }
+        return;
+      }
+    }
     for (mut size_t next = low + size_t(1); next < high; next++) {
       mut size_t position = next;
       while (position > low) {
