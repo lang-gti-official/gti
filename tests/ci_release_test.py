@@ -379,7 +379,7 @@ def workflow_contract(root):
     # CI, nightly packaging and the rollup bot run on GitHub; the frozen Gitea
     # release workflow stays as written.
     assert sorted(p.name for p in (root / ".github/workflows").glob("*.yml")) == [
-        "backport.yml", "beta.yml", "cache.yml", "ci.yml", "nightly.yml", "rollback.yml", "rollup.yml", "train.yml"]
+        "backport.yml", "beta.yml", "cache.yml", "ci.yml", "nightly.yml", "preview.yml", "rollback.yml", "rollup.yml", "train.yml"]
     assert not (root / ".gitea/workflows/ci.yml").exists()
     assert "branches:\n      - main" in release and "paths:" not in release
     assert release.count("-DGTI_RELEASE_BUILD=ON") == 1, "channels must share one configure"
@@ -694,6 +694,11 @@ def archive_contract(root, cmake):
         assert stable_archive.read_bytes() == stable_bytes, "nightly rewrote the immutable archive"
         assert stable["lib/gti/llvm/libclang.so.20"] == ("symlink", "libclang.so.20.1")
         rejected = work / "rejected"
+        preview_directory = work / "preview"
+        package("preview", "preview", preview_directory, sha)
+        preview = contents(preview_directory / "gti-preview-linux-x64.tar.gz")
+        assert preview["share/gti/BUILD_ID"] == (sha + "\n").encode()
+        package("preview", "nightly", rejected, sha, success=False)
         # The nightly stamp lives in the stage; a stable archive refuses it.
         package("stable", f"v{version}", rejected, success=False)
         assert not rejected.exists(), "a nightly-stamped stage produced a stable archive"

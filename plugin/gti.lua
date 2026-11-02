@@ -20,7 +20,8 @@ local channel = vim.g.gti_channel or vim.env.GTI_CHANNEL or "stable"
 local expected_version = toolchain.expected_version()
 local installed_version = toolchain.installed_version()
 if
-  channel == "stable"
+  not toolchain.managed()
+  and channel == "stable"
   and expected_version
   and installed_version
   and expected_version ~= installed_version
@@ -52,7 +53,7 @@ vim.api.nvim_create_autocmd("LspAttach", {
   callback = function(args)
     local client_id = args.data and args.data.client_id or nil
     local client = client_id and vim.lsp.get_client_by_id(client_id) or nil
-    if not client or client.name ~= "gti_lsp" or not expected_version then
+    if toolchain.managed() or not client or client.name ~= "gti_lsp" or not expected_version then
       return
     end
     local actual = client.server_info and client.server_info.version or nil
@@ -230,15 +231,22 @@ vim.api.nvim_create_user_command("GTIExpandMacro", function()
 end, { desc = "Inspect the checked macro expansion under the cursor (read-only)" })
 
 vim.api.nvim_create_user_command("GTIInfo", function()
-  local info = toolchain.version_info()
+  local buffer = vim.api.nvim_get_current_buf()
+  local name = vim.api.nvim_buf_get_name(buffer)
+  local clients = vim.lsp.get_clients({ name = "gti_lsp", bufnr = buffer })
+  local attached_root = clients[1] and clients[1].config and clients[1].config.root_dir
+  local project_root = attached_root or vim.fs.root(buffer, { "gti.toml", ".git", "CMakeLists.txt", "gti-toolchain" })
+  local info = toolchain.version_info({
+    cwd = project_root or (name ~= "" and vim.fs.dirname(name) or nil),
+  })
   local active_versions = {}
   local active_profiles = {}
   local problems = vim.deepcopy(info.problems)
-  for _, client in ipairs(vim.lsp.get_clients({ name = "gti_lsp" })) do
+  for _, client in ipairs(clients) do
     local version = client.server_info and client.server_info.version or "unknown"
     table.insert(active_versions, version)
     table.insert(active_profiles, requested_profile(client))
-    if info.expected and version ~= info.expected then
+    if not info.managed and info.expected and version ~= info.expected then
       table.insert(problems, string.format(
         "running language server is %s but the plugin expects %s",
         version,
@@ -248,6 +256,7 @@ vim.api.nvim_create_user_command("GTIInfo", function()
   end
 
   local lines = {
+    "Toolchain manager: " .. (info.managed and "gtiup" or "legacy plugin installer"),
     "Plugin version: " .. (info.expected or "unknown"),
     "Installed toolchain: " .. (info.installed or "not installed by Lazy"),
     string.format(

@@ -1,0 +1,1 @@
+Add gtiup to install and select complete preview, nightly, beta and stable GTI toolchains, including project-specific versions and matching Neovim language-server/parser selection. Publish prebuilt combined-preview packages independently of nightly admission.

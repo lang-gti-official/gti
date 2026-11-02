@@ -142,7 +142,12 @@ def main():
         run(configure, root, environment)
         run(["cmake", "--build", consumer, "--target", "gti_installed_llvm_cache",
              "--parallel", "2"], root, environment)
-        run([consumer / "gti_installed_llvm_cache", gti], root, environment)
+        # Resource discovery uses the running executable, not an argv hint.
+        # Exercise an installed embedding consumer beside the relocated CLI,
+        # with build-tree paths and resource overrides still unavailable.
+        installed_consumer = prefix / "bin/gti_installed_llvm_cache"
+        shutil.copy2(consumer / "gti_installed_llvm_cache", installed_consumer)
+        run([installed_consumer, gti], root, environment)
         coexistence = root / "coexistence-build"
         configure[configure.index("-S") + 1] = source / "tests/installed_library_smoke"
         configure[configure.index("-B") + 1] = coexistence

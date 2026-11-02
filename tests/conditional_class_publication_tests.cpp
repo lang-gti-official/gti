@@ -647,7 +647,10 @@ int main() {
       }
     }
   }
-  expect(movedReceivers == 29,
+  // Both::pick consumes its two fields in place: their cleanup stays with
+  // the outer receiver. They are not hidden moved temporaries. The other
+  // 27 receivers still require every staging and forged-mutation check above.
+  expect(movedReceivers == 27,
          "every conditionally moved receiver in the fixture was exercised: " +
              std::to_string(movedReceivers));
   expect(mutatedClass && mutatedPlain && mutatedClosure,
