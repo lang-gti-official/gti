@@ -34,7 +34,7 @@ AUTOMATION_WORKFLOWS = {".github/workflows/rollup.yml", ".github/workflows/train
                         ".github/workflows/backport.yml", ".github/workflows/rollback.yml"}
 FULL_VALIDATION_FILES = {"scripts/validation_checks.py", "scripts/validation_batch.py",
                          "scripts/named_test_shards.py", "tests/ci_release_test.py",
-                         "tests/gtiup_test.py", "tests/preview_release_test.py"}
+                         "tests/preview_release_test.py"}
 AUTOMATION_FILES = {"AGENTS.md", "CLAUDE.md", "README.md"}
 AUTOMATION_SCRIPTS = {"agent_workflow.py", "validation_batch.py", "validation_checks.py",
                       "preview_workflow.py", "preview_submit.py", "build_window.py", "bounded_log.py",
@@ -46,7 +46,7 @@ AUTOMATION_TESTS = {"agent_workflow_test.py", "preview_workflow_test.py", "build
                     "repository_hosting_test.py", "cut_release_test.py",
                     "ownership_map_test.py", "plan_checks_test.py", "rollup_test.py",
                     "release_train_test.py", "named_test_shards_test.py", "ci_release_test.py",
-                    "gtiup_test.py", "preview_release_test.py"}
+                    "preview_release_test.py"}
 # A rollup's membership record lists queue-validated members; unlike a degraded-
 # mode batch manifest it adds no admission obligation, so it leaves the
 # classification of the members' own paths unchanged.
