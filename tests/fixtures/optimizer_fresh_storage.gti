@@ -1,0 +1,47 @@
+import std.memory;
+import std.vector;
+import std.string;
+
+class PrefixParcel {
+  mut std::detail::prefix_owner<int32_t> slots;
+public:
+  PrefixParcel() : slots(std::detail::prefix_owner<int32_t>(uint64_t(4))) {}
+  void append(int32_t value) mut { this.slots.append_value(value); }
+  int32_t& borrow() { return this.slots.read(uint64_t(0)); }
+};
+class FreshAudit { public: FreshAudit() {} ~FreshAudit() { std::println(99); } };
+void* fresh_pointer() {
+  unsafe {
+#if target.os == "windows"
+    return gti_internal::runtime::gti_rt_aligned_malloc_v1(uint64_t(64), uint64_t(16));
+#else
+    return gti_internal::runtime::gti_rt_malloc_v1(uint64_t(64));
+#endif
+  }
+}
+unsafe void release_pointer(void* pointer) {
+  unsafe {
+#if target.os == "windows"
+    gti_internal::runtime::gti_rt_aligned_free_v1(pointer);
+#else
+    gti_internal::runtime::gti_rt_posix_free_v1(pointer);
+#endif
+  }
+}
+void fresh_scratch() {
+  // scratch-begin
+  void* pointer = fresh_pointer();
+  unsafe { release_pointer(pointer); }
+  // scratch-end
+}
+int32_t fresh_probe(int32_t value) {
+  mut PrefixParcel parcel{};
+  parcel.append(value);
+  fresh_scratch();
+  return parcel.borrow() * int32_t(2);
+}
+int main(int argc, std::vector<std::string> argv) {
+  FreshAudit audit{};
+  int32_t result = fresh_probe(argc > 1 ? int32_t(2147483647) : int32_t(9));
+  return result == int32_t(18) ? 0 : 2;
+}

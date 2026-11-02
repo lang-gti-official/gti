@@ -44,6 +44,34 @@ int main() {
         assert evidence["verification"]["inputValid"] and evidence["verification"]["outputValid"]
         assert evidence["safetyOperations"]["families"]["arithmetic-overflow"]["staticallyDischarged"] == 1, evidence["safetyOperations"]
         for mode, flags in modes:
+            fresh_text = (root / "tests/fixtures/optimizer_fresh_storage.gti").read_text()
+            fresh_module = ("export module fresh_storage_probe;\n"
+                            'import "detail/memory_storage.gti";\n'
+                            'import "detail/memory_capabilities.gti";\n' + fresh_text.replace(
+                                "int main(int argc, std::vector<std::string> argv)",
+                                "export int run_fresh_probe(int argc)"))
+            (library / "std/fresh_storage_probe.gti").write_text(fresh_module)
+            register_modules(library, {"fresh_storage_probe": "std/fresh_storage_probe.gti"})
+            fresh_source = Path(directory) / "fresh-main.gti"
+            fresh_source.write_text("import std.fresh_storage_probe; import std.vector; import std.string;\n"
+                                    "int main(int argc, std::vector<std::string> argv) { return run_fresh_probe(argc); }\n")
+            fresh_binary = Path(directory) / (mode + "-fresh")
+            command = [str(compiler), str(fresh_source), *flags, "-o", str(fresh_binary)]
+            built = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
+            assert built.returncode == 0, (command, built.stdout, built.stderr)
+            for failure in (False, True):
+                result = subprocess.run([str(fresh_binary), *(["overflow"] if failure else [])],
+                                        env=environment, capture_output=True, text=True, timeout=15)
+                assert result.returncode == (70 if failure else 0), (mode, failure, result)
+                assert result.stdout == "99\n", (mode, failure, result)
+                if failure:
+                    assert "runtime error[GTI-R0001]: integer_overflow in multiplication" in result.stderr
+                else:
+                    assert not result.stderr, (mode, failure, result)
+                key = ("fresh", failure)
+                observation = result.returncode, result.stdout, result.stderr
+                if mode == "llvm-O0": observations[key] = observation
+                else: assert observation == observations[key], (mode, key, observation, observations[key])
             binary = Path(directory) / mode
             command = [str(compiler), str(source), *flags, "-o", str(binary)]
             built = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)

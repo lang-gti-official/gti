@@ -114,6 +114,93 @@ int main() { mut Shell value{}; value = std::move(value); return 0; }
       return 1;
     }
   }
+  std::ifstream freshFile(root / "fixtures/optimizer_fresh_storage.gti");
+  const std::string freshSource{std::istreambuf_iterator<char>(freshFile), {}};
+  const auto freshControl = [&](std::string name, std::string declarations,
+                                std::string scratch, bool shouldProve) {
+    auto source = freshSource.substr(0, freshSource.find("int main"));
+    source.insert(0, "import \"../std/detail/memory_capabilities.gti\"; " +
+                         declarations);
+    const auto first = source.find("  // scratch-begin");
+    const auto last = source.find("  // scratch-end");
+    source.replace(first, last - first, std::move(scratch));
+    source += "int main() { return fresh_probe(int32_t(9)); }";
+    const auto fixture =
+        gti_test::analyzeTrustedPrivateMemoryFixture(name, source);
+    if (!fixture.canGenerateCode()) {
+      for (const auto &d : fixture.diagnostics)
+        std::cerr << d.code << ": " << d.message << '\n';
+      return false;
+    }
+    const auto analysis = lang::analyzeMirClosedCallSafetyChecks(fixture.mir);
+    const auto count = countDischarges(fixture, analysis, "fresh_probe");
+    if (!analysis.converged || count != std::size_t(shouldProve)) {
+      std::cerr << "fresh-storage noninterference " << name
+                << ": multiply=" << count << '\n';
+      return false;
+    }
+    return true;
+  };
+  if (!freshControl("fresh-storage.gti", "",
+                    "void* pointer = fresh_pointer(); unsafe { "
+                    "release_pointer(pointer); }\n",
+                    true) ||
+      !freshControl("distinct-invocations.gti",
+                    "void release_pair(void* a, void* b) { unsafe { "
+                    "release_pointer(a); release_pointer(b); } }\n",
+                    "void* a = fresh_pointer(); void* b = fresh_pointer(); "
+                    "release_pair(a, b);\n",
+                    true) ||
+      !freshControl(
+          "aliased-invocations.gti",
+          "void release_pair(void* a, void* b) { unsafe { release_pointer(a); "
+          "release_pointer(b); } }\n",
+          "void* a = fresh_pointer(); void* b = a; release_pair(a, b);\n",
+          false) ||
+      !freshControl(
+          "null-storage.gti", "",
+          "void* pointer = nullptr; unsafe { release_pointer(pointer); }\n",
+          true) ||
+      !freshControl("fresh-escape.gti",
+                    "extern \"C\" { void escape_pointer(void*); }\n",
+                    "void* pointer = fresh_pointer(); unsafe { "
+                    "escape_pointer(pointer); release_pointer(pointer); }\n",
+                    false) ||
+      !freshControl("foreign-storage.gti",
+                    "extern \"C\" { void* foreign_pointer(); }\n",
+                    "unsafe { void* pointer = foreign_pointer(); "
+                    "release_pointer(pointer); }\n",
+                    false) ||
+      !freshControl("overwritten-storage.gti",
+                    "extern \"C\" { void* foreign_pointer(); }\n",
+                    "mut void* pointer = fresh_pointer(); unsafe { pointer = "
+                    "foreign_pointer(); release_pointer(pointer); }\n",
+                    false) ||
+      !freshControl("double-release.gti", "",
+                    "void* pointer = fresh_pointer(); unsafe { "
+                    "release_pointer(pointer); release_pointer(pointer); }\n",
+                    false) ||
+      !freshControl("released-return.gti",
+                    "void* dangling_pointer() { void* p = fresh_pointer(); "
+                    "unsafe { release_pointer(p); } return p; }\n",
+                    "void* pointer = dangling_pointer(); unsafe { "
+                    "release_pointer(pointer); }\n",
+                    false) ||
+      !freshControl(
+          "conditionally-released-return.gti",
+          "void* maybe_dangling(bool release) { void* p = fresh_pointer(); if "
+          "(release) { unsafe { release_pointer(p); } } return p; }\n",
+          "void* pointer = maybe_dangling(false); unsafe { "
+          "release_pointer(pointer); }\n",
+          false) ||
+      !freshControl("global-release.gti", "mut void* old_pointer = nullptr;\n",
+                    "unsafe { release_pointer(old_pointer); }\n", false) ||
+      !freshControl("fresh-global-escape.gti",
+                    "mut void* old_pointer = nullptr;\n",
+                    "void* pointer = fresh_pointer(); old_pointer = pointer; "
+                    "unsafe { release_pointer(pointer); }\n",
+                    false))
+    return 1;
   const auto discharges = [&](const std::string &name) {
     return countDischarges(frontend, analysis, name);
   };

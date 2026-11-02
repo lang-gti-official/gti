@@ -1435,6 +1435,23 @@ providers reject the exception. This is a capture fact only: allocation, status
 writes, failure effects and ordinary memory invalidation are unchanged. The
 allocation result does not inherit the status address's provenance.
 
+A separate closed-call profile can prove that a wrapper touches only storage
+allocated during that invocation. Its pointer tokens carry provenance only;
+they establish no address equality, extent, initialization or source-level
+ownership. Releases of incoming pointers remain explicit parameter obligations.
+A caller discharges those obligations only against its own fresh-or-null tokens;
+unknown providers, callbacks, incoming/global releases, overwritten pointer
+bindings and repeated releases reject the noninterference profile. A released
+token cannot be published as a fresh return value. Allocation and failure effects remain opaque and
+observable, and no memory fact is restored after invalidation.
+
+The first slice admits acyclic ownerless scalar/pointer wrappers with unique
+dominating local definitions, ordinary SSA staging and exact sealed malloc or
+aligned-allocation operations. Typed record/payload fields, receiver publication,
+POSIX status-output allocation and loop-carried provenance remain outside this
+slice. An unrelated initialized-prefix owner proves the caller-side benefit;
+this does not yet establish vector reserve or substring performance gains.
+
 The capture analysis extends the place alias and escape analysis in
 `alias.cpp`. It has two layers.
 

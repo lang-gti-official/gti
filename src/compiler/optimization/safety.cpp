@@ -318,6 +318,7 @@ constexpr std::size_t maxTagFacts = 64;
 // than an unhandled operation which might write an already live object.
 enum class LiveMemoryBarrier {
   None,
+  FreshStorage,
   VacantStructuralConstruction,
   ProcessStorage,
   ProcessStorageWithStatus32,
@@ -325,7 +326,8 @@ enum class LiveMemoryBarrier {
 };
 
 [[nodiscard]] bool processStorageBarrier(LiveMemoryBarrier barrier) {
-  return barrier == LiveMemoryBarrier::ProcessStorage ||
+  return barrier == LiveMemoryBarrier::FreshStorage ||
+         barrier == LiveMemoryBarrier::ProcessStorage ||
          barrier == LiveMemoryBarrier::ProcessStorageWithStatus32;
 }
 
@@ -454,7 +456,16 @@ struct RelocatedPrefixSummary {
                          const RelocatedPrefixSummary &) = default;
 };
 
+struct FreshStorageProfile {
+  bool supported = false;
+  bool returnsFreshPointer = false;
+  std::set<std::size_t> releasedParameters;
+  friend bool operator==(const FreshStorageProfile &,
+                         const FreshStorageProfile &) = default;
+};
+
 struct ClosedCallSummary {
+  FreshStorageProfile freshStorage;
   bool complete = false;
   std::optional<RelocatedPrefixSummary> relocatedPrefix;
   // Result/postcondition completeness is independent of effect closure.
@@ -4093,6 +4104,13 @@ void preserveProcessStorageScalars(const MirProgram *program,
                                    MirBodyAddress address, const MirBody &body,
                                    AbstractState &state,
                                    LiveMemoryBarrier barrier) {
+  if (barrier == LiveMemoryBarrier::FreshStorage) {
+    // An independently closed all-path profile touches only storage acquired
+    // during that call. No fact is restored after an opaque invalidation.
+    state.hasOpaqueEffects = true;
+    state.liveMemoryBarrier = std::max(state.liveMemoryBarrier, barrier);
+    return;
+  }
   auto saved = preserveDifferentWidthFields(
       program, address, body, state,
       barrier == LiveMemoryBarrier::ProcessStorageWithStatus32
@@ -9515,6 +9533,239 @@ struct ContextualBodyResult {
   MirSafetyAnalysis safety;
 };
 
+// A bounded all-path profile. Tokens denote only allocation provenance relative
+// to this invocation, never an address, extent, or initialized object. Releases
+// of incoming pointers become obligations which callers must discharge.
+[[nodiscard]] FreshStorageProfile
+freshStorageProfile(const MirProgram &program, MirBodyAddress address,
+                    const MirBody &body, const ClosedCallRound &round) {
+  FreshStorageProfile result;
+  const auto *function = address.kind == MirBodyKind::Function
+                             ? program.findFunctionInstance(address.owner)
+                             : nullptr;
+  if (!function || function->owner || body.blocks.size() > 96 ||
+      body.instructionCount() > 512 ||
+      function->parameterBindings.size() != function->parameterTypes.size())
+    return result;
+  const auto dominance = computeMirDominance(body);
+  if (!dominance)
+    return result;
+  const auto loops = analyzeMirLoops(body, *dominance);
+  if (!loops.loops.empty() || loops.hasIrreducibleControlFlow)
+    return result;
+  using Origin =
+      std::pair<bool, std::uint64_t>; // incoming parameter / local call
+  using Origins = std::set<Origin>;
+  std::map<MirPlaceId, InstructionSite> stores;
+  std::set<MirPlaceId> multipleStores;
+  for (const auto &block : body.blocks)
+    if (dominance->isReachable(block.id))
+      for (const auto &instruction : block.instructions)
+        if (!instruction.tombstone && instruction.destination) {
+          const auto place = *instruction.destination;
+          if (!stores.emplace(place, InstructionSite{&block, &instruction})
+                   .second)
+            multipleStores.insert(place);
+        }
+  const auto sourceProfile =
+      [&](const MirInstruction &instruction) -> const FreshStorageProfile * {
+    if (instruction.kind != MirInstructionKind::Call || instruction.receiver ||
+        instruction.dispatch != CallDispatch::Static ||
+        instruction.nativeCallbackAdapter || instruction.threadTaskAdapter ||
+        instruction.callableInvocation || instruction.callableBoundary ||
+        instruction.intrinsic != IntrinsicKind::None)
+      return nullptr;
+    const auto target = closedCallTarget(program, instruction);
+    const auto found =
+        target ? round.summaries.find(*target) : round.summaries.end();
+    return found != round.summaries.end() && found->second.complete &&
+                   !round.rejected.contains(*target) &&
+                   found->second.freshStorage.supported
+               ? &found->second.freshStorage
+               : nullptr;
+  };
+  const auto operation = [&](const MirInstruction &instruction) {
+    if (instruction.kind != MirInstructionKind::Call || instruction.receiver ||
+        instruction.dispatch != CallDispatch::Static ||
+        instruction.intrinsic != IntrinsicKind::None ||
+        instruction.nativeCallbackAdapter || instruction.threadTaskAdapter ||
+        instruction.callableBoundary || instruction.callableInvocation ||
+        !instruction.functionTarget)
+      return ProcessMemoryRuntimeOperation::None;
+    const auto *target =
+        program.findFunctionInstance(*instruction.functionTarget);
+    return target ? target->processMemoryOperation
+                  : ProcessMemoryRuntimeOperation::None;
+  };
+  const auto allocate = [](ProcessMemoryRuntimeOperation op) {
+    return op == ProcessMemoryRuntimeOperation::PosixMalloc ||
+           op == ProcessMemoryRuntimeOperation::AlignedAllocate;
+  };
+  const auto precedes = [&](InstructionSite first, InstructionSite second) {
+    if (first.block != second.block)
+      return dominance->dominates(first.block->id, second.block->id);
+    for (const auto &instruction : first.block->instructions) {
+      if (&instruction == second.instruction)
+        return false;
+      if (&instruction == first.instruction)
+        return true;
+    }
+    return false;
+  };
+  const auto origins = [&](auto &&self, const MirOperand &operand,
+                           InstructionSite use,
+                           unsigned depth) -> std::optional<Origins> {
+    if (depth > 32)
+      return std::nullopt;
+    if (operand.literal &&
+        std::holds_alternative<std::nullptr_t>(*operand.literal))
+      return Origins{};
+    if (operand.type.kind != SemanticType::RawPointer &&
+        operand.type.kind != SemanticType::NullPtr)
+      return std::nullopt;
+    if (operand.value) {
+      const auto site = definitionSite(body, operand.value);
+      if (!site.instruction || !precedes(site, use))
+        return std::nullopt;
+      const auto &producer = *site.instruction;
+      if (producer.kind == MirInstructionKind::Compute &&
+          producer.operation == MirOperation::Literal && producer.literal &&
+          std::holds_alternative<std::nullptr_t>(*producer.literal))
+        return Origins{};
+      if (producer.kind == MirInstructionKind::Compute &&
+          producer.operation == MirOperation::Convert &&
+          producer.operands.size() == 1 &&
+          producer.operands.front().type.kind == SemanticType::NullPtr &&
+          producer.info.type.kind == SemanticType::RawPointer)
+        return self(self, producer.operands.front(), site, depth + 1);
+      const auto *profile = sourceProfile(producer);
+      if (allocate(operation(producer)) ||
+          (profile && profile->returnsFreshPointer))
+        return Origins{{false, producer.id}};
+      if (!producer.destination && producer.operands.size() == 1 &&
+          producer.info.type == producer.operands.front().type &&
+          (producer.kind == MirInstructionKind::Load ||
+           producer.kind == MirInstructionKind::CallInput ||
+           (producer.kind == MirInstructionKind::Compute &&
+            producer.operation == MirOperation::Identity)))
+        return self(self, producer.operands.front(), site, depth + 1);
+      return std::nullopt;
+    }
+    const auto *place = body.findPlace(operand.place);
+    if (!place || place->root != MirPlaceRootKind::Binding ||
+        !place->projections.empty() || place->traits.containsBorrowedState ||
+        multipleStores.contains(place->id))
+      return std::nullopt;
+    if (const auto store = stores.find(place->id); store != stores.end()) {
+      if (!precedes(store->second, use) ||
+          store->second.instruction->operands.size() != 1)
+        return std::nullopt;
+      return self(self, store->second.instruction->operands.front(),
+                  store->second, depth + 1);
+    }
+    for (std::size_t index = 0; index < function->parameterBindings.size();
+         ++index)
+      if (function->parameterBindings[index] == place->binding &&
+          function->parameterTypes[index] == place->type)
+        return Origins{{true, index}};
+    return std::nullopt;
+  };
+  Origins released;
+  Origins returned;
+  bool pointerReturn = false;
+  for (const auto &block : body.blocks) {
+    if (!dominance->isReachable(block.id))
+      continue;
+    if (!block.parameters.empty())
+      return {};
+    for (const auto &instruction : block.instructions) {
+      if (instruction.tombstone)
+        continue;
+      if (inertLifecycleMarker(instruction))
+        continue;
+      const InstructionSite site{&block, &instruction};
+      if (instruction.kind == MirInstructionKind::Call) {
+        const auto op = operation(instruction);
+        std::set<std::size_t> obligations;
+        if (op == ProcessMemoryRuntimeOperation::PosixRelease ||
+            op == ProcessMemoryRuntimeOperation::AlignedRelease)
+          obligations.insert(0);
+        else if (allocate(op)) {
+          // These exact adapters neither capture an input nor touch live
+          // memory.
+        } else if (op == ProcessMemoryRuntimeOperation::NativeSizeMax ||
+                   op == ProcessMemoryRuntimeOperation::PosixPointerSize ||
+                   op ==
+                       ProcessMemoryRuntimeOperation::PosixOutOfMemoryStatus ||
+                   op == ProcessMemoryRuntimeOperation::
+                             PosixInvalidArgumentStatus) {
+        } else if (const auto *profile = sourceProfile(instruction))
+          obligations = profile->releasedParameters;
+        else
+          return {};
+        for (const auto parameter : obligations) {
+          if (parameter >= instruction.operands.size())
+            return {};
+          const auto values =
+              origins(origins, instruction.operands[parameter], site, 0);
+          if (!values)
+            return {};
+          for (const auto value : *values) {
+            // Reject repeated releases, including conservative branch joins.
+            if (!released.insert(value).second)
+              return {};
+            if (value.first)
+              result.releasedParameters.insert(value.second);
+          }
+        }
+        continue;
+      }
+      const auto effect = effects(program, instruction);
+      if (instruction.rawMemoryAccess ||
+          instruction.unsafeOperation != UnsafeOperationKind::None ||
+          effect.writesUnknownMemory || effect.readsUnknownMemory ||
+          effect.invokesUserCode || effect.invokesRuntime ||
+          effect.maySynchronize ||
+          instruction.operation == MirOperation::AddressOf)
+        return {};
+      if (instruction.destination) {
+        const auto *place = body.findPlace(*instruction.destination);
+        if (!place || place->root != MirPlaceRootKind::Binding ||
+            !place->projections.empty() ||
+            place->traits.containsBorrowedState ||
+            !isMirScalarValueType(&program, place->type))
+          return {};
+      } else if (effect.writesPlace)
+        return {};
+      if (instruction.kind == MirInstructionKind::Drop &&
+          !isMirStructuralValueDrop(program, instruction))
+        return {};
+    }
+    if (block.terminator.kind == MirTerminatorKind::Return &&
+        body.returnType.kind == SemanticType::RawPointer) {
+      if (!block.terminator.value)
+        return {};
+      const auto values = origins(origins, *block.terminator.value,
+                                  InstructionSite{&block, nullptr}, 0);
+      if (!values)
+        return {};
+      pointerReturn = true;
+      returned.insert(values->begin(), values->end());
+    }
+  }
+  if (body.returnType.kind != SemanticType::Void &&
+      body.returnType.kind != SemanticType::RawPointer &&
+      !isMirScalarValueType(&program, body.returnType))
+    return {};
+  result.returnsFreshPointer =
+      pointerReturn &&
+      std::all_of(returned.begin(), returned.end(), [&](const Origin &value) {
+        return !value.first && !released.contains(value);
+      });
+  result.supported = true;
+  return result;
+}
+
 struct ScalarStoreProfile {
   bool supported = false;
   bool processMemoryEffects = false;
@@ -10274,6 +10525,7 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
     return result;
   }
   result.summary.complete = true;
+  result.summary.freshStorage = freshStorageProfile(program, address, *body, round);
 
   result.summary.relocatedPrefix = summarizeRelocatedPrefix(
       program, address, *body, aliases, incoming, round);
@@ -10295,6 +10547,10 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
   for (const auto &state : exits)
     result.summary.liveMemoryBarrier =
         std::max(result.summary.liveMemoryBarrier, state.liveMemoryBarrier);
+
+  if (result.summary.freshStorage.supported &&
+      result.summary.freshStorage.releasedParameters.empty())
+    result.summary.liveMemoryBarrier = LiveMemoryBarrier::FreshStorage;
 
   const auto *function = address.kind == MirBodyKind::Function
                              ? program.findFunctionInstance(address.owner)
