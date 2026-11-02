@@ -57,7 +57,7 @@
     "stdlib/std/simd.gti": "c525bc03c27ff0f3921aaaa7ff03931dacad40578895dac142b0863f1b5fb9ce",
     "stdlib/std/source_location.gti": "c748203afe96c27c06465ffd6b38728becb85bcceca6e8097f75a8460eb74f95",
     "stdlib/std/span.gti": "effe13ba9bd0beeb1f04c84f17b5bd4458686ff713e3eb6756a65a8b0e8a7409",
-    "stdlib/std/string.gti": "0beeddb811310b50821c9df0d71f50258ceec61a761ddffa909f33a53ae79cfb",
+    "stdlib/std/string.gti": "dd2021ed934b1816b0c6f7c5ea93d31baadef8185c989df57fb9753ab1ae4c73",
     "stdlib/std/string_view.gti": "3a96eeaa90719fdc5c2202f5cbd4ee81ef215f702a848767d2a4c2cf82a94cd6",
     "stdlib/std/tcp.gti": "23022069c0f430cf86fa3c0bd567aa44cde7ef638d7bcb821148a0ac77959c04",
     "stdlib/std/testing.gti": "03e0324d888081b1ee77a626f73c45170a94aa337a214732ba829880204af618",

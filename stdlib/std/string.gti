@@ -644,7 +644,9 @@ namespace std {
       if (end > other.size()) {
         gti_internal::index_bounds_check(end, other.size());
       }
-      this.reserve(end - begin);
+      // This owner is still empty: construct its final storage directly rather
+      // than entering the general growth/relocation path used by reserve().
+      this.data = detail::terminated_prefix_owner(end - begin);
       unsafe { this.data.append(other.view(), begin, end - begin); }
     }
 

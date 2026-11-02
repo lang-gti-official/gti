@@ -396,7 +396,21 @@ Irreducible CFGs and arithmetic used to derive an unrepresentable threshold
 fail closed. This is not a second solver, general recurrence engine, symbolic
 loop optimizer, or call transform.
 
-The admitted operations are deliberately narrow:
+Checked integer interpolation also retains its shared endpoint identity:
+`a + (b - a) / k`, or its commuted addition, lies between `a` and `b` when
+`k` is positive. When `a < b` and `k >= 2`, its result is strictly below `b`.
+The proof follows only same-domain typed operations and inert staging, using
+the existing still-current scalar equivalence and dominating order facts.
+It can prove the final addition and later bounds; it never removes a possibly
+overflowing earlier subtraction or the divisor's own checks. Signed division
+retains truncation toward zero. Negative/unknown divisors, unrelated endpoints,
+changed loaded origins and mixed domains do not receive this rule. Widening
+uses independently retained endpoint envelopes; a narrower current interval
+does not become a persistent ordering assumption. Native exhaustive endpoint
+controls cover extreme signed values, both addition orders, zero/negative
+divisors, base replacement, the first failure and cleanup.
+
+The safety discharge families are:
 
 - fixed-array scalar reads and writes whose complete index interval is within
   the known extent. A multidimensional access folds every dimension into one

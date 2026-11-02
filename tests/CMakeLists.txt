@@ -1170,6 +1170,11 @@ add_test(NAME optimizer_bounds_postconditions
                  "${PROJECT_SOURCE_DIR}/tests/optimizer_bounds_postconditions_test.py"
                  "$<TARGET_FILE:gti>")
 set_tests_properties(optimizer_bounds_postconditions PROPERTIES TIMEOUT 300)
+add_test(NAME optimizer_interpolation
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/optimizer_interpolation_test.py"
+                 "$<TARGET_FILE:gti>")
+set_tests_properties(optimizer_interpolation PROPERTIES TIMEOUT 300)
 add_executable(gti_optimizer_raw_context_tests optimizer_raw_context_tests.cpp)
 target_link_libraries(gti_optimizer_raw_context_tests PRIVATE gti_compiler)
 add_test(NAME optimizer_raw_context COMMAND gti_optimizer_raw_context_tests)

@@ -1,0 +1,30 @@
+import std.string;
+import std.vector;
+
+class InterpolationCleanup {
+public:
+  InterpolationCleanup() {}
+  ~InterpolationCleanup() { std::println(22); }
+};
+
+int interpolate(int first, int last, int divisor, int mode) {
+  if (mode == 0) return first + (last - first) / divisor;
+  if (mode == 1) return (last - first) / divisor + first;
+  mut int current = first;
+  int difference = last - current;
+  current = last;
+  return current + difference / divisor;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc != 5) return 10;
+  int endpoints[8] = {-2147483647 - 1, -2147483647, -8, -1, 0, 1, 8, 2147483647};
+  int divisors[8] = {-2, -1, 0, 1, 2, 3, 7, 2147483647};
+  InterpolationCleanup cleanup{};
+  int first = endpoints[argv[std::size_t(1)].size()];
+  int last = endpoints[argv[std::size_t(2)].size()];
+  int divisor = divisors[argv[std::size_t(3)].size()];
+  int mode = int(argv[std::size_t(4)].size());
+  std::println(interpolate(first, last, divisor, mode));
+  return 0;
+}

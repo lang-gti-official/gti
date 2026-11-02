@@ -1722,6 +1722,12 @@ characters, and exclusive-receiver borrowing continues to exclude aliased
 source views. Fixed-array and general input-iterator constructors retain their
 existing per-element path.
 
+Indexed-range string construction validates both endpoints before allocating,
+then constructs the fresh owner's final capacity directly. It does not route
+an empty new owner through the general reserve/relocation path. Empty copies
+retain zero capacity and perform no allocation; nonempty copies keep the same
+counted bytes, independent ownership, trailing NUL and allocation-failure policy.
+
 Sparse and prefix relocation consume semantic `RelocationKind` facts verified
 against concrete MIR type tables. Raw-buffer growth selects general
 `relocate_range_at` for structurally bitwise-relocatable elements, transferring

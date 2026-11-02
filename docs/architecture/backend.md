@@ -5444,6 +5444,40 @@ Other generated hierarchy transfers keep their supported C++20/23 comparisons.
 Normal move-chain cleanup and virtual failure after a move require exact,
 exactly-once numeric destructor traces without observing destructor dispatch.
 
+#### Guarded Native Dispatch Promotion
+
+At O2/O3, the LLVM backend may promote a bounded indirect dispatch site to
+pointer-guarded direct calls before ordinary LLVM inlining. The candidate
+inventory comes only from actual constant tables emitted by `Dispatch::table`;
+`loadCall` associates the physical slot load with its verified root. Every
+direct edge compares the currently loaded callee with the exact existing
+adjustment thunk and passes the original receiver, result and failure channels.
+LLVM's call-promotion utility repairs the control flow and result merge. The
+original indirect call remains as the fallback, including for an unlisted
+active phase or view. This does not create MIR/HIR instances or change virtual
+selection, lifetime, receiver adjustment, evaluation order or cleanup policy.
+
+The initial cost boundary is at most four distinct candidates per site, four
+sites per function and sixteen per module. Two concrete implementations may
+publish four distinct physical-view adjustment pointers; each is compared
+independently without assuming address equivalence. Each candidate and its immediate
+implementation bodies total at most 128 LLVM instructions. Different physical
+signatures/calling conventions, indirect invokes, personality-bearing bodies,
+volatile/atomic callee loads, operand bundles, tail calls, convergence,
+nonduplicable operations and returns-twice functions remain unchanged.
+Ordinary LLVM inlining still owns further expansion. O0/O1 are unchanged;
+there are no guessed branch weights, `!callees` exhaustive-family assertions,
+vptr invariance or added alias/effect promises. Temporary inventories are
+removed after the decision so repeated emission does not promote a fallback
+again. Mixed small polymorphic loops are the motivating family, not a source
+name match; runtime and code-size acceptance remain measured obligations.
+
+`llvm_dispatch_layout` checks admitted/rejected shapes, retained indirect
+fallbacks and O0/O3 native effects while the slot changes between calls and an
+unlisted callee executes. `llvm_dispatch_execution` retains phase, multiple-base,
+replacement and cleanup controls, and adds mixed user-record sums with a
+checked arithmetic failure after successful calls.
+
 #### Lifecycle Dispatch
 
 The backend-neutral lifecycle-dispatch contract, by owner decision on

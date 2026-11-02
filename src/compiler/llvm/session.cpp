@@ -4,6 +4,7 @@
 #include "checked_ranges.h"
 #include "checked_reductions.h"
 #include "debug_info.h"
+#include "dispatch.h"
 #include "instrumentation.h"
 #include "private_atomics.h"
 
@@ -679,6 +680,9 @@ BackendArtifact Session::emitObject() {
   builder.registerLoopAnalyses(loops);
   builder.crossRegisterProxies(loops, functions, cgscc, modules);
   const auto level = pipelineLevel(options_.optimization);
+  if (level == llvm::OptimizationLevel::O2 ||
+      level == llvm::OptimizationLevel::O3)
+    (void)promoteGuardedDispatchCalls(module_);
   auto pipeline = level == llvm::OptimizationLevel::O0
                       ? builder.buildO0DefaultPipeline(level)
                       : builder.buildPerModuleDefaultPipeline(level);

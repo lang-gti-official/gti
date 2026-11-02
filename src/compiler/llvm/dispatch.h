@@ -11,6 +11,11 @@
 
 namespace lang::native_llvm {
 
+// Guarded representation refinement over already-emitted table entries.
+// Candidate metadata is advisory, never an exhaustive-target assertion.
+// Returns the number of indirect sites promoted; the fallback is retained.
+std::size_t promoteGuardedDispatchCalls(llvm::Module &module);
+
 struct DispatchSlotPlan {
   HirFunctionInstanceId root = 0;
   HirFunctionInstanceId target = 0;

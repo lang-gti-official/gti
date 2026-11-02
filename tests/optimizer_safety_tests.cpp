@@ -1363,9 +1363,97 @@ int32_t descending(uint64_t seed, mut uint64_t rounds) {
   }
 }
 
+void testInterpolationEnvelopes() {
+  const auto frontend = analyzeTrusted("interpolation.gti", R"(
+int32_t bounded(int32_t first, int32_t last, int32_t divisor) {
+  mut int32_t values[8] = {};
+  if (first < 0) return 0;
+  if (first > 8) return 0;
+  if (last < 0) return 0;
+  if (last > 8) return 0;
+  if (first >= last) return 0;
+  if (divisor < 2) return 0;
+  int32_t index = first + (last - first) / divisor;
+  return values[index];
+}
+int32_t reversed(int32_t first, int32_t last) {
+  mut int32_t values[17] = {};
+  if (first < -8) return 0;
+  if (first > 8) return 0;
+  if (last < -8) return 0;
+  if (last > 8) return 0;
+  int32_t index = (last - first) / 3 + first;
+  return values[index + 8];
+}
+int32_t extremes(int32_t first, int32_t last) {
+  return first + (last - first) / 2;
+}
+int32_t unrelated(int32_t first, int32_t last, int32_t other) {
+  mut int32_t values[8] = {};
+  if (first < 0) return 0;
+  if (first > 8) return 0;
+  if (last < 0) return 0;
+  if (last > 8) return 0;
+  if (other < 0) return 0;
+  if (other > 8) return 0;
+  return values[first + (last - other) / 2];
+}
+int32_t negative_divisor(int32_t first, int32_t last) {
+  mut int32_t values[8] = {};
+  if (first < 0) return 0;
+  if (first > 8) return 0;
+  if (last < 0) return 0;
+  if (last > 8) return 0;
+  return values[first + (last - first) / -2];
+}
+int32_t replaced(int32_t input, int32_t last) {
+  mut int32_t first = input;
+  int32_t delta = last - first;
+  first = last;
+  return first + delta / 2;
+}
+int32_t main() { return 0; }
+)");
+  expect(frontend.canGenerateCode(), "interpolation fixture should lower");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  for (const auto level :
+       {lang::OptimizationLevel::O2, lang::OptimizationLevel::O3}) {
+    const auto optimized = lang::OptimizationPipeline().run(
+        {.hir = frontend.hir, .mir = frontend.mir, .level = level});
+    expect(optimized.valid(),
+           "interpolation envelopes must independently replay");
+    const auto bounds = [&](std::string_view name) {
+      return functionDischarges(frontend, optimized, name,
+                                lang::MirSafetyCheckFamily::Bounds);
+    };
+    expect(bounds("bounded") == 1 && bounds("reversed") == 1,
+           "interpolation stays between endpoints, strictly below an ordered "
+           "upper endpoint for divisor >= 2");
+    expect(
+        bounds("unrelated") == 0 && bounds("negative_divisor") == 0,
+        "unrelated bases and negative divisors do not establish interpolation");
+    const auto arithmetic = [&](std::string_view name, lang::MirOperation op) {
+      return functionOperationDischarges(
+          frontend, optimized, name,
+          lang::MirSafetyCheckFamily::ArithmeticOverflow, op,
+          lang::SemanticType::Int32);
+    };
+    expect(arithmetic("extremes", lang::MirOperation::Add) == 1 &&
+               arithmetic("extremes", lang::MirOperation::Subtract) == 0,
+           "interpolation proves its addition, never an overflowing earlier "
+           "delta");
+    expect(arithmetic("replaced", lang::MirOperation::Add) == 0,
+           "writing the base retires its earlier scalar equivalence");
+  }
+}
+
 void testSuccessfulBoundsPostconditions() {
   const auto frontend = analyzeTrusted("successful-bounds.gti", R"(
-extern "C" { void mutate_index(mut int32_t* value); }
+extern "C" { void mutate_index(int32_t* value); }
 int32_t after_write(int32_t index) {
   mut int32_t values[8] = {};
   values[index] = 3;
@@ -2996,6 +3084,7 @@ int main() {
   testSourcePrefixBoundsRelation();
   testRelationalBoundsDischarge();
   testSuccessfulBoundsPostconditions();
+  testInterpolationEnvelopes();
   testRelationalEdgeArguments();
   testDivisionAndComposedEnvelopes();
   testClosedIndexedElementEnvelope();

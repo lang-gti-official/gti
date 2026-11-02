@@ -2051,6 +2051,117 @@ void refineBranch(const MirBody &body, const MirBlock &block,
                     {}, program, address);
 }
 
+// For positive k, a + (b - a) / k lies between a and b, including signed
+// truncation toward zero. The subtraction/division already completed before
+// this addition; their own failure checks are not justified by this identity.
+// Retain exact scalar identity rather than equating overlapping intervals.
+[[nodiscard]] std::optional<IntegerFact>
+interpolatedIntegerFact(const MirBody &body, const AbstractState &state,
+                        const MirInstruction &instruction) {
+  if (instruction.operation != MirOperation::Add ||
+      instruction.operands.size() != 2)
+    return std::nullopt;
+  for (std::size_t side = 0; side < 2; ++side) {
+    const auto &base = instruction.operands[side];
+    const auto &quotient = instruction.operands[1 - side];
+    if (base.kind != MirOperandKind::Value ||
+        quotient.kind != MirOperandKind::Value || !base.value ||
+        !quotient.value || base.type != instruction.info.type ||
+        quotient.type != instruction.info.type)
+      continue;
+    Evidence evidence;
+    const auto *division =
+        definingInstruction(body, orderSource(body, quotient.value, &evidence));
+    if (!division || division->kind != MirInstructionKind::Compute ||
+        division->operation != MirOperation::Divide ||
+        division->info.type != instruction.info.type ||
+        division->operands.size() != 2)
+      continue;
+    const auto divisor = integerForOperand(body, state, division->operands[1]);
+    if (!divisor || divisor->lower.negative || !divisor->lower.magnitude)
+      continue;
+    const auto &delta = division->operands[0];
+    if (delta.kind != MirOperandKind::Value || !delta.value)
+      continue;
+    const auto *difference =
+        definingInstruction(body, orderSource(body, delta.value, &evidence));
+    if (!difference || difference->kind != MirInstructionKind::Compute ||
+        difference->operation != MirOperation::Subtract ||
+        difference->info.type != instruction.info.type ||
+        difference->operands.size() != 2)
+      continue;
+    const auto &end = difference->operands[0];
+    const auto &subtracted = difference->operands[1];
+    if (subtracted.kind != MirOperandKind::Value || !subtracted.value ||
+        subtracted.type != base.type || end.type != base.type ||
+        !sameCurrentScalar(state, orderSource(body, base.value, &evidence),
+                           orderSource(body, subtracted.value, &evidence),
+                           evidence))
+      continue;
+    const auto first = integerForOperand(body, state, base);
+    const auto last = integerForOperand(body, state, end);
+    if (!first || !last || first->domain != last->domain ||
+        first->domain != divisor->domain)
+      continue;
+    evidence = merged(std::move(evidence), first->evidence);
+    evidence = merged(std::move(evidence), last->evidence);
+    evidence = merged(std::move(evidence), divisor->evidence);
+    addInstruction(evidence, division->id);
+    addInstruction(evidence, difference->id);
+    addValue(evidence, quotient.value);
+    addValue(evidence, delta.value);
+    // With a < b and k >= 2, integer division cannot reach b. A dominating
+    // relation or disjoint endpoint intervals proves this stricter bound.
+    bool strict = false;
+    bool ordered = false;
+    if (divisor->lower.magnitude >= 2) {
+      strict = compare(first->upper, last->lower) < 0;
+      if (!strict)
+        if (const auto order = strictlyOrdered(body, state, base, end)) {
+          strict = true;
+          ordered = true;
+          evidence = merged(std::move(evidence), *order);
+        }
+    }
+    const auto bounds = [&](CheckedIntegerValue firstLow,
+                            CheckedIntegerValue firstHigh,
+                            CheckedIntegerValue lastLow,
+                            CheckedIntegerValue lastHigh, bool narrow) {
+      auto low = lesser(firstLow, lastLow);
+      auto high = compare(firstHigh, lastHigh) > 0 ? firstHigh : lastHigh;
+      if (narrow) {
+        const auto previous = evaluatedValue(evaluateCheckedIntegerBinary(
+            CheckedIntegerOperation::Subtract, lastHigh,
+            CheckedIntegerValue{.magnitude = 1}, first->domain));
+        if (previous) {
+          low = firstLow;
+          high = *previous;
+        }
+      }
+      return std::pair{low, high};
+    };
+    const auto range =
+        bounds(first->lower, first->upper, last->lower, last->upper, strict);
+    if (compare(range.first, range.second) > 0)
+      continue;
+    IntegerFact result{.domain = first->domain,
+                       .lower = range.first,
+                       .upper = range.second,
+                       .evidence = std::move(evidence)};
+    if (first->wideningEnvelope && last->wideningEnvelope) {
+      const auto envelope = bounds(
+          first->wideningEnvelope->first, first->wideningEnvelope->second,
+          last->wideningEnvelope->first, last->wideningEnvelope->second,
+          strict && (ordered || compare(first->wideningEnvelope->second,
+                                        last->wideningEnvelope->first) < 0));
+      if (compare(envelope.first, envelope.second) <= 0)
+        result.wideningEnvelope = envelope;
+    }
+    return result;
+  }
+  return std::nullopt;
+}
+
 [[nodiscard]] std::optional<IntegerFact>
 computeIntegerFact(const MirBody &body, const AbstractState &state,
                    const MirInstruction &instruction) {
@@ -2125,6 +2236,17 @@ computeIntegerFact(const MirBody &body, const AbstractState &state,
       break;
     }
     result = binaryFact(operation, *left, *right);
+    if (auto interpolation =
+            interpolatedIntegerFact(body, state, instruction)) {
+      if (result) {
+        if (!intersect(*interpolation, result->lower, result->upper,
+                       result->evidence))
+          break;
+        if (!interpolation->wideningEnvelope)
+          interpolation->wideningEnvelope = result->wideningEnvelope;
+      }
+      result = std::move(interpolation);
+    }
     break;
   }
   default:

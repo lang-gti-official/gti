@@ -16,15 +16,15 @@
     {
       "id": "registered-llvm-evidence",
       "kind": "registered-evidence-manifests",
-      "member_count": 454,
-      "inventory_sha256": "f1dd810b899ab011d01de515d757d156ef55275524f0ea5977b5d73673461119"
+      "member_count": 459,
+      "inventory_sha256": "d5145236458b4e3e0af0daeae25ac3e8c4439dcdf8f8166433e7c9997a538088"
     },
     {
       "id": "stdlib-surface",
       "kind": "source-backed-surface-manifest",
       "manifest": "tests/stdlib_surface_manifest.json",
       "member_count": 197,
-      "inventory_sha256": "adf974543ef59cced4466b778cbb925f2d032b5e8c2615e4be85793fd39fbadd"
+      "inventory_sha256": "8f5bbd0051d3baf460bd8f694380598ba15099fdef7677869f4788af8b9c7ad1"
     }
   ],
   "family_obligations": [
