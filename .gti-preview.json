@@ -159,10 +159,43 @@
         "d345c4d2491cda7cd00bb54978cdb245feaebadf"
       ],
       "merge": "d345c4d2491cda7cd00bb54978cdb245feaebadf"
+    },
+    {
+      "task": "runtime-relational-bounds",
+      "pr": 127,
+      "head": "17171b822ba504b053292446ae37f29fe9550d9a",
+      "tests": [
+        "optimizer_safety",
+        "optimizer_safety_native_evidence",
+        "optimizer_division_envelopes",
+        "optimizer_analyses",
+        "llvm_optimization_pipeline",
+        "llvm_checked_offsets",
+        "llvm_checked_offset_runtime",
+        "llvm_private_atomics",
+        "llvm_private_atomic_runtime",
+        "llvm_atomic_contracts",
+        "llvm_atomic_execution",
+        "llvm_thread_execution",
+        "llvm_checked_reductions",
+        "llvm_checked_reduction_runtime",
+        "llvm_checked_ranges",
+        "llvm_checked_range_runtime",
+        "process_resource_policy",
+        "process_storage_query_runtime",
+        "allocator_storage_runtime",
+        "source_prefix_owner_runtime",
+        "stdlib_adoption_runtime",
+        "stdlib_surface_manifest"
+      ],
+      "contributions": [
+        "947a2207b62a1032bddcf83fb66a18663509ddc7"
+      ],
+      "merge": "947a2207b62a1032bddcf83fb66a18663509ddc7"
     }
   ],
   "removed": [],
   "main": "e4f231574320d2182654b35de956ae52bb333d63",
-  "previous": "096cdd2b407d0d9f9f36b6352c7977f59fdef9f8",
-  "candidate": "4495ead9d1c047e781d86742024a13c2"
+  "previous": "25cbfe66781b2f51e2f2e3d637d4c1522f303d06",
+  "candidate": "e573de57354c477787d812a7549f223e"
 }
