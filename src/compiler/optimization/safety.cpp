@@ -3955,6 +3955,37 @@ preserveDifferentWidthFields(const MirProgram *program, MirBodyAddress address,
   return saved;
 }
 
+// A plain typed write either targets the same complete live scalar or is
+// disjoint from it. A known equal singleton therefore survives either alias
+// outcome. This carries no pointer, prefix, or entry-relative identity.
+[[nodiscard]] DisjointScalarFields
+preserveSameValueFields(const MirProgram *program, MirBodyAddress address,
+                        const MirBody &body, const AbstractState &state,
+                        const IntegerFact &written, MirBlockId block,
+                        MirInstructionId instruction) {
+  DisjointScalarFields saved;
+  if (written.domain.width <= 8 || !singleton(written))
+    return saved;
+  const auto same = [&](const IntegerFact &fact) {
+    return fact.domain == written.domain && singleton(fact) &&
+           compare(fact.lower, written.lower) == 0;
+  };
+  const auto retained = [&](IntegerFact fact) {
+    fact.evidence = merged(fact.evidence, written.evidence);
+    add(fact.evidence, block);
+    addInstruction(fact.evidence, instruction);
+    return fact;
+  };
+  for (const auto &[root, object] : state.objects)
+    for (const auto &[path, fact] : object.integers)
+      if (same(fact) && liveScalarPath(program, address, body, root, path))
+        saved.objects[root].emplace(path, retained(fact));
+  for (const auto &[place, fact] : state.integerPlaces)
+    if (same(fact) && liveScalarPath(program, address, body, place, {}))
+      saved.places.emplace(place, retained(fact));
+  return saved;
+}
+
 void restoreDifferentWidthFields(AbstractState &state,
                                  const DisjointScalarFields &saved) {
   for (const auto &[root, fields] : saved.objects)
@@ -4989,9 +5020,11 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
         unchangedPrefixes.emplace(root, object.prefixes);
   std::vector<std::pair<FieldOrigin, IntegerFact>> updatedFields;
   EntryRelativeFields composedUpdates;
-  if (!summary.mayWriteGlobals && invocation &&
-      !invocation->traits.maySynchronize &&
-      summary.liveMemoryBarrier != LiveMemoryBarrier::Unknown) {
+  // A completed successful-body relation is a postcondition, not a memory
+  // preservation claim. Capture its exact entry scalar before normal call
+  // invalidation, then publish only that proved output afterward. Opaque or
+  // synchronizing effects still execute and invalidate every unrelated fact.
+  if (invocation) {
     for (const auto &[path, update] : summary.receiverUpdates) {
       const auto origin =
           receiverFieldOrigin(closedCalls->program, address, body, aliases,
@@ -4999,7 +5032,12 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
       const auto input =
           receiverFieldOrigin(closedCalls->program, address, body, aliases,
                               state, instruction, update.field);
-      if (!origin || !input)
+      const auto *outputType =
+          origin ? liveOwnedPathType(&closedCalls->program, address, body,
+                                     origin->root, origin->path)
+                 : nullptr;
+      if (!origin || !input || !outputType ||
+          constantIntegerDomain(*outputType) != update.domain)
         continue;
       if (const auto object =
               extractObjectFact(body, aliases, input->root, state))
@@ -6898,8 +6936,18 @@ void applyInstructionCore(
     }
     const std::optional<IntegerFact> sourceArray =
         arrayForOperand(state, aliases, source);
+    // A scalar field load is not a copy of its enclosing aggregate. Its
+    // origin place still identifies that owner for alias invalidation, but
+    // only an aggregate value can transport an aggregate postcondition.
+    const auto &sourceValueType = source.type.kind == SemanticType::Reference &&
+                                          !source.type.arguments.empty()
+                                      ? source.type.arguments.front()
+                                      : source.type;
     std::optional<ObjectFact> sourceObject =
-        objectForOperand(body, aliases, state, source);
+        sourceValueType.kind == SemanticType::Class ||
+                sourceValueType.kind == SemanticType::Array
+            ? objectForOperand(body, aliases, state, source)
+            : std::nullopt;
     auto sourceRelative =
         program && source.kind == MirOperandKind::Value
             ? relativeMetadataForOperand(*program, address, body, aliases,
@@ -6933,6 +6981,14 @@ void applyInstructionCore(
       sourceObject->scalarPointees.clear();
       sourceObject->prefixes.clear();
     }
+    const auto sameValueFields =
+        typedCheckedWrite && writtenDomain && fact &&
+                *writtenDomain == fact->domain &&
+                (instruction.operation == MirOperation::None ||
+                 instruction.operation == MirOperation::Assign)
+            ? preserveSameValueFields(program, address, body, state, *fact,
+                                      block.id, instruction.id)
+            : DisjointScalarFields{};
     // Even exact indexed writes which retain aggregate envelopes retire
     // conditional memory correlations. Independent local initialization may
     // restore only its producer's freshly captured alternatives below.
@@ -6942,6 +6998,7 @@ void applyInstructionCore(
       invalidatePlaceRoot(body, aliases, state, destination);
     }
     restoreDifferentWidthFields(state, untouchedFields);
+    restoreDifferentWidthFields(state, sameValueFields);
     if (checkedBase) {
       // A raw-derived checked reference may write a caller-owned object. This
       // is not vacant construction: callers must invalidate possible aliases

@@ -82,6 +82,38 @@ int main() { mut Shell value{}; value = std::move(value); return 0; }
     }
     return found;
   };
+  std::ifstream equalFile(root / "fixtures/optimizer_equal_scalar_store.gti");
+  const std::string equalSource{std::istreambuf_iterator<char>(equalFile), {}};
+  const auto equal = gti_test::analyzeTrustedPrivateMemoryFixture(
+      "equal-scalar-store.gti", equalSource);
+  if (!equal.canGenerateCode()) {
+    for (const auto &d : equal.diagnostics)
+      std::cerr << d.code << ": " << d.message << '\n';
+    return 1;
+  }
+  const auto equalAnalysis = lang::analyzeMirClosedCallSafetyChecks(equal.mir);
+  if (!equalAnalysis.converged ||
+      countDischarges(equal, equalAnalysis, "changed_store") != 0 ||
+      countDischarges(equal, equalAnalysis, "raw_store") != 0 ||
+      countDischarges(equal, equalAnalysis, "conditional_store") != 0 ||
+      countDischarges(equal, equalAnalysis, "overlapping_byte_store") != 0) {
+    std::cerr << "equal scalar store mutation boundary failed\n";
+    return 1;
+  }
+  for (const auto *name : {"equal_store", "same_nonzero"}) {
+    const auto isolated = gti_test::analyzeTrustedPrivateMemoryFixture(
+        "equal-scalar-isolated.gti",
+        equalSource.substr(0, equalSource.find("int main")) +
+            "int main() { return int32_t(" + name + "()); }");
+    const auto isolatedAnalysis =
+        lang::analyzeMirClosedCallSafetyChecks(isolated.mir);
+    if (!isolated.canGenerateCode() || !isolatedAnalysis.converged ||
+        countDischarges(isolated, isolatedAnalysis, name) != 1) {
+      std::cerr << "equal scalar isolated postcondition failed: " << name
+                << '\n';
+      return 1;
+    }
+  }
   const auto discharges = [&](const std::string &name) {
     return countDischarges(frontend, analysis, name);
   };
@@ -127,6 +159,19 @@ int main() { mut Shell value{}; value = std::move(value); return 0; }
                       lang::MirOperation::Add) != 0) {
     std::cerr
         << "cross-field replay erased the nonzero source endpoint overflow\n";
+    return 1;
+  }
+  if (countDischarges(endpoints, endpointAnalysis,
+                      "reserved_endpoint_positive") != 1) {
+    std::cerr << "completed reserve length postcondition was not replayed\n";
+    return 1;
+  }
+  if (countDischarges(endpoints, endpointAnalysis,
+                      "opaque_postcondition_negative") != 0 ||
+      countDischarges(endpoints, endpointAnalysis,
+                      "conditional_postcondition_negative") != 0) {
+    std::cerr << "unproved opaque or conditional receiver mutation retained an "
+                 "old value\n";
     return 1;
   }
   const auto cleanupStates = [&](const std::string &name) {
@@ -551,6 +596,12 @@ int main() {
     return 1;
   }
   const auto repeatedAnalysis = lang::analyzeMirClosedCallSafetyChecks(repeated.mir);
+  if (countDischarges(repeated, repeatedAnalysis,
+                      "synchronized_receiver_postcondition") != 0) {
+    std::cerr << "synchronizing receiver call synthesized an unproved "
+                 "postcondition\n";
+    return 1;
+  }
   unsigned checkedAdds = 0;
   unsigned dischargedAdds = 0;
   bool atomicLoad = false, alignmentQuery = false;

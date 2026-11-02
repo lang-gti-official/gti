@@ -44,6 +44,34 @@ int32_t grown_value_control() {
   value.grow(uint64_t(8));
   return value.borrow(uint64_t(0)) * int32_t(2);
 }
+uint64_t reserved_endpoint_positive() {
+  Audit audit{};
+  mut std::vector<int32_t> values{};
+  values.reserve(uint64_t(8));
+  return values.size() * uint64_t(18446744073709551615);
+}
+class UnprovenEndpoint {
+  mut uint64_t value = uint64_t(9);
+public:
+  UnprovenEndpoint() {}
+  void raw_change() mut {
+    unsafe { uint64_t* pointer = &this.value; *pointer = uint64_t(18446744073709551615); }
+  }
+  void conditional_change(bool change) mut { if (change) { this.raw_change(); } }
+  uint64_t read() { return this.value; }
+};
+uint64_t opaque_postcondition_negative() {
+  Audit audit{};
+  mut UnprovenEndpoint value{};
+  value.raw_change();
+  return value.read() * uint64_t(2);
+}
+uint64_t conditional_postcondition_negative(bool change) {
+  Audit audit{};
+  mut UnprovenEndpoint value{};
+  value.conditional_change(change);
+  return value.read() * uint64_t(2);
+}
 mut int32_t cleanup_count = 0;
 class Counted {
 public:
@@ -75,6 +103,9 @@ int main(int argc, std::vector<std::string> argv) {
   if (argc == 1) { return fresh_endpoint_positive() == uint64_t(0) ? 0 : 1; }
   if (argc == 2) { return grown_endpoint_positive() == uint64_t(2) ? 0 : 1; }
   if (argc == 3) { return grown_value_control(); }
+  if (argc == 8) { return reserved_endpoint_positive() == uint64_t(0) ? 0 : 1; }
+  if (argc == 9) { return opaque_postcondition_negative() == uint64_t(18) ? 0 : 1; }
+  if (argc == 10 || argc == 11) { return conditional_postcondition_negative(argc == 11) == uint64_t(18) ? 0 : 1; }
   Audit audit{};
   if (argc == 4) { return moved_cleanup_positive() == int32_t(1) ? 0 : 1; }
   if (argc == 5) { return conditional_cleanup(true) == int32_t(1) ? 0 : 1; }

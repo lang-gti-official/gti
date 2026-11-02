@@ -1128,8 +1128,8 @@ mutable getters and by-value object inputs do not export this return contract.
 Implicit receiver roots remain analysis-only and never appear in proof records.
 
 Successful ordinary member summaries additionally retain bounded entry-relative
-integer-field updates: one exact owned receiver field equals its own entry
-value plus a proved constant offset. The relation is derived from typed loads,
+integer-field updates: one exact owned receiver field equals a named receiver
+entry field plus a proved constant offset. The relation is derived from typed loads,
 same-domain add/subtract, inert SSA staging, exact field assignment and nested
 closed calls, never by subtracting interval endpoints. It remains useful when
 different invocations have different starting values. Four calls that each
@@ -1150,8 +1150,14 @@ and by-value parameter-storage rules can preserve eligible owned fields.
 
 At an exact call the update transforms that caller's current field facts, with
 evidence rebased to the call rather than exporting callee-local MIR identities.
-Nested wrappers compose only exact same-field updates. Existing absolute
-postconditions can retain an independently proved widening envelope; exact
+Nested wrappers compose only exact named-field relations. A completed relation
+is an explicit successful postcondition, not a purity claim: replay snapshots
+the named input before normal opaque/global/synchronizing effect invalidation,
+then publishes only the independently proved, domain-checked scalar output.
+Unproved outputs and all pointer/prefix facts retain their normal invalidation.
+Every successful body path must establish the relation; raw mutation, actual
+synchronization and differing conditional writes do not manufacture one.
+Existing absolute postconditions can retain an independently proved widening envelope; exact
 constructor-initializer values carry a stable entry envelope, unlike arbitrary
 loop-produced singleton values. Closed non-writing, non-synchronizing and
 non-escaping calls do not erase caller memory merely because their numerical
@@ -1159,6 +1165,21 @@ postcondition is absent. Opaque calls retain their barriers. No instruction,
 failure edge or cleanup schedule is removed by these summary rules: even a
 net-zero update cannot erase an overflowing intermediate operation. Independent
 canonical replay derives the relation again; O0 remains transformation-free.
+
+A plain checked non-byte integer store also retains ordinary live scalar
+facts whose exact singleton value and integer domain match the value written.
+The written object either aliases the complete live scalar or is disjoint;
+both outcomes preserve that value. The ordinary live-object lifetime guarantee
+excludes partial overlap, and the owned-path admission excludes unions,
+capability backing and indexed/byte storage; width equality alone is not the
+justification. This rule retains no pointer, initialized
+prefix or entry-relative identity, and excludes raw, atomic, user-code and
+runtime writes. A different value or an unknown value still invalidates possible
+aliases. Scalar loads transport their scalar facts, never an `ObjectFact` for
+the enclosing aggregate. The independent `Cell` fixture covers equal values,
+different values, conditional writes, raw writes and overlapping byte writes;
+an isolated CLI reserve
+control checks the zero-count path through the actual optimized pass order.
 
 CFG argument transfer snapshots every incoming fact before publishing any
 destination block parameter. This includes integer intervals, loaded/field

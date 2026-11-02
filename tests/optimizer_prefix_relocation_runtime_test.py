@@ -2,6 +2,7 @@
 """Typed relocation preserves endpoint coverage, failures and cleanup."""
 from pathlib import Path
 import os
+import json
 import subprocess
 import sys
 import tempfile
@@ -24,6 +25,24 @@ def main():
             (root / "tests/fixtures/optimizer_prefix_query_probe.gti").read_text())
         register_modules(library, {"prefix_query_probe": "std/prefix_query_probe.gti"})
         environment = dict(os.environ, GTI_STDLIB_PATH=str(library))
+        # Isolate reserve from unrelated callers: the ordinary CLI pass order
+        # must prove the zero-count path, not rely on a widened call context.
+        reserve_source = Path(directory) / "reserve-control.gti"
+        reserve_source.write_text("""import std.vector;
+int main() {
+  mut std::vector<int32_t> values{};
+  values.reserve(uint64_t(8));
+  return int32_t(values.size() * uint64_t(18446744073709551615));
+}
+""")
+        report = Path(directory) / "reserve-control.json"
+        command = [str(compiler), str(reserve_source), "-O3", "--emit-mir",
+                   "--optimization-report", str(report), "-o", str(report.with_suffix(".mir"))]
+        built = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
+        assert built.returncode == 0, (command, built.stdout, built.stderr)
+        evidence = json.loads(report.read_text())
+        assert evidence["verification"]["inputValid"] and evidence["verification"]["outputValid"]
+        assert evidence["safetyOperations"]["families"]["arithmetic-overflow"]["staticallyDischarged"] == 1, evidence["safetyOperations"]
         for mode, flags in modes:
             binary = Path(directory) / mode
             command = [str(compiler), str(source), *flags, "-o", str(binary)]
@@ -43,6 +62,25 @@ def main():
                     observations[case] = observation
                 else:
                     assert observation == observations[case], (mode, case, observation, observations[case])
+            scalar_source = root / "tests/fixtures/optimizer_equal_scalar_store.gti"
+            scalar_binary = Path(directory) / (mode + "-equal-scalar")
+            command = [str(compiler), str(scalar_source), *flags, "-o", str(scalar_binary)]
+            built = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
+            assert built.returncode == 0, (command, built.stdout, built.stderr)
+            for scalar_case in range(7):
+                result = subprocess.run([str(scalar_binary), *(["x"] * scalar_case)],
+                                        env=environment, capture_output=True, text=True, timeout=15)
+                failure = scalar_case in (2, 3, 5, 6)
+                assert result.returncode == (70 if failure else 0), (mode, scalar_case, result)
+                assert result.stdout == "99\n", (mode, scalar_case, result)
+                if failure:
+                    assert "runtime error[GTI-R0001]: integer_overflow in multiplication" in result.stderr
+                else:
+                    assert not result.stderr, (mode, scalar_case, result)
+                key = ("equal-scalar", scalar_case)
+                observation = result.returncode, result.stdout, result.stderr
+                if mode == "llvm-O0": observations[key] = observation
+                else: assert observation == observations[key], (mode, key, observation, observations[key])
             endpoint_source = private_source(
                 root / "tests/fixtures/optimizer_prefix_endpoints.gti",
                 Path(directory) / "optimizer_prefix_endpoints.gti",
@@ -51,10 +89,10 @@ def main():
             command = [str(compiler), str(endpoint_source), *flags, "-o", str(endpoint_binary)]
             built = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
             assert built.returncode == 0, (command, built.stdout, built.stderr)
-            for endpoint_case in range(7):
+            for endpoint_case in range(11):
                 result = subprocess.run([str(endpoint_binary), *(["x"] * endpoint_case)],
                                         env=environment, capture_output=True, text=True, timeout=15)
-                failure = endpoint_case == 2
+                failure = endpoint_case in (2, 8, 10)
                 assert result.returncode == (70 if failure else 0), (mode, endpoint_case, result)
                 assert result.stdout == "99\n", (mode, endpoint_case, result)
                 if failure:
@@ -98,8 +136,8 @@ def main():
                        "--execution-profile", "concurrent", "-o", str(concurrent_binary)]
             built = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
             assert built.returncode == 0, (command, built.stdout, built.stderr)
-            for concurrent_case in range(6):
-                failure = concurrent_case in (1, 3, 5)
+            for concurrent_case in range(8):
+                failure = concurrent_case in (1, 3, 5, 7)
                 result = subprocess.run([str(concurrent_binary), *(["x"] * concurrent_case)],
                                         env=environment, capture_output=True, text=True, timeout=15)
                 assert result.returncode == (70 if failure else 0), (mode, failure, result)
