@@ -146,10 +146,23 @@
         "140b931121286628a3eb48e3c2d942ead81cab86"
       ],
       "merge": "140b931121286628a3eb48e3c2d942ead81cab86"
+    },
+    {
+      "task": "lsp-responsiveness",
+      "pr": 120,
+      "head": "e3f6ecd7516a164dd591a229ab0549a60122e241",
+      "tests": [
+        "semantic_header_boundary",
+        "module_preamble_identity"
+      ],
+      "contributions": [
+        "d345c4d2491cda7cd00bb54978cdb245feaebadf"
+      ],
+      "merge": "d345c4d2491cda7cd00bb54978cdb245feaebadf"
     }
   ],
   "removed": [],
-  "main": "6be28dbe6ef4f5ad050dbdb5ad1d1935e00e6a63",
-  "previous": "fb22c3e1ec6c3fe4c4caf2867700525da50aae70",
-  "candidate": "b7c5177975944ce59c02ee4a4b5646b0"
+  "main": "e4f231574320d2182654b35de956ae52bb333d63",
+  "previous": "096cdd2b407d0d9f9f36b6352c7977f59fdef9f8",
+  "candidate": "4495ead9d1c047e781d86742024a13c2"
 }
