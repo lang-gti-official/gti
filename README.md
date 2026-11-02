@@ -576,8 +576,12 @@ return {
 ```
 
 Run `:Lazy sync`, restart Neovim, and open a `.gti` file. Mason and
-`nvim-lspconfig` are not required. `:GTIInfo` reports the active plugin,
-toolchain, LSP, and parser versions.
+`nvim-lspconfig` are not required. `:GTIInfo` reports the configured channel,
+selected compiler/server/parser paths, and each running server's command and
+version. Available nightly or preview build identities are captured when the
+server launches (or a custom server attaches), so changing an install or an override does not hide a server
+still using the previous build. Nightly versions may differ from the plugin
+checkout; compiler/server version or build mismatches still produce a warning.
 
 Code completion also offers snippets: type `cl` for a class skeleton, `ct` or
 `dt` inside a class for its constructor or destructor, and `method`/`mutmethod`
@@ -626,7 +630,12 @@ downloads from the frozen Gitea releases. Otherwise build locally and set
 `GTI_PATH` and `GTI_LSP_PATH` to those executables (and `GTI_TREE_SITTER_PATH`
 to the built parser).
 When supplying your own toolchain, set `build = false` in the Lazy spec to
-disable its release-download hook.
+disable its release-download hook. In legacy mode, an explicit `GTI_LSP_PATH`
+or `GTI_PATH`
+selects its sibling installed Tree-sitter parser before a bundled parser;
+`GTI_TREE_SITTER_PATH` always takes precedence. Explicit executable overrides
+remain active when the command-line toolchain on `PATH` changes. Restart
+Neovim after changing toolchains so the server and parser are reloaded together.
 
 ### Local macOS installation without a release runner
 
