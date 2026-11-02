@@ -7462,6 +7462,24 @@ mayMutateTrackedPlace(const MirBody &body,
       nonMutatingLoanBoundary(body, instruction) ||
       ownerWitnessFormation(body, instruction))
     return false;
+  // The same capture invariant used by the value interpreter also bounds
+  // loop writes. Code that never received a scalar local's identity cannot
+  // change that local, even when its other effects are unknown. This says
+  // nothing about a pointer's referent, a field, or a local involved in this
+  // instruction. Direct writes are checked separately by the loop client.
+  if (closedCalls != nullptr && closedCalls->localCaptures != nullptr &&
+      closedCalls->localCaptures->valid) {
+    const MirPlace *place = body.findPlace(tracked);
+    const auto domain =
+        place == nullptr ? std::nullopt : constantIntegerDomain(place->type);
+    if (place != nullptr && place->root == MirPlaceRootKind::Binding &&
+        place->binding != 0 && place->projections.empty() && domain &&
+        domain->width > 8 &&
+        !closedCalls->localCaptures->mayBeCapturedBefore(place->binding,
+                                                         instruction.id) &&
+        !closedCalls->localCaptures->involves(place->binding, instruction.id))
+      return false;
+  }
   if ((instruction.rawMemoryAccess ||
        instruction.unsafeOperation != UnsafeOperationKind::None) &&
       !inertRawAddressOperation(instruction)) {
@@ -8865,6 +8883,25 @@ exportedInputAddress(const MirProgram &program, MirBodyAddress address,
   return std::nullopt;
 }
 
+// Field origins use canonical aggregate roots, which may be checked-reference
+// dereferences rather than the raw binding place used by address relays.
+[[nodiscard]] std::optional<InputField> relocationInputField(
+    const MirProgram &program, MirBodyAddress address, const MirBody &body,
+    const MirPlaceAliasEscapeAnalysis &aliases, const FieldOrigin &field) {
+  if (implicitReceiverType(&program, address) &&
+      field.root == canonicalPlace(aliases, thisRoot(body)))
+    return InputField{std::nullopt, field.path};
+  const auto bindings = parameterBindings(program, address);
+  const auto types = parameterTypes(program, address);
+  for (std::size_t index = 0; index < bindings.size() && index < types.size();
+       ++index)
+    if (types[index].kind == SemanticType::Reference)
+      if (const auto root = rootForBinding(body, bindings[index]);
+          root && field.root == canonicalPlace(aliases, root))
+        return InputField{index, field.path};
+  return std::nullopt;
+}
+
 // An input scalar identity is stronger than matching interval endpoints. This
 // restricted relay follows immutable staging back to one formal/owned field.
 [[nodiscard]] std::optional<InputField> relocationScalarInput(
@@ -8896,12 +8933,7 @@ exportedInputAddress(const MirProgram &program, MirBodyAddress address,
       fieldOriginForPlace(&program, address, body, aliases, operand.place);
   if (!field)
     return std::nullopt;
-  const auto input = exportedInputAddress(
-      program, address, body,
-      ScalarAddressKey{AddressOriginKind::EntryPointerField, field->root,
-                       field->path, 0, std::nullopt});
-  return input ? std::optional{InputField{input->parameter, input->field}}
-               : std::nullopt;
+  return relocationInputField(program, address, body, aliases, *field);
 }
 
 // Deliberately small successful-transfer summary. One acyclic typed bitwise
@@ -8937,12 +8969,7 @@ exportedInputAddress(const MirProgram &program, MirBodyAddress address,
   std::vector<MirBlockId> exits;
   const auto exportField =
       [&](const FieldOrigin &field) -> std::optional<InputField> {
-    const auto input = exportedInputAddress(
-        program, address, body,
-        ScalarAddressKey{AddressOriginKind::EntryPointerField, field.root,
-                         field.path, 0, std::nullopt});
-    return input ? std::optional{InputField{input->parameter, input->field}}
-                 : std::nullopt;
+    return relocationInputField(program, address, body, aliases, field);
   };
   for (const auto &block : body.blocks) {
     if (!block.id || block.id > incoming.size() ||
@@ -9293,7 +9320,8 @@ scalarStoreProfile(const MirProgram &program, MirBodyAddress address,
       const bool floating = destination && floatingScalar(destination->type);
       const bool independentScalar =
           destination && (domain || floating) &&
-          destination->root == MirPlaceRootKind::Binding &&
+          (destination->root == MirPlaceRootKind::Binding ||
+           destination->root == MirPlaceRootKind::Temporary) &&
           destination->projections.empty() &&
           !destination->traits.containsBorrowedState;
       if (independentScalar &&

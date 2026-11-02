@@ -385,8 +385,13 @@ literal initialization, one positive literal step, one latch, and a finite
 nonnegative upper-bound interval proved at its dominating exit comparison. The
 comparison may follow exact source-defined calls only when their signatures,
 effects, and closed summaries prove that they cannot mutate or escape the
-counter; native, virtual, raw, unsafe, synchronizing, allocating, or otherwise
-opaque calls remain barriers. The accumulator must have one dominating literal
+counter. An otherwise opaque effect also cannot write a plain non-byte scalar
+local when the existing local capture analysis proves that no earlier path
+exposed its identity and the current instruction does not involve it. This
+extends the interpreter's capture invariant to finite trip counts and bounded
+sums across native or dynamic calls; it does not make those calls pure or
+preserve facts about referenced storage. Captured locals, references, projected
+fields and byte carriers retain the existing barriers. The accumulator must have one dominating literal
 initialization and one additive write and cannot escape or have another
 may-alias write. The product of the containing maximum trip counts and the
 already-proved per-update interval forms a checked GTI integer threshold. A

@@ -668,6 +668,7 @@ int32_t masked_add(int32_t value) {
 
 extern "C" {
   void analysis_barrier();
+  void alter_recurrence(int64_t* total);
 }
 
 int64_t bounded_recurrence() {
@@ -700,6 +701,29 @@ int64_t recurrence_call_barrier() {
   for (mut uint64_t index = 0; index < 100; index++) {
     total += int64_t(index & uint64_t(255));
     analysis_barrier();
+  }
+  return total;
+}
+
+int64_t recurrence_captured_call() {
+  mut int64_t total = 0;
+  for (mut uint64_t index = 0; index < 100; index++) {
+    unsafe { alter_recurrence(&total); }
+    total += int64_t(index & uint64_t(255));
+  }
+  return total;
+}
+
+interface RecurrenceSource { int32_t next(); };
+class FixedRecurrenceSource : public RecurrenceSource {
+public:
+  int32_t next() override { return 7; }
+};
+
+uint64_t recurrence_dynamic_call(RecurrenceSource& source) {
+  mut uint64_t total = 0;
+  for (mut int32_t index = 0; index < 100; index++) {
+    total += uint64_t(source.next());
   }
   return total;
 }
@@ -787,6 +811,10 @@ int32_t main() {
   if (exact_observer_recurrence() != 4950) { return 8; }
   if (mutating_closed_call_recurrence() != 198) { return 9; }
   if (bounded_interval_recurrence(uint64_t(100)) != 4950) { return 10; }
+  if (recurrence_call_barrier() != 4950) { return 11; }
+  FixedRecurrenceSource source{};
+  if (recurrence_dynamic_call(source) != 700) { return 12; }
+  [[discard]] recurrence_captured_call();
   return 0;
 }
 )";
@@ -887,7 +915,19 @@ int32_t main() {
   expectCount("bounded_recurrence", boundedRecurrence, 2);
   expectCount("dynamic_recurrence", dynamicRecurrence, 0);
   expectCount("repeated_recurrence_write", repeatedRecurrence, 1);
-  expectCount("recurrence_call_barrier", callRecurrence, 0);
+  expectCount("recurrence_call_barrier", callRecurrence, 2);
+  expectCount("recurrence_captured_call accumulator",
+              functionOperationDischarges(
+                  frontend, o2, "recurrence_captured_call",
+                  lang::MirSafetyCheckFamily::ArithmeticOverflow,
+                  lang::MirOperation::AddAssign),
+              0);
+  expectCount("recurrence_dynamic_call accumulator",
+              functionOperationDischarges(
+                  frontend, o2, "recurrence_dynamic_call",
+                  lang::MirSafetyCheckFamily::ArithmeticOverflow,
+                  lang::MirOperation::AddAssign),
+              1);
   expectCount("contextual_bound_recurrence", contextualRecurrence, 2);
   expectCount("bounded_interval_recurrence", boundedIntervalRecurrence, 2);
   expectCount("exact_observer_recurrence", observerRecurrence, 2);

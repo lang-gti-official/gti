@@ -1,0 +1,53 @@
+import std.string;
+
+extern "C" {
+  int32_t recurrence_mode();
+  int32_t recurrence_value();
+  void recurrence_barrier();
+  void recurrence_stash(int64_t* address);
+  void recurrence_alter(int64_t* address);
+}
+
+class RecurrenceCleanup {
+public:
+  RecurrenceCleanup() {}
+  ~RecurrenceCleanup() { std::println(99); }
+};
+
+interface NumberSource { int32_t next(); };
+class NativeNumber : public NumberSource {
+public:
+  int32_t next() override { return recurrence_value(); }
+};
+
+uint64_t dynamic_sum(NumberSource& source) {
+  mut uint64_t sum = 0;
+  for (mut int32_t index = 0; index < 100; index++) {
+    sum += uint64_t(source.next());
+    recurrence_barrier();
+  }
+  return sum;
+}
+
+int64_t captured_sum(int32_t mode) {
+  mut int64_t sum = 0;
+  if (mode == 3) { unsafe { recurrence_stash(&sum); } }
+  for (mut int32_t index = 0; index < 100; index++) {
+    if (mode == 2) { unsafe { recurrence_alter(&sum); } }
+    recurrence_barrier();
+    sum += int64_t(1);
+  }
+  return sum;
+}
+
+int main() {
+  RecurrenceCleanup cleanup{};
+  int32_t mode = recurrence_mode();
+  if (mode < 2) {
+    NativeNumber source{};
+    std::println(dynamic_sum(source));
+  } else {
+    std::println(captured_sum(mode));
+  }
+  return 0;
+}
