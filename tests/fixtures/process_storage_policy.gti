@@ -1,11 +1,13 @@
 import std.memory;
 import std.numeric;
+import std.vector;
 
 extern "C" {
   void provider_test_mode(int32_t mode);
   void provider_test_fail_on_call(int32_t attempt);
   int32_t provider_test_calls();
   int32_t provider_test_releases();
+  int32_t provider_test_size_queries();
   uint64_t provider_test_bytes(int32_t attempt);
   void provider_test_event(int32_t value);
   int32_t provider_test_events();
@@ -46,6 +48,7 @@ int main() {
     auto failed = allocator.try_storage<Fixed>(std::size_t(3));
     if (failed || failed.error() != std::alloc_errc::resource_exhausted) { return 4; }
     if (provider_test_calls() != attempt || provider_test_releases() != attempt - 1) { return 5; }
+    if (provider_test_size_queries() != 1) { return 15; }
     if (attempt == 2 && (provider_test_events() != 1 || provider_test_event_at(0) != -1)) { return 6; }
   }
 
@@ -54,6 +57,7 @@ int main() {
     mut auto first = allocator.try_storage<Fixed>(std::size_t(3), std::alignment(std::size_t(4096))).expect("first");
     mut auto second = allocator.try_storage<int>(std::size_t(1)).expect("second");
     if (provider_test_calls() != 4 || provider_test_releases() != 0) { return 7; }
+    if (provider_test_size_queries() != 2) { return 16; }
     if (provider_test_bytes(1) != std::layout_of<Fixed>().bytes * uint64_t(3) ||
         provider_test_bytes(2) != uint64_t(3) ||
         provider_test_bytes(3) != std::layout_of<int>().bytes ||
@@ -79,5 +83,18 @@ int main() {
       provider_test_events() != 7 || provider_test_event_at(5) != -4 ||
       provider_test_event_at(6) != -3) { return 13; }
   provider_test_mode(0); // Independently rejects any remaining live native region.
+  // Prefix allocation and both sparse regions share one observation per
+  // operation. A later operation must still observe a newly selected limit.
+  {
+    mut std::vector<int> values{};
+    values.reserve(std::size_t(8));
+    if (provider_test_calls() != 1 || provider_test_size_queries() != 1) { return 17; }
+  }
+  if (provider_test_releases() != 1) { return 18; }
+  provider_test_mode(1);
+  auto limited = allocator.try_storage<int>(std::size_t(4096));
+  if (limited || limited.error() != std::alloc_errc::size_overflow ||
+      provider_test_calls() != 0 || provider_test_size_queries() != 1) { return 19; }
+  provider_test_mode(0);
   return 0;
 }
