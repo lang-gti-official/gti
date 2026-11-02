@@ -400,6 +400,55 @@ size_t sort_partition<std::relocatable T, Compare>(mut std::vector<T>& values,
   values.swap_elements(low, pivot);
   mut size_t left = low + size_t(1);
   mut size_t right = last;
+  if (count > size_t(128)) {
+    // Compare whole disjoint windows before moving elements. Every recorded
+    // index names a misplaced element; paired restoring swaps classify both.
+    // The pivot stays at low and all comparator borrows end before mutation.
+    mut size_t left_offsets[32] = {};
+    mut size_t right_offsets[32] = {};
+    mut size_t left_count = size_t(0);
+    mut size_t right_count = size_t(0);
+    mut size_t left_used = size_t(0);
+    mut size_t right_used = size_t(0);
+    while (right - left >= size_t(64)) {
+      if (left_used == left_count) {
+        left_used = size_t(0);
+        left_count = size_t(0);
+        for (mut size_t index = size_t(0); index < size_t(32); index++) {
+          left_offsets[left_count] = index;
+          {
+            std::vector<T>& readable = values;
+            before = compare(readable[left + index], readable[low]);
+          }
+          left_count += before ? size_t(0) : size_t(1);
+        }
+      }
+      if (right_used == right_count) {
+        right_used = size_t(0);
+        right_count = size_t(0);
+        for (mut size_t index = size_t(0); index < size_t(32); index++) {
+          right_offsets[right_count] = index;
+          {
+            std::vector<T>& readable = values;
+            before = compare(readable[low], readable[right - index]);
+          }
+          right_count += before ? size_t(0) : size_t(1);
+        }
+      }
+      while (left_used < left_count && right_used < right_count) {
+        values.swap_elements(left + left_offsets[left_used],
+                             right - right_offsets[right_used]);
+        left_used++;
+        right_used++;
+      }
+      // At least one window is complete. Never move an unfinished window's
+      // boundary: its remaining recorded offsets must stay valid.
+      if (left_used == left_count) { left += size_t(32); }
+      if (right_used == right_count) { right -= size_t(32); }
+    }
+    // Rescan the small residual interval, including any unfinished window.
+    // Discarding its offset metadata cannot discard unclassified elements.
+  }
   while (true) {
     while (left <= right) {
       {

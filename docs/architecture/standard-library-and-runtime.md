@@ -1749,6 +1749,24 @@ are ordinary GTI over these APIs, with read-only comparison scopes ending
 before each mutation. No public container or algorithm name grants compiler
 authority, and neither the library nor backend adds a copy/clone pivot.
 
+Introsort discovers monotonic direction through equivalent prefixes, then scans
+only that direction; its comparison order is unchanged and the pending-range
+stacks are initialized only after the monotonic early return. Large partitions
+use two fixed 32-index buffers to collect misplaced elements from disjoint
+windows before restoring swaps. A boundary advances only after its window's
+recorded elements have all been paired. The small residual interval is rescanned
+by the original bounded two-pointer partition, so discarding buffer metadata
+never discards unclassified elements. The pivot remains in the owner, read-only
+comparison borrows end before mutation, and no element is copied or cloned.
+Buffers allocate no heap storage. The same depth budget, smaller-side traversal
+and heapsort fallback retain the O(n log n) worst-case comparison bound;
+comparator or relocation failure retains the original-element permutation.
+`restoring_indexed_runtime` checks exact monotonic comparison traces and
+move-only block-partition failure cleanup. `stdlib_adoption_runtime` checks
+both comparator overloads, distributions, allocation counts and the adaptive
+comparison adversary. This algorithm choice still requires measured performance
+acceptance rather than an assumed improvement from fewer scan branches.
+
 **Current gap:** The generated C++ support prelude still contains terminal
 integrity and low-level capability helpers that call `std::abort()`. These are
 representation guards and legacy terminal operations, not an alternate source-

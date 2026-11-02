@@ -3,7 +3,7 @@
   "source_fingerprints": {
     "stdlib/prelude.gti": "ff426a31d12405cd7a6f09ad46cf76c14f7d3b0a1fadef595c6ad7a4d4d3f831",
     "stdlib/std.gti": "6bf76540ce1d32024871a3fce4b9512fd6fd494511f919db63450e2b4796a0f7",
-    "stdlib/std/algorithm.gti": "f72878c885ec72e42e9455db1d2bda89ad8e994459e3cd50466341029a3d6713",
+    "stdlib/std/algorithm.gti": "828c936f8e37dc9e776e49a51382c5181d0e24ac0bf1942f1c20b3590b510200",
     "stdlib/std/array.gti": "affed4f1d587a71a098ef7c9b381e6c255d8b639492abbe9a46b31e00115adde",
     "stdlib/std/assert.gti": "c34ddabb3ce77983232aa13452cf036dba6202cdbd8d2bb7e1c0d9f0a8b6d78d",
     "stdlib/std/atomic.gti": "d51045256225848941363200bff10a2fe1bf30b66915a06b89e1fce546d1aed1",

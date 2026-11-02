@@ -71,7 +71,54 @@ public:
   }
 };
 
-int main() {
+mut int block_drops[257] = {};
+class BlockResource {
+  int identity;
+public:
+  BlockResource(int identity) : identity(identity) {}
+  BlockResource(BlockResource& other) = delete;
+  BlockResource clone() { std::panic("block sort must not clone"); }
+  int id() { return this.identity; }
+  ~BlockResource() { block_drops[std::size_t(this.identity)]++; }
+};
+class BlockAudit {
+public:
+  BlockAudit() {}
+  ~BlockAudit() {
+    for (mut int index = 0; index < 257; index++) {
+      if (block_drops[std::size_t(index)] != 1) { std::panic("block permutation lost"); }
+    }
+    std::println("block permutation preserved");
+  }
+};
+class BlockCompare {
+  int fail_at;
+  mut int calls = 0;
+public:
+  BlockCompare(int fail_at) : fail_at(fail_at) {}
+  bool operator()(BlockResource& left, BlockResource& right) mut {
+    this.calls++;
+    if (this.calls == this.fail_at) { std::panic("block comparison failed"); }
+    return left.id() < right.id();
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc > 1) {
+    BlockAudit audit{};
+    mut std::vector<BlockResource> blocks{};
+    for (mut int index = 0; index < 257; index++) {
+      blocks.push_back(BlockResource((index * 37) % 257));
+    }
+    // Fail during window filling, after previous paired swaps, or in a later
+    // partition. Destruction proves each original resource survived exactly once.
+    int fail_at = argc == 2 ? 25 : argc == 3 ? 100 : argc == 4 ? 200 : 0;
+    std::sort(blocks, BlockCompare(fail_at));
+    for (mut int index = 0; index < 257; index++) {
+      if (blocks[std::size_t(index)].id() != index) { return 22; }
+    }
+    return 0;
+  }
   for (mut int direction = -1; direction <= 1; direction++) {
     mut std::vector<int> monotonic{};
     for (mut int index = 0; index < 24; index++) {
