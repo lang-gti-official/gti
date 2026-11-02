@@ -148,6 +148,49 @@ int dynamic_signed_boundary(int limit) {
   return total;
 }
 
+// The inner header starts with the result of the previous outer traversal.
+uint32_t outer_accumulation(int limit) {
+  ReductionCleanup inner{2};
+  mut uint32_t total = uint32_t(limit) & uint32_t(7);
+  mut uint32_t visits = 0;
+  uint32_t finish = uint32_t(7) + uint32_t(limit);
+  for (mut uint32_t round = 0; round < uint32_t(4); round++) {
+    for (mut uint32_t index = 7; index != finish; index++) {
+      if (((index + round) & uint32_t(1)) != uint32_t(0)) {
+        total += (index + round + uint32_t(limit)) % uint32_t(7);
+        total += index & uint32_t(3);
+      }
+      visits++;
+    }
+    std::println(total);
+  }
+  std::println(visits);
+  return total;
+}
+
+uint32_t initial_unsigned_boundary(int limit, bool early) {
+  ReductionCleanup inner{2};
+  mut uint32_t total = uint32_t(4294967290) + uint32_t(limit % 5);
+  uint32_t finish = uint32_t(7) + uint32_t(limit);
+  for (mut uint32_t index = 7; index != finish; index++) {
+    ReductionCleanup iteration{9};
+    if (early && index == uint32_t(9)) break;
+    total += (index + uint32_t(limit)) % uint32_t(3) + uint32_t(1); // initial-unsigned-boundary
+  }
+  return total;
+}
+
+int initial_signed_boundary(int limit) {
+  ReductionCleanup inner{2};
+  mut int total = 2147483640 + limit % 6;
+  uint32_t finish = uint32_t(7) + uint32_t(limit);
+  for (mut uint32_t index = 7; index != finish; index++) {
+    ReductionCleanup iteration{9};
+    total += int((index + uint32_t(limit)) % uint32_t(3) + uint32_t(1)); // initial-signed-boundary
+  }
+  return total;
+}
+
 int main(int argc, std::vector<std::string> argv) {
   if (argc != 3) return 10;
   int mode = int(argv[std::size_t(1)].size());
@@ -160,6 +203,9 @@ int main(int argc, std::vector<std::string> argv) {
   else if (mode == 4) std::println(alternative(limit));
   else if (mode == 5 || mode == 6) std::println(bounded_dynamic(limit, mode == 6));
   else if (mode == 7 || mode == 9) std::println(dynamic_unsigned_boundary(limit, mode == 9));
-  else std::println(dynamic_signed_boundary(limit));
+  else if (mode == 8) std::println(dynamic_signed_boundary(limit));
+  else if (mode == 10) std::println(outer_accumulation(limit));
+  else if (mode == 11 || mode == 12) std::println(initial_unsigned_boundary(limit, mode == 12));
+  else std::println(initial_signed_boundary(limit));
   return 0;
 }

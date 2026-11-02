@@ -41,16 +41,19 @@ struct Outcome {
 // this is not a compiler evaluator or an alternative source-language semantics.
 Outcome execute(llvm::Function &function, unsigned bound, unsigned pattern,
                 bool early = false, bool poisonedBound = false,
-                int frozenBound = -1) {
+                int frozenBound = -1, unsigned initial = 0,
+                int frozenInitial = -1, bool poisonedInitial = false) {
   llvm::DenseMap<const llvm::Value *, Scalar> values;
   llvm::DenseMap<const llvm::Value *, std::pair<Scalar, Scalar>> pairs;
   for (auto &argument : function.args()) {
     unsigned input = argument.getArgNo() == 0   ? bound
                      : argument.getArgNo() == 1 ? pattern
-                                                : unsigned(early);
+                     : argument.getArgNo() == 2 ? unsigned(early)
+                                                : initial;
     values[&argument] = {
         llvm::APInt(argument.getType()->getIntegerBitWidth(), input),
-        poisonedBound && argument.getArgNo() == 0};
+        (poisonedBound && argument.getArgNo() == 0) ||
+            (poisonedInitial && argument.getArgNo() == 3)};
   }
   const auto get = [&](const llvm::Value *value) -> Scalar {
     if (auto *constant = llvm::dyn_cast<llvm::ConstantInt>(value))
@@ -108,6 +111,10 @@ Outcome execute(llvm::Function &function, unsigned bound, unsigned pattern,
           break;
         case llvm::Instruction::Xor:
           result = left.bits ^ right.bits;
+          break;
+        case llvm::Instruction::UDiv:
+          require(!right.bits.isZero(), "oracle division by zero");
+          result = left.bits.udiv(right.bits);
           break;
         case llvm::Instruction::URem:
           require(!right.bits.isZero(), "oracle remainder by zero");
@@ -180,10 +187,14 @@ Outcome execute(llvm::Function &function, unsigned bound, unsigned pattern,
       } else if (auto *freeze =
                      llvm::dyn_cast<llvm::FreezeInst>(&instruction)) {
         auto value = get(freeze->getOperand(0));
-        if (value.poison || frozenBound >= 0)
-          value.bits =
-              llvm::APInt(value.bits.getBitWidth(),
-                          frozenBound >= 0 ? unsigned(frozenBound) : bound);
+        const bool isBound = freeze->getName().starts_with("reduction.bound");
+        const bool isInitial = freeze->getName().starts_with("reduction.initial");
+        require(isBound || isInitial, "unknown oracle freeze role");
+        const int forced = isBound ? frozenBound : frozenInitial;
+        if (value.poison || forced >= 0)
+          value.bits = llvm::APInt(value.bits.getBitWidth(),
+                                  forced >= 0 ? unsigned(forced)
+                                              : (isBound ? bound : initial));
         value.poison = false;
         values[freeze] = value;
       } else if (auto *cast = llvm::dyn_cast<llvm::CastInst>(&instruction)) {
@@ -273,6 +284,7 @@ struct Shape {
   bool intrinsicAdd = false;
   bool externalOverflow = false;
   bool separateDetector = false;
+  bool mixedIncrementPhi = false, sideIntrinsic = false;
   llvm::CmpInst::Predicate latchPredicate = llvm::CmpInst::ICMP_NE;
 };
 
@@ -284,7 +296,7 @@ llvm::Function *makeLoop(llvm::Module &module, const Shape &shape,
   auto *i32 = llvm::Type::getInt32Ty(context);
   auto *function = llvm::Function::Create(
       llvm::FunctionType::get(
-          i32, {indexType, accType, llvm::Type::getInt1Ty(context)}, false),
+          i32, {indexType, accType, llvm::Type::getInt1Ty(context), accType}, false),
       llvm::GlobalValue::ExternalLinkage, name, module);
   auto record = module.getOrInsertFunction(
       "record",
@@ -314,7 +326,7 @@ llvm::Function *makeLoop(llvm::Module &module, const Shape &shape,
                      entry);
   accumulator->addIncoming(
       shape.variableInitial
-          ? static_cast<llvm::Value *>(function->getArg(1))
+          ? static_cast<llvm::Value *>(function->getArg(3))
           : llvm::ConstantInt::getSigned(accType, shape.initial),
       entry);
   auto *event = builder.CreateCall(record, {llvm::ConstantInt::get(i32, 1)});
@@ -331,7 +343,24 @@ llvm::Function *makeLoop(llvm::Module &module, const Shape &shape,
     builder.CreateBr(choose);
   builder.SetInsertPoint(choose);
   auto *selected = builder.CreateCall(gate, {index, function->getArg(1)});
-  if (shape.conditional && !shape.selectUpdate)
+  llvm::Value *mixedIncrement = nullptr;
+  if (shape.mixedIncrementPhi) {
+    require(!shape.conditional, "mixed increment requires an unconditional update");
+    auto *bounded = llvm::BasicBlock::Create(context, "bounded", function);
+    auto *unbounded = llvm::BasicBlock::Create(context, "unbounded", function);
+    builder.CreateCondBr(selected, bounded, unbounded);
+    builder.SetInsertPoint(bounded);
+    auto *small = builder.CreateAnd(function->getArg(1),
+                                    llvm::ConstantInt::get(accType, 3));
+    builder.CreateBr(check);
+    builder.SetInsertPoint(unbounded);
+    builder.CreateBr(check);
+    builder.SetInsertPoint(check);
+    auto *merged = builder.CreatePHI(accType, 2, "mixed.increment");
+    merged->addIncoming(small, bounded);
+    merged->addIncoming(function->getArg(1), unbounded);
+    mixedIncrement = merged;
+  } else if (shape.conditional && !shape.selectUpdate)
     builder.CreateCondBr(selected, check, latch);
   else
     builder.CreateBr(check);
@@ -362,6 +391,13 @@ llvm::Function *makeLoop(llvm::Module &module, const Shape &shape,
     increment =
         builder.CreateSelect(selected, llvm::ConstantInt::get(accType, 3),
                              llvm::ConstantInt::get(accType, 7));
+  if (shape.boundedStep == 6)
+    increment = builder.CreateAdd(
+        builder.CreateAnd(function->getArg(1),
+                           llvm::ConstantInt::get(accType, 127)),
+        llvm::ConstantInt::get(accType, 200), "wrapping.increment");
+  if (mixedIncrement)
+    increment = mixedIncrement;
   // The guard and the value use the same checked operation, including the
   // zero-result lane; this catches accidentally dropping a failure without
   // proving the corresponding intermediate addition.
@@ -398,6 +434,15 @@ llvm::Function *makeLoop(llvm::Module &module, const Shape &shape,
     auto *sideGuard = builder.CreateICmpUGT(
         side, llvm::ConstantInt::get(accType, 126), "side.guard");
     builder.CreateCall(record, {builder.CreateZExt(sideGuard, i32)});
+  }
+  if (shape.sideIntrinsic) {
+    auto *pair = builder.CreateBinaryIntrinsic(
+        llvm::Intrinsic::uadd_with_overflow, accumulator,
+        llvm::ConstantInt::get(accType, 200));
+    auto *overflow = builder.CreateExtractValue(pair, 1, "side.overflow");
+    // This observable detector is not the recurrence update. Its larger
+    // increment can overflow even on a path where the recurrence is safe.
+    builder.CreateCall(record, {builder.CreateZExt(overflow, i32)});
   }
   if (shape.selectUpdate)
     nextAccumulator = builder.CreateSelect(selected, nextAccumulator,
@@ -558,6 +603,27 @@ void differential(const Shape &shape, bool expectChange) {
       require(execute(*before, bound, pattern) ==
                   execute(*after, bound, pattern),
               "reduction changed result, failure, or executed cleanup trace");
+  if (shape.variableInitial) {
+    for (unsigned initial : {0U, 1U, 7U, 120U, 126U, 127U, 128U, 250U, 255U})
+      for (unsigned bound = 0; bound < 256; ++bound)
+        for (unsigned pattern : {0U, 1U, 3U, 127U, 255U})
+          require(execute(*before, bound, pattern, false, false, -1, initial) ==
+                      execute(*after, bound, pattern, false, false, -1, initial),
+                  "dynamic initial changed result, failure or cleanup");
+    if (expectChange) {
+      const auto target = llvm::APInt(64, shape.indexInitial + 3)
+                              .zextOrTrunc(shape.indexWidth)
+                              .getZExtValue();
+      // Only the accumulator initial changes; predicate and increment inputs
+      // remain independent. The short traversal admits both chosen values.
+      for (unsigned chosen : {0U, 5U})
+        for (unsigned pattern : {0U, 1U, 3U})
+          require(execute(*before, target, pattern, false, false, -1, chosen) ==
+                      execute(*after, 200, pattern, false, false, target, 250,
+                              int(chosen)),
+                  "fast recurrence did not use the frozen initial value");
+    }
+  }
   if (shape.earlyExit)
     for (unsigned frozen = 0; frozen < 256; ++frozen)
       require(execute(*before, frozen, 0, true, true) ==
@@ -672,14 +738,63 @@ int main() {
       started.currentIndex = true;
       differential(started, true);
     }
+    for (bool multiple : {false, true}) {
+      Shape dynamicInitial;
+      dynamicInitial.variableInitial = true;
+      dynamicInitial.intrinsicAdd = true;
+      dynamicInitial.boundedStep = 1;
+      dynamicInitial.signedArithmetic = false;
+      dynamicInitial.multipleUpdates = multiple;
+      dynamicInitial.earlyExit = true;
+      dynamicInitial.indexInitial = 7;
+      dynamicInitial.latchPredicate = llvm::CmpInst::ICMP_ULT;
+      differential(dynamicInitial, true);
+    }
+    Shape dynamicSigned;
+    dynamicSigned.variableInitial = true;
+    dynamicSigned.intrinsicAdd = true;
+    dynamicSigned.conditional = false;
+    differential(dynamicSigned, true);
+    Shape sideDetector;
+    sideDetector.intrinsicAdd = true;
+    sideDetector.signedArithmetic = false;
+    sideDetector.conditional = false;
+    sideDetector.sideIntrinsic = true;
+    differential(sideDetector, true);
+    // No execution for inclusive continuation: at an extreme endpoint it can
+    // run forever, so only prove that admission leaves the original IR alone.
+    for (auto predicate : {llvm::CmpInst::ICMP_ULE, llvm::CmpInst::ICMP_UGE,
+                           llvm::CmpInst::ICMP_SLE, llvm::CmpInst::ICMP_SGE}) {
+      Shape inclusive;
+      inclusive.latchPredicate = predicate;
+      inclusive.initial = 0;
+      llvm::LLVMContext context;
+      llvm::Module module("inclusive-reduction", context);
+      auto *function = makeLoop(module, inclusive, "inclusive");
+      const auto original = printed(*function);
+      optimize(*function);
+      require(printed(*function) == original,
+              "inclusive continuation acquired an invalid finite bound");
+    }
+    for (bool mixed : {false, true}) {
+      Shape unsafeIncrement;
+      unsafeIncrement.intrinsicAdd = true;
+      unsafeIncrement.signedArithmetic = false;
+      unsafeIncrement.conditional = false;
+      unsafeIncrement.mixedIncrementPhi = mixed;
+      unsafeIncrement.boundedStep = mixed ? 0 : 6;
+      differential(unsafeIncrement, false);
+    }
     for (unsigned kind = 0; kind < 11; ++kind) {
       Shape negative;
       if (kind == 0)
         negative.dependentLatch = true;
       if (kind == 1)
         negative.initial = -1;
-      if (kind == 2)
+      if (kind == 2) {
         negative.variableInitial = true;
+        negative.variableStep = true;
+      }
       if (kind == 3)
         negative.variableStep = true;
       if (kind == 4)

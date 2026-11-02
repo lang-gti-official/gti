@@ -279,6 +279,9 @@ struct Plan {
   unsigned cost = 0;
   llvm::SmallVector<std::pair<llvm::ICmpInst *, bool>, 4> comparisons;
   llvm::SmallVector<llvm::ExtractValueInst *, 4> overflowLanes;
+  llvm::PHINode *reduction = nullptr;
+  llvm::Value *initialValue = nullptr;
+  uint64_t maximumIncrement = 0;
 };
 
 std::optional<Plan> planFor(llvm::Loop &loop, llvm::DominatorTree &dt,
@@ -297,13 +300,15 @@ std::optional<Plan> planFor(llvm::Loop &loop, llvm::DominatorTree &dt,
         phi.getType()->getIntegerBitWidth() > 64 ||
         phi.getNumIncomingValues() != 2)
       continue;
-    auto *initial = llvm::dyn_cast<llvm::ConstantInt>(
-        phi.getIncomingValueForBlock(loop.getLoopPreheader()));
-    if (!initial || initial->getValue().isNegative())
+    auto *initialValue =
+        phi.getIncomingValueForBlock(loop.getLoopPreheader());
+    auto *initial = llvm::dyn_cast<llvm::ConstantInt>(initialValue);
+    if ((initial && initial->getValue().isNegative()) ||
+        !loop.isLoopInvariant(initialValue))
       continue;
     const auto width = phi.getType()->getIntegerBitWidth();
     const auto limit = llvm::APInt::getSignedMaxValue(width).getZExtValue();
-    const auto start = initial->getZExtValue();
+    const auto start = initial ? initial->getZExtValue() : 0;
     Recurrence recurrence{phi, loop, limit};
     auto delta = recurrence.trace(phi.getIncomingValueForBlock(latch));
     if (!delta || delta->maximum == 0 || delta->maximum > limit - start)
@@ -318,19 +323,29 @@ std::optional<Plan> planFor(llvm::Loop &loop, llvm::DominatorTree &dt,
       if (backedges.getZExtValue() > threshold)
         continue;
       maximumBackedges = backedges.getZExtValue();
-      unconditional = true;
+      unconditional = initial != nullptr;
     } else if (llvm::APInt::getMaxValue(
                    induction->bound->getType()->getIntegerBitWidth())
                    .getZExtValue() <= threshold) {
       maximumBackedges = llvm::APInt::getMaxValue(
                              induction->bound->getType()->getIntegerBitWidth())
                              .getZExtValue();
-      unconditional = true;
+      unconditional = initial != nullptr;
     }
     // The division above guarantees this multiplication fits, without relying
     // on IR poison flags. Every intermediate belongs to the traced update DAG.
-    const auto rootMaximum = start + maximumBackedges * delta->maximum;
+    // A dynamic initial value gets its own guarded capacity. The guard admits
+    // at least one complete update, so every fast-loop header is at most
+    // signedMax - maximumIncrement, even across an outer-loop accumulation.
+    const auto rootMaximum = initial
+                                 ? start + maximumBackedges * delta->maximum
+                                 : limit - delta->maximum;
     Plan plan{&loop, *induction, threshold, unconditional, *cost, {}, {}};
+    if (!initial) {
+      plan.reduction = &phi;
+      plan.initialValue = initialValue;
+      plan.maximumIncrement = delta->maximum;
+    }
     // LLVM may sink a successful add into a PHI join while leaving each
     // predecessor's overflow intrinsic in place. Prove the exact operands of
     // each detector, rather than requiring its lane zero to be the recurrence.
@@ -407,13 +422,18 @@ void apply(Plan &plan, llvm::LoopInfo &loops, llvm::DominatorTree &dt) {
   llvm::Value *frozenBound = plan.traversal.bound;
   if (!llvm::isa<llvm::ConstantInt>(frozenBound))
     frozenBound = entry.CreateFreeze(frozenBound, "reduction.bound");
+  llvm::Value *frozenInitial = nullptr;
+  if (plan.initialValue)
+    frozenInitial =
+        entry.CreateFreeze(plan.initialValue, "reduction.initial");
   if (!plan.unconditional) {
     auto [fast, slow, slowLoop] = cloneCheckedFallback(loop, loops, dt);
     llvm::IRBuilder<> builder(guard->getTerminator());
     // The fast latch uses the SAME frozen target. Undef must not choose a
     // different target at each comparison and evade the finite traversal.
     // Freeze also avoids a new poison observation on an earlier-exit path.
-    // The first iteration is safe independently of this target.
+    // A dynamic initial value is frozen independently and checked for enough
+    // capacity for the first iteration as well as every possible backedge.
     auto *bound = builder.CreateSub(
         frozenBound,
         llvm::ConstantInt::get(frozenBound->getType(), plan.traversal.initial),
@@ -424,9 +444,29 @@ void apply(Plan &plan, llvm::LoopInfo &loops, llvm::DominatorTree &dt) {
                             "reduction.backedges");
     const auto width = std::max(64U, bound->getType()->getIntegerBitWidth());
     auto *wide = builder.CreateZExtOrTrunc(bound, builder.getIntNTy(width));
-    auto *safe = builder.CreateICmpULE(
-        wide, llvm::ConstantInt::get(wide->getType(), plan.maximumBackedges),
-        "reduction.fits");
+    llvm::Value *safe;
+    if (frozenInitial) {
+      const auto initialWidth = frozenInitial->getType()->getIntegerBitWidth();
+      auto *limit = llvm::ConstantInt::get(
+          frozenInitial->getType(), llvm::APInt::getSignedMaxValue(initialWidth));
+      auto *nonnegative = builder.CreateICmpULE(frozenInitial, limit);
+      // Deliberately unflagged: subtraction may wrap on the rejected path.
+      // Division is total because the proven increment bound is nonzero.
+      auto *remaining = builder.CreateSub(limit, frozenInitial);
+      auto *capacity = builder.CreateUDiv(
+          remaining, llvm::ConstantInt::get(frozenInitial->getType(),
+                                            plan.maximumIncrement));
+      capacity = builder.CreateZExtOrTrunc(capacity, wide->getType());
+      auto *fits = builder.CreateICmpULT(wide, capacity);
+      safe = builder.CreateAnd(nonnegative, fits, "reduction.fits");
+      // The fallback was cloned before this rewrite and keeps the original
+      // initial value. Only the fast recurrence uses the guarded freeze.
+      plan.reduction->setIncomingValueForBlock(fast, frozenInitial);
+    } else {
+      safe = builder.CreateICmpULE(
+          wide, llvm::ConstantInt::get(wide->getType(), plan.maximumBackedges),
+          "reduction.fits");
+    }
     builder.CreateCondBr(safe, fast, slow);
     guard->getTerminator()->eraseFromParent();
     markCheckedLoop(*slowLoop, versionedMarker);

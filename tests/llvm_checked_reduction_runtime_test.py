@@ -68,6 +68,40 @@ def main():
                               f"{fixture.name}:{site}: runtime error[GTI-R0001]: integer_overflow in addition\n"))
             else:
                 cases.append((mode, count, 0, output + f"{total}\n1\n", ""))
+    for count in (0, 1, 2, 3, 4, 7, 31, 64, 127, 255):
+        total = count & 7
+        outputs = []
+        for outer in range(4):
+            total += sum((index + outer + count) % 7 + (index & 3)
+                         for index in range(7, 7 + count)
+                         if (index + outer) % 2 != 0)
+            outputs.append(total)
+        output = "".join(f"{value}\n" for value in outputs)
+        cases.append((10, count, 0, output + f"{count * 4}\n2\n{total}\n1\n", ""))
+        for mode in (11, 12, 13):
+            unsigned = mode != 13
+            total = (4294967290 + count % 5 if unsigned
+                     else 2147483640 + count % 6)
+            maximum = 4294967295 if unsigned else 2147483647
+            marker = "initial-unsigned-boundary" if unsigned else "initial-signed-boundary"
+            site = next(index for index, line in enumerate(lines, 1)
+                        if f"// {marker}" in line)
+            visits, failed = 0, False
+            for index in range(7, 7 + count):
+                visits += 1
+                if mode == 12 and index == 9:
+                    break
+                increment = (index + count) % 3 + 1
+                if total + increment > maximum:
+                    failed = True
+                    break
+                total += increment
+            output = "9\n" * visits + "2\n"
+            if failed:
+                cases.append((mode, count, 70, output + "1\n",
+                              f"{fixture.name}:{site}: runtime error[GTI-R0001]: integer_overflow in addition\n"))
+            else:
+                cases.append((mode, count, 0, output + f"{total}\n1\n", ""))
     modes = [("llvm-O0", ["--backend", "llvm", "-O0"]),
              ("llvm-O2", ["--backend", "llvm", "-O2"]),
              ("llvm-O3", ["--backend", "llvm", "-O3"]),

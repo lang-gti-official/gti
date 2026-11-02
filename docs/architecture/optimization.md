@@ -1510,7 +1510,7 @@ permits `bound - initial - 1`. Both subtractions use the index's modular width
 before widening. A next-index target equal to the initial value can require a
 complete traversal of that domain.
 
-A separate reduction starts at a nonnegative literal and carries only
+A separate reduction starts at a nonnegative literal or an invariant input and carries only
 nonnegative bounded additions, PHIs and selects back to its header. Uniform
 increment envelopes come from constants, constant masks, unsigned remainders
 by nonzero constants, constant logical shifts, zero extensions, nonwrapping
@@ -1532,10 +1532,21 @@ ordinary counters and conditional weighted reductions without recognizing
 library declarations or type names. LLVM can then vectorize eligible loops;
 vectorization and a speedup are not guaranteed for every admitted shape.
 
+For an invariant initial value, the guard first requires its unsigned value to
+be at most the signed maximum. With maximum per-iteration increment `K > 0`,
+it then requires `backedges < (signedMax - initial) / K`. This admits the first
+update without overflowing a `backedges + 1` calculation. Subtraction remains
+unflagged and division has a nonzero constant divisor, including on rejected
+paths. The fast header range is conservatively `[0, signedMax - K]`; exact
+intermediate offsets still need their own proof. This supports sums carried
+from an outer loop without assuming the outer computation is bounded.
+
 The guard and fast latch share one frozen bound so `undef` cannot select a
-small bound at entry and a different target each iteration. The first update
-must be safe independently of the bound, preserving paths that exit before a
-poison bound would originally be consumed. Cloning repairs every external PHI,
+small bound at entry and a different target each iteration. A dynamic reduction
+initial value has a separate freeze shared by its capacity guard and fast
+header; the fallback retains the original input. The guard proves the first
+update safe too, preserving paths that exit before a poison input would
+originally be consumed. Cloning repairs every external PHI,
 and each edit invalidates and reacquires function analyses. The pass rejects
 nonduplicable/convergent operations, local allocas, EH/address-taken blocks,
 already-versioned/vectorized loops, and size-optimized functions. It admits at
