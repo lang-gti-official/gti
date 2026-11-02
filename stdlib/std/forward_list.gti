@@ -285,24 +285,24 @@ namespace std {
     }
 
     /// Destroy matching nodes without moving the retained elements.
-  [[discardable]] size_t remove_if<Predicate>(mut Predicate predicate) mut
-      requires std::predicate<Predicate, T> {
-    mut forward_list<T> retained{};
-    mut size_t removed = 0;
-    while (!this.empty()) {
-      if (predicate(this.front())) {
-        this.pop_front();
-        removed++;
-      } else {
-        retained.prepend_node(this.detach_front());
+    [[discardable]] size_t remove_if<Predicate>(mut Predicate predicate) mut
+        requires std::predicate<Predicate, T> {
+      mut forward_list<T> retained{};
+      mut size_t removed = 0;
+      while (!this.empty()) {
+        if (predicate(this.front())) {
+          this.pop_front();
+          removed++;
+        } else {
+          retained.prepend_node(this.detach_front());
+        }
       }
+      retained.reverse();
+      this.head = std::move(retained.head);
+      retained.head = std::unique_ptr<detail::forward_list_node<T>>();
+      return removed;
     }
-    retained.reverse();
-    this.head = std::move(retained.head);
-    retained.head = std::unique_ptr<detail::forward_list_node<T>>();
-    return removed;
-  }
-  [[discardable]] size_t remove(T& value) mut
+    [[discardable]] size_t remove(T& value) mut
       requires std::equality_comparable<T> {
       mut forward_list<T> retained = forward_list<T>();
       mut size_t removed = 0;
