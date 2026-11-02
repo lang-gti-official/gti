@@ -1,12 +1,13 @@
 export module json;
 
-// <std/json> -- JSON text for application types, through reflection.
+// <std/json> -- JSON text for typed application data and owned dynamic trees.
 //
-// Every encoding and decoding rule is ordinary GTI written over <std/meta>;
-// no JSON type or operation has compiler recognition. `encode` walks a
+// Every encoding and decoding rule is ordinary GTI; typed data uses <std/meta>.
+// No JSON type or operation has compiler recognition. For typed data, `encode` walks a
 // value's fields and writes text; `decode` scans text into per-member byte
 // ranges and builds the value with `std::meta::construct`, so no object exists
-// before every field has a value and constructors are never bypassed.
+// before every field has a value and constructors are never bypassed. Dynamic
+// `value` trees use runtime tagged values; `object` owns mixed-value members.
 //
 // Field keys are the declared names unless `[[std::json::name("key")]]`
 // renames one; `[[std::json::ignore]]` leaves a field out of the
@@ -22,7 +23,7 @@ export module json;
 // (encoding only), integral enums (by enumerator name), std::optional<T>
 // (`null` or an absent member), std::vector<E>, std::map and
 // std::unordered_map with std::string keys (objects with dynamic keys),
-// nested reflectable structs, and any type with a
+// std::json::value and std::json::object, nested reflectable structs, and any type with a
 // `std::json::codec<T>` specialization. Anything else is
 // rejected where it is used.
 //
@@ -210,6 +211,7 @@ public:
   object(object&& other) = default;
   std::size_t size() { return this.members.size(); }
   bool empty() { return this.members.empty(); }
+  void reserve(std::size_t capacity) mut { this.members.reserve(capacity); }
   std::vector<member>::const_iterator begin() { return this.members.begin(); }
   std::vector<member>::sentinel end() { return this.members.end(); }
   bool contains(std::string_view key) {
@@ -238,6 +240,7 @@ public:
       this.members.insert(index, member(std::move(key), std::move(item)));
     }
   }
+  void set(std::string_view key, value item) mut { this.set(std::string(key), std::move(item)); }
   [[discardable]] bool erase(std::string_view key) mut {
     std::size_t index = this.position(key);
     if (index >= this.members.size() || this.members[index].first != key) { return false; }
@@ -387,6 +390,14 @@ public:
   mut value& at_mut(std::string_view key) mut { return this.as_object_mut().at_mut(key); }
   bool contains(std::string_view key) { return this.as_object().contains(key); }
 
+  /// Consumes this value and transfers its object storage without cloning.
+  std::json::object take_object() && {
+    switch (std::move(this.data)) {
+    case detail::dynamic_payload::object(stored): return std::move(stored);
+    default: std::panic("JSON value has the wrong kind");
+    }
+  }
+
   /// Recursively copies owned text and children; no subtree is shared.
   value clone() {
     switch (this.data) {
@@ -403,6 +414,7 @@ public:
       return value(std::move(copied));
     case detail::dynamic_payload::object(auto& stored):
       mut std::json::object copied{};
+      copied.reserve(stored.size());
       for (auto& entry : stored) { copied.set(entry.first.clone(), entry.second.clone()); }
       return value(std::move(copied));
     }
@@ -682,6 +694,9 @@ expected<void, error> append_floating(mut std::string& out, double value) {
 }
 
 expected<void, error> encode_dynamic_object(mut std::string& out, std::json::object& item, layout& style, std::size_t depth) {
+  if (depth >= std::size_t(128)) {
+    return unexpected(error(errc::nesting_limit, std::size_t(0), std::size_t(0), std::size_t(0)));
+  }
   out.push_back('{');
   mut bool first = true;
   for (auto& entry : item) {
@@ -720,6 +735,8 @@ expected<void, error> encode_dynamic(mut std::string& out, value& item, layout& 
 expected<void, error> encode_value<F>(mut std::string& out, F& item, layout& style, std::size_t depth) {
   if constexpr (std::meta::is_same<F, value>()) {
     return encode_dynamic(out, item, style, depth);
+  } else if constexpr (std::meta::is_same<F, std::json::object>()) {
+    return encode_dynamic_object(out, item, style, depth);
   } else if constexpr (has_codec<F>()) {
     codec<F> mapping{};
     return mapping.encode(item, out);
@@ -1529,6 +1546,10 @@ expected<F, error> decode_value<F>(std::string_view text, std::size_t begin, std
   trim(text, start, stop);
   if constexpr (std::meta::is_same<F, value>()) {
     return decode_dynamic(text, start, stop, options);
+  } else if constexpr (std::meta::is_same<F, std::json::object>()) {
+    value decoded = ?decode_dynamic(text, start, stop, options);
+    if (!decoded.is_object()) { return unexpected(located(errc::type_mismatch, text, start)); }
+    return std::move(decoded).take_object();
   } else if constexpr (has_codec<F>()) {
     return decode_with_codec<F>(text, start, stop);
   } else if constexpr (std::meta::is_bool<F>()) {
@@ -1688,8 +1709,9 @@ expected<T, error> decode_object<T>(std::string_view text, std::size_t begin, st
 
 /// The compact JSON text of `value`. Structs become objects with one member
 /// per field that is not `[[ignore]]`d, keyed by `[[name]]` or the declared
-/// name; see the file comment for every supported type. Fails only for
-/// invalid UTF-8 text and non-finite floating values.
+/// name. Dynamic values preserve their JSON kinds, with object keys in lexical
+/// order. Reports invalid UTF-8, non-finite numbers, or dynamic nesting over
+/// 128 containers; custom codecs can report their own errors.
 export expected<std::string, error> encode<T>(T& value) {
   mut std::string out = std::string("");
   mut detail::layout style{};

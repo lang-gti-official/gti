@@ -7,9 +7,9 @@ import sys
 import tempfile
 
 
-def run(command, env, cwd, *, code=0):
+def run(command, env, cwd, *, code=0, timeout=180):
     result = subprocess.run(list(map(str, command)), env=env, cwd=cwd,
-                            capture_output=True, text=True, timeout=180)
+                            capture_output=True, text=True, timeout=timeout)
     if result.returncode != code:
         raise AssertionError(f"{command}: exit {result.returncode}, wanted {code}\n"
                              f"{result.stdout}{result.stderr}")
@@ -25,13 +25,13 @@ def main():
         fixture = root / "tests/fixtures/json_dynamic.gti"
         modes = [("llvm-O0", ["--backend", "llvm", "-O0"], []),
                  ("llvm-O3", ["--backend", "llvm", "-O3"], []),
-                 ("cpp20-O0", ["--std", "c++20", "-O0"], []),
-                 ("cpp23-O3", ["--std", "c++23", "-O3"], []),
-                 ("sanitized", ["--std", "c++23", "-O1"],
+                 ("cpp20-O0", ["--backend", "cpp", "--std", "c++20", "-O0"], []),
+                 ("cpp23-O3", ["--backend", "cpp", "--std", "c++23", "-O3"], []),
+                 ("sanitized", ["--backend", "cpp", "--std", "c++23", "-O1"],
                   ["--", "-fsanitize=address,undefined", "-fno-omit-frame-pointer"])]
         for name, flags, native in modes:
             binary = work / name
-            run([compiler, fixture, *flags, "-o", binary, *native], env, work)
+            run([compiler, fixture, *flags, "-o", binary, *native], env, work, timeout=600)
             result = run([binary], env, work)
             assert not result.stdout and not result.stderr, result
             print(f"PASS {name}", flush=True)

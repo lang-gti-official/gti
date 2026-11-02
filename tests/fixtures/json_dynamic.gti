@@ -97,6 +97,18 @@ int main() {
   auto limited = json::encode(deep);
   if (limited || limited.error().code != json::errc::nesting_limit) { return 23; }
 
+  mut json::object direct{};
+  direct.set("z", json::value(1));
+  direct.set("a", json::value("first"));
+  direct.set("middle", json::value(false));
+  if (!direct.erase("middle") || direct.erase("absent")) { return 24; }
+  auto direct_text = json::encode(direct);
+  if (!direct_text || direct_text.value() != "{\"a\":\"first\",\"z\":1}") { return 25; }
+  auto direct_back = json::decode<json::object>(direct_text.value().view());
+  if (!direct_back || direct_back.value().at("z").as_int64() != int64_t(1)) { return 26; }
+  auto wrong_object = json::decode<json::object>("[]");
+  if (wrong_object || wrong_object.error().code != json::errc::type_mismatch) { return 27; }
+
   // Replacement drops the complete old subtree, and null has no allocation.
   independent = json::value();
   if (!independent.is_null()) { return 19; }
