@@ -31,11 +31,9 @@ SUCCESS_CASES = (
     "checked_callable_pointer",
     "checked_callable_result_origin",
     "checked_callable_transport",
-)
-LLVM_ONLY_SUCCESS_CASES = (
-    "llvm_callable_wrapper",
     "lambda_parameter_reference_results",
 )
+LLVM_ONLY_SUCCESS_CASES = ("llvm_callable_wrapper",)
 FAILURE_CASES = {
     "llvm_callable_failure": ("GTI-R0017", "later callable argument failed"),
     "llvm_callable_pointer_failure": ("GTI-R0002", "division_by_zero"),

@@ -8694,6 +8694,17 @@ auto SemanticVisitor::Impl::retainedLoanSource(const ExprPtr &expression) const
   }
   const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
   if (resolved == nullptr) {
+    const auto *lambda = semanticModel.findLambdaCall(*call);
+    if (lambda != nullptr &&
+        lambda->returnType.kind == SemanticType::Reference &&
+        lambda->borrowOrigin == BorrowOriginKind::Argument) {
+      // The result reborrows the selected argument's existing authority.
+      // In particular an incoming mutable reference already has an entry
+      // loan: creating an unrelated root would either conflict with it or
+      // lose the ancestry that suspends it while the result remains live.
+      const ExprPtr *origin = storedBorrowSource(expression);
+      return origin == nullptr ? std::nullopt : retainedLoanSource(*origin);
+    }
     return std::nullopt;
   }
   if (resolved->borrowFields.size() == 1 &&

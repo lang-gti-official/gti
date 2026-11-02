@@ -203,6 +203,16 @@ int& observe(mut int& value) { return value; }
 int main() { return 0; }
 )gti",
                 "borrowed return cannot derive from a mutable parameter");
+  checkRejected("lambda-reference-parameter-remains-suspended.gti", R"gti(
+int read(mut int& value) {
+  auto observe = [](mut int& input) -> int& { return input; };
+  int& result = observe(value);
+  value += 1;
+  return result;
+}
+int main() { return 0; }
+)gti",
+                "borrow");
   for (const auto returnType : {"mut int", "mut int*"}) {
     const auto invalid =
         analyze("lambda-mutable-value-result.gti",
@@ -284,7 +294,11 @@ int main() {
          "both shared and exclusive inputs compete for a shared result");
   if (found != result.diagnostics.end()) {
     const auto start = ambiguous.find("int&", ambiguous.find("->"));
-    if (found->primary.source != "lambda-ambiguous-result.gti" ||
+    const auto expectedSource =
+        std::filesystem::absolute("lambda-ambiguous-result.gti")
+            .lexically_normal()
+            .string();
+    if (found->primary.source != expectedSource ||
         found->primary.start != start || found->primary.end != start + 3) {
       std::cerr << "Ambiguous result span: " << found->primary.source << ':'
                 << found->primary.start << '-' << found->primary.end
@@ -293,7 +307,7 @@ int main() {
     expect(
         found->code == "GTI-S2017" &&
             found->phase == lang::DiagnosticPhase::Semantics &&
-            found->primary.source == "lambda-ambiguous-result.gti" &&
+            found->primary.source == expectedSource &&
             found->primary.start == start && found->primary.end == start + 3 &&
             !found->hints.empty(),
         "ambiguous result diagnostic retains code, exact type span and hint");

@@ -278,6 +278,7 @@ owners = [
   "generic_initialization",
   "tryable_propagation",
   "borrow_origin",
+  "lambda_reference",
   "local_reference_inference",
   "bounded_array_borrows",
   "bounded_array_borrows_runtime",

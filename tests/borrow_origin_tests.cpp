@@ -1285,6 +1285,17 @@ mut int& invoke<F>(F& callback, mut int& input) {
   return callback(input);
 }
 
+int through_parameter(mut int& input) {
+  auto relay = [](mut int& source) -> mut int& {
+    mut int& parent = source;
+    mut int& child = parent;
+    return child;
+  };
+  mut int& result = relay(input);
+  result += 1;
+  return result;
+}
+
 int main() {
   auto relay = [](int delta, mut int& input) -> mut int& {
     mut int& parent = input;
@@ -1313,11 +1324,12 @@ int main() {
   selected += 1;
   mut int& forwarded = invoke(generic, number);
   forwarded += 1;
+  if (through_parameter(number) != 9) return 1;
   mut Cell cell{8};
   mut int& projected = field(cell);
   projected += 1;
   int& observed = observe(cell);
-  return number + observed - 18;
+  return number + observed - 19;
 }
 )gti");
   expect(frontend.canGenerateCode(),
@@ -1456,6 +1468,19 @@ int main() {
   };
   return 0;
 }
+)gti");
+  rejected("caller-parameter-still-suspended", R"gti(
+int invalid(mut int& input) {
+  auto relay = [](mut int& source) -> mut int& {
+    mut int& parent = source;
+    mut int& child = parent;
+    return child;
+  };
+  mut int& result = relay(input);
+  input += 1;
+  return result;
+}
+int main() { return 0; }
 )gti");
 }
 } // namespace
