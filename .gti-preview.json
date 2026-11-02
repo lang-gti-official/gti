@@ -146,10 +146,22 @@
         "140b931121286628a3eb48e3c2d942ead81cab86"
       ],
       "merge": "140b931121286628a3eb48e3c2d942ead81cab86"
+    },
+    {
+      "task": "ci-installed-path",
+      "pr": 128,
+      "head": "e6e13442cbbb92afa68ddf823e5f4ec7218052dd",
+      "tests": [
+        "ci_release"
+      ],
+      "contributions": [
+        "a4411cd3fabed1aee297892c85dac2f0419cc575"
+      ],
+      "merge": "a4411cd3fabed1aee297892c85dac2f0419cc575"
     }
   ],
   "removed": [],
-  "main": "6be28dbe6ef4f5ad050dbdb5ad1d1935e00e6a63",
-  "previous": "fb22c3e1ec6c3fe4c4caf2867700525da50aae70",
-  "candidate": "b7c5177975944ce59c02ee4a4b5646b0"
+  "main": "52809340f6ee5a6604748a7ca2fe86ff2d400149",
+  "previous": "096cdd2b407d0d9f9f36b6352c7977f59fdef9f8",
+  "candidate": "3dc60085ba8a4dc483351fe645cd5ebf"
 }
