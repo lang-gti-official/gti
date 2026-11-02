@@ -880,3 +880,32 @@ However, the four motivating container/string programs still produce
 identical optimized MIR with the library held fixed. The remaining receiver
 and release composition is unfinished. No vector speedup is attributed to
 this groundwork, and further expansion is stopped for this round.
+
+### Integral natural-order sorting
+
+The source-library radix path covers builtin integer natural ordering while
+preserving the existing monotonic probe and the comparator-based introsort
+path. Passing only a live element address into the recursive helper keeps
+container metadata outside recursive calls. Terminal partitions reconstruct
+counted runs only when each nonempty bucket denotes one exact observed
+integer; other partitions use bounded permutation cycles. There is no heap
+allocation and recursion fixes at most eight differing key bytes.
+
+In the source-only `integer-sort-v5-mini` trial with the `ba88b70e` compiler
+held fixed, the 17-sample paired random-sort ratio is **0.3626** (95% interval
+0.3561–0.3730). Its three-language ratios are **0.5203 against C++ and 0.8875
+against Rust** (Rust interval 0.8820–0.8918). Sorted and reverse inputs remain
+within the separate 5% paired regression band. This closes random sorting in
+that trial; it is not a new full-corpus headline or evidence about application
+performance. Final combined reports must identify their own compiler and
+library source.
+
+The earlier raw-element variant `v3` reduced random-sort runtime by 47.0% but
+remained 1.2178 times Rust. The intervening adaptive-bucket variant `v4` was
+worse than `v3` and is not retained. Wider keys, high-byte distributions and
+duplicate-heavy inputs remain diagnostic additions outside the unchanged
+34-program headline. Correctness covers all eight integer widths, extrema,
+empty/small inputs, common prefixes and exact multiset preservation, alongside
+the existing custom-comparator, ownership and failure cases. Full sources,
+paired observations, allocation requests, code-size and compiler-cost records
+are retained in the corresponding round-eight experiment directories.
