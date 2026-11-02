@@ -3653,6 +3653,7 @@
         "tests/source_prefix_owner_tests.cpp",
         "tests/source_sparse_storage_tests.cpp",
         "tests/fixtures/process_storage_policy.gti",
+        "tests/fixtures/process_storage_query_policy.gti",
         "tests/stdlib_module_boundaries_test.py"
       ]
     },
