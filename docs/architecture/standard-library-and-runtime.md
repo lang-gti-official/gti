@@ -778,6 +778,9 @@ removing or reordering a call. [MIR](mir.md) records the representation.
 LLVM additionally records the existing process-allocation elision permission
 on exact result-only allocator and matching release call edges: allocation
 family, requested byte count, uninitialized storage, and the released pointer.
+Allocation touches only inaccessible allocator state; release additionally
+touches its argument region. Neither operation introduces a GTI synchronization
+edge or unwinds across the native ABI.
 The Windows family also records its alignment argument. The ordinary POSIX
 allocator and Windows aligned allocator can then participate in LLVM's
 allocation-pair removal. The POSIX status-writing allocator remains excluded

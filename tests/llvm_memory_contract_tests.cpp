@@ -254,6 +254,10 @@ void providerContracts() {
     llvm::TargetLibraryInfo library(libraryImpl);
     expect(llvm::isRemovableAlloc(acquire, &library) == (variant != 1),
            "allocation removability comes from the sealed call edge");
+    expect(acquire->onlyAccessesInaccessibleMemory() == (variant != 1),
+           "a sealed allocator cannot mutate existing GTI-visible storage");
+    expect(release->onlyAccessesInaccessibleMemOrArgMem() == (variant != 1),
+           "a sealed release touches only its region and allocator state");
     expect((llvm::getFreedOperand(release, &library) == acquire) ==
                (variant != 1),
            "only sealed release edges identify their freed operand");

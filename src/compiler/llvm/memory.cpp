@@ -174,6 +174,10 @@ llvm::Value *Memory::providerCall(ProcessMemoryRuntimeOperation operation,
                                          windows ? "gti.process.aligned.v1"
                                                  : "gti.process.posix.v1"));
     call->setDoesNotThrow();
+    call->setMemoryEffects(
+        plainAllocation ? llvm::MemoryEffects::inaccessibleMemOnly()
+                        : llvm::MemoryEffects::inaccessibleOrArgMemOnly());
+    call->addFnAttr(llvm::Attribute::NoSync);
     auto kind = plainAllocation ? llvm::AllocFnKind::Alloc |
                                       llvm::AllocFnKind::Uninitialized
                                 : llvm::AllocFnKind::Free;
