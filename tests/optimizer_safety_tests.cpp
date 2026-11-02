@@ -1374,7 +1374,7 @@ int32_t after_write(int32_t index) {
 int32_t after_read(int32_t index) {
   mut int32_t values[8] = {};
   int32_t seen = values[index];
-  return index + seen + int32_t(1);
+  return index + int32_t(1);
 }
 int32_t after_address(int32_t index) {
   mut int32_t values[8] = {};
