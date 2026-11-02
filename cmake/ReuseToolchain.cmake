@@ -13,6 +13,9 @@ add_library(gti_tree_sitter MODULE IMPORTED GLOBAL)
 set_target_properties(gti_tree_sitter PROPERTIES IMPORTED_LOCATION "${GTI_REUSE_TOOLCHAIN}/share/gti/parser/gti.so")
 set(GTI_BUILD_STDLIB_ROOT "${PROJECT_SOURCE_DIR}/stdlib")
 set(GTI_RELEASE_BUILD ON)
+# Do not retain every compiler test case's allocations in a single process.
+# The existing aggregate validates the complete census in either mode.
+set(GTI_COMPILER_TEST_ISOLATE_CASES ON CACHE BOOL "Bound source-lane compiler test memory" FORCE)
 # Existing test registrations remain authoritative. Only selected test harness
 # targets are built; no source compiler/runtime targets exist in this graph.
 add_subdirectory(tests)

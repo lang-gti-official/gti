@@ -306,6 +306,7 @@ class SourceStdlibCI(unittest.TestCase):
             self.assertIn(required, lane)
         self.assertNotIn('cmake --install', lane)
         self.assertNotIn('continue-on-error', lane)
+        self.assertIn('GTI_COMPILER_TEST_ISOLATE_CASES ON', (ROOT / 'cmake/ReuseToolchain.cmake').read_text())
         self.assertIn("needs.plan.outputs.mode == 'full'", text.split('\n  package:\n')[1])
 
 

@@ -756,7 +756,9 @@ only test consumer targets are built. The CMake target graph rejects dependencie
 that would rebuild compiler/runtime sources. Ownership-map T1 owners and T2
 consumers, changed registered harnesses/fixtures, compiler_pipeline, native O0/O3
 smoke and affected example gates must execute without missing/disabled/skipped
-results. This includes runtime and rejection coverage, not compilation alone.
+results. The existing compiler-pipeline census runs each named case in a fresh
+process to bound retained allocations; no case is removed. This includes runtime
+and rejection coverage, not compilation alone.
 PR-declared tests add to this mandatory selection. Installed CLI/LSP/project and
 resource checks exercise the updated packaged library without source overrides.
 
