@@ -338,6 +338,17 @@ It publishes only the rolling `nightly` channel. Stable `v<VERSION>` releases
 come from the [release train](#github-release-train), which cuts the commit
 this workflow published.
 
+Source-only standard-library merge groups may instead reuse an ancestor's
+validated production compiler when all native inputs match exactly. They run
+the affected library owners/consumers and installed checks on both platforms,
+then package the candidate's new stdlib with unchanged compiler/runtime binaries.
+`BUILD_ID` identifies the assembled source revision; `COMPILER_ORIGIN.json` and
+artifact provenance retain the compiler's original revision, full CI run/attempt
+and native-input digest. Missing compatible evidence selects full CI. See the
+[source-only CI contract](agent-workflow.md#required-ci-and-the-merge-queue).
+This successful integration also qualifies for nightly publication; an
+arbitrary PR pass or merge exception still does not.
+
 1. **Build and validate in integration.** Full `ci.yml` integration builds
    production archives on `ubuntu-24.04` (`linux-x64`) and `macos-26`
    (`darwin-arm64`). Each uses the reviewed compiler from

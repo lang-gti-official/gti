@@ -226,7 +226,7 @@ def nightly_contract(root):
         assert all(count == rows[0][0] for count, _ in rows)
     assert "validation_checks.py shard --build build" in suite
     gate = integration["gate"]
-    assert "fast, package, integration, sanitizers]" in gate
+    assert "fast, package, integration, sanitizers, source-stdlib]" in gate
     assert "validation_checks.py ci-gate" in gate
     assert "named_test_shards.py verify" in gate
     publish = sections["publish"]
