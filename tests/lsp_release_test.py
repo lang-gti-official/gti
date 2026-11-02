@@ -128,6 +128,22 @@ class IndependentLSP(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'checksum'):
                 component.pack(root / 'input', root / 'corrupt', PLAN)
 
+    def test_already_published_source_skips_package_downloads(self):
+        def api(path):
+            if '/git/ref/' in path: return {'object':{'sha':SHA}}
+            if '/workflows/' in path: return {'workflow_runs':[{'head_sha':SHA,'event':'merge_group'}]}
+            if '/releases?' in path:
+                return [dict(tag_name='lsp-'+COMPAT+'-7', draft=False, target_commitish=SHA)]
+            raise AssertionError(path)
+        with patch.object(artifacts, 'release_evidence', return_value={'run_id':'7','run_attempt':'2'}), \
+             patch.object(compatibility, 'identity', return_value=COMPAT), patch.object(component.source, 'git'):
+            self.assertIsNone(component.select(api))
+        workflow = (ROOT / '.github/workflows/lsp.yml').read_text()
+        self.assertIn("workflow_run.event == 'merge_group'", workflow)
+        self.assertIn('ref: main', workflow)
+        self.assertIn('cancel-in-progress: false', workflow)
+        self.assertNotIn('cmake --build', workflow)
+
     def test_draft_publication_resumes_without_overwriting_assets(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary); packages(root / 'input')

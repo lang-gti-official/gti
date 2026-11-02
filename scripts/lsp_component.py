@@ -42,6 +42,13 @@ def select(api=source.request):
             source.git("cat-file", "-e", sha + ":scripts/lsp_compatibility.py")
         except (ValueError, subprocess.SubprocessError):
             continue
+        # The common trigger is another integration/push after this source was
+        # already published. Avoid downloading both large SDKs just to no-op.
+        published = api(f"{BASE}/releases?per_page=100&page=1")
+        prefix = "lsp-" + compatibility + "-"
+        if any(not r.get("draft") and r.get("tag_name", "").startswith(prefix)
+               and r.get("target_commitish") == sha for r in published):
+            return None
         return {"sha": sha, "run_id": int(evidence["run_id"]),
                 "attempt": int(evidence["run_attempt"]), "compatibility": compatibility,
                 "validation_mode": evidence.get("validation_mode", "full")}
