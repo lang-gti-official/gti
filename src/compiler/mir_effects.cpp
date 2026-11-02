@@ -973,7 +973,9 @@ bool structuralScalarRecord(const MirProgram &program, const SemanticType &type,
     visiting.erase(owner->id);
     return fields;
   };
-  return type.kind == SemanticType::Class && structural(structural, type);
+  return (type.kind == SemanticType::Class ||
+          type.kind == SemanticType::Enum) &&
+         structural(structural, type);
 }
 } // namespace
 
@@ -1016,7 +1018,8 @@ bool isMirStructuralValueTransfer(const MirProgram &program,
       instruction.synchronization.kind != SynchronizationOperationKind::None ||
       instruction.hostedStartupOperation ||
       instruction.info.type != instruction.operands.front().type ||
-      instruction.info.type.kind != SemanticType::Class ||
+      (instruction.info.type.kind != SemanticType::Class &&
+       instruction.info.type.kind != SemanticType::Enum) ||
       instruction.info.traits.containsBorrowedState ||
       std::any_of(instruction.lifecycle.begin(), instruction.lifecycle.end(),
                   [](const MirLifecycleEvent &event) {
@@ -1032,6 +1035,27 @@ bool isMirStructuralValueTransfer(const MirProgram &program,
   return structuralScalarRecord(program, instruction.info.type,
                                 copy ? StructuralValueOperation::Copy
                                      : StructuralValueOperation::Move);
+}
+
+bool isMirStructuralPayloadExtraction(const MirProgram &program,
+                                      const MirInstruction &instruction) {
+  return !instruction.tombstone &&
+         instruction.kind == MirInstructionKind::Compute &&
+         instruction.operation == MirOperation::PayloadExtract &&
+         instruction.payloadExtractionKind ==
+             PayloadExtractionKind::MoveValue &&
+         instruction.result && instruction.operands.size() == 1 &&
+         instruction.operands.front().kind == MirOperandKind::Move &&
+         instruction.operands.front().place && !instruction.destination &&
+         !instruction.receiver && instruction.lifecycle.empty() &&
+         !instruction.rawMemoryAccess && !instruction.hostedStartupOperation &&
+         instruction.intrinsic == IntrinsicKind::None &&
+         instruction.unsafeOperation == UnsafeOperationKind::None &&
+         instruction.synchronization.kind ==
+             SynchronizationOperationKind::None &&
+         program.findPayloadEnum(mirInstructionEnumType(instruction)) &&
+         structuralScalarRecord(program, mirInstructionEnumType(instruction),
+                                StructuralValueOperation::Move);
 }
 
 bool isMirStructuralValueDrop(const MirProgram &program,

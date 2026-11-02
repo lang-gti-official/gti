@@ -1317,6 +1317,30 @@ symbol name. Allocation, failure, ordering and general invalidation remain
 unchanged. Focused controls cover allocation/release, a foreign allocator and
 a status pointer overlapping a tracked field.
 
+The process-storage barrier is replayed through closed constructors and their
+field initializer summaries while preserving exact mutable arguments and globals.
+Declaration-only field inventory uses the canonical MIR classifier and causes no
+runtime write; actual initialization remains authoritative. Pure layout queries
+likewise do not invalidate memory. Neither rule assumes arbitrary fresh `this`
+storage or erases a constructor effect.
+
+A closed consuming call can preserve unrelated caller fields when its receiver
+is an exact prepared structural value containing only independent scalar fields,
+with no pointer, reference, resource, custom cleanup or receiver escape. Facts
+for that consumed value are retired. Pointer-bearing receivers remain outside
+this profile. A closed frame-local address relay may copy an address without
+writing its pointee; capture tracking remains unchanged, so a subsequent opaque
+writer still invalidates those facts.
+
+The shared structural transfer classifier also admits wholly passive payload
+enums, as it already did for such enums nested inside records. Ownership-bearing,
+borrowed and actively cleaned alternatives remain excluded. Moving extraction
+from that passive enum retires its exact source rather than all caller memory;
+no result pointer, variant or payload provenance is inferred. This extends
+effect precision, not language movement, variant-state or lifetime semantics.
+The native controls include consuming argument mutation, escaped-pointer writes
+and variant extraction followed by overflow, with deterministic cleanup.
+
 General ownership-shell move/replacement continues to retire prefix snapshots;
 this summary alone does not establish vector-growth optimization or a runtime
 gain.

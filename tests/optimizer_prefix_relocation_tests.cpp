@@ -1,4 +1,5 @@
 #include "gti/frontend.h"
+#include "gti/mir_effects.h"
 #include "gti/optimization/safety.h"
 #include "private_stdlib_fixture.h"
 #include <filesystem>
@@ -100,10 +101,70 @@ int main() { mut Shell value{}; value = std::move(value); return 0; }
               << " failed=" << failed << '\n';
     return 1;
   }
+  const auto sums = gti_test::analyzeTrustedPrivateMemoryFixture(
+      "passive-sum-transfer.gti", std::string(R"(
+class Active { public: Active() {} ~Active() {} };
+enum Passive { number(uint64_t value), flag(bool value) };
+enum Owning { owned(std::unique_ptr<int32_t> value) };
+enum Cleaned { active(Active value) };
+Passive move_passive(Passive value) { return std::move(value); }
+Owning move_owning(Owning value) { return std::move(value); }
+Cleaned move_cleaned(Cleaned value) { return std::move(value); }
+int main() {
+  mut Passive p = move_passive(Passive::number(uint64_t(9)));
+  mut Owning o = move_owning(Owning::owned(std::make_unique<int32_t>(int32_t(9))));
+  mut Cleaned c = move_cleaned(Cleaned::active(Active()));
+  return 0;
+}
+)"));
+  if (!sums.canGenerateCode()) {
+    for (const auto &d : sums.diagnostics)
+      std::cerr << d.code << ": " << d.message << '\n';
+    return 1;
+  }
+  std::size_t passiveTransfers = 0, activeRejections = 0;
+  for (const auto &function : sums.hir.functionInstances()) {
+    if (!function.source)
+      continue;
+    const auto name = function.source->name().lexeme;
+    if (name != "move_passive" && name != "move_owning" &&
+        name != "move_cleaned")
+      continue;
+    const auto *mir = sums.mir.findFunctionInstance(function.id);
+    for (const auto &block : mir->body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Move ||
+            instruction.info.type.kind != lang::SemanticType::Enum)
+          continue;
+        const bool structural =
+            lang::isMirStructuralValueTransfer(sums.mir, instruction);
+        if ((name == "move_passive") != structural) {
+          std::cerr << "incorrect passive enum transfer classification: "
+                    << name << '\n';
+          return 1;
+        }
+        if (structural) {
+          ++passiveTransfers;
+          const auto effects = lang::effects(sums.mir, instruction);
+          auto malformed = instruction;
+          malformed.rawMemoryAccess = true;
+          if (effects.invokesUserCode || effects.invokesRuntime ||
+              effects.writesUnknownMemory || effects.removableWhenUnused ||
+              lang::isMirStructuralValueTransfer(sums.mir, malformed))
+            return 1;
+        } else {
+          ++activeRejections;
+        }
+      }
+  }
+  if (!passiveTransfers || activeRejections < 2) {
+    std::cerr << "passive enum controls did not exercise all move shapes\n";
+    return 1;
+  }
   const auto process = gti_test::analyzeTrustedPrivateMemoryFixture(
       "process-scalar-profile.gti", std::string(R"(
 import "../std/detail/memory_capabilities.gti";
-extern "C" { void* ordinary_allocator(uint64_t bytes); }
+extern "C" { void* ordinary_allocator(uint64_t bytes); void mutate_address(uint64_t* address); }
 class ScalarBox { public: mut uint64_t value; mut int32_t status;
   ScalarBox() : value(9), status(9) {} };
 uint64_t sealed_allocate(mut ScalarBox& box) {
@@ -136,10 +197,133 @@ int32_t status_overlap(mut ScalarBox& box) {
   }
   return box.status * int32_t(2);
 }
-int main() { mut ScalarBox box{};
-  uint64_t a = sealed_allocate(box);
-  uint64_t b = foreign_allocate(box);
-  int32_t c = status_overlap(box);
+class AllocatedShell { mut void* storage = nullptr; public:
+  AllocatedShell() {
+    std::layout shape = std::layout_of<uint64_t>();
+    unsafe {
+#if target.os == "windows"
+      this.storage = gti_internal::runtime::gti_rt_aligned_malloc_v1(shape.bytes, shape.alignment);
+#else
+      this.storage = gti_internal::runtime::gti_rt_malloc_v1(shape.bytes);
+#endif
+    }
+  }
+  ~AllocatedShell() {
+    unsafe {
+#if target.os == "windows"
+      gti_internal::runtime::gti_rt_aligned_free_v1(this.storage);
+#else
+      gti_internal::runtime::gti_rt_posix_free_v1(this.storage);
+#endif
+    }
+  }
+};
+class ForeignShell { public:
+  ForeignShell() { unsafe { void* ignored = ordinary_allocator(uint64_t(16)); } }
+};
+class ReplacingShell { public:
+  ReplacingShell(mut ScalarBox& box) { box.value = uint64_t(18446744073709551615); }
+};
+uint64_t layout_preserves(mut ScalarBox& box) {
+  std::layout descriptor = std::layout_of<ScalarBox>();
+  return box.value * uint64_t(2);
+}
+class AddressPacket { public: uint64_t* address = nullptr;
+  AddressPacket(uint64_t* address) : address(address) {}
+};
+uint64_t transport_preserves(mut ScalarBox& box, uint64_t* address) {
+  AddressPacket packet{address};
+  return box.value * uint64_t(2);
+}
+uint64_t transport_then_write(mut ScalarBox& box, uint64_t* address) {
+  AddressPacket packet{address};
+  unsafe { mutate_address(packet.address); }
+  return box.value * uint64_t(2);
+}
+class NumericPacket { mut uint64_t value; public:
+  NumericPacket(uint64_t value) : value(value) {}
+  uint64_t take() && { return std::move(this.value); }
+  uint64_t replace(mut ScalarBox& box) && {
+    box.value = uint64_t(18446744073709551615);
+    return std::move(this.value);
+  }
+};
+class PointerPacket { mut uint64_t value; void* pointer = nullptr; public:
+  PointerPacket() : value(9), pointer(nullptr) {}
+  uint64_t take() && { return std::move(this.value); }
+};
+class CleanupPacket { mut uint64_t value; public:
+  CleanupPacket() : value(9) {}
+  uint64_t take() && { return std::move(this.value); }
+  ~CleanupPacket() { unsafe { void* ignored = ordinary_allocator(uint64_t(16)); } }
+};
+uint64_t prepared_preserves(mut ScalarBox& box) {
+  mut NumericPacket packet{uint64_t(9)};
+  uint64_t value = std::move(packet).take();
+  return box.value * uint64_t(2);
+}
+uint64_t prepared_argument_replaces(mut ScalarBox& box) {
+  mut NumericPacket packet{uint64_t(9)};
+  uint64_t value = std::move(packet).replace(box);
+  return box.value * uint64_t(2);
+}
+uint64_t prepared_pointer(mut ScalarBox& box) {
+  mut PointerPacket packet{};
+  uint64_t value = std::move(packet).take();
+  return box.value * uint64_t(2);
+}
+uint64_t prepared_cleanup(mut ScalarBox& box) {
+  mut CleanupPacket packet{};
+  uint64_t value = std::move(packet).take();
+  return box.value * uint64_t(2);
+}
+enum ScalarChoice { value(uint64_t value), other(uint64_t value) };
+uint64_t payload_preserves(mut ScalarBox& box) {
+  mut ScalarChoice choice = ScalarChoice::value(uint64_t(7));
+  switch (std::move(choice)) {
+    case ScalarChoice::value(value): return box.value * uint64_t(2);
+    case ScalarChoice::other(value): return box.value * uint64_t(2);
+  }
+}
+uint64_t payload_replaces(mut ScalarBox& box) {
+  mut ScalarChoice choice = ScalarChoice::value(uint64_t(7));
+  switch (std::move(choice)) {
+    case ScalarChoice::value(value):
+      box.value = uint64_t(18446744073709551615);
+      return box.value * uint64_t(2);
+    case ScalarChoice::other(value):
+      box.value = uint64_t(18446744073709551615);
+      return box.value * uint64_t(2);
+  }
+}
+uint64_t constructor_preserves(mut ScalarBox& box) {
+  AllocatedShell storage{};
+  return box.value * uint64_t(2);
+}
+uint64_t constructor_foreign(mut ScalarBox& box) {
+  ForeignShell storage{};
+  return box.value * uint64_t(2);
+}
+uint64_t constructor_replaces(mut ScalarBox& box) {
+  ReplacingShell storage{box};
+  return box.value * uint64_t(2);
+}
+int main() {
+  mut ScalarBox first{}; uint64_t a = sealed_allocate(first);
+  mut ScalarBox second{}; uint64_t b = foreign_allocate(second);
+  mut ScalarBox third{}; int32_t c = status_overlap(third);
+  mut ScalarBox layoutBox{}; uint64_t l = layout_preserves(layoutBox);
+  mut ScalarBox transported{}; uint64_t t = transport_preserves(transported, nullptr);
+  mut ScalarBox written{}; uint64_t w = transport_then_write(written, nullptr);
+  mut ScalarBox seventh{}; uint64_t g = prepared_preserves(seventh);
+  mut ScalarBox eighth{}; uint64_t h = prepared_argument_replaces(eighth);
+  mut ScalarBox ninth{}; uint64_t i = prepared_pointer(ninth);
+  mut ScalarBox tenth{}; uint64_t j = prepared_cleanup(tenth);
+  mut ScalarBox payload{}; uint64_t p = payload_preserves(payload);
+  mut ScalarBox replacedPayload{}; uint64_t q = payload_replaces(replacedPayload);
+  mut ScalarBox fourth{}; uint64_t d = constructor_preserves(fourth);
+  mut ScalarBox fifth{}; uint64_t e = constructor_foreign(fifth);
+  mut ScalarBox sixth{}; uint64_t f = constructor_replaces(sixth);
   return 0;
 }
 )"));
@@ -173,10 +357,24 @@ int main() { mut ScalarBox box{};
   };
   if (!processAnalysis.converged || processProofs("sealed_allocate") != 1 ||
       processProofs("foreign_allocate") != 0 ||
-      processProofs("status_overlap") != 0) {
+      processProofs("status_overlap") != 0 ||
+      processProofs("layout_preserves") != 1 ||
+      processProofs("constructor_preserves") != 1 ||
+      processProofs("constructor_foreign") != 0 ||
+      processProofs("constructor_replaces") != 0 ||
+      processProofs("prepared_preserves") != 1 ||
+      processProofs("prepared_argument_replaces") != 0 ||
+      processProofs("prepared_pointer") != 0 ||
+      processProofs("prepared_cleanup") != 0 ||
+      processProofs("transport_preserves") != 1 ||
+      processProofs("transport_then_write") != 0 ||
+      processProofs("payload_preserves") != 2 ||
+      processProofs("payload_replaces") != 0) {
     std::cerr << "process scalar profile: sealed="
               << processProofs("sealed_allocate")
               << " foreign=" << processProofs("foreign_allocate")
+              << " payload=" << processProofs("payload_preserves")
+              << " payload-replaced=" << processProofs("payload_replaces")
               << " status=" << processProofs("status_overlap") << '\n';
     return 1;
   }

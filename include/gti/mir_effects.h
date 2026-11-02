@@ -54,6 +54,11 @@ isMirStructuralFinalAddressConstruction(const MirProgram &program,
 [[nodiscard]] bool
 isMirStructuralValueTransfer(const MirProgram &program,
                              const MirInstruction &instruction);
+// A verified moving extraction from a wholly passive payload enum retires only
+// its selected source payload. It conveys no variant or alias proof.
+[[nodiscard]] bool
+isMirStructuralPayloadExtraction(const MirProgram &program,
+                                 const MirInstruction &instruction);
 // Generated scalar records can retire their own storage without executing
 // user/runtime cleanup. This does not prove their storage is disjoint from any
 // other place.

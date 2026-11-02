@@ -259,7 +259,56 @@ int32_t metadata_move_captured() {
   return destination.read() * int32_t(2);
 }
 
+class ScalarPacket {
+  mut int32_t value;
+public:
+  ScalarPacket(int32_t value) : value(value) {}
+  int32_t take() && { return std::move(this.value); }
+  int32_t replace(mut int32_t& target) && {
+    target = int32_t(2147483647);
+    return std::move(this.value);
+  }
+};
+class AddressRelay { public:
+  mut int32_t* address = nullptr;
+  AddressRelay(mut int32_t* address) : address(address) {}
+};
+enum ScalarVariant { number(int32_t value), other(int32_t value) };
+int32_t scalar_transport(int32_t mode) {
+  Audit audit{};
+  mut int32_t value = int32_t(9);
+  if (mode == int32_t(0)) {
+    mut ScalarPacket packet{int32_t(3)};
+    int32_t taken = std::move(packet).take();
+    require_cell(taken == int32_t(3));
+  } else if (mode == int32_t(1)) {
+    mut ScalarPacket packet{int32_t(3)};
+    int32_t taken = std::move(packet).replace(value);
+    require_cell(taken == int32_t(3));
+  } else if (mode == int32_t(2)) {
+    unsafe {
+      AddressRelay relay{&value};
+      *relay.address = int32_t(2147483647);
+    }
+  } else {
+    mut ScalarVariant variant = ScalarVariant::number(int32_t(3));
+    switch (std::move(variant)) {
+      case ScalarVariant::number(number):
+        require_cell(number == int32_t(3));
+        if (mode == int32_t(4)) { value = int32_t(2147483647); }
+        break;
+      case ScalarVariant::other(number): value = number; break;
+    }
+  }
+  return value * int32_t(2);
+}
+
 int main(int argc, std::vector<std::string> argv) {
+  if (argc == 16) { return scalar_transport(int32_t(0)) == int32_t(18) ? 0 : 1; }
+  if (argc == 17) { return scalar_transport(int32_t(1)); }
+  if (argc == 18) { return scalar_transport(int32_t(2)); }
+  if (argc == 19) { return scalar_transport(int32_t(3)) == int32_t(18) ? 0 : 1; }
+  if (argc == 20) { return scalar_transport(int32_t(4)); }
   if (argc == 15) { return empty_endpoint_positive() == uint64_t(0) ? 0 : 1; }
   if (argc == 12) { return metadata_move_positive() == int32_t(18) ? 0 : 1; }
   if (argc == 13) { return metadata_move_cleanup_failure(); }

@@ -316,7 +316,18 @@ constexpr std::size_t maxTagFacts = 64;
 // These are transfer-rule barriers, not replacement MIR effects. A vacant
 // structural construction remains opaque, but has a narrower supported transfer
 // than an unhandled operation which might write an already live object.
-enum class LiveMemoryBarrier { None, VacantStructuralConstruction, Unknown };
+enum class LiveMemoryBarrier {
+  None,
+  VacantStructuralConstruction,
+  ProcessStorage,
+  ProcessStorageWithStatus32,
+  Unknown
+};
+
+[[nodiscard]] bool processStorageBarrier(LiveMemoryBarrier barrier) {
+  return barrier == LiveMemoryBarrier::ProcessStorage ||
+         barrier == LiveMemoryBarrier::ProcessStorageWithStatus32;
+}
 
 [[nodiscard]] bool mergeObject(ObjectFact &target, const ObjectFact &incoming,
                                bool widen);
@@ -3932,6 +3943,29 @@ void restoreDifferentWidthFields(AbstractState &state,
     publishConstructedScalar(state, pointer, fact);
 }
 
+void killUnknownMemory(const MirBody &body, AbstractState &state);
+
+// The storage transaction still invalidates every raw/prefix/address fact.
+// Only typed live scalar values survive; status writes also discard int32.
+// Preserve the prior barrier so a later sealed operation cannot erase an
+// earlier unknown write from a closed body's effect history.
+void preserveProcessStorageScalars(const MirProgram *program,
+                                   MirBodyAddress address, const MirBody &body,
+                                   AbstractState &state,
+                                   LiveMemoryBarrier barrier) {
+  auto saved = preserveDifferentWidthFields(
+      program, address, body, state,
+      barrier == LiveMemoryBarrier::ProcessStorageWithStatus32
+          ? std::optional<unsigned>{32}
+          : std::nullopt);
+  saved.pointees.clear();
+  const auto prior = state.liveMemoryBarrier;
+  killUnknownMemory(body, state);
+  restoreDifferentWidthFields(state, saved);
+  state.hasOpaqueEffects = true;
+  state.liveMemoryBarrier = std::max(prior, barrier);
+}
+
 // An opaque effect reaches only storage whose identity reached it. A local
 // binding that no earlier instruction may have captured, and that this
 // instruction does not take as an input, keeps its own non-byte integer
@@ -3974,7 +4008,6 @@ operandProtectedPlaces(const MirBody &body, const MirOperand &operand);
 operandMayAliasPlace(const MirBody &body,
                      const MirPlaceAliasEscapeAnalysis &aliases,
                      const MirOperand &operand, MirPlaceId tracked);
-void killUnknownMemory(const MirBody &body, AbstractState &state);
 void killGlobalAliases(const MirBody &body, AbstractState &state);
 void preserveLiveScalarFactsForConstruction(const MirProgram *program,
                                             MirBodyAddress address,
@@ -4017,6 +4050,55 @@ mayAliasRepresentedGlobal(const MirBody &body,
       });
 }
 
+// An owning prepared value is distinct from every surviving caller object.
+// Restrict this to closed scalar records with no address-bearing inventory or
+// active cleanup; a nominally generated move alone also permits pointers.
+[[nodiscard]] bool independentPreparedReceiver(const MirProgram &program,
+                                               const MirBody &body,
+                                               const MirOperand &operand) {
+  if (operand.kind != MirOperandKind::Value || !operand.value)
+    return false;
+  const auto *input = definingInstruction(body, operand.value);
+  if (!input || input->kind != MirInstructionKind::CallInput ||
+      input->info.category != ValueCategory::Value ||
+      input->info.type != operand.type ||
+      !isMirStructuralValueTransfer(program, *input))
+    return false;
+  std::set<HirClassInstanceId> visiting;
+  std::size_t budget = 64;
+  const auto scalarInventory = [&](const auto &self,
+                                   const SemanticType &type) -> bool {
+    if (!budget)
+      return false;
+    --budget;
+    if (isMirScalarValueType(&program, type))
+      return type.kind != SemanticType::RawPointer &&
+             type.kind != SemanticType::NullPtr;
+    if (type.kind != SemanticType::Class)
+      return false;
+    const MirClassInstance *record = nullptr;
+    for (const auto &candidate : program.classInstances())
+      if (candidate.type == type) {
+        if (record)
+          return false;
+        record = &candidate;
+      }
+    if (!record || record->destructor || record->cOpaqueHandle ||
+        record->destructorStatus != SpecialMemberStatus::Generated ||
+        record->compilerCapability != CompilerCapabilityTypeKind::None ||
+        record->traits.containsBorrowedState || record->unionLayout ||
+        record->polymorphic || record->abstract || !record->bases.empty() ||
+        !record->structuralBases.empty() || !visiting.insert(record->id).second)
+      return false;
+    const bool accepted = std::all_of(
+        record->declaredFields.begin(), record->declaredFields.end(),
+        [&](const auto &field) { return self(self, field.type); });
+    visiting.erase(record->id);
+    return accepted;
+  };
+  return scalarInventory(scalarInventory, operand.type);
+}
+
 void invalidateClosedCallInputs(const MirProgram &program, const MirBody &body,
                                 const MirPlaceAliasEscapeAnalysis &aliases,
                                 const MirInstruction &instruction,
@@ -4024,6 +4106,7 @@ void invalidateClosedCallInputs(const MirProgram &program, const MirBody &body,
                                 bool opaqueEffects,
                                 LiveMemoryBarrier liveMemoryBarrier,
                                 bool pointerRelayOnly,
+                                bool frameLocalWritesOnly,
                                 const MirLocalCaptureAnalysis *captures,
                                 AbstractState &state) {
   const auto killUnknownMemory = [&](const MirBody &body,
@@ -4037,14 +4120,20 @@ void invalidateClosedCallInputs(const MirProgram &program, const MirBody &body,
   const bool structuralConstructionOnly =
       opaqueEffects &&
       liveMemoryBarrier == LiveMemoryBarrier::VacantStructuralConstruction;
-  if (!summary || (opaqueEffects && (summary->traits.maySynchronize ||
-                                     (summary->traits.writesUnknownMemory &&
-                                      !structuralConstructionOnly)))) {
+  const bool processStorageOnly =
+      opaqueEffects && processStorageBarrier(liveMemoryBarrier);
+  if (!summary || (opaqueEffects &&
+                   (summary->traits.maySynchronize ||
+                    (summary->traits.writesUnknownMemory &&
+                     !structuralConstructionOnly && !processStorageOnly)))) {
     killUnknownMemory(body, state);
     return;
   }
   if (structuralConstructionOnly)
     preserveLiveScalarFactsForConstruction(&program, address, body, state);
+  else if (processStorageOnly)
+    preserveProcessStorageScalars(&program, address, body, state,
+                                  liveMemoryBarrier);
   const auto *function = target.kind == MirBodyKind::Function
                              ? program.findFunctionInstance(target.owner)
                              : nullptr;
@@ -4094,21 +4183,38 @@ void invalidateClosedCallInputs(const MirProgram &program, const MirBody &body,
   if (function && instruction.receiver &&
       receiverAllowsMutation(function->receiverMutability) &&
       (summary->traits.writesPlace || summary->receiverEscapes ||
-       function->receiverMutability == ReceiverMutability::Consuming))
-    invalidate(*instruction.receiver);
+       function->receiverMutability == ReceiverMutability::Consuming)) {
+    if (function->receiverMutability == ReceiverMutability::Consuming &&
+        !opaqueEffects && !summary->receiverEscapes &&
+        independentPreparedReceiver(program, body, *instruction.receiver)) {
+      // Only the consumed prepared value dies. No borrowed/caller place has
+      // been proved independent, and all ordinary arguments are still visited.
+      const auto value = instruction.receiver->value;
+      state.objectValues.erase(value);
+      state.stagedMetadata.erase(value);
+      state.valueAlternatives.erase(value);
+      state.fieldOrigins.erase(value);
+      state.aggregateOrigins.erase(value);
+      state.scalarAddressValues.erase(value);
+      state.entryRelativeValues.erase(value);
+    } else {
+      invalidate(*instruction.receiver);
+    }
+  }
   for (std::size_t index = 0; index < parameters->size(); ++index) {
     // Returning/forwarding a raw address does not overwrite another already
     // live object. Only the fully interpreted vacant structural profile may use
     // that contract; actual raw writes, destruction, or an unknown call mark
     // the successful path Unknown instead. Checked references and ordinary
     // receiver/global writes still invalidate their exact protected inputs.
-    if (structuralConstructionOnly &&
+    if ((structuralConstructionOnly || processStorageOnly) &&
         (*parameters)[index].kind == SemanticType::RawPointer)
       continue;
-    // An exact no-write source relay may return one input address. That escape
-    // is not a pointee write. Keep this separate from unknown retention/calls,
-    // and never apply the exception to reference or aggregate inputs.
-    if (pointerRelayOnly &&
+    // A closed frame/vacant-construction write profile can also copy an
+    // address into a fresh return carrier. Escaping the address is not an
+    // immediate pointee write; capture/alias analysis still sees the escape
+    // and later opaque operations still invalidate reachable storage.
+    if ((pointerRelayOnly || frameLocalWritesOnly) &&
         (*parameters)[index].kind == SemanticType::RawPointer)
       continue;
     const bool escapes = index >= summary->argumentsEscape.size() ||
@@ -4679,6 +4785,7 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
         !summary.processMemoryEffects && !summary.mayWriteGlobals &&
         invocation && !invocation->traits.maySynchronize &&
         summary.liveMemoryBarrier != LiveMemoryBarrier::Unknown &&
+        !processStorageBarrier(summary.liveMemoryBarrier) &&
         value.domain.width > 8 &&
         (!summary.scalarStoreWidth ||
          *summary.scalarStoreWidth != value.domain.width)) {
@@ -4809,10 +4916,11 @@ applyClosedCall(const MirBody &body, const MirPlaceAliasEscapeAnalysis &aliases,
           constantIntegerDomain(instruction.info.type) == field->second.domain)
         currentResultField = field->second;
   }
-  invalidateClosedCallInputs(closedCalls->program, body, aliases, instruction,
-                             address, *target, summary.hasOpaqueEffects,
-                             summary.liveMemoryBarrier, pointerRelayOnly,
-                             closedCalls->localCaptures, state);
+  invalidateClosedCallInputs(
+      closedCalls->program, body, aliases, instruction, address, *target,
+      summary.hasOpaqueEffects, summary.liveMemoryBarrier, pointerRelayOnly,
+      frameLocalWrites && !summary.hasOpaqueEffects && !summary.mayWriteGlobals,
+      closedCalls->localCaptures, state);
   if (summary.mayWriteGlobals) {
     // A checked reference or receiver can denote a callee-only global whose
     // Symbol is absent from this body. Current effect summaries do not carry
@@ -5991,11 +6099,10 @@ void applyInstructionCore(
     return;
   }
   if (const auto width = processScalarWriteWidth(program, instruction)) {
-    auto saved = preserveDifferentWidthFields(program, address, body, state,
-                                              *width ? width : std::nullopt);
-    saved.pointees.clear();
-    unknownEffectBarrier();
-    restoreDifferentWidthFields(state, saved);
+    preserveProcessStorageScalars(
+        program, address, body, state,
+        *width ? LiveMemoryBarrier::ProcessStorageWithStatus32
+               : LiveMemoryBarrier::ProcessStorage);
     return;
   }
 
@@ -6112,6 +6219,23 @@ void applyInstructionCore(
       if (instruction.destination)
         seedObjectFact(body, aliases, *instruction.destination, *object, state);
     }
+    return;
+  }
+  if (program && isMirStructuralPayloadExtraction(*program, instruction) &&
+      !effect.writesUnknownMemory && !effect.invokesUserCode &&
+      !effect.maySynchronize) {
+    // Extracting a passive payload retires its exact source storage. It is
+    // not an unknown write to unrelated objects. Keep no payload, pointer or
+    // variant provenance in the result; variant/lifetime validation remains
+    // owned by verified MIR.
+    invalidateValueStorage(program, address, body, aliases, state,
+                           instruction.operands.front().place);
+    state.integers.erase(*instruction.result);
+    state.arrayValues.erase(*instruction.result);
+    state.objectValues.erase(*instruction.result);
+    state.loadedOrigins.erase(*instruction.result);
+    state.fieldOrigins.erase(*instruction.result);
+    state.aggregateOrigins.erase(*instruction.result);
     return;
   }
   if (instruction.kind == MirInstructionKind::Compute) {
@@ -6798,6 +6922,12 @@ void applyInstructionCore(
     }
     return;
   }
+  if (program && address.kind == MirBodyKind::FieldInitializers) {
+    const auto *owner = program->findClassInstance(address.owner);
+    if (owner &&
+        isMirDeclarationOnlyFieldInitialization(*owner, body, instruction))
+      return; // Inventory only: the constructor owns the eventual write.
+  }
   if (instruction.kind != MirInstructionKind::Call) {
     const MirEffectTraits effect = effects(instruction);
     const bool opaque =
@@ -6812,6 +6942,17 @@ void applyInstructionCore(
       // destination, but does not itself introduce unknown execution effects.
       killUnknownMemory(body, state);
     }
+    return;
+  }
+
+  if ((instruction.intrinsic == IntrinsicKind::ObjectSize ||
+       instruction.intrinsic == IntrinsicKind::ObjectAlignment) &&
+      instruction.result && instruction.operands.empty() &&
+      !instruction.receiver && !instruction.destination &&
+      effect.speculatable && effect.removableWhenUnused && effect.reorderable) {
+    // Target layout queries compute values without touching existing objects.
+    // Do not infer the queried size or alignment here; their value owner is
+    // still the layout/backend contract.
     return;
   }
 
@@ -9461,6 +9602,7 @@ scalarStoreProfile(const MirProgram &program, MirBodyAddress address,
                                             .owner = constructor->owner};
           findMirBody(program, initializers) && !closedProfile(initializers))
         return {};
+
   const auto vacantReceiverField = [&](const MirInstruction &instruction) {
     const auto *destination = instruction.destination
                                   ? body.findPlace(*instruction.destination)
@@ -9655,6 +9797,11 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
               LiveMemoryBarrier::VacantStructuralConstruction)
             preserveLiveScalarFactsForConstruction(&program, address, *body,
                                                    entry);
+          else if (processStorageBarrier(
+                       initializers->second.liveMemoryBarrier))
+            preserveProcessStorageScalars(
+                &program, address, *body, entry,
+                initializers->second.liveMemoryBarrier);
           else
             killUnknownMemory(*body, entry);
           entry.hasOpaqueEffects = true;

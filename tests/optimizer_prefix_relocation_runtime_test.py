@@ -26,12 +26,12 @@ def main():
             command = [str(compiler), str(source), *flags, "-o", str(binary)]
             built = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
             assert built.returncode == 0, (command, built.stdout, built.stderr)
-            for case in range(15):
+            for case in range(20):
                 result = subprocess.run([str(binary), *(["x"] * case)],
                                         env=environment, capture_output=True, text=True, timeout=15)
-                assert result.returncode == (0 if case in (0, 5, 9, 10, 11, 13, 14) else 70), (mode, case, result)
+                assert result.returncode == (0 if case in (0, 5, 9, 10, 11, 13, 14, 15, 18) else 70), (mode, case, result)
                 assert result.stdout == "99\n", (mode, case, result.stdout, result.stderr)
-                if case not in (0, 5, 9, 10, 11, 13, 14):
+                if case not in (0, 5, 9, 10, 11, 13, 14, 15, 18):
                     assert "runtime error[GTI-R" in result.stderr and "GTI-R0014" not in result.stderr, (mode, case, result.stderr)
                 else:
                     assert not result.stderr, (mode, result.stderr)
