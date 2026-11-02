@@ -1040,6 +1040,8 @@ paths = [
   "stdlib/std/algorithm.gti",
   "stdlib/std/numeric.gti",
   "stdlib/std/detail/iterator.gti",
+  "stdlib/std/detail/sequence_removal.gti",
+  "stdlib/std/detail/key_removal.gti",
   "stdlib/std/detail/map_*",
   "stdlib/std/detail/unordered_map_iterators.gti",
 ]
@@ -1067,6 +1069,7 @@ owners = [
   "vector_scalar_constructor_runtime",
   "^generic_algorithm_breadth_(cpp20|cpp23|no_elide|sanitized)$",
   "generic_algorithm_cluster",
+  "removal_algorithms",
   "generic_algorithm_errors",
 ]
 consumers = [

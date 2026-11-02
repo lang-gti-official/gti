@@ -1756,3 +1756,15 @@ Language-facing ownership and native rules are documented in
 and [`docs/language/native-c-interop.md`](../language/native-c-interop.md).
 [ADR 004](../decisions/004-standard-library-runtime-boundary.md) records the
 rationale.
+
+
+### Source-defined removal algorithms
+
+`std/detail/sequence_removal.gti` owns indexed stable compaction and suffix
+cleanup. Public algorithm and container modules delegate to that shared policy.
+Checked restoring swaps preserve fully initialized vector/array slots; deque
+exchanges its node owners, string swaps bytes, and linked/associative containers
+unlink nodes under their existing exclusive owner borrow. These operations add
+no compiler name recognition, native runtime service, or backend authority.
+Predicates borrow one read-only element for the duration of the call; the loan
+ends before a swap/unlink. No element or cursor loan escapes the algorithm.
