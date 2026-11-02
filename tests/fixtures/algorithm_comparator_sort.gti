@@ -97,7 +97,9 @@ int main() {
       if (reverse != 0) { return reverse; }
     }
   }
-  int boundaries[8] = {2, 15, 16, 17, 39, 40, 41, 127};
+  // Exercise insertion, sampling, block-window and residual boundaries.
+  int boundaries[17] = {2, 15, 16, 17, 31, 32, 33, 39, 40, 41,
+                       63, 64, 65, 127, 129, 255, 257};
   for (int& count : boundaries) {
     for (mut int shape = 1; shape < 11; shape++) {
       if (exercise(count, shape, false) != 0 ||

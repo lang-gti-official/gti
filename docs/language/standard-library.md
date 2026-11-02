@@ -1083,6 +1083,11 @@ strict weak ordering. Each comparison borrows elements read-only, ending those
 loans before any swap. A failed comparator leaves a valid permutation, not a
 promised partially sorted order, and normal cleanup destroys each remaining
 element exactly once. Empty and singleton inputs perform no comparisons.
+The source implementation uses `get_unchecked` only where its subrange,
+window, or loop bounds establish a live element. Internal range-taking helpers
+are explicitly unsafe; the safe sort entry point establishes and preserves
+their range preconditions. These bounds do not depend on a comparator returning
+a particular answer. Restoring swaps retain their checks and cleanup behavior.
 See [move-only ordering](../../examples/104-move-only-ordering.gti).
 
 `std::string(begin, end, other)` copies the code units in the half-open interval

@@ -31,6 +31,9 @@ int main() {
     // it; a separate source fault-injection case exercises the overflow branch.
     provider_test_mode(1);
     auto within_target = provider.allocate(std::layout(uint64_t(4096), uint64_t(8))).expect("target-sized allocation");
+    // Force a real region: counting a replaceable process allocator does not
+    // prohibit eliding an otherwise unused allocation/release pair.
+    if (provider_test_region(within_target.address, within_target.bytes, within_target.alignment) != 0) { return 22; }
     provider.release(within_target);
     if (provider_test_calls() != 1 || provider_test_releases() != 1) { return 4; }
     provider_test_mode(0);
@@ -56,23 +59,38 @@ int main() {
     uint64_t pointer_bytes = std::layout_of<void*>().bytes;
     uint64_t pointer_alignment = std::layout_of<void*>().alignment;
     auto fitting = provider.allocate(std::layout(pointer_bytes, pointer_alignment)).expect("pointer witness");
+    if (provider_test_region(fitting.address, fitting.bytes, fitting.alignment) != 0) { return 23; }
     if (provider_test_ordinary_calls() != 1) { return 17; }
     provider.release(fitting);
     auto too_small = provider.allocate(std::layout(pointer_bytes - uint64_t(1), pointer_alignment)).expect("small aligned");
+    if (provider_test_region(too_small.address, too_small.bytes, too_small.alignment) != 0) { return 24; }
     if (provider_test_ordinary_calls() != 1) { return 18; }
     provider.release(too_small);
     auto too_aligned = provider.allocate(std::layout(pointer_bytes, pointer_alignment * uint64_t(2))).expect("over aligned");
+    if (provider_test_region(too_aligned.address, too_aligned.bytes, too_aligned.alignment) != 0) { return 25; }
     if (provider_test_ordinary_calls() != 1 || provider_test_calls() != 3) { return 19; }
     provider.release(too_aligned);
     if (provider_test_releases() != 3) { return 20; }
     provider_test_mode(2);
     auto ordinary_exhausted = provider.allocate(std::layout(uint64_t(1), uint64_t(1)));
-    if (ordinary_exhausted || ordinary_exhausted.error() != std::alloc_errc::resource_exhausted ||
+    if (ordinary_exhausted) {
+      auto& region = ordinary_exhausted.value();
+      if (provider_test_region(region.address, region.bytes, region.alignment) != 0) { return 26; }
+      provider.release(region);
+      return 21;
+    }
+    if (ordinary_exhausted.error() != std::alloc_errc::resource_exhausted ||
         provider_test_ordinary_calls() != 1 || provider_test_releases() != 0) { return 21; }
 #endif
     provider_test_mode(2);
     auto exhausted = provider.allocate(std::layout(uint64_t(16), uint64_t(8)));
-    if (exhausted || exhausted.error() != std::alloc_errc::resource_exhausted) { return 12; }
+    if (exhausted) {
+      auto& region = exhausted.value();
+      if (provider_test_region(region.address, region.bytes, region.alignment) != 0) { return 27; }
+      provider.release(region);
+      return 12;
+    }
+    if (exhausted.error() != std::alloc_errc::resource_exhausted) { return 12; }
 #if target.os != "windows"
     provider_test_mode(3);
     auto invalid = provider.allocate(std::layout(uint64_t(16), uint64_t(4096)));

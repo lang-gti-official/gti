@@ -24,7 +24,7 @@
       "kind": "source-backed-surface-manifest",
       "manifest": "tests/stdlib_surface_manifest.json",
       "member_count": 197,
-      "inventory_sha256": "2f4606de15193f5142a02472b39e8995648e47139dbc99122166700eed18cd01"
+      "inventory_sha256": "bfeff9c92584755e6aefc4d2b0b76d28faf6e09cfbcf62b0f9bbf3ed91032c32"
     }
   ],
   "family_obligations": [

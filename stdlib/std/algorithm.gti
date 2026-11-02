@@ -244,75 +244,82 @@ public:
 // phase states the same comparator contract as the public overloads.
 
 // Insertion sort of [low, high).
-void sort_insertion<std::relocatable T, Compare>(mut std::vector<T>& values,
+// Safety: low <= high <= values.size(); the caller keeps the live range fixed.
+// next < high and low < position <= next justify both unchecked reads.
+unsafe void sort_insertion<std::relocatable T, Compare>(mut std::vector<T>& values,
                                                  mut Compare& compare,
                                                  size_t low, size_t high)
   requires std::vector_element<T> && std::comparator<Compare, T> {
-  for (mut size_t next = low + size_t(1); next < high; next++) {
-    mut size_t position = next;
-    while (position > low) {
-      mut bool before = false;
-      {
-        std::vector<T>& readable = values;
-        before = compare(readable[position], readable[position - size_t(1)]);
+  unsafe {
+    for (mut size_t next = low + size_t(1); next < high; next++) {
+      mut size_t position = next;
+      while (position > low) {
+        mut bool before = false;
+        {
+          std::vector<T>& readable = values;
+          before = compare(readable.get_unchecked(position), readable.get_unchecked(position - size_t(1)));
+        }
+        if (!before) {
+          break;
+        }
+        values.swap_elements(position, position - size_t(1));
+        position--;
       }
-      if (!before) {
-        break;
-      }
-      values.swap_elements(position, position - size_t(1));
-      position--;
     }
   }
 }
 
+// Safety: low <= high <= values.size(); the live range stays fixed.
 // Heapsort of [low, high). root < end/2 proves 2*root+1 is an in-range child
 // without overflow; an odd-sized heap's last parent also has children at
 // root == end/2-1.
-void sort_heap<std::relocatable T, Compare>(mut std::vector<T>& values,
+unsafe void sort_heap<std::relocatable T, Compare>(mut std::vector<T>& values,
                                             mut Compare& compare, size_t low,
                                             size_t high)
   requires std::vector_element<T> && std::comparator<Compare, T> {
-  mut size_t end = high - low;
-  mut size_t start = end / size_t(2);
-  while (end > size_t(1)) {
-    mut size_t root = size_t(0);
-    if (start > size_t(0)) {
-      start--;
-      root = start;
-    } else {
-      end--;
-      values.swap_elements(low, low + end);
-    }
-    while (root < end / size_t(2)) {
-      mut size_t child = root * size_t(2) + size_t(1);
-      if (child + size_t(1) < end) {
-        mut bool larger = false;
+  unsafe {
+    mut size_t end = high - low;
+    mut size_t start = end / size_t(2);
+    while (end > size_t(1)) {
+      mut size_t root = size_t(0);
+      if (start > size_t(0)) {
+        start--;
+        root = start;
+      } else {
+        end--;
+        values.swap_elements(low, low + end);
+      }
+      while (root < end / size_t(2)) {
+        mut size_t child = root * size_t(2) + size_t(1);
+        if (child + size_t(1) < end) {
+          mut bool larger = false;
+          {
+            std::vector<T>& readable = values;
+            larger = compare(readable.get_unchecked(low + child),
+                             readable.get_unchecked(low + child + size_t(1)));
+          }
+          if (larger) {
+            child++;
+          }
+        }
+        mut bool before = false;
         {
           std::vector<T>& readable = values;
-          larger = compare(readable[low + child],
-                           readable[low + child + size_t(1)]);
+          before = compare(readable.get_unchecked(low + root), readable.get_unchecked(low + child));
         }
-        if (larger) {
-          child++;
+        if (!before) {
+          break;
         }
+        values.swap_elements(low + root, low + child);
+        root = child;
       }
-      mut bool before = false;
-      {
-        std::vector<T>& readable = values;
-        before = compare(readable[low + root], readable[low + child]);
-      }
-      if (!before) {
-        break;
-      }
-      values.swap_elements(low + root, low + child);
-      root = child;
     }
   }
 }
 
 // Return a sampled index, never a copied pivot. A three-comparison decision
 // tree avoids allocating or sorting a temporary array of sample indices.
-// The caller checks storage access before lending these values. Keeping that
+// The caller establishes live storage before lending these values. Keeping that
 // access outside this policy helper lets an infallible relation stay infallible.
 size_t sort_median_index<std::relocatable T, Compare>(T& first, T& middle, T& last,
                                                        mut Compare& compare,
@@ -335,30 +342,38 @@ size_t sort_median_index<std::relocatable T, Compare>(T& first, T& middle, T& la
 // known, one comparison per adjacent pair suffices. Disorder returns early;
 // no element moves and a failed comparator leaves the input unchanged.
 // 1 means nondecreasing (including all equal), -1 nonincreasing, 0 neither.
+// index starts at one and each read is guarded by index < size(), so both
+// adjacent indices are live. The shared borrow prevents structural mutation.
 int sort_monotonic_direction<std::relocatable T, Compare>(std::vector<T>& values,
                                                            mut Compare& compare)
   requires std::vector_element<T> && std::comparator<Compare, T> {
-  for (mut size_t index = size_t(1); index < values.size(); index++) {
-    if (compare(values[index], values[index - size_t(1)])) {
-      // Direction is now fixed. Continue with the same next comparison as
-      // the discovery loop, without testing direction on every element.
-      index++;
-      for (; index < values.size(); index++) {
-        if (compare(values[index - size_t(1)], values[index])) { return 0; }
+  unsafe {
+    for (mut size_t index = size_t(1); index < values.size(); index++) {
+      if (compare(values.get_unchecked(index), values.get_unchecked(index - size_t(1)))) {
+        // Direction is now fixed. Continue with the same next comparison as
+        // the discovery loop, without testing direction on every element.
+        index++;
+        for (; index < values.size(); index++) {
+          if (compare(values.get_unchecked(index - size_t(1)), values.get_unchecked(index))) { return 0; }
+        }
+        return -1;
       }
-      return -1;
-    }
-    if (compare(values[index - size_t(1)], values[index])) {
-      index++;
-      for (; index < values.size(); index++) {
-        if (compare(values[index], values[index - size_t(1)])) { return 0; }
+      if (compare(values.get_unchecked(index - size_t(1)), values.get_unchecked(index))) {
+        index++;
+        for (; index < values.size(); index++) {
+          if (compare(values.get_unchecked(index), values.get_unchecked(index - size_t(1)))) { return 0; }
+        }
+        return 1;
       }
-      return 1;
     }
+    return 1;
   }
-  return 1;
 }
 
+// Safety: low < high <= values.size(), high-low > 16, and the live range
+// remains fixed. Sample indices stay inside the range; block scans read only
+// the disjoint 32-element windows, and scalar scans test their bounds before
+// every read. These facts do not rely on the comparator choosing an answer.
 // Partitions [low, high), which holds more than 16 elements, and returns the
 // pivot's final index: earlier elements are not after it and later elements
 // are not before it. The pivot is the median of the first, middle and last
@@ -367,118 +382,120 @@ int sort_monotonic_direction<std::relocatable T, Compare>(std::vector<T>& values
 // 1993). Both scans stop at elements equal to the pivot, so runs of equal
 // elements split evenly, and both stay inside (low, high) whatever the
 // comparison answers.
-size_t sort_partition<std::relocatable T, Compare>(mut std::vector<T>& values,
+unsafe size_t sort_partition<std::relocatable T, Compare>(mut std::vector<T>& values,
                                                    mut Compare& compare,
                                                    size_t low, size_t high)
   requires std::vector_element<T> && std::comparator<Compare, T> {
-  size_t count = high - low;
-  size_t middle = low + count / size_t(2);
-  size_t last = high - size_t(1);
-  mut bool before = false;
-  mut size_t pivot = size_t(0);
-  {
-    std::vector<T>& readable = values;
-    if (count > size_t(40)) {
-      size_t step = count / size_t(8);
-      size_t first_sample = sort_median_index(
-          readable[low], readable[low + step], readable[low + step * size_t(2)],
-          compare, low, low + step, low + step * size_t(2));
-      size_t middle_sample = sort_median_index(
-          readable[middle - step], readable[middle], readable[middle + step],
-          compare, middle - step, middle, middle + step);
-      size_t last_sample = sort_median_index(
-          readable[last - step * size_t(2)], readable[last - step], readable[last],
-          compare, last - step * size_t(2), last - step, last);
-      pivot = sort_median_index(
-          readable[first_sample], readable[middle_sample], readable[last_sample],
-          compare, first_sample, middle_sample, last_sample);
-    } else {
-      pivot = sort_median_index(readable[low], readable[middle], readable[last],
-                                compare, low, middle, last);
+  unsafe {
+    size_t count = high - low;
+    size_t middle = low + count / size_t(2);
+    size_t last = high - size_t(1);
+    mut bool before = false;
+    mut size_t pivot = size_t(0);
+    {
+      std::vector<T>& readable = values;
+      if (count > size_t(40)) {
+        size_t step = count / size_t(8);
+        size_t first_sample = sort_median_index(
+            readable.get_unchecked(low), readable.get_unchecked(low + step), readable.get_unchecked(low + step * size_t(2)),
+            compare, low, low + step, low + step * size_t(2));
+        size_t middle_sample = sort_median_index(
+            readable.get_unchecked(middle - step), readable.get_unchecked(middle), readable.get_unchecked(middle + step),
+            compare, middle - step, middle, middle + step);
+        size_t last_sample = sort_median_index(
+            readable.get_unchecked(last - step * size_t(2)), readable.get_unchecked(last - step), readable.get_unchecked(last),
+            compare, last - step * size_t(2), last - step, last);
+        pivot = sort_median_index(
+            readable.get_unchecked(first_sample), readable.get_unchecked(middle_sample), readable.get_unchecked(last_sample),
+            compare, first_sample, middle_sample, last_sample);
+      } else {
+        pivot = sort_median_index(readable.get_unchecked(low), readable.get_unchecked(middle), readable.get_unchecked(last),
+                                  compare, low, middle, last);
+      }
     }
-  }
-  values.swap_elements(low, pivot);
-  mut size_t left = low + size_t(1);
-  mut size_t right = last;
-  if (count > size_t(128)) {
-    // Compare whole disjoint windows before moving elements. Every recorded
-    // index names a misplaced element; paired restoring swaps classify both.
-    // The pivot stays at low and all comparator borrows end before mutation.
-    mut size_t left_offsets[32] = {};
-    mut size_t right_offsets[32] = {};
-    mut size_t left_count = size_t(0);
-    mut size_t right_count = size_t(0);
-    mut size_t left_used = size_t(0);
-    mut size_t right_used = size_t(0);
-    while (right - left >= size_t(64)) {
-      if (left_used == left_count) {
-        left_used = size_t(0);
-        left_count = size_t(0);
-        for (mut size_t index = size_t(0); index < size_t(32); index++) {
-          left_offsets[left_count] = index;
-          {
-            std::vector<T>& readable = values;
-            before = compare(readable[left + index], readable[low]);
+    values.swap_elements(low, pivot);
+    mut size_t left = low + size_t(1);
+    mut size_t right = last;
+    if (count > size_t(128)) {
+      // Compare whole disjoint windows before moving elements. Every recorded
+      // index names a misplaced element; paired restoring swaps classify both.
+      // The pivot stays at low and all comparator borrows end before mutation.
+      mut size_t left_offsets[32] = {};
+      mut size_t right_offsets[32] = {};
+      mut size_t left_count = size_t(0);
+      mut size_t right_count = size_t(0);
+      mut size_t left_used = size_t(0);
+      mut size_t right_used = size_t(0);
+      while (right - left >= size_t(64)) {
+        if (left_used == left_count) {
+          left_used = size_t(0);
+          left_count = size_t(0);
+          for (mut size_t index = size_t(0); index < size_t(32); index++) {
+            left_offsets[left_count] = index;
+            {
+              std::vector<T>& readable = values;
+              before = compare(readable.get_unchecked(left + index), readable.get_unchecked(low));
+            }
+            left_count += before ? size_t(0) : size_t(1);
           }
-          left_count += before ? size_t(0) : size_t(1);
         }
-      }
-      if (right_used == right_count) {
-        right_used = size_t(0);
-        right_count = size_t(0);
-        for (mut size_t index = size_t(0); index < size_t(32); index++) {
-          right_offsets[right_count] = index;
-          {
-            std::vector<T>& readable = values;
-            before = compare(readable[low], readable[right - index]);
+        if (right_used == right_count) {
+          right_used = size_t(0);
+          right_count = size_t(0);
+          for (mut size_t index = size_t(0); index < size_t(32); index++) {
+            right_offsets[right_count] = index;
+            {
+              std::vector<T>& readable = values;
+              before = compare(readable.get_unchecked(low), readable.get_unchecked(right - index));
+            }
+            right_count += before ? size_t(0) : size_t(1);
           }
-          right_count += before ? size_t(0) : size_t(1);
         }
+        while (left_used < left_count && right_used < right_count) {
+          values.swap_elements(left + left_offsets[left_used],
+                               right - right_offsets[right_used]);
+          left_used++;
+          right_used++;
+        }
+        // At least one window is complete. Never move an unfinished window's
+        // boundary: its remaining recorded offsets must stay valid.
+        if (left_used == left_count) { left += size_t(32); }
+        if (right_used == right_count) { right -= size_t(32); }
       }
-      while (left_used < left_count && right_used < right_count) {
-        values.swap_elements(left + left_offsets[left_used],
-                             right - right_offsets[right_used]);
-        left_used++;
-        right_used++;
-      }
-      // At least one window is complete. Never move an unfinished window's
-      // boundary: its remaining recorded offsets must stay valid.
-      if (left_used == left_count) { left += size_t(32); }
-      if (right_used == right_count) { right -= size_t(32); }
+      // Rescan the small residual interval, including any unfinished window.
+      // Discarding its offset metadata cannot discard unclassified elements.
     }
-    // Rescan the small residual interval, including any unfinished window.
-    // Discarding its offset metadata cannot discard unclassified elements.
-  }
-  while (true) {
-    while (left <= right) {
-      {
-        std::vector<T>& readable = values;
-        before = compare(readable[left], readable[low]);
+    while (true) {
+      while (left <= right) {
+        {
+          std::vector<T>& readable = values;
+          before = compare(readable.get_unchecked(left), readable.get_unchecked(low));
+        }
+        if (!before) {
+          break;
+        }
+        left++;
       }
-      if (!before) {
+      while (left <= right) {
+        {
+          std::vector<T>& readable = values;
+          before = compare(readable.get_unchecked(low), readable.get_unchecked(right));
+        }
+        if (!before) {
+          break;
+        }
+        right--;
+      }
+      if (left >= right) {
         break;
       }
+      values.swap_elements(left, right);
       left++;
-    }
-    while (left <= right) {
-      {
-        std::vector<T>& readable = values;
-        before = compare(readable[low], readable[right]);
-      }
-      if (!before) {
-        break;
-      }
       right--;
     }
-    if (left >= right) {
-      break;
-    }
-    values.swap_elements(left, right);
-    left++;
-    right--;
+    values.swap_elements(low, right);
+    return right;
   }
-  values.swap_elements(low, right);
-  return right;
 }
 
 // Adaptive introsort. Monotonic whole inputs finish in linear time; otherwise
@@ -489,7 +506,9 @@ size_t sort_partition<std::relocatable T, Compare>(mut std::vector<T>& values,
 // continues with the smaller side, so at most log2(n) < 64 ranges wait at
 // once and sorting never allocates. Only checked restoring swaps move
 // elements, so an interrupted sort leaves a permutation of the original
-// elements.
+// elements. Every pending interval is a subrange of the original live prefix;
+// splitting at the returned in-range pivot preserves the unsafe helper
+// preconditions. Comparator borrows end before each restoring swap.
 void introsort<std::relocatable T, Compare>(mut std::vector<T>& values,
                                             mut Compare& compare)
   requires std::vector_element<T> && std::comparator<Compare, T> {
@@ -517,12 +536,13 @@ void introsort<std::relocatable T, Compare>(mut std::vector<T>& values,
   mut size_t depth = sort_depth_limit(high);
   while (true) {
     if (high - low <= size_t(16)) {
-      sort_insertion(values, compare, low, high);
+      unsafe { sort_insertion(values, compare, low, high); }
     } else if (depth == size_t(0)) {
-      sort_heap(values, compare, low, high);
+      unsafe { sort_heap(values, compare, low, high); }
     } else {
       depth--;
-      size_t pivot = sort_partition(values, compare, low, high);
+      mut size_t pivot = size_t(0);
+      unsafe { pivot = sort_partition(values, compare, low, high); }
       if (pivot - low < high - pivot - size_t(1)) {
         lows[waiting] = pivot + size_t(1);
         highs[waiting] = high;
