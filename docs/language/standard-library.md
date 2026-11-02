@@ -373,12 +373,17 @@ The current implemented foundation includes:
   of a named owner or direct ownership transfer from a fresh string result;
   and
 - `std.vector` `std::vector<T>` as a move-only dynamic owner with checked
-  indexed access,
+  indexed access and read-only `contains(T& value)` membership search,
   reserve, resize, shrink-to-fit, clear, push/pop, indexed insertion/erasure,
   read-only traversal, in-place emplacement, explicit cloneable-element
   cloning, and construction from one contextual fixed-array value such as
   `std::vector<int>({1, 2, 3})`; this constructor copies elements from its
-  owned array parameter and therefore requires copyable `T` when used. Public
+  owned array parameter and therefore requires copyable `T` when used.
+  `contains` borrows a named `T` value, compares in order until the first match,
+  and returns `false` for an empty vector. It performs at most `size()` equality
+  comparisons with no element copies or search-storage allocation. Only this
+  method requires `std::equality_comparable<T>`; unrelated vector operations
+  remain available for non-comparable elements. Public
   type aliases are `std::vector<T>::const_iterator` (read-only), `::iterator`
   (exclusive writable traversal), and `::sentinel`. `begin()` returns
   `const_iterator`, `begin_mut() mut` returns `iterator`, and `end()` returns

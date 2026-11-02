@@ -251,7 +251,7 @@ is a teaching helper, not a production server.
 | `035-conditional-expressions.gti` | lazy conditional values and explicit move selection |
 | `036-c-abi-sockets.gti` | bounded `extern "C"` interoperability with POSIX `socket` and `close` |
 | `037-tcp-socket-owner.gti` | a move-only `std::tcp::socket` owner over the POSIX C ABI |
-| `038-vector-emplace.gti` | move-aware dynamic storage, checked and unsafe unchecked access, read-only iteration, and in-place construction |
+| `038-vector-emplace.gti` | move-aware dynamic storage, checked and unsafe unchecked access, read-only iteration and membership search, and in-place construction |
 | `039-raw-pointers.gti` | one-level raw pointers, unsafe declaration/call contracts, lexical `unsafe`, and pointer arithmetic |
 | `040-loan-flow-edges.gti` | bounded switch-exit and immediate-`break` retained-loan endings |
 | `041-owner-dependencies.gti` | single-origin read-only and mutable owner dependencies through factories, generics, moves, and returns |
