@@ -18,6 +18,11 @@ int interpolate(int first, int last, int divisor, int mode) {
   return current + difference / divisor;
 }
 
+uint64_t unsigned_interpolate(uint64_t first, uint64_t last, uint64_t divisor, int mode) {
+  if (mode == 4) return first + (last - first) / divisor;
+  return first + std::wrapping_sub(last, first) / divisor;
+}
+
 int main(int argc, std::vector<std::string> argv) {
   if (argc != 5) return 10;
   int endpoints[8] = {-2147483647 - 1, -2147483647, -8, -1, 0, 1, 8, 2147483647};
@@ -27,6 +32,17 @@ int main(int argc, std::vector<std::string> argv) {
   int last = endpoints[argv[std::size_t(2)].size()];
   int divisor = divisors[argv[std::size_t(3)].size()];
   int mode = int(argv[std::size_t(4)].size());
+  if (mode >= 4) {
+    uint64_t unsigned_endpoints[8] = {0, 1, 2, 8, 2147483647, 4294967295,
+      uint64_t(18446744073709551614), uint64_t(18446744073709551615)};
+    uint64_t unsigned_divisors[8] = {0, 1, 2, 3, 7, 8, 4294967295,
+      uint64_t(18446744073709551615)};
+    std::println(unsigned_interpolate(
+      unsigned_endpoints[argv[std::size_t(1)].size()],
+      unsigned_endpoints[argv[std::size_t(2)].size()],
+      unsigned_divisors[argv[std::size_t(3)].size()], mode));
+    return 0;
+  }
   std::println(interpolate(first, last, divisor, mode));
   return 0;
 }

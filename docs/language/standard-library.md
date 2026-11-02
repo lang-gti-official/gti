@@ -983,6 +983,9 @@ traversal carries one exclusive dependency. `map` additionally provides
 `bucket_count`, `load_factor`, and read/write `max_load_factor`; a new finite,
 positive maximum applies to later growth/reserve/rehash without immediately
 rehashing existing elements.
+`reserve(n)` prepares both the bucket array and the owning node-index array for
+at least `n` entries. Entry objects are still allocated separately; reserving
+does not construct keys or values or change the container's size.
 
 Name a specialized member type through a concrete alias, for example
 `using Dictionary = std::map<int, int>;` followed by `Dictionary::iterator`.

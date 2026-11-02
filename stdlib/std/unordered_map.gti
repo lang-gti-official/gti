@@ -235,6 +235,9 @@ public:
   void reserve(size_t requested) mut {
     size_t minimum = this.minimum_buckets(requested);
     if (minimum > this.buckets.size()) { this.rehash(minimum); }
+    // Entry objects keep their stable addresses; reserve their owning index
+    // as well so insertion up to the requested size does not grow that array.
+    this.nodes.reserve(requested);
   }
   void clear() mut {
     this.element_count = 0;

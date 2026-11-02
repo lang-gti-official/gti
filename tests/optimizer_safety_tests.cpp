@@ -1388,6 +1388,9 @@ int32_t reversed(int32_t first, int32_t last) {
 int32_t extremes(int32_t first, int32_t last) {
   return first + (last - first) / 2;
 }
+uint64_t unsigned_extremes(uint64_t first, uint64_t last) {
+  return first + (last - first) / uint64_t(2);
+}
 int32_t unrelated(int32_t first, int32_t last, int32_t other) {
   mut int32_t values[8] = {};
   if (first < 0) return 0;
@@ -1454,6 +1457,16 @@ int32_t main() { return 0; }
            "writing the base retires its earlier scalar equivalence");
     expect(arithmetic("wrapped_delta", lang::MirOperation::Add) == 0,
            "a modular difference does not obey checked interpolation bounds");
+    expect(functionOperationDischarges(
+               frontend, optimized, "unsigned_extremes",
+               lang::MirSafetyCheckFamily::ArithmeticOverflow,
+               lang::MirOperation::Add, lang::SemanticType::UInt64) == 1 &&
+               functionOperationDischarges(
+                   frontend, optimized, "unsigned_extremes",
+                   lang::MirSafetyCheckFamily::ArithmeticOverflow,
+                   lang::MirOperation::Subtract,
+                   lang::SemanticType::UInt64) == 0,
+           "unsigned interpolation keeps an earlier subtract-underflow check");
   }
 }
 
