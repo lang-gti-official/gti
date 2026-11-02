@@ -801,7 +801,7 @@
       }
     },
     "052-stateful-callables.gti": {
-      "declarations": 1729,
+      "declarations": 1730,
       "bodies": 161,
       "generated_items": 113,
       "generated_kinds": {
@@ -1041,7 +1041,7 @@
       }
     },
     "067-forward-iterators.gti": {
-      "declarations": 1697,
+      "declarations": 1698,
       "bodies": 144,
       "generated_items": 102,
       "generated_kinds": {
@@ -1201,7 +1201,7 @@
       }
     },
     "077-callable-concepts.gti": {
-      "declarations": 1706,
+      "declarations": 1707,
       "bodies": 160,
       "generated_items": 112,
       "generated_kinds": {
@@ -1249,7 +1249,7 @@
       }
     },
     "080-function-items.gti": {
-      "declarations": 1703,
+      "declarations": 1704,
       "bodies": 147,
       "generated_items": 102,
       "generated_kinds": {
@@ -1265,7 +1265,7 @@
       }
     },
     "083-complete-ranges.gti": {
-      "declarations": 1711,
+      "declarations": 1712,
       "bodies": 172,
       "generated_items": 118,
       "generated_kinds": {
@@ -1377,18 +1377,18 @@
       }
     },
     "090-generic-algorithms.gti": {
-      "declarations": 2084,
-      "bodies": 436,
-      "generated_items": 325,
+      "declarations": 2243,
+      "bodies": 612,
+      "generated_items": 444,
       "generated_kinds": {
-        "program_initialization": 0,
+        "program_initialization": 1,
         "hosted_entry": 1,
-        "structural_operator_adapter": 43,
+        "structural_operator_adapter": 51,
         "callable_adapter": 20,
-        "lifecycle_cleanup": 9,
+        "lifecycle_cleanup": 13,
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
-        "concrete_instance_adapter": 252,
+        "concrete_instance_adapter": 358,
         "thread_local_storage": 0
       }
     },
@@ -1553,7 +1553,7 @@
       }
     },
     "101-owned-algorithm-results.gti": {
-      "declarations": 1860,
+      "declarations": 1861,
       "bodies": 327,
       "generated_items": 236,
       "generated_kinds": {
@@ -1601,7 +1601,7 @@
       }
     },
     "104-move-only-ordering.gti": {
-      "declarations": 1947,
+      "declarations": 1948,
       "bodies": 259,
       "generated_items": 178,
       "generated_kinds": {
@@ -2161,7 +2161,7 @@
       }
     },
     "139-ordered-search.gti": {
-      "declarations": 1709,
+      "declarations": 1710,
       "bodies": 196,
       "generated_items": 138,
       "generated_kinds": {
@@ -2289,7 +2289,7 @@
       }
     },
     "147-standard-library-import.gti": {
-      "declarations": 3498,
+      "declarations": 3499,
       "bodies": 472,
       "generated_items": 263,
       "generated_kinds": {
@@ -2721,7 +2721,7 @@
       }
     },
     "173-general-requires.gti": {
-      "declarations": 1826,
+      "declarations": 1827,
       "bodies": 194,
       "generated_items": 97,
       "generated_kinds": {
@@ -2880,6 +2880,22 @@
         "thread_local_storage": 0
       }
     },
+    "182-bounded-array-borrows.gti": {
+      "declarations": 1828,
+      "bodies": 156,
+      "generated_items": 80,
+      "generated_kinds": {
+        "program_initialization": 1,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 31,
+        "callable_adapter": 19,
+        "lifecycle_cleanup": 5,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 23,
+        "thread_local_storage": 0
+      }
+    },
     "183-immediate-functions.gti": {
       "declarations": 415,
       "bodies": 11,
@@ -2927,28 +2943,12 @@
         "concrete_instance_adapter": 13,
         "thread_local_storage": 0
       }
-    },
-    "182-bounded-array-borrows.gti": {
-      "declarations": 1828,
-      "bodies": 156,
-      "generated_items": 80,
-      "generated_kinds": {
-        "program_initialization": 1,
-        "hosted_entry": 1,
-        "structural_operator_adapter": 31,
-        "callable_adapter": 19,
-        "lifecycle_cleanup": 5,
-        "native_interop_adapter": 0,
-        "thread_task_adapter": 0,
-        "concrete_instance_adapter": 23,
-        "thread_local_storage": 0
-      }
     }
   },
   "totals": {
-    "declarations": 224982,
-    "bodies": 28368,
-    "generated_items": 16674
+    "declarations": 225151,
+    "bodies": 28544,
+    "generated_items": 16793
   },
   "target": "arm64-apple-macos",
   "variants": {
@@ -2988,9 +2988,9 @@
         }
       },
       "totals": {
-        "declarations": 224982,
-        "bodies": 28366,
-        "generated_items": 16672
+        "declarations": 225151,
+        "bodies": 28542,
+        "generated_items": 16791
       }
     }
   }

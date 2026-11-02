@@ -18,6 +18,7 @@ import std.deque;
 import std.array;
 import std.set;
 import std.string;
+import std.map;
 """
     negatives = {
         "overlapping-transform": 'int main() { mut std::vector<int> x = {1}; std::transform(x, x, [](int& n) -> int { return n + 1; }); return 0; }',
@@ -30,6 +31,14 @@ import std.string;
         "overlapping-copy": 'int main() { mut std::vector<int> x = {1}; std::copy_n(x.begin(), std::size_t(1), x.begin_mut()); return 0; }',
         "immutable-keys": 'int main() { mut std::set<int> x = {1}; int old = 1; int replacement = 2; std::replace(x, old, replacement); return 0; }',
         "bad-comparison": 'struct Item { int x = 0;  public: Item() = default; }; int main() { std::vector<Item> x = {Item()}; return std::equal(x.begin(), x.end(), x.begin(), x.end()) ? 1 : 0; }',
+        "max-wrong-result": 'int main() { std::vector<int> x = {1, 2}; auto best = std::max_element(x.begin(), x.end(), [](int& a, int& b) -> int { return a - b; }); return 0; }',
+        "max-wrong-argument": 'int main() { std::vector<int> x = {1, 2}; auto best = std::max_element(x.begin(), x.end(), [](double& a, double& b) -> bool { return a < b; }); return 0; }',
+        "max-mutable-element": 'int main() { mut std::vector<int> x = {1, 2}; auto best = std::max_element(x.begin(), x.end(), [](mut int& a, int& b) -> bool { a = b; return true; }); return 0; }',
+        "max-once-callable": 'class Once { public: Once() = default; bool operator()(int& a, int& b) && { return a < b; } }; int main() { std::vector<int> x = {1, 2}; auto best = std::max_element(x.begin(), x.end(), Once()); return 0; }',
+        "max-unsafe-callable": 'unsafe bool order(int& a, int& b) { return a < b; } int main() { std::vector<int> x = {1, 2}; auto best = std::max_element(x.begin(), x.end(), order); return 0; }',
+        "max-retained-owner": 'int main() { mut std::vector<int> x = {1, 2}; auto best = std::max_element(x.begin(), x.end(), [](int& a, int& b) -> bool { return a < b; }); x.clear(); return *best; }',
+        "max-retained-map": 'using Entry = std::map<int, int>::value_type; int main() { mut std::map<int, int> x{}; x.insert(1, 2); auto best = std::max_element(x.begin(), x.end(), [](Entry& a, Entry& b) -> bool { return a.second < b.second; }); x.clear(); return (*best).second; }',
+        "max-noncopy-cursor": 'using Entry = std::map<int, int>::value_type; int main() { mut std::map<int, int> x{}; x.insert(1, 2); auto best = std::max_element(x.begin_mut(), x.end(), [](Entry& a, Entry& b) -> bool { return a.second < b.second; }); return 0; }',
     }
     for container in ("list", "deque", "array"):
         init = f'mut std::{container}<int> x = {{1, 2}};' if container != "array" else 'mut std::array<int, 2> x{};'
@@ -53,17 +62,18 @@ import std.string;
                 assert "GTI-S2024" not in checked.stderr, checked.stderr
             if name == "copy-owner":
                 assert "error[GTI-S2003]" in checked.stderr and "Cannot copy assign" in checked.stderr, checked.stderr
-        for level in ("O0", "O3"):
-            binary = root / level
+        for backend, level in ((b, o) for b in ("cpp", "llvm") for o in ("O0", "O3")):
+            binary = root / f"{backend}-{level}"
             build = subprocess.run([str(compiler), str(repository / "tests/fixtures/algorithm_failure.gti"),
-                                    f"-{level}", "-o", str(binary)], env=environment, capture_output=True, text=True, timeout=120)
+                                    "--backend", backend, f"-{level}", "-o", str(binary)], env=environment, capture_output=True, text=True, timeout=120)
             assert build.returncode == 0, build
-            for count in range(4):
+            for count in range(5):
                 result = subprocess.run([str(binary), *(["fail"] * count)], env=environment,
                                         capture_output=True, text=True, timeout=30)
-                assert result.returncode == 70 and result.stdout == "99\n", (count, result)
+                expected = "77\n99\n" if count == 4 else "99\n"
+                assert result.returncode == 70 and result.stdout == expected, (count, result)
                 assert "runtime error[GTI-R" in result.stderr, result
-    print(f"generic algorithms: {len(negatives)} semantic rejections and eight failure cleanups passed")
+    print(f"generic algorithms: {len(negatives)} semantic rejections and twenty failure cleanups passed")
 
 
 if __name__ == "__main__":

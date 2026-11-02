@@ -3,7 +3,7 @@
   "source_fingerprints": {
     "stdlib/prelude.gti": "ff426a31d12405cd7a6f09ad46cf76c14f7d3b0a1fadef595c6ad7a4d4d3f831",
     "stdlib/std.gti": "6bf76540ce1d32024871a3fce4b9512fd6fd494511f919db63450e2b4796a0f7",
-    "stdlib/std/algorithm.gti": "0b11f6332b1aa9cb3f0b5be90680a81e5f5e7fcd6cc38322f65263e87d6f7f2b",
+    "stdlib/std/algorithm.gti": "b8617ff49b7f8eb1df8c599f086158270f6dde77af182b4caf7763a73da5897a",
     "stdlib/std/array.gti": "affed4f1d587a71a098ef7c9b381e6c255d8b639492abbe9a46b31e00115adde",
     "stdlib/std/assert.gti": "c34ddabb3ce77983232aa13452cf036dba6202cdbd8d2bb7e1c0d9f0a8b6d78d",
     "stdlib/std/atomic.gti": "d51045256225848941363200bff10a2fe1bf30b66915a06b89e1fce546d1aed1",
@@ -95,6 +95,21 @@
         "stdout": "",
         "stderr": ""
       }
+    },
+    {
+      "id": "algorithm-max-element",
+      "mode": "run",
+      "source": "tests/fixtures/algorithm_max_element.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "backend": "llvm"
     },
     {
       "id": "algorithm-mutation",
@@ -2958,16 +2973,17 @@
       "case_ids": [
         "algorithm",
         "algorithm-boundaries",
+        "algorithm-max-element",
         "algorithm-mutation",
-        "algorithm-search",
-        "algorithm-user-types",
-        "constexpr-library",
         "algorithm-ordered-search",
         "algorithm-ordered-search-cost",
         "algorithm-ordered-search-example",
         "algorithm-ordered-search-user-types",
-        "algorithm-owned-transform",
         "algorithm-owned-example",
+        "algorithm-owned-transform",
+        "algorithm-search",
+        "algorithm-user-types",
+        "constexpr-library",
         "restoring-indexed",
         "restoring-order",
         "restoring-order-example"
@@ -2981,20 +2997,21 @@
         "forward cursors with owning unordered records and move-only mutable query callbacks"
       ],
       "evidence": [
-        "tests/fixtures/stdlib_surface_algorithm.gti",
+        "examples/139-ordered-search.gti",
+        "stdlib/std/algorithm.gti",
+        "tests/fixtures/algorithm_max_element.gti",
+        "tests/fixtures/complete_range_probe.gti",
         "tests/fixtures/generic_algorithm_find_count.gti",
         "tests/fixtures/generic_algorithm_for_each.gti",
         "tests/fixtures/generic_callable_concepts.gti",
-        "tests/fixtures/complete_range_probe.gti",
-        "tests/generic_algorithm_cluster_test.py",
-        "tests/generic_callable_concepts_runtime_test.py",
-        "tests/generic_algorithm_breadth_test.py",
-        "tests/generic_algorithm_errors_test.py",
-        "tests/ordered_search_runtime_test.py",
         "tests/fixtures/ordered_search.gti",
         "tests/fixtures/ordered_search_user_types.gti",
-        "examples/139-ordered-search.gti",
-        "stdlib/std/algorithm.gti"
+        "tests/fixtures/stdlib_surface_algorithm.gti",
+        "tests/generic_algorithm_breadth_test.py",
+        "tests/generic_algorithm_cluster_test.py",
+        "tests/generic_algorithm_errors_test.py",
+        "tests/generic_callable_concepts_runtime_test.py",
+        "tests/ordered_search_runtime_test.py"
       ]
     },
     {
