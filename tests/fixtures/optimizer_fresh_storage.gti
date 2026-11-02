@@ -72,6 +72,20 @@ void payload_scratch(bool good) {
   case NativeAllocationPacket::absent: break;
   }
 }
+void status_and_join_scratch(bool alternate) {
+  mut void* pointer = nullptr;
+  if (alternate) {
+    pointer = fresh_pointer();
+  } else {
+#if target.os == "windows"
+    unsafe { pointer = gti_internal::runtime::gti_rt_aligned_malloc_v1(uint64_t(64), uint64_t(16)); }
+#else
+    mut int32_t status = 0;
+    unsafe { pointer = gti_internal::runtime::gti_rt_posix_memalign_v1(uint64_t(64), uint64_t(16), &status); }
+#endif
+  }
+  unsafe { release_pointer(pointer); }
+}
 int32_t fresh_probe(int32_t value) {
   mut PrefixParcel parcel{};
   parcel.append(value);
@@ -79,6 +93,7 @@ int32_t fresh_probe(int32_t value) {
   descriptor_scratch();
   payload_scratch(true);
   payload_scratch(false);
+  status_and_join_scratch(value == int32_t(9));
   return parcel.borrow() * int32_t(2);
 }
 int main(int argc, std::vector<std::string> argv) {

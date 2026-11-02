@@ -49,6 +49,8 @@ int exercise(int count, int shape, bool descending) {
     if (shape == 9 && i == count - 2) { value = count - 1; }
     if (shape == 9 && i == count - 1) { value = count - 2; }
     if (shape == 10) { value = (count - i - 1) / 4; }
+    if (shape == 11) { value = i == 0 ? count - 1 : (i == 1 ? 0 : count / 2); }
+    if (shape == 12) { value = i % 32 == 0 || i % 32 == 31 ? count - 1 : 0; }
     values.push_back(value);
     frequencies[std::size_t(value)]++;
   }
@@ -90,7 +92,7 @@ int exercise(int count, int shape, bool descending) {
 
 int main() {
   for (mut int count = 128; count <= 1024; count *= 2) {
-    for (mut int shape = 0; shape < 11; shape++) {
+    for (mut int shape = 0; shape < 13; shape++) {
       int result = exercise(count, shape, false);
       if (result != 0) { return result; }
       int reverse = exercise(count, shape, true);
@@ -101,7 +103,7 @@ int main() {
   int boundaries[17] = {2, 15, 16, 17, 31, 32, 33, 39, 40, 41,
                        63, 64, 65, 127, 129, 255, 257};
   for (int& count : boundaries) {
-    for (mut int shape = 1; shape < 11; shape++) {
+    for (mut int shape = 1; shape < 13; shape++) {
       if (exercise(count, shape, false) != 0 ||
           exercise(count, shape, true) != 0) { return 9; }
     }

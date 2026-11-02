@@ -1440,8 +1440,8 @@ allocated during that invocation. Its pointer tokens carry provenance only;
 they establish no address equality, extent, initialization or source-level
 ownership. Releases of incoming pointers remain explicit parameter obligations.
 A caller discharges those obligations only against its own fresh-or-null tokens;
-unknown providers, callbacks, incoming/global releases, overwritten pointer
-bindings and repeated releases reject the noninterference profile. A released
+unknown providers, callbacks, unresolved incoming/global releases and repeated
+releases reject the noninterference profile. A released
 token cannot be published as a fresh return value. Allocation and failure effects remain opaque and
 observable, and no memory fact is restored after invalidation.
 
@@ -1462,17 +1462,29 @@ effects are still checked on every path, including error alternatives. A token
 released on any path cannot be exported as fresh. Callbacks, unresolved
 incoming fields, mutated records and user cleanup reject the profile.
 
-Store uniqueness is keyed by binding identity, not by a particular MIR place
+The store inventory is keyed by binding identity, not by a particular MIR place
 view. Writable locals must denote their own ordinary storage; reference
 parameters, local reference aliases, foreign storage and inconsistent typed
 views are excluded. Structural call-input materialization may use a passive
-compiler-owned temporary; arbitrary temporary writes remain unsupported.
+compiler-owned temporary. Plain integer, Boolean and floating-point control-flow
+temporaries may also be initialized or assigned; their complete instruction
+effects are still checked and they provide no pointer provenance.
 Consuming payload extraction requires owned local storage. Constructor
 publication admits exact passive fields and complete non-opaque field
 initialization. No pointee access, capture or ownership fact is inferred from
 a pointer field. Aggregate inspection has explicit depth, node and field-path
-budgets. POSIX status-output allocation, mutable receiver publication and
-loop-carried provenance remain unsupported. Unrelated initialized-prefix
+budgets. Plain local raw-pointer stores conservatively union every written
+origin, retaining parameter entry origins; an unknown store rejects provenance.
+Aggregate fields still require one dominating store.
+
+POSIX allocation is admitted only with an ordinary private local `int32_t`
+status slot and the capture analysis's complete exclusive status-use proof.
+Later address escapes, unknown callbacks and incoming status slots reject it;
+a slot used exclusively by multiple sealed allocations is permitted. The sealed
+alignment query inspects address bits without accessing pointed storage, as
+specified by its existing MIR effect contract. This does not make arbitrary
+queries pure or removable. Mutable receiver publication and loop-carried
+provenance remain unsupported. Unrelated initialized-prefix
 owners prove caller-side noninterference; this alone does not establish vector
 reserve or substring performance gains.
 

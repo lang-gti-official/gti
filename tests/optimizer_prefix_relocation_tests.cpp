@@ -480,6 +480,115 @@ class CallbackTokenBox { Descriptor region; public:
 };
 )",
       "CallbackTokenBox box{fresh_descriptor()}; box.release();\n", false);
+  descriptorControls &= freshControl("fresh-null-store-join.gti", R"(
+void* joined_pointer(bool pick) {
+  mut void* pointer = nullptr;
+  if (pick) { pointer = fresh_pointer(); }
+  return pointer;
+}
+)",
+                                     "void* pointer = joined_pointer(true); "
+                                     "unsafe { release_pointer(pointer); }\n",
+                                     true);
+  descriptorControls &= freshControl("fresh-distinct-store-join.gti", R"(
+void* joined_pointer(bool pick) {
+  mut void* pointer = nullptr;
+  if (pick) { pointer = fresh_pointer(); }
+  else { pointer = fresh_pointer(); }
+  return pointer;
+}
+)",
+                                     "void* pointer = joined_pointer(false); "
+                                     "unsafe { release_pointer(pointer); }\n",
+                                     true);
+  descriptorControls &=
+      freshControl("fresh-incoming-store-join.gti", R"(
+mut void* old_pointer = nullptr;
+void* joined_pointer(bool pick, void* incoming) {
+  mut void* pointer = incoming;
+  if (pick) { pointer = fresh_pointer(); }
+  return pointer;
+}
+)",
+                   "void* pointer = joined_pointer(true, old_pointer); unsafe "
+                   "{ release_pointer(pointer); }\n",
+                   false);
+  descriptorControls &= freshControl("fresh-private-status.gti", R"(
+void* status_pointer() {
+#if target.os == "windows"
+  unsafe { return gti_internal::runtime::gti_rt_aligned_malloc_v1(uint64_t(64), uint64_t(16)); }
+#else
+  mut int32_t status = 0;
+  unsafe { return gti_internal::runtime::gti_rt_posix_memalign_v1(uint64_t(64), uint64_t(16), &status); }
+#endif
+}
+)",
+                                     "void* pointer = status_pointer(); unsafe "
+                                     "{ release_pointer(pointer); }\n",
+                                     true);
+  descriptorControls &= freshControl("fresh-incoming-status.gti", R"(
+void write_reference(mut int32_t& status) {
+#if target.os == "windows"
+  status = int32_t(2147483647);
+  void* pointer = fresh_pointer();
+  unsafe { release_pointer(pointer); }
+#else
+  unsafe { void* pointer = gti_internal::runtime::gti_rt_posix_memalign_v1(uint64_t(64), uint64_t(16), &status); release_pointer(pointer); }
+#endif
+}
+)",
+                                     "", false, false, true);
+  descriptorControls &= freshControl("fresh-status-later-escape.gti", R"(
+extern "C" { void status_callback(int32_t* status); }
+void later_status_escape() {
+  mut int32_t status = 0;
+#if target.os == "windows"
+  void* pointer = fresh_pointer();
+#else
+  mut void* pointer = nullptr;
+  unsafe { pointer = gti_internal::runtime::gti_rt_posix_memalign_v1(uint64_t(64), uint64_t(16), &status); }
+#endif
+  unsafe { status_callback(&status); release_pointer(pointer); }
+}
+)",
+                                     "later_status_escape();\n", false);
+  descriptorControls &= freshControl("fresh-shared-status-slot.gti", R"(
+void shared_status_slot() {
+#if target.os == "windows"
+  void* first = fresh_pointer();
+  void* second = fresh_pointer();
+#else
+  mut int32_t status = 0;
+  mut void* first = nullptr;
+  mut void* second = nullptr;
+  unsafe {
+    first = gti_internal::runtime::gti_rt_posix_memalign_v1(uint64_t(64), uint64_t(16), &status);
+    second = gti_internal::runtime::gti_rt_posix_memalign_v1(uint64_t(64), uint64_t(16), &status);
+  }
+#endif
+  unsafe { release_pointer(first); release_pointer(second); }
+}
+)",
+                                     "shared_status_slot();\n", true);
+  descriptorControls &=
+      freshControl("fresh-short-circuit-temporary.gti", R"(
+void* boolean_pointer(uint64_t size, uint64_t alignment) {
+  if (size == uint64_t(0) || alignment == uint64_t(0)) { return nullptr; }
+  return fresh_pointer();
+}
+)",
+                   "void* pointer = boolean_pointer(uint64_t(64), "
+                   "uint64_t(16)); unsafe { release_pointer(pointer); }\n",
+                   true);
+  descriptorControls &= freshControl("fresh-pointer-temporary.gti", R"(
+mut void* outside_pointer = nullptr;
+void* selected_pointer(bool choose) {
+  return choose ? fresh_pointer() : outside_pointer;
+}
+)",
+                                     "void* pointer = selected_pointer(true); "
+                                     "unsafe { release_pointer(pointer); }\n",
+                                     false);
   if (!descriptorControls)
     return 1;
   const auto discharges = [&](const std::string &name) {
