@@ -315,6 +315,45 @@ int main() {
   expect(checked == 1, "the nested field child has one exact entry parent");
   const std::string original =
       "int get() { auto view = this.value.read(); return view.get(); }";
+  auto chained = declarations;
+  const std::string reader = "int get() { return this.value; }";
+  chained.replace(chained.find(reader), reader.size(),
+                  reader + " Read subview() { return Read(this.value); }");
+  chained.replace(chained.find(original), original.size(),
+                  "int get() { auto view = this.value.read(); "
+                  "auto child = view.subview(); return child.get(); }");
+  const auto sharedChain = lang::Frontend().analyze(
+      "field-reborrow-shared-chain.gti", chained, {standardLibraryPrelude()},
+      {}, {standardLibraryRoot()});
+  expect(
+      sharedChain.canGenerateCode(),
+      "a readonly subview preserves an existing exclusive-owner child chain");
+  std::size_t checkedChain = 0;
+  if (sharedChain.canGenerateCode())
+    for (const auto &function : sharedChain.mir.functionInstances())
+      for (const auto &loan : function.body.loans) {
+        const auto *parent = function.body.findLoan(loan.parent);
+        if (loan.kind != lang::MirLoanKind::Stored || !parent ||
+            parent->entry || parent->kind != lang::MirLoanKind::Stored ||
+            parent->parent == 0)
+          continue;
+        for (int mutation = 0; mutation != 2; ++mutation) {
+          auto malformed = sharedChain.mir;
+          auto *body = lang::findMirBody(
+              malformed, {lang::MirBodyKind::Function, function.id});
+          if (mutation == 0)
+            body->loans[loan.id - 1].parent = 0;
+          else
+            body->loans[loan.id - 1].source =
+                function.body.findLoan(parent->parent)->source;
+          expect(!lang::verifyMirProgram(malformed).valid(),
+                 "a shared subview cannot discard its parent or substitute its "
+                 "owner shell");
+        }
+        checkedChain++;
+      }
+  expect(checkedChain != 0,
+         "shared subview exercises an exact intermediate parent");
   auto disjoint = declarations;
   disjoint.replace(disjoint.find("mut Write value;"),
                    std::string("mut Write value;").size(),

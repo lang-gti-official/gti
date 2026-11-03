@@ -6027,7 +6027,11 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
                                          input.arguments.size() == 1
                                      ? input.arguments.front()
                                      : input;
-          constructedShell = referent == sourceType;
+          // Relaying text by value keeps its existing external owner. Only
+          // a distinct owner type publishes a new physical text-owner shell.
+          constructedShell =
+              referent == sourceType &&
+              (!textPublication || referent != instruction.info.type);
         }
       }
     }

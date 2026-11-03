@@ -8309,6 +8309,8 @@ private:
     // binding loan. Its abstract entry still supplies the selected external
     // permission, including a shared child of an exclusive nested field.
     if (originLoan == 0 && value.borrowOrigin == BorrowOriginKind::Receiver &&
+        value.info.category == ValueCategory::Value &&
+        value.info.traits.containsBorrowedState &&
         !value.borrowFields.empty()) {
       const auto *selected = output.findPlace(origin);
       const auto *dependency =
@@ -8469,6 +8471,13 @@ private:
             kind == MirLoanKind::Stored &&
             (parentAccess == AccessMode::Mutable ||
              exactReadonlyRetainedParent(value, originLoan) ||
+             // A shared view derived from an existing child retains that
+             // checked ancestry during its own value publication, including
+             // a transient result that will be folded into a retained alias.
+             (output.loans[originLoan - 1].kind == MirLoanKind::Stored &&
+              output.loans[originLoan - 1].parent != 0 &&
+              parentAccess == AccessMode::ReadOnly &&
+              value.borrowAccess == AccessMode::ReadOnly) ||
              (output.loans[originLoan - 1].kind == MirLoanKind::Stored &&
               isLifecycleBoundBorrowCarrier(value.info.type)) ||
              (output.loans[originLoan - 1].kind == MirLoanKind::Stored &&
@@ -8531,16 +8540,26 @@ private:
           retainedContract == retainedInitializerLoans.end()
               ? nullptr
               : source.findLoan(retainedContract->second);
+      const bool textShellContract =
+          shellContract &&
+          shellContract->kind == SemanticLoanKind::StoredValue &&
+          shellContract->designatedFields.empty() &&
+          shellContract->additionalDependencies.empty() &&
+          shellContract->storedDependency != 0 && value.borrowFields.empty() &&
+          value.borrowArguments.empty() &&
+          (value.info.type.kind == SemanticType::StringView ||
+           value.info.type.kind == SemanticType::CString);
       const HirValue *shellArgument =
           (value.constructorTarget || value.functionTarget) &&
                   value.borrowOrigin == BorrowOriginKind::Argument &&
                   value.borrowArgument < arguments.size()
               ? findValue(arguments[value.borrowArgument])
-          : storesCarrierReference(value) && receiverValue(value)
+          : (storesCarrierReference(value) || textShellContract) &&
+                  receiverValue(value)
               ? findValue(*receiverValue(value))
               : nullptr;
       const bool shellReferenceInput =
-          storesCarrierReference(value) ||
+          storesCarrierReference(value) || textShellContract ||
           (value.borrowOrigin == BorrowOriginKind::Argument &&
            value.borrowArgument < value.parameterTypes.size() &&
            value.parameterTypes[value.borrowArgument].kind ==
