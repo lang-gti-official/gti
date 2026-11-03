@@ -9,7 +9,8 @@ namespace {
 
 // Each maximum is a measured safety bound, not a performance promise: the
 // counters are 64-bit, the evaluator's storage is bounded independently of
-// its step count, and nesting limits stay within the compiler's stack budget.
+// its step count, and nested work runs on fresh native stack segments
+// (support.h), so the maxima bound time and memory rather than stack use.
 constexpr std::array<CompileLimitInfo, 6> limits{{
     {.key = "constexpr-steps",
      .field = &CompileLimits::constexprSteps,

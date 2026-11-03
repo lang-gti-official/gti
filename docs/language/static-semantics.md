@@ -2329,6 +2329,9 @@ its configuration. Direct single-file compilation has no manifest and uses only
 the command line, and editor analysis applies the same root-package table as
 a build. See [the driver contract](../architecture/build-and-driver.md#compile-limits).
 
+Reaching any limit, up to its largest setting, reports that limit's
+diagnostic: the depth of nested evaluation, staged analysis, macro expansion
+and the lowering of expanded bodies does not depend on the host's native stack.
 Exceeding a constant-evaluation limit reports `GTI-S2057` at the request. The
 diagnostic names the request, the limit and its value and the function that was
 executing, and its hint names the command-line flag and manifest key that

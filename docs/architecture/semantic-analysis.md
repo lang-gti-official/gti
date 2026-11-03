@@ -3632,8 +3632,8 @@ bodies. Recursive constant nodes retain exact scoped-enum, array, class, generic
 argument identity; declaration spelling and emitted C++ types are never used as
 substitutes for those identities. One execution context carries concrete
 generic substitutions, automatic values, and an optional read-only receiver
-through constexpr calls and constructors while enforcing the existing shared
-4096-step and 64-call-depth limits.
+through constexpr calls and constructors while enforcing the request's
+configured step and call-depth limits (`CompileLimits`).
 
 Staged class discovery distinguishes generic type-argument identity from an
 executed object layout. A metadata carrier or ordinary user-defined type tag
@@ -3695,7 +3695,7 @@ assertions) stage against its canonical base model, never its partially
 analyzed delta. Nested workers keep separate semantic state and share only a
 constant-request work account and the list of instances whose reanalysis is
 open along the staging chain. Nested staging counts toward the depth bound,
-and its executed work consumes the same 4096-step budget as the enclosing
+and its executed work consumes the same step budget as the enclosing
 request. Recursive semantic-staging cycles therefore fail with a resource
 diagnostic instead of unbounded reentry. An assertion's constant may need the
 instance that owns it, as when a class assertion or a destructor reflects on
@@ -3735,7 +3735,7 @@ budget by the primary analysis, its reanalyses and every worker they stage
 through) and replays it wherever all of those match. A replay charges the steps
 the evaluation consumed and reports its warnings again, and is used only where
 the evaluation's limits still hold: the current steps plus that charge stay
-within the 4096-step budget, and the current staging plus call depth is no
+within the request's step limit, and the current staging plus call depth is no
 deeper than the one it succeeded at. Otherwise, and for every failure, the call
 executes as before, so exhaustion and failure diagnostics are unchanged.
 Results holding an executor-local transient owner are never recorded, and
