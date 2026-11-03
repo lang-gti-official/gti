@@ -12606,22 +12606,17 @@ LLVM gap the audit found, runs on LLVM since PR 421.
   the C++ backend never supported, or are deliberate whole-program errors.
   `llvm_mutex_guard_lifecycle`, `llvm_native_process_storage` and
   `llvm_mutex_source_lifecycle` (a C++ backend `GTI-B0001`) run only on LLVM.
-- **Allocator-hook differences in companion fixtures.** `process_storage_policy`,
-  `process_allocation_elision`, `scoped_parallel_allocations`,
-  `unique_scalar_allocation_failure`, `unique_scalar_allocation_cleanup_failure`
-  and `inline_polymorphic_lifecycle` give different results on the two
-  backends. Their companions count or fault-inject the C++ allocator
-  (`operator new`) or replace the runtime's `gti_rt_posix_memalign_v1`. On
-  LLVM, unique owners allocate through that runtime function, and on C++
-  through `operator new`. No GTI document fixes which allocator backs a unique
-  owner. Source-only GTI cannot see the difference; these companions can.
-  Since 2026-10-29 the `unique_scalar_allocation_failure`,
-  `unique_scalar_allocation_cleanup_failure` and `process_allocation_elision`
-  programs also run with companions that replace the runtime's POSIX provider
-  through the same switch or probe, so `unique_scalar_allocation_runtime` and
-  `process_allocation_elision` check exhaustion, failure during cleanup and
-  owner release on LLVM as well (not on Windows). The other three tests stay
-  C++-only.
+- **Allocator-hook companions now agree (2026-11-03).** Generated owner
+  storage on LLVM calls the runtime's `gti_rt_owner_allocate_v1`/
+  `gti_rt_owner_release_v1`, which use the same replaceable nothrow
+  `operator new`/`delete` as generated C++, so the injectable process provider
+  (`gti_rt_posix_memalign_v1`) sees only source-policy allocations on both
+  backends (lang-gti-official/gti#200). `process_storage_policy`,
+  `process_allocation_elision`, `unique_scalar_allocation_failure`,
+  `unique_scalar_allocation_cleanup_failure` and `inline_polymorphic_lifecycle`
+  now observe the same allocations, exhaustion and cleanup failure on both
+  backends, including Windows. The runtime-provider fault companion is retired.
+  `scoped_parallel_allocations` still runs only in its C++ modes.
 - **Recorded C++ lifecycle bug.** In `llvm_dispatch_lifecycle_phases`, a base
   destructor's virtual call on `this` runs the destructor's own class on LLVM,
   the owner's lifecycle-dispatch rule. The C++ backend reaches the destroyed
