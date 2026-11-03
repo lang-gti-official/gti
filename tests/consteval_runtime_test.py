@@ -105,6 +105,73 @@ int main() { return make<0>().value; }
                     "GTI-S2057" in rejected.stderr and
                     "GTI-B" not in rejected.stderr and
                     binary.read_bytes() == b"preserve existing artifact"), rejected
+
+        # One lazy compile-time rule (#174, #175): unexecuted runtime-only
+        # operations never reject a request, and compile-time values equal
+        # run-time evaluation of the same bodies.
+        lazy = root / "tests/fixtures/compile_time_lazy_values.gti"
+        for level in ("O0", "O3"):
+            binary = Path(directory) / f"{lazy.stem}-{level}"
+            built = subprocess.run(
+                [str(compiler), str(lazy), "--backend", "llvm", f"-{level}",
+                 "-o", str(binary)], capture_output=True, text=True, env=env,
+                timeout=120)
+            assert built.returncode == 0, (level, built.stdout, built.stderr)
+            result = subprocess.run([str(binary)], capture_output=True,
+                                    text=True, timeout=30)
+            assert (result.returncode, result.stdout, result.stderr) == (0, "", ""), result
+
+        validator = """import std.panic;
+constexpr int checked_third(int v) {
+  if (v % 3 != 0) { std::panic("not a multiple of three"); }
+  return v / 3;
+}
+int runtime_only(int v) { return v - 1; }
+constexpr int clamp_positive(int v) {
+  if (v < 0) { return runtime_only(v); }
+  return v;
+}
+constexpr int checked_half(int v) {
+  if (v % 2 != 0) { std::panic("odd {}", v); }
+  return v / 2;
+}
+"""
+        panic = 'Compile-time evaluation panicked: "not a multiple of three"'
+        executed_failures = {
+            "panic-immediate": ("consteval int third(int v) { return checked_third(v); }\n"
+                                "int main() { return third(10); }\n", panic),
+            "panic-binding": ("constexpr int bad = checked_third(10);\n"
+                              "int main() { return bad; }\n", panic),
+            "panic-static-assert": ("static_assert(checked_third(10) == 3);\n"
+                                    "int main() { return 0; }\n", panic),
+            "runtime-only-immediate": (
+                "consteval int clamp(int v) { return clamp_positive(v); }\n"
+                "int main() { return clamp(-3); }\n",
+                "'runtime_only' is not constexpr."),
+            "runtime-only-binding": ("constexpr int c = clamp_positive(-5);\n"
+                                     "int main() { return c; }\n",
+                                     "'runtime_only' is not constexpr."),
+            # A formatted message is not yet constant-eligible; executing it
+            # still fails the request rather than being accepted.
+            "formatted-panic-executed": (
+                "consteval int half(int v) { return checked_half(v); }\n"
+                "int main() { return half(7); }\n",
+                "'std::panic' is not constexpr."),
+        }
+        for name, (use, expected) in executed_failures.items():
+            source = Path(directory) / f"executed-{name}.gti"
+            source.write_text(validator + use)
+            binary = source.with_suffix("")
+            binary.write_bytes(b"preserve existing artifact")
+            rejected = subprocess.run(
+                [str(compiler), str(source), "--backend", "llvm", "-O0",
+                 "-o", str(binary), "--color=never"], capture_output=True,
+                text=True, env=env, timeout=120)
+            assert (rejected.returncode == 65 and
+                    "GTI-S2057" in rejected.stderr and
+                    expected in rejected.stderr and
+                    "Constant evaluation requested here." in rejected.stderr and
+                    binary.read_bytes() == b"preserve existing artifact"), (name, rejected)
     return 0
 
 

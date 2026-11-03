@@ -7,8 +7,9 @@ import std.string;
 import "detail/panic.gti";
 export namespace std {
   /// Stops normal execution after preserving the message and running cleanup.
+  /// During compile-time evaluation it fails the request with the message.
   [[noreturn, track_caller]]
-  void panic(string_view message) {
+  constexpr void panic(string_view message) {
     detail::panic(message);
   }
 

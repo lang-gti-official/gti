@@ -117,6 +117,29 @@ int main() { validate(2); return make().value - 42; }
             assert any("Immediate declaration" in item["message"]
                        for item in error["relatedInformation"]), error
 
+            # A panic executed during compile-time evaluation publishes its
+            # message at the user's panic call, with the request trace; an
+            # unexecuted panic publishes nothing (#174, #175).
+            panicking = """import std.panic;
+consteval void require_small(int value) {
+  if (value > 10) { std::panic("format pattern rejected: too large"); }
+}
+int main() { require_small(3); return 0; }
+"""
+            assert not publish(panicking)
+            invalid_panic = panicking.replace("require_small(3)", "require_small(30)")
+            diagnostics = publish(invalid_panic)
+            error = next(item for item in diagnostics if item.get("code") == "GTI-S2057")
+            assert "Consteval invocation" in error["message"], error
+            note = next(item for item in error["relatedInformation"]
+                        if 'Compile-time evaluation panicked: "format pattern '
+                           'rejected: too large"' in item["message"])
+            panic_call = invalid_panic.index("std::panic(")
+            assert (note["location"]["range"]["start"]["line"] ==
+                    lsp_position(invalid_panic, panic_call)["line"]), note
+            assert any("requested here" in item["message"]
+                       for item in error["relatedInformation"]), error
+
             incomplete = "consteval int pending(int value"
             assert publish(incomplete)
             assert not publish(SOURCE)

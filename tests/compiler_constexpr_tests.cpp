@@ -1640,7 +1640,8 @@ static_assert(table<3>(7) == 7);
   const auto runtime = evaluate("lazy", false);
   expect(lazy && lazy.value == integer(42) && !runtime &&
              runtime.failure ==
-                 lang::ConstantEvaluationFailure::UnsupportedExpression,
+                 lang::ConstantEvaluationFailure::RuntimeOnlyCall &&
+             runtime.runtimeCallee != 0,
          "constant eligibility follows executed paths but never invokes "
          "runtime code");
   const auto zero = evaluate("divide", integer(0));
@@ -1839,10 +1840,23 @@ int later() { return selected(); }
       provider.model(), provider, sumDeclaration, {});
   expect(!unavailable.valid(),
          "a registered but incomplete root cannot be staged");
+  // Staging is lazy (#175): a callee absent from the completed inventory
+  // keeps only a signature-only declaration body and is never executed.
   auto incompleteCallee = stagedLowerer.lowerConstantFunction(
       provider.model(), provider, callerDeclaration, {callerDeclaration});
-  expect(!incompleteCallee.valid(), "a completed root cannot stage a callee "
-                                    "absent from the completed inventory");
+  const auto signatureOnly =
+      std::count_if(incompleteCallee.program.functionInstances().begin(),
+                    incompleteCallee.program.functionInstances().end(),
+                    [&](const lang::HirFunctionInstance &function) {
+                      return function.declaration == sumDeclaration &&
+                             function.source == nullptr &&
+                             function.body.roots.empty();
+                    });
+  expect(incompleteCallee.valid() &&
+             incompleteCallee.program.functionInstances().size() == 2 &&
+             signatureOnly == 1,
+         "a callee absent from the completed inventory stages as a "
+         "signature-only declaration, never its body");
   auto completeClosure = stagedLowerer.lowerConstantFunction(
       provider.model(), provider, callerDeclaration,
       {callerDeclaration, sumDeclaration});
@@ -2751,7 +2765,7 @@ int main() { Table table = build(4); return table.total() + array_work(4) - 68; 
       lang::evaluateMirConstantFunction(runtimeOnly, scalarId, argument);
   expect(lang::verifyMirProgram(runtimeOnly).valid() && !unavailable &&
              unavailable.failure ==
-                 lang::ConstantEvaluationFailure::UnsupportedExpression,
+                 lang::ConstantEvaluationFailure::RuntimeOnlyCall,
          "runtime validity is not proof of constant eligibility for a mutable "
          "selected call");
 
@@ -6524,6 +6538,273 @@ int main() { Validator(5).check(5); return 0; }
   }
 }
 
+// Compile-time evaluation stages call closures lazily and gives a trusted
+// terminal failure its compile-time meaning: only executed operations must be
+// compile-time capable, and an executed panic fails the request with its
+// message. Constexpr bindings, static_assert, if constexpr and immediate calls
+// share this one rule (issues #174 and #175).
+void testLazyStagingAndCompileTimePanic() {
+  const auto analyze = [](const std::string &name, const std::string &source) {
+    return lang::Frontend().analyze(name, source, {standardLibraryPrelude()},
+                                    {}, {standardLibraryRoot()});
+  };
+  const auto relatedText =
+      [](const lang::Diagnostic &diagnostic,
+         const std::string &text) -> const lang::RelatedDiagnostic * {
+    for (const auto &related : diagnostic.related)
+      if (related.message.find(text) != std::string::npos)
+        return &related;
+    return nullptr;
+  };
+  const auto hinted = [](const lang::Diagnostic &diagnostic,
+                         const std::string &text) {
+    return std::any_of(diagnostic.hints.begin(), diagnostic.hints.end(),
+                       [&](const std::string &hint) {
+                         return hint.find(text) != std::string::npos;
+                       });
+  };
+  const auto onlyError =
+      [](const lang::FrontendResult &result) -> const lang::Diagnostic * {
+    const lang::Diagnostic *found = nullptr;
+    for (const auto &diagnostic : result.diagnostics) {
+      if (diagnostic.severity != lang::DiagnosticSeverity::Error)
+        continue;
+      if (found != nullptr)
+        return nullptr;
+      found = &diagnostic;
+    }
+    return found;
+  };
+  const auto within = [](const lang::SourceSpan &span,
+                         const std::string &source, std::string_view text) {
+    const std::size_t start = source.find(text);
+    return start != std::string::npos && span.start >= start &&
+           span.end <= start + text.size();
+  };
+
+  // An unexecuted runtime-only callee, literal or formatted panic, typed
+  // macro or assertion never rejects a request in any context.
+  for (const std::string &source : {std::string(R"(
+int runtime_only(int v) { return v - 1; }
+constexpr int clamp_positive(int v) {
+  if (v < 0) { return runtime_only(v); }
+  return v;
+}
+constexpr int c = clamp_positive(5);
+consteval int immediate_clamp(int v) { return clamp_positive(v); }
+int main() { return c + immediate_clamp(3) == 8 ? 0 : 1; }
+)"),
+                                    std::string(R"(
+import std.panic;
+constexpr int checked_half(int v) {
+  if (v % 2 != 0) { std::panic("odd {}", v); }
+  return v / 2;
+}
+constexpr int checked_third(int v) {
+  if (v % 3 != 0) { std::panic("not a multiple of three"); }
+  return v / 3;
+}
+constexpr int h = checked_half(8);
+constexpr int t = checked_third(9);
+static_assert(checked_third(9) == 3);
+consteval int immediate_half(int v) { return checked_half(v); }
+consteval int immediate_third(int v) { return checked_third(v); }
+int main() {
+  if constexpr (checked_third(6) == 2) {
+    return immediate_third(9) + immediate_half(6) + h + t == 13 ? 0 : 1;
+  }
+  return 1;
+}
+)"),
+                                    std::string(R"(
+import std.assert;
+import std.panic;
+#macro fail_if(bool c, int v) { if (c) { std::panic("bad {}", v); } }
+constexpr int checked_half(int v) {
+  std::assert(v % 2 == 0);
+  fail_if(v % 2 != 0, v);
+  return v / 2;
+}
+constexpr int h = checked_half(8);
+consteval int immediate_half(int v) { return checked_half(v); }
+int main() { return checked_half(4) + h + immediate_half(6) == 9 ? 0 : 1; }
+)")}) {
+    const auto accepted = analyze("lazy-staging-accepted.gti", source);
+    if (!accepted.canGenerateCode())
+      for (const auto &diagnostic : accepted.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(accepted.canGenerateCode() &&
+               lang::verifyMirProgram(accepted.mir).valid(),
+           "an unexecuted runtime-only operation does not reject constexpr "
+           "bindings, static_assert, if constexpr or immediate calls");
+  }
+
+  // An executed panic is a compile error carrying its message. The
+  // [[track_caller]] library wrappers anchor it at the call the user wrote,
+  // and the trace shows how evaluation reached it.
+  const std::string panicking = R"(
+import std.panic;
+constexpr void require_arguments(int fields, int arguments) {
+  if (fields != arguments) {
+    std::panic("format pattern has 2 fields but 1 argument");
+  }
+}
+consteval void check_pattern(int fields, int arguments) {
+  require_arguments(fields, arguments);
+}
+int main() {
+  check_pattern(2, 2);
+  check_pattern(2, 1);
+  return 0;
+}
+)";
+  const auto panicked = analyze("compile-time-panic.gti", panicking);
+  const auto *error = onlyError(panicked);
+  const auto *note =
+      error ? relatedText(*error, "Compile-time evaluation panicked: \"format "
+                                  "pattern has 2 fields but 1 argument\"")
+            : nullptr;
+  expect(!panicked.canGenerateCode() && error != nullptr &&
+             error->code == "GTI-S2057" && note != nullptr &&
+             note->span.source == error->primary.source &&
+             within(note->span, panicking,
+                    "std::panic(\"format pattern has 2 fields but 1 "
+                    "argument\")") &&
+             within(error->primary, panicking, "check_pattern(2, 1)") &&
+             relatedText(*error, "Constant evaluation requested here.") !=
+                 nullptr,
+         "an executed compile-time panic reports its message at the user's "
+         "panic call, with the request as the primary span and trace notes");
+
+  // Every compile-time context reports the same executed panic.
+  const std::string validator = R"(
+import std.panic;
+constexpr int checked_third(int v) {
+  if (v % 3 != 0) { std::panic("not a multiple of three"); }
+  return v / 3;
+}
+)";
+  const std::string expectedPanic =
+      "Compile-time evaluation panicked: \"not a multiple of three\"";
+  for (const std::string &use :
+       {std::string("constexpr int bad = checked_third(10);\n"
+                    "int main() { return bad; }\n"),
+        std::string("static_assert(checked_third(10) == 3);\n"
+                    "int main() { return 0; }\n"),
+        std::string("int main() {\n"
+                    "  if constexpr (checked_third(10) == 3) { return 0; }\n"
+                    "  return 1;\n}\n"),
+        std::string("consteval int third(int v) { return checked_third(v); }\n"
+                    "int main() { return third(10); }\n")}) {
+    const auto result =
+        analyze("compile-time-panic-context.gti", validator + use);
+    const auto *failure = onlyError(result);
+    expect(!result.canGenerateCode() && failure != nullptr &&
+               failure->code == "GTI-S2057" &&
+               (failure->message.find(expectedPanic) != std::string::npos ||
+                relatedText(*failure, expectedPanic) != nullptr) &&
+               relatedText(*failure, "Constant evaluation requested here.") !=
+                   nullptr,
+           "constexpr bindings, static_assert, if constexpr and immediate "
+           "calls report one executed panic identically");
+  }
+
+  // An executed runtime-only callee fails in both paths, naming the callee
+  // at its call.
+  const std::string executed = R"(
+int runtime_only(int v) { return v - 1; }
+constexpr int clamp_positive(int v) {
+  if (v < 0) { return runtime_only(v); }
+  return v;
+}
+)";
+  for (const std::string &use :
+       {std::string("constexpr int c = clamp_positive(-5);\n"
+                    "int main() { return c; }\n"),
+        std::string("consteval int clamp(int v) { return clamp_positive(v); }\n"
+                    "int main() { return clamp(-3); }\n")}) {
+    const std::string source = executed + use;
+    const auto result = analyze("runtime-only-executed.gti", source);
+    const auto *failure = onlyError(result);
+    const bool named =
+        failure != nullptr &&
+        (failure->message.find("'runtime_only' is not constexpr.") !=
+             std::string::npos ||
+         hinted(*failure, "'runtime_only' is not constexpr."));
+    const bool located =
+        failure != nullptr &&
+        (within(failure->primary, source, "runtime_only(v)") ||
+         std::any_of(failure->related.begin(), failure->related.end(),
+                     [&](const lang::RelatedDiagnostic &related) {
+                       return within(related.span, source, "runtime_only(v)");
+                     }));
+    expect(!result.canGenerateCode() && named && located &&
+               relatedText(*failure, "Constant evaluation requested here.") !=
+                   nullptr,
+           "an executed runtime-only callee fails identically through a "
+           "binding and an immediate call, naming the callee at its call");
+  }
+
+  // A user helper reports the message once it is constexpr; a runtime-only
+  // helper is itself the call that cannot run during compilation.
+  const auto withHelper = [&](const std::string &specifier) {
+    return analyze("compile-time-panic-helper.gti",
+                   "import std.panic;\n[[noreturn]] " + specifier +
+                       "void reject(std::string_view message) { "
+                       "std::panic(message); }\n" +
+                       R"(consteval int checked_percent(int value) {
+  if (value > 100) { reject("percentage above 100"); }
+  return value;
+}
+int main() { return checked_percent(42) + checked_percent(142) == 0 ? 0 : 1; }
+)");
+  };
+  const auto constantHelper = withHelper("constexpr ");
+  const auto *helperError = onlyError(constantHelper);
+  const auto runtimeHelper = withHelper("");
+  const auto *runtimeError = onlyError(runtimeHelper);
+  expect(helperError != nullptr &&
+             relatedText(*helperError, "Compile-time evaluation panicked: "
+                                       "\"percentage above 100\"") != nullptr &&
+             runtimeError != nullptr &&
+             hinted(*runtimeError, "'reject' is not constexpr."),
+         "a constexpr user helper reports its panic message; a runtime-only "
+         "helper is reported as the executed runtime-only call");
+
+  // The message is quoted with its control characters escaped.
+  const auto escaped = analyze("compile-time-panic-escape.gti", R"(
+import std.panic;
+consteval int fail() { std::panic("say \"no\"\nnow"); return 0; }
+int main() { return fail(); }
+)");
+  const auto *escapedError = onlyError(escaped);
+  expect(escapedError != nullptr &&
+             relatedText(*escapedError,
+                         "Compile-time evaluation panicked: \"say \\\"no\\\"\\n"
+                         "now\"") != nullptr,
+         "a compile-time panic message is quoted with escapes");
+
+  // static_assert still cannot read a parameter, and points at the pattern
+  // that checks one at each compile-time call.
+  const auto parameter = analyze("static-assert-parameter.gti", R"(
+consteval void require_small(int value) {
+  static_assert(value <= 10, "too large");
+}
+int main() { return 0; }
+)");
+  expect(!parameter.canGenerateCode() &&
+             std::any_of(
+                 parameter.diagnostics.begin(), parameter.diagnostics.end(),
+                 [&](const lang::Diagnostic &diagnostic) {
+                   return diagnostic.message.find("reads a binding that is not "
+                                                  "constexpr") !=
+                              std::string::npos &&
+                          hinted(diagnostic, "if (!condition) { std::panic(");
+                 }),
+         "static_assert on a parameter stays rejected and hints at the "
+         "compile-time panic pattern");
+}
+
 constexpr NamedTest kTests[] = {
     {"testConsteval", testConsteval},
     {"testConstevalStatementCompletion", testConstevalStatementCompletion},
@@ -6560,6 +6841,7 @@ constexpr NamedTest kTests[] = {
     {"testStaticStorageAndMembers", testStaticStorageAndMembers},
     {"testConcurrentGlobalPolicy", testConcurrentGlobalPolicy},
     {"testCompileTimeConditionals", testCompileTimeConditionals},
+    {"testLazyStagingAndCompileTimePanic", testLazyStagingAndCompileTimePanic},
 };
 
 } // namespace

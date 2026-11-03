@@ -114,6 +114,12 @@ enum class ConstantEvaluationFailure {
   NegativeShiftCount,
   ShiftCountOutOfRange,
   ConversionOutOfRange,
+  // Execution reached a terminal failure operation, such as a panic. The
+  // evaluation's detail carries its message; the request fails with it.
+  Panicked,
+  // Execution reached a call to a function that cannot run during
+  // compilation. An unexecuted call to the same function is not a failure.
+  RuntimeOnlyCall,
 };
 
 struct ConstantEvaluation {
