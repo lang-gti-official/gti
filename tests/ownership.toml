@@ -1634,6 +1634,22 @@ owners = [
 consumers = []
 
 [[area]]
+area = "backend-modes"
+paths = [
+  "tests/backend_modes.py",
+  "tests/execution_coverage_test.py",
+]
+owners = [
+  "execution_coverage",
+  "test_throughput_registration",
+]
+consumers = [
+  "lambda_pack_invocation_runtime",
+  "native_fixture_build",
+  "test_case_jobs",
+]
+
+[[area]]
 area = "ci-shard-durations"
 paths = [
   "tests/ci_test_durations.json",

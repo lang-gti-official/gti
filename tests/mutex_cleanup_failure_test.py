@@ -6,6 +6,7 @@ import sys
 import tempfile
 
 from unique_class_allocation_runtime_test import run
+from backend_modes import check_unsupported, is_cpp_mode, keep_cpp, native_modes
 
 
 def main() -> int:
@@ -37,41 +38,30 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="gti-mutex-cleanup-") as temporary:
         root = pathlib.Path(temporary)
-        for standard in ("c++20", "c++23"):
-            for optimization in ("O0", "O3"):
-                label = f"{standard}-{optimization}"
-                binary = root / label
-                command = [
-                    str(compiler),
-                    str(source),
-                    "--execution-profile",
-                    "concurrent",
-                    "--std",
-                    standard,
-                    f"-{optimization}",
-                    "--keep-cpp",
-                    "-o",
-                    str(binary),
-                ]
+        for label, flags, _native in native_modes():
+            binary = root / label
+            if is_cpp_mode(flags):
+                # The C++ text has no wrapping atomic read-modify-write;
+                # the LLVM modes carry the execution evidence.
+                command = [str(compiler), str(source), "--execution-profile", "concurrent",
+                           *flags, *keep_cpp(flags), "-o", str(binary)]
                 binary.write_bytes(b"preserved")
                 rejected = run(command)
-                assert (rejected.returncode == 65 and "GTI-B0003" in rejected.stderr
-                        and "wrapping atomic read-modify-write" in rejected.stderr
-                        and binary.read_bytes() == b"preserved"), rejected
-                print(f"RECORDED C++ LIMITATION {label}: wrapping atomics", flush=True)
-                built = run([str(compiler), str(source), "--backend", "llvm",
-                             "--execution-profile", "concurrent", f"-{optimization}",
-                             "-o", str(binary)])
-                assert built.returncode == 0, (label, built.stdout, built.stderr)
-                for arguments, expected in cases:
-                    executed = run([str(binary), *arguments])
-                    actual = (
-                        executed.returncode,
-                        executed.stdout,
-                        executed.stderr,
-                    )
-                    assert actual == expected, (label, arguments, actual, expected)
-                print(f"mutex cleanup: LLVM {optimization} (C++ {standard} rejected) passed", flush=True)
+                check_unsupported(rejected, "wrapping atomic read-modify-write", source.name, label, flags)
+                assert binary.read_bytes() == b"preserved", label
+                continue
+            built = run([str(compiler), str(source), *flags,
+                         "--execution-profile", "concurrent", "-o", str(binary)])
+            assert built.returncode == 0, (label, built.stdout, built.stderr)
+            for arguments, expected in cases:
+                executed = run([str(binary), *arguments])
+                actual = (
+                    executed.returncode,
+                    executed.stdout,
+                    executed.stderr,
+                )
+                assert actual == expected, (label, arguments, actual, expected)
+            print(f"mutex cleanup: {label} passed", flush=True)
     return 0
 
 

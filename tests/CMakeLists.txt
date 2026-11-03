@@ -440,11 +440,11 @@ if(TARGET gti_lsp)
       "$<TARGET_FILE:gti_lsp>")
   set_tests_properties(conditional_capability_lsp PROPERTIES TIMEOUT 90)
 endif()
-add_test(NAME source_sparse_storage_runtime
+add_test(NAME cpp_mir_source_sparse_storage
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_sparse_storage_runtime_test.py"
     "$<TARGET_FILE:gti_source_sparse_storage_tests>" "${CMAKE_CXX_COMPILER}"
     "$<TARGET_FILE:gti_runtime>")
-set_tests_properties(source_sparse_storage_runtime PROPERTIES TIMEOUT 300)
+set_tests_properties(cpp_mir_source_sparse_storage PROPERTIES TIMEOUT 300)
 add_executable(gti_resource_protocol_tests resource_protocol_tests.cpp)
 target_link_libraries(gti_resource_protocol_tests PRIVATE gti_compiler gti_cpp_backend)
 add_test(NAME resource_protocol_contract COMMAND gti_resource_protocol_tests)
@@ -3040,6 +3040,15 @@ if(Python3_Interpreter_FOUND)
             --build "${PROJECT_BINARY_DIR}"
   )
   set_tests_properties(test_ownership_map PROPERTIES TIMEOUT 120)
+  # No fixture loses its last execution mode: every registered runtime harness
+  # plans LLVM execution under the default backend policy or declares why not.
+  add_test(
+    NAME execution_coverage
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/execution_coverage_test.py"
+            "${PROJECT_SOURCE_DIR}" "${PROJECT_BINARY_DIR}"
+  )
+  set_tests_properties(execution_coverage PROPERTIES TIMEOUT 300)
   add_test(
     NAME plan_checks
     COMMAND "${Python3_EXECUTABLE}"
@@ -3487,11 +3496,11 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(source_optional_protocol_runtime PROPERTIES TIMEOUT 900)
   add_test(
-    NAME payload_enum_carrier_runtime
+    NAME cpp_mir_payload_enum_carrier
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/payload_enum_carrier_runtime_test.py"
             "$<TARGET_FILE:gti>")
-  set_tests_properties(payload_enum_carrier_runtime PROPERTIES TIMEOUT 900)
+  set_tests_properties(cpp_mir_payload_enum_carrier PROPERTIES TIMEOUT 900)
 
   add_test(
     NAME composed_payload_runtime
@@ -4239,7 +4248,7 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}"
   )
   add_test(
-    NAME cpp_program_linkage
+    NAME cpp_mir_program_linkage
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/cpp_program_linkage_test.py"
             "$<TARGET_FILE:gti>"
@@ -4247,7 +4256,7 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}"
             "$<TARGET_FILE:gti_runtime>"
   )
-  set_tests_properties(cpp_program_linkage PROPERTIES TIMEOUT 120)
+  set_tests_properties(cpp_mir_program_linkage PROPERTIES TIMEOUT 120)
   add_test(
     NAME mir_backend_scalar_cfg_runtime
     COMMAND "${Python3_EXECUTABLE}"

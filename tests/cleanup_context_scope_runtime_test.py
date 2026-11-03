@@ -8,6 +8,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+from backend_modes import cpp_text_modes, is_cpp_mode
 
 
 PROBE = r"""
@@ -106,22 +107,26 @@ def main():
         work = Path(directory)
         source = work / "empty.gti"
         source.write_text("int main() { return 0; }\n")
-        for standard in ("c++20", "c++23"):
-            generated = work / f"{standard}.cpp"
-            run([compiler, source, "--std", standard, "--emit-cpp", "-o", generated])
-            text, replaced = re.subn(r"^int main\(", "int __gti_scope_original_main(",
-                                     generated.read_text(), flags=re.MULTILINE)
-            assert replaced == 1, "probe must replace exactly the native entry point"
+        for label, flags, _native in cpp_text_modes():
+            generated = work / f"{label}.cpp"
+            if is_cpp_mode(flags):
+                run([compiler, source, *flags, "--emit-cpp", "-o", generated])
+            if is_cpp_mode(flags):
+                text, replaced = re.subn(r"^int main\(", "int __gti_scope_original_main(",
+                                         generated.read_text(), flags=re.MULTILINE)
+                assert replaced == 1, "probe must replace exactly the native entry point"
             cold_helper = ("#if defined(__GNUC__) || defined(__clang__)\n"
                            "__attribute__((__cold__, __noinline__))\n"
                            "#endif\n"
                            "inline void mir_check_incoming_cleanup_failure_v1(")
-            assert text.count(cold_helper) == 1, "failure-only check must have its bounded cold hint"
+            if is_cpp_mode(flags):
+                assert text.count(cold_helper) == 1, "failure-only check must have its bounded cold hint"
             publish_helper = ("#if defined(__GNUC__) || defined(__clang__)\n"
                               "__attribute__((__cold__, __noinline__))\n"
                               "#endif\n"
                               "inline void mir_publish_failure_v1(")
-            assert text.count(publish_helper) == 1, "failure publication must have its bounded cold hint"
+            if is_cpp_mode(flags):
+                assert text.count(publish_helper) == 1, "failure publication must have its bounded cold hint"
             terminal_helper = ("[[noreturn]]\n"
                                "#if defined(__GNUC__) || defined(__clang__)\n"
                                "__attribute__((__cold__, __noinline__))\n"
@@ -129,11 +134,12 @@ def main():
                                "__declspec(noinline)\n"
                                "#endif\n"
                                "inline void mir_terminate_cleanup_failure_v2(")
-            assert text.count(terminal_helper) == 1, "terminal envelope must stay in its own native frame"
-            generated.write_text(text + PROBE)
+            if is_cpp_mode(flags):
+                assert text.count(terminal_helper) == 1, "terminal envelope must stay in its own native frame"
+                generated.write_text(text + PROBE)
             for level in ("-O0", "-O3"):
-                binary = work / f"{standard}-{level}"
-                run([cxx, f"-std={standard}", level,
+                binary = work / f"{label}-{level}"
+                run([cxx, f"-std={label}", level,
                      "-fno-fast-math", "-ffp-contract=off",
                      "-D__gti_strict_ieee754=1", generated,
                      "-I", root / "runtime/include",

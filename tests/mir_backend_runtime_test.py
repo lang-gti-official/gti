@@ -4,6 +4,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from backend_modes import cpp_text_modes, is_cpp_mode, native_modes
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -41,168 +42,169 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="gti-mir-backend-") as temporary:
         root = pathlib.Path(temporary)
         emitted_by_mode: dict[tuple[str, str], str] = {}
-        for optimization in ("O0", "O1", "O3"):
-            for standard in ("c++20", "c++23"):
-                executable = root / f"mir-backend-{optimization}-{standard}"
-                built = run(
-                    [
-                        str(compiler),
-                        str(source),
-                        f"-{optimization}",
-                        "--std",
-                        standard,
-                        "-o",
-                        str(executable),
-                    ]
-                )
-                if built.returncode != 0:
-                    return fail(built)
-                executed = run([str(executable)])
-                if executed.returncode != 0:
-                    return fail(executed)
+        for mode, flags, _native in native_modes():
+            executable = root / f"mir-backend-{mode}"
+            built = run(
+                [
+                    str(compiler),
+                    str(source),
+                    *flags,
+                    "-o",
+                    str(executable),
+                ]
+            )
+            if built.returncode != 0:
+                return fail(built)
+            executed = run([str(executable)])
+            if executed.returncode != 0:
+                return fail(executed)
 
-                emitted = root / f"mir-backend-{optimization}-{standard}.cpp"
-                emission = run(
-                    [
-                        str(compiler),
-                        str(source),
-                        f"-{optimization}",
-                        "--std",
-                        standard,
-                        "--emit-cpp",
-                        "-o",
-                        str(emitted),
-                    ]
-                )
-                if emission.returncode != 0:
-                    return fail(emission)
-                generated = emitted.read_text(encoding="utf8")
-                if (
-                    generated.count(f"{marker} field-initializers-instance")
-                    != 0
-                    or generated.count(
-                        f"{marker} static-field-initializers-instance"
+        # The C++ text probes: every level of the C++ profile, for the
+        # per-level representation checks and the cross-level comparison.
+        for label, flags, _native in cpp_text_modes():
+            for level in ("O0", "O1", "O3"):
+                emitted = root / f"mir-backend-{label}-{level}.cpp"
+                if is_cpp_mode(flags):
+                    emission = run(
+                        [
+                            str(compiler),
+                            str(source),
+                            *flags,
+                                f"-{level}",
+                            "--emit-cpp",
+                            "-o",
+                            str(emitted),
+                        ]
                     )
-                    != 0
-                    or generated.count(f"{marker} module-instance") != 1
-                    or generated.count(
-                        "// GTI verified-MIR body: native-boundary-v1 "
-                        "function-instance"
-                    )
-                    # Only the two native stdout declarations are roots. The
-                    # unused prelude capabilities/classes are not lowered.
-                    != 2
-                ):
-                    sys.stderr.write(
-                        "generated C++ lost the verified prelude initializer, "
-                        "module, or native-boundary schedules\n"
-                    )
-                    return 1
-                checked = function_definition(
-                    generated, "compatibility_checked__gti_mir_failure"
-                )
-                if (
-                    "// GTI verified-MIR body: scalar-cfg-failure-v1" not in checked
-                    or function_definition(generated, "compatibility_checked")
-                ):
-                    sys.stderr.write(
-                        "compatibility_checked should emit only its explicit "
-                        "failure-form body, without an ordinary wrapper\n"
-                    )
-                    return 1
-                for failure_name in (
-                    "checked_leaf",
-                    "checked_caller",
-                    "entry",
-                ):
-                    failure_body = function_definition(
-                        generated, f"{failure_name}__gti_mir_failure"
-                    )
+                    if emission.returncode != 0:
+                        return fail(emission)
+                    generated = emitted.read_text(encoding="utf8")
                     if (
-                        "// GTI verified-MIR body: scalar-cfg-failure-v1"
-                        not in failure_body
+                        generated.count(f"{marker} field-initializers-instance")
+                        != 0
+                        or generated.count(
+                            f"{marker} static-field-initializers-instance"
+                        )
+                        != 0
+                        or generated.count(f"{marker} module-instance") != 1
+                        or generated.count(
+                            "// GTI verified-MIR body: native-boundary-v1 "
+                            "function-instance"
+                        )
+                        # Only the two native stdout declarations are roots. The
+                        # unused prelude capabilities/classes are not lowered.
+                        != 2
                     ):
                         sys.stderr.write(
-                            f"{failure_name} lost its explicit failure-form "
-                            "verified-MIR body\n"
+                            "generated C++ lost the verified prelude initializer, "
+                            "module, or native-boundary schedules\n"
                         )
                         return 1
-                if (
-                    "checked_leaf__gti_mir_failure(" not in generated
-                    or "__gti_mir_call_success_" not in generated
-                ):
-                    sys.stderr.write(
-                        "checked_caller should reach checked_leaf through "
-                        "the transformed convention: a direct derived-name "
-                        "call branching on the call-success bool\n"
+                    checked = function_definition(
+                        generated, "compatibility_checked__gti_mir_failure"
                     )
-                    return 1
-                if (
-                    "std::int8_t"
-                    not in function_definition(generated, "mir_i8_identity")
-                    or "mir_second(std::int8_t __gti_mir_arg_0, std::int32_t "
-                    "__gti_mir_arg_1, std::uint64_t __gti_mir_arg_2)"
-                    not in generated
-                    or "= __gti_mir_arg_1;"
-                    not in function_definition(generated, "mir_second")
-                    or "static_cast<std::int64_t>(9223372036854775807)"
-                    not in function_definition(generated, "mir_i64_max")
-                    or "18446744073709551615ULL"
-                    not in function_definition(generated, "mir_u64_max")
-                    or "return;"
-                    not in function_definition(generated, "mir_noop")
-                ):
-                    sys.stderr.write(
-                        "generated MIR family lost fixed-width or void semantics\n"
-                    )
-                    return 1
-                if (
-                    marker
-                    not in function_definition(
-                        generated, "compatibility_bool_identity"
-                    )
-                    or marker
-                    not in function_definition(
-                        generated, "compatibility_char_identity"
-                    )
-                ):
-                    sys.stderr.write(
-                        "bool or character identity bodies should now be "
-                        "admitted per body by the general emitter\n"
-                    )
-                    return 1
+                    if (
+                        "// GTI verified-MIR body: scalar-cfg-failure-v1" not in checked
+                        or function_definition(generated, "compatibility_checked")
+                    ):
+                        sys.stderr.write(
+                            "compatibility_checked should emit only its explicit "
+                            "failure-form body, without an ordinary wrapper\n"
+                        )
+                        return 1
+                    for failure_name in (
+                        "checked_leaf",
+                        "checked_caller",
+                        "entry",
+                    ):
+                        failure_body = function_definition(
+                            generated, f"{failure_name}__gti_mir_failure"
+                        )
+                        if (
+                            "// GTI verified-MIR body: scalar-cfg-failure-v1"
+                            not in failure_body
+                        ):
+                            sys.stderr.write(
+                                f"{failure_name} lost its explicit failure-form "
+                                "verified-MIR body\n"
+                            )
+                            return 1
+                    if (
+                        "checked_leaf__gti_mir_failure(" not in generated
+                        or "__gti_mir_call_success_" not in generated
+                    ):
+                        sys.stderr.write(
+                            "checked_caller should reach checked_leaf through "
+                            "the transformed convention: a direct derived-name "
+                            "call branching on the call-success bool\n"
+                        )
+                        return 1
+                    if (
+                        "std::int8_t"
+                        not in function_definition(generated, "mir_i8_identity")
+                        or "mir_second(std::int8_t __gti_mir_arg_0, std::int32_t "
+                        "__gti_mir_arg_1, std::uint64_t __gti_mir_arg_2)"
+                        not in generated
+                        or "= __gti_mir_arg_1;"
+                        not in function_definition(generated, "mir_second")
+                        or "static_cast<std::int64_t>(9223372036854775807)"
+                        not in function_definition(generated, "mir_i64_max")
+                        or "18446744073709551615ULL"
+                        not in function_definition(generated, "mir_u64_max")
+                        or "return;"
+                        not in function_definition(generated, "mir_noop")
+                    ):
+                        sys.stderr.write(
+                            "generated MIR family lost fixed-width or void semantics\n"
+                        )
+                        return 1
+                    if (
+                        marker
+                        not in function_definition(
+                            generated, "compatibility_bool_identity"
+                        )
+                        or marker
+                        not in function_definition(
+                            generated, "compatibility_char_identity"
+                        )
+                    ):
+                        sys.stderr.write(
+                            "bool or character identity bodies should now be "
+                            "admitted per body by the general emitter\n"
+                        )
+                        return 1
 
-                constant = function_definition(generated, "mir_constant")
-                if optimization == "O0":
-                    exact_transform = (
-                        "__gti_mir_v_2 = __gti_mir_v_1;" in constant
-                        and "__gti_mir_v_2 = static_cast<std::int32_t>(42);"
-                        not in constant
-                    )
-                else:
-                    exact_transform = (
-                        "__gti_mir_v_2 = static_cast<std::int32_t>(42);"
-                        in constant
-                        and "__gti_mir_v_2 = __gti_mir_v_1;" not in constant
-                    )
-                if not exact_transform:
-                    sys.stderr.write(
-                        f"marked {optimization}/{standard} body did not "
-                        "reflect its verified MIR transform state\n"
-                    )
-                    return 1
-                emitted_by_mode[(optimization, standard)] = generated
+                    constant = function_definition(generated, "mir_constant")
+                    if optimization == "O0":
+                        exact_transform = (
+                            "__gti_mir_v_2 = __gti_mir_v_1;" in constant
+                            and "__gti_mir_v_2 = static_cast<std::int32_t>(42);"
+                            not in constant
+                        )
+                    else:
+                        exact_transform = (
+                            "__gti_mir_v_2 = static_cast<std::int32_t>(42);"
+                            in constant
+                            and "__gti_mir_v_2 = __gti_mir_v_1;" not in constant
+                        )
+                    if not exact_transform:
+                        sys.stderr.write(
+                            f"marked {level}/{label} body did not "
+                            "reflect its verified MIR transform state\n"
+                        )
+                        return 1
+                    emitted_by_mode[(level, label)] = generated
 
-        for standard in ("c++20", "c++23"):
+        for label, _flags, _native in cpp_text_modes():
             o1_constant = function_definition(
-                emitted_by_mode[("O1", standard)], "mir_constant"
+                emitted_by_mode[("O1", label)], "mir_constant"
             )
             o3_constant = function_definition(
-                emitted_by_mode[("O3", standard)], "mir_constant"
+                emitted_by_mode[("O3", label)], "mir_constant"
             )
             if o1_constant != o3_constant:
                 sys.stderr.write(
-                    f"marked O1/O3 {standard} bodies did not preserve the "
+                    f"marked O1/O3 {label} bodies did not preserve the "
                     "same verified MIR identity fold\n"
                 )
                 return 1

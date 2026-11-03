@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from backend_modes import cpp_text_modes, is_cpp_mode
 
 
 def run(command):
@@ -29,7 +30,7 @@ int first_entry();
 int second_entry();
 int main() { return first_entry() == 7 && second_entry() == 11 ? 0 : 1; }
 ''')
-        for standard in ("c++20", "c++23"):
+        for label, flags, _native in cpp_text_modes():
             for level in ("O0", "O3"):
                 objects = []
                 for name, value in (("first", 7), ("second", 11)):
@@ -45,20 +46,21 @@ int identity(int value) {{ return value; }}
 int main() {{ return native_identity(identity(local_value)); }}
 ''')
                     generated = root / f"{name}.cpp"
-                    run([compiler, source, f"-{level}", "--std", standard,
-                         "--emit-cpp", "-o", generated])
-                    text = generated.read_text()
-                    if text.count("int main() {") != 1:
-                        raise RuntimeError("missing exact no-argument hosted adapter")
-                    generated.write_text(text.replace("int main() {", f"int {name}_entry() {{"))
+                    if is_cpp_mode(flags):
+                        run([compiler, source, f"-{level}", *flags,
+                             "--emit-cpp", "-o", generated])
+                        text = generated.read_text()
+                        if text.count("int main() {") != 1:
+                            raise RuntimeError("missing exact no-argument hosted adapter")
+                        generated.write_text(text.replace("int main() {", f"int {name}_entry() {{"))
                     obj = root / f"{name}.o"
-                    run([cxx, f"-std={standard}", f"-{level}",
+                    run([cxx, f"-std={label}", f"-{level}",
                          "-D__gti_strict_ieee754=1",
                          "-I", repository / "runtime/include",
                          "-c", generated, "-o", obj])
                     objects.append(obj)
-                executable = root / f"linkage-{standard}-{level}"
-                run([cxx, f"-std={standard}", f"-{level}", harness,
+                executable = root / f"linkage-{label}-{level}"
+                run([cxx, f"-std={label}", f"-{level}", harness,
                      *objects, runtime, "-pthread", "-o", executable])
                 result = run([executable])
                 if result.stdout or result.stderr:

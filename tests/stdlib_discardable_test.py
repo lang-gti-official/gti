@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def execute(command, environment):
@@ -21,19 +22,16 @@ def main():
                        GTI_RUNTIME_INCLUDE=str(repository / "runtime/include"),
                        ASAN_OPTIONS="halt_on_error=1",
                        UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1")
-    modes = [("c++20", "O0", []), ("c++23", "O3", []),
-             ("c++23", "O1", ["-fsanitize=address,undefined",
-                               "-fno-omit-frame-pointer"])]
+    modes = native_modes()
     sources = [(repository / "tests/fixtures/stdlib_discardable_containers.gti", ""),
                (repository / "tests/fixtures/stdlib_discardable_misc.gti", "1\n2\n"),
                (repository / "examples/115-discardable-results.gti", "")]
     with tempfile.TemporaryDirectory(prefix="gti-stdlib-discardable-") as directory:
         temporary = Path(directory)
-        for standard, optimization, native in modes:
+        for mode, flags, native in modes:
             for source, expected_output in sources:
-                output = temporary / f"{source.stem}-{standard}-{optimization}"
-                command = [compiler, source, "--std", standard,
-                           f"-{optimization}", "-o", output]
+                output = temporary / f"{source.stem}-{mode}"
+                command = [compiler, source, *flags, "-o", output]
                 if source.name == "stdlib_discardable_misc.gti":
                     command += ["--execution-profile", "concurrent"]
                 if native:
@@ -42,7 +40,7 @@ def main():
                 assert compiled.returncode == 0, f"{command}\n{compiled.stdout}\n{compiled.stderr}"
                 result = execute([output], environment)
                 assert (result.returncode, result.stdout, result.stderr) == (0, expected_output, ""), \
-                    (source.name, standard, optimization, result.returncode, result.stdout, result.stderr)
+                    (source.name, mode, result.returncode, result.stdout, result.stderr)
                 print(f"{source.name}: {standard}-{optimization} passed", flush=True)
 
         # Instantiate the JSON branches whose redundant discards were removed.

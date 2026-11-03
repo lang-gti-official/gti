@@ -5,6 +5,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from backend_modes import cpp_text_modes, is_cpp_mode
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -61,43 +62,42 @@ int main() {
         root = pathlib.Path(temporary)
         source = root / "evaluation-order.gti"
         source.write_text(source_text, encoding="utf8")
-        for standard in ("c++20", "c++23"):
-            generated = root / f"evaluation-order-{standard}.cpp"
-            emitted = run(
-                [
-                    str(compiler),
-                    str(source),
-                    "--std",
-                    standard,
-                    "--emit-cpp",
-                    "-o",
-                    str(generated),
-                ]
-            )
-            if emitted.returncode != 0:
-                return fail(f"emit {standard}", emitted)
+        for label, flags, native in cpp_text_modes():
+            generated = root / f"evaluation-order-{label}.cpp"
+            if is_cpp_mode(flags):
+                emitted = run(
+                    [
+                        str(compiler),
+                        str(source),
+                        *flags,
+                        "--emit-cpp",
+                        "-o",
+                        str(generated),
+                    ]
+                )
+                if emitted.returncode != 0:
+                    return fail(f"emit {label}", emitted)
             if not verify_emitted_order(generated.read_text(encoding="utf8")):
                 sys.stderr.write(
-                    f"emit {standard}: effectful arguments were not emitted "
+                    f"emit {label}: effectful arguments were not emitted "
                     "as ordered calls before invocation\n"
                 )
                 return 1
 
             for optimization in ("O0", "O3"):
-                executable = root / f"evaluation-order-{standard}-{optimization}"
+                executable = root / f"evaluation-order-{label}-{optimization}"
                 built = run(
                     [
                         str(compiler),
                         str(source),
-                        "--std",
-                        standard,
+                        *flags,
                         f"-{optimization}",
                         "-o",
                         str(executable),
                     ]
                 )
                 if built.returncode != 0:
-                    return fail(f"build {standard} {optimization}", built)
+                    return fail(f"build {label} {optimization}", built)
 
                 executed = run([str(executable)])
                 if (
@@ -105,7 +105,7 @@ int main() {
                     or executed.stdout != "a\nb\n"
                     or executed.stderr != ""
                 ):
-                    return fail(f"run {standard} {optimization}", executed)
+                    return fail(f"run {label} {optimization}", executed)
 
     return 0
 

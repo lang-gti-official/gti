@@ -8,18 +8,11 @@ import subprocess
 import tempfile
 
 from case_jobs import configured_jobs, positive_jobs, run_cases
+from backend_modes import is_cpp_mode, keep_cpp, native_modes
 
 
-MODES = {
-    f"{standard}-{level}": ["--std", standard, f"-{level}"]
-    for standard in ("c++20", "c++23")
-    for level in ("O0", "O1", "O3")
-}
-MODES["no-elide"] = ["--std", "c++23", "-O3", "--", "-fno-elide-constructors"]
-MODES["sanitized"] = [
-    "--std", "c++23", "-O1", "--", "-fsanitize=address,undefined",
-    "-fno-omit-frame-pointer",
-]
+MODES = {label: [*flags, *(["--", *native] if native else [])]
+         for label, flags, native in native_modes()}
 
 
 def run(command):
@@ -32,10 +25,11 @@ def check(compiler, repository, directory, mode):
                     "user_owning_reference_replacement_failure"):
         source = repository / "tests" / "fixtures" / f"{fixture}.gti"
         binary = directory / f"{fixture}-{mode}"
-        built = run([str(compiler), str(source), "--keep-cpp", "--progress=never",
+        built = run([str(compiler), str(source), *keep_cpp(flags), "--progress=never",
                      "-o", str(binary), *flags])
         assert built.returncode == 0, (mode, fixture, built.stdout, built.stderr)
-        assert "// GTI verified-MIR body:" in binary.with_suffix(".gti.cpp").read_text()
+        if is_cpp_mode(flags):
+            assert "// GTI verified-MIR body:" in binary.with_suffix(".gti.cpp").read_text()
         completed = run([str(binary)])
         expected_output = "100\n200\n10\n20\n" if fixture.endswith("failure") else ""
         assert completed.returncode == 0 and completed.stdout == expected_output

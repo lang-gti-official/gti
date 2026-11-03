@@ -8,6 +8,7 @@ import platform
 import shutil
 import subprocess
 import tempfile
+from backend_modes import native_modes
 
 
 def run(command, environment, expected_status=0):
@@ -62,11 +63,7 @@ def main():
     else:
         environment.update(GTI_STDLIB_PATH=str(root / "stdlib"),
                            GTI_RUNTIME_INCLUDE=str(root / "runtime/include"))
-    modes = [(f"{standard}-{level}", ["--std", standard, f"-{level}"], [])
-             for standard in ("c++20", "c++23") for level in ("O0", "O1", "O3")]
-    modes += [("no-elide", ["--std", "c++23", "-O0"], ["-fno-elide-constructors"]),
-              ("sanitized", ["--std", "c++23", "-O1"],
-               ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])]
+    modes = native_modes()
     if arguments.mode:
         unknown = set(arguments.mode) - {label for label, _, _ in modes}
         if unknown:

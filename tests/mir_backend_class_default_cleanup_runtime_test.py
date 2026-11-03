@@ -5,6 +5,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from backend_modes import is_cpp_mode, native_modes
 
 
 # The function route dissolved into analysis-driven per-body admission:
@@ -191,34 +192,30 @@ def main() -> int:
     source = pathlib.Path(sys.argv[2]).resolve()
     with tempfile.TemporaryDirectory(prefix="gti-mir-class-cleanup-") as temporary:
         root = pathlib.Path(temporary)
-        for optimization in ("O0", "O1", "O3"):
-            for standard in ("c++20", "c++23"):
-                executable = root / f"cleanup-{optimization}-{standard}"
-                built = run(
-                    [
-                        str(compiler),
-                        str(source),
-                        f"-{optimization}",
-                        "--std",
-                        standard,
-                        "-o",
-                        str(executable),
-                    ]
-                )
-                if built.returncode != 0:
-                    return fail(built)
-                executed = run([str(executable)])
-                if executed.returncode != 0:
-                    return fail(executed)
+        for mode, flags, _native in native_modes():
+            executable = root / f"cleanup-{mode}"
+            built = run(
+                [
+                    str(compiler),
+                    str(source),
+                    *flags,
+                    "-o",
+                    str(executable),
+                ]
+            )
+            if built.returncode != 0:
+                return fail(built)
+            executed = run([str(executable)])
+            if executed.returncode != 0:
+                return fail(executed)
 
-                emitted = root / f"cleanup-{optimization}-{standard}.cpp"
+            emitted = root / f"cleanup-{mode}.cpp"
+            if is_cpp_mode(flags):
                 emission = run(
                     [
                         str(compiler),
                         str(source),
-                        f"-{optimization}",
-                        "--std",
-                        standard,
+                        *flags,
                         "--emit-cpp",
                         "-o",
                         str(emitted),
@@ -226,8 +223,9 @@ def main() -> int:
                 )
                 if emission.returncode != 0:
                     return fail(emission)
+            if is_cpp_mode(flags):
                 generated = emitted.read_text(encoding="utf8")
-                if not validate_family(generated, optimization, standard):
+                if not validate_family(generated, mode):
                     return 1
     return 0
 
