@@ -38,7 +38,8 @@ FULL_VALIDATION_FILES = {"scripts/validation_checks.py", "scripts/validation_bat
 AUTOMATION_FILES = {"AGENTS.md", "CLAUDE.md", "README.md"}
 AUTOMATION_SCRIPTS = {"agent_workflow.py", "validation_batch.py", "validation_checks.py",
                       "preview_workflow.py", "preview_submit.py", "build_window.py", "bounded_log.py",
-                      "cut_release.py", "check_release_version.py", "rollup.py", "release_train.py"}
+                      "cut_release.py", "check_release_version.py", "rollup.py", "release_train.py",
+                      "full_validation_report.py"}
 # Exactly the existing harnesses that CI's workflow-regression job runs. The
 # batch, validation and preview-submit scripts are covered by agent_workflow_test.
 AUTOMATION_TESTS = {"agent_workflow_test.py", "preview_workflow_test.py", "build_window_test.py",
@@ -236,27 +237,36 @@ def ci_mode(event, paths):
 
 
 LINT_JOBS = {"plan", "formatting", "release-version", "tree-sitter", "automation-tests"}
-EVENTS = {"pull_request", "merge_group"}
+EVENTS = {"pull_request", "merge_group", "full_validation"}
+# Post-integration full validation (full-validation.yml) proves these on each
+# main head; they are not merge-gate jobs.
+FULL_VALIDATION_JOBS = {"package", "integration", "sanitizers"}
 
 
 def admission(mode, results, event="pull_request"):
-    """The one required check. A PR proves its fast checks before it may queue;
-    the merge queue proves the complete suite on the exact candidate."""
+    """The one required check. A PR proves lint and fast checks before it may
+    queue, and the merge queue proves the same on the exact candidate; the
+    complete suite runs post-integration under the `full_validation` event."""
     if event not in EVENTS:
         raise ValueError("Unknown CI event")
     if mode == "component":
         raise ValueError("Awaiting integration: a batch component cannot merge directly; finish its validated batch or withdraw admission")
-    required = set(LINT_JOBS)
-    if mode == "full":
-        # System-LLVM checks run in fast; production package and full shards gate integration.
-        required |= {"fast"} if event == "pull_request" else {"fast", "package", "integration", "sanitizers"}
-    elif mode == "source-stdlib":
-        required |= {"source-stdlib"}
-    elif mode == "draft":
-        if event != "pull_request":
-            raise ValueError("A draft cannot enter the merge queue")
-    elif mode != "automation":
-        raise ValueError("Unknown CI validation mode")
+    if event == "full_validation":
+        if mode != "full":
+            raise ValueError("Full validation runs only in full mode")
+        required = set(FULL_VALIDATION_JOBS)
+    else:
+        required = set(LINT_JOBS)
+        if mode == "full":
+            # System-LLVM build and fast checks gate both the PR and the queue.
+            required |= {"fast"}
+        elif mode == "source-stdlib":
+            required |= {"source-stdlib"}
+        elif mode == "draft":
+            if event != "pull_request":
+                raise ValueError("A draft cannot enter the merge queue")
+        elif mode != "automation":
+            raise ValueError("Unknown CI validation mode")
     missing = sorted(key for key in required if results.get(key, {}).get("result") != "success")
     if missing:
         raise ValueError("Required validation did not pass: " + ", ".join(missing))
@@ -690,9 +700,9 @@ def main(argv=None):
             print("Metadata-only PR edit: no compiler validation or integration acceptance is claimed.")
             return
         admission(args.mode, json.loads(args.results), args.event)
-        if args.mode == "full" and args.event == "merge_group":
+        if args.mode == "full" and args.event == "full_validation":
             if not args.shard_reports:
-                raise ValueError("The merge queue gate needs the shard reports")
+                raise ValueError("Full validation needs the shard reports")
             reports = [json.loads(path.read_text()) for path in sorted(Path(args.shard_reports).rglob("*.json"))]
             summary = merge_shards(reports, [p for p in args.platforms.split(",") if p])
             print("GTI_INTEGRATION_RESULT=" + json.dumps(summary, sort_keys=True))
