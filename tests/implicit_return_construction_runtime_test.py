@@ -6,6 +6,7 @@ import tempfile
 
 from shared_failure_cleanup_runtime_test import SITES, expected_report
 from unique_class_allocation_runtime_test import run
+from backend_modes import native_modes
 
 CASES = [
     (0, 0, [7, 99, -99, 7, -7, 7, 99, -99, 7, -7,
@@ -20,10 +21,7 @@ SITES["implicit_return_construction.gti"] = {
 def main():
     compiler = pathlib.Path(sys.argv[1]).resolve()
     source = pathlib.Path(__file__).parent / "fixtures" / "implicit_return_construction.gti"
-    modes = [(f"{standard}-{level}", ["--std", standard, f"-{level}"], [])
-             for standard in ("c++20", "c++23") for level in ("O0", "O1", "O2", "O3")]
-    modes.append(("sanitized", ["--std", "c++23", "-O1"],
-                  ["--", "-fsanitize=address,undefined", "-fno-omit-frame-pointer"]))
+    modes = native_modes()
     with tempfile.TemporaryDirectory(prefix="gti-implicit-return-") as directory:
         for name, flags, native in modes:
             binary = pathlib.Path(directory) / name

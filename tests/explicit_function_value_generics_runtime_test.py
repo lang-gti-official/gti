@@ -6,6 +6,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def run(command: list[str], environment: dict[str, str]) -> subprocess.CompletedProcess[str]:
@@ -43,8 +44,6 @@ def main() -> int:
                 str(compiler),
                 str(source),
                 "--emit-mir",
-                "--std",
-                "c++23",
                 "-O1",
                 "-o",
                 str(mir_path),
@@ -69,27 +68,23 @@ def main() -> int:
                 sys.stderr.write(f"MIR lost explicit generic identity {value!r}\n")
                 return 1
 
-        for standard in ("c++20", "c++23"):
-            for optimization in ("O0", "O1", "O3"):
-                mode = f"{standard}-{optimization}"
-                executable = root / mode
-                built = run(
-                    [
-                        str(compiler),
-                        str(source),
-                        "--std",
-                        standard,
-                        f"-{optimization}",
-                        "-o",
-                        str(executable),
-                    ],
-                    environment,
-                )
-                if built.returncode != 0 or "GTI-B0001" in built.stderr:
-                    return fail(f"build {mode}", built)
-                executed = run([str(executable)], environment)
-                if executed.returncode != 0 or executed.stdout or executed.stderr:
-                    return fail(f"run {mode}", executed)
+        for mode, flags, _native in native_modes():
+            executable = root / mode
+            built = run(
+                [
+                    str(compiler),
+                    str(source),
+                    *flags,
+                    "-o",
+                    str(executable),
+                ],
+                environment,
+            )
+            if built.returncode != 0 or "GTI-B0001" in built.stderr:
+                return fail(f"build {mode}", built)
+            executed = run([str(executable)], environment)
+            if executed.returncode != 0 or executed.stdout or executed.stderr:
+                return fail(f"run {mode}", executed)
 
     return 0
 

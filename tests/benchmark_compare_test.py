@@ -1840,6 +1840,24 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
             is visibility,
             "decoded provenance lost its library findings visibility",
         )
+    require(
+        sequential_report.get("compile_limits", {}).get("constexpr-steps")
+        == 1048576,
+        "benchmark sidecar did not record the default compile limits",
+    )
+    for limits in ([], "1048576", {"constexpr-steps": 0},
+                   {"constexpr-steps": True}, {"constexpr-steps": "1"}):
+        limits_report = copy.deepcopy(sequential_report)
+        limits_report["compile_limits"] = limits
+        limits_path = root / "invalid-compile-limits-report.json"
+        limits_path.write_text(json.dumps(limits_report), encoding="utf-8")
+        expect_benchmark_error(
+            module,
+            lambda: module.load_build_provenance(
+                limits_path, selected_gti, selected_cxx, sequential_entry
+            ),
+            "compile_limits must map limit names to positive integers",
+        )
     for visibility in (1, 0, "true", None, [], {}):
         visibility_report = copy.deepcopy(sequential_report)
         visibility_report["raw_pointer_audit_library_findings"] = visibility

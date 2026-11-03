@@ -2450,7 +2450,7 @@
     },
     "156-borrowing-callbacks.gti": {
       "declarations": 1397,
-      "bodies": 99,
+      "bodies": 102,
       "generated_items": 50,
       "generated_kinds": {
         "program_initialization": 0,
@@ -2961,11 +2961,6 @@
       }
     }
   },
-  "totals": {
-    "declarations": 227804,
-    "bodies": 28818,
-    "generated_items": 16965
-  },
   "target": "arm64-apple-macos",
   "variants": {
     "x86_64-unknown-linux": {
@@ -3018,11 +3013,6 @@
             "thread_local_storage": 0
           }
         }
-      },
-      "totals": {
-        "declarations": 227804,
-        "bodies": 28815,
-        "generated_items": 16962
       }
     }
   }

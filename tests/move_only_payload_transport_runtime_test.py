@@ -24,6 +24,7 @@ import tempfile
 from sanitizer_support import SANITIZED_BUILD_TIMEOUT
 from shared_failure_cleanup_runtime_test import SITES, expected_report
 from unique_class_allocation_runtime_test import run
+from backend_modes import native_modes
 
 # (phase, exit code, stdout integers, report)
 CASES = [
@@ -51,10 +52,7 @@ def build(command, sanitized):
 def main():
     compiler = pathlib.Path(sys.argv[1]).resolve()
     source = pathlib.Path(__file__).parent / "fixtures" / "move_only_payload_transport.gti"
-    modes = [(f"{standard}-{opt}", ["--std", standard, f"-{opt}"], [])
-             for standard in ("c++20", "c++23") for opt in ("O0", "O3")]
-    modes.append(("sanitized", ["--std", "c++23", "-O1"],
-                  ["--", "-fsanitize=address,undefined", "-fno-omit-frame-pointer"]))
+    modes = native_modes()
     with tempfile.TemporaryDirectory(prefix="gti-move-only-payload-") as directory:
         for name, flags, native in modes:
             binary = pathlib.Path(directory) / f"move-only-payload-{name}"

@@ -9,6 +9,7 @@ import sys
 import tempfile
 
 from sanitizer_support import SANITIZED_BUILD_TIMEOUT
+from backend_modes import native_modes
 
 
 def run(command, environment, timeout=120):
@@ -25,11 +26,7 @@ def main():
     fixture = pathlib.Path(__file__).parent / "fixtures" / "expected_ergonomics.gti"
     environment = dict(os.environ, ASAN_OPTIONS="halt_on_error=1",
                        UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1")
-    modes = [(standard, level, ["-fno-elide-constructors"])
-             for standard in ("20", "23")
-             for level in ("0", "1", "3")]
-    modes.append(("23", "1", ["-fsanitize=address,undefined",
-                               "-fno-omit-frame-pointer"]))
+    modes = native_modes()
     if arguments.quick:
         modes = [("23", "0", ["-fno-elide-constructors"])]
     lines = fixture.read_text().splitlines()
@@ -79,10 +76,9 @@ def main():
     ]
     with tempfile.TemporaryDirectory(prefix="gti-expected-ergonomics-") as temp:
         root = pathlib.Path(temp)
-        for standard, level, native in modes:
-            executable = root / f"expected-cpp{standard}-O{level}"
-            command = [str(compiler), str(fixture), "--std", f"c++{standard}",
-                       f"-O{level}", "-o", str(executable), "--", *native]
+        for label, flags, native in modes:
+            executable = root / f"expected-cpp{label}"
+            command = [str(compiler), str(fixture), *flags, "-o", str(executable), "--", *native]
             sanitized = any(flag.startswith("-fsanitize=") for flag in native)
             built = run(command, environment,
                         SANITIZED_BUILD_TIMEOUT if sanitized else 120)
@@ -95,11 +91,11 @@ def main():
                         (not fragments and executed.stderr) or
                         any(fragment not in executed.stderr for fragment in fragments)):
                     sys.stderr.write(
-                        f"cpp{standard}/O{level}, case {count}: expected "
+                        f"cpp{label}, case {count}: expected "
                         f"{status}, {stdout!r}, {fragments!r}; got "
                         f"{executed.returncode}, {executed.stdout!r}, {executed.stderr!r}\n")
                     return 1
-            print(f"expected ergonomics: C++{standard}/O{level}, {len(cases)} outcomes",
+            print(f"expected ergonomics: C++{label}, {len(cases)} outcomes",
                   flush=True)
     return 0
 

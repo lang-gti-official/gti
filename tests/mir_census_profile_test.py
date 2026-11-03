@@ -28,6 +28,7 @@ class ProfileControls(unittest.TestCase):
                           if mac[name] != linux[name]}, {
             "087-associative-containers.gti": (452, 451),
             "089-library-workflow.gti": (918, 917),
+            "186-consuming-ranges.gti": (450, 449),
         })
         lowered = json.loads((ROOT / "tests/lowered_program_census_baseline.json").read_text())
         for name, row in lowered["variants"][reviewed.TARGETS[1]]["examples"].items():
@@ -54,7 +55,8 @@ class ProfileControls(unittest.TestCase):
             for target in reviewed.TARGETS:
                 with self.assertRaises(ValueError):
                     reviewed.select(bad, target)
-        rejected(lambda d: d.update(total=d["total"] + 1))
+        # Totals are derived; a stored one is tolerated only when consistent.
+        rejected(lambda d: d.update(total=sum(d["examples"].values()) + 1))
         rejected(lambda d: d.update(target="unknown"))
         rejected(lambda d: d["variants"].update(unknown={}))
         rejected(lambda d: d["variants"].clear())
@@ -63,6 +65,20 @@ class ProfileControls(unittest.TestCase):
         rejected(lambda d: variant(d).update(examples={"missing.gti": 1}))
         for value in [None, True, 0, -1, 447.0, "447"]:
             rejected(lambda d: variant(d)["examples"].update({"087-associative-containers.gti": value}))
+
+    def test_totals_are_derived_never_stored(self):
+        # A stored total made every pull request rewrite the same lines and
+        # any two of them conflict; the baseline carries counts only.
+        self.assertNotIn("total", DOCUMENT)
+        for variant in DOCUMENT["variants"].values():
+            self.assertNotIn("total", variant)
+        consistent = deepcopy(DOCUMENT)
+        consistent["total"] = sum(consistent["examples"].values())
+        for target in reviewed.TARGETS:
+            self.assertEqual(reviewed.select(consistent, target), reviewed.select(DOCUMENT, target))
+        refreshed = reviewed.updated(consistent, reviewed.TARGETS[0], reviewed.select(DOCUMENT, reviewed.TARGETS[0]))
+        self.assertNotIn("total", refreshed)
+        self.assertEqual(set(refreshed["variants"][reviewed.TARGETS[1]]), {"examples"})
 
     def test_update_preserves_other_profile_and_rejects_partial_results(self):
         for target in reviewed.TARGETS:
@@ -124,8 +140,6 @@ class ProfileControls(unittest.TestCase):
                 # Even a selected-case run validates the entire corpus first.
                 bad = deepcopy(DOCUMENT)
                 del bad["examples"]["001-basics.gti"]
-                bad["total"] -= 8
-                bad["variants"][reviewed.TARGETS[1]]["total"] -= 8
                 baseline.write_text(json.dumps(bad))
                 with patch.object(sys, "argv", argv), patch.object(oracle, "build_and_run") as run:
                     self.assertEqual(oracle.main(), 1)

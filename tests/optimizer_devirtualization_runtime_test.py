@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from backend_modes import keep_cpp, native_modes, optimization_level
 
 def invoke(command):
     return subprocess.run(command, capture_output=True, text=True, timeout=120)
@@ -15,13 +16,15 @@ def main():
     with tempfile.TemporaryDirectory(prefix='gti-exact-receiver-') as temporary:
         root = Path(temporary)
         reference = {}
-        for standard in ('c++20', 'c++23'):
-            for level in ('0', '2', '3'):
+        # O2 is where devirtualization is first expected; the policy adds O0/O3.
+        for mode, flags, _native in native_modes(levels=("O0", "O2", "O3")):
+            if True:
+                level = optimization_level(flags)[1:]
                 for failing in (False, True):
-                    name = f'{standard}-{level}-{failing}'
+                    name = f'{mode}-{failing}'
                     executable, report = root/name, root/(name+'.json')
-                    cmd = [compiler, source, '-O'+level, '--std', standard, '--cxx', cxx,
-                           '--keep-cpp', '--optimization-report', str(report), '-o', str(executable)]
+                    cmd = [compiler, source, *flags, '--cxx', cxx,
+                           *keep_cpp(flags), '--optimization-report', str(report), '-o', str(executable)]
                     if failing: cmd += ['-D', 'FAIL_RUNTIME']
                     built = invoke(cmd)
                     assert built.returncode == 0, (cmd, built.stdout, built.stderr)
