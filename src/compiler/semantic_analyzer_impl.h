@@ -869,6 +869,9 @@ public:
 
   void visitLayoutQueryExpr(const LayoutQuery &expr) override;
   void visitMemberRequirementExpr(const MemberRequirement &expr) override;
+  void visitConceptTestExpr(const ConceptTest &expr) override;
+  [[nodiscard]] std::vector<AppliedConceptRequirement>
+  conceptConditionRequirements(const Expr &expr) const;
 
   void visitLiteralExpr(const LiteralExpr &expr) override;
 

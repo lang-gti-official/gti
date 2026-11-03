@@ -2165,6 +2165,16 @@ before HIR lowering. Nested constexpr predicates may themselves require staged
 concrete analysis; their execution shares the enclosing constant request's
 step budget and a bounded staging/call depth.
 
+A concept application `C<T>` is a semantic Boolean query using the existing
+constraint satisfaction service. In a selected true `if constexpr` arm it
+supplies that application's guaranteed constraint facts; grouping retains them
+and conjunction combines them. Disjunction, negation and the else arm supply no
+additional facts. A dependent test uses the same deferred selection described
+above. Closed query results are Boolean constants lowered to MIR literals;
+constexpr function execution remains in the staged MIR evaluator. See
+[concept tests](concepts.md#concept-tests-in-expressions) for expression positions
+and the distinction from constraint-clause negation.
+
 Concrete non-negative integer constexpr values may supply fixed-array extents
 and `uint64_t` value-generic arguments. These uses refer to the declaration's
 computed value rather than reinterpreting emitted C++.

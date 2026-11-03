@@ -6311,7 +6311,8 @@ private:
       for (const LambdaCapture &capture : lambda->captures()) {
         lowerOperand(capture.initializer);
       }
-    } else if (exprAs<MemberRequirement>(raw) != nullptr) {
+    } else if (exprAs<MemberRequirement>(raw) != nullptr ||
+               exprAs<ConceptTest>(raw) != nullptr) {
       kind = HirValueKind::Literal;
       if (const auto constant = model.findConstant(*raw)) {
         if (const auto *value = std::get_if<bool>(&*constant))

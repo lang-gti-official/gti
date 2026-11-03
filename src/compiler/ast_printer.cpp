@@ -136,6 +136,13 @@ void AstPrinter::visitLiteralExpr(const LiteralExpr &expr) {
   result = literalToString(expr.value());
 }
 
+void AstPrinter::visitConceptTestExpr(const ConceptTest &expr) {
+  result = "(concept-test " +
+           typeToString(
+               TypeRef{expr.application().name, expr.application().arguments}) +
+           ")";
+}
+
 void AstPrinter::visitMemberRequirementExpr(const MemberRequirement &expr) {
   if (expr.isExpressionRequirement()) {
     std::string parameters;

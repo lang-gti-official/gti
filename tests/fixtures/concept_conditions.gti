@@ -1,0 +1,77 @@
+import std.utility;
+
+concept has_size<T> = requires(T& value) { { value.size() } -> uint64_t; };
+concept has_read<T> = requires(T& value) { { value.read() } -> int; };
+struct Box {
+  int number;
+public:
+  Box(int value) : number(value) {}
+  uint64_t size() { return uint64_t(this.number); }
+  int read() { return this.number; }
+  Box clone() { return Box(this.number); }
+};
+
+int combined<T>(T& value) {
+  if constexpr ((has_size<T>) && has_read<T>) {
+    return int(value.size()) + value.read();
+  } else { return 0; }
+}
+// A true dependent test proven by the enclosing constraint is checked before
+// instantiation; it uses the exact same structural and operator guarantees.
+int proven<has_read T>(T& value) {
+  if constexpr (has_read<T>) { return value.read(); }
+  else { return value.unavailable(); }
+}
+int number<T>(T value) {
+  if constexpr (std::integral<T>) { return int(value + value); }
+  else { return 0; }
+}
+int negate<T>() {
+  if constexpr (!has_read<T>) { return 1; } else { return 2; }
+}
+int alternative<T>() {
+  if constexpr (has_read<T> || std::integral<T>) { return 3; }
+  else { return 4; }
+}
+concept readable<T> { int read(T& value); };
+for concept readable<Box> {
+  int read(Box& value) { return value.read(); }
+};
+int dispatch<T>(T& value) {
+  if constexpr (readable<T>) { return readable<T>::read(value); }
+  else { return -1; }
+}
+int proven_dispatch<T>(T& value) requires readable<T> {
+  if constexpr (readable<T>) { return readable<T>::read(value); }
+  else { return value.unavailable(); }
+}
+constexpr bool yes = has_read<Box>;
+constexpr bool no = has_read<int>;
+static_assert(yes && !no);
+static_assert(std::integral<int> == true);
+static_assert(std::integral<Box> != true);
+static_assert(!has_read<int> && (has_read<Box> || has_size<int>));
+constexpr bool is_readable<T>() { return has_read<T>; }
+static_assert(is_readable<Box>() && !is_readable<int>());
+bool identity(bool value) { return value; }
+
+int main() {
+  Box box{7};
+  if (combined(box) != 14 || proven(box) != 7) { return 1; }
+  int input = 7;
+  if (combined(input) != 0 || number(7) != 14) { return 2; }
+  if (negate<int>() != 1 || negate<Box>() != 2) { return 3; }
+  if (alternative<int>() != 3 || alternative<float>() != 4) { return 4; }
+  if (dispatch(box) != 7 || proven_dispatch(box) != 7) { return 5; }
+  int integer = 9;
+  if (dispatch(integer) != -1) { return 6; }
+  Box cloned = std::clone(box);
+  if (cloned.read() != 7 || std::clone(integer) != 9) { return 7; }
+  bool ordinary = has_read<Box>;
+  if (!ordinary || !identity(std::integral<int>)) { return 8; }
+  int a = 1;
+  int b = 2;
+  int c = 3;
+  if (!(a < b) || !(c > b)) { return 9; }
+  return 0;
+}

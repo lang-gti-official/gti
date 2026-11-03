@@ -21,9 +21,59 @@ integer representation and excludes payload enums. `std::enum_underlying<T,U>`
 additionally requires `U` to be the exact declared representation, including
 signedness and width. They do not grant numeric operators or implicit integer
 conversion. The separate `std::to_underlying<U,T>(value)` function extracts that
-exact integer at runtime. Concept applications are constraint syntax, not
-boolean expressions; ordinary bounded member queries can inspect a constrained
-member in a constant condition.
+exact integer at runtime. Concept applications are also constant Boolean
+expressions, using the same satisfaction query as a constraint.
+
+## Concept tests in expressions
+
+A named application `C<T>` is a `bool`: it is true precisely when the visible
+concept is satisfied with those exact arguments. Source-defined structural
+concepts, compiler-bound primitive concepts, and protocol concepts follow the
+same rule. Unknown/non-concept names, inaccessible concepts, invalid type
+arguments and wrong arity remain source diagnostics; an ordinary unsatisfied
+application is simply false.
+
+```gti
+concept has_size<T> = requires(T& value) { { value.size() } -> uint64_t; };
+uint64_t measure<T>(T& value) {
+  if constexpr (has_size<T>) { return value.size(); }
+  else { return 0; }
+}
+static_assert(std::integral<int> && !has_size<int>);
+constexpr bool numeric = std::integral<int> || std::floating_point<int>;
+```
+
+Tests can appear in `if constexpr`, `static_assert`, Boolean initializers,
+returns and call arguments. Ordinary Boolean `&&`/`and`, `||`/`or`, `!`,
+equality and conditional expressions apply. A bare angle application is
+recognized when its closing `>` is followed by a Boolean operator or an
+expression delimiter; parentheses disambiguate other expression contexts.
+Ordinary comparisons retain their grammar. Concept tests are type queries,
+not overload-selection operations or runtime calls.
+
+A selected true `if constexpr (C<T>)` arm receives the same guaranteed facts
+as `requires C<T>`: structural members, operators, conversions, borrowing and
+protocol operation dispatch all use the shared constraint authority. Grouping
+preserves these facts and `&&` combines its operands' facts. `||` and `!`
+add no facts, and neither does `else`. Existing facts remain available. Facts
+from a test do not escape the selected arm or arise from an ordinary runtime
+`if`, a stored Boolean, or comparison with `true`.
+
+An unresolved dependent test uses the existing deferred `if constexpr`
+selection: concrete instantiation chooses and checks only its selected arm.
+Closed tests and already-proven dependent tests are frontend Boolean constants;
+HIR/MIR preserve the result as a literal and emit no runtime satisfaction query.
+This is a semantic query, not a second execution interpreter. Executing a
+constexpr function containing a test uses the existing staged MIR profile.
+
+Named tests do not inspect constexpr helper bodies for structural contracts.
+A concept defined by `query<T>()` retains only the facts its constraint already
+guarantees. Nested `requires C<T>;` inside a requires-expression remains outside
+this slice; compose concepts with ordinary constraint conjunction instead.
+Negation is supported as a Boolean expression here, while constraint-clause
+negation and constraint-only overload ranking remain unsupported.
+[Example 188](../../examples/188-concept-conditions.gti) demonstrates structural
+and protocol tests with both satisfied and unsatisfied types.
 
 ## Concept declarations
 
@@ -1237,7 +1287,7 @@ call closure. A runtime-only operation remains ineligible for constant execution
 ## Deliberate exclusions and extension rule
 
 The implemented language does not provide general C++ requires-expressions,
-arbitrary expression requirements, negation, associated types outside a concept
+arbitrary expression requirements, constraint-clause negation, associated types outside a concept
 with a body, value constraints, concept or partial specialization, constraint
 subsumption, constraint-based overload ordering, conditionally available
 operators, constrained polymorphic contracts, or unrestricted compile-time

@@ -7194,8 +7194,7 @@ auto SemanticVisitor::Impl::resolveRequirements(
                 concepts[*global - 1].declaration->name(),
                 concepts[*global - 1].sourceUnit))) {
         report(application.name.last(),
-               "Unknown concept '" + pathSpelling(application.name) +
-                   "' in requires clause.",
+               "Unknown concept '" + pathSpelling(application.name) + "'.",
                "GTI-S2049");
         diagnostics.back().missingIncludeName = application.name.last().lexeme;
       }

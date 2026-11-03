@@ -3661,6 +3661,16 @@ private:
         consume(TokenKind::LEFT_PAREN,
                 "Expect '(' after explicit generic arguments.");
         expr = finishCall(std::move(expr), std::move(typeArguments));
+      } else if (isConceptTestStart() && (exprAs<Variable>(expr.get()) ||
+                                          exprAs<QualifiedName>(expr.get()))) {
+        NamePath name = exprAs<Variable>(expr.get())
+                            ? NamePath(exprAs<Variable>(expr.get())->name())
+                            : exprAs<QualifiedName>(expr.get())->takeName();
+        std::vector<TypeRef> arguments = typeArgumentList();
+        expr = std::make_unique<ConceptTest>(
+            ConceptApplication{.name = std::move(name),
+                               .arguments = std::move(arguments)},
+            previous());
       } else if (match({TokenKind::LEFT_PAREN})) {
         expr = finishCall(std::move(expr), {});
       } else if (match({TokenKind::DOT})) {
@@ -3807,6 +3817,9 @@ private:
       collectRequirementTypes(group->expression().get(), types);
     } else if (const auto *get = exprAs<Get>(expression)) {
       collectRequirementTypes(get->object().get(), types);
+    } else if (const auto *test = exprAs<ConceptTest>(expression)) {
+      types.insert(types.end(), test->application().arguments.begin(),
+                   test->application().arguments.end());
     } else if (const auto *query = exprAs<MemberRequirement>(expression)) {
       if (!query->isExpressionRequirement())
         types.push_back(query->receiver());
@@ -4281,6 +4294,44 @@ private:
     }
     return peekAt(next).kind == TokenKind::GREATER &&
            peekAt(next + 1).kind == TokenKind::SCOPE;
+  }
+
+  [[nodiscard]] bool isConceptTestStart() const {
+    if (!check(TokenKind::LESS))
+      return false;
+    std::size_t next = 1;
+    if (peekAt(next).kind != TokenKind::GREATER) {
+      auto end = genericArgumentEnd(next);
+      if (!end)
+        return false;
+      next = *end;
+      while (peekAt(next).kind == TokenKind::COMMA) {
+        end = genericArgumentEnd(next + 1);
+        if (!end)
+          return false;
+        next = *end;
+      }
+    }
+    if (peekAt(next).kind != TokenKind::GREATER)
+      return false;
+    // These tokens cannot begin a comparison's right operand. In particular,
+    // keep `a < b > +c` and similar ordinary comparisons unchanged.
+    switch (peekAt(next + 1).kind) {
+    case TokenKind::RIGHT_PAREN:
+    case TokenKind::RIGHT_BRACKET:
+    case TokenKind::RIGHT_BRACE:
+    case TokenKind::SEMICOLON:
+    case TokenKind::COMMA:
+    case TokenKind::AND:
+    case TokenKind::OR:
+    case TokenKind::EQUAL_EQUAL:
+    case TokenKind::BANG_EQUAL:
+    case TokenKind::QUESTION:
+    case TokenKind::COLON:
+      return true;
+    default:
+      return false;
+    }
   }
 
   [[nodiscard]]
