@@ -240,7 +240,7 @@ LINT_JOBS = {"plan", "formatting", "release-version", "tree-sitter", "automation
 EVENTS = {"pull_request", "merge_group", "full_validation"}
 # Post-integration full validation (full-validation.yml) proves these on each
 # main head; they are not merge-gate jobs.
-FULL_VALIDATION_JOBS = {"package", "integration", "sanitizers"}
+FULL_VALIDATION_JOBS = {"package", "integration", "sanitizers", "llvm-sanitizers", "tsan"}
 
 
 def admission(mode, results, event="pull_request"):
@@ -533,27 +533,62 @@ SHARDED_AGGREGATES = {
 # corpus censuses. They stay in full validation; this is the gate's test set,
 # not a quarantine, and `--test-set full` restores them.
 GATE_EXCLUDED = {
-    "generic_algorithm_breadth_cpp20", "generic_algorithm_breadth_no_elide",
-    "generic_algorithm_breadth_sanitized",
     "trusted_body_analysis_1", "trusted_body_analysis_2", "trusted_body_analysis_3",
-    "lowered_program_corpus_census", "cpp_mir_body_emitter_corpus",
+    "lowered_program_corpus_census",
 }
-TEST_SETS = ("gate", "full")
+# The C++ backend is deprecated and frozen. Tests whose only subject is that
+# backend's generated text or its emitter run in the scheduled C++ job
+# (cpp-backend.yml, GTI_TEST_BACKENDS=cpp), never in the gate or in full
+# validation, as rustc tests its non-primary codegen backends on their own
+# schedule. Harness-driven C++ modes are selected by GTI_TEST_BACKENDS in
+# tests/backend_modes.py; these are the CTest entries that exist only for it.
+CPP_ONLY_PREFIXES = ("cpp_mir_", "cpp_debug_artifacts", "lowered_program_corpus_census")
+# macOS does not repeat the Linux inventory. It runs the `darwin` set from
+# tests/ci_darwin_tests.json: what differs on the platform. Linux proves the
+# rest once. See AGENTS.md "Validation".
+DARWIN_TESTS = "tests/ci_darwin_tests.json"
+TEST_SETS = ("gate", "full", "darwin", "cpp")
 
 
-def shard_inventory(expected, test_set="full"):
-    """The names a sharded run of `test_set` executes, from the registered inventory."""
+def darwin_set(root):
+    table = json.loads((Path(root) / DARWIN_TESTS).read_text())
+    if table.get("schema") != 1 or not isinstance(table.get("tests"), list) or not isinstance(table.get("prefixes"), list):
+        raise ValueError("tests/ci_darwin_tests.json is malformed")
+    return tuple(table["prefixes"]), set(table["tests"])
+
+
+def cpp_only(name):
+    return any(name.startswith(prefix) for prefix in CPP_ONLY_PREFIXES)
+
+
+def shard_inventory(expected, test_set="full", darwin=None):
+    """The names a sharded run of `test_set` executes, from the registered inventory.
+
+    `darwin` is (prefixes, names) from tests/ci_darwin_tests.json; the darwin
+    set needs it. A listed name that is not registered is an error, so the
+    list cannot silently rot.
+    """
     if test_set not in TEST_SETS:
         raise ValueError("unknown test set")
     names = set(expected)
     for aggregate, prefix in SHARDED_AGGREGATES.items():
         if aggregate in names and any(name.startswith(prefix) for name in names):
             names.discard(aggregate)
+    if test_set == "cpp":
+        return names
+    names = {name for name in names if not cpp_only(name)}
     if test_set == "gate":
         missing = GATE_EXCLUDED - set(expected)
         if missing:
             raise ValueError("Gate exclusions name unregistered tests; update GATE_EXCLUDED: " + ", ".join(sorted(missing)))
         names -= GATE_EXCLUDED
+    elif test_set == "darwin":
+        prefixes, listed = darwin or ((), set())
+        stale = listed - set(expected)
+        if stale:
+            raise ValueError("tests/ci_darwin_tests.json names unregistered tests: " + ", ".join(sorted(stale)))
+        names = {name for name in names
+                 if name == SMOKE or name in listed or any(name.startswith(prefix) for prefix in prefixes)}
     return names
 
 
@@ -568,7 +603,7 @@ def run_shard(root, build, shards, index, durations, jobs=4, log=None, junit=Non
     excluded = set(quarantined_on(load_quarantine(root), sys.platform))
     if excluded - expected:
         raise ValueError("Quarantined tests are not registered; remove them: " + ", ".join(sorted(excluded - expected)))
-    candidates = shard_inventory(expected, test_set)
+    candidates = shard_inventory(expected, test_set, darwin_set(root) if test_set == "darwin" else None)
     table = json.loads(Path(durations).read_text())
     selected = shard_assignment(candidates - excluded, table["seconds"], shards, table.get("default_seconds", 30))[index]
     skipped = []

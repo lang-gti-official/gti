@@ -1370,23 +1370,33 @@ class ValidationChecks(unittest.TestCase):
             validation.admission("draft", lint, "merge_group")
 
     def test_shard_inventory_runs_split_parts_instead_of_aggregates_and_gate_set_is_a_subset(self):
+        cpp_only = {"cpp_mir_body_emitter_text", "cpp_debug_artifacts", "lowered_program_corpus_census"}
         registered = {"smoke", "compiler_pipeline", "compiler_pipeline_frontend", "compiler_pipeline_backend",
-                      "instance_reuse", "instance_reuse_0", "instance_reuse_1", "other",
-                      *validation.GATE_EXCLUDED}
+                      "instance_reuse", "instance_reuse_0", "instance_reuse_1", "other", "llvm_backend_scalar",
+                      *validation.GATE_EXCLUDED, *cpp_only}
+        aggregates = {"compiler_pipeline", "instance_reuse"}
         full = validation.shard_inventory(registered, "full")
-        # The aggregates are replaced by their registered parts; nothing else changes.
+        # The aggregates are replaced by their registered parts; the C++-only tests leave for the weekly job.
         self.assertNotIn("compiler_pipeline", full)
         self.assertNotIn("instance_reuse", full)
-        self.assertEqual(full, registered - {"compiler_pipeline", "instance_reuse"})
+        self.assertEqual(full, registered - aggregates - cpp_only)
+        # Only the scheduled C++ set runs the frozen backend's own tests.
+        self.assertEqual(validation.shard_inventory(registered, "cpp"), registered - aggregates)
         # Without the parts, an aggregate stays (no coverage loss on an older tree).
         alone = {"smoke", "compiler_pipeline", "other", *validation.GATE_EXCLUDED}
         self.assertIn("compiler_pipeline", validation.shard_inventory(alone, "full"))
         gate = validation.shard_inventory(registered, "gate")
         self.assertEqual(gate, full - validation.GATE_EXCLUDED)
         self.assertTrue(gate < full)
-        self.assertIn("generic_algorithm_breadth_cpp23", registered | {"generic_algorithm_breadth_cpp23"})
-        self.assertNotIn("generic_algorithm_breadth_cpp23", validation.GATE_EXCLUDED, "the shipped default stays in the gate")
+        self.assertNotIn("generic_algorithm_breadth", validation.GATE_EXCLUDED, "the shipped default stays in the gate")
+        self.assertFalse(validation.cpp_only("generic_algorithm_breadth"))
         self.assertNotIn("trusted_body_analysis_0", validation.GATE_EXCLUDED)
+        # macOS runs only the platform-specific inventory: listed names and prefixed families.
+        darwin = validation.shard_inventory(registered, "darwin", (("llvm_",), {"other"}))
+        self.assertEqual(darwin, {"other", "llvm_backend_scalar"})
+        self.assertTrue(darwin < full)
+        with self.assertRaises(ValueError):
+            validation.shard_inventory(registered, "darwin", ((), {"missing"}))  # stale names fail the shard
         with self.assertRaises(ValueError):
             validation.shard_inventory({"smoke", "other"}, "gate")  # exclusions must name registered tests
         with self.assertRaises(ValueError):

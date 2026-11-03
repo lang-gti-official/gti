@@ -7,8 +7,9 @@ import pathlib
 import subprocess
 import tempfile
 
+from backend_modes import is_cpp_mode, native_modes, selected_backends
 from case_jobs import configured_jobs, positive_jobs, run_cases
-from sanitizer_support import SANITIZED_BUILD_TIMEOUT, scaled_timeout
+from sanitizer_support import scaled_timeout
 from internal_module_fixture import private_library, private_source
 
 
@@ -20,20 +21,18 @@ def main(names=None, cases=None, execution_profile=None, stdin_by_name=None,
         names = ("lambda_pack_invocation", "stored_callable_signature",
                  "stored_callable_signature_void", "stored_callable_signature_mixed",
                  "stored_callable_clone")
-    modes = [(f"{standard}-{level}", ["--std", standard, f"-{level}"], [])
-             for standard in ("c++20", "c++23") for level in ("O0", "O1", "O3")]
-    modes += [("no-elide", ["--std", "c++23", "-O0"], ["-fno-elide-constructors"]),
-              ("sanitized", ["--std", "c++23", "-O1"],
-               ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])]
-    if llvm_modes:
-        modes += [(f"llvm-{level}", ["--backend", "llvm", f"-{level}"], [])
-                  for level in ("O0", "O1", "O2", "O3")]
+    # The shipped backend gets the execution coverage; the C++ profile runs
+    # only when GTI_TEST_BACKENDS selects it (tests/backend_modes.py).
+    # `llvm_modes` is retained for callers but no longer changes the set.
+    del llvm_modes
+    modes = native_modes()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("compiler", type=pathlib.Path)
     parser.add_argument("--fixture", action="append", choices=names,
                         help="Run only this fixture; repeat to select several. Default: all fixtures.")
     parser.add_argument("--mode", action="append", choices=[mode[0] for mode in modes],
-                        help="Run only this native mode; repeat to select several. Default: all modes.")
+                        help="Run only this native mode; repeat to select several. Default: all modes "
+                             f"of GTI_TEST_BACKENDS={selected_backends()}.")
     parser.add_argument("--jobs", type=positive_jobs, default=configured_jobs(),
                         help="Concurrent compilations; executions stay ordered. Default: serial outside CTest.")
     arguments = parser.parse_args()
@@ -70,8 +69,8 @@ def main(names=None, cases=None, execution_profile=None, stdin_by_name=None,
                 native_arguments += native_arguments_by_case(name, label, environment)
             if native_arguments:
                 command += ["--", *native_arguments]
-            timeout = SANITIZED_BUILD_TIMEOUT if label == "sanitized" else scaled_timeout(120)
-            expected_cpp_limitation = cpp_unsupported and "--std" in flags
+            timeout = scaled_timeout(120)
+            expected_cpp_limitation = cpp_unsupported and is_cpp_mode(flags)
             if expected_cpp_limitation:
                 binary.write_bytes(b"preserved unsupported output")
             built = subprocess.run(command, capture_output=True, text=True,
