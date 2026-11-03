@@ -3055,6 +3055,9 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/remote_runner_test.py"
   )
   set_tests_properties(remote_runner PROPERTIES TIMEOUT 120)
+  add_test(NAME gcp_spot_runner
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/gcp_spot_runner_test.py")
+  set_tests_properties(gcp_spot_runner PROPERTIES TIMEOUT 60)
   add_test(
     NAME cmake_test_ownership
     COMMAND "${Python3_EXECUTABLE}"
@@ -3689,6 +3692,7 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
             "${PROJECT_SOURCE_DIR}"
             "${PROJECT_SOURCE_DIR}/tests/mir_census_baseline.json"
+            --lowered-census "$<TARGET_FILE:gti_lowered_program_census>"
   )
   add_test(
     NAME mir_cutover_corpus_oracle
