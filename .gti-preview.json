@@ -243,10 +243,42 @@
         "85a96e81e07dc5e8c7663c6122be6d29d7661c1f"
       ],
       "merge": "85a96e81e07dc5e8c7663c6122be6d29d7661c1f"
+    },
+    {
+      "task": "issue-reconciliation",
+      "pr": 143,
+      "head": "082d7cf9516d5ea39be05224c0ee321921df8f1b",
+      "tests": [
+        "borrowed_field_publication_runtime",
+        "owning_expression_transfers",
+        "llvm_borrowed_dispatch_regressions",
+        "carrier_shell_references",
+        "mir_full_expression",
+        "documentation_index",
+        "llvm_coverage_evidence",
+        "cpp_mir_body_emitter_corpus",
+        "mir_census_regression",
+        "package_registry_cli",
+        "compiler_pipeline",
+        "llvm_admission",
+        "llvm_dispatch_layout",
+        "cpp_mir_body_emitter_lifecycle",
+        "cpp_mir_body_emitter_text",
+        "object_lifetime_contract",
+        "complete_borrow_summaries",
+        "optimizer_conformance",
+        "optimizer_safety",
+        "cpp_mir_body_emitter_corpus_protocol",
+        "cpp_mir_body_emitter_census"
+      ],
+      "contributions": [
+        "7c40a329bc3e765e813c15fc4fcfb01693516af0"
+      ],
+      "merge": "7c40a329bc3e765e813c15fc4fcfb01693516af0"
     }
   ],
   "removed": [],
   "main": "e3532e6715dd6344b0085e367982a8f2d496bda1",
-  "previous": "1e739f24b8b9e2f8e6da10de9afc1f1fd995263d",
-  "candidate": "af706270c1a84c4cbb849c0128dc61ea"
+  "previous": "6ed26ced974fd54d982116907badf799926d7bf7",
+  "candidate": "d735d0527b8343e8af04a5ea71a03311"
 }
