@@ -931,6 +931,7 @@ owners = [
 consumers = [
   "format_output_matrix_runtime",
   "json_runtime",
+  "json_dynamic_runtime",
 ]
 
 [[area]]

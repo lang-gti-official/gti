@@ -3997,6 +3997,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(json_runtime PROPERTIES TIMEOUT 1200)
   add_test(
+    NAME json_dynamic_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/json_dynamic_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(json_dynamic_runtime PROPERTIES TIMEOUT 1200)
+  add_test(
     NAME constexpr_text_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
