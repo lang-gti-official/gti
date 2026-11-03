@@ -278,9 +278,10 @@ def check_rollup(root, ci, rollup, workflows):
                    f"only the rollup bot and the release cut may reference the App secrets: {workflow}")
     triggers = rollup.split("\npermissions:", 1)[0]
     expect("pull_request" not in triggers and "pull_request_target" not in rollup
-           and "workflow_run" not in triggers and "permissions: {}" in rollup
+           and "workflow_run" in triggers and "workflows: [CI]" in rollup
+           and "types: [completed]" in rollup and "permissions: {}" in rollup
            and "cancel-in-progress: false" in rollup,
-           "rollup must not run on pull-request events, and runs one at a time without cancellation")
+           "rollup uses CI completion, never pull-request execution, and runs one at a time without cancellation")
     steps = rollup.split("uses: actions/checkout@")[1:]
     expect(steps and all(re.match(r"[0-9a-f]{40} # [^\n]*\n        with:\n(?:          [^\n]*\n)*?"
                                   r"          ref: main\n", step) for step in steps)

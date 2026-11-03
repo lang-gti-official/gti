@@ -5,6 +5,8 @@ import subprocess
 import sys
 import tempfile
 
+from backend_modes import is_cpp_mode, native_modes
+
 
 def expected(mode, low, high):
     events = ["7"]
@@ -37,10 +39,9 @@ def main():
     endpoints = (0, 1, 2, 7, 8, 16, 127, 128, 240, 254, 255)
     cases = [(mode, low, high) for mode in range(5)
              for low in endpoints for high in endpoints]
-    modes = [("llvm-O0", ["--backend", "llvm", "-O0"]),
-             ("llvm-O2", ["--backend", "llvm", "-O2"]),
-             ("llvm-O3", ["--backend", "llvm", "-O3"]),
-             ("cpp-O3", ["--backend", "cpp", "--std", "c++23", "-O3"])]
+    # LLVM at O0/O2/O3 under the default policy, plus the C++ profile when
+    # GTI_TEST_BACKENDS selects it (tests/backend_modes.py).
+    modes = [(label, flags) for label, flags, _native in native_modes(levels=("O0", "O2", "O3"))]
     baseline = {}
     with tempfile.TemporaryDirectory(prefix="gti-checked-offsets-") as directory:
         for name, flags in modes:
@@ -59,7 +60,7 @@ def main():
                 else:
                     assert not result.stderr, (name, case, result.stderr)
                 observed = (result.returncode, result.stdout, result.stderr)
-                if name == "llvm-O0":
+                if case not in baseline:
                     baseline[case] = observed
                 else:
                     assert observed == baseline[case], (name, case, observed, baseline[case])

@@ -2945,11 +2945,6 @@
       }
     }
   },
-  "totals": {
-    "declarations": 224995,
-    "bodies": 28381,
-    "generated_items": 16675
-  },
   "target": "arm64-apple-macos",
   "variants": {
     "x86_64-unknown-linux": {
@@ -2986,11 +2981,6 @@
             "thread_local_storage": 0
           }
         }
-      },
-      "totals": {
-        "declarations": 224995,
-        "bodies": 28379,
-        "generated_items": 16673
       }
     }
   }

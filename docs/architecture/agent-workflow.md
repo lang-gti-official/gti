@@ -890,8 +890,8 @@ the ownership-map coverage check and the planner's tests.
 
 A complete queue run is long and hosted macOS concurrency is small, so the
 queue's group size is one and rollups combine compatible work instead.
-`scripts/rollup.py`, run by `.github/workflows/rollup.yml` every 30 minutes,
-on dispatch, and on an exact `/rollup` comment from a writer, composes several
+`scripts/rollup.py`, run by `.github/workflows/rollup.yml` after CI completes,
+every 30 minutes, on dispatch, and on an exact `/rollup` comment from a writer, composes several
 green PRs into one queue entry. Only `main`'s code runs; PR content is never
 checked out or executed, and merges are Git plumbing with hooks disabled.
 
@@ -919,8 +919,18 @@ orders them by priority, then the time their gate passed, then number, and
 merges each exact head onto current `main` with `--no-ff`, up to six members. A
 PR that conflicts with `main` is skipped and labelled `needs-rebase` with a
 comment; one that conflicts only with an earlier member waits for a later
-rollup. The bot never resolves conflicts. With fewer than two members it does
-nothing. Otherwise it commits `.gti-validation/batches/rollup-<date>-<n>.json`
+rollup. The bot never resolves conflicts. `reconcile` applies the same label
+and comment to every open, non-draft PR on `main` that no longer merges
+cleanly, whichever path it was on: the merge queue drops a conflicting entry
+without a run, a status or a comment, and merge-when-ready never fires, so a
+PR that waited while `main` moved otherwise vanishes from every pipeline (on
+2026-11-03, 13 of 31 open PRs). The census baselines
+(`tests/mir_census_baseline.json`, `tests/lowered_program_census_baseline.json`)
+store per-example counts only, never totals, and the LLVM readiness provider
+inventories hash example and stdlib sources rather than those manifest files,
+so two PRs conflict there only when they change the same example. A single eligible member enters the
+merge queue alone, so it cannot wait indefinitely for a second PR. With no
+eligible members it does nothing. Otherwise it commits `.gti-validation/batches/rollup-<date>-<n>.json`
 (the batch manifest schema that `validation_checks.py full` checks) and opens
 `Rollup of N pull requests`, labelled `rollup=never`, listing each member and
 carrying a `Validation:` block whose T0/T1 items are the deduplicated union of
@@ -944,6 +954,16 @@ before its rollup is queued makes the rollup stale: the bot closes it and the
 members return to the pool. Close a rollup PR to stop it. Bisection of a
 failed rollup is future work. Every command takes `--dry-run`. The bot writes
 only with its GitHub App installation token; see `.github/README.md`.
+
+CI completion is a wakeup, not acceptance evidence. The authorization job
+checks the canonical repository and CI workflow identity, and the bot executes
+only `main`'s code without downloading run artifacts or checking out a PR.
+It queries current PR heads and gates again before any queue operation. Failed
+and cancelled CI runs also wake reconciliation; they do not qualify a PR for
+integration. Admission requires the latest CI run for that exact head to finish
+successfully and its own matching check suite's gate to pass; an older green
+draft gate cannot substitute for pending ready-for-review validation. The
+scheduled trigger remains a recovery fallback.
 
 Automation-only and source-only GTI stdlib local owning checks may use
 `verify --focused`, which checks the actual diff and does not reserve a
