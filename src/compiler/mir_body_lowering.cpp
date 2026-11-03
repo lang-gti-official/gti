@@ -9073,13 +9073,12 @@ private:
     const MirDropObligationId resultDrop =
         detachedBorrowResult ? 0 : dropObligationForValue(value.id);
     const bool borrowedValueResult =
-        call.loan &&
-        value.info.category == ValueCategory::Value &&
+        call.loan && value.info.category == ValueCategory::Value &&
         value.info.traits.movable &&
         (value.info.traits.containsBorrowedState ||
          value.info.traits.drop == DropKind::Trivial);
-    // An owning or materialized passive result exists only after a fallible call
-    // succeeds, regardless of whether it is the full-expression root or a
+    // An owning or materialized passive result exists only after a fallible
+    // call succeeds, regardless of whether it is the full-expression root or a
     // nested input to another call. Passive values can carry a checked external
     // dependency through call.loan without type-level borrowed-state traits.
     // Arm their value obligation on the Invoke
