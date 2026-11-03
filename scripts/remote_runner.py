@@ -972,6 +972,8 @@ def main(argv=None):
         return int(any("error" in state for state in states.values()))
     run_id = valid_id(args.run_id) if getattr(args, "run_id", None) else None
     name, config = select_connection(args, settings, local, run_id)
+    if name == "gcp-spot":
+        raise RunnerError("Spot leases are ephemeral: use --runner gcp-spot status/clean; successful foreground results are already local")
     if args.command == "configure":
         observed = connection(config, "status")  # validate connection and owned root before saving
         if config.get("platform") and observed.get("platform") != config["platform"]:

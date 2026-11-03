@@ -89,6 +89,8 @@ def policy(path):
     region = data["zone"].rsplit("-", 1)[0]
     if not data["subnetwork"].startswith(f"projects/{data['project']}/regions/{region}/subnetworks/"):
         raise SpotError("subnetwork must be in the dedicated project and selected region")
+    if not data["image"].startswith(f"projects/{data['project']}/global/images/"):
+        raise SpotError("prepared image must belong to the dedicated project")
     for key in ("pricing_valid_until", "trial_acknowledged_until"):
         timestamp(data[key])
     return data
@@ -115,6 +117,11 @@ def write_json(path, value):
         output.flush()
         os.fsync(output.fileno())
     os.replace(temporary, path)
+    directory = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
 
 
 class Ledger:
@@ -138,11 +145,22 @@ class Ledger:
                     raise SpotError("Spot journal identity mismatch; investigate, do not reset it")
                 if state.get("schema") != 1 or not isinstance(state.get("leases"), list):
                     raise SpotError("invalid Spot journal")
+                if state["leases"] and (not isinstance(state.get("identity"), dict) or
+                                        set(state["identity"]) != {"project", "billing_account", "currency", "account"}):
+                    raise SpotError("Spot journal lost its billing identity")
                 for lease in state["leases"]:
                     if not isinstance(lease, dict) or not re.fullmatch(r"run-[0-9a-f]{32}", lease.get("id", "")):
                         raise SpotError("invalid Spot lease identity")
                     if lease.get("instance") != "gti-spot-" + lease["id"][4:] or type(lease.get("cost_micros")) is not int or lease["cost_micros"] <= 0:
                         raise SpotError("invalid Spot lease accounting")
+                    if (type(lease.get("creation_confirmed")) is not bool or
+                            lease.get("state") not in {"reserved", "creating", "booting", "running", "deleting", "deleted", "cleanup-required"} or
+                            lease.get("pool") != state["pool"]):
+                        raise SpotError("invalid Spot lease lifecycle")
+                    timestamp(lease.get("created"))
+                    timestamp(lease.get("expires"))
+                    if any(lease.get(key) != state["identity"][key] for key in ("project", "account")):
+                        raise SpotError("Spot lease does not match its controller identity")
             else:
                 if marker.exists():
                     raise SpotError("Spot journal is missing; never reset an unresolved cost ledger")
@@ -163,9 +181,13 @@ class Ledger:
                 raise SpotError("invalid or duplicate Spot run identity")
             if any(lease.get("state") != "deleted" for lease in state["leases"]):
                 raise SpotError("the one Spot slot is occupied or unresolved; inspect status/reap")
+            if len(state["leases"]) >= 8:
+                raise SpotError("eight-attempt pilot cap reached; owner review is required")
             if sum(lease["cost_micros"] for lease in state["leases"]) + amount > config["total_limit_micros"]:
                 raise SpotError("total Spot trial allowance exhausted")
             day = utc(now)[:10]
+            if sum(lease["created"][:10] == day for lease in state["leases"]) >= 2:
+                raise SpotError("two-attempt daily pilot cap reached")
             daily = sum(lease["cost_micros"] for lease in state["leases"] if lease["created"][:10] == day)
             if daily + amount > config["daily_limit_micros"]:
                 raise SpotError("daily Spot allowance exhausted")
@@ -201,6 +223,10 @@ class Google:
             raise SpotError("Google API command timed out; its outcome may be unknown") from error
         if result.returncode:
             raise SpotError("Google API command failed: " + " ".join(args[:3]) + ": " + result.stderr[-2000:])
+        if not result.stdout.strip():
+            if args[:3] in (("compute", "instances", "delete"), ("compute", "disks", "delete")):
+                return None
+            raise SpotError("Google API returned no structured result; this is not proof of absence")
         return json.loads(result.stdout)
 
     def preflight(self):
@@ -216,14 +242,25 @@ class Google:
         network = self.command("compute", "networks", "subnets", "describe", subnet[-1], "--region=" + subnet[3])
         if network.get("privateIpGoogleAccess") is not True:
             raise SpotError("the private subnet must already have Private Google Access")
+        image = self.command("compute", "images", "describe", self.config["image"].split("/")[-1])
+        if image.get("status") != "READY" or image.get("architecture") != "X86_64":
+            raise SpotError("the prepared image must be READY and X86_64")
         if self.instances():
             raise SpotError("dedicated Spot project contains a VM; reconcile it before provisioning")
+        if self.disks():
+            raise SpotError("dedicated Spot project contains a persistent disk; reconcile it before provisioning")
 
     def instances(self):
-        return self.command("compute", "instances", "list")
+        return self.resources("instances")
 
     def disks(self):
-        return self.command("compute", "disks", "list")
+        return self.resources("disks")
+
+    def resources(self, kind):
+        data = self.command("compute", kind, "list")
+        if not isinstance(data, list) or any(not isinstance(item, dict) for item in data):
+            raise SpotError("Google resource inventory is not a structured list; absence is unproven")
+        return data
 
     def create(self, lease):
         c = self.config
@@ -231,7 +268,7 @@ class Google:
                      "--machine-type=" + c["machine_type"], "--image=" + c["image"],
                      "--subnet=" + c["subnetwork"], "--no-address", "--no-service-account", "--no-scopes",
                      "--provisioning-model=SPOT", "--instance-termination-action=DELETE",
-                     "--termination-time=" + lease["expires"], "--no-restart-on-failure",
+                     "--max-run-duration=" + str(c["vm_lifetime_seconds"]) + "s", "--no-restart-on-failure",
                      "--maintenance-policy=TERMINATE", "--no-deletion-protection",
                      "--boot-disk-auto-delete", "--boot-disk-size=" + str(c["boot_disk_gib"]) + "GB",
                      "--boot-disk-type=pd-standard",
@@ -252,7 +289,8 @@ class Google:
         interfaces = instance.get("networkInterfaces", [])
         if (not self.owned(instance, lease) or schedule.get("provisioningModel") != "SPOT" or
                 schedule.get("instanceTerminationAction") != "DELETE" or schedule.get("automaticRestart") is not False or
-                provider_timestamp(schedule.get("terminationTime")) != timestamp(lease["expires"]) or instance.get("serviceAccounts") or
+                schedule.get("maxRunDuration", {}).get("seconds") not in (self.config["vm_lifetime_seconds"], str(self.config["vm_lifetime_seconds"])) or
+                schedule.get("maxRunDuration", {}).get("nanos", 0) != 0 or instance.get("serviceAccounts") or
                 not instance.get("machineType", "").endswith("/machineTypes/" + self.config["machine_type"]) or
                 instance.get("deletionProtection", False) is not False or instance.get("guestAccelerators") or
                 len(disks) != 1 or disks[0].get("boot") is not True or disks[0].get("autoDelete") is not True or

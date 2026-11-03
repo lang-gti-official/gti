@@ -5,6 +5,7 @@ import json
 import multiprocessing
 from pathlib import Path
 import platform
+import signal
 import subprocess
 import sys
 import tempfile
@@ -33,7 +34,7 @@ def instance(config, lease):
             "machineType": prefix + "projects/" + config["project"] + "/zones/" + config["zone"] + "/machineTypes/" + config["machine_type"],
             "labels": {"gti-runner": "spot-v1", "gti-pool": lease["pool"], "gti-run": lease["id"][4:]},
             "scheduling": {"provisioningModel": "SPOT", "instanceTerminationAction": "DELETE",
-                           "automaticRestart": False, "terminationTime": lease["expires"]},
+                           "automaticRestart": False, "maxRunDuration": {"seconds": str(config["vm_lifetime_seconds"])}},
             "disks": [{"boot": True, "autoDelete": True, "diskSizeGb": str(config["boot_disk_gib"]),
                        "source": prefix + "projects/" + config["project"] + "/zones/" + config["zone"] + "/disks/" + lease["instance"]}],
             "networkInterfaces": [{"subnetwork": prefix + config["subnetwork"]}]}
@@ -164,6 +165,21 @@ class SpotRunner(unittest.TestCase):
         self.assertEqual(results.count("reserved"), 1)
         self.assertEqual(results.count("blocked"), 3)
 
+    def test_attempt_caps_are_independent_of_price_estimates(self):
+        self.config.update(hourly_ceiling_micros=1, per_run_extra_micros=1)
+        now = time.time()
+        for i in range(8):
+            day = i // 2
+            self.config.update(pricing_valid_until=spot.utc(now + (day + 1) * 86400),
+                               trial_acknowledged_until=spot.utc(now + (day + 1) * 86400))
+            lease = self.ledger.reserve(self.config, "run-" + f"{i:032x}", now + day * 86400)
+            self.ledger.update(lease, state="deleted")
+            if i == 1:
+                with self.assertRaisesRegex(spot.SpotError, "two-attempt"):
+                    self.ledger.reserve(self.config, "run-" + "f" * 32, now)
+        with self.assertRaisesRegex(spot.SpotError, "eight-attempt"):
+            self.ledger.reserve(self.config, "run-" + "f" * 32, now + 3 * 86400)
+
     def test_missing_or_corrupt_journal_fails_closed(self):
         self.reserve()
         path = self.ledger.root / "leases.json"
@@ -173,6 +189,15 @@ class SpotRunner(unittest.TestCase):
         path.write_text("{broken")
         with self.assertRaises(ValueError):
             self.reserve(2)
+
+    def test_corrupt_confirmation_cannot_release_uncertain_creation(self):
+        self.reserve()
+        path = self.ledger.root / "leases.json"
+        state = json.loads(path.read_text())
+        state["leases"][0]["creation_confirmed"] = "false"
+        path.write_text(json.dumps(state))
+        with self.assertRaisesRegex(spot.SpotError, "lifecycle"):
+            self.ledger.status()
 
     def test_complete_cancel_disconnect_and_bad_boot_delete(self):
         self.assertEqual(self.execute(), 0)
@@ -204,6 +229,20 @@ class SpotRunner(unittest.TestCase):
                     with self.assertRaisesRegex(spot.SpotError, "occupied"):
                         self.reserve(2)
 
+    def test_sigterm_cleans_and_restores_the_original_handler(self):
+        old_handler = signal.getsignal(signal.SIGTERM)
+        def executor(*args):
+            args[-1]()
+            signal.raise_signal(signal.SIGTERM)
+        with mock.patch.object(runner, "execute_run", side_effect=executor), \
+             mock.patch.object(runner, "local_directory", return_value=self.root), \
+             mock.patch.object(runner, "connection", return_value={"platform": "Linux", "machine": "x86_64"}):
+            with self.assertRaises(KeyboardInterrupt):
+                spot.run(self.arguments(), runner, self.config, self.ledger, self.provider)
+        self.assertEqual(signal.getsignal(signal.SIGTERM), old_handler)
+        self.assertFalse(self.provider.present)
+        self.assertEqual(self.ledger.status()["leases"][0]["state"], "deleted")
+
     def test_invalid_requests_and_snapshot_failure_never_provision(self):
         for extra in (("--detach",), ("--full-suite",), ("--platform", "Darwin"), ("--timeout", "7200"), ("--jobs", "64")):
             with self.assertRaises(spot.SpotError):
@@ -224,14 +263,37 @@ class SpotRunner(unittest.TestCase):
             for flag in ("--provisioning-model=SPOT", "--instance-termination-action=DELETE", "--no-address",
                          "--no-service-account", "--no-scopes", "--boot-disk-auto-delete", "--no-restart-on-failure"):
                 self.assertIn(flag, args)
-            self.assertIn("--termination-time=" + lease["expires"], args)
-            self.assertNotIn("--max-run-duration", args)
+            self.assertIn("--max-run-duration=5400s", args)
+            self.assertFalse(any(a.startswith("--termination-time") for a in args))
         with mock.patch("subprocess.run", return_value=subprocess.CompletedProcess([], 0, "[]", "")) as execute:
             google.instances()
             argv = execute.call_args.args[0]
             self.assertIn("--account=" + self.config["account"], argv)
             self.assertIn("--project=" + self.config["project"], argv)
             self.assertEqual(execute.call_args.kwargs["timeout"], 90)
+        with mock.patch("subprocess.run", return_value=subprocess.CompletedProcess([], 0, "", "")):
+            self.assertIsNone(google.command("compute", "instances", "delete", lease["instance"]))
+            with self.assertRaisesRegex(spot.SpotError, "not proof of absence"):
+                google.instances()
+        for malformed in (None, {}, False, [None]):
+            with mock.patch.object(google, "command", return_value=malformed):
+                with self.assertRaisesRegex(spot.SpotError, "absence is unproven"):
+                    google.instances()
+
+    def test_read_only_preflight_rejects_billing_currency_image_and_existing_vms(self):
+        google = spot.Google(self.config)
+        responses = [{"billingAccountName": "billingAccounts/" + self.config["billing_account"], "billingEnabled": True},
+                     {"open": True, "currencyCode": self.config["currency"]},
+                     {"privateIpGoogleAccess": True}, {"status": "READY", "architecture": "X86_64"}, [], []]
+        with mock.patch.object(google, "command", side_effect=responses):
+            google.preflight()
+        for index, replacement in ((0, {"billingEnabled": False}), (1, {"open": True, "currencyCode": "USD"}),
+                                   (2, {}), (3, {"status": "READY", "architecture": "ARM64"}),
+                                   (4, [{"name": "unmanaged"}]), (5, [{"name": "orphan-disk"}])):
+            bad = copy.deepcopy(responses)
+            bad[index] = replacement
+            with mock.patch.object(google, "command", side_effect=bad), self.assertRaises(spot.SpotError):
+                google.preflight()
 
     def test_created_vm_contract_and_host_keys(self):
         google = spot.Google(self.config)
@@ -240,7 +302,7 @@ class SpotRunner(unittest.TestCase):
         with mock.patch.object(google, "instances", return_value=[actual]):
             self.assertEqual(google.verify(lease), actual)
         variants = []
-        for key, value in (("instanceTerminationAction", "STOP"), ("terminationTime", spot.utc(time.time() + 86400)), ("automaticRestart", True)):
+        for key, value in (("instanceTerminationAction", "STOP"), ("maxRunDuration", {"seconds": "86400"}), ("automaticRestart", True)):
             bad = copy.deepcopy(actual)
             bad["scheduling"][key] = value
             variants.append(bad)

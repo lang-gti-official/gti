@@ -389,7 +389,10 @@ least 15 minutes of lifecycle headroom. Daily allowance is at most 5 currency
 units and lifetime trial allowance at most 20; lower values are valid. Every
 attempt reserves the entire VM lifetime rounded up, plus overhead. Successful
 deletion does not refund the allowance. UTC days reset the daily subtotal,
-never the accumulated trial allowance. After owner setup and enablement:
+never the accumulated trial allowance.
+An independent pilot cap permits at most two attempts per UTC day and eight
+attempts in total (at most 12 VM-hours), even if price estimates are wrong.
+These counters also never refund or reset automatically. After enablement:
 
 ```sh
 python3 scripts/remote_runner.py --runner gcp-spot run --target gti --target gti_tests --target gti_lsp --ctest-regex '^compiler_pipeline$'
@@ -406,9 +409,11 @@ history, unresolved creation or failed cleanup blocks admission. This is a
 cooperating-tool allowance, not a security boundary against an operator with
 Google credentials or permission to edit the journal.
 
-Creation requests an absolute provider expiry, Spot termination action DELETE,
+Creation requests a provider-enforced maximum runtime, Spot termination action DELETE,
 no automatic restart and an auto-deleted boot disk. Returned resource facts are
-verified. IAP SSH uses provider-fetched guest host keys, never disabled host-key
+verified. The runtime cap is independent of the controller's wall clock; the
+journal's UTC expiry is a conservative reaping deadline, not a reason to restart
+or renew a VM. IAP SSH uses provider-fetched guest host keys, never disabled host-key
 checking. Normal completion, errors, cancellation and SIGTERM attempt VM/disk
 cleanup and verify absence before releasing the slot. A lost insert response
 is quarantined even when a list currently shows no VM: absence cannot prove an
