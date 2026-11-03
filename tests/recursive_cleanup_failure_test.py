@@ -6,6 +6,7 @@ import sys
 import tempfile
 
 from unique_class_allocation_runtime_test import run
+from backend_modes import is_cpp_mode, keep_cpp, native_modes
 
 
 def main():
@@ -84,10 +85,7 @@ def main():
         (70, "1\n2\n3\n9\n", ordinary(right)),
         (0, "1\n2\n3\n2\n9\n", ""),
     ])
-    modes = [(f"{standard}-{opt}", ["--std", standard, f"-{opt}"], [])
-             for standard in ("c++20", "c++23") for opt in ("O0", "O1", "O3")]
-    modes.append(("sanitized", ["--std", "c++23", "-O1"],
-                  ["--", "-fsanitize=address,undefined", "-fno-omit-frame-pointer"]))
+    modes = native_modes()
     failures = []
     with tempfile.TemporaryDirectory(prefix="gti-recursive-cleanup-") as directory:
         for name, flags, native in modes:
@@ -99,13 +97,14 @@ def main():
             result = run([str(projection)])
             assert (result.returncode, result.stdout, result.stderr) == (0, "", "")
             binary = pathlib.Path(directory) / name
-            command = [str(compiler), str(source), *flags, "--keep-cpp",
+            command = [str(compiler), str(source), *flags, *keep_cpp(flags),
                        "-o", str(binary), *native]
             built = run(command)
             assert built.returncode == 0, (command, built.stdout, built.stderr)
-            generated = binary.with_suffix(".gti.cpp").read_text()
-            assert "mir_unique_aggregate_owner_drop_with_failure_v1<" in generated
-            assert "// GTI verified-MIR body:" in generated
+            if is_cpp_mode(flags):
+                generated = binary.with_suffix(".gti.cpp").read_text()
+                assert "mir_unique_aggregate_owner_drop_with_failure_v1<" in generated
+                assert "// GTI verified-MIR body:" in generated
             for phase, expected in enumerate(cases):
                 result = run([str(binary), *(["phase"] * phase)])
                 actual = (result.returncode, result.stdout, result.stderr)

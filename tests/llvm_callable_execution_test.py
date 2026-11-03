@@ -31,6 +31,7 @@ SUCCESS_CASES = (
     "checked_callable_pointer",
     "checked_callable_result_origin",
     "checked_callable_transport",
+    "lambda_parameter_reference_results",
 )
 LLVM_ONLY_SUCCESS_CASES = ("llvm_callable_wrapper",)
 FAILURE_CASES = {

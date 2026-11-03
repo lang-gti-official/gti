@@ -7,6 +7,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def main():
@@ -25,33 +26,29 @@ def main():
         subprocess.run([*shlex.split(os.environ.get("CXX", "c++")), "-std=c++17",
                         "-O2", "-c", str(fixtures / "llvm_checked_square_native.cpp"),
                         "-o", str(native)], check=True, capture_output=True, timeout=60)
-        for backend, level in [("llvm", "-O0"), ("llvm", "-O2"),
-                               ("llvm", "-O3"), ("cpp", "-O3")]:
-            binary = Path(directory) / (backend + level)
+        for mode, flags, _ in native_modes(levels=("O0", "O2", "O3")):
+            binary = Path(directory) / mode
             command = [str(compiler), str(fixtures / "llvm_checked_square.gti"),
-                       "--backend", backend, level, "-o", str(binary)]
-            if backend == "cpp":
-                command += ["--std", "c++23"]
-            command += ["--", str(native)]
+                       *flags, "-o", str(binary), "--", str(native)]
             built = subprocess.run(command, capture_output=True, text=True, timeout=180)
             assert built.returncode == 0, (command, built.stdout, built.stderr)
-            for mode in range(23):
+            for case in range(23):
                 result = subprocess.run([str(binary)], capture_output=True, text=True,
-                                        env=dict(os.environ, GTI_SQUARE_CASE=str(mode)),
+                                        env=dict(os.environ, GTI_SQUARE_CASE=str(case)),
                                         timeout=15)
                 observed = result.returncode, result.stdout, result.stderr
-                if mode in expected:
-                    assert observed == (0, f"{expected[mode]}\n99\n", ""), (
-                        backend, level, mode, observed)
+                if case in expected:
+                    assert observed == (0, f"{expected[case]}\n99\n", ""), (
+                        mode, case, observed)
                 else:
-                    assert observed[:2] == (70, "99\n"), (backend, level, mode, observed)
-                    assert "integer_overflow" in result.stderr, (backend, level, mode, observed)
-                if level == "-O0":
-                    baseline[mode] = observed
+                    assert observed[:2] == (70, "99\n"), (mode, case, observed)
+                    assert "integer_overflow" in result.stderr, (mode, case, observed)
+                if case not in baseline:
+                    baseline[case] = observed
                 else:
-                    assert observed == baseline[mode], (backend, level, mode, observed,
-                                                       baseline[mode])
-            print(f"Checked square: {backend} {level} passed 23 cases", flush=True)
+                    assert observed == baseline[case], (mode, case, observed,
+                                                       baseline[case])
+            print(f"Checked square: {mode} passed 23 cases", flush=True)
 
 
 if __name__ == "__main__":

@@ -6,16 +6,14 @@ import json
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 from internal_module_fixture import private_library, private_source, register_modules
 
 
 def main():
     compiler = Path(sys.argv[1]).resolve()
     source = Path(__file__).resolve().parent / "fixtures/optimizer_prefix_relocation.gti"
-    modes = [("llvm-O0", ["--backend", "llvm", "-O0"]),
-             ("llvm-O2", ["--backend", "llvm", "-O2"]),
-             ("llvm-O3", ["--backend", "llvm", "-O3"]),
-             ("cpp-O3", ["--backend", "cpp", "--std", "c++23", "-O3"])]
+    modes = [(mode, flags) for mode, flags, _ in native_modes(levels=("O0", "O2", "O3"))]
     observations = {}
     with tempfile.TemporaryDirectory(prefix="gti-prefix-relocation-") as directory:
         root = Path(__file__).resolve().parent.parent
@@ -72,7 +70,7 @@ int main() {
                     assert not result.stderr, (mode, fresh_case, result)
                 key = ("fresh", fresh_case)
                 observation = result.returncode, result.stdout, result.stderr
-                if mode == "llvm-O0": observations[key] = observation
+                if key not in observations: observations[key] = observation
                 else: assert observation == observations[key], (mode, key, observation, observations[key])
             binary = Path(directory) / mode
             command = [str(compiler), str(source), *flags, "-o", str(binary)]
@@ -88,7 +86,7 @@ int main() {
                 else:
                     assert not result.stderr, (mode, result.stderr)
                 observation = result.returncode, result.stdout, result.stderr
-                if mode == "llvm-O0":
+                if case not in observations:
                     observations[case] = observation
                 else:
                     assert observation == observations[case], (mode, case, observation, observations[case])
@@ -109,7 +107,7 @@ int main() {
                     assert not result.stderr, (mode, scalar_case, result)
                 key = ("equal-scalar", scalar_case)
                 observation = result.returncode, result.stdout, result.stderr
-                if mode == "llvm-O0": observations[key] = observation
+                if key not in observations: observations[key] = observation
                 else: assert observation == observations[key], (mode, key, observation, observations[key])
             endpoint_source = private_source(
                 root / "tests/fixtures/optimizer_prefix_endpoints.gti",
@@ -131,7 +129,7 @@ int main() {
                     assert not result.stderr, (mode, endpoint_case, result)
                 key = ("endpoint", endpoint_case)
                 observation = result.returncode, result.stdout, result.stderr
-                if mode == "llvm-O0":
+                if key not in observations:
                     observations[key] = observation
                 else:
                     assert observation == observations[key], (mode, key, observation, observations[key])
@@ -155,7 +153,7 @@ int main() {
                     assert not result.stderr, (mode, cross_case, result)
                 key = ("cross-field", cross_case)
                 observation = result.returncode, result.stdout, result.stderr
-                if mode == "llvm-O0": observations[key] = observation
+                if key not in observations: observations[key] = observation
                 else: assert observation == observations[key], (mode, key, observation, observations[key])
             concurrent_source = private_source(
                 root / "tests/fixtures/optimizer_prefix_receiver_concurrent.gti",
@@ -178,7 +176,7 @@ int main() {
                     assert not result.stderr, (mode, result)
                 key = ("concurrent", concurrent_case)
                 observation = result.returncode, result.stdout, result.stderr
-                if mode == "llvm-O0":
+                if key not in observations:
                     observations[key] = observation
                 else:
                     assert observation == observations[key], (mode, observation, observations[key])

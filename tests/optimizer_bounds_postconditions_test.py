@@ -4,6 +4,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def expected(mode, value):
@@ -53,13 +54,9 @@ def main():
     cases = [(mode, value) for mode in range(8) for value in range(27)]
     baseline = {}
     with tempfile.TemporaryDirectory(prefix="gti-bounds-postconditions-") as directory:
-        for backend, level in [("llvm", "-O0"), ("llvm", "-O2"),
-                               ("llvm", "-O3"), ("cpp", "-O3")]:
-            binary = Path(directory) / (backend + level)
-            command = [str(compiler), str(source), "--backend", backend,
-                       level, "-o", str(binary)]
-            if backend == "cpp":
-                command += ["--std", "c++23"]
+        for mode, flags, _ in native_modes(levels=("O0", "O2", "O3")):
+            binary = Path(directory) / mode
+            command = [str(compiler), str(source), *flags, "-o", str(binary)]
             built = subprocess.run(command, capture_output=True, text=True, timeout=180)
             assert built.returncode == 0, (command, built.stdout, built.stderr)
             for case in cases:
@@ -67,18 +64,18 @@ def main():
                                         capture_output=True, text=True, timeout=15)
                 status, output = expected(*case)
                 assert (result.returncode, result.stdout) == (status, output), (
-                    backend, level, case, result.returncode, result.stdout, result.stderr)
+                    mode, case, result.returncode, result.stdout, result.stderr)
                 if status:
                     assert "runtime error[GTI-R" in result.stderr, result.stderr
                 else:
                     assert not result.stderr, result.stderr
                 observed = (result.returncode, result.stdout, result.stderr)
-                if level == "-O0":
+                if case not in baseline:
                     baseline[case] = observed
                 else:
                     assert observed == baseline[case], (
-                        backend, level, case, observed, baseline[case])
-            print(f"Bounds postconditions: {backend} {level} passed {len(cases)} cases", flush=True)
+                        mode, case, observed, baseline[case])
+            print(f"Bounds postconditions: {mode} passed {len(cases)} cases", flush=True)
 
 
 if __name__ == "__main__":

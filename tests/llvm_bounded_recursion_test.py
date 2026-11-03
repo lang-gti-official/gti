@@ -6,6 +6,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def expected(depth, value):
@@ -30,14 +31,10 @@ def main():
         subprocess.run([*shlex.split(os.environ.get("CXX", "c++")), "-std=c++17",
                         "-O2", "-c", str(fixtures / "llvm_bounded_recursion_native.cpp"),
                         "-o", str(native)], check=True, capture_output=True, timeout=60)
-        for backend, level in (("llvm", "-O0"), ("llvm", "-O2"),
-                               ("llvm", "-O3"), ("cpp", "-O3")):
-            binary = Path(directory) / (backend + level)
+        for mode, flags, _ in native_modes(levels=("O0", "O2", "O3")):
+            binary = Path(directory) / mode
             command = [str(compiler), str(fixtures / "llvm_bounded_recursion.gti"),
-                       "--backend", backend, level, "-o", str(binary)]
-            if backend == "cpp":
-                command += ["--std", "c++23"]
-            command += ["--", str(native)]
+                       *flags, "-o", str(binary), "--", str(native)]
             built = subprocess.run(command, capture_output=True, text=True, timeout=180)
             assert built.returncode == 0, (command, built.stdout, built.stderr)
             for depth, value in cases:
@@ -47,15 +44,15 @@ def main():
                 observation = result.returncode, result.stdout, result.stderr
                 answer = expected(depth, value)
                 if answer is None:
-                    assert observation[:2] == (70, "99\n"), (backend, level, depth, value, observation)
+                    assert observation[:2] == (70, "99\n"), (mode, depth, value, observation)
                     assert "integer_overflow" in result.stderr
                 else:
-                    assert observation == (0, f"{answer}\n99\n", ""), (backend, level, depth, value, observation)
-                if level == "-O0":
+                    assert observation == (0, f"{answer}\n99\n", ""), (mode, depth, value, observation)
+                if (depth, value) not in observations:
                     observations[depth, value] = observation
                 else:
-                    assert observation == observations[depth, value], (backend, level, depth, value, observation)
-            print(f"Bounded recursion: {backend} {level} passed {len(cases)} cases", flush=True)
+                    assert observation == observations[depth, value], (mode, depth, value, observation)
+            print(f"Bounded recursion: {mode} passed {len(cases)} cases", flush=True)
 
 
 if __name__ == "__main__":

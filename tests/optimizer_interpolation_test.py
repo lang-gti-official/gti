@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 MINIMUM = -(1 << 31)
@@ -54,13 +55,9 @@ def main():
     cases = list(product(range(8), range(8), range(8), range(6)))
     baseline = {}
     with tempfile.TemporaryDirectory(prefix="gti-interpolation-") as directory:
-        for backend, level in [("llvm", "-O0"), ("llvm", "-O2"),
-                               ("llvm", "-O3"), ("cpp", "-O3")]:
-            binary = Path(directory) / (backend + level)
-            command = [str(compiler), str(fixture), "--backend", backend,
-                       level, "-o", str(binary)]
-            if backend == "cpp":
-                command += ["--std", "c++23"]
+        for label, flags, _ in native_modes(levels=("O0", "O2", "O3")):
+            binary = Path(directory) / label
+            command = [str(compiler), str(fixture), *flags, "-o", str(binary)]
             built = subprocess.run(command, capture_output=True, text=True, timeout=180)
             assert built.returncode == 0, (command, built.stdout, built.stderr)
             for case in cases:
@@ -72,15 +69,15 @@ def main():
                 result = subprocess.run([str(binary), *("x" * n for n in case)],
                                         capture_output=True, text=True, timeout=15)
                 observed = result.returncode, result.stdout, result.stderr
-                assert observed[:2] == (status, output), (backend, level, case, observed)
+                assert observed[:2] == (status, output), (label, case, observed)
                 assert failure in result.stderr if failure else not result.stderr, (
-                    backend, level, case, observed)
-                if level == "-O0":
+                    label, case, observed)
+                if case not in baseline:
                     baseline[case] = observed
                 else:
-                    assert observed == baseline[case], (backend, level, case, observed,
+                    assert observed == baseline[case], (label, case, observed,
                                                        baseline[case])
-            print(f"Interpolation: {backend} {level} passed {len(cases)} cases", flush=True)
+            print(f"Interpolation: {label} passed {len(cases)} cases", flush=True)
 
 
 if __name__ == "__main__":

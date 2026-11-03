@@ -15,6 +15,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -136,31 +137,28 @@ def main() -> int:
         for label, source_text in PROGRAMS:
             source = root / f"{label}.gti"
             source.write_text(source_text, encoding="utf8")
-            for standard in ("c++20", "c++23"):
-                for optimization in ("O0", "O3"):
-                    mode = f"{label}-{standard}-{optimization}"
-                    executable = root / mode
-                    built = run(
-                        [
-                            str(compiler),
-                            str(source),
-                            "--std",
-                            standard,
-                            f"-{optimization}",
-                            "-o",
-                            str(executable),
-                        ]
-                    )
-                    if built.returncode != 0:
-                        return fail(f"build {mode}", built)
+            for variant, flags, native in native_modes():
+                mode = f"{label}-{variant}"
+                executable = root / mode
+                built = run(
+                    [
+                        str(compiler),
+                        str(source),
+                        *flags,
+                        "-o",
+                        str(executable),
+                    ]
+                )
+                if built.returncode != 0:
+                    return fail(f"build {mode}", built)
 
-                    executed = run([str(executable)])
-                    if (
-                        executed.returncode != 0
-                        or executed.stdout != ""
-                        or executed.stderr != ""
-                    ):
-                        return fail(f"run {mode}", executed)
+                executed = run([str(executable)])
+                if (
+                    executed.returncode != 0
+                    or executed.stdout != ""
+                    or executed.stderr != ""
+                ):
+                    return fail(f"run {mode}", executed)
 
     return 0
 

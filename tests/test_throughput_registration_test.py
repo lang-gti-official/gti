@@ -13,33 +13,28 @@ import tempfile
 
 from sanitizer_support import SANITIZED_BUILD_TIMEOUT, scaled_timeout
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "scripts"))
+from validation_checks import cpp_only  # noqa: E402  (the label mirrors CPP_ONLY_PREFIXES)
+
 
 def verify_algorithm_partitions(tests):
-    expected = {f"c++{standard}-O{level}" for standard in (20, 23)
-                for level in (0, 1, 3)} | {"no-elide", "sanitized"}
+    """The breadth harness is one entry whose modes come from backend policy.
+
+    The former c++20/c++23 x O0/O1/O3, no-elide and sanitized partitions were
+    C++-backend configurations; tests/backend_modes.py now selects the modes
+    from GTI_TEST_BACKENDS, so the entry must not pin any --mode itself.
+    """
     partitions = [test for test in tests if any(
         pathlib.Path(arg).name == "generic_algorithm_breadth_test.py"
         for arg in test.get("command", []))]
-    modes = []
-    if len(partitions) != 4:
-        raise AssertionError("generic algorithm matrix must have four partitions")
-    for test in partitions:
-        command = test["command"]
-        if any(arg == "--fixture" or arg.startswith("--fixture=") for arg in command):
-            raise AssertionError("generic algorithm partition omitted fixtures")
-        selected = [command[index + 1] for index, arg in enumerate(command)
-                    if arg == "--mode"]
-        if not selected:
-            raise AssertionError("generic algorithm partition has no modes")
-        modes.extend(selected)
-        properties = {item["name"]: item["value"] for item in test["properties"]}
-        if not properties.get("RUN_SERIAL"):
-            raise AssertionError("generic algorithm partitions must run serially")
-        if "sanitized" in selected and properties["TIMEOUT"] <= SANITIZED_BUILD_TIMEOUT:
-            raise AssertionError("outer timeout truncates an admitted sanitized compile")
-    if len(modes) != len(expected) or set(modes) != expected:
-        raise AssertionError("generic algorithm mode census is incomplete or duplicated")
-
+    if len(partitions) != 1 or partitions[0]["name"] != "generic_algorithm_breadth":
+        raise AssertionError("generic algorithm breadth must be one backend-policy entry")
+    command = partitions[0]["command"]
+    if "--mode" in command or any(arg.startswith("--fixture") for arg in command):
+        raise AssertionError("generic algorithm breadth must not pin modes or fixtures")
+    properties = {p["name"]: p["value"] for p in partitions[0].get("properties", [])}
+    if properties.get("TIMEOUT", 0) < 900 or not properties.get("RUN_SERIAL"):
+        raise AssertionError("generic algorithm breadth keeps its serial bound")
 
 def verify_trusted_body_partitions(tests, repository):
     expected = sorted(path.resolve() for directory in ("examples", "stdlib/tests")
@@ -118,6 +113,8 @@ def verify(tests, repository):
         labels = properties.get("LABELS", [])
         if "coverage-full" not in labels or properties.get("DISABLED"):
             raise AssertionError(f"{test['name']}: omitted from full coverage")
+        if ("cpp-backend" in labels) != bool(cpp_only(test["name"])):
+            raise AssertionError(f"{test['name']}: cpp-backend label disagrees with CPP_ONLY_PREFIXES")
         timeout = properties.get("TIMEOUT")
         if not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or timeout <= 0:
             raise AssertionError(f"{test['name']}: no explicit timeout bound")
@@ -249,6 +246,21 @@ def main():
             pass
         else:
             raise AssertionError(f"accepted forged {mutation} registration")
+    # The C++-only label must track scripts/validation_checks.py in both directions.
+    for target_name, mutation in (("stdlib_surface", "labelled"), ("cpp_mir_body_emitter_text", "unlabelled")):
+        changed = copy.deepcopy(tests)
+        target = next(test for test in changed if test["name"] == target_name)
+        labels = next(prop for prop in target["properties"] if prop["name"] == "LABELS")["value"]
+        if mutation == "labelled":
+            labels.append("cpp-backend")
+        else:
+            labels.remove("cpp-backend")
+        try:
+            verify(changed, repository)
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError(f"accepted a {mutation} C++-only entry")
     harnesses, referrers = harness_sources(repository)
     standalone_inventory = json.loads((repository / "tests/standalone_harnesses.json").read_text())
     standalone = verify_harness_inventory(tests, harnesses, referrers, standalone_inventory)
@@ -270,55 +282,26 @@ def main():
             pass
         else:
             raise AssertionError(f"accepted forged {kind} standalone harness inventory")
-    for mutation in ("omitted-partition", "duplicate-mode", "fixture-filter", "short-timeout", "parallel"):
+    for mutation in ("omitted-partition", "pinned-mode", "fixture-filter", "short-timeout", "parallel"):
         changed = copy.deepcopy(tests)
-        target = next(test for test in changed
-                      if test["name"] == "generic_algorithm_breadth_sanitized")
+        target = next(test for test in changed if test["name"] == "generic_algorithm_breadth")
         if mutation == "omitted-partition":
             changed.remove(target)
-        elif mutation == "duplicate-mode":
-            target["command"].extend(["--mode", "c++20-O0"])
+        elif mutation == "pinned-mode":
+            target["command"].extend(["--mode", "llvm-O0"])
         elif mutation == "fixture-filter":
             target["command"].append("--fixture=algorithm_search")
+        elif mutation == "short-timeout":
+            target["properties"] = [p if p["name"] != "TIMEOUT" else {"name": "TIMEOUT", "value": 60}
+                                    for p in target["properties"]]
         else:
-            for prop in target["properties"]:
-                if mutation == "short-timeout" and prop["name"] == "TIMEOUT":
-                    prop["value"] = SANITIZED_BUILD_TIMEOUT
-                elif mutation == "parallel" and prop["name"] == "RUN_SERIAL":
-                    prop["value"] = False
+            target["properties"] = [p for p in target["properties"] if p["name"] != "RUN_SERIAL"]
         try:
             verify_algorithm_partitions(changed)
         except AssertionError:
             pass
         else:
-            raise AssertionError(f"accepted forged algorithm {mutation}")
-    for mutation in ("omitted-partition", "omitted-entry", "duplicate-entry", "parallel",
-                     "missing-timeout", "short-timeout", "long-timeout"):
-        changed = copy.deepcopy(tests)
-        target = next(test for test in changed
-                      if test["name"] == "trusted_body_analysis_0")
-        if mutation == "omitted-partition":
-            changed.remove(target)
-        elif mutation == "omitted-entry":
-            target["command"].pop()
-        elif mutation == "duplicate-entry":
-            target["command"].append(target["command"][-1])
-        elif mutation == "missing-timeout":
-            target["properties"] = [prop for prop in target["properties"]
-                                    if prop["name"] != "TIMEOUT"]
-        else:
-            for prop in target["properties"]:
-                if mutation == "parallel" and prop["name"] == "RUN_SERIAL":
-                    prop["value"] = False
-                elif prop["name"] == "TIMEOUT" and mutation != "parallel":
-                    prop["value"] = scaled_timeout(600) + (
-                        -1 if mutation == "short-timeout" else 1)
-        try:
-            verify_trusted_body_partitions(changed, repository)
-        except AssertionError:
-            pass
-        else:
-            raise AssertionError(f"accepted forged trusted-body {mutation}")
+            raise AssertionError(f"accepted forged breadth registration: {mutation}")
     verify_cold_ordering()
     print(f"Full census: {len(tests)} gates; {len(clients)} parallel clients accounted; "
           f"{standalone} standalone harnesses inventoried; "
