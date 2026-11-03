@@ -191,9 +191,7 @@ llvm::Value *Memory::providerCall(ProcessMemoryRuntimeOperation operation,
     } else {
       call->addParamAttr(0, llvm::Attribute::AllocatedPointer);
     }
-    call->addFnAttr(llvm::Attribute::get(
-        session.context(), llvm::Attribute::AllocKind,
-        static_cast<std::uint64_t>(kind)));
+    call->addFnAttr(llvm::Attribute::getWithAllocKind(session.context(), kind));
   }
   // The POSIX status address is only written, never returned or retained. Do
   // not mechanically translate every MIR non-escaping argument: for example,
