@@ -73,9 +73,7 @@ ALLOWED_SPELLINGS = {
     "llvm_raw_pointer_array_test.py": "LLVM-backend harness; C++ entries are a differential oracle",
     "llvm_simd_source_test.py": "LLVM-backend harness; C++ entries are a differential oracle",
     # Thread-sanitizer evidence is carried by the C++ text today.
-    "atomic_tsan_test.py": "thread-sanitizer run of the C++ text; the fixtures execute on LLVM in atomic_end_to_end",
-    "managed_thread_tsan_test.py": "thread-sanitizer run of the C++ text; the fixtures execute on LLVM in managed_thread_end_to_end",
-    "mutex_tsan_test.py": "thread-sanitizer run of the C++ text; the fixtures execute on LLVM in mutex_end_to_end",
+    "managed_thread_tsan_test.py": "spells --backend cpp only for the source-owner rejection pin; every ThreadSanitizer run instruments the LLVM emission (#196)",
 }
 
 
