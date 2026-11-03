@@ -10,6 +10,7 @@ import tempfile
 import threading
 from http.server import ThreadingHTTPServer
 from example_case_context import LLVM_ONLY_EXAMPLES, require_cpp_limitation
+from backend_modes import is_cpp_mode, native_modes, optimization_level
 
 
 OUTPUTS = {
@@ -35,19 +36,20 @@ def main():
         worker.start()
         try:
             with tempfile.TemporaryDirectory(prefix="gti-practical-examples-") as temp:
-                for standard, level in (("c++20", "-O0"), ("c++23", "-O3")):
+                for mode, flags, _native in native_modes():
                     for name, output in OUTPUTS.items():
                         binary = Path(temp) / Path(name).stem
-                        flags = ["--std", standard]
-                        if name in LLVM_ONLY_EXAMPLES:
+                        if name in LLVM_ONLY_EXAMPLES and is_cpp_mode(flags):
+                            # The C++ text cannot carry these examples; the
+                            # LLVM modes execute them.
                             require_cpp_limitation(compiler, root / "examples" / name,
-                                                   binary, environment, level[1:], standard)
-                            flags = ["--backend", "llvm"]
+                                                   binary, environment, optimization_level(flags))
+                            continue
                         built = subprocess.run(
                             [str(compiler), str(root / "examples" / name), *flags,
-                             level, "-o", str(binary)], capture_output=True, text=True,
+                             "-o", str(binary)], capture_output=True, text=True,
                             timeout=240, env=environment)
-                        assert built.returncode == 0, (name, standard, built.stdout, built.stderr)
+                        assert built.returncode == 0, (name, mode, built.stdout, built.stderr)
                         cases = [([], 0, output)]
                         if name == "093-http-json-client.gti":
                             base = f"http://127.0.0.1:{server.server_port}"
@@ -64,8 +66,8 @@ def main():
                             result = subprocess.run([str(binary), *args], capture_output=True,
                                                     text=True, timeout=15, env=environment)
                             assert (result.returncode, result.stdout, result.stderr) == (status, expected, ""), (
-                                name, standard, args, result.returncode, result.stdout, result.stderr)
-                        print(f"PASS {name} {standard} {level}", flush=True)
+                                name, mode, args, result.returncode, result.stdout, result.stderr)
+                        print(f"PASS {name} {mode}", flush=True)
         finally:
             server.shutdown()
             worker.join(timeout=5)

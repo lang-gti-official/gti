@@ -10,6 +10,7 @@ import tempfile
 
 from case_jobs import configured_jobs, positive_jobs, run_cases
 from contiguous_iterator_completion_test import MODES
+from backend_modes import is_cpp_mode, keep_cpp
 
 
 def events(*identities):
@@ -77,11 +78,12 @@ def main():
             executable = output / f"{fixture}-{label}"
             result = subprocess.run(
                 [str(compiler), str(fixtures / f"{fixture}.gti"), *flags,
-                 "--progress=never", "--keep-cpp", "-o", str(executable), "--",
+                 "--progress=never", *keep_cpp(flags), "-o", str(executable), "--",
                  *native, str(fixtures / "user_dual_range_events.cpp")],
                 env=environment, capture_output=True, text=True, timeout=180)
             assert result.returncode == 0, (fixture, label, result.stdout, result.stderr)
-            assert "// GTI verified-MIR body:" in executable.with_suffix(".gti.cpp").read_text()
+            if is_cpp_mode(flags):
+                assert "// GTI verified-MIR body:" in executable.with_suffix(".gti.cpp").read_text()
             return fixture, label, executable
 
         def observe(case):

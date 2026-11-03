@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def main():
@@ -31,15 +32,12 @@ def main():
         site = next(i for i, line in enumerate(lines, 1) if f"return {call}(0) + 1" in line)
         cases.append((call, source.replace(f"{call}(0)", f"{call}(1)"),
                       (70, "", f"{call}.gti:{site}: runtime error[GTI-R0001]: integer_overflow in addition\n")))
-    modes = [(f"{standard}-{level}", ["--std", standard, f"-{level}"])
-             for standard in ("c++20", "c++23") for level in ("O0", "O2", "O3")]
-    modes.append(("sanitized", ["--std", "c++23", "-O1", "--",
-                                "-fsanitize=address,undefined", "-fno-omit-frame-pointer"]))
+    modes = native_modes()
     environment = dict(os.environ, ASAN_OPTIONS="halt_on_error=1",
                        UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1")
     with tempfile.TemporaryDirectory(prefix="gti-terminal-context-") as directory:
         root = Path(directory)
-        for name, flags in modes:
+        for name, flags, native in modes:
             for case, text, expected in cases:
                 path = root / f"{case}.gti"
                 path.write_text(text)

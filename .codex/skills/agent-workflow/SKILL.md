@@ -145,7 +145,7 @@ integration is complete contributor work; report it as deferred, never as passed
    Continue normal integration without waiting for preview.
 
    Write the final PR description to a temporary file: behaviour, exactly
-   which checks ran, and "complete suite deferred to the merge queue". Unless
+   which checks ran, and "complete suite deferred to full validation". Unless
    the change is automation-only, end it with a `Validation:` block whose `T0`
    and `T1` items list the CTest names you ran, comma-separated; other items
    (`tier`, `T2`, `reproduction`, `unaffected`, `T3`) are prose:
@@ -157,7 +157,7 @@ integration is complete contributor work; report it as deferred, never as passed
    - T1: mir_full_expression, optimizer_conformance, compiler_pipeline
    - T2: llvm_place_execution, cpp_mir_body_emitter_lifecycle
    - reproduction: fails on parent <sha> with GTI-B0003, passes on the patch
-   - T3: deferred to the merge queue
+   - T3: deferred to post-integration full validation
    ```
 
    `finish` refuses a missing block or a declared test that no recorded

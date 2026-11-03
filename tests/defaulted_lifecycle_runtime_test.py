@@ -5,6 +5,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from backend_modes import is_cpp_mode, native_modes
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -76,35 +77,30 @@ def main() -> int:
     source = pathlib.Path(sys.argv[2]).resolve()
     with tempfile.TemporaryDirectory(prefix="gti-defaulted-lifecycle-") as temporary:
         root = pathlib.Path(temporary)
-        for optimization in ("O0", "O3"):
-            for standard in ("c++20", "c++23"):
-                mode = f"{optimization}/{standard}"
-                executable = root / f"defaulted-{optimization}-{standard}"
-                built = run(
-                    [
-                        str(compiler),
-                        str(source),
-                        f"-{optimization}",
-                        "--std",
-                        standard,
-                        "-o",
-                        str(executable),
-                    ]
-                )
-                if built.returncode != 0:
-                    return fail(built)
-                executed = run([str(executable)])
-                if executed.returncode != 0:
-                    return fail(executed)
+        for mode, flags, _native in native_modes():
+            executable = root / f"defaulted-{mode}"
+            built = run(
+                [
+                    str(compiler),
+                    str(source),
+                    *flags,
+                    "-o",
+                    str(executable),
+                ]
+            )
+            if built.returncode != 0:
+                return fail(built)
+            executed = run([str(executable)])
+            if executed.returncode != 0:
+                return fail(executed)
 
-                emitted = root / f"defaulted-{optimization}-{standard}.cpp"
+            emitted = root / f"defaulted-{mode}.cpp"
+            if is_cpp_mode(flags):
                 emission = run(
                     [
                         str(compiler),
                         str(source),
-                        f"-{optimization}",
-                        "--std",
-                        standard,
+                        *flags,
                         "--emit-cpp",
                         "-o",
                         str(emitted),
@@ -112,6 +108,7 @@ def main() -> int:
                 )
                 if emission.returncode != 0:
                     return fail(emission)
+            if is_cpp_mode(flags):
                 if not validate_emission(emitted.read_text(encoding="utf8"), mode):
                     return 1
     return 0

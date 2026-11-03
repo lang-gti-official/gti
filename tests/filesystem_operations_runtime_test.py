@@ -8,16 +8,11 @@ import subprocess
 import tempfile
 
 from sanitizer_support import SANITIZED_BUILD_TIMEOUT
+from backend_modes import native_modes
 
 
 def main():
-    configurations = {
-        f"{standard}-{level}": (["--std", standard, f"-{level}"], [])
-        for standard in ("c++20", "c++23") for level in ("O0", "O1", "O3")
-    }
-    configurations["no-elide"] = (["--std", "c++23", "-O0"], ["-fno-elide-constructors"])
-    configurations["sanitized"] = (["--std", "c++23", "-O1"],
-                                   ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])
+    configurations = {label: (flags, native) for label, flags, native in native_modes()}
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("compiler", type=pathlib.Path)
     parser.add_argument("--mode", action="append",

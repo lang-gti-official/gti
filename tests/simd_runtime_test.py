@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from backend_modes import cpp_modes, cpp_variant_mode, native_modes
 
 
 def run(command: list[str], environment: dict[str, str]) -> subprocess.CompletedProcess[str]:
@@ -36,21 +37,21 @@ def main() -> int:
                 "dormant SIMD include")
         if "inline void simd_binary" in dormant_cpp.read_text():
             raise AssertionError("unused SIMD imports must not emit native SIMD support")
-        modes = [(standard, optimization, [])
-                 for standard in ("c++20", "c++23")
-                 for optimization in ("O0", "O1", "O3")]
-        modes += [("c++20", "O3", ["-DGTI_SIMD_SCALAR_REFERENCE=1"]),
-                  ("c++23", "O1", ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]),
-                  ("c++20", "O1", ["-Dmemcpy=host_macro", "-Dconditional_t=host_macro",
-                                     "-Dvector_size=host_macro", "-Dsimd_binary=host_macro",
-                                     "-DOperation=host_macro"])]
-        for index, (standard, optimization, arguments) in enumerate(modes):
+        modes = native_modes()
+        if cpp_modes():
+            # C++-text checks: the scalar reference implementation and host
+            # macro hygiene of the generated text.
+            modes += [cpp_variant_mode("scalar-reference", "O3", ["-DGTI_SIMD_SCALAR_REFERENCE=1"]),
+                      cpp_variant_mode("host-macros", "O1",
+                                       ["-Dmemcpy=host_macro", "-Dconditional_t=host_macro",
+                                        "-Dvector_size=host_macro", "-Dsimd_binary=host_macro",
+                                        "-DOperation=host_macro"])]
+        for index, (mode, flags, arguments) in enumerate(modes):
             executable = root / f"values-{index}"
-            command = [str(compiler), str(fixture), "--std", standard,
-                       f"-{optimization}", "-o", str(executable)]
+            command = [str(compiler), str(fixture), *flags, "-o", str(executable)]
             if arguments:
                 command += ["--", *arguments]
-            success(run(command, environment), f"{standard}/{optimization}/{arguments} build")
+            success(run(command, environment), f"{mode}/{arguments} build")
             executed = run([str(executable)], environment)
             success(executed, "SIMD values")
             if executed.stdout != "simd ok\n" or executed.stderr:
@@ -97,16 +98,14 @@ int main() {
   return 0;
 }
 ''')
-        for standard in ("c++20", "c++23"):
-            for optimization in ("O0", "O3"):
-                executable = root / f"transactional-{standard}-{optimization}"
-                success(run([str(compiler), str(transactional), "--std", standard,
-                             f"-{optimization}", "-o", str(executable)], environment),
-                        "transactional copy build")
-                executed = run([str(executable)], environment)
-                if (executed.returncode != 70 or executed.stdout != "0\n" * 6
-                        or "runtime error[GTI-R0007]: index_out_of_bounds" not in executed.stderr):
-                    raise AssertionError(f"copy published partial destination state: {executed}")
+        for mode, flags, _native in native_modes():
+            executable = root / f"transactional-{mode}"
+            success(run([str(compiler), str(transactional), *flags, "-o", str(executable)], environment),
+                    "transactional copy build")
+            executed = run([str(executable)], environment)
+            if (executed.returncode != 70 or executed.stdout != "0\n" * 6
+                    or "runtime error[GTI-R0007]: index_out_of_bounds" not in executed.stderr):
+                raise AssertionError(f"copy published partial destination state: {executed}")
 
         # Disable auto-vectorization: packed arithmetic must come from the
         # verified SIMD capability, and must disappear in the scalar reference.

@@ -10,6 +10,7 @@ import tempfile
 from sanitizer_support import thread_sanitizer_enabled
 
 from native_symbol_spelling import native_spelling
+from backend_modes import cpp_variant_mode, is_cpp_mode, keep_cpp, native_modes, optimization_level
 
 
 def run(command):
@@ -31,18 +32,14 @@ def main():
     cxx = pathlib.Path(sys.argv[2]).absolute()
     root = pathlib.Path(__file__).resolve().parent.parent
     fixtures = root / "tests/fixtures"
-    modes = [(f"{std}-{opt}", std, opt, []) for std in ("c++20", "c++23")
-             for opt in ("O0", "O1", "O3")]
-    modes.append(("asan-ubsan", "c++23", "O1",
-                  ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]))
+    modes = native_modes()
     if thread_sanitizer_enabled():
-        modes.append(("tsan", "c++23", "O1",
-                      ["-fsanitize=thread", "-fno-omit-frame-pointer"]))
+        modes.append(cpp_variant_mode("tsan", native=["-fsanitize=thread", "-fno-omit-frame-pointer"]))
     with tempfile.TemporaryDirectory(prefix="gti-cthread-sleep-") as directory:
         output = pathlib.Path(directory)
-        for mode, std, opt, sanitizers in modes:
+        for mode, flags, sanitizers in modes:
             native = output / f"native-{mode}"
-            run([cxx, f"-std={std}", f"-{opt}", *sanitizers,
+            run([cxx, "-std=c++23", f"-{optimization_level(flags)}", *sanitizers,
                  "-Wall", "-Wextra", "-Werror", "-pthread",
                  "-I", root / "runtime/include", "-I", root / "runtime/src",
                  root / "runtime/src/cthread_sleep.cpp",
@@ -50,8 +47,7 @@ def main():
             run([native])
             for fixture in ("cthread_sleep", "cthread_sleep_oracle", "cthread_sleep_concurrent"):
                 binary = output / f"{fixture}-{mode}"
-                command = [compiler, fixtures / f"{fixture}.gti", "--progress=never", "--std", std,
-                           f"-{opt}", "--keep-cpp", "-o", binary]
+                command = [compiler, fixtures / f"{fixture}.gti", "--progress=never", *flags, *keep_cpp(flags), "-o", binary]
                 if fixture.endswith("concurrent"):
                     command += ["--execution-profile", "concurrent"]
                 extra = [*sanitizers]
@@ -61,11 +57,12 @@ def main():
                     command += ["--", *extra]
                 run(command)
                 run([binary])
-                generated = binary.with_suffix(".gti.cpp").read_text()
-                if ("// GTI verified-MIR body:" not in generated or
-                        generated.count(
-                            f"{native_spelling(generated, 'gti_rt_cthread_sleep_v1')}(") < 2):
-                    raise AssertionError(f"{fixture} lost its MIR/native-call witness")
+                if is_cpp_mode(flags):
+                    generated = binary.with_suffix(".gti.cpp").read_text()
+                    if ("// GTI verified-MIR body:" not in generated or
+                            generated.count(
+                                f"{native_spelling(generated, 'gti_rt_cthread_sleep_v1')}(") < 2):
+                        raise AssertionError(f"{fixture} lost its MIR/native-call witness")
             print(f"C-thread sleep: {mode} passed", flush=True)
 
 

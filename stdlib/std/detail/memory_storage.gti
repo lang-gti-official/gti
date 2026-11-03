@@ -564,8 +564,10 @@ public:
 
 // Defensive descriptor checks are not proof of the unsafe provider contract.
 // The native seam observes pointer alignment; all allocation policy stays here.
+// Reuse the transaction's native-size limit: it describes the target, not the
+// returned region. Injected limits are selected before an allocation operation.
 export expected<void, std::alloc_errc> validate_region(
-    std::detail::raw_allocation allocation, std::layout requested) {
+    std::detail::raw_allocation allocation, std::layout requested, uint64_t maximum) {
   if (allocation.alignment < requested.alignment) {
     return unexpected(std::alloc_errc::invalid_region);
   }
@@ -573,7 +575,6 @@ export expected<void, std::alloc_errc> validate_region(
       (allocation.alignment & (allocation.alignment - uint64_t(1))) != uint64_t(0)) {
     return unexpected(std::alloc_errc::invalid_alignment);
   }
-  uint64_t maximum = runtime::gti_rt_native_size_max_v1();
   if (allocation.bytes > maximum || allocation.alignment > maximum) {
     return unexpected(std::alloc_errc::size_overflow);
   }
@@ -623,7 +624,7 @@ export expected<std::detail::raw_allocation, std::alloc_errc> try_allocate_objec
     if (!attempt) { return unexpected(attempt.error()); }
     std::detail::raw_allocation region = std::move(attempt).value();
     objects.attach(region);
-    auto valid = validate_region(region, request);
+    auto valid = validate_region(region, request, maximum);
     if (!valid) {
       objects.release();
       return unexpected(valid.error());
@@ -657,7 +658,7 @@ export expected<void, std::alloc_errc> try_allocate_sparse<T, Lease>(
     if (!attempt) { return unexpected(attempt.error()); }
     std::detail::raw_allocation region = std::move(attempt).value();
     objects.attach(region);
-    auto valid = validate_region(region, request);
+    auto valid = validate_region(region, request, maximum);
     if (!valid) {
       objects.release();
       return unexpected(valid.error());
@@ -671,7 +672,7 @@ export expected<void, std::alloc_errc> try_allocate_sparse<T, Lease>(
     }
     std::detail::raw_allocation flags = std::move(flags_attempt).value();
     metadata.attach(flags);
-    auto valid_flags = validate_region(flags, metadata_request);
+    auto valid_flags = validate_region(flags, metadata_request, maximum);
     if (!valid_flags) {
       metadata.release();
       objects.release();

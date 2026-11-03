@@ -1383,6 +1383,7 @@ module.exports = grammar({
         field("captures", $.lambda_capture_list),
         field("parameters", $.parameter_clause),
         "->",
+        optional("mut"),
         field("return_type", $.type),
         field("body", $.block),
       ),

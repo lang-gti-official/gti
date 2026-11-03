@@ -9,6 +9,7 @@ import tempfile
 
 from vector_scalar_constructor_runtime_test import run
 from internal_module_fixture import register_modules
+from backend_modes import native_modes
 
 
 def main():
@@ -46,11 +47,7 @@ def main():
             error = f"{cleanup}: runtime error[GTI-R0002]: division_by_zero in integer_division\n"
             cases.append((70, "89\n900\n", error))
 
-    modes = [(f"{standard}-{level}", ["--std", standard, f"-{level}"], [])
-             for standard in ("c++20", "c++23") for level in ("O0", "O1", "O3")]
-    modes += [("no-elide", ["--std", "c++23", "-O0"], ["-fno-elide-constructors"]),
-              ("asan-ubsan", ["--std", "c++23", "-O1"],
-               ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])]
+    modes = native_modes()
     if args.mode:
         modes = [mode for mode in modes if mode[0] == args.mode]
         if not modes:

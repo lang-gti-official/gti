@@ -5,6 +5,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def run(command):
@@ -45,25 +46,20 @@ int main() {
             "drops = drops + 1;\n    if (this.identity == 2) { int32_t checked = int32_t(1) / zero; }"
         ), 70, "3\n2\n1\n"),
     }
-    modes = [(standard, optimization, [])
-             for standard in ("c++20", "c++23")
-             for optimization in ("O0", "O1", "O3")]
-    modes += [("c++23", "O0", ["-fno-elide-constructors"]),
-              ("c++23", "O1", ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])]
+    modes = native_modes()
     with tempfile.TemporaryDirectory(prefix="gti-recursive-sum-") as temporary:
         root = pathlib.Path(temporary)
         for name, (text, expected_exit, expected_output) in cases.items():
             path = root / (name + ".gti")
             path.write_text(text)
-            for index, (standard, optimization, flags) in enumerate(modes):
+            for index, (label, flags, native) in enumerate(modes):
                 binary = root / f"{name}-{index}"
-                command = [str(compiler), str(path), "--std", standard,
-                           "-" + optimization, "-o", str(binary)]
-                if flags:
-                    command += ["--", *flags]
+                command = [str(compiler), str(path), *flags, "-o", str(binary)]
+                if native:
+                    command += ["--", *native]
                 compiled = run(command)
                 if compiled.returncode:
-                    sys.stderr.write(f"{name} {standard} {optimization}: compile failed\n" +
+                    sys.stderr.write(f"{name} {label}: compile failed\n" +
                                      compiled.stdout + compiled.stderr)
                     return 1
                 executed = run([str(binary)])
@@ -72,7 +68,7 @@ int main() {
                         (expected_exit == 70 and "division_by_zero" not in executed.stderr) or
                         "AddressSanitizer" in executed.stderr or
                         "runtime error:" in executed.stderr):
-                    sys.stderr.write(f"{name} {standard} {optimization}: "
+                    sys.stderr.write(f"{name} {label}: "
                                      f"exit={executed.returncode} stdout={executed.stdout!r} "
                                      f"stderr={executed.stderr!r}\n")
                     return 1

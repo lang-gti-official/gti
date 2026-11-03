@@ -1,9 +1,11 @@
 #include "session.h"
 #include "abi.h"
+#include "checked_offsets.h"
 #include "checked_ranges.h"
 #include "checked_reductions.h"
 #include "debug_info.h"
 #include "instrumentation.h"
+#include "private_atomics.h"
 
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/CodeGen/TargetLowering.h>
@@ -667,6 +669,8 @@ BackendArtifact Session::emitObject() {
   llvm::CGSCCAnalysisManager cgscc;
   llvm::ModuleAnalysisManager modules;
   llvm::PassBuilder builder(machine_.get());
+  registerPrivateAtomicPass(builder);
+  registerCheckedOffsetPass(builder);
   registerCheckedReductionPass(builder);
   registerCheckedRangePass(builder);
   builder.registerModuleAnalyses(modules);

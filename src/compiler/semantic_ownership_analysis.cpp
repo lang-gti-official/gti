@@ -5105,7 +5105,7 @@ auto SemanticVisitor::Impl::completeBorrowQuery(
   ++state->depth;
   auto worker = std::make_unique<Impl>(
       target, sourceGraph, false, workMetrics, sources, rawPointerAudit, false,
-      TrustedBodyAnalysis::Complete, sourceDebugProfile);
+      TrustedBodyAnalysis::Complete, sourceDebugProfile, compileLimits);
   if (state->idleCatalogs.empty())
     worker->catalog = catalog.snapshotForInstanceAnalysis();
   else {
@@ -6637,8 +6637,8 @@ auto SemanticVisitor::Impl::functionReturnBorrowSummary(
     const SemanticType &returnType,
     const std::vector<SemanticType> &parameterTypes, ClassId ownerClass,
     bool staticMember, IntrinsicKind intrinsic,
-    std::optional<std::size_t> exactReturnParameter) const
-    -> FunctionReturnBorrowSummary {
+    std::optional<std::size_t> exactReturnParameter,
+    bool allowReadOnlyReferenceReborrow) const -> FunctionReturnBorrowSummary {
   FunctionReturnBorrowSummary summary;
   if (!isBorrowReturningType(returnType) || intrinsic != IntrinsicKind::None) {
     return summary;
@@ -6649,6 +6649,19 @@ auto SemanticVisitor::Impl::functionReturnBorrowSummary(
     summary.origin = BorrowOriginKind::Receiver;
     return summary;
   }
+
+  // A checked reference result can weaken an incoming exclusive reference
+  // to shared access. This policy does not change stored-carrier inference:
+  // its nested dependency graph has a separate return contract.
+  const bool readOnlyReferenceReborrow =
+      allowReadOnlyReferenceReborrow &&
+      returnType.kind == SemanticType::Reference &&
+      summary.access == AccessMode::ReadOnly;
+  const auto sufficientReferenceAccess = [&](const SemanticType &parameter) {
+    return parameter.referenceAccess == summary.access ||
+           (readOnlyReferenceReborrow &&
+            parameter.referenceAccess == AccessMode::Mutable);
+  };
 
   // An erased object is opaque: a typed referent is reached through it only
   // by exact unsafe restoration. A reference to one is therefore a weak
@@ -6663,17 +6676,19 @@ auto SemanticVisitor::Impl::functionReturnBorrowSummary(
     return owner != nullptr && owner->compilerCapability ==
                                    CompilerCapabilityTypeKind::ErasedObject;
   };
-  const bool typedCandidate = std::any_of(
-      parameterTypes.begin(), parameterTypes.end(),
-      [&](const SemanticType &parameter) {
-        return parameter.kind == SemanticType::Reference &&
-               parameter.referenceAccess == borrowAccess(returnType) &&
-               !erasedReferent(parameter);
-      });
+  const bool typedCandidate =
+      std::any_of(parameterTypes.begin(), parameterTypes.end(),
+                  [&](const SemanticType &parameter) {
+                    return parameter.kind == SemanticType::Reference &&
+                           sufficientReferenceAccess(parameter) &&
+                           !erasedReferent(parameter);
+                  });
   const auto readOnlyDependency = [&](const SemanticType &parameter) {
     const bool readOnlyReference =
         parameter.kind == SemanticType::Reference &&
-        parameter.referenceAccess == AccessMode::ReadOnly &&
+        (parameter.referenceAccess == AccessMode::ReadOnly ||
+         (readOnlyReferenceReborrow &&
+          parameter.referenceAccess == AccessMode::Mutable)) &&
         (!typedCandidate || !erasedReferent(parameter)) &&
         (parameter.arguments.empty() ||
          !typeTraits(parameter.arguments.front()).containsBorrowedState ||
@@ -6896,27 +6911,26 @@ auto SemanticVisitor::Impl::reportMissingLambdaReturnBorrowSummary(
     diagnostic = makeDiagnostic(
         "GTI-S2017", DiagnosticPhase::Semantics, location,
         "A lambda's borrowed return dependency is ambiguous; exactly one "
-        "read-only reference parameter may provide its owner.");
+        "reference parameter with sufficient access may provide its owner.");
     diagnostic.hints.emplace_back(
-        "Reduce the lambda to one read-only reference parameter, or return "
+        "Reduce the lambda to one eligible reference parameter, or return "
         "an owned value.");
-  } else if (summary.hasMutableCandidate ||
-             summary.access == AccessMode::Mutable) {
+  } else if (summary.access == AccessMode::Mutable) {
     diagnostic = makeDiagnostic(
         "GTI-S2017", DiagnosticPhase::Semantics, location,
-        "A lambda's borrowed return cannot derive from a mutable parameter "
-        "because escaping mutable dependency graphs are not supported.");
+        "A lambda's mutable reference return requires exactly one mutable "
+        "reference parameter that outlives the result.");
     diagnostic.hints.emplace_back(
-        "Return a read-only reference that borrows one read-only reference "
-        "parameter, or return an owned value.");
+        "Borrow the result from a mutable reference parameter, or return "
+        "a read-only reference or an owned value.");
   } else {
     diagnostic = makeDiagnostic(
         "GTI-S2017", DiagnosticPhase::Semantics, location,
-        "A lambda's borrowed return requires exactly one read-only reference "
+        "A lambda's borrowed return requires exactly one reference "
         "parameter that outlives the result; captures are not result "
         "origins.");
     diagnostic.hints.emplace_back(
-        "Add one read-only reference parameter the result borrows from, or "
+        "Add one reference parameter the result borrows from, or "
         "return an owned value.");
   }
   diagnostics.emplace_back(std::move(diagnostic));
@@ -6931,7 +6945,8 @@ auto SemanticVisitor::Impl::callableResultOriginContract(const Call &call) const
       lambda = instanceBaseModel->findLambda(callee.lambdaId);
     return lambda != nullptr &&
            lambda->returnBorrowOrigin == BorrowOriginKind::Argument &&
-           lambda->returnBorrowAccess == AccessMode::ReadOnly;
+           lambda->returnType.kind == SemanticType::Reference &&
+           lambda->returnBorrowAccess == lambda->returnType.referenceAccess;
   }
   if (callee.hasFunctionItemShape()) {
     const FunctionInfo *function =
@@ -6940,7 +6955,8 @@ auto SemanticVisitor::Impl::callableResultOriginContract(const Call &call) const
       function = instanceBaseModel->findFunction(callee.functionId);
     return function != nullptr &&
            function->returnBorrowOrigin == BorrowOriginKind::Argument &&
-           function->returnBorrowAccess == AccessMode::ReadOnly;
+           function->returnType.kind == SemanticType::Reference &&
+           function->returnBorrowAccess == function->returnType.referenceAccess;
   }
   return false;
 }
@@ -8678,6 +8694,17 @@ auto SemanticVisitor::Impl::retainedLoanSource(const ExprPtr &expression) const
   }
   const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
   if (resolved == nullptr) {
+    const auto *lambda = semanticModel.findLambdaCall(*call);
+    if (lambda != nullptr &&
+        lambda->returnType.kind == SemanticType::Reference &&
+        lambda->borrowOrigin == BorrowOriginKind::Argument) {
+      // The result reborrows the selected argument's existing authority.
+      // In particular an incoming mutable reference already has an entry
+      // loan: creating an unrelated root would either conflict with it or
+      // lose the ancestry that suspends it while the result remains live.
+      const ExprPtr *origin = storedBorrowSource(expression);
+      return origin == nullptr ? std::nullopt : retainedLoanSource(*origin);
+    }
     return std::nullopt;
   }
   if (resolved->borrowFields.size() == 1 &&

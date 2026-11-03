@@ -6,6 +6,7 @@ import sys
 import tempfile
 
 from unique_class_allocation_runtime_test import run
+from backend_modes import is_cpp_mode, keep_cpp, native_modes
 
 
 def main():
@@ -50,26 +51,24 @@ def main():
         (0, "2\n1\n9\n", ""),
         (0, "9\n", ""),
     ]
-    modes = [(f"{standard}-{opt}", ["--std", standard, f"-{opt}"], [])
-             for standard in ("c++20", "c++23") for opt in ("O0", "O1", "O3")]
-    modes.append(("sanitized", ["--std", "c++23", "-O1"],
-                  ["--", "-fsanitize=address,undefined", "-fno-omit-frame-pointer"]))
+    modes = native_modes()
     with tempfile.TemporaryDirectory(prefix="gti-aggregate-cleanup-") as directory:
         for name, flags, native in modes:
             binary = pathlib.Path(directory) / name
-            command = [str(compiler), str(source), *flags, "--keep-cpp",
+            command = [str(compiler), str(source), *flags, *keep_cpp(flags),
                        "-o", str(binary), *native]
             built = run(command)
             assert built.returncode == 0, (command, built.stdout, built.stderr)
-            generated = binary.with_suffix(".gti.cpp").read_text()
-            assert "mir_cleanup_sequence_v1 sequence" in generated
-            assert "mir_unique_aggregate_owner_drop_with_failure_v1<" in generated
+            if is_cpp_mode(flags):
+                generated = binary.with_suffix(".gti.cpp").read_text()
+                assert "mir_cleanup_sequence_v1 sequence" in generated
+                assert "mir_unique_aggregate_owner_drop_with_failure_v1<" in generated
             for phase, expected in enumerate(cases):
                 result = run([str(binary), *(["phase"] * phase)])
                 actual = (result.returncode, result.stdout, result.stderr)
                 assert actual == expected, (name, phase, actual, expected)
             original = pathlib.Path(directory) / f"{name}-original"
-            built = run([str(compiler), str(inherited), *flags, "--keep-cpp",
+            built = run([str(compiler), str(inherited), *flags, *keep_cpp(flags),
                          "-o", str(original), *native])
             assert built.returncode == 0, (name, built.stdout, built.stderr)
             result = run([str(original)])

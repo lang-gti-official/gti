@@ -6,6 +6,7 @@ import sys
 import tempfile
 
 from unique_class_allocation_runtime_test import run
+from backend_modes import native_modes
 
 
 def main():
@@ -14,10 +15,7 @@ def main():
     source = fixtures / "native_opaque_pointer_results.gti"
     site = next(number for number, line in enumerate(source.read_text().splitlines(), 1)
                 if "return native::mesh(this.value, uint32_t(index));" in line)
-    modes = [(f"{std}-{opt}", ["--std", std, f"-{opt}"], [])
-             for std in ("c++20", "c++23") for opt in ("O0", "O1", "O3")]
-    modes.append(("sanitized", ["--std", "c++23", "-O1"],
-                  ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]))
+    modes = native_modes()
     with tempfile.TemporaryDirectory(prefix="gti-opaque-results-") as directory:
         for name, flags, native in modes:
             binary = Path(directory) / name

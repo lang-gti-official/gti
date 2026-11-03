@@ -88,6 +88,35 @@ void internalTrialsDoNotReportProgress() {
          "only the original analysis reports loading, parsing and checking");
 }
 
+void immutableDiscoveryAndCancellation() {
+  Fixture f;
+  f.write("api.gti",
+          "export module api;\nexport int discovered() { return 7; }\n");
+  f.options.suggestIncludes = false;
+  const auto base = f.analyze("int main() { return discovered(); }\n");
+  expect(lang::canSuggestIncludes(base) && fixes(base).empty(),
+         "ordinary diagnostics are complete without speculative discovery");
+  auto advice = lang::discoverIncludeSuggestions(
+      base, f.options, f.root / "main.gti", {}, f.overlays, {}, {});
+  expect(!advice.cancelled &&
+             std::any_of(advice.diagnostics.begin(), advice.diagnostics.end(),
+                         [](const auto &diagnostic) {
+                           return !diagnostic.fixes.empty();
+                         }),
+         "immutable discovery retains compiler-validated fixes");
+  expect(fixes(base).empty() && !base.includeSuggestionsRequested &&
+             base.includeSuggestionInputs.empty(),
+         "discovery never mutates a snapshot already published to queries");
+  std::atomic<bool> cancellation{true};
+  f.options.cancellation = &cancellation;
+  advice = lang::discoverIncludeSuggestions(
+      base, f.options, f.root / "main.gti", {}, f.overlays, {}, {});
+  expect(advice.cancelled && advice.inputs.empty(),
+         "cancelled discovery stops before scanning any candidate");
+  expect(fixes(base).empty() && !base.cancelled,
+         "cancelled advice cannot invalidate the original semantic snapshot");
+}
+
 void projectDeclarations() {
   Fixture f;
   f.write("api.gti", R"(export module api;
@@ -580,6 +609,7 @@ int main() {
   discoveryReusesCandidateScans();
   moduleMapChangesInvalidateScans();
   internalTrialsDoNotReportProgress();
+  immutableDiscoveryAndCancellation();
   projectDeclarations();
   missingOverloadDeclarations();
   snapshotsAndAlternatives();
