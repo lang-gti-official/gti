@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 FAILURE_CLEANUP_SOURCE = """\
@@ -73,17 +74,14 @@ def build(
     source: pathlib.Path,
     output: pathlib.Path,
     *,
-    standard: str,
-    optimization: str,
+    flags: list[str],
     native_arguments: list[str] | None = None,
 ) -> None:
     command = [
         str(compiler),
         "--execution-profile",
         "concurrent",
-        "--std",
-        standard,
-        optimization,
+        *flags,
         str(source),
         "-o",
         str(output),
@@ -116,21 +114,19 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="gti-mutex-") as scratch:
         root = pathlib.Path(scratch)
-        for standard in ("c++20", "c++23"):
-            for optimization in ("-O0", "-O3"):
-                suffix = f"{standard.replace('+', 'p')}_{optimization[1:].lower()}"
-                for source in sources:
-                    binary = executable_path(root, f"{source.stem}_{suffix}")
-                    build(
-                        compiler,
-                        source,
-                        binary,
-                        standard=standard,
-                        optimization=optimization,
-                    )
-                    repetitions = 10 if source.name == "mutex_concurrent.gti" else 1
-                    for _ in range(repetitions):
-                        execute([str(binary)])
+        for mode, flags, _native in native_modes():
+            suffix = mode.replace("+", "p").replace("-", "_")
+            for source in sources:
+                binary = executable_path(root, f"{source.stem}_{suffix}")
+                build(
+                    compiler,
+                    source,
+                    binary,
+                    flags=flags,
+                )
+                repetitions = 10 if source.name == "mutex_concurrent.gti" else 1
+                for _ in range(repetitions):
+                    execute([str(binary)])
 
         failure_source = root / "mutex_failure_cleanup.gti"
         failure_source.write_text(FAILURE_CLEANUP_SOURCE, encoding="utf-8")
@@ -139,8 +135,7 @@ def main() -> int:
             compiler,
             failure_source,
             failure_binary,
-            standard="c++23",
-            optimization="-O3",
+            flags=native_modes(levels=("O3",))[0][1],
         )
         result = execute([str(failure_binary)], expected=70, timeout=30)
         failure_line = source_line(FAILURE_CLEANUP_SOURCE, "int32_t failed =")

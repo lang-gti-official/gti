@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from backend_modes import is_cpp_mode, keep_cpp, native_modes
 
 
 def run(command):
@@ -29,26 +30,24 @@ def main():
     source = fixtures / "numeric_boundaries.gti"
     failure = fixtures / "numeric_boundaries_failure.gti"
     oracle = fixtures / "numeric_boundaries_oracle.cpp"
-    modes = [(f"{standard}-{level}", ["--std", standard, f"-{level}"], [])
-             for standard in ("c++20", "c++23") for level in ("O0", "O1", "O3")]
-    modes.append(("sanitized", ["--std", "c++23", "-O1"],
-                  ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]))
+    modes = native_modes()
     with tempfile.TemporaryDirectory(prefix="gti-numeric-boundaries-") as directory:
         root = Path(directory)
-        for mode, flags, native_flags in modes:
+        for mode, flags, native in modes:
             executable = root / mode
-            built([compiler, source, *flags, "--keep-cpp", "-o", executable,
-                   "--", oracle, *native_flags])
+            built([compiler, source, *flags, *keep_cpp(flags), "-o", executable,
+                   "--", oracle, *native])
             result = run([executable])
             assert (result.returncode, result.stdout, result.stderr) == (0, "", ""), (mode, result)
-            generated = executable.with_suffix(".gti.cpp").read_text()
-            assert "// GTI verified-MIR body:" in generated
-            # Public arithmetic stays source-defined, not a backend std:: shim.
-            for operation in ("gcd", "lcm", "midpoint"):
-                assert re.search(rf"__gti_inst_[0-9a-f]+_{operation}__gti_mir_failure\(", generated), operation
-                assert f"::std::{operation}(" not in generated, operation
+            if is_cpp_mode(flags):
+                generated = executable.with_suffix(".gti.cpp").read_text()
+                assert "// GTI verified-MIR body:" in generated
+                # Public arithmetic stays source-defined, not a backend std:: shim.
+                for operation in ("gcd", "lcm", "midpoint"):
+                    assert re.search(rf"__gti_inst_[0-9a-f]+_{operation}__gti_mir_failure\(", generated), operation
+                    assert f"::std::{operation}(" not in generated, operation
             failing = root / f"{mode}-failure"
-            built([compiler, failure, *flags, "-o", failing, "--", *native_flags])
+            built([compiler, failure, *flags, "-o", failing, "--", *native])
             for argc in range(2, 16):
                 result = run([failing, *(["x"] * (argc - 1))])
                 assert result.returncode == 70 and result.stdout == "cleaned\n", (mode, argc, result)

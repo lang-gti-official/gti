@@ -38,6 +38,7 @@ FrontendResult analyze(const CompilationRequest &request,
       .progress = progress};
   options.rawPointerAudit = request.rawPointerAudit();
   options.reportLibraryAuditFindings = request.rawPointerAuditLibraryFindings();
+  options.limits = request.compileLimits();
   options.program = request.program();
   options.sourceDebugProfile = request.debugInfo()
                                    ? SourceDebugProfile::LexicalV1

@@ -1,0 +1,67 @@
+import std.string;
+
+class Gauge {
+public:
+  mut int reading;
+  Gauge(int reading) : reading(reading) {}
+};
+
+[[borrowed_from(value)]]
+mut T& invoke<F, T>(F& callback, mut T& value) { return callback(value); }
+
+int main() {
+  auto increment = [](mut int& value) -> mut int& {
+    value += 1;
+    return value;
+  };
+  auto observe = [](mut int& value) -> int& {
+    value += 1;
+    return value;
+  };
+  auto relay = [](mut int& value) -> mut int& {
+    mut int& parent = value;
+    mut int& child = parent;
+    return child;
+  };
+  mut int number = 10;
+  mut int& result = increment(relay(number));
+  result += 5;
+  int& view = observe(number);
+  if (view != 17) return 1;
+  mut int& generic = invoke(relay, number);
+  generic += 1;
+  if (number != 18) return 2;
+
+  auto field = [](mut Gauge& gauge) -> mut int& {
+    mut int& parent = gauge.reading;
+    mut int& child = parent;
+    return child;
+  };
+  auto read_field = [](mut Gauge& gauge) -> int& {
+    gauge.reading += 1;
+    mut int& parent = gauge.reading;
+    int& child = parent;
+    return child;
+  };
+  mut Gauge gauge = Gauge(20);
+  mut int& reading = field(gauge);
+  reading += 3;
+  int& observed = read_field(gauge);
+  if (observed != 24) return 3;
+
+  // Owned objects stay with the caller; reference helpers neither copy nor
+  // transfer the string, and the nested result retains exclusive access.
+  auto left = [](mut std::string& text) -> mut std::string& {
+    text.erase(std::size_t(0), std::size_t(1));
+    return text;
+  };
+  auto right = [](mut std::string& text) -> mut std::string& {
+    text.erase(text.size() - std::size_t(1));
+    mut std::string& alias = text;
+    return alias;
+  };
+  mut std::string text = std::string(" hello ");
+  mut std::string& trimmed = left(right(text));
+  if (trimmed != "hello") return 4;
+  return 0;
+}

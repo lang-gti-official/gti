@@ -17,7 +17,11 @@ def required_tests(source, platform):
     spec = importlib.util.spec_from_file_location('preview_candidate_examples', source / 'scripts/preview_examples.py')
     examples = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(examples)
-    selected = examples.required_tests(platform) | set(examples.manifest_tests(source / '.gti-preview.json'))
+    manifest = source / '.gti-preview.json'
+    # Older candidates only know the whole-manifest replay.
+    focused = (examples.pending_tests(manifest, source) if hasattr(examples, 'pending_tests')
+               else examples.manifest_tests(manifest))
+    selected = examples.required_tests(platform) | set(focused)
     if not selected or 'preview_admission' in selected:
         raise ValueError('empty or recursive preview selection')
     examples.validate_sources(subprocess.check_output(
@@ -90,9 +94,11 @@ def main():
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--build', type=Path, required=True)
     parser.add_argument('--parallel', type=positive, required=True)
+    parser.add_argument('--products-only', action='store_true',
+                        help='build only the installed toolchain products; the publisher runs no admission checks')
     args = parser.parse_args()
     source, build = args.source.resolve(), args.build.resolve()
-    selected = required_tests(source, sys.platform)
+    selected = set() if args.products_only else required_tests(source, sys.platform)
     targets = build_targets(source, build, selected)
     evidence = build / 'Testing/preview-build.json'
     evidence.parent.mkdir(parents=True, exist_ok=True)

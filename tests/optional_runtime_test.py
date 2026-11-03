@@ -7,6 +7,7 @@ import sys
 import tempfile
 
 from native_fixture_build import build_fixture
+from backend_modes import is_cpp_mode, native_modes, optimization_level
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -117,77 +118,71 @@ def main() -> int:
         ):
             return 1
 
-        for standard in ("c++20", "c++23"):
-            for optimization in ("O0", "O3"):
-                mode = f"{standard}/{optimization}"
-                for fixture_name in ("optional_value.gti", "optional_lifecycle.gti",
-                                     "optional_clone.gti", "optional_nested.gti",
-                                     "optional_expected_composition.gti",
-                                     "optional_move_view_local.gti",
-                                     "optional_move_assignment.gti"):
-                    executable = root / f"{fixture_name}-{standard}-{optimization}"
-                    built = run(
-                        [
-                            str(compiler),
-                            str(fixtures / fixture_name),
-                            "--std",
-                            standard,
-                            f"-{optimization}",
-                            "-o",
-                            str(executable),
-                        ]
-                    )
-                    if built.returncode != 0:
-                        return fail(f"build {fixture_name} {mode}", built)
-                    executed = run([str(executable)])
-                    if executed.returncode != 0 or executed.stdout or executed.stderr:
-                        return fail(f"run {fixture_name} {mode}", executed)
-
-                allocated = root / f"allocations-{standard}-{optimization}"
-                built = build_fixture(
-                    [str(compiler), str(fixtures / "optional_allocations.gti"),
-                     "--std", standard, f"-{optimization}"], allocated,
-                    native_sources=[fixtures / "stdlib_adoption_allocation_counts.cpp"],
-                    standard=standard, optimization=optimization,
-                    text=True, capture_output=True, check=False, timeout=120)
+        for mode, flags, _native in native_modes():
+            for fixture_name in ("optional_value.gti", "optional_lifecycle.gti",
+                                 "optional_clone.gti", "optional_nested.gti",
+                                 "optional_expected_composition.gti",
+                                 "optional_move_view_local.gti",
+                                 "optional_move_assignment.gti"):
+                executable = root / f"{fixture_name}-{mode}"
+                built = run(
+                    [
+                        str(compiler),
+                        str(fixtures / fixture_name),
+                        *flags,
+                        "-o",
+                        str(executable),
+                    ]
+                )
                 if built.returncode != 0:
-                    return fail(f"build allocation probe {mode}", built)
-                counted = run([str(allocated)])
-                if counted.returncode or counted.stdout or counted.stderr:
-                    return fail(f"run allocation probe {mode}", counted)
+                    return fail(f"build {fixture_name} {mode}", built)
+                executed = run([str(executable)])
+                if executed.returncode != 0 or executed.stdout or executed.stderr:
+                    return fail(f"run {fixture_name} {mode}", executed)
 
-                for name, success, failure in (
-                    ("optional_constructor_failure", "3\n12\n3\n9\n", "3\n3\n9\n"),
-                    ("optional_reset_failure", "3\ndone\n9\n", "3\n9\n"),
+            allocated = root / f"allocations-{mode}"
+            built = build_fixture(
+                [str(compiler), str(fixtures / "optional_allocations.gti"),
+                 *flags], allocated,
+                native_sources=[fixtures / "stdlib_adoption_allocation_counts.cpp"],
+                optimization=optimization_level(flags),
+                text=True, capture_output=True, check=False, timeout=120)
+            if built.returncode != 0:
+                return fail(f"build allocation probe {mode}", built)
+            counted = run([str(allocated)])
+            if counted.returncode or counted.stdout or counted.stderr:
+                return fail(f"run allocation probe {mode}", counted)
+
+            for name, success, failure in (
+                ("optional_constructor_failure", "3\n12\n3\n9\n", "3\n3\n9\n"),
+                ("optional_reset_failure", "3\ndone\n9\n", "3\n9\n"),
+            ):
+                source = fixtures / f"{name}.gti"
+                line = next(index + 1 for index, text in
+                            enumerate(source.read_text().splitlines())
+                            if "12 / divisor" in text)
+                binary = root / f"{name}-{mode}"
+                built = run([str(compiler), str(source), *flags, "-o", str(binary)])
+                if built.returncode:
+                    return fail(f"build {name} {mode}", built)
+                for arguments, code, stdout, stderr in (
+                    ([], 0, success, ""),
+                    (["fail"], 70, failure,
+                     f"{source.name}:{line}: runtime error[GTI-R0002]: "
+                     "division_by_zero in integer_division\n"),
                 ):
-                    source = fixtures / f"{name}.gti"
-                    line = next(index + 1 for index, text in
-                                enumerate(source.read_text().splitlines())
-                                if "12 / divisor" in text)
-                    binary = root / f"{name}-{standard}-{optimization}"
-                    built = run([str(compiler), str(source), "--std", standard,
-                                 f"-{optimization}", "-o", str(binary)])
-                    if built.returncode:
-                        return fail(f"build {name} {mode}", built)
-                    for arguments, code, stdout, stderr in (
-                        ([], 0, success, ""),
-                        (["fail"], 70, failure,
-                         f"{source.name}:{line}: runtime error[GTI-R0002]: "
-                         "division_by_zero in integer_division\n"),
-                    ):
-                        executed = run([str(binary), *arguments])
-                        if (executed.returncode, executed.stdout, executed.stderr) != (
-                                code, stdout, stderr):
-                            return fail(f"run {name} {mode} {arguments}", executed)
+                    executed = run([str(binary), *arguments])
+                    if (executed.returncode, executed.stdout, executed.stderr) != (
+                            code, stdout, stderr):
+                        return fail(f"run {name} {mode} {arguments}", executed)
 
-                generated = root / f"optional-{standard}-{optimization}.cpp"
+            generated = root / f"optional-{mode}.cpp"
+            if is_cpp_mode(flags):
                 emission = run(
                     [
                         str(compiler),
                         str(fixtures / "optional_lifecycle.gti"),
-                        "--std",
-                        standard,
-                        f"-{optimization}",
+                        *flags,
                         "--emit-cpp",
                         "-o",
                         str(generated),
@@ -200,32 +195,30 @@ def main() -> int:
                 ):
                     return 1
 
-                wrong_state = root / f"wrong-{standard}-{optimization}"
-                built = run(
-                    [
-                        str(compiler),
-                        str(fixtures / "optional_wrong_state.gti"),
-                        "--std",
-                        standard,
-                        f"-{optimization}",
-                        "-o",
-                        str(wrong_state),
-                    ]
-                )
-                if built.returncode != 0:
-                    return fail(f"build wrong-state {mode}", built)
-                executed = run([str(wrong_state)])
-                expected_stderr = (
-                    f"<std/optional>:{read_line}: runtime error[GTI-R0008]: "
-                    "empty_owner_access in member_access\n"
-                )
-                if (
-                    executed.returncode != 70
-                    or executed.stdout != "73\n"
-                    or executed.stderr != expected_stderr
-                ):
-                    return fail(f"run wrong-state {mode}", executed)
-                print(f"source optional: {mode} passed", flush=True)
+            wrong_state = root / f"wrong-{mode}"
+            built = run(
+                [
+                    str(compiler),
+                    str(fixtures / "optional_wrong_state.gti"),
+                    *flags,
+                    "-o",
+                    str(wrong_state),
+                ]
+            )
+            if built.returncode != 0:
+                return fail(f"build wrong-state {mode}", built)
+            executed = run([str(wrong_state)])
+            expected_stderr = (
+                f"<std/optional>:{read_line}: runtime error[GTI-R0008]: "
+                "empty_owner_access in member_access\n"
+            )
+            if (
+                executed.returncode != 70
+                or executed.stdout != "73\n"
+                or executed.stderr != expected_stderr
+            ):
+                return fail(f"run wrong-state {mode}", executed)
+            print(f"source optional: {mode} passed", flush=True)
 
     return 0
 

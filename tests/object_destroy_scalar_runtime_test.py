@@ -6,6 +6,7 @@ import os
 import pathlib
 import subprocess
 import tempfile
+from backend_modes import native_modes
 
 
 def main():
@@ -14,20 +15,16 @@ def main():
     args = parser.parse_args()
     compiler = args.compiler.resolve()
     fixtures = pathlib.Path(__file__).parent / "fixtures"
-    modes = [(f"{standard}-{level}", standard, level, [])
-             for standard in ("c++20", "c++23") for level in ("O0", "O1", "O3")]
-    modes += [("no-elide", "c++23", "O0", ["-fno-elide-constructors"]),
-              ("sanitized", "c++23", "O1",
-               ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])]
+    modes = native_modes()
     environment = dict(os.environ, ASAN_OPTIONS="halt_on_error=1",
                        UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1")
     with tempfile.TemporaryDirectory(prefix="gti-object-destroy-") as directory:
-        for label, standard, level, flags in modes:
+        for label, flags, native in modes:
             binary = pathlib.Path(directory) / label
             build = subprocess.run(
                 [str(compiler), str(fixtures / "object_destroy_scalar.gti"),
-                 "--std", standard, f"-{level}", "-o", str(binary), "--",
-                 str(fixtures / "object_destroy_scalar_native.cpp"), *flags],
+                 *flags, "-o", str(binary), "--",
+                 str(fixtures / "object_destroy_scalar_native.cpp"), *native],
                 capture_output=True, text=True, timeout=120, env=environment)
             assert build.returncode == 0, (label, build.stdout, build.stderr)
             run = subprocess.run([str(binary)], capture_output=True, text=True,
