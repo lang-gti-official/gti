@@ -353,8 +353,11 @@ and exports the resulting packages. Each platform must have a successful,
 clean, exact-source remote-runner report executing that complete known plan.
 Linux uses Ubuntu 24.04, either directly or through an immutable Docker image
 ID built from `scripts/preview-ubuntu24.Dockerfile`; newer host distributions
-cannot silently raise the package's runtime requirements. macOS builds target
-26.0 explicitly, including installed-program checks. Both use the same
+cannot silently raise the package's runtime requirements. The macOS compiler
+and runtime build targets 26.0 explicitly through CMake. GTI program checks,
+including installed consumers, use the supported implicit native host policy;
+the build's deployment-target environment must not leak into their invocations.
+Both platforms use the same
 checksum-pinned Neovim setup as CI. Receipts bind the production environment
 and any container image ID as well as source and package identities.
 `record` binds package hashes to those reports; `check` verifies both platforms
