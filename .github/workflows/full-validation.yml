@@ -505,6 +505,21 @@ jobs:
           ctest --test-dir build --output-on-failure --no-tests=error
           --output-junit "${RUNNER_TEMP}/tsan.xml"
           --parallel "${GTI_TEST_JOBS}" -R '_tsan$'
+      - name: Require every thread-sanitizer test to run
+        # A harness exits 77 (CTest "skipped") when the native compiler has
+        # no -fsanitize=thread runtime; the first run on main passed 10/10
+        # with five of them skipped. Skips are a missing runtime, not evidence.
+        run: |
+          python3 - "${RUNNER_TEMP}/tsan.xml" <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          root = ET.parse(sys.argv[1]).getroot()
+          suite = root if root.tag == "testsuite" else root.find("testsuite")
+          tests, skipped = int(suite.get("tests", 0)), int(suite.get("skipped", 0))
+          skipped_names = [case.get("name") for case in suite.iter("testcase") if case.find("skipped") is not None]
+          print(f"thread-sanitizer tests: {tests}, skipped: {skipped} {skipped_names}")
+          if tests < 1 or skipped or skipped_names:
+              sys.exit("every registered _tsan test must execute under ThreadSanitizer")
+          PY
       - name: Preserve TSan evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

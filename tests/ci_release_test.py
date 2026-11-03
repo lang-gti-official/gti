@@ -253,6 +253,9 @@ def nightly_contract(root):
     verdict = integration["verdict"]
     assert "needs: [plan, package, integration, sanitizers, llvm-sanitizers, tsan]" in verdict
     assert "GTI_ENABLE_THREAD_SANITIZER_TESTS=ON" in integration["tsan"], "TSan is real in full validation"
+    assert "Require every thread-sanitizer test to run" in integration["tsan"] and 'suite.get("skipped"' in integration["tsan"], \
+        "a skipped _tsan test is a missing runtime, never evidence"
+    assert "libclang-rt-20-dev" in (root / "scripts/configure_ci_toolchain.sh").read_text(), "clang's TSan runtime is installed on Linux"
     assert "GTI_TEST_BACKENDS: llvm" in integration["llvm-sanitizers"]
     assert "cpp_mir" not in integration["sanitizers"], "the C++ emitter is sanitized only in cpp-backend.yml"
     cpp = (root / ".github/workflows/cpp-backend.yml").read_text()
