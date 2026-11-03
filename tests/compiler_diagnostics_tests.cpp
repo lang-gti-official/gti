@@ -3502,6 +3502,132 @@ int main() { return select(1, 2); }
             !hasDiagnosticHint(result.diagnostics, "argument count"),
         "defaults and generic packs must not be misreported as arity failures");
   }
+
+  // An overload set whose only exact-type candidate takes a named move-only
+  // argument by value reports that copy at the argument (GTI-S2018), as a
+  // single-candidate call does, instead of the aggregate GTI-S2012 list.
+  const std::string printSource = R"(import std.string;
+import std.format;
+int main() {
+  mut std::string s = "hello";
+  std::println("{}", s);
+  return 0;
+}
+)";
+  const auto printed = lang::Frontend().analyze(
+      "println-move-only.gti", printSource, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  const auto *printCopy =
+      findDiagnosticByCode(printed.diagnostics, "GTI-S2018");
+  const auto relatedWith = [](const lang::Diagnostic &diagnostic,
+                              std::string_view fragment) {
+    return std::any_of(diagnostic.related.begin(), diagnostic.related.end(),
+                       [&](const auto &item) {
+                         return item.message.find(fragment) !=
+                                std::string::npos;
+                       });
+  };
+  expect(!printed.canGenerateCode() && printCopy != nullptr &&
+             !hasDiagnosticCode(printed.diagnostics, "GTI-S2012") &&
+             printCopy->message ==
+                 "Argument 2 would call the deleted copy constructor of "
+                 "'std::string'." &&
+             printCopy->primary.start == printSource.find("s);") &&
+             printCopy->primary.end == printCopy->primary.start + 1 &&
+             relatedWith(*printCopy, "Parameter 'first' takes its argument "
+                                     "by value.") &&
+             relatedWith(*printCopy, "Exact-type candidate: println<") &&
+             !relatedWith(*printCopy, "Candidate: println(char)") &&
+             printCopy->hints ==
+                 std::vector<std::string>{
+                     "Pass the argument with std::move(...) when this call "
+                     "should transfer ownership.",
+                     "Pass 's.view()' to borrow the value instead when the "
+                     "callee accepts its view type."} &&
+             printCopy->fixes.empty(),
+         "a named move-only println argument names its deleted copy, not "
+         "every println overload");
+
+  const std::string packDeclarations = R"(class Ticket {
+  int id;
+public:
+  Ticket(int value) : id(value) {}
+  Ticket(Ticket& other) = delete;
+  Ticket(Ticket&& other) = default;
+  std::string_view view() { return "ticket"; }
+};
+class Point {
+  int x;
+public:
+  Point(int value) : x(value) {}
+};
+void sink(int value) {}
+void sink(char value) {}
+void sink<Args...>(std::string_view label, Args... args) {}
+void only<Args...>(Args... args) {}
+)";
+  const auto analyzePack = [&](std::string_view name, std::string_view body) {
+    return lang::Frontend().analyze(std::string(name),
+                                    packDeclarations + "int main() {\n" +
+                                        std::string(body) + "  return 0;\n}\n",
+                                    {standardLibraryPrelude()}, {},
+                                    {standardLibraryRoot()});
+  };
+  const std::string packBody = "  Ticket t{1};\n  sink(\"x\", t);\n";
+  const auto packed = analyzePack("user-pack-move-only.gti", packBody);
+  const auto *packCopy = findDiagnosticByCode(packed.diagnostics, "GTI-S2018");
+  const std::string packText = packDeclarations + "int main() {\n" + packBody;
+  expect(!packed.canGenerateCode() && packCopy != nullptr &&
+             !hasDiagnosticCode(packed.diagnostics, "GTI-S2012") &&
+             packCopy->message == "Argument 2 would call the deleted copy "
+                                  "constructor of 'Ticket'." &&
+             packCopy->primary.start == packText.find("t);") &&
+             relatedWith(*packCopy, "Parameter pack 'args' takes each "
+                                    "argument by value") &&
+             relatedWith(*packCopy, "Exact-type candidate: sink<Args...>") &&
+             hasDiagnosticHint(packed.diagnostics, "std::move(...)") &&
+             hasDiagnosticHint(packed.diagnostics, "'t.view()'"),
+         "a user-defined overloaded pack and move-only class report the "
+         "same deleted copy as std::println");
+  const auto single =
+      analyzePack("user-single-pack.gti", "  Ticket t{1};\n  only(t);\n");
+  const auto *singleCopy =
+      findDiagnosticByCode(single.diagnostics, "GTI-S2018");
+  expect(!single.canGenerateCode() && singleCopy != nullptr &&
+             singleCopy->message == "Argument 1 would call the deleted copy "
+                                    "constructor of 'Ticket'." &&
+             relatedWith(*singleCopy, "Parameter pack 'args'"),
+         "a single-overload pack keeps its precise copy diagnostic");
+  for (const std::string_view body :
+       {std::string_view("  Point p{3};\n  sink(\"p\", p);\n"),
+        std::string_view("  Ticket t{1};\n  sink(\"t\", std::move(t));\n")}) {
+    const auto accepted = analyzePack("user-pack-accepted.gti", body);
+    expect(accepted.canGenerateCode(),
+           "copyable and explicitly moved pack arguments remain accepted");
+  }
+  const auto other = analyzePack("user-pack-other-cause.gti",
+                                 "  Ticket t{1};\n  sink(true, t);\n");
+  const auto *otherError = findDiagnosticByCode(other.diagnostics, "GTI-S2012");
+  expect(!other.canGenerateCode() && otherError != nullptr &&
+             !hasDiagnosticCode(other.diagnostics, "GTI-S2018") &&
+             relatedWith(*otherError, "Candidate: sink(int)") &&
+             relatedWith(*otherError, "Candidate: sink<Args...>"),
+         "an overload set rejected for another reason still lists its "
+         "candidates");
+  const auto *moved = std::string_view(R"(import std.string;
+import std.format;
+int main() {
+  mut std::string s = "hello";
+  std::println("{}", std::move(s));
+  return 0;
+}
+)")
+                          .data();
+  const auto movedPrint = lang::Frontend().analyze("println-moved.gti", moved,
+                                                   {standardLibraryPrelude()},
+                                                   {}, {standardLibraryRoot()});
+  expect(movedPrint.canGenerateCode(),
+         "an explicitly moved println argument remains accepted");
 }
 
 void testConversionDiagnosticGuidance() {

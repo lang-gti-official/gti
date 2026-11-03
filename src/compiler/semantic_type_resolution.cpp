@@ -1298,6 +1298,69 @@ auto SemanticVisitor::Impl::reportCallArgumentMismatch(
       return;
     }
   }
+  // A named value reaching a by-value parameter is copied. Relate the
+  // parameter that takes it by value and, when that parameter's type is
+  // deduced from the argument and the value's type offers a public read-only
+  // view, name that borrowing alternative.
+  const auto annotateByValueCopy = [&]() {
+    Diagnostic &diagnostic = diagnostics.back();
+    const FunctionDecl *declaration =
+        function != nullptr ? function->declaration : nullptr;
+    bool deduced = false;
+    if (declaration != nullptr && !declaration->parameters().empty()) {
+      const auto &parameters = declaration->parameters();
+      const std::size_t declaredIndex =
+          parameters.back().pack && index + 1 >= parameters.size()
+              ? parameters.size() - 1
+              : index;
+      const Parameter *declared = declaredIndex < parameters.size()
+                                      ? &parameters[declaredIndex]
+                                      : nullptr;
+      if (declared != nullptr && function->declarationRecord != nullptr &&
+          declaredIndex < function->record().parameterTypes.size()) {
+        const SemanticType::Kind kind =
+            function->record().parameterTypes[declaredIndex].kind;
+        deduced = kind == SemanticType::TypeParameter ||
+                  kind == SemanticType::TypePack;
+      }
+      if (declared != nullptr)
+        diagnostic.related.push_back(
+            {tokenSpan(declared->name),
+             declared->pack ? "Parameter pack '" + declared->name.lexeme +
+                                  "' takes each argument by value, so a named "
+                                  "argument is copied into it."
+                            : "Parameter '" + declared->name.lexeme +
+                                  "' takes its argument by value."});
+    }
+    const ClassInfo *owner = deduced ? classInfo(argument) : nullptr;
+    if (owner == nullptr)
+      return;
+    const auto member = owner->members.find("view");
+    if (member == owner->members.end() ||
+        member->second.access != AccessModifier::Public)
+      return;
+    const Symbol concrete = substituteSymbol(member->second.symbol, argument);
+    const bool readOnlyView = std::any_of(
+        concrete.overloads.begin(), concrete.overloads.end(),
+        [](const CallableCandidate &candidate) {
+          return candidate.declarationRecord != nullptr &&
+                 candidate.parameterTypes.empty() && !candidate.staticMember &&
+                 candidate.record().genericParameters.empty() &&
+                 !candidate.record().requiresUnsafe &&
+                 candidate.receiverMutability == ReceiverMutability::ReadOnly;
+        });
+    if (!readOnlyView)
+      return;
+    const Expr *source = expression.get();
+    while (const auto *grouping = exprAs<Grouping>(source))
+      source = grouping->expression().get();
+    const auto *variable = exprAs<Variable>(source);
+    const std::string spelling =
+        variable != nullptr ? variable->name().lexeme : std::string("value");
+    diagnostic.hints.emplace_back("Pass '" + spelling +
+                                  ".view()' to borrow the value instead when "
+                                  "the callee accepts its view type.");
+  };
   if (isMoveOnlyOwnerType(parameter) && parameter == argument) {
     const ClassInfo *owner = classInfo(parameter);
     if (owner != nullptr && owner->copyConstructor &&
@@ -1314,6 +1377,7 @@ auto SemanticVisitor::Impl::reportCallArgumentMismatch(
         diagnostics.back().hints.emplace_back(
             "Pass the argument with std::move(...) when this call should "
             "transfer ownership.");
+      annotateByValueCopy();
       return;
     }
     std::string copyDescription =
@@ -1325,6 +1389,7 @@ auto SemanticVisitor::Impl::reportCallArgumentMismatch(
            argumentLabel + std::to_string(index + 1) + copyDescription +
                "transfer ownership.",
            "GTI-S2018");
+    annotateByValueCopy();
     return;
   }
   if (parameter == argument && parameter.kind != SemanticType::TypePack &&
@@ -1338,6 +1403,7 @@ auto SemanticVisitor::Impl::reportCallArgumentMismatch(
                  " requires copying type '" + typeSpelling(parameter) +
                  "', but copy construction is unavailable.",
              "GTI-S2018");
+      annotateByValueCopy();
       return;
     }
     if (info != nullptr && info->category == ValueCategory::Value &&
