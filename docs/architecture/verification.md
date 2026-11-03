@@ -2,6 +2,16 @@
 
 ## Google Spot runner pilot
 
+Phase-two cases in `tests/gcp_spot_recovery_test.py` are loaded by the existing
+`gcp_spot_runner` gate. They cover setup defaults/identity, immutable cloud leases,
+bounded signed uploads, checkpoint redaction, source-bound recovery, janitor
+expiry/rechecks, gross-cost high-water marks and final-upload publication order.
+The existing `remote_runner` gate owns snapshot/provision-hook compatibility.
+Execution of the new cases, Terraform provider validation and live commissioning
+are deferred by the owner until the runner plan is complete; do not describe
+them as passed. No compiler rebuild/full suite is needed to exercise these Python
+owners, and no cloud resource is required by their offline fakes.
+
 `gcp_spot_runner` is entirely offline: strict policy parsing, disabled/expired
 admission, currency/account pinning, integer reservations, daily/total limits,
 missing/corrupt history, four competing controller processes, provider creation

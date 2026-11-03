@@ -155,6 +155,17 @@ class Ledger:
                     raise SpotError("Spot journal identity mismatch; investigate, do not reset it")
                 if state.get("schema") != 1 or not isinstance(state.get("leases"), list):
                     raise SpotError("invalid Spot journal")
+                observation = state.get("cost_observation")
+                if observation is not None:
+                    if (not isinstance(observation, dict) or
+                            set(observation) != {"total_micros", "daily_micros", "infrastructure_reserve_micros", "day", "queried_at"} or
+                            any(type(observation.get(key)) is not int or observation[key] < 0 for key in
+                                ("total_micros", "daily_micros", "infrastructure_reserve_micros")) or
+                            observation["daily_micros"] > observation["total_micros"] or
+                            not isinstance(observation.get("day"), str) or
+                            not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", observation["day"])):
+                        raise SpotError("invalid persistent billing observation")
+                    timestamp(observation["queried_at"])
                 if state["leases"] and (not isinstance(state.get("identity"), dict) or
                                         set(state["identity"]) != {"project", "billing_account", "currency", "account"}):
                     raise SpotError("Spot journal lost its billing identity")
@@ -193,13 +204,16 @@ class Ledger:
                 raise SpotError("the one Spot slot is occupied or unresolved; inspect status/reap")
             if len(state["leases"]) >= 8:
                 raise SpotError("eight-attempt pilot cap reached; owner review is required")
-            if sum(lease["cost_micros"] for lease in state["leases"]) + amount > config["total_limit_micros"]:
+            observation = state.get("cost_observation", {})
+            infrastructure = observation.get("infrastructure_reserve_micros", 0)
+            if max(sum(lease["cost_micros"] for lease in state["leases"]), observation.get("total_micros", 0)) + infrastructure + amount > config["total_limit_micros"]:
                 raise SpotError("total Spot trial allowance exhausted")
             day = utc(now)[:10]
             if sum(lease["created"][:10] == day for lease in state["leases"]) >= 2:
                 raise SpotError("two-attempt daily pilot cap reached")
             daily = sum(lease["cost_micros"] for lease in state["leases"] if lease["created"][:10] == day)
-            if daily + amount > config["daily_limit_micros"]:
+            observed_daily = observation.get("daily_micros", 0) if observation.get("day") == day else 0
+            if max(daily, observed_daily) + infrastructure + amount > config["daily_limit_micros"]:
                 raise SpotError("daily Spot allowance exhausted")
             lease = {"id": run_id, "instance": "gti-spot-" + run_id[4:], "pool": state["pool"],
                      "project": config["project"], "zone": config["zone"], "account": config["account"],
@@ -208,6 +222,31 @@ class Ledger:
             state["identity"] = identity
             state["leases"].append(lease)
             return dict(lease)
+
+    def observe_cost(self, config, lease, total, daily, infrastructure, now):
+        if any(type(value) is not int or value < 0 for value in (total, daily, infrastructure)) or daily > total:
+            raise SpotError("invalid billing observation")
+        exceeded = False
+        with self.locked() as state:
+            if state.get("identity") != {key: config[key] for key in ("project", "billing_account", "currency", "account")}:
+                raise SpotError("billing observation does not match the journal identity")
+            previous = state.get("cost_observation", {})
+            current = next((item for item in state["leases"] if item["id"] == lease["id"]), None)
+            if current is None or current["cost_micros"] != lease["cost_micros"]:
+                raise SpotError("billing observation has no matching reserved lease")
+            day = utc(now)[:10]
+            observation = {"total_micros": max(total, previous.get("total_micros", 0)),
+                           "daily_micros": max(daily, previous.get("daily_micros", 0) if previous.get("day") == day else 0),
+                           "infrastructure_reserve_micros": max(infrastructure, previous.get("infrastructure_reserve_micros", 0)),
+                           "day": day, "queried_at": utc(now)}
+            state["cost_observation"] = observation
+            prior = [item for item in state["leases"] if item["id"] != lease["id"]]
+            overhead = observation["infrastructure_reserve_micros"] + current["cost_micros"]
+            exceeded = (max(sum(item["cost_micros"] for item in prior), observation["total_micros"]) + overhead > config["total_limit_micros"] or
+                        max(sum(item["cost_micros"] for item in prior if item["created"][:10] == day), observation["daily_micros"]) + overhead > config["daily_limit_micros"])
+        # Persist new high-water marks even when this admission is rejected.
+        if exceeded:
+            raise SpotError("observed gross project charges plus reservations/infrastructure exceed the allowance")
 
     def update(self, lease, **changes):
         with self.locked() as state:
@@ -359,7 +398,7 @@ def cleanup(provider, ledger, lease):
         raise
 
 
-def run(args, runner, config, ledger, provider):
+def run(args, runner, config, ledger, provider, recovery=None):
     if args.detach or args.full_suite or (not args.target and not args.steps_file):
         raise SpotError("phase one requires a foreground run with explicit targets/steps; no full suite or detached mode")
     if args.platform not in (None, "Linux") or any(getattr(args, key) for key in ("host", "root", "python", "transport", "cc", "cxx")):
@@ -370,6 +409,8 @@ def run(args, runner, config, ledger, provider):
         raise SpotError("requested timeout or parallelism exceeds the Spot policy")
     admission(config, time.time())
     provider.preflight()
+    if recovery is not None:
+        recovery.preflight(ledger)
     run_id = "run-" + uuid.uuid4().hex
     host_file = ledger.root / (run_id + "-known-hosts")
     connection = {"host": "gti-spot-" + run_id[4:], "root": "/tmp/gti-remote-runner", "python": "/usr/bin/python3",
@@ -378,11 +419,13 @@ def run(args, runner, config, ledger, provider):
                   "gcp_zone": config["zone"], "gcp_account": config["account"], "known_hosts": str(host_file)}
     lease = None
 
-    def provision():
+    def provision(identity):
         nonlocal lease
         lease = ledger.reserve(config, run_id, time.time())
         print(f"Spot lease {run_id}: reserved {lease['cost_micros']} micro-{config['currency']}; expires {lease['expires']}", flush=True)
         ledger.update(lease, state="creating")
+        ledger.update(lease, source={key: identity[key] for key in ("head", "snapshot_sha256")})
+        uploads = recovery.prepare(ledger, lease) if recovery is not None else None
         provider.create(lease)
         ledger.update(lease, creation_confirmed=True, state="booting")
         instance = provider.verify(lease)
@@ -399,6 +442,7 @@ def run(args, runner, config, ledger, provider):
                     raise SpotError("private worker bootstrap/host-key check timed out")
                 time.sleep(10)
         ledger.update(lease, state="running")
+        return uploads
 
     def terminate(*_):
         raise KeyboardInterrupt()
@@ -418,7 +462,9 @@ def dispatch(args, runner):
     config = policy(args.spot_policy or DEFAULT_POLICY)
     ledger, provider = Ledger(), Google(config)
     if args.command == "run":
-        return run(args, runner, config, ledger, provider)
+        from gcp_spot_recovery import DEFAULT_RECOVERY, Recovery, configuration
+        recovery = Recovery(config, configuration(args.spot_recovery or DEFAULT_RECOVERY, config))
+        return run(args, runner, config, ledger, provider, recovery)
     if args.command == "status":
         if args.all:
             raise SpotError("Spot status uses its one controller journal; omit --all")

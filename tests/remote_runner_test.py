@@ -391,10 +391,11 @@ class RemoteRunner(unittest.TestCase):
 
     def test_provision_hook_follows_snapshot_and_precedes_submission(self):
         args = runner.parser().parse_args(["--repo", str(self.repo), "run", "--detach", "--timeout", "10", "--target", "gti"])
-        hook = mock.Mock()
+        hook = mock.Mock(return_value=None)
         config = dict(runner.HOSTS["mini"])
         def submit(*unused, **kwargs):
-            hook.assert_called_once_with()
+            hook.assert_called_once()
+            self.assertRegex(hook.call_args.args[0]["snapshot_sha256"], r"^[0-9a-f]{64}$")
             self.assertTrue(Path(kwargs["input_path"]).is_file())
             return {}
         with mock.patch.object(runner, "connection", side_effect=submit), mock.patch("sys.stdout", new_callable=io.StringIO):

@@ -464,7 +464,7 @@ def cleanup_heavy(run):
     (run / "upload.tar").unlink(missing_ok=True)
 
 
-def publish_report(run, state):
+def publish_report(run, state, before_publish=None):
     saved = []
     if not state.get("result_error"):
         try:
@@ -480,6 +480,14 @@ def publish_report(run, state):
             add_bytes(archive, member.name, data, member.mode)
         add_bytes(archive, "report.json", json.dumps(state, indent=2).encode())
     temporary.replace(run / "results.tar.gz")
+    if before_publish is not None:
+        try:
+            before_publish(run / "results.tar.gz")
+        except Exception:
+            state.update(state="failed", exit_code=1,
+                         durable_result_error="final upload failed; partial cloud checkpoints may remain")
+            publish_report(run, state)
+            return
     write_json(run / "state.json", state)
 
 
@@ -515,6 +523,7 @@ def worker(root_value, run_id):
     state = {"id": run_id, "runner": request.get("runner"), "state": "running", "pid": os.getpid(), "child_pid": None, "created": started,
              "started": started, "steps": [], "source": request["source"], "exit_code": 1}
     process = None
+    checkpoints = None
     previous = {}
     spawning = False
     pending_interrupt = None
@@ -556,6 +565,9 @@ def worker(root_value, run_id):
     signal.setitimer(signal.ITIMER_REAL, 0.25, 0.25)
     write_json(run / "state.json", state)
     try:
+        if (run / "input" / "checkpoint_upload.json").is_file():
+            from gcp_spot_checkpoint import Checkpoints
+            checkpoints = Checkpoints(read_json(run / "input" / "checkpoint_upload.json"), run, request["source"])
         if request.get("required_platform") and request["required_platform"] != platform.system():
             raise RunnerError(f"run requires {request['required_platform']}, host is {platform.system()}")
         source = run / "source"
@@ -645,7 +657,10 @@ def worker(root_value, run_id):
         # Publish the final report after cleanup, even if packaging/cleanup
         # failed. A small fallback bundle keeps that diagnostic retrievable.
         try:
-            publish_report(run, state)
+            if checkpoints:
+                publish_report(run, state, before_publish=checkpoints.finish)
+            else:
+                publish_report(run, state)
         except BaseException:
             write_json(run / "state.json", state)
             raise
@@ -730,7 +745,9 @@ def remote_action(action, root_value, run_id=None):
             incoming.mkdir()
             extract(run / "upload.tar", incoming, MAX_INPUT)
             required = {"head.bundle", "source.tar", "request.json", "remote_runner.py", "build_window.py"}
-            if {p.name for p in incoming.iterdir()} != required:
+            present = {p.name for p in incoming.iterdir()}
+            checkpoint_files = {"checkpoint_upload.json", "gcp_spot_checkpoint.py"}
+            if present != required and present != required | checkpoint_files:
                 raise RunnerError("upload has unexpected/missing entries")
             request = read_json(incoming / "request.json")
             if request["steps"]:
@@ -741,6 +758,8 @@ def remote_action(action, root_value, run_id=None):
             # after execution. Detached worker survives a client disconnect.
             for name in ("remote_runner.py", "build_window.py"):
                 shutil.copyfile(incoming / name, run / name)
+            if present == required | checkpoint_files:
+                shutil.copyfile(incoming / "gcp_spot_checkpoint.py", run / "gcp_spot_checkpoint.py")
             with (run / "worker.log").open("ab") as log:
                 process = subprocess.Popen([sys.executable, str(run / "remote_runner.py"), "_worker",
                                             str(root), run_id], stdin=subprocess.DEVNULL,
@@ -836,6 +855,7 @@ def parser():
     result.add_argument("--repo", default=".", help="source worktree (default: current directory)")
     result.add_argument("--runner", help="named host: mini, ubuntu-6, ubuntu-8 (or a configured name)")
     result.add_argument("--spot-policy", type=Path, help="owner-reviewed cloud policy for --runner gcp-spot")
+    result.add_argument("--spot-recovery", type=Path, help="reviewed recovery control plane for --runner gcp-spot")
     result.add_argument("--host", help="SSH alias or user@host; saved by configure")
     result.add_argument("--root", help="absolute remote directory ending in gti-remote-runner")
     result.add_argument("--python", help="remote Python 3.9+ executable")
@@ -902,7 +922,13 @@ def execute_run(args, local, name, config, run_id=None, before_submit=None):
             add_bytes(archive, "remote_runner.py", source_code().encode())
             add_bytes(archive, "build_window.py", (Path(__file__).parent / "build_window.py").read_bytes())
         if before_submit is not None:
-            before_submit()
+            additions = before_submit(identity)
+            if additions is not None:
+                if not isinstance(additions, dict) or set(additions) != {"checkpoint_upload.json"} or not isinstance(additions["checkpoint_upload.json"], bytes):
+                    raise RunnerError("invalid ephemeral-host checkpoint bootstrap")
+                with tarfile.open(packet, "a") as archive:
+                    add_bytes(archive, "checkpoint_upload.json", additions["checkpoint_upload.json"], mode=0o600)
+                    add_bytes(archive, "gcp_spot_checkpoint.py", (Path(__file__).parent / "gcp_spot_checkpoint.py").read_bytes())
         record_connection(local, run_id, name, config)
         print(f"Submitting {run_id} to {name} ({config['host']}): {identity['head']} / snapshot {identity['snapshot_sha256']}", flush=True)
         connection(config, "submit", run_id, input_path=packet)

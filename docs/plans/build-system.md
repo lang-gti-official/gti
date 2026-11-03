@@ -1699,11 +1699,16 @@ The development runner's Google Spot pilot is separate from `gti build`
 semantics: one opt-in private worker reuses the SSH snapshot/executor with a
 durable conservative allowance and provider expiry. See
 [the current contract](../architecture/agent-workflow.md#opt-in-google-spot-pilot).
-Offline lifecycle tests are implemented; live owner commissioning is not
-claimed. Three-worker/cloud-first expansion requires durable off-worker results,
-an independently scheduled orphan reaper, price/cost reconciliation and one
-multi-host provisioning broker. Cloud facilities do not belong in the language
-or compilation driver.
+Phase one implements opt-in leases and bounded admission. Phase two adds
+owner-reviewed Terraform setup, image preparation, immutable cloud lease/source
+records, bounded signed checkpoint/final uploads and explicit recovery, a
+separately scheduled non-provisioning janitor, and gross-cost observations with
+durable high-water marks. Offline regression cases are provided; phase-two
+execution evidence and live owner commissioning remain open under the campaign's
+testing deferral. Three-worker/cloud-first expansion still needs one multi-host
+provisioning broker, live pricing review and commissioned failure/recovery/cost
+receipts; source implementation and mocks do not satisfy those gates. Cloud
+facilities do not belong in the language or compilation driver.
 
 These goals feed the existing [implementation sequence](implementation-sequence.md),
 not a second milestone queue. Earlier benchmark-first or demonstrated-need

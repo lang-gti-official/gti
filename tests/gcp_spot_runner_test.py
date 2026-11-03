@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import gcp_spot_runner as spot
 import remote_runner as runner
+from gcp_spot_recovery_test import RecoveryTests
 
 
 def configuration(now=None):
@@ -102,7 +103,7 @@ class SpotRunner(unittest.TestCase):
             self.assertEqual(name, "gcp-spot")
             self.assertEqual(config["transport"], "gcloud-iap")
             runner.validate_connection(config)
-            before_submit()
+            before_submit({"head": "a" * 40, "snapshot_sha256": "b" * 64})
             if failure:
                 raise failure
             return 0

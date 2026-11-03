@@ -1692,7 +1692,15 @@ paths = [
   "scripts/remote_runner.py",
   "scripts/gcp_spot_runner.py",
   "scripts/gcp_spot_policy.example.json",
+  "scripts/gcp_spot_cloud.py",
+  "scripts/gcp_spot_checkpoint.py",
+  "scripts/gcp_spot_recovery.py",
+  "scripts/gcp_spot_recovery.example.json",
+  "scripts/gcp_spot_janitor.py",
+  "scripts/gcp_spot_setup.py",
+  "scripts/spot_infra/**",
   "tests/gcp_spot_runner_test.py",
+  "tests/gcp_spot_recovery_test.py",
 ]
 owners = [
   "remote_runner",
