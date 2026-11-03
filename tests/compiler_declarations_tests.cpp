@@ -13467,7 +13467,6 @@ int main() { if (take((-(128))) != -128) { return 1; } return 0; }
         std::cerr << "pass: " << pass.name << '\n';
       for (const auto &error : optimized.report.outputVerification.errors)
         std::cerr << "verification: " << error.message << '\n';
-      std::cerr << lang::MirPrinter().print(optimized.mir);
     }
   }
 
