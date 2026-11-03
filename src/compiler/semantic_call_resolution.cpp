@@ -5472,7 +5472,8 @@ auto SemanticVisitor::Impl::structuralOperatorCandidates(
   std::vector<CallableCandidate> result;
   for (const CallableCandidate &candidate : overloadSet.overloads) {
     if (!candidate.staticMember && candidate.access == AccessModifier::Public &&
-        !candidate.compilerPrivate && candidate.requirements.empty()) {
+        !candidate.compilerPrivate &&
+        !firstRequirementFailure(candidate.requirements)) {
       result.emplace_back(candidate);
     }
   }
@@ -6364,7 +6365,7 @@ auto SemanticVisitor::Impl::resolveOperator(
   std::optional<CallableCandidate> rejectedMutableFunction;
   bool rejectedConsumingReceiver = false;
   bool rejectedCompilerPrivate = false;
-  bool rejectedRequirements = false;
+  std::optional<ConstraintFailure> rejectedRequirements;
   struct ViableOperator {
     CallableCandidate function;
     CallReceiverMode receiverMode = CallReceiverMode::None;
@@ -6431,8 +6432,9 @@ auto SemanticVisitor::Impl::resolveOperator(
     }
     if (!matches)
       continue;
-    if (!candidate.requirements.empty()) {
-      rejectedRequirements = true;
+    if (auto failure = firstRequirementFailure(candidate.requirements)) {
+      if (!rejectedRequirements)
+        rejectedRequirements = std::move(failure);
       continue;
     }
     if (candidate.receiverMutability == ReceiverMutability::Consuming &&
@@ -6547,10 +6549,7 @@ auto SemanticVisitor::Impl::resolveOperator(
         report(token, subject + " requires a mutable receiver.", "GTI-S2022");
       }
     } else if (viable.empty() && rejectedRequirements) {
-      report(token,
-             "Operator candidates with trailing requires clauses are "
-             "unavailable in the bounded requirements model.",
-             "GTI-S2049");
+      reportConstraintFailure(token, *rejectedRequirements);
     } else if (viable.empty()) {
       std::string received;
       if (!argumentTypes.empty()) {

@@ -27,6 +27,18 @@ namespace std {
     mut U second;
 
     constexpr pair(T first_value, U second_value) : first(std::move(first_value)), second(std::move(second_value)) {}
+
+    /// Compare both elements when each element type supports equality.
+    constexpr bool operator==(pair<T, U>& other)
+        requires std::equality_comparable<T> && std::equality_comparable<U> {
+      return this.first == other.first && this.second == other.second;
+    }
+
+    /// Test whether either element differs, using the same equality contract.
+    constexpr bool operator!=(pair<T, U>& other)
+        requires std::equality_comparable<T> && std::equality_comparable<U> {
+      return !(this == other);
+    }
   };
 
   export constexpr pair<T, U> make_pair<T, U>(T first, U second) {

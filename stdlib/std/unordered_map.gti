@@ -192,6 +192,12 @@ public:
     return this.nodes[position]->entry.second;
   }
 
+  /// Return the entry, inserting a default value only when this exact owned key is absent.
+  /// The returned mutable reference exclusively borrows the map until its last use.
+  mut V& operator[](K key) mut requires std::default_initializable<V> {
+    return this.get_or_insert(std::move(key));
+  }
+
   [[discardable]] size_t erase(K& key) mut {
     if (this.buckets.empty()) { return 0; }
     size_t hash = this.hasher(key);
