@@ -1496,6 +1496,25 @@ class ValidationChecks(unittest.TestCase):
             with self.subTest(label), self.assertRaises(ValueError):
                 validation.merge_shards(reports, ["darwin", "linux"])
 
+    def test_test_targets_keeps_only_names_the_ninja_tree_builds(self):
+        # A test also receives build-tree paths that are not targets (an
+        # evidence directory, a registry it writes); feeding those to
+        # `cmake --build --target` fails the whole build step.
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory).resolve()
+            (build / "tests").mkdir()
+            (build / "tests" / "CTestTestfile.cmake").write_text(
+                f'add_test("llvm_wait" "/usr/bin/python3" "/src/w.py" "{build}/gti_llvm_wait_tests" "{build}/atomic-wait-service-evidence" "{build}/registry.tsv")\n')
+            self.assertEqual(validation.test_targets(build, "^llvm_wait$"),
+                             ["atomic-wait-service-evidence", "gti", "gti_llvm_wait_tests", "gti_runtime", "registry.tsv"])
+            original = validation.build_targets
+            validation.build_targets = lambda tree: {"all", "gti", "gti_runtime", "gti_llvm_wait_tests"}
+            try:
+                self.assertEqual(validation.test_targets(build, "^llvm_wait$"),
+                                 ["gti", "gti_llvm_wait_tests", "gti_runtime"])
+            finally:
+                validation.build_targets = original
+
     def test_test_targets_reads_configured_commands_without_a_build(self):
         with tempfile.TemporaryDirectory() as directory:
             build = Path(directory).resolve()

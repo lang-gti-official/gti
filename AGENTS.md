@@ -123,8 +123,8 @@ wrapper, and neither backend defines its semantics.
 - **CI is the required integration gate.** The `main` ruleset requires pull
   requests, the merge queue and the `CI gate` check, with no bypass for any
   role. A PR's `CI gate` runs the fast checks (lint, workflow regressions, and
-  a macOS arm64 and Linux x64 build with `feedback-fast` and
-  `compiler_pipeline`); the queue's `CI gate` runs the same bounded set on the
+  a macOS arm64 and Linux x64 build with `feedback-fast`, plus
+  `compiler_pipeline` on Linux); the queue's `CI gate` runs the same bounded set on the
   exact candidate. Post-integration full validation then runs the complete
   inventory on Linux in cost-balanced bundled-release shards, the `darwin`
   set on macOS (what differs on the platform: the AArch64 LLVM backend,
@@ -181,7 +181,14 @@ wrapper, and neither backend defines its semantics.
 - Run every full build and every full or broad test suite through the shared
   build window, whether or not the helper runs it:
   `python3 scripts/build_window.py --kind build -- cmake --build <tree> ...` and
-  `python3 scripts/build_window.py --kind suite -- ctest --test-dir <tree> ...`.
+  `python3 scripts/build_window.py --kind suite -- ctest --test-dir <tree> -LE cpp-backend ...`.
+  Local runs follow the CI test policy: a configured tree exports
+  `GTI_TEST_BACKENDS=llvm` to every harness, so runtime harnesses exercise the
+  shipped backend, and the C++-only entries carry the `cpp-backend` label, so
+  broad runs exclude them. C++-backend bug fixes configure
+  `-DGTI_TEST_BACKENDS=cpp` (or `both`), run their harnesses and
+  `-L cpp-backend`, and dispatch `cpp-backend.yml` on the PR branch for
+  exact-candidate CI evidence.
   The window is one counted semaphore under the Git common directory, shared
   by every worktree and session on the machine, so concurrent agents stop
   stacking full suites on each other. Focused tests (`ctest -R '^name$'`, one

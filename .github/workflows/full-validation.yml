@@ -270,17 +270,21 @@ jobs:
           if-no-files-found: ignore
 
   sanitizers:
-    name: Compiler sanitizers (${{ matrix.kind }} ${{ matrix.index }}/2)
+    name: Compiler sanitizers (${{ matrix.kind }} ${{ matrix.index }}/${{ matrix.count }})
     if: needs.plan.outputs.mode == 'full'
     needs: [plan]
     # The compiler aggregate exceeded three hours serially. Split its six
-    # suites across two runners, separately from the two library partitions.
-    # Every compiler partition verifies the complete manifest census first.
+    # suites across two runners. Every compiler partition verifies the
+    # complete manifest census first. Without the C++ emitter suites (now in
+    # cpp-backend.yml) the library partition fits one runner, which saves a
+    # cold instrumented build.
     strategy:
       fail-fast: false
       matrix:
-        kind: [compiler, libraries]
-        index: [1, 2]
+        include:
+          - {kind: compiler, index: 1, count: 2}
+          - {kind: compiler, index: 2, count: 2}
+          - {kind: libraries, index: 1, count: 1}
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     env:
@@ -348,7 +352,7 @@ jobs:
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: |
           if [[ "${{ matrix.kind }}" == "compiler" ]]; then
-            GTI_COMPILER_TEST_SHARD_INDEX="${{ matrix.index }}" GTI_COMPILER_TEST_SHARD_COUNT=2 \
+            GTI_COMPILER_TEST_SHARD_INDEX="${{ matrix.index }}" GTI_COMPILER_TEST_SHARD_COUNT="${{ matrix.count }}" \
               ctest --test-dir build-sanitized --verbose --output-on-failure --no-tests=error \
               --output-junit "${RUNNER_TEMP}/sanitizers-${{ matrix.kind }}-${{ matrix.index }}.xml" \
               -R '^compiler_pipeline$'
@@ -356,7 +360,7 @@ jobs:
             ctest --test-dir build-sanitized --verbose --output-on-failure --no-tests=error \
               --output-junit "${RUNNER_TEMP}/sanitizers-${{ matrix.kind }}-${{ matrix.index }}.xml" \
               --parallel "${GTI_TEST_JOBS}" -R "${GTI_SANITIZER_TESTS}" \
-              -E '^compiler_pipeline$' -I "${{ matrix.index }},,2"
+              -E '^compiler_pipeline$' -I "${{ matrix.index }},,${{ matrix.count }}"
           fi
       - name: Preserve sanitizer test evidence
         if: always()
@@ -368,7 +372,7 @@ jobs:
             build-sanitized/Testing/Temporary/LastTest.log
             build-sanitized/Testing/Temporary/LastTestsFailed.log
           if-no-files-found: warn
-          retention-days: 7
+          retention-days: 30
       # cache.yml owns the sanitizer cache under its content key; a validation
       # run only restores it.
       - name: Report compiler cache statistics

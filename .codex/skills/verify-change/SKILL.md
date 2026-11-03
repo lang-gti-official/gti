@@ -142,7 +142,13 @@ invalid setup cheaply; they do not replace required broad coverage.
    through the shared build window,
    `python3 scripts/build_window.py --kind build|suite -- <command>`, so
    concurrent sessions share the host; focused `-R` selections and
-   single-file compiles run directly.
+   single-file compiles run directly. Local runs follow the CI test policy:
+   a configured tree exports `GTI_TEST_BACKENDS=llvm` to every harness, so
+   runtime harnesses prove the shipped backend, and broad CTest runs exclude
+   the C++-only entries with `-LE cpp-backend`. Only a C++-backend bug fix
+   configures `-DGTI_TEST_BACKENDS=cpp` (or `both`), runs its harnesses and
+   `-L cpp-backend`, and dispatches `cpp-backend.yml` on its branch for
+   exact-candidate CI evidence.
 3. Select completion coverage from the changed invariant and affected consumer
    graph, as described in the canonical verification document. An independent
    isolated subsystem change can complete with owning, cross-phase and required
