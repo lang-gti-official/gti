@@ -2223,9 +2223,9 @@ private:
                                         : MirTemporaryCarrierDependency{};
   }
 
-  [[nodiscard]] std::unordered_set<MirLoanId> temporaryCarrierLoans(
-      const std::vector<MirDropObligationId> &retired = {},
-      bool failureCleanup = false) const {
+  [[nodiscard]] std::unordered_set<MirLoanId>
+  temporaryCarrierLoans(const std::vector<MirDropObligationId> &retired = {},
+                        bool failureCleanup = false) const {
     std::unordered_set<MirLoanId> retained;
     for (const TemporaryDrop &temporary : temporaryDrops) {
       if (containsDrop(retired, temporary.obligation))
@@ -2254,9 +2254,9 @@ private:
     const auto *drop = output.findDropObligation(obligation);
     const auto *place =
         drop == nullptr ? nullptr : output.findPlace(drop->place);
-    const auto carrier =
-        place == nullptr ? MirTemporaryCarrierDependency{}
-                         : temporaryReceiverCarrier(*place, failureCleanup);
+    const auto carrier = place == nullptr
+                             ? MirTemporaryCarrierDependency{}
+                             : temporaryReceiverCarrier(*place, failureCleanup);
     if (!carrier)
       return {};
     auto retained = failureCleanup ? temporaryCarrierLoans(retired, true)
