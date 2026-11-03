@@ -16,6 +16,28 @@ SOURCE = """int main() {
 }
 """
 
+REFERENCE_SOURCE = """int main() {
+  // supplementary character: 😀
+  auto increment = [](mut int& value) -> mut int& {
+    value += 1;
+    return value;
+  };
+  auto relay = [](mut int& value) -> mut int& {
+    mut int& alias = value;
+    return alias;
+  };
+  auto observe = [](mut int& value) -> int& {
+    value += 1;
+    return value;
+  };
+  mut int number = 10;
+  mut int& changed = increment(relay(number));
+  changed += 5;
+  int& observed = observe(number);
+  return observed - 17;
+}
+"""
+
 
 def main():
     with tempfile.TemporaryDirectory(prefix="gti-borrow-capture-lsp-") as directory:
@@ -76,6 +98,26 @@ def main():
             errors = change(7, conflicts)
             assert any(item.get("code") == "GTI-S2017" for item in errors), errors
             clean(change(8, SOURCE))
+            clean(change(9, REFERENCE_SOURCE))
+            hover = request("textDocument/hover", {
+                "textDocument": {"uri": uri},
+                "position": lsp_position(
+                    REFERENCE_SOURCE, REFERENCE_SOURCE.index("changed +="))})
+            assert hover and "int32_t" in str(hover), hover
+            edits = request("textDocument/formatting", {
+                "textDocument": {"uri": uri},
+                "options": {"tabSize": 2, "insertSpaces": True}})
+            formatted = edits[0]["newText"] if edits else REFERENCE_SOURCE
+            assert "-> mut int&" in formatted, formatted
+            clean(change(10, formatted))
+            conflicts = REFERENCE_SOURCE.replace(
+                "  return observed", "  number += 1;\n  return observed")
+            errors = change(11, conflicts)
+            assert any(item.get("code") == "GTI-S2017" for item in errors), errors
+            assert not any(item.get("code") == "GTI-B0001" for item in errors), errors
+            clean(change(12, REFERENCE_SOURCE))
+            assert change(13, REFERENCE_SOURCE.replace("-> mut int&", "-> mut"))
+            clean(change(14, REFERENCE_SOURCE))
         finally:
             session.close()
     print("Borrowing callback LSP checks passed")

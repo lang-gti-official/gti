@@ -15753,7 +15753,7 @@ private:
                           output.returnType.arguments.front()))) {
               valid = false;
             } else {
-              // A read-only reference parameter's entry loan is seeded at the
+              // A reference parameter's entry loan is seeded at the
               // body entry and has no producing instruction, so its runtime
               // address lives only in the parameter's pointer carrier. The
               // fallback below reclassifies the returned loan in place, which
@@ -15770,9 +15770,9 @@ private:
               // authority while storing a call's different runtime address.
               // Publish that exact address, not the parameter pointer. The
               // verifier independently proves its unique initialization.
-              const MirLoanId published =
-                  createLoan(MirLoanKind::Return, retainedLoan.source,
-                             retainedLoan.access, *statement.value);
+              const MirLoanId published = createLoan(
+                  MirLoanKind::Return, retainedLoan.source,
+                  output.returnType.referenceAccess, *statement.value);
               output.loans[published - 1].storedDependency =
                   retainedLoan.storedDependency;
               (void)appendInstruction(
@@ -16021,9 +16021,9 @@ private:
               publicationSource = ancestor->source;
               ancestor = output.findLoan(ancestor->parent);
             }
-            const MirLoanId published =
-                createLoan(MirLoanKind::Return, publicationSource,
-                           source.access, source.producedBy);
+            const MirLoanId published = createLoan(
+                MirLoanKind::Return, publicationSource,
+                output.returnType.referenceAccess, source.producedBy);
             output.loans[published - 1].storedDependency =
                 source.storedDependency;
             output.loans[published - 1].additionalDependencies =

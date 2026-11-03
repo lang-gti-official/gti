@@ -1438,6 +1438,10 @@ add_executable(gti_borrow_origin_syntax_tests "${PROJECT_SOURCE_DIR}/tests/borro
 target_link_libraries(gti_borrow_origin_syntax_tests PRIVATE gti_compiler)
 add_test(NAME borrow_origin_syntax COMMAND gti_borrow_origin_syntax_tests)
 
+add_executable(gti_lambda_reference_tests lambda_reference_tests.cpp)
+target_link_libraries(gti_lambda_reference_tests PRIVATE gti_compiler)
+add_test(NAME lambda_reference COMMAND gti_lambda_reference_tests)
+
 add_executable(gti_discardable_result_tests "${PROJECT_SOURCE_DIR}/tests/discardable_result_tests.cpp")
 target_link_libraries(gti_discardable_result_tests PRIVATE gti_compiler)
 add_test(NAME discardable_result COMMAND gti_discardable_result_tests)

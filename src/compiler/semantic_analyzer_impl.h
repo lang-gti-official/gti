@@ -2893,7 +2893,8 @@ private:
       const SemanticType &returnType,
       const std::vector<SemanticType> &parameterTypes, ClassId ownerClass,
       bool staticMember, IntrinsicKind intrinsic,
-      std::optional<std::size_t> exactReturnParameter = std::nullopt) const;
+      std::optional<std::size_t> exactReturnParameter = std::nullopt,
+      bool allowReadOnlyReferenceReborrow = false) const;
 
   void applyFunctionReturnBorrowSummary(CallableCandidate &function) const;
 
@@ -7566,6 +7567,7 @@ private:
         structuredBindingElements;
     SemanticType currentType = SemanticType::Unknown;
     SemanticType currentReturnType = SemanticType::Unknown;
+    std::optional<LambdaReturnContext> currentLambdaReturn;
     ProgramEffectOwner currentProgramEffectOwner;
     decltype(ValueFlowState::rawPointerLoops) rawPointerLoops;
     std::vector<RawProgramStorageState> rawProgramStorage;

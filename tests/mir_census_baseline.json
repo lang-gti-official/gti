@@ -153,7 +153,7 @@
     "153-constexpr-allocation.gti": 74,
     "154-declaration-construction.gti": 178,
     "155-conversion-operators.gti": 185,
-    "156-borrowing-callbacks.gti": 98,
+    "156-borrowing-callbacks.gti": 101,
     "157-protocol-concepts.gti": 192,
     "158-multi-parameter-concepts.gti": 180,
     "159-tryable-propagation.gti": 180,

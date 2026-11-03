@@ -2450,7 +2450,7 @@
     },
     "156-borrowing-callbacks.gti": {
       "declarations": 1395,
-      "bodies": 99,
+      "bodies": 102,
       "generated_items": 50,
       "generated_kinds": {
         "program_initialization": 0,
