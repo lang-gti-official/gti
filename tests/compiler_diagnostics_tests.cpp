@@ -3446,13 +3446,38 @@ void testOverloadFailureGuidance() {
              operation->related.size() == 2 &&
              operation->related[1].span.start == source->find("+ b") &&
              operation->related[1].span.end == source->find("+ b") + 1 &&
-             operation->related[1].message.find("temporary value") !=
-                 std::string::npos &&
-             hasDiagnosticHint(temporary.diagnostics, "Bind a temporary") &&
+             operation->related[1].message.find(
+                 "temporary; a mutable reference requires an existing mutable "
+                 "place") != std::string::npos &&
+             hasDiagnosticHint(
+                 temporary.diagnostics,
+                 "Mutable references require existing mutable places") &&
              !hasDiagnosticHint(temporary.diagnostics, "convert") &&
              operation->fixes.empty(),
-         "an exact operator reference mismatch explains the value category "
+         "an exact mutable operator reference mismatch explains the value "
+         "category "
          "at the operand, not an unrelated conversion");
+
+  const auto readOnlyTemporary =
+      lang::Frontend().analyze("readonly-operator-temporary.gti", R"(
+class Value {
+public:
+  int value;
+  Value(int value) : value(value) {}
+  Value operator+(Value& other) { return Value(this.value + other.value); }
+  bool operator==(Value& other) { return this.value == other.value; }
+};
+int main() {
+  Value first{1};
+  Value second{2};
+  Value total{3};
+  return total == first + second ? 0 : 1;
+}
+)");
+  expect(readOnlyTemporary.canGenerateCode() &&
+             !lang::hasErrorDiagnostics(readOnlyTemporary.diagnostics),
+         "a read-only operator parameter accepts the corresponding class "
+         "temporary without reference-mismatch guidance");
 
   const auto missing =
       analyzeDiagnosticFixture("a60-println-format-missing-include");
