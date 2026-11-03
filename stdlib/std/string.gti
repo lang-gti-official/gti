@@ -53,7 +53,7 @@ namespace std {
       return float_prefix(index, negative, format);
     }
 
-    expected<T, parse_errc> parse_string_integer<std::integral T>(
+    constexpr expected<T, parse_errc> parse_string_integer<std::integral T>(
         string_view input, mut size_t& position, int base) {
       mut T value = T(0);
       auto parsed = std::detail::parse_integer(input, value, base, true);
@@ -99,59 +99,59 @@ namespace std {
 
   /// ASCII whitespace and a leading sign are accepted. Base zero recognizes
   /// decimal, leading-zero octal, and 0x hexadecimal. Errors are recoverable.
-  export expected<int32_t, parse_errc> stoi(string_view input, mut size_t& position, int base) {
+  export constexpr expected<int32_t, parse_errc> stoi(string_view input, mut size_t& position, int base) {
     return detail::parse_string_integer<int32_t>(input, position, base);
   }
-  export expected<int32_t, parse_errc> stoi(string_view input, mut size_t& position) {
+  export constexpr expected<int32_t, parse_errc> stoi(string_view input, mut size_t& position) {
     return std::stoi(input, position, 10);
   }
-  export expected<int32_t, parse_errc> stoi(string_view input, int base) {
+  export constexpr expected<int32_t, parse_errc> stoi(string_view input, int base) {
     mut size_t position = 0;
     return std::stoi(input, position, base);
   }
-  export expected<int32_t, parse_errc> stoi(string_view input) { return std::stoi(input, 10); }
+  export constexpr expected<int32_t, parse_errc> stoi(string_view input) { return std::stoi(input, 10); }
 
-  export expected<int64_t, parse_errc> stoll(string_view input, mut size_t& position, int base) {
+  export constexpr expected<int64_t, parse_errc> stoll(string_view input, mut size_t& position, int base) {
     return detail::parse_string_integer<int64_t>(input, position, base);
   }
-  export expected<int64_t, parse_errc> stoll(string_view input, mut size_t& position) {
+  export constexpr expected<int64_t, parse_errc> stoll(string_view input, mut size_t& position) {
     return std::stoll(input, position, 10);
   }
-  export expected<int64_t, parse_errc> stoll(string_view input, int base) {
+  export constexpr expected<int64_t, parse_errc> stoll(string_view input, int base) {
     mut size_t position = 0;
     return std::stoll(input, position, base);
   }
-  export expected<int64_t, parse_errc> stoll(string_view input) { return std::stoll(input, 10); }
+  export constexpr expected<int64_t, parse_errc> stoll(string_view input) { return std::stoll(input, 10); }
 
-  export expected<int64_t, parse_errc> stol(string_view input, mut size_t& position, int base) {
+  export constexpr expected<int64_t, parse_errc> stol(string_view input, mut size_t& position, int base) {
     return std::stoll(input, position, base);
   }
-  export expected<int64_t, parse_errc> stol(string_view input, mut size_t& position) {
+  export constexpr expected<int64_t, parse_errc> stol(string_view input, mut size_t& position) {
     return std::stoll(input, position);
   }
-  export expected<int64_t, parse_errc> stol(string_view input, int base) { return std::stoll(input, base); }
-  export expected<int64_t, parse_errc> stol(string_view input) { return std::stoll(input); }
+  export constexpr expected<int64_t, parse_errc> stol(string_view input, int base) { return std::stoll(input, base); }
+  export constexpr expected<int64_t, parse_errc> stol(string_view input) { return std::stoll(input); }
 
-  export expected<uint64_t, parse_errc> stoull(string_view input, mut size_t& position, int base) {
+  export constexpr expected<uint64_t, parse_errc> stoull(string_view input, mut size_t& position, int base) {
     return detail::parse_string_integer<uint64_t>(input, position, base);
   }
-  export expected<uint64_t, parse_errc> stoull(string_view input, mut size_t& position) {
+  export constexpr expected<uint64_t, parse_errc> stoull(string_view input, mut size_t& position) {
     return std::stoull(input, position, 10);
   }
-  export expected<uint64_t, parse_errc> stoull(string_view input, int base) {
+  export constexpr expected<uint64_t, parse_errc> stoull(string_view input, int base) {
     mut size_t position = 0;
     return std::stoull(input, position, base);
   }
-  export expected<uint64_t, parse_errc> stoull(string_view input) { return std::stoull(input, 10); }
+  export constexpr expected<uint64_t, parse_errc> stoull(string_view input) { return std::stoull(input, 10); }
 
-  export expected<uint64_t, parse_errc> stoul(string_view input, mut size_t& position, int base) {
+  export constexpr expected<uint64_t, parse_errc> stoul(string_view input, mut size_t& position, int base) {
     return std::stoull(input, position, base);
   }
-  export expected<uint64_t, parse_errc> stoul(string_view input, mut size_t& position) {
+  export constexpr expected<uint64_t, parse_errc> stoul(string_view input, mut size_t& position) {
     return std::stoull(input, position);
   }
-  export expected<uint64_t, parse_errc> stoul(string_view input, int base) { return std::stoull(input, base); }
-  export expected<uint64_t, parse_errc> stoul(string_view input) { return std::stoull(input); }
+  export constexpr expected<uint64_t, parse_errc> stoul(string_view input, int base) { return std::stoull(input, base); }
+  export constexpr expected<uint64_t, parse_errc> stoul(string_view input) { return std::stoull(input); }
 
   namespace detail {
     // Empty strings borrow a process-lifetime, immutable NUL without a heap
@@ -562,6 +562,20 @@ namespace std {
       return true;
     }
 
+    // Implicit growth for push_back, append and a growing replace reaches at
+    // least twice the current capacity, so a sequence of appends takes
+    // amortized linear time. Explicit reserve and resize stay exact.
+    void grow_for(size_t additional) mut {
+      size_t length = this.data.length();
+      size_t capacity = this.data.capacity();
+      if (additional <= capacity - length) { return; }
+      gti_internal::require_container_argument(additional <= string::npos - length);
+      size_t required = length + additional;
+      mut size_t grown = required;
+      if (capacity > required - capacity) { grown = capacity + capacity; }
+      this.data.reserve(grown);
+    }
+
     void check_position(size_t position) {
       if (position > this.data.length()) {
         gti_internal::index_bounds_check(position, this.data.length());
@@ -924,13 +938,8 @@ namespace std {
     }
 
     void push_back(char value) mut {
-      if (this.data.length() == this.capacity()) {
-        mut size_t grown = this.capacity() * 2;
-        if (grown <= this.data.length()) {
-          grown = this.data.length() + 1;
-        }
-        this.reserve(grown);
-      }
+      // Keep the common non-growing path to one comparison.
+      if (this.data.length() == this.data.capacity()) { this.grow_for(size_t(1)); }
       unsafe { this.data.append(value); }
     }
 
@@ -942,7 +951,7 @@ namespace std {
     }
 
     void append(string_view value) mut {
-      this.reserve(this.data.length() + value.size());
+      this.grow_for(value.size());
       unsafe { this.data.append(value); }
     }
 
@@ -966,6 +975,7 @@ namespace std {
       size_t new_count = retained + value.size();
       size_t tail_start = position + removed;
       if (value.size() > removed) {
+        this.grow_for(value.size() - removed);
         this.resize(new_count);
         mut size_t source = old_count;
         while (source > tail_start) {
@@ -1048,29 +1058,26 @@ namespace std {
     bool operator>=(string& other) { return this.compare_bytes(other.view()) >= 0; }
   };
 
+  /// Writes every code unit, including embedded NULs, in one counted write.
   export [[track_caller]]
   void print(string& value) {
-    for (mut size_t index = 0; index < value.size(); index++) {
-      print(value[index]);
-    }
+    print(value.view());
   }
 
   export [[track_caller]]
   void print(string value) {
-    for (mut size_t index = 0; index < value.size(); index++) {
-      print(value[index]);
-    }
+    print(value.view());
   }
 
   export [[track_caller]]
   void println(string& value) {
-    print(value);
+    print(value.view());
     print("\n");
   }
 
   export [[track_caller]]
   void println(string value) {
-    print(value);
+    print(value.view());
     print("\n");
   }
 

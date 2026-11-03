@@ -267,8 +267,10 @@ The generic helpers are:
 - `getline(source, text, delimiter = uint8_t(10))`: clears `text`, consumes but
   excludes the delimiter, and preserves all other bytes (including NUL and CR).
   A final unterminated line succeeds; EOF before any byte returns `end_of_file`.
-  This helper currently allocates a one-byte initialized scratch buffer per call;
-  use a buffered reader to amortize host reads.
+  A `buffered_source` (below) is scanned in its read-ahead window, so the line
+  costs one refill per window rather than one call per byte. Any other reader
+  is read one byte at a time, because it cannot return bytes taken past the
+  delimiter; wrap such a transport in `buffered_reader` for line input.
 
 Each helper returns `expected<size_t, io::error>`, where `error` has `code` and
 `transferred` fields. Progress counts bytes read into the destination, bytes
@@ -302,6 +304,51 @@ prefix fitting its buffer, draining a full buffer before accepting more.
 flush preserves exactly the unwritten suffix, so retry does not duplicate the
 committed prefix. Zero-capacity adapters reject nonempty operations with
 `invalid_stream`; empty requests still succeed.
+
+`buffered_reader<R>` also exposes its read-ahead window, so a parser can peek
+at pending bytes and take only what it needs:
+
+- `fill_buffer()`: if the window is empty, refills it with one `read_some` on
+  the source; a nonempty window is left as is. It returns the pending count,
+  which is zero only at EOF. A zero-capacity reader reports `invalid_stream`.
+- `buffered()`: a read-only `span<uint8_t>` of exactly the pending bytes. It
+  borrows the reader, so bind it to a local and release it before calling a
+  `mut` member.
+- `consume(n)`: discards the first `n` pending bytes; `n` greater than
+  `available()` stops with an invalid container argument.
+
+```gti
+auto pending = reader.fill_buffer();
+if (!pending) { return 1; }
+{
+  std::span<uint8_t> window = reader.buffered();
+  // Inspect window[i] for i < window.size() ...
+}
+reader.consume(taken);
+```
+
+The optional `std::io::buffered_source<R>` concept names that protocol for any
+reader, including user-defined transports:
+
+```gti
+concept buffered_source<R> = reader<R> && requires(mut R& stream, size_t count) {
+  { stream.fill_buffer() } -> expected<std::size_t, std::io_errc>;
+  { stream.consume(count) } -> void;
+} && requires(R& stream) {
+  { stream.buffered() };
+};
+```
+
+A type satisfies it by declaring the members; there is no base class. A
+requirement cannot yet name a borrowed view as an exact result type, so
+`buffered()` is checked only for being callable; it must return a
+`span<uint8_t>` view of the pending bytes. The contract the helpers rely on is:
+`fill_buffer` refills only an empty window and returns zero only at EOF;
+`buffered().size()` equals the count `fill_buffer` returned until bytes are
+consumed; and `consume(n)` removes exactly `n` of them. `getline` rejects a
+window whose size disagrees with the reported count as `read_failed`. Bytes
+taken through `read_some` and through the window come from the same pending
+sequence, so mixing the two keeps byte order.
 
 **Buffered writers require explicit `flush()` and handling its result.** Their
 destruction discards pending bytes; it does not perform fallible hidden I/O.

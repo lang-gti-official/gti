@@ -33,20 +33,25 @@ def main():
              for standard in ("c++20", "c++23") for level in ("O0", "O1", "O3")]
     modes.append(("sanitized", ["--std", "c++23", "-O1"],
                   ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]))
+    # The LLVM backend lowers the same verified MIR; it must agree with the
+    # same native oracles at an optimizing level.
+    modes.append(("llvm-O2", ["--backend", "llvm", "-O2"], []))
     with tempfile.TemporaryDirectory(prefix="gti-numeric-boundaries-") as directory:
         root = Path(directory)
         for mode, flags, native_flags in modes:
             executable = root / mode
-            built([compiler, source, *flags, "--keep-cpp", "-o", executable,
-                   "--", oracle, *native_flags])
+            cpp = "--backend" not in flags
+            built([compiler, source, *flags, *(["--keep-cpp"] if cpp else []),
+                   "-o", executable, "--", oracle, *native_flags])
             result = run([executable])
             assert (result.returncode, result.stdout, result.stderr) == (0, "", ""), (mode, result)
-            generated = executable.with_suffix(".gti.cpp").read_text()
-            assert "// GTI verified-MIR body:" in generated
-            # Public arithmetic stays source-defined, not a backend std:: shim.
-            for operation in ("gcd", "lcm", "midpoint"):
-                assert re.search(rf"__gti_inst_[0-9a-f]+_{operation}__gti_mir_failure\(", generated), operation
-                assert f"::std::{operation}(" not in generated, operation
+            if cpp:
+                generated = executable.with_suffix(".gti.cpp").read_text()
+                assert "// GTI verified-MIR body:" in generated
+                # Public arithmetic stays source-defined, not a backend std:: shim.
+                for operation in ("gcd", "lcm", "midpoint"):
+                    assert re.search(rf"__gti_inst_[0-9a-f]+_{operation}__gti_mir_failure\(", generated), operation
+                    assert f"::std::{operation}(" not in generated, operation
             failing = root / f"{mode}-failure"
             built([compiler, failure, *flags, "-o", failing, "--", *native_flags])
             for argc in range(2, 16):

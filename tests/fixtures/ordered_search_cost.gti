@@ -10,6 +10,7 @@ extern "C" {
 
 mut std::size_t calls = 0;
 mut std::size_t increments = 0;
+mut std::size_t jumps = 0;
 
 class CostEnd {
   std::size_t length;
@@ -17,6 +18,15 @@ public:
   CostEnd(std::size_t length) : length(length) {}
   std::size_t position() { return this.length; }
 };
+// A second end over the same positions with no distance operator: a jumping
+// cursor must still count its way to it.
+class UnsizedEnd {
+  std::size_t length;
+public:
+  UnsizedEnd(std::size_t length) : length(length) {}
+  std::size_t position() { return this.length; }
+};
+// The step-only cursor has neither jumps nor a sized sentinel.
 class CostCursor {
   CostSeries& owner;
   mut std::size_t index;
@@ -26,6 +36,31 @@ public:
   void operator++() mut { this.index++; increments++; }
   bool operator!=(CostEnd& end) { return this.index != end.position(); }
   bool operator!=(CostCursor& other) { return this.index != other.index; }
+};
+// An unrelated cursor that declares the jump contract and a sized sentinel.
+// Nothing about it names a standard container.
+class JumpCostCursor {
+  CostSeries& owner;
+  mut std::size_t index;
+public:
+  JumpCostCursor(CostSeries& owner, std::size_t index) : owner(owner), index(index) {}
+  int& operator*() { return this.owner.at(this.index); }
+  void operator++() mut { this.index++; increments++; }
+  void operator+=(std::ptrdiff_t offset) mut {
+    this.index = std::size_t(std::ptrdiff_t(this.index) + offset);
+    jumps++;
+  }
+  void operator-=(std::ptrdiff_t offset) mut {
+    this.index = std::size_t(std::ptrdiff_t(this.index) - offset);
+    jumps++;
+  }
+  bool operator!=(CostEnd& end) { return this.index != end.position(); }
+  bool operator!=(UnsizedEnd& end) { return this.index != end.position(); }
+  bool operator!=(JumpCostCursor& other) { return this.index != other.index; }
+  std::ptrdiff_t operator-(CostEnd& end) {
+    return std::ptrdiff_t(this.index) - std::ptrdiff_t(end.position());
+  }
+  std::size_t position() { return this.index; }
 };
 class CostSeries {
   mut std::vector<int> elements{};
@@ -39,6 +74,8 @@ public:
   int& at(std::size_t index) { return this.elements[index]; }
   CostCursor begin() { return CostCursor(this, std::size_t(0)); }
   CostEnd end() { return CostEnd(this.elements.size()); }
+  JumpCostCursor jump_begin() { return JumpCostCursor(this, std::size_t(0)); }
+  UnsizedEnd unsized_end() { return UnsizedEnd(this.elements.size()); }
 public:
   CostSeries() = default;
 };
@@ -58,6 +95,7 @@ public:
 void reset_cost() {
   calls = 0;
   increments = 0;
+  jumps = 0;
   unsafe { adoption_count_begin(); }
 }
 bool check_cost(std::size_t length, std::size_t maximum_calls) {
@@ -68,6 +106,61 @@ bool check_cost(std::size_t length, std::size_t maximum_calls) {
   // Counted forward search uses at most three traversals and logarithmically
   // many callback invocations. Counters observe the real source operations.
   return calls <= maximum_calls && increments <= std::size_t(3) * length;
+}
+// A jumping cursor measures a sized range with one subtraction and an unsized
+// one with exactly one counting pass; each narrowing level then makes at most
+// two checked jumps and no increments.
+bool check_jumps(std::size_t levels, std::size_t maximum_calls, std::size_t counted) {
+  unsafe {
+    adoption_count_end();
+    if (adoption_allocations() != uint64_t(0)) { return false; }
+  }
+  return calls <= maximum_calls && increments == counted &&
+         jumps <= std::size_t(2) * levels;
+}
+
+int exercise_jumps(std::size_t length, int key, std::size_t levels,
+                   std::size_t expected_lower, std::size_t expected_upper) {
+  CostSeries values{length};
+  CostEnd end = values.end();
+  UnsizedEnd unsized = values.unsized_end();
+  bool expected_found = expected_lower != expected_upper;
+  std::size_t none = 0;
+
+  reset_cost();
+  auto lower = std::lower_bound(values.jump_begin(), end, key, CostOrder());
+  if (!check_jumps(levels, levels, none) || lower.position() != expected_lower) { return 1; }
+  reset_cost();
+  auto upper = std::upper_bound(values.jump_begin(), end, key, CostOrder());
+  if (!check_jumps(levels, levels, none) || upper.position() != expected_upper) { return 2; }
+  reset_cost();
+  auto partition = std::partition_point(values.jump_begin(), end, CostPredicate(key));
+  if (!check_jumps(levels, levels, none) || partition.position() != expected_lower) { return 3; }
+  reset_cost();
+  bool found = std::binary_search(values.jump_begin(), end, key, CostOrder());
+  if (!check_jumps(levels, levels + 1, none) || found != expected_found) { return 4; }
+
+  // The element-order overloads move the same way.
+  reset_cost();
+  auto natural_lower = std::lower_bound(values.jump_begin(), end, key);
+  if (!check_jumps(levels, none, none) || natural_lower.position() != expected_lower) { return 5; }
+  reset_cost();
+  auto natural_upper = std::upper_bound(values.jump_begin(), end, key);
+  if (!check_jumps(levels, none, none) || natural_upper.position() != expected_upper) { return 6; }
+  reset_cost();
+  bool natural_found = std::binary_search(values.jump_begin(), end, key);
+  if (!check_jumps(levels, none, none) || natural_found != expected_found) { return 7; }
+
+  // Without a sized sentinel the range is counted once, then narrowed by jumps.
+  reset_cost();
+  auto unsized_lower = std::lower_bound(values.jump_begin(), unsized, key, CostOrder());
+  if (!check_jumps(levels, levels, length) || unsized_lower.position() != expected_lower) {
+    return 8;
+  }
+  reset_cost();
+  bool unsized_found = std::binary_search(values.jump_begin(), unsized, key);
+  if (!check_jumps(levels, none, length) || unsized_found != expected_found) { return 9; }
+  return 0;
 }
 
 int exercise(std::size_t length, int key) {
@@ -100,6 +193,7 @@ int exercise(std::size_t length, int key) {
   bool found = std::binary_search(values.begin(), end, key, CostOrder());
   if (!check_cost(length, levels + 1)) { return 7; }
   if (found != (expected_lower != expected_upper)) { return 8; }
+  if (exercise_jumps(length, key, levels, expected_lower, expected_upper) != 0) { return 9; }
   return 0;
 }
 

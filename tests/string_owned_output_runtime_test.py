@@ -8,7 +8,7 @@ import sys
 import tempfile
 
 
-EXPECTED = "named 42 7\n/hello/world.txt\nnamed\n"
+EXPECTED = "named 42 7\n/hello/world.txt\nnamed\na\0ba\0b\n\n\n"
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -28,15 +28,16 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="gti-string-owned-output-") as scratch:
         root = pathlib.Path(scratch)
-        for standard in ("c++20", "c++23"):
+        modes = [(standard, ["--std", standard]) for standard in ("c++20", "c++23")]
+        modes.append(("llvm", ["--backend", "llvm"]))
+        for standard, backend in modes:
             for optimization in ("O0", "O3"):
                 executable = root / f"string-output-{standard}-{optimization}"
                 built = run(
                     [
                         str(compiler),
                         str(source),
-                        "--std",
-                        standard,
+                        *backend,
                         f"-{optimization}",
                         "-o",
                         str(executable),

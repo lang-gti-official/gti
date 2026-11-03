@@ -419,8 +419,8 @@ specializations retain their existing canonical selection and contract checks.
 Formatting allocates once per result in the common case:
 - `try_format` reserves the pattern length plus 16 bytes per argument.
 - Every later append goes through `detail::reserve_additional`, which grows
-  capacity at least geometrically. `string::append` itself reserves the exact
-  new size.
+  capacity at least geometrically. `string::append` applies the same
+  geometric policy, so the helper only reserves ahead of each formatted piece.
 - Integer formatting keeps its sign and base prefix in a three-character
   array, and its digits in the existing reversed digit buffer. It writes fill,
   prefix, zero padding and digits straight into the output.

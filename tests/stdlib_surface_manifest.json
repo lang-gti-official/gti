@@ -3,7 +3,7 @@
   "source_fingerprints": {
     "stdlib/prelude.gti": "ff426a31d12405cd7a6f09ad46cf76c14f7d3b0a1fadef595c6ad7a4d4d3f831",
     "stdlib/std.gti": "6bf76540ce1d32024871a3fce4b9512fd6fd494511f919db63450e2b4796a0f7",
-    "stdlib/std/algorithm.gti": "0b11f6332b1aa9cb3f0b5be90680a81e5f5e7fcd6cc38322f65263e87d6f7f2b",
+    "stdlib/std/algorithm.gti": "d4972b45bb83dbd7adc531f7ff2bb25cf631eab748d6daba79676c9a7217e102",
     "stdlib/std/array.gti": "affed4f1d587a71a098ef7c9b381e6c255d8b639492abbe9a46b31e00115adde",
     "stdlib/std/assert.gti": "c34ddabb3ce77983232aa13452cf036dba6202cdbd8d2bb7e1c0d9f0a8b6d78d",
     "stdlib/std/atomic.gti": "d51045256225848941363200bff10a2fe1bf30b66915a06b89e1fce546d1aed1",
@@ -14,8 +14,8 @@
     "stdlib/std/cstdio.gti": "5e76cfb1de246b3793166886bb8c2dc07abaa7218d87950b1a168ce7d27c3492",
     "stdlib/std/cthread.gti": "18dad8820d74e9caed0d11aca7e4e4bc970304e9fe52ae5908832a1d0ab88d30",
     "stdlib/std/deque.gti": "733408fd8d0e2922772b2e3fc6d594273961479afd1672f7b397496a7f1e993e",
-    "stdlib/std/detail/charconv_parse.gti": "fd7c40e70656ba6525d9ef03caf622ff3df739f9b07d786296f4a0a7a0415940",
-    "stdlib/std/detail/charconv_types.gti": "f95bc5d90d09bec1fc814eb2a463bd781a2f78777f1bcc214050f58577298afd",
+    "stdlib/std/detail/charconv_parse.gti": "63feab3f553fd8040b85b53332c9bb198d44173c347f50a00657e005a57e25ae",
+    "stdlib/std/detail/charconv_types.gti": "803526487da9cbbe46fb92dbf8c6b70223a8780efadfb9b3ffe61a2656fe4e8a",
     "stdlib/std/detail/function_pointer.gti": "e50ccd32727edd5436ae961d9a22e3c4cc7be9674a224493ac6a24ea32856fd4",
     "stdlib/std/detail/iterator.gti": "3b40fd44d87c647be20245b57e670c460547a3b9808438aee0333d7864d4d491",
     "stdlib/std/detail/map_entry.gti": "18d397281e03301cf5cb9758b7c6b55415720a6cf346bf14660667ee869d62d6",
@@ -35,15 +35,15 @@
     "stdlib/std/forward_list.gti": "8d39227073b9f98eb6bc83a7a7103bc630497345830bc7e618dcc01fccb917ef",
     "stdlib/std/functional.gti": "094c1baa47c93162e8ad139c30e5bd0070cff7c5e2343fb3fd32ca880f8437ac",
     "stdlib/std/http.gti": "7810cf7acaee803670f346e0103fa6c0cdfca62aca8edda538cfa880e8ae3521",
-    "stdlib/std/io.gti": "8c28bff6f539a82e47f507db2cff429e74307b0dbe6128de48c0b47fd329c0b3",
-    "stdlib/std/iterator.gti": "586855579c50031612b0136d001e21dd31c4387dcf115c9fe4485bd12d2577e3",
+    "stdlib/std/io.gti": "3152b68099ccb770d7be781330bcfb9e92abf2b58e3b5798d133571a806d8eb3",
+    "stdlib/std/iterator.gti": "adfd4d90d8788888472bd48054288bdd523b65e19b1094fd9288c64ce0295229",
     "stdlib/std/json.gti": "85e0213cd253a521937160a0cac1d3e5be1eaa622f34442831a4d2dbffe7b812",
     "stdlib/std/list.gti": "d8c0a951c3ef5a9fefb8fd69882c8d2b313c9b502d32df906e8e38da809f7923",
     "stdlib/std/map.gti": "73bbf9e8c529c923f3391b94b83e330b90c02b933a7b2cfd9f3c171ee01a6955",
     "stdlib/std/memory.gti": "cf4a99569c5e3d3ddd352ae4a6019586a64ff5fe27e2d637a6bf1c91e4bd62c1",
     "stdlib/std/meta.gti": "a551c06adbe68e4d6240146db6259483dc95899feee10aa3bfdf7f8de93732fa",
     "stdlib/std/mutex.gti": "d761ef5ca158c5da39f60c2c6c2d66004f6a02a9ea5903bbf4db015e9a77eb11",
-    "stdlib/std/numeric.gti": "fa0d3a929076f3f614ebef4c10c897c513e91712332d00b24fc58e78af5bd0cf",
+    "stdlib/std/numeric.gti": "4c070cd84b97c9020014102afaf35190f65ad208305fb2f33a06a699dbf749f2",
     "stdlib/std/optional.gti": "a67d746ef0f8f5eb14c256b5595725febe56425cfec76fea484f5717fd1ca0d1",
     "stdlib/std/paired_span.gti": "06244b15782f49e35b229fa20238489c578305d8b09a70e9b22ba77f7d5dfffa",
     "stdlib/std/panic.gti": "3d57fe9c9292a04c6671534abaa3fd9b9287c47247f5c2d40e686344c25cd222",
@@ -57,7 +57,7 @@
     "stdlib/std/simd.gti": "c525bc03c27ff0f3921aaaa7ff03931dacad40578895dac142b0863f1b5fb9ce",
     "stdlib/std/source_location.gti": "c748203afe96c27c06465ffd6b38728becb85bcceca6e8097f75a8460eb74f95",
     "stdlib/std/span.gti": "effe13ba9bd0beeb1f04c84f17b5bd4458686ff713e3eb6756a65a8b0e8a7409",
-    "stdlib/std/string.gti": "0beeddb811310b50821c9df0d71f50258ceec61a761ddffa909f33a53ae79cfb",
+    "stdlib/std/string.gti": "37f8e80f82de06b16c951c2d70178916b236a9e273250ed471e6e409a7d7f867",
     "stdlib/std/string_view.gti": "3a96eeaa90719fdc5c2202f5cbd4ee81ef215f702a848767d2a4c2cf82a94cd6",
     "stdlib/std/tcp.gti": "23022069c0f430cf86fa3c0bd567aa44cde7ef638d7bcb821148a0ac77959c04",
     "stdlib/std/testing.gti": "03e0324d888081b1ee77a626f73c45170a94aa337a214732ba829880204af618",
@@ -500,6 +500,20 @@
       }
     },
     {
+      "id": "charconv-constexpr-integer",
+      "mode": "run",
+      "source": "tests/fixtures/charconv_constexpr_integer.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
       "id": "charconv-float",
       "mode": "run",
       "source": "tests/fixtures/charconv_float.gti",
@@ -657,6 +671,20 @@
       "id": "composable-io",
       "mode": "run",
       "source": "tests/fixtures/composable_io.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "composable-io-buffered-source",
+      "mode": "run",
+      "source": "tests/fixtures/composable_io_buffered_source.gti",
       "optimizations": [
         "O0",
         "O3"
@@ -4332,6 +4360,10 @@
       "operations": [
         "std::byte_buffer",
         "std::io::buffered_reader",
+        "std::io::buffered_reader::buffered",
+        "std::io::buffered_reader::consume",
+        "std::io::buffered_reader::fill_buffer",
+        "std::io::buffered_source",
         "std::io::buffered_writer",
         "std::io::copy",
         "std::io::error",
@@ -4348,12 +4380,14 @@
       ],
       "case_ids": [
         "composable-io",
+        "composable-io-buffered-source",
         "composable-io-native"
       ],
       "required_instantiations": [
         "memory/file/process stream adapters",
         "custom short/failing/stalled/oversized transports",
-        "buffered readers and writers"
+        "buffered readers and writers",
+        "user-defined buffered_source windows"
       ],
       "evidence": [
         "tests/composable_io_runtime_test.py",
@@ -6709,12 +6743,14 @@
       "case_ids": [
         "charconv-integer",
         "charconv-float",
-        "charconv-owned-arguments"
+        "charconv-owned-arguments",
+        "charconv-constexpr-integer"
       ],
       "required_instantiations": [
         "optional consumed position",
         "base zero or2..36",
-        "decimal and hexadecimal floats"
+        "decimal and hexadecimal floats",
+        "constant evaluation of the string_view integer forms"
       ],
       "evidence": [
         "tests/charconv_runtime_test.py",

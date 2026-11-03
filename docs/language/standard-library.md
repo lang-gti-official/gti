@@ -363,13 +363,17 @@ The current implemented foundation includes:
   `implicit`, so `std::string text = "Sampling...";` constructs a string, and
   assignment from a counted view (`text = "Done";`) replaces the contents. Mutation retains capacity when
   sufficient and excludes any live view into the destination, including a
-  replacement argument that aliases it. These operations count bytes, not
-  Unicode characters. Counted-view construction, append, clone and indexed
+  replacement argument that aliases it. When `append`, `push_back`, `insert`,
+  or `replace` must grow, capacity at least doubles, so a sequence of appends
+  takes amortized linear time; `reserve` and a growing `resize` allocate
+  exactly the requested capacity, and `shrink_to_fit` trims it to the size.
+  These operations count bytes, not Unicode characters. Counted-view construction, append, clone and indexed
   copies construct their complete character range before publishing one final
   terminator and length; range checks and allocation precede that copy.
   This unit also provides
   source-defined base-10 `std::to_string` conversion for every fixed-width
-  integer, plus `print`/`println` traversal through either a read-only borrow
+  integer, plus `print`/`println`, which write the complete contents,
+  embedded NULs included, as one counted write through either a read-only borrow
   of a named owner or direct ownership transfer from a fresh string result;
   and
 - `std.vector` `std::vector<T>` as a move-only dynamic owner with checked
@@ -902,6 +906,13 @@ An optional mutable `size_t&` position argument receives the consumed offset
 only on success and remains unchanged on failure. Integer overloads take an
 optional explicit base after that position, or as the second argument when
 position is not requested. There is no long-double type or `stold` overload.
+The integer `string_view` overloads are `constexpr` and run the same source
+parser in constant evaluation, so `constexpr int32_t port =
+std::stoi("8080").value();` and `static_assert(std::stoi("x1").error() ==
+std::parse_errc::invalid_argument);` are accepted. Test success there with
+`has_value()`; the contextual `bool` conversion of `expected` is not yet
+constant-evaluable. The `string&` overloads, `from_chars`, and `stof`/`stod`
+are run-time only.
 
 ## 7.4 Allocation And Containers
 
