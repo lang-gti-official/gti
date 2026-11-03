@@ -23,7 +23,8 @@ def main():
     # Keep the direct stores under LLVM and the separate C++ read companion
     # explicit: #70's existing local reference-field store bug is not evidence
     # against or a substitute for the complete MIR publication contract.
-    profiles = (("borrowed_text_field_reborrow", ("llvm", "cpp")),
+    profiles = (("temporary_cursor_cleanup_provider", ("llvm", "cpp")),
+                ("borrowed_text_field_reborrow", ("llvm", "cpp")),
                 ("receiver_field_carriers", ("llvm",)),
                 ("receiver_field_carriers_read", ("cpp",)))
     with tempfile.TemporaryDirectory(prefix="gti-borrow-origin-") as temporary:
@@ -42,8 +43,16 @@ def main():
         def execute(binary):
             result = subprocess.run([str(binary)], capture_output=True, text=True,
                                     env=environment, timeout=scaled_timeout(30))
-            assert (result.returncode, result.stdout, result.stderr) == (0, "", ""), (
+            expected = "42\nprovider\n" if binary.name.startswith("temporary_cursor_cleanup_provider") else ""
+            assert (result.returncode, result.stdout, result.stderr) == (0, expected, ""), (
                 binary, result)
+            if binary.name.startswith("temporary_cursor_cleanup_provider"):
+                failed = subprocess.run([str(binary), "fail"], capture_output=True,
+                                        text=True, env=environment,
+                                        timeout=scaled_timeout(30))
+                assert (failed.returncode, failed.stdout) == (70, expected), failed
+                assert "runtime error[GTI-R0002]" in failed.stderr, failed.stderr
+
 
         cases = [(f"{name}/{backend}-{level}", (name, backend, level))
                  for name, backends in profiles for backend in backends

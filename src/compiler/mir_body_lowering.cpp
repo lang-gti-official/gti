@@ -8668,6 +8668,14 @@ private:
         // the physical field address stored by the adapter.
         output.loans[loan - 1].storedDependency =
             storedDependencyForPlace(origin);
+        // The result borrows the physical carrier shell. Its external
+        // authority is a separate dependency, not also a parent reborrow
+        // of that same authority. This applies to shared retained carriers
+        // as well as exclusive ones.
+        if (output.loans[loan - 1].parent != 0 &&
+            output.loans[loan - 1].parent ==
+                output.loans[loan - 1].storedDependency)
+          output.loans[loan - 1].parent = 0;
       } else if (shellReference) {
         output.loans[loan - 1].storedDependency =
             storedDependencyForPlace(origin);

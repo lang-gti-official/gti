@@ -438,6 +438,7 @@ paths = [
   "tests/borrow_origin_publication_tests.cpp",
   "tests/borrow_origin_publication_runtime_test.py",
   "tests/fixtures/borrowed_text_field_reborrow.gti",
+  "tests/fixtures/temporary_cursor_cleanup_provider.gti",
   "tests/fixtures/receiver_field_carriers*.gti",
   "src/compiler/mir_*",
   "src/compiler/mir.cpp",

@@ -40,6 +40,14 @@ preserves an owned receiver's explicit input borrow permission, without deriving
 writable access merely from a mutable place. These are compile-time provenance
 facts; they introduce no runtime loan state or allocation.
 
+A temporary view of a carrier's physical storage retains the carrier's
+external authority as one stored dependency. If selecting the receiver also
+selected that same authority as a parent, lowering removes the duplicate
+parent edge. This applies to shared cleanup-bound owners as well as exclusive
+carriers; it does not remove the dependency or shorten its cleanup lifetime.
+The verifier continues to reject duplicate parent/dependency identities and
+retirement of an independently owned provider before its dependent cleanup.
+
 Unique allocation of an already-built class value uses the selected generated
 copy/move policy. HIR stages a generated move as a consuming same-type value,
 not as a callable shared-reference formal. MIR reuses the separate checked
