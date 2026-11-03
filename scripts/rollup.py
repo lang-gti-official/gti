@@ -725,8 +725,11 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         if args.command == "authorize":
-            event = json.loads(Path(args.event).read_text()) if args.event_name == "issue_comment" else {}
-            api = workflow.GitHub() if args.event_name == "issue_comment" else None
+            # A comment and a CI completion are judged on their payload and the
+            # API; a schedule or a manual dispatch needs neither.
+            inspected = args.event_name in {"issue_comment", "workflow_run"}
+            event = json.loads(Path(args.event).read_text()) if inspected else {}
+            api = workflow.GitHub() if inspected else None
             print("authorized=" + ("true" if authorize(args.event_name, event, api) else "false"))
             return 0
         api, token = client(write=not args.dry_run)
