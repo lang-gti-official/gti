@@ -6,7 +6,16 @@ for <T> concept score<Box<T>> requires score<T> {
   int read(Box<T>& value) { return score<T>::read(value.value); }
 };
 int read_score<T>(T& value) requires score<T> { return score<T>::read(value); }
+concept projected<T> { typename item; item read(T& value); };
+for concept projected<Unit> {
+  using item = int;
+  item read(Unit& value) { return value.value; }
+};
+for <T> concept projected<Box<T>> requires projected<T> {
+  using item = projected<T>::item;
+  item read(Box<T>& value) { return projected<T>::read(value.value); }
+};
 int main() {
   Box<Box<Unit>> box{Box<Unit>(Unit(42))};
-  return read_score(box) - 42;
+  return read_score(box) + projected<Box<Box<Unit>>>::read(box) - 84;
 }

@@ -200,6 +200,25 @@ int main() { return 0; }
            "conformance requirements format idempotently");
   }
 
+  reportedOnce(R"gti(
+concept C<T> { int first(T& v); int second(T& v); };
+struct Box<T> {};
+for <T> concept C<Box<T>> requires unknown<T> {
+  int first(Box<T>& v) { return 0; }
+  int second(Box<T>& v) { return 0; }
+};
+int main() { return 0; }
+)gti", "GTI-S2049", "requires ", "unknown");
+  rejected(R"gti(
+concept C<T> { int read(T& v); };
+concept D<T> { int read(T& v); };
+struct Box<T> { T value; };
+for <T> concept C<Box<T>> requires C<T> || D<T> {
+  int read(Box<T>& v) { return C<T>::read(v.value); }
+};
+int main() { return 0; }
+)gti", "GTI-S2123", "requires 'requires C<T>'");
+
   const std::string conditionalContract = R"gti(
 concept selecting<T> {
   typename element;
