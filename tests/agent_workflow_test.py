@@ -1323,24 +1323,36 @@ class ValidationChecks(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validation.build_cache(root, build)
 
-    def test_ci_gate_requires_fast_checks_on_prs_and_the_suite_in_the_queue(self):
+    def test_ci_gate_requires_fast_checks_and_full_validation_proves_the_suite(self):
         lint = {name: {"result": "success"} for name in validation.LINT_JOBS}
-        pr = {**lint, "fast": {"result": "success"}}
-        queue = {**lint, "fast": {"result": "success"}, "package": {"result": "success"}, "integration": {"result": "success"}, "sanitizers": {"result": "success"}}
-        validation.admission("full", pr, "pull_request")
-        validation.admission("full", queue, "merge_group")
-        with self.assertRaises(ValueError):
-            validation.admission("full", pr, "merge_group")
+        gate = {**lint, "fast": {"result": "success"}}
+        suite = {name: {"result": "success"} for name in validation.FULL_VALIDATION_JOBS}
+        # The PR and the merge queue prove the same bounded set.
+        validation.admission("full", gate, "pull_request")
+        validation.admission("full", gate, "merge_group")
         with self.assertRaises(ValueError):
             validation.admission("full", lint, "pull_request")
-        for results, event in ((pr, "pull_request"), (queue, "merge_group")):
-            for name in results:
-                failed = copy.deepcopy(results)
+        with self.assertRaises(ValueError):
+            validation.admission("full", lint, "merge_group")
+        for event in ("pull_request", "merge_group"):
+            for name in gate:
+                failed = copy.deepcopy(gate)
                 failed[name]["result"] = "skipped"
                 with self.assertRaises(ValueError):
                     validation.admission("full", failed, event)
+        # Post-integration full validation requires packaging, every shard and the sanitizers.
+        validation.admission("full", suite, "full_validation")
+        for name in suite:
+            failed = copy.deepcopy(suite)
+            failed[name]["result"] = "failure"
+            with self.assertRaises(ValueError):
+                validation.admission("full", failed, "full_validation")
         with self.assertRaises(ValueError):
-            validation.admission("full", queue, "push")
+            validation.admission("full", gate, "full_validation")
+        with self.assertRaises(ValueError):
+            validation.admission("automation", suite, "full_validation")
+        with self.assertRaises(ValueError):
+            validation.admission("full", gate, "push")
 
     def test_ci_draft_and_component_report_incomplete_integration(self):
         lint = {name: {"result": "success"} for name in validation.LINT_JOBS}
@@ -1494,6 +1506,7 @@ class ValidationChecks(unittest.TestCase):
                     for sensitive in ("src/compiler/parser.cpp", "runtime/src/memory.cpp",
                                       "stdlib/std.gti", "tests/CMakeLists.txt", "CMakeLists.txt",
                                       ".github/workflows/ci.yml", ".github/workflows/cache.yml",
+                                      ".github/workflows/full-validation.yml",
                                       ".github/workflows/nightly.yml", ".github/workflows/beta.yml",
                                       ".github/workflows/new.yml", "scripts/validation_checks.py",
                                       "scripts/validation_batch.py", "scripts/named_test_shards.py",

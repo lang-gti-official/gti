@@ -22,7 +22,7 @@ a watcher, and a trace assertion that body-only saves do not repeat analysis.
 
 The affected source-module, driver, cache and LSP consumers, `compiler_pipeline`
 and native O0/O3 smoke remain focused acceptance obligations. Linux portability
-checks complement macOS evidence. The merge queue validates complete integration
+checks complement macOS evidence. Post-integration full validation proves complete integration
 on macOS arm64 and Linux x64 before the change can reach nightly.
 
 ## Owned inline consumption (unreleased)

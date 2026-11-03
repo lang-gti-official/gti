@@ -491,9 +491,13 @@ Failure to confirm cancellation prevents publication. `--pr-only` also withdraws
 intent. New work after a confirmed merge belongs to a new task. The `main` ruleset requires
 pull requests, the merge queue and the `CI gate` status check, denies force
 pushes and deletion, and has no bypass actors, administrators included. The
-queue builds each candidate on the current `main`, runs the complete suite and
-merges it only if `CI gate` passes; it removes a failing PR and rebuilds the
-entries behind it. The last handoff record stays `rollup`, `awaiting-ci` or `queued` until refreshed;
+queue builds each candidate on the current `main`, runs the bounded gate
+(build and fast checks on both platforms) and merges it only if `CI gate`
+passes; it removes a failing PR and rebuilds the entries behind it. The
+complete suite runs after integration on each main head
+(`full-validation.yml`); a red main is reported in the `main-broken` issue and
+is fixed forward or reverted, and no channel selects a main commit full
+validation has not passed. The last handoff record stays `rollup`, `awaiting-ci` or `queued` until refreshed;
 GitHub owns the transition and failures/conflicts still need repair. Once GitHub reports
 the merge, and `sync` (or a repeated `finish`) then advances local main. Do not force a merge
 or bypass a server rule. Release workflows run after integration and need not
@@ -504,21 +508,22 @@ The library sanitizer jobs partition `cpp_mir_body_emitter_lifecycle` through
 its existing `--list` / `--test NAME` protocol. Each job runs half of the sorted
 named-case inventory serially under the unchanged 5,400-second aggregate bound;
 native integration still runs the ordinary aggregate CTest. The sanitizer jobs
-retain per-case outcomes and durations. The final gate requires both reports
-for its exact candidate, identical inventories, and every named case passing
+retain per-case outcomes and durations. The full validation verdict requires both reports
+for its exact main head, identical inventories, and every named case passing
 exactly once. Missing, stale, failed or timed-out case evidence fails the gate.
 Compiler sanitizer jobs build only the targets of `compiler_pipeline`; library
 jobs retain the library subset targets. This avoids filling runner disks with
 unexecuted sanitizer library binaries in compiler jobs.
 This avoids assigning the entire lifecycle suite to one library shard without
 removing sanitizer coverage or increasing timeouts. Runner termination still
-fails integration; this scheduling change does not claim to repair host loss.
+fails full validation; this scheduling change does not claim to repair host loss.
 
 ## Risk-based batch validation
 
 The risk tiers below select how broad a change's focused checks must be. The
 batch commands that follow are the degraded-mode path: in normal operation each
-PR goes through the merge queue, which runs the complete suite.
+PR goes through the merge queue, which runs the bounded gate; post-integration
+full validation runs the complete suite on the merged result.
 
 Per-change validation establishes that a patch fixes its motivating problem
 and preserves the affected rules. Integration validation establishes that the
@@ -711,8 +716,9 @@ advisory-CI policy. `.github/workflows/ci.yml` reports one required check,
 | --- | --- | --- |
 | `pull_request` (ready) | full | lint (formatting, release version, Tree-sitter), workflow regressions, and `fast` on macOS arm64 and Linux x64 (`feedback-fast`, `compiler_pipeline` and the PR's declared T0/T1 tests) |
 | `pull_request` (draft) | draft | lint and workflow regressions only; a draft cannot enter the queue |
-| `merge_group` | full | lint, workflow regressions, system-LLVM `fast` checks, production packaging and installed checks, every bundled-release `integration` shard on both platforms, and `sanitizers` |
-| `workflow_dispatch` on main | full | the same full integration and production packaging gates, for release commissioning/recovery |
+| `merge_group` | full | the same as a ready pull request: lint, workflow regressions and system-LLVM `fast` checks on the exact candidate (a bounded gate, as rustc and LLVM gate merges) |
+| `workflow_dispatch` on main | full | the same bounded gate, for recovery |
+| `push` to main, or `workflow_dispatch` (`full-validation.yml`) | full | post-integration full validation: production packaging and installed checks, every bundled-release `integration` shard on both platforms, and `sanitizers`; its `Full validation verdict` and retained packages are the nightly/beta/train evidence, and a failure opens the `main-broken` issue |
 | PR or merge group | source-stdlib | lint, workflow regressions, source-library owners and consumers, declared PR regressions and native smoke on both platforms using an admitted full-CI compiler; merge groups also package the new source library |
 | PR or merge group | automation | lint and workflow regressions only |
 | PR or merge group | component | always fails: a batch component cannot merge directly |

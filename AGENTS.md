@@ -100,8 +100,10 @@ not a C++ wrapper, and neither backend defines its semantics.
   subsystem's tests, and the affected cross-phase and tooling consumers, plus
   `compiler_pipeline` and the native smoke. Record exactly what ran with
   `verify`. Never run the complete suite locally to finish a feature or fix:
-  the merge queue runs it on the exact candidate that becomes `main`, on every
-  required platform. Deferring it to the queue is complete work, not a gap;
+  the merge queue proves build and fast checks on the exact candidate that
+  becomes `main`, and post-integration full validation then runs the complete
+  suite on that main head on every required platform. Deferring it is complete
+  work, not a gap;
   never describe focused evidence as full validation. Run broad local suites
   only to diagnose an integration failure assigned to your change (and then
   only its failing tests), when the owner asks, or in the degraded mode below.

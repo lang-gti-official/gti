@@ -373,8 +373,8 @@ and native-input digest. Missing compatible evidence selects full CI. See the
 This successful integration also qualifies for nightly publication; an
 arbitrary PR pass or merge exception still does not.
 
-1. **Build and validate in integration.** Full `ci.yml` integration builds
-   production archives on `ubuntu-24.04` (`linux-x64`) and `macos-26`
+1. **Build and validate after integration.** `full-validation.yml`, on every
+   main head, builds production archives on `ubuntu-24.04` (`linux-x64`) and `macos-26`
    (`darwin-arm64`). Each uses the reviewed compiler from
    `scripts/configure_ci_toolchain.sh`, configures
    `-DCMAKE_BUILD_TYPE=Release -DGTI_RELEASE_BUILD=ON` with pinned bundled
@@ -389,14 +389,14 @@ arbitrary PR pass or merge exception still does not.
    configuration, reusing the packaging job's object cache, and retains the
    separate sanitizer gates and system-LLVM fast checks, including the Linux
    system-LLVM installed consumers. The coverage gate proves each platform's inventory
-   ran exactly once. Packaging is a required part of the full `CI gate`.
+   ran exactly once. Packaging is a required part of the `Full validation
+   verdict`; the merge gate (`CI gate`) proves only build and fast checks.
 2. **Select validated artifacts.** Nightly runs only from main's own definition
    in `lang-gti-official/gti`. It takes main head, or a dispatched exact 40-hex
    commit on main. `scripts/resolve_release_source.py select-nightly` requires
-   successful full CI for that exact commit and its retained production
-   artifacts. Normally this is the `merge_group` run of
-   `.github/workflows/ci.yml` on `gh-readonly-queue/main/...`; a full main-only
-   CI dispatch also qualifies for commissioning or artifact recovery. PR runs,
+   successful full validation for that exact commit and its retained production
+   artifacts: the `push` run of `.github/workflows/full-validation.yml` on
+   `main`, or a dispatch of it for commissioning or artifact recovery. PR runs,
    automation-only passes and merge exceptions alone are not release evidence.
    Scheduled selection skips unchanged main. There is no fallback that stamps
    an older compiler with a new commit when the selected source has no artifacts.

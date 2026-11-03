@@ -86,7 +86,7 @@ class NamedShards(unittest.TestCase):
                 shards.selection(['a', 'b', 'c', 'd', 'e'], index, count)
 
     def test_ci_keeps_native_aggregate_and_requires_both_sanitizer_reports(self):
-        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
+        workflow = (ROOT / '.github/workflows/full-validation.yml').read_text()
         self.assertIn("-E '^(compiler_pipeline|cpp_mir_body_emitter_lifecycle)$'", workflow)
         self.assertIn('--executable build-sanitized/gti_cpp_mir_body_emitter_lifecycle_tests', workflow)
         self.assertIn('--count 2 --timeout 5400', workflow)
