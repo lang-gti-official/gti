@@ -109,6 +109,14 @@ def admission(config, now):
     return (config["hourly_ceiling_micros"] * config["vm_lifetime_seconds"] + 3599) // 3600 + config["per_run_extra_micros"]
 
 
+def sync_directory(path):
+    directory = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+
+
 def write_json(path, value):
     temporary = path.with_suffix(".new")
     with temporary.open("w") as output:
@@ -117,11 +125,7 @@ def write_json(path, value):
         output.flush()
         os.fsync(output.fileno())
     os.replace(temporary, path)
-    directory = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-    try:
-        os.fsync(directory)
-    finally:
-        os.close(directory)
+    sync_directory(path.parent)
 
 
 class Ledger:
@@ -133,9 +137,15 @@ class Ledger:
     def locked(self):
         if self.root.is_symlink():
             raise SpotError("Spot state directory must not be a symlink")
-        self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        if self.root.stat().st_uid != os.getuid():
-            raise SpotError("Spot state directory belongs to another user")
+        missing, parent = [], self.root
+        while not parent.exists():
+            missing.append(parent)
+            parent = parent.parent
+        for directory in reversed(missing):
+            directory.mkdir(exist_ok=True, mode=0o700)
+            sync_directory(directory.parent)
+        if self.root.stat().st_uid != os.getuid() or self.root.stat().st_mode & 0o022:
+            raise SpotError("Spot state directory must be owner-controlled and not group/world-writable")
         with (self.root / "lock").open("a+") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             path, marker = self.root / "leases.json", self.root / "pool-id"
