@@ -2008,7 +2008,7 @@ private:
   struct ConstexprWorkBudget {
     std::size_t steps = 0;
     std::size_t stagingDepth = 0;
-    // The first per-request limit this request exhausted, and the function
+    // The per-request limit this request last exhausted, and the function
     // executing when it did. Failure-only evidence for the diagnostic.
     struct Exhaustion {
       std::size_t CompileLimits::*limit = nullptr;
@@ -2104,8 +2104,10 @@ private:
     bool allowVoidCompletion = false;
     const Expr *immediateRoot = nullptr;
     // The function or constructor the compatibility interpreter is executing,
-    // named in a resource-limit diagnostic. Empty at expression level.
-    std::string_view executing;
+    // named in a resource-limit diagnostic; null at expression level. Stable
+    // syntax identities: names are resolved only when a limit is exhausted.
+    const FunctionDecl *executingFunction = nullptr;
+    const ConstructorDecl *executingConstructor = nullptr;
     std::vector<std::unordered_map<SymbolId, ConstexprLocalValue>> scopes;
     std::vector<GenericSubstitution> substitutions;
     std::vector<ConstantValue> receivers;
@@ -2235,8 +2237,9 @@ private:
   // Charges one compatibility-interpreter step to the request; false once
   // the request's step limit is exhausted (and records that exhaustion).
   [[nodiscard]] bool chargeConstexprStep(ConstexprInterpreter &context) const;
-  // Records the first per-request limit the request exhausted; `function`
-  // defaults to the function the compatibility interpreter is executing.
+  // Records the per-request limit the request exhausted (the latest trip is
+  // the one a failure reports); `function` defaults to the function or
+  // constructor the compatibility interpreter is executing.
   void recordLimitExhaustion(ConstexprInterpreter &context,
                              std::size_t CompileLimits::*limit,
                              std::string_view function = {}) const;

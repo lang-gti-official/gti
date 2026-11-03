@@ -915,8 +915,14 @@ infer target defines for a unique matching entry root, or any document in a
 single-target package. Shared files and ambiguous entry roots in multi-target
 packages receive no target defines: unrelated target sets are never combined.
 Inactive consumer target/profile flag names remain known for typo diagnostics,
-and both active and declared sets enter the frontend cache context. Watching a
-manifest refreshes these facts for diagnostics and completion together.
+and both active and declared sets enter the frontend cache context. The facts
+also carry the root package's `[limits]` table resolved over the defaults
+(`ProjectFacts::compileLimits()`), which analysis and completion pass as
+`FrontendOptions::limits`, so an editor reports the same compile-limit
+exhaustion as `gti check`; standalone files use the defaults. The limits enter
+the semantic cache context, so a preamble or instance analysis is never reused
+across a limit change. Watching a manifest refreshes these facts for
+diagnostics and completion together.
 Profile changes also advance every open document's analysis generation,
 invalidate token caches and queued semantic requests, and capture the exact
 profile into each analysis/completion request. In-flight old-profile results

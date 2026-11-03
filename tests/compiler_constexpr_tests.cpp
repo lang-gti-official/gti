@@ -6254,6 +6254,47 @@ void testCompileLimits() {
   expect(perRequest.canGenerateCode(),
          "every request has its own budget; requests never share one");
 
+  // The audit's motivating client: a user-written literal-pattern validator
+  // run by an immediate call. A 300-character, 24-field pattern needs far
+  // more than the former 4096-step budget.
+  std::string pattern;
+  for (int index = 0; index < 24; ++index)
+    pattern += "field {} ";
+  pattern += std::string(100, 'x');
+  const std::string validator =
+      "struct PatternScan {\n  uint64_t fields;\n  bool valid;\n"
+      "  constexpr PatternScan(uint64_t f, bool v) : fields(f), valid(v) {}\n"
+      "};\n"
+      "constexpr PatternScan scan_pattern(std::string_view pattern) {\n"
+      "  mut uint64_t at = 0;\n  mut uint64_t fields = 0;\n"
+      "  while (at < pattern.size()) {\n"
+      "    if (pattern[at] == '{') {\n"
+      "      if (at + 1 < pattern.size() && pattern[at + 1] == '}') {\n"
+      "        fields = fields + 1;\n        at = at + 2;\n        continue;\n"
+      "      }\n      return PatternScan(fields, false);\n    }\n"
+      "    if (pattern[at] == '}') { return PatternScan(fields, false); }\n"
+      "    at = at + 1;\n  }\n  return PatternScan(fields, true);\n}\n"
+      "consteval void require_pattern(std::string_view pattern, uint64_t "
+      "expected) {\n  PatternScan scan = scan_pattern(pattern);\n"
+      "  uint64_t checked = uint64_t(1) / (scan.valid && scan.fields == "
+      "expected ? uint64_t(1) : uint64_t(0));\n}\n"
+      "void validate() {\n  require_pattern(\"" +
+      pattern + "\", uint64_t(24));\n}";
+  const auto withLibrary = [&](lang::FrontendOptions options) {
+    return lang::Frontend(std::move(options))
+        .analyze("compile-limits-pattern.gti",
+                 validator + "\nint main() { return 0; }",
+                 {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  };
+  const auto longPattern = withLibrary({});
+  const auto longPatternOldBudget = withLibrary(stepLimited(4096));
+  expect(longPattern.canGenerateCode() &&
+             !longPatternOldBudget.canGenerateCode() &&
+             hasDiagnosticHint(longPatternOldBudget.diagnostics,
+                               "while executing 'scan_pattern'"),
+         "a long literal pattern validates within the default request "
+         "budget but not the former 4096-step budget");
+
   // Each request kind names itself.
   const auto binding = analyze(
       "constexpr uint64_t total = spin(uint64_t(5000));", stepLimited(1000));

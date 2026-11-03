@@ -13570,11 +13570,15 @@ auto SemanticVisitor::Impl::evaluateConstexprConstruction(
   context.scopes.emplace_back();
   context.substitutions.push_back(substitution);
   ++context.callDepth;
-  const std::string_view enclosingExecuting = context.executing;
-  context.executing = owner->name.lexeme;
+  const FunctionDecl *const enclosingFunction = context.executingFunction;
+  const ConstructorDecl *const enclosingConstructor =
+      context.executingConstructor;
+  context.executingFunction = nullptr;
+  context.executingConstructor = declaration;
   const auto restore = [&]() {
     --context.callDepth;
-    context.executing = enclosingExecuting;
+    context.executingFunction = enclosingFunction;
+    context.executingConstructor = enclosingConstructor;
     context.scopes.resize(enclosingScopeCount);
     context.substitutions.resize(enclosingSubstitutionCount);
     context.receivers.resize(enclosingReceiverCount);
@@ -13706,11 +13710,17 @@ auto SemanticVisitor::Impl::chargeConstexprStep(
 auto SemanticVisitor::Impl::recordLimitExhaustion(
     ConstexprInterpreter &context, std::size_t CompileLimits::*limit,
     std::string_view function) const -> void {
-  if (context.work->exhaustion)
-    return;
+  std::string executing(function);
+  if (executing.empty() && context.executingFunction != nullptr) {
+    const FunctionInfo *info =
+        semanticModel.findFunction(*context.executingFunction);
+    executing = info != nullptr ? info->qualifiedName
+                                : context.executingFunction->name().lexeme;
+  } else if (executing.empty() && context.executingConstructor != nullptr) {
+    executing = context.executingConstructor->name().lexeme;
+  }
   context.work->exhaustion = ConstexprWorkBudget::Exhaustion{
-      .limit = limit,
-      .function = std::string(function.empty() ? context.executing : function)};
+      .limit = limit, .function = std::move(executing)};
 }
 
 auto SemanticVisitor::Impl::describeLimitExhaustion(
@@ -14943,10 +14953,13 @@ auto SemanticVisitor::Impl::executeConstexprFunction(
     context.receivers.push_back(*receiver);
   }
   ++context.callDepth;
-  const std::string_view enclosingExecuting = context.executing;
+  const FunctionDecl *const enclosingFunction = context.executingFunction;
+  const ConstructorDecl *const enclosingConstructor =
+      context.executingConstructor;
+  context.executingFunction = &function;
+  context.executingConstructor = nullptr;
   ConstexprEvaluation setupFailure;
   if (const FunctionInfo *info = semanticModel.findFunction(function)) {
-    context.executing = info->qualifiedName;
     if (info->ownerClass != 0) {
       seedConstexprValueParameters(
           classInfo(info->ownerClass).genericParameters, substitution,
@@ -14974,7 +14987,8 @@ auto SemanticVisitor::Impl::executeConstexprFunction(
         executeConstexprStatements(function.body()->statements(), context);
   }
   --context.callDepth;
-  context.executing = enclosingExecuting;
+  context.executingFunction = enclosingFunction;
+  context.executingConstructor = enclosingConstructor;
   context.scopes.resize(enclosingScopeCount);
   context.substitutions.resize(enclosingSubstitutionCount);
   context.receivers.resize(enclosingReceiverCount);

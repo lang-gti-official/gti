@@ -3826,6 +3826,36 @@ profile; it is not admitted by the integral-enum catalog.
 Language rules belong in [`docs/language/`](../language/index.md); this document
 only describes their implementation ownership.
 
+## Staged Constant Limits And Reuse
+
+Every constant request owns one `ConstexprWorkBudget`: the step count, the
+staging depth and, after a failure, the exhausted limit with the function that
+was executing. Concrete reanalysis workers, nested staged evaluations and the
+compatibility interpreter charge the same budget against the compilation's
+`CompileLimits` (`FrontendOptions::limits`), which every worker analyzer
+receives at construction. The MIR evaluator receives the remaining budget as
+`MirConstantLimits` and reports which configurable limit it exhausted; the
+request's diagnostic names that limit, its value, the executing function and
+the flag and manifest key (see
+[implementation limits](../language/static-semantics.md#3112-implementation-limits)).
+
+`StagedConstantResults` is shared by every analyzer of one analysis request and
+reset with it, so no reuse crosses a compilation or editor snapshot. It keys a
+staged evaluation by callee identity, generic substitution, constant arguments
+and receiver, and its environment: whether a concrete reanalysis is open and the
+constexpr definitions and constructors the worker may execute and HIR may lower.
+A successful value or void completion is replayed; the lowered call closure (HIR
+plus verified MIR, keyed without arguments and receiver) is executed again with
+new arguments instead of being lowered again. A replay charges the steps the
+original evaluation, or the original lowering's nested work, consumed and
+replays its warnings, and is used only where those steps fit the remaining
+budget and the original staging depth is at least the current one; otherwise
+the request runs fresh and fails exactly as it would have. Failures and work
+done while a layout query exhausted its budget are never recorded.
+`FrontendOptions::reuseConstantEvaluations` disables both caches for tests that
+prove a program's diagnostics are identical either way. HIR retains the
+synthetic syntax it references, so a cached closure outlives its provider.
+
 ## Immediate Invocation Publication
 
 `consteval` shares constexpr signature eligibility but requires ordinary
