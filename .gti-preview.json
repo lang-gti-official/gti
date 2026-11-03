@@ -551,6 +551,24 @@
         "2817556d436756eb31ab7ba1199266d2bd76ae8c"
       ],
       "merge": "2817556d436756eb31ab7ba1199266d2bd76ae8c"
+    },
+    {
+      "task": "preview-manual-publisher",
+      "pr": 177,
+      "head": "8b87e348f0e4d5027772012331fea96fae50ca9b",
+      "tests": [
+        "ci_release",
+        "compiler_pipeline",
+        "mir_census_profile_controls",
+        "mir_census_regression",
+        "preview_release",
+        "preview_workflow",
+        "test_ownership_map"
+      ],
+      "contributions": [
+        "f0fbf09e0d98219b14a3fd556d704f769ed9bc31"
+      ],
+      "merge": "f0fbf09e0d98219b14a3fd556d704f769ed9bc31"
     }
   ],
   "removed": [],
