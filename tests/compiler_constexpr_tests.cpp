@@ -6727,13 +6727,12 @@ void testConstantEvaluationReuse() {
                            return diagnostic.code == "GTI-S2057" &&
                                   (diagnostic.message.find(named) !=
                                        std::string::npos ||
-                                   std::any_of(
-                                       diagnostic.hints.begin(),
-                                       diagnostic.hints.end(),
-                                       [&](const std::string &hint) {
-                                         return hint.find(named) !=
-                                                std::string::npos;
-                                       }));
+                                   std::any_of(diagnostic.hints.begin(),
+                                               diagnostic.hints.end(),
+                                               [&](const std::string &hint) {
+                                                 return hint.find(named) !=
+                                                        std::string::npos;
+                                               }));
                          }),
          "an executed runtime-only call in a reused lazy closure names its "
          "callee");
