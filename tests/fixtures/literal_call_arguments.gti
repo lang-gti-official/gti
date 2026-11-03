@@ -94,5 +94,7 @@ int main() {
   int borrowedResult = borrowed(Borrowed(), 5);
   if (borrowedResult != 12 || drops != 1 || exact(Passive(), 5) != 1) { return 14; }
   if (narrow(+(255)) != 255 || signed8((-(128))) != -128) { return 15; }
+  if (signed64(-((9223372036854775808))) != -9223372036854775808 ||
+      unsigned64(((18446744073709551615))) != 18446744073709551615) { return 16; }
   return 0;
 }

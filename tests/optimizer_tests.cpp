@@ -9519,7 +9519,8 @@ void testContextualSignedMinimumIdentityChain() {
 int main() {
   int8_t smallest = (-(128));
   int16_t wider = (-((32768)));
-  if (smallest != -128 || wider != -32768) { return 1; }
+  int64_t widest = -((9223372036854775808));
+  if (smallest != -128 || wider != -32768 || widest != -9223372036854775808) { return 1; }
   return 0;
 }
 )");

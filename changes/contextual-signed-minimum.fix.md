@@ -1,1 +1,1 @@
-Preserve parenthesized signed-minimum literals through MIR optimization, including narrow integer arguments, without introducing a runtime conversion or weakening integer-range verification.
+Accept parenthesized `int64_t` minimum literals consistently and preserve parenthesized signed-minimum literals through MIR optimization, including narrow integer arguments, without introducing a runtime conversion or weakening integer-range verification.

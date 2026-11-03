@@ -12183,7 +12183,8 @@ auto SemanticVisitor::Impl::visitUnaryExpr(const Unary &expr) -> void {
     return;
   }
   if (expr.oper().kind == TokenKind::MINUS) {
-    if (const auto *literal = exprAs<LiteralExpr>(expr.right().get());
+    if (const auto *literal =
+            contextualIntegerLiteral(expr.right().get(), false);
         literal != nullptr) {
       const auto *magnitude = std::get_if<std::uint64_t>(&literal->value());
       if (magnitude != nullptr && *magnitude == (std::uint64_t{1} << 63U)) {
