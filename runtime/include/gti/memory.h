@@ -21,6 +21,10 @@ int32_t gti_rt_address_is_aligned_v1(const void *address, uint64_t alignment);
 void *gti_rt_aligned_malloc_v1(uint64_t bytes, uint64_t alignment);
 void gti_rt_aligned_free_v1(void *address);
 #else
+// Preconditions: 0 < bytes <= SIZE_MAX. Source/backend policy separately
+// proves that malloc alignment suffices for the requested object. Null means
+// exhaustion; release through gti_rt_posix_free_v1. No extent rounding.
+void *gti_rt_malloc_v1(uint64_t bytes);
 uint64_t gti_rt_posix_pointer_size_v1(void);
 int32_t gti_rt_posix_enomem_v1(void);
 int32_t gti_rt_posix_einval_v1(void);

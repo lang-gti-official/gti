@@ -1,0 +1,1 @@
+Add `std::vector::swap_elements_unchecked` for restoring element exchanges when an unsafe caller has proved both indices live. Sorting uses its existing range proofs to avoid repeating bounds checks at each exchange; checked swaps retain their diagnostics and cleanup guarantees.

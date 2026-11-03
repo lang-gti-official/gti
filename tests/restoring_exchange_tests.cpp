@@ -545,6 +545,13 @@ int main() {
         "return item;",
         "std::vector<int> v{}; v.swap_elements(std::size_t(0), "
         "std::size_t(0));",
+        "mut std::vector<int> v{}; v.push_back(1); "
+        "v.swap_elements_unchecked(std::size_t(0), std::size_t(0));",
+        "std::vector<int> v{}; unsafe { "
+        "v.swap_elements_unchecked(std::size_t(0), std::size_t(0)); }",
+        "mut std::vector<int> v{}; v.push_back(1); int& item = "
+        "v[std::size_t(0)]; unsafe { v.swap_elements_unchecked("
+        "std::size_t(0), std::size_t(0)); } return item;",
         "mut std::array<int, 2> v{}; v.swap(v);",
         "mut std::vector<Resource> v{}; v.push_back(Resource(1)); Resource "
         "escaped = std::move(v[std::size_t(0)]);"}) {

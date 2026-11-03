@@ -988,6 +988,15 @@ traversal carries one exclusive dependency. `map` additionally provides
 `bucket_count`, `load_factor`, and read/write `max_load_factor`; a new finite,
 positive maximum applies to later growth/reserve/rehash without immediately
 rehashing existing elements.
+`reserve(n)` prepares the bucket array and owning page index for at least `n`
+entries. Hash nodes share checked typed-storage pages and keep their final
+addresses across page-index growth, rehashing and movement of the owner. A page
+holds 64 nodes of at most 64 bytes, 16 nodes of at most 256 bytes, or one larger
+node; this bounds spare payload storage for large element types. Erased slots
+are reused, and each live node is destroyed exactly once in reverse slot order
+when clearing or dropping the owner. Reserving does not construct keys or
+values or change the container's size. These internal stable addresses do not
+relax the whole-container borrow rules above.
 
 Name a specialized member type through a concrete alias, for example
 `using Dictionary = std::map<int, int>;` followed by `Dictionary::iterator`.
@@ -1066,25 +1075,64 @@ distinct and unborrowed. `std::array` and `std::vector` expose
 indices are checked against the initialized length before mutation. Equal
 **valid** indices are a no-op; equal invalid indices still fail. Bounds failure
 uses ordinary defined-failure cleanup and leaves the sequence unchanged.
+`std::vector::swap_elements_unchecked(left, right) mut` provides the same
+restoring exchange inside an unsafe context when the caller proves both
+indices are below `size()`, even if they are equal. The operation still requires
+relocatable elements and an exclusive mutable borrow; it does not permit a
+live element loan across the swap. It moves each value without copying or
+running its destructor.
 
 Whole-vector `std::reverse` and both `std::sort` overloads accept relocatable
-move-only elements. Sort uses adaptive iterative introsort. Whole inputs longer
-than 16 elements first receive a monotonic-order probe: a nondecreasing range
-is already finished, and a nonincreasing range is reversed with checked swaps.
+move-only elements. Whole inputs longer than 16 elements first receive a
+monotonic-order probe: a nondecreasing range
+is already finished, and a nonincreasing range is reversed with restoring swaps.
 Equivalent prefixes and plateaus are supported. The probe stops at the first
 change in strict direction, without moving any element; ordered inputs need
-at most two comparisons per adjacent pair. Other inputs use median-of-three
+at most two comparisons per adjacent pair.
+
+For the default ordering of builtin signed/unsigned integers, unordered ranges
+longer than 128 elements use an in-place most-significant-byte radix sort.
+Order-preserving unsigned keys cover all eight fixed-width integer types, including signed
+minima and maxima. Equal leading bytes are skipped; ranges of at most 32 values
+finish with primitive insertion sort. Each recursive level fixes a differing
+byte, so depth is at most eight, with at most two 256-entry counter arrays per level and
+no allocation. The private helper receives only the live element address and
+range, keeping vector metadata outside the recursive call. Its caller retains
+the exclusive vector borrow. Histogram totals and bucket cursors prove every
+read/write address live; primitive copies and assignments cannot invoke user
+code or fail. A displaced value is carried locally while a permutation cycle
+fills its destinations. When only the last key byte differs, each nonempty
+histogram bucket identifies one exact input value. That terminal level writes
+the counted runs directly, preserving the multiset without permutation cycles;
+it reconstructs only represented values, including signed minima. This path
+is unavailable to user comparators and user-defined element types.
+
+All other inputs use adaptive iterative introsort with median-of-three
 quicksort partitions (a median of three sampled medians for ranges longer
 than 40), insertion sort for ranges of at most 16 elements, and heapsort for
 any range that exhausts 2*floor(log2(n)) partition levels. Comparisons are
 O(n log n) in the worst case, auxiliary storage is a fixed-size stack, and
-elements move only by checked swaps, without copying a pivot or cloning
+elements move only by restoring swaps, without copying a pivot or cloning
 elements. It is not stable. The default relation requires `std::totally_ordered<T>`; an
 explicit comparator must satisfy `std::comparator<Compare, T>` and define a
 strict weak ordering. Each comparison borrows elements read-only, ending those
-loans before any swap. A failed comparator leaves a valid permutation, not a
+loans before any swap. Internal sorting ranges prove every read and exchange
+index live, so the unsafe implementation uses unchecked accesses and swaps
+without repeated index checks. A failed comparator leaves a valid permutation, not a
 promised partially sorted order, and normal cleanup destroys each remaining
 element exactly once. Empty and singleton inputs perform no comparisons.
+The source implementation uses `get_unchecked` only where its subrange,
+window, or loop bounds establish a live element. Internal range-taking helpers
+are explicitly unsafe; the safe sort entry point establishes and preserves
+their range preconditions. These bounds do not depend on a comparator returning
+a particular answer. Public checked swaps retain both index checks; every
+restoring exchange retains the same move and cleanup behavior.
+Partition offset arrays and the pending-range stack also use internally
+proved indices: a window records at most 32 offsets, and continuing with the
+smaller partition bounds pending ranges by the bit width of `size_t`. Within
+the complete windows, bounded counter and address arithmetic is exact even
+when expressed with wrapping operations; it cannot wrap for an admitted
+range. Comparator failures and public index checks are unchanged.
 See [move-only ordering](../../examples/104-move-only-ordering.gti).
 
 `std::string(begin, end, other)` copies the code units in the half-open interval
@@ -1096,6 +1144,11 @@ precede endpoint subtraction, allocation of the copied range, and source reads.
 The source is borrowed only during construction. Later mutations of either
 string do not affect the other, and the result may outlive its source. Indices
 count code units, not Unicode characters, and embedded zero bytes are copied.
+
+Single-character `string::find` scans complete 16-code-unit windows with an
+independent comparison reduction, then locates the first match or scans the
+short tail. It never reads the terminator or bytes outside the counted string.
+Positions at or past the length return `npos`, including `npos` itself.
 
 `std.memory` exposes `std::layout_of<T>()`, returning an ordinary
 `std::layout` with `size_t bytes` and `size_t alignment` fields. These are the

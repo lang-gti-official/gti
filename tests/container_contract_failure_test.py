@@ -25,6 +25,21 @@ public:
   Guard() : token(std::make_unique<int>(7)) {}
   ~Guard() { if (this.token != nullptr) std::println("cleaned"); }
 };
+class EntryGuard {
+  int id;
+public:
+  EntryGuard(int id) : id(id) {}
+  EntryGuard(EntryGuard& other) = delete;
+  EntryGuard(EntryGuard&& other) = default;
+  ~EntryGuard() { std::println(this.id); }
+};
+class FailingEntry {
+  EntryGuard member;
+public:
+  FailingEntry(int id, int divisor) : member(EntryGuard(id)) {
+    int checked = 1 / divisor;
+  }
+};
 """
     cases = {
         "argument-check": ("mut std::unordered_map<int, int> values{}; values.max_load_factor(0.0);", 16,
@@ -41,6 +56,22 @@ public:
                                     16, "invalid_container_argument", "container_argument"),
         "success": ("mut std::unordered_map<int, int> values{}; values.max_load_factor(0.5); [[discard]] values.insert(1, 2); int key = 1; [[discard]] values.at(key);",
                     0, "", ""),
+        "unordered-page-cleanup": ("""mut std::unordered_map<int, EntryGuard> values{};
+for (mut int i = 0; i < 65; i++) { [[discard]] values.try_emplace(i, i); }
+int replaced = 16; [[discard]] values.erase(replaced);
+[[discard]] values.try_emplace(replaced, 116);
+int missing = 1000; [[discard]] values.at(missing);""",
+                                   15, "key_not_found", "key_lookup"),
+        "unordered-page-construction": ("""mut std::unordered_map<int, FailingEntry> values{};
+for (mut int i = 0; i < 65; i++) { [[discard]] values.try_emplace(i, i, 1); }
+[[discard]] values.try_emplace(65, 65, 0);""",
+                                       2, "division_by_zero", "integer_division"),
+    }
+    cleanup = {
+        "unordered-page-cleanup": "16\n" + "".join(
+            f"{116 if index == 16 else index}\n" for index in reversed(range(65))) + "cleaned\n",
+        "unordered-page-construction": "65\n" + "".join(
+            f"{index}\n" for index in reversed(range(65))) + "cleaned\n",
     }
     for label, value in (("negative", "-0.5"), ("nan", "std::sqrt(-1.0)"),
                          ("infinity", "std::exp(1000.0)")):
@@ -49,12 +80,19 @@ public:
             16, "invalid_container_argument", "container_argument")
     modes = [(f"{standard}-{level}", ["--std", standard, f"-{level}"], [])
              for standard in ("c++20", "c++23") for level in ("O0", "O1", "O3")]
+    modes += [(f"llvm-{level}", ["--backend", "llvm", f"-{level}"], [])
+              for level in ("O0", "O1", "O2", "O3")]
     modes += [("no-elide", ["--std", "c++23", "-O0"], ["-fno-elide-constructors"]),
               ("sanitized", ["--std", "c++23", "-O1"],
                ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])]
     selected = [sys.argv[index + 1] for index, value in enumerate(sys.argv) if value == "--mode"]
     if selected:
         modes = [mode for mode in modes if mode[0] in selected]
+    selected_cases = [sys.argv[index + 1] for index, value in enumerate(sys.argv)
+                      if value == "--case"]
+    if selected_cases:
+        assert all(name in cases for name in selected_cases), selected_cases
+        cases = {name: case for name, case in cases.items() if name in selected_cases}
     with tempfile.TemporaryDirectory(prefix="gti-container-contract-") as temporary:
         root = Path(temporary)
         for expression in ("gti_internal::require_key(1)",
@@ -77,7 +115,7 @@ public:
                 result = subprocess.run(command, capture_output=True, text=True, timeout=120, env=environment)
                 assert result.returncode == 0, (name, label, result.stdout, result.stderr)
                 result = subprocess.run([str(executable)], capture_output=True, text=True, timeout=30, env=environment)
-                assert result.returncode == (70 if code else 0) and result.stdout == "cleaned\n", (name, label, result)
+                assert result.returncode == (70 if code else 0) and result.stdout == cleanup.get(name, "cleaned\n"), (name, label, result)
                 if code:
                     assert re.fullmatch(rf".+:\d+: runtime error\[GTI-R{code:04d}\]: {category} in {detail}\n", result.stderr), result.stderr
                 else:
