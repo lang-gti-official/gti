@@ -347,6 +347,12 @@ plan configures the same optimized bundled-LLVM release profile, builds the
 installed/test target closure, runs combined admission and installed consumers,
 and exports the resulting packages. Each platform must have a successful,
 clean, exact-source remote-runner report executing that complete known plan.
+Linux uses Ubuntu 24.04, either directly or through an immutable Docker image
+ID built from `scripts/preview-ubuntu24.Dockerfile`; newer host distributions
+cannot silently raise the package's runtime requirements. macOS builds target
+26.0 explicitly, including installed-program checks. Both use the same
+checksum-pinned Neovim setup as CI. Receipts bind the production environment
+and any container image ID as well as source and package identities.
 `record` binds package hashes to those reports; `check` verifies both platforms
 and embedded inclusion records; `admit` records that evidence through the preview
 helper and publishes the append-only source candidate. `publish` uses the same

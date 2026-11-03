@@ -21,23 +21,37 @@ STEPS = ('configure', 'build', 'admission', 'installed', 'package')
 MARKER = 'GTI_REMOTE_PREVIEW_PACKAGE='
 
 
-def plan(sha, platform, output, jobs=4, test_jobs=4):
+def plan(sha, platform, output, jobs=4, test_jobs=4, image=None):
     preview_release.checked_sha(sha)
     if platform not in PLATFORMS or not Path(output).is_absolute():
         raise ValueError('reviewed platform and absolute export directory required')
     if not 1 <= jobs <= 64 or not 1 <= test_jobs <= 64:
         raise ValueError('invalid resource budget')
+    if image is not None and (platform != 'linux-x64' or not re.fullmatch(r'sha256:[a-f0-9]{64}', image)):
+        raise ValueError('Linux container must use its immutable image ID')
     return [{'name': name, 'kind': 'build' if name in ('configure', 'build', 'package') else 'suite',
              'cwd': 'source', 'argv': ['python3', '{source}/scripts/preview_remote.py', 'step', name,
              '--sha', sha, '--platform', platform, '--build', '{build}', '--output', str(output),
-             '--jobs', str(jobs), '--test-jobs', str(test_jobs)]} for name in STEPS]
+             '--jobs', str(jobs), '--test-jobs', str(test_jobs)] +
+             (['--container-image', image] if image else [])} for name in STEPS]
 
 
 def execute(argv, *, env=None, cwd=None):
     subprocess.run(list(map(str, argv)), check=True, env=env, cwd=cwd)
 
 
-def step(name, sha, platform, build, output, jobs, test_jobs):
+def production_environment(platform, image=None):
+    if platform == 'linux-x64':
+        release = host.freedesktop_os_release()
+        if release.get('ID') != 'ubuntu' or release.get('VERSION_ID') != '24.04':
+            raise ValueError('Linux production packages require Ubuntu 24.04, directly or in a container')
+        return {'os': 'ubuntu-24.04', 'image': image}
+    if int(host.mac_ver()[0].split('.')[0]) < 26:
+        raise ValueError('macOS production requires macOS 26 or newer with deployment target 26.0')
+    return {'os': 'macos', 'deployment_target': '26.0', 'image': None}
+
+
+def step(name, sha, platform, build, output, jobs, test_jobs, image=None):
     root = Path(__file__).resolve().parents[1]
     expected = {'darwin-arm64': ('Darwin', 'arm64'), 'linux-x64': ('Linux', 'x86_64')}[platform]
     if (host.system(), host.machine()) != expected:
@@ -46,18 +60,43 @@ def step(name, sha, platform, build, output, jobs, test_jobs):
         raise ValueError('source head changed')
     if preview_release.command('git', '-C', str(root), 'status', '--porcelain'):
         raise ValueError('release source is not clean')
+    if image:
+        plan(sha, platform, output, jobs, test_jobs, image)
+        build.mkdir(parents=True, exist_ok=True)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        execute(['docker', 'run', '--rm', '--init', '--cpus', jobs,
+                 '--mount', f'type=bind,source={root},target={root},readonly',
+                 '--mount', f'type=bind,source={build},target={build}',
+                 '--mount', f'type=bind,source={output.parent},target={output.parent}',
+                 '--workdir', root, '--env', 'GTI_PREVIEW_IMAGE='+image, image,
+                 'python3', root/'scripts/preview_remote.py', 'step', name,
+                 '--sha', sha, '--platform', platform, '--build', build,
+                 '--output', output, '--jobs', jobs, '--test-jobs', test_jobs])
+        return
+    environment = production_environment(platform, os.environ.get('GTI_PREVIEW_IMAGE'))
     cc, cxx = (('/usr/bin/clang', '/usr/bin/clang++') if platform == 'darwin-arm64'
                else ('/usr/bin/gcc-14', '/usr/bin/g++-14'))
     env = dict(os.environ, CC=cc, CXX=cxx, CTEST_PARALLEL_LEVEL=str(test_jobs),
                GTI_TEST_JOBS=str(test_jobs))
+    if platform == 'darwin-arm64':
+        env['MACOSX_DEPLOYMENT_TARGET'] = '26.0'
     stage = build / 'preview-stage'
+    editor_path = build / 'preview-editor.path'
+    if name == 'configure':
+        from configure_ci_editor import stage as stage_editor
+        editor_path.unlink(missing_ok=True)
+        stage_editor(build/'preview-editor', editor_path)
+    if not editor_path.is_file():
+        raise ValueError('checksum-pinned editor setup is missing')
+    env['PATH'] = editor_path.read_text().strip() + os.pathsep + env['PATH']
     if name == 'configure':
         query = build / '.cmake/api/v1/query'; query.mkdir(parents=True, exist_ok=True)
         (query / 'codemodel-v2').touch()
         execute(['cmake', '-S', root, '-B', build, '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release',
                  '-DGTI_RELEASE_BUILD=ON', '-DGTI_BUNDLE_LLVM=ON', '-DBUILD_TESTING=ON',
                  '-DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF', '-DCMAKE_C_COMPILER='+cc,
-                 '-DCMAKE_CXX_COMPILER='+cxx], env=env)
+                 '-DCMAKE_CXX_COMPILER='+cxx] +
+                (['-DCMAKE_OSX_DEPLOYMENT_TARGET=26.0'] if platform == 'darwin-arm64' else []), env=env)
     elif name == 'build':
         execute(['python3', root/'scripts/preview_build.py', '--source', root, '--build', build,
                  '--parallel', jobs], env=env)
@@ -103,6 +142,7 @@ def step(name, sha, platform, build, output, jobs, test_jobs):
         if {p.name for p in output.iterdir()} != names:
             raise ValueError('unexpected exported package inventory')
         print(MARKER + json.dumps({'sha': sha, 'platform': platform, 'profile': PROFILE,
+                                  'environment': environment,
                                   'files': {n: digest(output/n) for n in sorted(names)}}), flush=True)
     else:
         raise ValueError('unknown release step')
@@ -129,7 +169,8 @@ def receipt(results, sha, platform):
     try:
         argv = request['steps'][0]['argv']
         value = lambda flag: argv[argv.index(flag)+1]
-        expected = plan(sha, platform, value('--output'), int(value('--jobs')), int(value('--test-jobs')))
+        image = value('--container-image') if '--container-image' in argv else None
+        expected = plan(sha, platform, value('--output'), int(value('--jobs')), int(value('--test-jobs')), image)
     except (KeyError, IndexError, ValueError, TypeError) as error:
         raise ValueError('invalid remote preview plan') from error
     if request['steps'] != expected or len(report.get('steps', [])) != len(expected):
@@ -155,12 +196,15 @@ def receipt(results, sha, platform):
     if len(rows) != 1:
         raise ValueError('remote package receipt missing or ambiguous')
     package = json.loads(rows[0])
+    environment = ({'os': 'ubuntu-24.04', 'image': image} if platform == 'linux-x64' else
+                   {'os': 'macos', 'deployment_target': '26.0', 'image': None})
     names = {f'gti-preview-{platform}.tar.gz', f'gti-preview-{platform}.tar.gz.sha256'}
     if (package.get('sha') != sha or package.get('platform') != platform or package.get('profile') != PROFILE
-            or set(package.get('files', {})) != names):
+            or package.get('environment') != environment or set(package.get('files', {})) != names):
         raise ValueError('remote package identity mismatch')
     return {'schema': 2, 'executor': 'remote-runner', 'channel': 'preview', 'sha': sha,
             'platform': platform, 'profile': PROFILE, 'repository': preview_release.REPOSITORY,
+            'environment': environment,
             'run_id': run, 'snapshot_sha256': snapshot, 'files': package['files'],
             'report_sha256': digest(results/'report.json'), 'request_sha256': digest(results/'request.json')}
 
@@ -217,14 +261,15 @@ def main():
     parser.add_argument('--output', type=Path)
     parser.add_argument('--jobs', type=int, default=4)
     parser.add_argument('--test-jobs', type=int, default=4)
+    parser.add_argument('--container-image', help='immutable Ubuntu 24.04 Docker image ID for Linux')
     parser.add_argument('--results', action='append', default=[], help='PLATFORM=retained remote results directory')
     parser.add_argument('--repo', type=Path)
     parser.add_argument('--candidate')
     args = parser.parse_args(); preview_release.checked_sha(args.sha)
     if args.mode == 'plan':
-        print(json.dumps(plan(args.sha, args.platform, args.output, args.jobs, args.test_jobs), indent=2))
+        print(json.dumps(plan(args.sha, args.platform, args.output, args.jobs, args.test_jobs, args.container_image), indent=2))
     elif args.mode == 'step':
-        step(args.step, args.sha, args.platform, args.build, args.output, args.jobs, args.test_jobs)
+        step(args.step, args.sha, args.platform, args.build, args.output, args.jobs, args.test_jobs, args.container_image)
     else:
         results = dict(item.split('=', 1) for item in args.results)
         if args.mode == 'record':verify(args.output, args.sha, results, record=True)
