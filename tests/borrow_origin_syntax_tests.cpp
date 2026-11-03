@@ -200,6 +200,34 @@ int main() {
 } // namespace
 
 int main() {
+  {
+    const std::string source =
+        "int main() { auto relay = [](mut int& value) -> mut int& { "
+        "return value; }; return 0; }";
+    lang::Lexer lexer;
+    lang::Parser parser(lexer.scan(source, "lambda-reference-syntax.gti"));
+    const auto program = parser.parse();
+    expect(!parser.hadError() && program.declarations().size() == 1,
+           "mutable lambda result syntax must parse");
+    const auto *function =
+        lang::stmtAs<lang::FunctionDecl>(program.declarations().front().get());
+    const auto *binding =
+        function && function->body()
+            ? lang::stmtAs<lang::VariableDecl>(
+                  function->body()->statements().front().get())
+            : nullptr;
+    const auto *lambda =
+        binding ? lang::exprAs<lang::Lambda>(binding->initializer().get())
+                : nullptr;
+    expect(lambda && lambda->returnType().reference &&
+               lambda->returnType().referenceMutability,
+           "lambda result must preserve its reference and access tokens");
+    const auto &access = *lambda->returnType().referenceMutability;
+    expect(access.source == "lambda-reference-syntax.gti" &&
+               access.position == source.find("-> mut") + 3 &&
+               access.lexeme == "mut",
+           "lambda result access must retain its exact source span");
+  }
   testAttributes();
   testMalformedAttributes();
   testFormatting();
