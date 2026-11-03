@@ -1,0 +1,1 @@
+Allow maintainers to publish preview toolchains validated on both remote platforms with explicit source-bound provenance, without repeating those production builds in GitHub Actions. Nightly, beta and stable admission remain unchanged.
