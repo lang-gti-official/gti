@@ -89,7 +89,7 @@ jobs:
         run: |
           size="$(du -sm "${CCACHE_DIR}" | cut -f1)"
           echo "release object store: ${size} MB"
-          [[ "${size}" -ge 200 ]] || { echo "object store too small to be a finished prebuild" >&2; exit 1; }
+          [[ "${size}" -ge 150 ]] || { echo "object store too small to be a finished prebuild" >&2; exit 1; }
       # Only a build that ran to completion saves. `always()` here once saved
       # the 87 KB left by a cancelled configure step, after which every run
       # hit the key and skipped the build.

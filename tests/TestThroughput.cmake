@@ -363,4 +363,11 @@ foreach(suite IN LISTS gti_throughput_tests)
   if(suite MATCHES "(runtime|end_to_end|corpus|oracle|workflow|^stdlib_surface$)")
     set_property(TEST "${suite}" APPEND PROPERTY LABELS "end-to-end")
   endif()
+  # The frozen C++ backend's own tests (scripts/validation_checks.py
+  # CPP_ONLY_PREFIXES, which test_throughput_registration keeps in step): the
+  # scheduled C++ job runs them; broad local runs exclude them with
+  # `-LE cpp-backend`.
+  if(suite MATCHES "^(cpp_mir_|cpp_debug_artifacts|lowered_program_corpus_census)")
+    set_property(TEST "${suite}" APPEND PROPERTY LABELS "cpp-backend")
+  endif()
 endforeach()

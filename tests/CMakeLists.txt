@@ -5897,7 +5897,8 @@ if(Python3_Interpreter_FOUND)
               "${PROJECT_SOURCE_DIR}/tests/managed_thread_tsan_test.py"
               "$<TARGET_FILE:gti>"
               "${PROJECT_SOURCE_DIR}/tests/fixtures/managed_thread_class_result.gti"
-              "${CMAKE_CXX_COMPILER}"
+              "$<TARGET_FILE:gti_llvm_instrumented_source>"
+              "${LLVM_TOOLS_BINARY_DIR}/clang++"
     )
     set_tests_properties(managed_thread_tsan PROPERTIES TIMEOUT 300)
     foreach(fixture shared_mutex_threads transfer_function_threads
@@ -5910,7 +5911,6 @@ if(Python3_Interpreter_FOUND)
                 "${PROJECT_SOURCE_DIR}/tests/managed_thread_tsan_test.py"
                 "$<TARGET_FILE:gti>"
                 "${PROJECT_SOURCE_DIR}/tests/fixtures/${fixture}.gti"
-                "${CMAKE_CXX_COMPILER}"
                 "$<TARGET_FILE:gti_llvm_instrumented_source>"
                 "${LLVM_TOOLS_BINARY_DIR}/clang++"
       )
@@ -5941,11 +5941,11 @@ if(Python3_Interpreter_FOUND)
       NAME atomic_tsan
       COMMAND "${Python3_EXECUTABLE}"
               "${PROJECT_SOURCE_DIR}/tests/atomic_tsan_test.py"
-              "$<TARGET_FILE:gti>"
+              "$<TARGET_FILE:gti_llvm_instrumented_source>"
+              "${LLVM_TOOLS_BINARY_DIR}/clang++"
               "${PROJECT_SOURCE_DIR}/tests/fixtures/atomic_concurrent.gti"
               "${PROJECT_SOURCE_DIR}/tests/fixtures/atomic_orders.gti"
               "${PROJECT_SOURCE_DIR}/tests/fixtures/atomic_fetch.gti"
-              "${CMAKE_CXX_COMPILER}"
               "${PROJECT_SOURCE_DIR}/tests/fixtures/atomic_wait.gti"
     )
     set_tests_properties(atomic_tsan PROPERTIES TIMEOUT 600)
@@ -5963,9 +5963,9 @@ if(Python3_Interpreter_FOUND)
       NAME mutex_tsan
       COMMAND "${Python3_EXECUTABLE}"
               "${PROJECT_SOURCE_DIR}/tests/mutex_tsan_test.py"
-              "$<TARGET_FILE:gti>"
+              "$<TARGET_FILE:gti_llvm_instrumented_source>"
+              "${LLVM_TOOLS_BINARY_DIR}/clang++"
               "${PROJECT_SOURCE_DIR}/tests/fixtures/mutex_concurrent.gti"
-              "${CMAKE_CXX_COMPILER}"
     )
     set_tests_properties(mutex_tsan PROPERTIES TIMEOUT 300)
     add_test(
