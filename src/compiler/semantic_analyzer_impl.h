@@ -243,12 +243,14 @@ public:
       RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off,
       bool requireFunctionDefinitions = false,
       TrustedBodyAnalysis trustedBodies = TrustedBodyAnalysis::Complete,
-      SourceDebugProfile sourceDebugProfile = SourceDebugProfile::None)
+      SourceDebugProfile sourceDebugProfile = SourceDebugProfile::None,
+      CompileLimits compileLimits = {})
       : target(std::move(target)), sourceGraph(sourceGraph), sources(sources),
         toolingOccurrences(toolingOccurrences), workMetrics(workMetrics),
         rawPointerAudit(rawPointerAudit),
         requireFunctionDefinitions(requireFunctionDefinitions),
-        trustedBodies(trustedBodies), sourceDebugProfile(sourceDebugProfile) {
+        trustedBodies(trustedBodies), sourceDebugProfile(sourceDebugProfile),
+        compileLimits(compileLimits) {
     semanticModel.setToolingOccurrencesEnabled(toolingOccurrences);
     semanticModel.setSourceDebugProfile(sourceDebugProfile);
   }
@@ -2084,8 +2086,10 @@ private:
     ConstexprEvaluation failure;
   };
 
-  static constexpr std::size_t constexprExpressionStepLimit = 4096;
   static constexpr std::size_t constexprCallDepthLimit = 64;
+  // Concrete class instances one layout query may validate. A compiler work
+  // bound on instance discovery, not a constant-evaluation step limit.
+  static constexpr std::size_t layoutAssertionInstanceLimit = 4096;
 
   [[nodiscard]] std::optional<ConstexprEvaluation> executeStagedConstexpr(
       const std::variant<const FunctionDecl *, ResolvedConstructionInfo>
@@ -7678,6 +7682,9 @@ private:
   bool requireFunctionDefinitions = false;
   TrustedBodyAnalysis trustedBodies = TrustedBodyAnalysis::Complete;
   SourceDebugProfile sourceDebugProfile = SourceDebugProfile::None;
+  // The compilation's per-request limits (FrontendOptions::limits). Every
+  // worker analyzer this one creates receives the same value.
+  CompileLimits compileLimits;
 
   // ---- Staged constant evaluation worker --------------------------------
   // The model the constants required here stage against: this analyzer's

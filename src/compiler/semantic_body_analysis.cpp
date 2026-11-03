@@ -10657,7 +10657,7 @@ auto SemanticVisitor::Impl::validateLayoutClassAssertions(
         work->failure = diagnostics.back();
         return false;
       }
-      if (work->instances >= constexprExpressionStepLimit) {
+      if (work->instances >= layoutAssertionInstanceLimit) {
         report(query,
                "Layout query class assertions exceeded the compiler "
                "instantiation-work limit.",
@@ -13325,7 +13325,7 @@ auto SemanticVisitor::Impl::evaluateConstexprMutation(
 auto SemanticVisitor::Impl::defaultConstexprValue(
     const SemanticType &type, ConstexprInterpreter &context) const
     -> ConstantEvaluation {
-  if (context.work->steps++ >= constexprExpressionStepLimit) {
+  if (context.work->steps++ >= compileLimits.constexprSteps) {
     return {.failure = ConstantEvaluationFailure::ResourceLimit};
   }
   if (const std::optional<CheckedIntegerDomain> domain =
@@ -13691,7 +13691,7 @@ auto SemanticVisitor::Impl::evaluateConstexprExpression(
 
 auto SemanticVisitor::Impl::evaluateConstexprExpression(
     const Expr &source, ConstexprInterpreter &context) -> ConstexprEvaluation {
-  if (context.work->steps++ >= constexprExpressionStepLimit) {
+  if (context.work->steps++ >= compileLimits.constexprSteps) {
     return constexprFailure(expressionToken(source),
                             ConstantEvaluationFailure::ResourceLimit);
   }
@@ -14520,7 +14520,7 @@ auto SemanticVisitor::Impl::executeConstexprStatement(
   if (statement == nullptr) {
     return {};
   }
-  if (context.work->steps++ >= constexprExpressionStepLimit) {
+  if (context.work->steps++ >= compileLimits.constexprSteps) {
     return constexprStatementFailure(
         constexprFailure({}, ConstantEvaluationFailure::ResourceLimit));
   }

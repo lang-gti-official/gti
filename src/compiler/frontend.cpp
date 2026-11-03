@@ -373,8 +373,12 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   StmtList declarations;
   bool syntaxValid = true;
   const std::string syntaxCacheContext = cacheContext(options);
+  // Compile limits decide which constant, macro and expansion requests
+  // succeed, so every semantic reuse (preamble, instance analysis) keys on
+  // them; lexing and parsing do not depend on them.
   std::string frontendCacheContext =
-      syntaxCacheContext + "\nsource-owners:" +
+      syntaxCacheContext + "\nlimits:" + compileLimitsIdentity(options.limits) +
+      "\nsource-owners:" +
       (result.sourceGraph.sourceOwners()
            ? result.sourceGraph.sourceOwners()->resolutionIdentity()
            : std::string{});
@@ -562,7 +566,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
             options.target, &result.sourceGraph, options.toolingOccurrences,
             nullptr, &result.sources, RawPointerAuditMode::Off,
             requireDefinitions, TrustedBodyAnalysis::Complete,
-            options.sourceDebugProfile);
+            options.sourceDebugProfile, options.limits);
         preamble = builder.buildPreamble(Program(std::move(prefix)));
         options.preambleCache->store(std::move(key), preamble);
         if (options.workMetrics != nullptr) {
@@ -592,7 +596,8 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     semanticOwner = std::make_unique<SemanticVisitor>(
         options.target, &result.sourceGraph, options.toolingOccurrences,
         options.workMetrics, &result.sources, options.rawPointerAudit,
-        requireDefinitions, trustedBodies, options.sourceDebugProfile);
+        requireDefinitions, trustedBodies, options.sourceDebugProfile,
+        options.limits);
     SemanticVisitor &semantic = *semanticOwner;
     semantic.requireFunctionBodies(requiredBodies);
     semantic.setCancellation(options.cancellation);

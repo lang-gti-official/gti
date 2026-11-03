@@ -1,5 +1,6 @@
 #pragma once
 
+#include "gti/compile_limits.h"
 #include "gti/semantic_model.h"
 
 #include <atomic>
@@ -79,7 +80,8 @@ public:
       RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off,
       bool requireFunctionDefinitions = false,
       TrustedBodyAnalysis trustedBodies = TrustedBodyAnalysis::Complete,
-      SourceDebugProfile sourceDebugProfile = SourceDebugProfile::None);
+      SourceDebugProfile sourceDebugProfile = SourceDebugProfile::None,
+      CompileLimits compileLimits = {});
   ~SemanticVisitor();
 
   SemanticVisitor(const SemanticVisitor &) = delete;

@@ -6,11 +6,12 @@ SemanticVisitor::SemanticVisitor(
     TargetInfo target, const SourceGraph *sourceGraph, bool toolingOccurrences,
     FrontendWorkMetrics *workMetrics, const SourceManager *sources,
     RawPointerAuditMode rawPointerAudit, bool requireFunctionDefinitions,
-    TrustedBodyAnalysis trustedBodies, SourceDebugProfile sourceDebugProfile)
-    : impl(std::make_unique<Impl>(std::move(target), sourceGraph,
-                                  toolingOccurrences, workMetrics, sources,
-                                  rawPointerAudit, requireFunctionDefinitions,
-                                  trustedBodies, sourceDebugProfile)) {}
+    TrustedBodyAnalysis trustedBodies, SourceDebugProfile sourceDebugProfile,
+    CompileLimits compileLimits)
+    : impl(std::make_unique<Impl>(
+          std::move(target), sourceGraph, toolingOccurrences, workMetrics,
+          sources, rawPointerAudit, requireFunctionDefinitions, trustedBodies,
+          sourceDebugProfile, compileLimits)) {}
 
 SemanticVisitor::~SemanticVisitor() = default;
 SemanticVisitor::SemanticVisitor(SemanticVisitor &&) noexcept = default;
@@ -21,7 +22,7 @@ auto SemanticVisitor::Impl::freshRequest() const -> std::unique_ptr<Impl> {
   auto fresh = std::make_unique<Impl>(target, sourceGraph, toolingOccurrences,
                                       workMetrics, sources, rawPointerAudit,
                                       requireFunctionDefinitions, trustedBodies,
-                                      sourceDebugProfile);
+                                      sourceDebugProfile, compileLimits);
   fresh->cancellation = cancellation;
   fresh->requiredFunctionBodies = requiredFunctionBodies;
   return fresh;

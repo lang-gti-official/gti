@@ -148,8 +148,47 @@ ColorArgument parseProgressArgument(int argc, char *argv[], int &index) {
   return ColorArgument::Accepted;
 }
 
+// `--<limit> <n>` or `--<limit>=<n>` for every CompileLimits entry. Each limit
+// may be given once; a value outside its range is rejected, never clamped.
+enum class LimitArgument { NotLimit, Accepted, Invalid };
+LimitArgument parseLimitArgument(int argc, char *argv[], int &index,
+                                 lang::CompileLimitOverrides &overrides) {
+  const std::string_view argument = argv[index];
+  if (!argument.starts_with("--"))
+    return LimitArgument::NotLimit;
+  const std::string_view spelling = argument.substr(2);
+  const std::size_t equals = spelling.find('=');
+  const lang::CompileLimitInfo *limit =
+      lang::findCompileLimit(spelling.substr(0, equals));
+  if (limit == nullptr)
+    return LimitArgument::NotLimit;
+  const std::string flag = "--" + std::string(limit->key);
+  std::string_view value;
+  if (equals != std::string_view::npos) {
+    value = spelling.substr(equals + 1);
+  } else if (++index >= argc) {
+    std::cerr << "gti: missing count after " << flag << '\n';
+    return LimitArgument::Invalid;
+  } else {
+    value = argv[index];
+  }
+  if (overrides.find(*limit)) {
+    std::cerr << "gti: " << flag << " may be specified only once\n";
+    return LimitArgument::Invalid;
+  }
+  std::string error;
+  const auto parsed = lang::parseCompileLimitValue(*limit, value, error);
+  if (!parsed) {
+    std::cerr << "gti: invalid " << flag << ": " << error << '\n';
+    return LimitArgument::Invalid;
+  }
+  overrides.set(*limit, *parsed);
+  return LimitArgument::Accepted;
+}
+
 struct Options {
   std::optional<lang::RawPointerAuditMode> rawPointerAudit;
+  lang::CompileLimitOverrides compileLimits;
   std::optional<bool> rawPointerAuditLibraryFindings;
   std::filesystem::path input;
   std::filesystem::path output;
@@ -203,6 +242,7 @@ enum class ProjectCommand {
 
 struct ProjectOptions {
   std::optional<lang::RawPointerAuditMode> rawPointerAudit;
+  lang::CompileLimitOverrides compileLimits;
   std::optional<bool> rawPointerAuditLibraryFindings;
   ProjectCommand command = ProjectCommand::Build;
   std::optional<std::string> package;
@@ -393,6 +433,17 @@ void printUsage(std::ostream &stream) {
          "                       Build progress: auto (default), plain, "
          "never.\n"
          "\n"
+         "Compile-time limits (direct and project commands; each overrides "
+         "the\n"
+         "root package's gti.toml [limits] entry of the same name):\n";
+  const lang::CompileLimits defaults;
+  for (const lang::CompileLimitInfo &limit : lang::compileLimitTable()) {
+    stream << "      --" << limit.key << " <n>\n"
+           << "                       " << limit.summary
+           << " (default: " << defaults.*limit.field << ").\n";
+  }
+  stream
+      << "\n"
          "Project build options:\n"
          "      --package <name> Select a package from the active workspace.\n"
          "      --profile <name> Select a manifest profile (default: dev).\n"
@@ -638,6 +689,12 @@ ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
     if (color == ColorArgument::Accepted) {
       continue;
     }
+    const auto limit =
+        parseLimitArgument(argc, argv, index, options.compileLimits);
+    if (limit == LimitArgument::Invalid)
+      return ArgumentResult::ExitFailure;
+    if (limit == LimitArgument::Accepted)
+      continue;
     const std::string argument = argv[index];
 
     if (argument == "--") {
@@ -1014,6 +1071,12 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
     if (color == ColorArgument::Accepted) {
       continue;
     }
+    const auto limit =
+        parseLimitArgument(argc, argv, index, options.compileLimits);
+    if (limit == LimitArgument::Invalid)
+      return ArgumentResult::ExitFailure;
+    if (limit == LimitArgument::Accepted)
+      continue;
     const std::string argument = argv[index];
     if (argument == "-h" || argument == "--help") {
       printUsage(std::cout);
@@ -2533,13 +2596,19 @@ int runDirect(const Options &options, const char *driver) {
           !(options.emitCpp || options.emitMir || options.emitNativeHeader));
 
   if (options.emitCpp || options.emitNativeHeader || options.emitMir) {
-    const lang::driver::CompilationRequest request(
-        options.input, toolchain.standardLibrary, target, options.optimization,
-        options.standard, {}, configuration.configurationFlags(),
-        optimizationOutputRequest(options),
-        lang::WarningPolicy(options.disabledWarnings), options.debugInfo, {},
-        options.rawPointerAudit.value_or(lang::RawPointerAuditMode::Off), {},
-        {}, options.rawPointerAuditLibraryFindings.value_or(false));
+    // Direct mode is manifest-independent: command-line limits over defaults.
+    const lang::driver::CompilationRequest request =
+        lang::driver::CompilationRequest(
+            options.input, toolchain.standardLibrary, target,
+            options.optimization, options.standard, {},
+            configuration.configurationFlags(),
+            optimizationOutputRequest(options),
+            lang::WarningPolicy(options.disabledWarnings), options.debugInfo,
+            {},
+            options.rawPointerAudit.value_or(lang::RawPointerAuditMode::Off),
+            {}, {}, options.rawPointerAuditLibraryFindings.value_or(false))
+            .withCompileLimits(
+                lang::resolveCompileLimits({}, options.compileLimits));
     const lang::driver::CompilationResult compilation =
         options.emitNativeHeader
             ? lang::driver::compileToNativeHeader(request, progress.observer())
@@ -2610,7 +2679,9 @@ int runDirect(const Options &options, const char *driver) {
                       lang::RawPointerAuditMode::Off),
                   {}, {},
                   options.rawPointerAuditLibraryFindings.value_or(false))
-                  .withBackend(backend),
+                  .withBackend(backend)
+                  .withCompileLimits(
+                      lang::resolveCompileLimits({}, options.compileLimits)),
               toolchain, generatedSource, options.output,
               lang::driver::discoverNativeCompiler(options.cxx),
               std::move(nativeInputs), options.keepCpp, false, options.verbose,
@@ -2950,7 +3021,8 @@ int buildProjectPlan(
                   plan.rawPointerAudit(), plan.programRequest(),
                   plan.declaredConfigurationFlags(),
                   plan.rawPointerAuditLibraryFindings())
-                  .withBackend(plan.backend()),
+                  .withBackend(plan.backend())
+                  .withCompileLimits(plan.compileLimits()),
               toolchain, plan.generatedSource(), plan.output(), cppCompiler,
               nativeInputs, plan.keepCpp(), true, options.verbose,
               lang::driver::ManagedOutputPolicy{
@@ -2991,6 +3063,7 @@ int runProjectBuildAll(const ProjectOptions &options, const char *driver) {
   overrides.optimization = options.optimization;
   overrides.cppStandard = options.standard;
   overrides.backend = options.backend;
+  overrides.compileLimits = options.compileLimits;
   overrides.executionProfile = options.executionProfile;
   overrides.rawPointerAudit = options.rawPointerAudit;
   overrides.rawPointerAuditLibraryFindings =
@@ -3290,6 +3363,7 @@ int runProject(const ProjectOptions &options, const char *driver) {
   overrides.optimization = options.optimization;
   overrides.cppStandard = options.standard;
   overrides.backend = options.backend;
+  overrides.compileLimits = options.compileLimits;
   overrides.executionProfile = options.executionProfile;
   overrides.rawPointerAudit = options.rawPointerAudit;
   overrides.rawPointerAuditLibraryFindings =
@@ -3396,7 +3470,8 @@ int runProject(const ProjectOptions &options, const char *driver) {
                 plan.configurationFlags(), {}, plan.warnings(), false,
                 plan.packageWarnings(), plan.rawPointerAudit(),
                 plan.programRequest(), plan.declaredConfigurationFlags(),
-                plan.rawPointerAuditLibraryFindings()),
+                plan.rawPointerAuditLibraryFindings())
+                .withCompileLimits(plan.compileLimits()),
             progress.observer());
     progress.suspend();
     if (!compilation.succeeded()) {
@@ -3448,7 +3523,8 @@ int runProject(const ProjectOptions &options, const char *driver) {
                       plan.rawPointerAudit(), plan.programRequest(),
                       plan.declaredConfigurationFlags(),
                       plan.rawPointerAuditLibraryFindings())
-                      .forExecutable(),
+                      .forExecutable()
+                      .withCompileLimits(plan.compileLimits()),
                   progress.observer());
     progress.suspend();
     if (!result.succeeded()) {
@@ -3574,6 +3650,7 @@ int runProjectVerify(const ProjectOptions &options, const char *driver) {
   overrides.optimization = options.optimization;
   overrides.cppStandard = options.standard;
   overrides.backend = options.backend;
+  overrides.compileLimits = options.compileLimits;
   overrides.executionProfile = options.executionProfile;
   overrides.rawPointerAudit =
       options.rawPointerAudit.value_or(recorded->rawPointerAudit);
@@ -3695,6 +3772,7 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
   overrides.optimization = options.optimization;
   overrides.cppStandard = options.standard;
   overrides.backend = options.backend;
+  overrides.compileLimits = options.compileLimits;
   overrides.executionProfile = options.executionProfile;
   overrides.rawPointerAudit = options.rawPointerAudit;
   overrides.rawPointerAuditLibraryFindings =

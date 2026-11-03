@@ -91,7 +91,7 @@ auto SemanticVisitor::Impl::blankLikeThis() const -> std::unique_ptr<Impl> {
   return std::make_unique<Impl>(target, nullptr, toolingOccurrences, nullptr,
                                 nullptr, RawPointerAuditMode::Off,
                                 requireFunctionDefinitions, trustedBodies,
-                                sourceDebugProfile);
+                                sourceDebugProfile, compileLimits);
 }
 
 // Copies the preamble's session state into this analyzer. Everything the

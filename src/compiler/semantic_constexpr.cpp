@@ -742,9 +742,10 @@ auto SemanticVisitor::Impl::stagedWorkerFor(
       worker.definitions != definitions ||
       worker.constructors != constructors) {
     const PhaseTimeScope workerScope("constexpr-staged-worker");
-    worker.impl = std::make_unique<Impl>(
-        target, sourceGraph, false, workMetrics, sources, rawPointerAudit,
-        false, TrustedBodyAnalysis::Complete, sourceDebugProfile);
+    worker.impl = std::make_unique<Impl>(target, sourceGraph, false,
+                                         workMetrics, sources, rawPointerAudit,
+                                         false, TrustedBodyAnalysis::Complete,
+                                         sourceDebugProfile, compileLimits);
     worker.impl->catalog = catalog.snapshotForInstanceAnalysis();
     worker.impl->semanticModel = stagingModel;
     worker.impl->macroLookup = macroLookup;
@@ -854,7 +855,7 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
   if (reuseKey) {
     const auto *reused = stagedConstants->find(*reuseKey);
     if (reused != nullptr && reused->depth >= depth &&
-        context.work->steps + reused->steps <= constexprExpressionStepLimit) {
+        context.work->steps + reused->steps <= compileLimits.constexprSteps) {
       context.work->steps += reused->steps;
       appendStagedWarnings(reused->warnings);
       if (reused->nativeObjectLayout)
@@ -974,8 +975,8 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
     }
   }
   const MirConstantLimits limits{
-      .steps = constexprExpressionStepLimit -
-               std::min(context.work->steps, constexprExpressionStepLimit),
+      .steps = compileLimits.constexprSteps -
+               std::min(context.work->steps, compileLimits.constexprSteps),
       .callDepth = constexprCallDepthLimit - context.work->stagingDepth + 1};
   auto result = [&] {
     const PhaseTimeScope evaluateScope("constexpr-staged-evaluate");

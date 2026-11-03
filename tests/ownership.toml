@@ -333,6 +333,8 @@ consumers = [
 [[area]]
 area = "constexpr"
 paths = [
+  "src/compiler/compile_limits.cpp",
+  "include/gti/compile_limits.h",
   "src/compiler/constant_evaluator.cpp",
   "src/compiler/mir_constant_evaluator.cpp",
   "src/compiler/semantic_constexpr.cpp",
