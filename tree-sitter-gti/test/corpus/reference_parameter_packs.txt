@@ -1,0 +1,87 @@
+==================
+Reference parameter packs
+==================
+void observe<Args...>(Args&... args) {}
+void mutate<Args...>(mut Args&... args) {}
+class Reader {
+public:
+  Reader<Args...>(Args&... args) { observe(args...); }
+  void read<Args...>(Args&... args) { observe(args...); }
+};
+
+---
+
+(source_file
+  (function_declaration
+    (type)
+    (identifier)
+    (generic_parameter_clause
+      (generic_parameter
+        (identifier)))
+    (parameter_clause
+      (parameter
+        (type
+          (user_type
+            (identifier))
+          (reference_declarator))
+        (identifier)))
+    (block))
+  (function_declaration
+    (type)
+    (identifier)
+    (generic_parameter_clause
+      (generic_parameter
+        (identifier)))
+    (parameter_clause
+      (parameter
+        (type
+          (user_type
+            (identifier))
+          (reference_declarator))
+        (identifier)))
+    (block))
+  (class_declaration
+    (identifier)
+    (class_body
+      (access_specifier)
+      (constructor_declaration
+        (identifier)
+        (generic_parameter_clause
+          (generic_parameter
+            (identifier)))
+        (parameter_clause
+          (parameter
+            (type
+              (user_type
+                (identifier))
+              (reference_declarator))
+            (identifier)))
+        (block
+          (expression_statement
+            (call_expression
+              (primary_expression
+                (identifier))
+              (argument_list
+                (pack_expansion
+                  (identifier)))))))
+      (method_declaration
+        (type)
+        (identifier)
+        (generic_parameter_clause
+          (generic_parameter
+            (identifier)))
+        (parameter_clause
+          (parameter
+            (type
+              (user_type
+                (identifier))
+              (reference_declarator))
+            (identifier)))
+        (block
+          (expression_statement
+            (call_expression
+              (primary_expression
+                (identifier))
+              (argument_list
+                (pack_expansion
+                  (identifier))))))))))

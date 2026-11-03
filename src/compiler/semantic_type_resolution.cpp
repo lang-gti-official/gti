@@ -2366,6 +2366,18 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
   }
 
   const ViableConstructor &selected = viable.front();
+  if (selected.constructor && selected.constructor->parameterPack &&
+      selected.constructor->declaration &&
+      !selected.constructor->declaration->parameters().empty() &&
+      selected.constructor->declaration->parameters().back().type.reference &&
+      typeTraits(constructedType).containsBorrowedState) {
+    report(paren,
+           "A reference parameter pack cannot construct a result with "
+           "borrowed state; pack elements cannot escape the call.",
+           "GTI-S2023");
+    currentType = constructedType;
+    return;
+  }
   if (hasDeferredArgument) {
     bool valid = true;
     for (std::size_t index = 0; index < arguments.size(); ++index) {
@@ -7950,6 +7962,16 @@ auto SemanticVisitor::Impl::validateParameterPacks(
     if (parameterType.kind == SemanticType::TypePack &&
         parameterType.concretePack) {
       for (const SemanticType &element : parameterType.arguments) {
+        if (parameter.type.reference &&
+            element.kind == SemanticType::Reference &&
+            element.arguments.size() == 1 &&
+            element.arguments.front().kind == SemanticType::Reference) {
+          report(*parameter.pack,
+                 "Reference parameter packs require object type arguments; "
+                 "reference collapsing is not supported.",
+                 "GTI-S2023");
+          break;
+        }
         if (element == SemanticType::Void ||
             element.kind == SemanticType::FunctionSignature) {
           report(*parameter.pack,

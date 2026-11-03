@@ -26,11 +26,11 @@ public:
         "mutable_alias": ("""
 void touch<Args...>(mut Args&... args) {}
 int main() { mut Ticket value{}; touch(value, value); return 0; }
-""", "GTI-S2045"),
+""", "GTI-S2017"),
         "mixed_alias": ("""
 void touch<Args...>(Ticket& first, mut Args&... args) {}
 int main() { mut Ticket value{}; touch(value, value); return 0; }
-""", "GTI-S2045"),
+""", "GTI-S2017"),
         "immutable_mutable": ("""
 void touch<Args...>(mut Args&... args) {}
 int main() { Ticket value{}; touch(value); return 0; }
@@ -44,9 +44,9 @@ int& escape<Args...>(int& value, Args&... args) { return value; }
 int main() { int value = 3; Ticket ticket{}; escape(value, ticket); return 0; }
 """, "GTI-S2023"),
         "borrowed_result": ("""
-struct Borrowed { Ticket& value; };
+struct Borrowed { Ticket& value; Borrowed(Ticket& source) : value(source) {} };
 Borrowed escape<Args...>(Ticket& value, Args&... args) {
-  return Borrowed{.value = value};
+  return Borrowed(value);
 }
 int main() { Ticket value{}; escape(value, value); return 0; }
 """, "GTI-S2023"),
@@ -59,17 +59,46 @@ int main() { mut Ticket value{}; forward(value); return 0; }
 void observe<Args...>(Args&... args) {}
 int main() { int value = 3; observe<int&>(value); return 0; }
 """, "GTI-S20"),
+        "prescribed_reference_element": ("""
+class Reader<Args...> {
+public:
+  Reader() = default;
+  void observe(Args&... args) {}
+};
+int main() { Reader<int&> reader{}; int value = 3; reader.observe(value); return 0; }
+""", "GTI-S2023"),
+        "constructor_escape": ("""
+struct Holder<T> {
+  T& value;
+  Holder<Args...>(T& source, Args&... args) : value(source) {}
+};
+int main() { Ticket value{}; Holder<Ticket> holder{value, value}; return 0; }
+""", "GTI-S2023"),
         "forwarding_reference": ("""
 void observe<Args...>(Args&&... args) {}
 int main() { return 0; }
 """, "GTI-S2023"),
+        "moved_source": ("""
+import std.utility;
+void observe<Args...>(Args&... args) {}
+int main() { Ticket value{}; observe(std::move(value)); observe(value); return 0; }
+""", "GTI-S2018"),
+        "thread_escape": ("""
+import std.thread;
+void schedule<T>(T& value) {
+  auto task = [&value]() -> void {};
+  auto started = std::thread::start(std::move(task));
+}
+void escape<Args...>(Args&... args) { (schedule(args), ...); }
+int main() { Ticket value{}; escape(value); return 0; }
+""", "GTI-S20"),
     }
     with tempfile.TemporaryDirectory(prefix="gti-reference-packs-") as temporary:
         scratch = Path(temporary)
         for name, (source, code) in cases.items():
             path = scratch / f"{name}.gti"
             path.write_text(ticket + source)
-            result = run([str(compiler), str(path), "--emit-mir", "--progress", "never",
+            result = run([str(compiler), str(path), "--emit-mir", "--execution-profile", "concurrent", "--progress", "never",
                           "-o", str(scratch / f"{name}.mir")])
             diagnostic = result.stdout + result.stderr
             assert result.returncode and code in diagnostic and "GTI-B000" not in diagnostic, (name, diagnostic)
@@ -88,6 +117,15 @@ int main() { return 0; }
             result = run([str(executable)])
             assert (result.returncode, result.stdout, result.stderr) == (0, "", ""), result
             print(f"reference packs: {backend} {level} passed", flush=True)
+        fixture = root / "tests/fixtures/reference_parameter_pack_temporaries.gti"
+        for level in ("O0", "O3"):
+            executable = scratch / f"temporaries-{level}"
+            result = run([str(compiler), str(fixture), "--backend", "llvm", f"-{level}",
+                          "--progress", "never", "-o", str(executable)])
+            assert not result.returncode, result.stdout + result.stderr
+            result = run([str(executable)])
+            assert (result.returncode, result.stdout, result.stderr) == (0, "", ""), result
+            print(f"reference-pack temporary lifetimes: LLVM {level} passed", flush=True)
 
 
 if __name__ == "__main__":

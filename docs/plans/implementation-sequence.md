@@ -10174,8 +10174,8 @@ follow-ups:
   escaped braces, bounded presentation specifiers, binary32/binary64 values,
   and public exact `std::formatter<T>` specializations. It validates before
   stdout; named/dynamic fields and compile-time literal validation remain
-  later breadth. Named move-only strings use an
-  owner-tied view because GTI does not yet admit `Args&...` reference packs.
+  later breadth. Explicit `Args&...` reference packs now let formatting borrow
+  named move-only strings and custom owners without a view or transfer.
   Recoverable counted stderr output is now supplied by `L-HOST-01`.
 - **Implemented binary32 text sub-slice:** `std::to_string(float)` plus the
   `std::print`/`std::println` binary32 overloads and the matching

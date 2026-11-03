@@ -1867,6 +1867,22 @@
           }
         },
         {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "requirements",
+              "content": {
+                "type": "SYMBOL",
+                "name": "requires_clause"
+              }
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
           "type": "FIELD",
           "name": "body",
           "content": {
@@ -7588,7 +7604,7 @@
             },
             {
               "type": "SYMBOL",
-              "name": "generic_function"
+              "name": "concept_application"
             },
             {
               "type": "SYMBOL",
@@ -7665,7 +7681,7 @@
                 },
                 {
                   "type": "SYMBOL",
-                  "name": "generic_function"
+                  "name": "concept_application"
                 },
                 {
                   "type": "SYMBOL",
@@ -8262,8 +8278,21 @@
                 "type": "FIELD",
                 "name": "function",
                 "content": {
-                  "type": "SYMBOL",
-                  "name": "_postfix_expression"
+                  "type": "CHOICE",
+                  "members": [
+                    {
+                      "type": "PREC_DYNAMIC",
+                      "value": 1,
+                      "content": {
+                        "type": "SYMBOL",
+                        "name": "generic_function"
+                      }
+                    },
+                    {
+                      "type": "SYMBOL",
+                      "name": "_postfix_expression"
+                    }
+                  ]
                 }
               },
               {
@@ -8632,7 +8661,7 @@
         },
         {
           "type": "SYMBOL",
-          "name": "generic_function"
+          "name": "concept_application"
         },
         {
           "type": "SYMBOL",
@@ -9584,7 +9613,7 @@
                 },
                 {
                   "type": "SYMBOL",
-                  "name": "generic_function"
+                  "name": "concept_application"
                 },
                 {
                   "type": "SYMBOL",
@@ -9652,7 +9681,7 @@
                     },
                     {
                       "type": "SYMBOL",
-                      "name": "generic_function"
+                      "name": "concept_application"
                     },
                     {
                       "type": "SYMBOL",
@@ -9783,13 +9812,19 @@
       "user_type"
     ],
     [
+      "concept_application",
       "generic_function",
       "primary_expression"
     ],
     [
-      "generic_function",
+      "concept_application",
       "user_type",
+      "generic_function",
       "primary_expression"
+    ],
+    [
+      "concept_application",
+      "type_argument_clause"
     ],
     [
       "user_type",

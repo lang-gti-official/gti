@@ -1140,15 +1140,19 @@ type/value substitution as written or inferred arguments. Concrete generic
 bodies are rechecked after substitution; generic validity and default selection
 are not delegated to C++ template instantiation.
 
-A function or method may own one final type pack, bound either through a final
-named immutable by-value parameter pack or an explicit type-list expansion in
+A function, method or constructor may own one final type pack, bound either through a final
+named parameter pack or an explicit type-list expansion in
 a formal parameter's type metadata. A metadata-bound pack does not add runtime
 parameters and may also expand into returned nominal metadata. Bare pack types
 remain invalid as return values or object storage. A named value pack uses the
 same deduced list if both forms are present. Whole-pack forwarding remains available
 only as the final argument of another variadic call. The bounded comma-pack
 fold `(call(fixed, pack), ...)` additionally applies one call pattern to each
-concrete pack element. It is well-formed only when:
+concrete pack element. `Args... args` retains value transport; `Args&... args`
+borrows each argument read-only, and `mut Args&... args` borrows each argument
+mutably. Deduction binds `Args` to object types; explicitly supplying reference
+types to a reference-pack declarator is rejected rather than collapsed.
+The grouped pack is not an independently assignable object. It is well-formed only when:
 
 - the bare parameter-pack name occurs exactly once and is the pattern call's
   final argument;
@@ -1157,7 +1161,8 @@ concrete pack element. It is well-formed only when:
 - the target is one directly named, non-overloaded ordinary free function with
   `void` result;
 - that target has one generic type parameter supplied by the element and an
-  exact final read-only reference parameter to that element type; and
+  exact final reference parameter to that element type (mutable access requires
+  a mutable reference element); and
 - the source pack's constraint facts imply the target element parameter's
   constraints while the generic body is checked.
 
@@ -1166,8 +1171,8 @@ reanalysis then substitutes each source-pack element in order, validates its
 constraints and exact parameter types, and records one resolved call identity
 per element. It does not reopen an overload set for each type. The expression
 has type `void`, including for an empty pack. This rule adds neither a general
-fold-expression algebra nor pack indexing, multiple packs, mutable element
-iteration, partial movement, member-call patterns, or backend-selected
+fold-expression algebra nor pack indexing, multiple packs,
+partial movement, member-call patterns, or backend-selected
 template behavior.
 
 A class or struct may also declare one final type pack, for example
@@ -1194,8 +1199,22 @@ must be non-void object types or references; bare signatures are rejected even
 if the method is never called. Mutable reference elements require exact mutable
 reference forwarding and do not consume the referent, so sequential forwarding
 is allowed. The grouped pack binding itself remains immutable.
-This does not admit reference-pack declarators (`Args&...`) or forwarding
-references, nor implicit borrowing during unconstrained pack deduction.
+Reference-pack declarators can also bind a class's prescribed object-type pack.
+They use the same per-element references as explicit function-pack deduction.
+Read-only elements may alias; mutable elements require disjoint places, including
+against fixed reference parameters. Forwarding can reborrow mutable elements
+read-only but cannot strengthen read-only access. Reference packs admit only
+results without borrowed state, including for constructors: pack elements cannot
+escape through a returned reference, borrowed carrier, field, global, escaping
+closure or thread. Plain value packs and owned thread/task entry points retain
+their existing transport rules. Forwarding references and implicit borrowing
+during value-pack deduction remain unsupported.
+
+Fresh arguments admitted by the ordinary call-scoped temporary rule live until
+the caller's full-expression boundary. Conditional operands are materialized
+only on the executed path. An explicit `std::move` consumes its source and the
+callee borrows the resulting temporary. A named borrowed owner is destroyed by
+its caller, whereas a by-value argument is destroyed at the callee's exit.
 
 ## 3.8 Classes, Interfaces, And Lifecycle
 

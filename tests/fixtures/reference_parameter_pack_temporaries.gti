@@ -1,0 +1,32 @@
+import std.utility;
+mut int trace = 0;
+mut int visits = 0;
+class Ticket {
+  int id;
+public:
+  Ticket(int value) : id(value) {}
+  Ticket(Ticket& other) = delete;
+  Ticket(Ticket&& other) = default;
+  ~Ticket() { trace = trace * 10 + this.id; }
+};
+void inspect<T>(T& value) { visits++; }
+bool observe<Args...>(Args&... args) { (inspect(args), ...); return true; }
+class Reader {
+public:
+  Reader<Args...>(Args&... args) { [[discard]] observe(args...); }
+};
+Ticket make_ticket(int id) { return Ticket(id); }
+int main() {
+  Reader first{make_ticket(1), 42};
+  if (trace != 1 || visits != 2) { return 1; }
+  Ticket second{2};
+  [[discard]] observe(std::move(second));
+  if (trace != 12 || visits != 3) { return 2; }
+  bool skipped_left = false && observe(Ticket(8));
+  bool skipped_right = true || observe(Ticket(9));
+  bool evaluated = true && observe(Ticket(3), 2 + 3);
+  if (trace != 123 || visits != 5 || skipped_left || !skipped_right || !evaluated) { return 3; }
+  Reader empty{};
+  [[discard]] observe();
+  return trace == 123 && visits == 5 ? 0 : 4;
+}
