@@ -5995,9 +5995,30 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
         isPotentiallyBorrowedCarrier(program, sourceType)) {
       for (const auto &block : body.blocks) {
         for (const auto &instruction : block.instructions) {
+          const bool textPublication =
+              instruction.kind == MirInstructionKind::Call &&
+              instruction.result && instruction.hirValue == loan.producedBy &&
+              instruction.info.category == ValueCategory::Value &&
+              (instruction.info.type.kind == SemanticType::StringView ||
+               instruction.info.type.kind == SemanticType::CString) &&
+              instruction.borrowAccess == AccessMode::ReadOnly &&
+              instruction.borrowFields.empty() &&
+              instruction.borrowArguments.empty() &&
+              loan.access == AccessMode::ReadOnly &&
+              loan.designatedFields.empty() &&
+              loan.additionalDependencies.empty() &&
+              ((instruction.borrowOrigin == BorrowOriginKind::Receiver &&
+                instruction.receiver.has_value()) ||
+               (instruction.borrowOrigin == BorrowOriginKind::Argument &&
+                instruction.borrowArgument <
+                    instruction.parameterTypes.size()));
           if (instruction.loan != loan.id ||
-              !isCarrierReferenceResult(program, instruction))
+              (!isCarrierReferenceResult(program, instruction) &&
+               !textPublication))
             continue;
+          // Scalar text publishes its own evaluated value while retaining the
+          // same physical carrier shell and independently verified dependency.
+          // Its owner has fields; the text result must not inherit them.
           const auto &input =
               instruction.borrowOrigin == BorrowOriginKind::Receiver
                   ? instruction.receiver->type

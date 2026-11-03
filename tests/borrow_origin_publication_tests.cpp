@@ -97,34 +97,49 @@ class ByteOwner {
 public:
   ByteOwner(uint8_t& byte) : byte(byte) {}
   uint8_t& get() { return this.byte; }
+  std::string_view receiver_text(std::string_view unrelated) {
+    std::string_view copy = unrelated;
+    std::size_t observed = copy.size();
+    unsafe {
+      const char* first = std::typed_address<char>(std::erase_address(&this.byte));
+      auto text = std::assume_string_view(first, std::size_t(1), this);
+      return text;
+    }
+  }
+  c_string receiver_c_text(c_string unrelated) {
+    bool observed = unrelated == nullptr;
+    unsafe {
+      const char* first = std::typed_address<char>(std::erase_address(&this.byte));
+      auto text = std::assume_c_string(first, this);
+      return text;
+    }
+  }
 };
-std::string_view direct_text(ByteOwner& owner) {
-  std::string_view unrelated = "other";
-  std::size_t observed = unrelated.size();
+std::string_view direct_text(ByteOwner& owner, std::string_view unrelated) {
+  std::string_view copy = unrelated;
+  std::size_t observed = copy.size();
   unsafe {
     const char* first = std::typed_address<char>(std::erase_address(&owner.get()));
     return std::assume_string_view(first, std::size_t(1), owner);
   }
 }
-std::string_view copied_text(ByteOwner& owner) {
-  std::string_view unrelated = "other";
-  std::size_t observed = unrelated.size();
+std::string_view copied_text(ByteOwner& owner, std::string_view unrelated) {
+  std::string_view copy = unrelated;
+  std::size_t observed = copy.size();
   unsafe {
     const char* first = std::typed_address<char>(std::erase_address(&owner.get()));
     auto text = std::assume_string_view(first, std::size_t(1), owner);
     return text;
   }
 }
-c_string direct_c_text(ByteOwner& owner) {
-  c_string unrelated = "other";
+c_string direct_c_text(ByteOwner& owner, c_string unrelated) {
   bool observed = unrelated == nullptr;
   unsafe {
     const char* first = std::typed_address<char>(std::erase_address(&owner.get()));
     return std::assume_c_string(first, owner);
   }
 }
-c_string copied_c_text(ByteOwner& owner) {
-  c_string unrelated = "other";
+c_string copied_c_text(ByteOwner& owner, c_string unrelated) {
   bool observed = unrelated == nullptr;
   unsafe {
     const char* first = std::typed_address<char>(std::erase_address(&owner.get()));
@@ -136,8 +151,9 @@ int main() {
   uint8_t bytes[2] = {uint8_t(104), uint8_t(0)};
   uint8_t& byte = bytes[0];
   ByteOwner owner{byte};
-  if (direct_c_text(owner) == nullptr || copied_c_text(owner) == nullptr) { return 1; }
-  return int(direct_text(owner).size() + copied_text(owner).size()) - 2;
+  if (direct_c_text(owner, nullptr) == nullptr || copied_c_text(owner, nullptr) == nullptr) { return 1; }
+  if (owner.receiver_text("other").size() != std::size_t(1) || owner.receiver_c_text(nullptr) == nullptr) { return 2; }
+  return int(direct_text(owner, "other").size() + copied_text(owner, "other").size()) - 2;
 }
 )gti",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
@@ -155,7 +171,9 @@ int main() {
         (hir->source->name().lexeme != "direct_text" &&
          hir->source->name().lexeme != "copied_text" &&
          hir->source->name().lexeme != "direct_c_text" &&
-         hir->source->name().lexeme != "copied_c_text"))
+         hir->source->name().lexeme != "copied_c_text" &&
+         hir->source->name().lexeme != "receiver_text" &&
+         hir->source->name().lexeme != "receiver_c_text"))
       continue;
     for (const auto &block : function.body.blocks) {
       if (!block.terminator.returnLoan)
@@ -215,8 +233,9 @@ int main() {
       }
     }
   }
-  expect(checked == 4, "direct and local-copy string_view and c_string returns "
-                       "carry exact values");
+  expect(checked == 6,
+         "direct, local-copy and receiver string_view and c_string returns "
+         "carry exact values");
 }
 
 void checkFieldReborrow() {

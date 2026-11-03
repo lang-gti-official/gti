@@ -11350,6 +11350,58 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
     const bool storedReceiverShell = retainedStoredBorrow &&
                                      !binding.isRangeIterator() &&
                                      receiverStorageBorrow(expression);
+    SemanticType textOwnerType = SemanticType::Unknown;
+    if (resolved != nullptr && resolved->borrowFields.empty() &&
+        resolved->borrowArguments.empty()) {
+      if (resolved->borrowOrigin == BorrowOriginKind::Argument &&
+          resolved->borrowArgument < resolved->parameterTypes.size()) {
+        textOwnerType = resolved->parameterTypes[resolved->borrowArgument];
+      } else if (resolved->borrowOrigin == BorrowOriginKind::Receiver) {
+        if (const auto *member = exprAs<Get>(call->callee().get()))
+          textOwnerType = semanticModel.typeOf(*member->object());
+      }
+      if (textOwnerType.kind == SemanticType::Reference &&
+          textOwnerType.arguments.size() == 1)
+        textOwnerType = SemanticType(textOwnerType.arguments.front());
+    }
+    if (sourceLoan != nullptr && retainedStoredBorrow &&
+        (carrier->type.kind == SemanticType::StringView ||
+         carrier->type.kind == SemanticType::CString) &&
+        textOwnerType != SemanticType::Unknown &&
+        textOwnerType != carrier->type &&
+        ((sourceLoan->kind == SemanticLoanKind::Reference &&
+          sourceLoan->storedDependency != 0) ||
+         sourceLoan->kind == SemanticLoanKind::StoredValue) &&
+        !source->transfer) {
+      // A text-producing call tied to a differently typed carrier publishes a
+      // new text value. It retains the physical owner and its external
+      // dependency; it is not a copy of the owner's field inventory. Copies
+      // of text itself still use ordinary shared aliases.
+      const auto origin = *sourceLoan;
+      const bool referenceOwner = origin.kind == SemanticLoanKind::Reference;
+      const auto place =
+          referenceOwner ? origin.place : retainedLoanPlace(expression);
+      if (place.root == 0 && !place.receiver)
+        return; // Ordinary borrow validation requires a stable owner.
+      const auto parent = referenceOwner ? origin.id : SemanticLoanId{0};
+      const auto dependency =
+          referenceOwner ? origin.storedDependency : origin.id;
+      reportBorrowConflict(
+          expressionToken(expression),
+          conflictingLoans(place, carrierAccess, parent),
+          "Cannot retain this text while an overlapping owner borrow may still "
+          "be live.");
+      const auto id = createRetainedLoan(
+          *carrier, carrierSymbol, SemanticLoanKind::StoredValue,
+          expression.get(), place, place.root, place.receiver, carrierAccess,
+          true, parent);
+      auto loan = *semanticModel.findLoan(id);
+      loan.storedDependency = dependency;
+      semanticModel.recordLoan(std::move(loan));
+      semanticModel.recordBindingLoan(binding, id);
+      recordSemanticLoanUseForLoan(dependency);
+      return;
+    }
     if (sourceLoan != nullptr && retainedStoredBorrow &&
         !binding.isRangeIterator() && !storedReceiverShell &&
         sourceLoan->kind == SemanticLoanKind::Reference &&

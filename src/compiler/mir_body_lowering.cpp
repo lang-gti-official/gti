@@ -7374,15 +7374,18 @@ private:
     return id;
   }
 
-  [[nodiscard]] bool exactReadonlyCleanupParent(const HirValue &value,
-                                                MirLoanId origin) const {
+  [[nodiscard]] bool exactReadonlyRetainedParent(const HirValue &value,
+                                                 MirLoanId origin) const {
     const auto contract = retainedInitializerLoans.find(value.id);
     const auto *retained = contract == retainedInitializerLoans.end()
                                ? nullptr
                                : source.findLoan(contract->second);
     const auto *selected = output.findLoan(origin);
-    if (!retained || !retained->lifecycleBound || retained->parent == 0 ||
-        retained->access != AccessMode::ReadOnly ||
+    // HIR gives every retained carrier its exact readonly parent, including
+    // a plain carrier constructed from a local reference. Cleanup-bearing
+    // carriers use this same relationship; cleanup is not its source.
+    if (!retained || retained->kind != SemanticLoanKind::StoredValue ||
+        retained->parent == 0 || retained->access != AccessMode::ReadOnly ||
         value.borrowAccess != AccessMode::ReadOnly || !selected ||
         selected->access != AccessMode::ReadOnly)
       return false;
@@ -8465,7 +8468,7 @@ private:
         const bool derivedOriginCarrier =
             kind == MirLoanKind::Stored &&
             (parentAccess == AccessMode::Mutable ||
-             exactReadonlyCleanupParent(value, originLoan) ||
+             exactReadonlyRetainedParent(value, originLoan) ||
              (output.loans[originLoan - 1].kind == MirLoanKind::Stored &&
               isLifecycleBoundBorrowCarrier(value.info.type)) ||
              (output.loans[originLoan - 1].kind == MirLoanKind::Stored &&
@@ -9526,7 +9529,7 @@ private:
       // from an overlapping source place (or from the constructor spelling).
       if (originLoan != 0 && originLoan <= output.loans.size() &&
           (output.loans[originLoan - 1].access == AccessMode::Mutable ||
-           exactReadonlyCleanupParent(value, originLoan) ||
+           exactReadonlyRetainedParent(value, originLoan) ||
            (output.loans[originLoan - 1].kind == MirLoanKind::Stored &&
             output.loans[originLoan - 1].entry &&
             isLifecycleBoundBorrowCarrier(value.info.type)))) {
@@ -14122,28 +14125,7 @@ private:
             // A copied value retains the external owners, not the address of
             // the reference's carrier shell. Do not rewrite the physical loan
             // or compare its independent shell permission with owner access.
-            const auto *parent = output.findLoan(candidate->parent);
-            const auto *entry = output.findPlace(existing->source);
-            const bool textOwnerPublication =
-                existing->entry && entry &&
-                entry->type.kind == SemanticType::Reference &&
-                entry->type.arguments.size() == 1 &&
-                entry->type.arguments.front() != binding->info.type &&
-                (binding->info.type.kind == SemanticType::StringView ||
-                 binding->info.type.kind == SemanticType::CString) &&
-                parent && parent->entry &&
-                parent->kind == MirLoanKind::Parameter &&
-                parent->storedDependency == existing->id;
-            if (textOwnerPublication) {
-              // This local contains newly produced text, not a copy of the
-              // entry carrier. Keep its producer's lifetime and dependency;
-              // the semantic identity continues to name the external owner.
-              physicalRangeLoan = true;
-              std::erase(output.loans[existing->id - 1].carriers,
-                         *statement.binding);
-            } else {
-              retainedLoan = existing->id;
-            }
+            retainedLoan = existing->id;
           } else if (existing != nullptr && candidate != nullptr &&
                      loanIsActive(scopes, existing->id) &&
                      (existing->access == candidate->access ||

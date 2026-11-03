@@ -5737,20 +5737,24 @@ auto SemanticVisitor::Impl::isParameterDerivedBorrow(
     if (const ExprPtr *source = storedBorrowSource(expression)) {
       return isParameterDerivedBorrow(*source, parameter, visiting);
     }
-    // A reference binding with no initializer, such as an `auto&` payload
-    // pattern, names its referent only through its retained loan. A loan
-    // whose one origin place is rooted at the parameter's referent borrows
-    // storage inside it, just as a receiver-rooted loan derives from `this`.
-    // A selected stored reference names an external owner instead; its
-    // complete dependency set is proved before this structural walk.
+    // Some locals name their owner only through the retained loan: a
+    // reference pattern has no initializer, and dynamic scalar text has
+    // expression-dependent borrowed state rather than a borrowed nominal
+    // type. Both retain one exact unconditional origin here. A selected
+    // stored field or composite dependency needs its separate full proof.
     const auto *binding = semanticModel.findBinding(parameter);
+    const auto *value = semanticModel.findExpression(*expression);
     const SemanticLoanInfo *loan =
-        symbol == nullptr || symbol->type.kind != SemanticType::Reference ||
-                symbol->retainedLoan == 0
+        symbol == nullptr || symbol->retainedLoan == 0
             ? nullptr
             : semanticModel.findLoan(symbol->retainedLoan);
-    return binding != nullptr && binding->symbol != 0 && loan != nullptr &&
-           loan->kind == SemanticLoanKind::Reference &&
+    const bool scalarLoan =
+        loan != nullptr && symbol != nullptr &&
+        ((symbol->type.kind == SemanticType::Reference &&
+          loan->kind == SemanticLoanKind::Reference) ||
+         (value != nullptr && value->traits.containsBorrowedState &&
+          loan->kind == SemanticLoanKind::StoredValue));
+    return binding != nullptr && binding->symbol != 0 && scalarLoan &&
            !loan->referenceSelection && loan->designatedFields.empty() &&
            loan->conditions.empty() && loan->additionalDependencies.empty() &&
            !loan->place.receiver && loan->place.root == binding->symbol;
