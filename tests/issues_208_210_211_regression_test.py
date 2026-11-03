@@ -5,6 +5,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 INCOMING_CLEANUP_CHECK = (
@@ -77,30 +78,26 @@ def main() -> int:
         root = pathlib.Path(temporary)
         for fixture_name in FIXTURES:
             source = fixtures / fixture_name
-            for optimization in ("O0", "O3"):
-                for standard in ("c++20", "c++23"):
-                    mode = f"{optimization}-{standard}"
-                    executable = root / f"{source.stem}-{mode}"
-                    built = run(
-                        [
-                            str(compiler),
-                            str(source),
-                            f"-{optimization}",
-                            "--std",
-                            standard,
-                            "-o",
-                            str(executable),
-                        ]
-                    )
-                    if built.returncode != 0:
-                        return fail(f"build {fixture_name} {mode}", built)
-                    executed = run([str(executable)])
-                    if (
-                        executed.returncode != 0
-                        or executed.stdout != ""
-                        or executed.stderr != ""
-                    ):
-                        return fail(f"run {fixture_name} {mode}", executed)
+            for mode, flags, native in native_modes():
+                executable = root / f"{source.stem}-{mode}"
+                built = run(
+                    [
+                        str(compiler),
+                        str(source),
+                        *flags,
+                        "-o",
+                        str(executable),
+                    ]
+                )
+                if built.returncode != 0:
+                    return fail(f"build {fixture_name} {mode}", built)
+                executed = run([str(executable)])
+                if (
+                    executed.returncode != 0
+                    or executed.stdout != ""
+                    or executed.stderr != ""
+                ):
+                    return fail(f"run {fixture_name} {mode}", executed)
 
         literal_cpp = emit_cpp(
             compiler,

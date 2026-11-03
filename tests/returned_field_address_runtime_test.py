@@ -10,6 +10,7 @@ import sys
 import tempfile
 
 from case_jobs import configured_jobs, positive_jobs, run_cases
+from backend_modes import native_modes
 
 
 def run_fixture(compiler, filename, negatives, marker,
@@ -19,10 +20,7 @@ def run_fixture(compiler, filename, negatives, marker,
     fixture = fixtures / filename
     original = fixture.read_text()
     native = fixtures / native_filename
-    modes = [(f"{standard}-{level}", ["--std", standard, f"-{level}"], [])
-             for standard in ("c++20", "c++23") for level in ("O0", "O2", "O3")]
-    modes.append(("sanitized", ["--std", "c++23", "-O1"],
-                  ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]))
+    modes = native_modes()
     environment = dict(os.environ, ASAN_OPTIONS="halt_on_error=1",
                        UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1")
     with tempfile.TemporaryDirectory(prefix="gti-returned-field-") as directory:

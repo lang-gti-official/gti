@@ -64,7 +64,8 @@ def request(path):
 
 def baseline(repository, head, api=request, root=ROOT):
     expected = native_identity(head, root)
-    runs = api(f"repos/{repository}/actions/workflows/ci.yml/runs?status=success&per_page=100")
+    # Retained full-CI compilers come from post-integration full validation of main.
+    runs = api(f"repos/{repository}/actions/workflows/full-validation.yml/runs?status=success&per_page=100")
     seen = set()
     for run in runs.get("workflow_runs", []):
         sha = run.get("head_sha", "")

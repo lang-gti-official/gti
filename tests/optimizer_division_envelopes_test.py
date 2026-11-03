@@ -5,6 +5,8 @@ import subprocess
 import sys
 import tempfile
 
+from backend_modes import is_cpp_mode, native_modes
+
 
 def expected(mode, value):
     unsigned = value if value < 128 else (1 << 64) - 1 - (255 - value)
@@ -44,15 +46,15 @@ def main():
     source = Path(__file__).parent / "fixtures/optimizer_division_envelopes.gti"
     cases = [(mode, value) for mode in (0, 1, 2, 3, 5, 6) for value in range(256)]
     cases += [(4, value) for value in range(67)]
-    modes = [("llvm", "-O0"), ("llvm", "-O2"), ("llvm", "-O3"), ("cpp", "-O3")]
+    # LLVM at O0/O2/O3 under the default policy, plus the C++ profile when
+    # GTI_TEST_BACKENDS selects it (tests/backend_modes.py).
+    modes = [(label, flags) for label, flags, _native in native_modes(levels=("O0", "O2", "O3"))]
     baseline = {}
     with tempfile.TemporaryDirectory(prefix="gti-division-envelopes-") as directory:
-        for backend, level in modes:
-            binary = Path(directory) / (backend + level)
-            command = [str(compiler), str(source), "--backend", backend,
-                       level, "-o", str(binary)]
-            if backend == "cpp":
-                command += ["--std", "c++23"]
+        for label, flags in modes:
+            backend, level = ("cpp" if is_cpp_mode(flags) else "llvm"), "-" + label.rsplit("-", 1)[1]
+            binary = Path(directory) / label
+            command = [str(compiler), str(source), *flags, "-o", str(binary)]
             built = subprocess.run(command, capture_output=True, text=True, timeout=180)
             assert built.returncode == 0, (command, built.stdout, built.stderr)
             for case in cases:
@@ -66,7 +68,9 @@ def main():
                 else:
                     assert not result.stderr, result.stderr
                 observed = (result.returncode, result.stdout, result.stderr)
-                if level == "-O0":
+                # The first mode the policy selects is the baseline; every
+                # later mode (another level, or the C++ profile) must match it.
+                if case not in baseline:
                     baseline[case] = observed
                 else:
                     assert observed == baseline[case], (backend, level, case, observed, baseline[case])

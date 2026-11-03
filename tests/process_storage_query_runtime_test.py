@@ -6,6 +6,8 @@ import subprocess
 import sys
 import tempfile
 
+from backend_modes import native_modes
+
 
 def main():
     compiler = Path(sys.argv[1]).resolve()
@@ -20,10 +22,9 @@ def main():
                        GTI_RUNTIME_LIBRARY=str(Path(runtime).resolve()))
     fixture = root / "tests/fixtures/process_storage_query_policy.gti"
     provider = root / "tests/fixtures/process_resource_policy_native.cpp"
-    modes = [("llvm-O0", ["--backend", "llvm", "-O0"]),
-             ("llvm-O2", ["--backend", "llvm", "-O2"]),
-             ("llvm-O3", ["--backend", "llvm", "-O3"]),
-             ("cpp-O3", ["--backend", "cpp", "--std", "c++23", "-O3"])]
+    # LLVM at O0/O2/O3 under the default policy, plus the C++ profile when
+    # GTI_TEST_BACKENDS selects it (tests/backend_modes.py).
+    modes = [(label, flags) for label, flags, _native in native_modes(levels=("O0", "O2", "O3"))]
     with tempfile.TemporaryDirectory(prefix="gti-storage-query-") as directory:
         for name, flags in modes:
             binary = Path(directory) / name

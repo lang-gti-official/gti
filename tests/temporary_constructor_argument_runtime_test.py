@@ -6,6 +6,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from backend_modes import is_cpp_mode, keep_cpp, native_modes
 
 
 def run(command):
@@ -50,14 +51,13 @@ def main():
     source = pathlib.Path(__file__).parent / "fixtures/temporary_constructor_argument.gti"
     with tempfile.TemporaryDirectory(prefix="gti-temporary-constructor-") as temporary:
         root = pathlib.Path(temporary)
-        for standard in ("c++20", "c++23"):
-            for optimization in ("O0", "O1", "O3"):
-                binary = root / f"temporary-{standard}-{optimization}"
-                require_build([
-                    str(compiler), str(source), f"-{optimization}",
-                    "--std", standard, "--keep-cpp", "-o", str(binary)
-                ])
-                check_execution(binary)
+        for mode, flags, _native in native_modes():
+            binary = root / f"temporary-{mode}"
+            require_build([
+                str(compiler), str(source), *flags, *keep_cpp(flags), "-o", str(binary)
+            ])
+            check_execution(binary)
+            if is_cpp_mode(flags):
                 generated = binary.with_suffix(".gti.cpp").read_text()
                 # TransferOut now occurs at invocation: take() retires the
                 # prepared argument representation before entering the native
@@ -73,12 +73,6 @@ def main():
                 if "// GTI verified-MIR body:" not in generated:
                     raise AssertionError("missing verified-MIR emission witness")
 
-        binary = root / "temporary-sanitized"
-        require_build([
-            str(compiler), str(source), "-O1", "--std", "c++23", "-o", str(binary),
-            "--", "-fsanitize=address,undefined", "-fno-omit-frame-pointer"
-        ])
-        check_execution(binary)
 
 
 if __name__ == "__main__":

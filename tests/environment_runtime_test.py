@@ -10,6 +10,7 @@ import tempfile
 import time
 
 from native_symbol_spelling import native_spelling
+from backend_modes import is_cpp_mode, keep_cpp, native_modes
 
 
 def run(command, environment, status=0, output=None):
@@ -49,20 +50,20 @@ def main():
                  (root / "tests/fixtures/environment_lookup.gti", "lookup"),
                  (root / "examples/140-environment-configuration.gti", "example"),
                  (module, "module")]
-        for standard in ("c++20", "c++23"):
-            for level in ("O0", "O3"):
-                for source, name in cases:
-                    binary = scratch / f"{name}-{standard}-{level}"
-                    run([compiler, source, "--std", standard, f"-{level}",
-                         "--keep-cpp", "-o", binary], environment)
-                    if name == "example":
-                        run([binary], environment, output="profile: default\n")
-                        run([binary], dict(environment, GTI_DEMO_PROFILE=""),
-                            output="profile: explicitly empty\n")
-                        run([binary], dict(environment, GTI_DEMO_PROFILE="development"),
-                            output="development\n")
-                    else:
-                        run([binary], environment, output="")
+        for mode, flags, _native in native_modes():
+            for source, name in cases:
+                binary = scratch / f"{name}-{mode}"
+                run([compiler, source, *flags,
+                     *keep_cpp(flags), "-o", binary], environment)
+                if name == "example":
+                    run([binary], environment, output="profile: default\n")
+                    run([binary], dict(environment, GTI_DEMO_PROFILE=""),
+                        output="profile: explicitly empty\n")
+                    run([binary], dict(environment, GTI_DEMO_PROFILE="development"),
+                        output="development\n")
+                else:
+                    run([binary], environment, output="")
+                if is_cpp_mode(flags):
                     generated = binary.with_suffix(".gti.cpp").read_text()
                     assert "// GTI verified-MIR body:" in generated
                     assert native_spelling(generated, "gti_rt_environment_get_v1") in generated
@@ -88,7 +89,7 @@ def main():
         benchmark = scratch / "benchmark"
         started = time.perf_counter()
         run([compiler, root / "tests/fixtures/environment_lookup_benchmark.gti",
-             "--std", "c++23", "-O3", "-o", benchmark], environment)
+             *native_modes(levels=("O3",))[0][1], "-o", benchmark], environment)
         build_seconds = time.perf_counter() - started
         times = []
         for _ in range(5):

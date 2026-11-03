@@ -166,9 +166,23 @@ Their ordinary capture initialization, moves, borrows and cleanup occur only
 at evaluated uses; a disabled use does not initialize a capture. Returns inside
 a caller-written lambda still exit that lambda, not a surrounding macro.
 Macro declarations themselves cannot be taken as function items or callbacks.
-Void calls remain complete expression statements. Expansion has deterministic limits of 64
-nested calls and 4096 expanded bodies in one analysis request; recursive
-macro cycles are rejected without expanding the cycle repeatedly.
+Void calls remain complete expression statements. Recursive macro cycles are
+rejected without expanding the cycle repeatedly.
+
+Expansion has two deterministic implementation limits, configured like the
+other compile-time limits (see
+[Implementation limits](static-semantics.md#3112-implementation-limits)):
+`macro-depth` bounds the nested expansions active at once (guaranteed at least
+1024; the default is 1024) and `macro-expansions` bounds the bodies one
+outermost written invocation expands, counting every nested expansion and
+forced argument expansion it causes (guaranteed at least 4096; the default is
+8192). Each outermost invocation has its own budget, so separate invocations
+never accumulate toward a limit, however many a program contains. Exceeding
+either limit rejects that invocation once with `GTI-S2124`, naming the limit,
+its value, and the `--macro-depth`/`--macro-expansions` option and `[limits]`
+key that raise it. Neither limit depends on the host's native stack: the
+compiler continues deep expansion, and the lowering of the expanded bodies, on
+fresh stack segments.
 
 Value results use a typed HIR result region and an ordinary MIR result place.
 The selected result is initialized before macro-local cleanup and remains

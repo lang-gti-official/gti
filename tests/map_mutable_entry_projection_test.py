@@ -12,6 +12,7 @@ import time
 
 from native_fixture_build import build_fixture
 from internal_module_fixture import private_library, private_source
+from backend_modes import is_cpp_mode, keep_cpp, native_modes
 
 
 def run(command):
@@ -74,12 +75,13 @@ def reject_invalid(compiler, fixtures, directory):
 def measure_projection(compiler, fixtures, directory):
     binary = directory / "map-entry-cost"
     started = time.monotonic()
+    # The production level of the first selected backend measures the cost.
+    _label, cost_flags, _native = native_modes(levels=("O3",))[0]
     built = build_fixture(
-        [str(compiler), str(fixtures / "map_mutable_entry_cost.gti"),
-         "--std", "c++23", "-O3"], binary,
+        [str(compiler), str(fixtures / "map_mutable_entry_cost.gti"), *cost_flags], binary,
         native_sources=[fixtures / "stdlib_adoption_allocation_counts.cpp",
                         fixtures / "storage_lane_iterator_cost.cpp"],
-        standard="c++23", optimization="O3", capture_output=True, text=True,
+        optimization="O3", capture_output=True, text=True,
         timeout=180)
     assert built.returncode == 0, (built.stdout, built.stderr)
     seconds = time.monotonic() - started
@@ -100,7 +102,8 @@ def measure_projection(compiler, fixtures, directory):
         print(f"{label} mapped projection: 128={small}ns, 256={large}ns, ratio={large / small:.3f}; "
               "0 update allocations, complete final keys/values checked", flush=True)
     print(f"mapped projection cost: binary={binary.stat().st_size} bytes, "
-          f"C++={binary.with_suffix('.gti.cpp').stat().st_size} bytes, build={seconds:.3f}s; "
+          + (f"C++={binary.with_suffix('.gti.cpp').stat().st_size} bytes, " if is_cpp_mode(cost_flags) else "")
+          + f"build={seconds:.3f}s; "
           "bounded cost control, no speedup claim", flush=True)
 
 
@@ -121,11 +124,8 @@ def main():
         reject_invalid(compiler, fixtures, directory)
         if len(sys.argv) == 3:
             return
-        modes = [(f"{standard}-{level}", ["--std", standard, f"-{level}"])
-                 for standard in ("c++20", "c++23") for level in ("O0", "O1", "O3")]
-        modes.append(("sanitized", ["--std", "c++23", "-O1", "--",
-                                    "-fsanitize=address,undefined", "-fno-omit-frame-pointer"]))
-        for mode, flags in modes:
+        modes = native_modes()
+        for mode, flags, native in modes:
             for fixture in ("map_mutable_entry_projection", "projected_record_iteration",
                             "associative_map_insert_result", "unordered_map_insert_result",
                             "associative_map_iteration", "unordered_map_iteration", "map_mutable_entry_failure"):
@@ -133,9 +133,10 @@ def main():
                 source = fixtures / f"{fixture}.gti"
                 if fixture == "map_mutable_entry_projection":
                     source = private_source(source, directory / source.name, ("detail.map_entry",))
-                built = run([str(compiler), str(source), "--keep-cpp", "-o", str(binary), *flags])
+                built = run([str(compiler), str(source), *keep_cpp(flags), "-o", str(binary), *flags])
                 assert built.returncode == 0, (fixture, mode, built.stdout, built.stderr)
-                assert "// GTI verified-MIR body:" in binary.with_suffix(".gti.cpp").read_text(), (fixture, mode)
+                if is_cpp_mode(flags):
+                    assert "// GTI verified-MIR body:" in binary.with_suffix(".gti.cpp").read_text(), (fixture, mode)
                 if fixture.endswith("failure"):
                     for argc in range(1, 9):
                         failed = run([str(binary), *(["fail"] * (argc - 1))])

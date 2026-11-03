@@ -980,8 +980,8 @@ static-variable-declaration
    observation, and explicit numeric conversions. Bounded constexpr free
    functions, methods, and ordinary constructors admit concrete non-pack
    generic instances, automatic supported values, structured control flow,
-   recursion, and calls to available constexpr definitions. Evaluation has one
-   4096-step budget and a 64-call-depth limit.
+   recursion, and calls to available constexpr definitions. Each request has
+   one step budget and one call-depth limit (static-semantics.md 3.11.2).
 
    `if constexpr` requires a computed bool and analyzes and lowers only its
    selected branch. Completed function closures execute supported fixed-array

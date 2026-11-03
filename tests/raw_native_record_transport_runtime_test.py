@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+from backend_modes import cpp_text_modes, is_cpp_mode, keep_cpp, native_modes
 
 
 def run(command):
@@ -71,25 +72,23 @@ def main():
             rejected.returncode, rejected.stdout, rejected.stderr)
         assert "error[GTI-S2101]" in rejected.stderr and "scope has ended" in rejected.stderr, (
             rejected.stdout, rejected.stderr)
-        for standard in ("c++20", "c++23"):
+        for label, flags, _native in cpp_text_modes():
             if arguments.syntax_cxx:
-                syntax_source = work / f"transport-{standard}.cpp"
-                run([compiler, source, "--emit-cpp", "--std", standard,
-                     "-o", syntax_source])
+                syntax_source = work / f"transport-{label}.cpp"
+                if is_cpp_mode(flags):
+                    run([compiler, source, "--emit-cpp", *flags, "-o", syntax_source])
                 root = Path(__file__).resolve().parents[1]
                 for cxx in arguments.syntax_cxx:
-                    run([cxx, f"-std={standard}", "-fsyntax-only",
+                    run([cxx, "-std=c++23", "-fsyntax-only",
                          "-fno-fast-math", "-ffp-contract=off",
                          "-D__gti_strict_ieee754=1", "-I", root / "runtime/include",
                          syntax_source])
-            for level in ("O0", "O2", "O3"):
-                binary = work / f"transport-{standard}-{level}"
-                run([compiler, source, "--std", standard, f"-{level}",
-                     "--keep-cpp", "-o", binary, "--", obj,
-                     "-fno-elide-constructors"])
-                result = run([binary])
-                assert result.stdout == "" and result.stderr == "", result
-        print("native record inert transport: six optimized/standard modes passed")
+        for mode, flags, _native in native_modes():
+            binary = work / f"transport-{mode}"
+            run([compiler, source, *flags, *keep_cpp(flags), "-o", binary, "--", obj])
+            result = run([binary])
+            assert result.stdout == "" and result.stderr == "", result
+        print("native record inert transport: every selected mode passed")
 
 if __name__ == "__main__":
     main()

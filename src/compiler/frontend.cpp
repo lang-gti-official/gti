@@ -381,8 +381,14 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   StmtList declarations;
   bool syntaxValid = true;
   const std::string syntaxContext = syntaxCacheContext(options);
+  // Compile limits decide which constant, macro and expansion requests
+  // succeed, so every semantic reuse (preamble, instance analysis) keys on
+  // them; lexing and parsing do not depend on them.
   std::string frontendCacheContext =
-      semanticCacheContext(options) + "\nsource-owners:" +
+      semanticCacheContext(options) + "\nlimits:" +
+      compileLimitsIdentity(options.limits) +
+      (options.reuseConstantEvaluations ? "" : "\nconstant-reuse:off") +
+      "\nsource-owners:" +
       (result.sourceGraph.sourceOwners()
            ? result.sourceGraph.sourceOwners()->resolutionIdentity()
            : std::string{});
@@ -570,8 +576,9 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
             options.target, &result.sourceGraph, options.toolingOccurrences,
             nullptr, &result.sources, RawPointerAuditMode::Off,
             requireDefinitions, TrustedBodyAnalysis::Complete,
-            options.sourceDebugProfile);
+            options.sourceDebugProfile, options.limits);
         builder.setCancellation(options.cancellation);
+        builder.setConstantEvaluationReuse(options.reuseConstantEvaluations);
         preamble = builder.buildPreamble(Program(std::move(prefix)));
         if (builder.cancelled()) {
           result.cancelled = true;
@@ -605,10 +612,12 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     semanticOwner = std::make_unique<SemanticVisitor>(
         options.target, &result.sourceGraph, options.toolingOccurrences,
         options.workMetrics, &result.sources, options.rawPointerAudit,
-        requireDefinitions, trustedBodies, options.sourceDebugProfile);
+        requireDefinitions, trustedBodies, options.sourceDebugProfile,
+        options.limits);
     SemanticVisitor &semantic = *semanticOwner;
     semantic.requireFunctionBodies(requiredBodies);
     semantic.setCancellation(options.cancellation);
+    semantic.setConstantEvaluationReuse(options.reuseConstantEvaluations);
     if (preamble != nullptr) {
       semantic.adoptPreamble(preamble, preambleDeclarations);
       if (options.workMetrics != nullptr)

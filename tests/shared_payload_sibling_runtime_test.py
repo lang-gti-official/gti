@@ -5,6 +5,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 SOURCE = """\
 enum Event<T> { item(T value) };
@@ -73,25 +74,23 @@ def main() -> int:
         root = pathlib.Path(directory)
         source = root / "main.gti"
         source.write_text(SOURCE, encoding="utf-8")
-        for standard in ("c++20", "c++23"):
-            for optimization in ("-O0", "-O3"):
-                executable = root / f"main-{standard}{optimization}"
-                built = subprocess.run(
-                    [str(compiler), str(source), "--std", standard,
-                     optimization, "-o", str(executable)],
-                    text=True, capture_output=True, check=False)
-                if built.returncode != 0:
-                    sys.stderr.write(
-                        f"build {standard} {optimization} failed:\n"
-                        f"{built.stdout}{built.stderr}")
-                    return 1
-                ran = subprocess.run([str(executable)], text=True,
-                                     capture_output=True, check=False)
-                if ran.returncode != 0:
-                    sys.stderr.write(
-                        f"run {standard} {optimization} exited "
-                        f"{ran.returncode}: {ran.stdout}{ran.stderr}")
-                    return 1
+        for mode, flags, native in native_modes():
+            executable = root / f"main-{mode}"
+            built = subprocess.run(
+                [str(compiler), str(source), *flags, "-o", str(executable)],
+                text=True, capture_output=True, check=False)
+            if built.returncode != 0:
+                sys.stderr.write(
+                    f"build {mode} failed:\n"
+                    f"{built.stdout}{built.stderr}")
+                return 1
+            ran = subprocess.run([str(executable)], text=True,
+                                 capture_output=True, check=False)
+            if ran.returncode != 0:
+                sys.stderr.write(
+                    f"run {mode} exited "
+                    f"{ran.returncode}: {ran.stdout}{ran.stderr}")
+                return 1
     return 0
 
 

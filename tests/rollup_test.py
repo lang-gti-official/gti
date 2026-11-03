@@ -520,6 +520,33 @@ class Queue(Repositories):
         self.bot().reconcile()
         self.assertEqual(len(self.api.writes), writes)
 
+    def test_reconcile_flags_any_open_pr_that_conflicts_with_main(self):
+        # A queue-only PR (never a rollup candidate) that main moved under.
+        stuck = self.member("stuck", files={"base.txt": "stuck\n"}, labels=(rollup.NEVER,))
+        fine = self.member("fine", labels=(rollup.NEVER,))
+        draft = self.member("draft", files={"base.txt": "draft\n"}, labels=(rollup.NEVER,), draft=True)
+        git(self.dev, "switch", "-q", "-C", "main", "origin/main")
+        (self.dev / "base.txt").write_text("main moved\n")
+        git(self.dev, "commit", "-q", "-am", "main moves")
+        git(self.dev, "push", "-q", "origin", "HEAD:refs/heads/main")
+        report = self.bot().reconcile()
+        self.assertEqual(report["conflicting"], [stuck["number"]])
+        self.assertEqual(self.api.labels(stuck["number"]), [rollup.NEVER, rollup.REBASE])
+        self.assertIn("never resolves conflicts", self.api.prs[stuck["number"]]["comments"][0]["body"])
+        self.assertEqual(self.api.labels(fine["number"]), [rollup.NEVER])
+        self.assertEqual(self.api.labels(draft["number"]), [rollup.NEVER], "drafts are left alone")
+        # Flagged once: a second pass adds nothing.
+        self.bot().reconcile()
+        self.assertEqual(len(self.api.prs[stuck["number"]]["comments"]), 1)
+        # Reconciled with main: the label clears.
+        git(self.dev, "switch", "-q", stuck["head"]["ref"])
+        git(self.dev, "merge", "-q", "-m", "merge main", "-X", "theirs", "origin/main")
+        git(self.dev, "push", "-q", "origin", "HEAD:refs/heads/" + stuck["head"]["ref"])
+        self.api.refresh(stuck["number"])
+        report = self.bot().reconcile()
+        self.assertEqual(report["rebased"], [stuck["number"]])
+        self.assertEqual(self.api.labels(stuck["number"]), [rollup.NEVER])
+
     def test_a_failed_rollup_is_closed_and_members_queue_alone(self):
         (first, second), pr = self.rollup()
         self.bot().enqueue()

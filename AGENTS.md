@@ -19,11 +19,12 @@ GTI is an independent, experimental, statically typed systems language with
 strong C++ syntax familiarity, explicit ownership, and deterministic cleanup.
 Its goal is a fully usable systems language with excellent safety and sound
 architecture. LLVM is the primary development backend. The C++ backend is
-deprecated as the primary backend and receives bug fixes only through v1.0,
-preserving its existing supported behavior as a comparison oracle. The shipped
-default remains C++ until LLVM passes its production-promotion gates; that
-transitional default does not authorize parallel feature development. GTI is
-not a C++ wrapper, and neither backend defines its semantics.
+deprecated as the primary backend and receives bug fixes only through v1.0.
+LLVM is the shipped default on macOS arm64 and Linux x86_64. The C++ backend
+is proven on its own schedule under one profile (`c++23 -O3`, the scheduled
+C++ job), never per change and never as a per-feature differential against
+LLVM, as rustc treats its non-primary codegen backends. GTI is not a C++
+wrapper, and neither backend defines its semantics.
 
 ## Backend Development Policy
 
@@ -32,10 +33,12 @@ not a C++ wrapper, and neither backend defines its semantics.
   pre-1.0 campaign. C++ changes are limited to bug fixes needed to preserve its
   existing behavior and usefulness as an oracle, including repairs for shared
   interface changes. Do not disguise missing feature support as a bug fix.
-- Retain valid C++ regression and differential checks. Where C++ lacks support
-  or has a documented defect, require independent GTI semantic/MIR and native
-  execution evidence; do not weaken LLVM acceptance, silently skip a comparator,
-  or extend C++ merely to make a new LLVM feature testable.
+- The shipped backend gets the execution coverage: every runtime harness runs
+  its fixtures on LLVM (`llvm-O0` and `llvm-O3`, via `tests/backend_modes.py`),
+  and no fixture may lose its last execution mode. C++ modes run only in the
+  scheduled C++ job; a C++ bug-fix PR declares the relevant tests as its
+  T0/T1 so the gate re-runs them. Do not extend C++ merely to make a new
+  LLVM feature testable, and do not weaken LLVM acceptance.
 - After v1.0, C++ catch-up may be reconsidered by an explicit owner decision;
   development does not automatically resume and parity is not promised. This
   policy does not remove the backend or prematurely change CLI defaults.
@@ -100,8 +103,10 @@ not a C++ wrapper, and neither backend defines its semantics.
   subsystem's tests, and the affected cross-phase and tooling consumers, plus
   `compiler_pipeline` and the native smoke. Record exactly what ran with
   `verify`. Never run the complete suite locally to finish a feature or fix:
-  the merge queue runs it on the exact candidate that becomes `main`, on every
-  required platform. Deferring it to the queue is complete work, not a gap;
+  the merge queue proves build and fast checks on the exact candidate that
+  becomes `main`, and post-integration full validation then runs the complete
+  suite on that main head on every required platform. Deferring it is complete
+  work, not a gap;
   never describe focused evidence as full validation. Run broad local suites
   only to diagnose an integration failure assigned to your change (and then
   only its failing tests), when the owner asks, or in the degraded mode below.
@@ -118,11 +123,15 @@ not a C++ wrapper, and neither backend defines its semantics.
 - **CI is the required integration gate.** The `main` ruleset requires pull
   requests, the merge queue and the `CI gate` check, with no bypass for any
   role. A PR's `CI gate` runs the fast checks (lint, workflow regressions, and
-  a macOS arm64 and Linux x64 build with `feedback-fast` and
-  `compiler_pipeline`); the queue's `CI gate` runs the complete suite in
-  cost-balanced bundled-release shards on both platforms, the sanitizer subset
-  and installed-toolchain checks, produces the production archives, and proves
-  the shards covered every registered test. Explicitly allowlisted orchestration-only changes run lint and workflow
+  a macOS arm64 and Linux x64 build with `feedback-fast`, plus
+  `compiler_pipeline` on Linux); the queue's `CI gate` runs the same bounded set on the
+  exact candidate. Post-integration full validation then runs the complete
+  inventory on Linux in cost-balanced bundled-release shards, the `darwin`
+  set on macOS (what differs on the platform: the AArch64 LLVM backend,
+  Apple-only tests, threads/TLS/atomics, debug info, install/bundle/link,
+  ABI/layout; `tests/ci_darwin_tests.json`), the compiler, LLVM-backend and
+  thread sanitizers, and installed-toolchain checks, produces the production
+  archives, and proves each platform's shards covered its inventory. Explicitly allowlisted orchestration-only changes run lint and workflow
   regressions instead; compiler/runtime, build/packaging, validation selection,
   mixed and unknown changes retain full integration coverage. A source-only
   `stdlib/std/*.gti` candidate with allowed source tests/docs/metadata may reuse
@@ -172,7 +181,14 @@ not a C++ wrapper, and neither backend defines its semantics.
 - Run every full build and every full or broad test suite through the shared
   build window, whether or not the helper runs it:
   `python3 scripts/build_window.py --kind build -- cmake --build <tree> ...` and
-  `python3 scripts/build_window.py --kind suite -- ctest --test-dir <tree> ...`.
+  `python3 scripts/build_window.py --kind suite -- ctest --test-dir <tree> -LE cpp-backend ...`.
+  Local runs follow the CI test policy: a configured tree exports
+  `GTI_TEST_BACKENDS=llvm` to every harness, so runtime harnesses exercise the
+  shipped backend, and the C++-only entries carry the `cpp-backend` label, so
+  broad runs exclude them. C++-backend bug fixes configure
+  `-DGTI_TEST_BACKENDS=cpp` (or `both`), run their harnesses and
+  `-L cpp-backend`, and dispatch `cpp-backend.yml` on the PR branch for
+  exact-candidate CI evidence.
   The window is one counted semaphore under the Git common directory, shared
   by every worktree and session on the machine, so concurrent agents stop
   stacking full suites on each other. Focused tests (`ctest -R '^name$'`, one
@@ -195,7 +211,8 @@ not a C++ wrapper, and neither backend defines its semantics.
   Select `--runner mini`, `--runner ubuntu-6`, or `--runner ubuntu-8` before the
   subcommand, or set `GTI_REMOTE_RUNNER` for remote lifecycle verification.
   Inspect `status --all` to spread work across idle, platform-appropriate hosts;
-  Linux checks do not replace required macOS evidence. The wrapper snapshots
+  tests in the `darwin` set need macOS evidence, and Linux proves the rest of
+  the inventory once. The wrapper snapshots
   the selected worktree, uses that host's shared build window, retrieves logs/results,
   and removes remote source/build trees even after failures or cancellation.
   Use `--detach`, `status` and `fetch` for asynchronous work. Follow the
@@ -328,9 +345,12 @@ on Gitea and is unaffected. See "Published Toolchain Channels" in
 `docs/architecture/build-and-driver.md`.
 
 - **Preview** distributes the separately admitted combined `preview` source through
-  `preview.yml`, with focused combined admission, installed checks, source and
-  inclusion identity on both packaged platforms. It is not full-main CI or
-  nightly evidence and never promotes into main. `gtiup` manages preview,
+  `preview.yml`, which builds the admitted source, proves the compiler runs,
+  smoke-tests the installed toolchain and packages it with source and
+  inclusion identity on both platforms; focused admission of each submitted
+  feature happens once, on the submitting host, before the source reaches
+  the branch. Preview is an early snapshot that builds and runs, not full-main
+  CI or nightly evidence, and never promotes into main. `gtiup` manages preview,
   nightly, beta and stable toolchains; Neovim managed mode uses the selected
   matching compiler/LSP/parser without downloading its own tools. Installation
   remains opt-in. Never move the rolling preview tag by hand.
@@ -348,7 +368,8 @@ on Gitea and is unaffected. See "Published Toolchain Channels" in
 - **Beta** is `v<VERSION>-beta.<K>`, a GitHub prerelease. Every 48 hours the
   train cuts the published nightly's commit, once it has been on `main` for 24
   hours, into a `Release-Cut:` PR that the merge queue lands like any other
-  change; `beta.yml` then builds that cut commit, opens the
+  change; `beta.yml` then builds that cut commit (no suite re-run: the
+  cut's full-CI-verified parent is its evidence), opens the
   `beta/<major>.<minor>` line and publishes beta 1. Fixes reach a line only as
   `git cherry-pick -x` backports of `main` commits through `backport.yml`; a
   user-visible backport ends with a patch release cut.
