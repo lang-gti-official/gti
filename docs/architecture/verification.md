@@ -11293,6 +11293,15 @@ corpus census/oracle must still be run by the combined acceptance campaign.
 
 ### Bounded case workers and development selections
 
+The C++ MIR corpus worker shares one immutable frontend result between its
+readiness and text-agreement sweeps when their source and target profile match.
+Both sweeps still build their own representation rows and plans and retain all
+body, rejection, deterministic-text and aggregate assertions. Concurrent-profile
+readiness cases keep a distinct default-profile analysis for agreement. This
+reuse is confined to a single-source worker; `GTI_CPP_MIR_CORPUS_NO_REUSE=1`
+retains the independent-analysis path for differential timing and evidence.
+
+
 `compiler_pipeline` validates the complete named-test manifest before execution.
 Configure `-DGTI_COMPILER_TEST_ISOLATE_CASES=ON` to run every listed compiler case
 in a fresh process through its existing `--test NAME` entry point. This limits
