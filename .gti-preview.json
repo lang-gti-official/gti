@@ -243,10 +243,57 @@
         "85a96e81e07dc5e8c7663c6122be6d29d7661c1f"
       ],
       "merge": "85a96e81e07dc5e8c7663c6122be6d29d7661c1f"
+    },
+    {
+      "task": "compile-time-panic-lazy-staging",
+      "pr": 178,
+      "head": "cdb58f8a65859378bd821cf8941e3c81967a6a7d",
+      "tests": [
+        "compiler_pipeline",
+        "consteval_runtime",
+        "consteval_lsp",
+        "defined_integer_arithmetic",
+        "constexpr_aggregate_runtime",
+        "constexpr_text_runtime",
+        "constexpr_array_mir_runtime",
+        "constexpr_readonly_references_runtime",
+        "constexpr_mutation_runtime",
+        "constexpr_results_runtime",
+        "constexpr_allocation_runtime",
+        "constexpr_payload_enum_runtime",
+        "constexpr_tryable_runtime",
+        "constexpr_allocation_example",
+        "constexpr_enum_builders_runtime",
+        "constexpr_builders_example",
+        "constexpr_chrono_runtime",
+        "constexpr_library_runtime",
+        "constexpr_dependent_branches_runtime",
+        "constexpr_operators_runtime",
+        "constexpr_asset_table_runtime",
+        "constexpr_record_mir_runtime",
+        "macro_values_semantic_ir",
+        "macro_values_runtime",
+        "macro_result_failures",
+        "deferred_assertions",
+        "deferred_assertions_runtime",
+        "deferred_assertions_lsp",
+        "testing_assertions_runtime",
+        "panic_contracts",
+        "panic_runtime",
+        "panic_adoption_runtime",
+        "source_expected_example_runtime",
+        "practical_examples",
+        "typed_differential_smoke",
+        "feature_interaction_smoke"
+      ],
+      "contributions": [
+        "19006f9c6bf74d5f0d146174c8ecd2435b9cb7a3"
+      ],
+      "merge": "19006f9c6bf74d5f0d146174c8ecd2435b9cb7a3"
     }
   ],
   "removed": [],
   "main": "e3532e6715dd6344b0085e367982a8f2d496bda1",
-  "previous": "1e739f24b8b9e2f8e6da10de9afc1f1fd995263d",
-  "candidate": "af706270c1a84c4cbb849c0128dc61ea"
+  "previous": "6ed26ced974fd54d982116907badf799926d7bf7",
+  "candidate": "f4a0ebd3301e46c785199886865a0a30"
 }
