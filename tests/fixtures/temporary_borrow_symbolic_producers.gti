@@ -1,4 +1,5 @@
 import std.format;
+import std.string;
 
 class Counter {
   int amount;
@@ -25,5 +26,9 @@ int main() {
   if (text_size(static_text()) != std::size_t(6)) { return 3; }
   std::string text = std::format("{} {}", "choice", selected ? "yes" : "no");
   std::println(text);
+  // The first borrowed temporary must publish only after its producing call
+  // succeeds, before evaluation of the next argument branches.
+  std::string owner = "owned";
+  std::println(std::format("{} {}", owner.view(), selected ? "yes" : "no"));
   return 0;
 }

@@ -12,6 +12,8 @@ CONCURRENT_EXAMPLES = frozenset({
 CENSUS_TIMEOUT = 180
 # Features with an explicit unsupported C++ backend diagnostic.
 LLVM_ONLY_EXAMPLES = frozenset({
+    "058-formatted-output.gti", "134-standard-library-modules.gti",
+    "161-consuming-matches.gti", "175-thread-local-storage.gti",
     "066-managed-threads.gti", "098-shared-ownership.gti",
     "178-wrapping-atomic-counters.gti", "179-weak-ownership.gti",
     "180-compact-source-owners.gti",
@@ -26,7 +28,11 @@ LLVM_ONLY_EXAMPLES = frozenset({
 
 
 def cpp_limitation(name):
-    return {"190-conditional-member-operators.gti": "fresh class-valued subscript arguments",
+    return {"058-formatted-output.gti": "scalar, plain-enum, and text temporary reference arguments",
+            "134-standard-library-modules.gti": "scalar, plain-enum, and text temporary reference arguments",
+            "161-consuming-matches.gti": "scalar, plain-enum, and text temporary reference arguments",
+            "175-thread-local-storage.gti": "scalar, plain-enum, and text temporary reference arguments",
+            "190-conditional-member-operators.gti": "fresh class-valued subscript arguments",
             "191-reference-parameter-packs.gti": "scalar, plain-enum, and text temporary reference arguments",
             "186-scalar-temporary-borrows.gti": "scalar, plain-enum, and text temporary reference arguments",
             "187-operator-temporary-borrows.gti": "scalar, plain-enum, and text temporary reference arguments",

@@ -64,6 +64,55 @@ class NativeFixtureBuildTests(unittest.TestCase):
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (9, "emit\nnative\n", "warning\nlink failure\n"))
 
+    def test_explicit_cpp_provider_uses_one_emission_selector(self):
+        result = subprocess.CompletedProcess([], 0, "", "")
+        with patch("native_fixture_build.subprocess.run", return_value=result) as run:
+            build_fixture(["gti", "fixture.gti", "--backend", "cpp", "-O3"],
+                          "program", native_sources=["provider.cpp"])
+        self.assertEqual(run.call_args_list[0].args[0],
+                         ["gti", "fixture.gti", "-O3", "--emit-cpp", "-o", "program.gti.cpp"])
+        self.assertEqual(run.call_count, 2)
+
+    def test_llvm_providers_keep_driver_linking_and_object_order(self):
+        compiled = subprocess.CompletedProcess([], 0, "", "")
+        linked = subprocess.CompletedProcess([], 0, "llvm built", "")
+        environment = {"GTI_CXX": "/ambient/compiler"}
+        with patch("native_fixture_build.subprocess.run",
+                   side_effect=[compiled, compiled, linked]) as run:
+            result = build_fixture(
+                ["gti", "fixture.gti", "--backend", "llvm", "-O3"],
+                Path("output/program"), native_sources=["first.cpp", "second.cpp"],
+                native_arguments=["-fsanitize=address"], cxx=Path("/selected/clang++"),
+                optimization="O3", env=environment, text=True)
+        self.assertIs(result, linked)
+        self.assertEqual(run.call_args_list[0].args[0],
+                         ["/selected/clang++", "-std=c++23", "-O3", "-fsanitize=address",
+                          "-c", "first.cpp", "-o", "output/program-provider-0.o"])
+        self.assertEqual(run.call_args_list[1].args[0][-4:],
+                         ["-c", "second.cpp", "-o", "output/program-provider-1.o"])
+        self.assertEqual(run.call_args_list[2].args[0],
+                         ["gti", "fixture.gti", "--backend", "llvm", "-O3", "-o",
+                          "output/program", "--", "output/program-provider-0.o",
+                          "output/program-provider-1.o", "-fsanitize=address"])
+        for call in run.call_args_list:
+            self.assertEqual(call.kwargs, {"env": environment, "text": True})
+            self.assertNotIn("--emit-cpp", call.args[0])
+
+    def test_llvm_provider_failure_prevents_driver_link(self):
+        failed = subprocess.CompletedProcess([], 9, "", "provider error")
+        with patch("native_fixture_build.subprocess.run", return_value=failed) as run:
+            result = build_fixture(["gti", "fixture.gti", "--backend", "llvm"],
+                                   "program", native_sources=["provider.cpp"])
+        self.assertIs(result, failed)
+        self.assertEqual(run.call_count, 1)
+
+    def test_llvm_same_translation_unit_suffix_never_falls_back_to_cpp(self):
+        with patch("native_fixture_build.subprocess.run") as run:
+            with self.assertRaisesRegex(ValueError, r"native_suffix requires the C\+\+"):
+                build_fixture(["gti", "fixture.gti", "--backend", "llvm"],
+                              "program", native_suffix="// C++-only probe")
+        run.assert_not_called()
+
     def test_frontend_failure_never_invokes_native_compiler(self):
         failed = subprocess.CompletedProcess([], 65, "", "source error")
         with patch("native_fixture_build.subprocess.run", return_value=failed) as run:

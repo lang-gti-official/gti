@@ -9072,21 +9072,23 @@ private:
     }
     const MirDropObligationId resultDrop =
         detachedBorrowResult ? 0 : dropObligationForValue(value.id);
-    const bool transferableBorrowedResult =
+    const bool borrowedValueResult =
         call.loan &&
-        (value.info.type.kind == SemanticType::Class ||
-         value.info.type.kind == SemanticType::Enum) &&
         value.info.category == ValueCategory::Value &&
-        value.info.traits.movable && value.info.traits.containsBorrowedState;
-    // A cleanup-owning result exists only after a failure-capable call
+        value.info.traits.movable &&
+        (value.info.traits.containsBorrowedState ||
+         value.info.traits.drop == DropKind::Trivial);
+    // An owning or materialized passive result exists only after a fallible call
     // succeeds, regardless of whether it is the full-expression root or a
-    // nested input to another call. Arm its value obligation on the Invoke
+    // nested input to another call. Passive values can carry a checked external
+    // dependency through call.loan without type-level borrowed-state traits.
+    // Arm their value obligation on the Invoke
     // success edge; the normal successor then owns the temporary until a
     // later CallInput reparents it or full-expression cleanup drops it.
     const bool successEdgeResult =
         resultDrop != 0 && routeFailureEdgesHere() &&
         call.definedFailure.mayUnwind() && !call.destination &&
-        (!call.loan || transferableBorrowedResult ||
+        (!call.loan || borrowedValueResult ||
          borrowedTemporaryTransfers.contains(value.id)) &&
         !value.ownership;
     if (successEdgeResult) {

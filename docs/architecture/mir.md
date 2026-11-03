@@ -2842,6 +2842,10 @@ A `MirBody` owns:
   retains the source HIR identity, exact place, bounds origin and assigned
   failure site, and its successful `Invoke` edge precedes publication. Other
   origin and propagation families remain on the operation that owns them.
+  Temporary argument loans end in reverse staging order on both invocation
+  successors. A terminal call still publishes that epilogue before sealing its
+  normal successor as `Unreachable`; no-return control flow does not erase
+  full-expression borrow or failure-cleanup obligations.
   Scheduled ordinary constructors use this same path:
   written, defaulted, and pack-expanded inputs retain prepared-parameter
   places across later argument evaluation and transfer at `Construct`, not at

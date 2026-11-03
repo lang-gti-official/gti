@@ -272,6 +272,10 @@ void testGeneralTextStepMatchesProductionEmission() {
     const bool freshClassSubscript =
         source.filename() == "190-conditional-member-operators.gti";
     const bool temporaryReference =
+        source.filename() == "058-formatted-output.gti" ||
+        source.filename() == "134-standard-library-modules.gti" ||
+        source.filename() == "161-consuming-matches.gti" ||
+        source.filename() == "175-thread-local-storage.gti" ||
         source.filename() == "186-scalar-temporary-borrows.gti" ||
         source.filename() == "187-operator-temporary-borrows.gti" ||
         source.filename() == "191-reference-parameter-packs.gti";

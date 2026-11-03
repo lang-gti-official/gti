@@ -1,7 +1,7 @@
 {
   "schema": "gti-stdlib-surface-v1",
   "source_fingerprints": {
-    "stdlib/prelude.gti": "ff426a31d12405cd7a6f09ad46cf76c14f7d3b0a1fadef595c6ad7a4d4d3f831",
+    "stdlib/prelude.gti": "64f74322b06154e33d4c6c97abcdfe543ae8a2d7965d1adfa20b989c0771ab49",
     "stdlib/std.gti": "6bf76540ce1d32024871a3fce4b9512fd6fd494511f919db63450e2b4796a0f7",
     "stdlib/std/algorithm.gti": "0b11f6332b1aa9cb3f0b5be90680a81e5f5e7fcd6cc38322f65263e87d6f7f2b",
     "stdlib/std/array.gti": "affed4f1d587a71a098ef7c9b381e6c255d8b639492abbe9a46b31e00115adde",
@@ -31,22 +31,22 @@
     "stdlib/std/environment.gti": "3a8c583446b14f97b3c3f3b1ae9dad7c206c830222bd31e8b1650e6f4d0cd826",
     "stdlib/std/experimental/optional.gti": "9ef1e87987c636fa141de4f844c264f07147e816db9c365d98f334f32689c083",
     "stdlib/std/filesystem.gti": "a579044390fadec9e7854eccd4d5901f13ab85288bf71a19ee97cadad2693de6",
-    "stdlib/std/format.gti": "6bb96b2a640689505878eeafc4ed2b75989c5821638e12114d5661ecdbe0ea67",
+    "stdlib/std/format.gti": "c47af029e7f6e7a449c49cd9b4e3f9e4e876a0889a5934fb7736058950aef6a2",
     "stdlib/std/forward_list.gti": "8d39227073b9f98eb6bc83a7a7103bc630497345830bc7e618dcc01fccb917ef",
-    "stdlib/std/functional.gti": "094c1baa47c93162e8ad139c30e5bd0070cff7c5e2343fb3fd32ca880f8437ac",
+    "stdlib/std/functional.gti": "d855a3aa7a179ddba7f259088d7e040cd9ef901f1977e8bd69edf1428a006ecc",
     "stdlib/std/http.gti": "7810cf7acaee803670f346e0103fa6c0cdfca62aca8edda538cfa880e8ae3521",
     "stdlib/std/io.gti": "8c28bff6f539a82e47f507db2cff429e74307b0dbe6128de48c0b47fd329c0b3",
     "stdlib/std/iterator.gti": "586855579c50031612b0136d001e21dd31c4387dcf115c9fe4485bd12d2577e3",
     "stdlib/std/json.gti": "85e0213cd253a521937160a0cac1d3e5be1eaa622f34442831a4d2dbffe7b812",
     "stdlib/std/list.gti": "d8c0a951c3ef5a9fefb8fd69882c8d2b313c9b502d32df906e8e38da809f7923",
-    "stdlib/std/map.gti": "73bbf9e8c529c923f3391b94b83e330b90c02b933a7b2cfd9f3c171ee01a6955",
+    "stdlib/std/map.gti": "ef4d00691aaa30c44dc2256160fafd629fa387cf61fd2dc00494a21ecc1015b8",
     "stdlib/std/memory.gti": "cf4a99569c5e3d3ddd352ae4a6019586a64ff5fe27e2d637a6bf1c91e4bd62c1",
     "stdlib/std/meta.gti": "a551c06adbe68e4d6240146db6259483dc95899feee10aa3bfdf7f8de93732fa",
     "stdlib/std/mutex.gti": "d761ef5ca158c5da39f60c2c6c2d66004f6a02a9ea5903bbf4db015e9a77eb11",
     "stdlib/std/numeric.gti": "fa0d3a929076f3f614ebef4c10c897c513e91712332d00b24fc58e78af5bd0cf",
     "stdlib/std/optional.gti": "a67d746ef0f8f5eb14c256b5595725febe56425cfec76fea484f5717fd1ca0d1",
     "stdlib/std/paired_span.gti": "06244b15782f49e35b229fa20238489c578305d8b09a70e9b22ba77f7d5dfffa",
-    "stdlib/std/panic.gti": "3d57fe9c9292a04c6671534abaa3fd9b9287c47247f5c2d40e686344c25cd222",
+    "stdlib/std/panic.gti": "df03aec87b809ae4a8932c5da8c8ede3a65c9a55448094604eadedae788aa11c",
     "stdlib/std/polymorphic.gti": "009f2fe6faec263700c6d734d8db3448b25cde6cca9c9adfea2e8807ed3a594a",
     "stdlib/std/process.gti": "632b0c183f363b66872ae2c17a00516ac9b103bfd580527fc639fd0996e1324b",
     "stdlib/std/queue.gti": "38c9d92a49aa37fcd56dadaa3c2639e5c963b79efa5286f30b407016bc909eed",
@@ -57,14 +57,14 @@
     "stdlib/std/simd.gti": "c525bc03c27ff0f3921aaaa7ff03931dacad40578895dac142b0863f1b5fb9ce",
     "stdlib/std/source_location.gti": "c748203afe96c27c06465ffd6b38728becb85bcceca6e8097f75a8460eb74f95",
     "stdlib/std/span.gti": "effe13ba9bd0beeb1f04c84f17b5bd4458686ff713e3eb6756a65a8b0e8a7409",
-    "stdlib/std/string.gti": "0beeddb811310b50821c9df0d71f50258ceec61a761ddffa909f33a53ae79cfb",
+    "stdlib/std/string.gti": "16203eb1bc2d94ced23f95c6f211473a161394b7b59f328f9cebc7dacc906078",
     "stdlib/std/string_view.gti": "3a96eeaa90719fdc5c2202f5cbd4ee81ef215f702a848767d2a4c2cf82a94cd6",
     "stdlib/std/tcp.gti": "23022069c0f430cf86fa3c0bd567aa44cde7ef638d7bcb821148a0ac77959c04",
-    "stdlib/std/testing.gti": "03e0324d888081b1ee77a626f73c45170a94aa337a214732ba829880204af618",
+    "stdlib/std/testing.gti": "97481e862587cbeda0b36a1421c0cd66b89d896cdad601d4dc96086d88f2a2c3",
     "stdlib/std/thread.gti": "3fc42f30db431e05b406379bfc24999dc499a1105bee59c07fc1e794b350e77a",
-    "stdlib/std/unordered_map.gti": "7e1066725b42affa19324597126a44fb608416b63bfc778d38526ed9b795e1ed",
-    "stdlib/std/unordered_set.gti": "beefd607c3c90ac64cae71baec51e9808919b7fe6a5f362ec7c2e29351138da0",
-    "stdlib/std/utility.gti": "983e0584b5bf5c1850f0f648ebc579a53586e1e0f5f5d28c23d4fc88155343b5",
+    "stdlib/std/unordered_map.gti": "566586e159a1a519114a88ff2ba54a4d56228bdf8ff29efd9487613163d159b4",
+    "stdlib/std/unordered_set.gti": "9ee55b4641c6052909d9c7815d816afc536cf4d8466004543143142e6cc64afc",
+    "stdlib/std/utility.gti": "25969598c6420f6f29a710a96ef01289c0207e74c75f5ddae669b53d9c53fe6f",
     "stdlib/std/vector.gti": "65d48f1d767a11f2d44606f4748485e0cfb430529db8c8b54d79040b75eeb24c"
   },
   "cases": [
@@ -683,6 +683,36 @@
       }
     },
     {
+      "id": "conditional-member-operators",
+      "mode": "run",
+      "source": "tests/fixtures/conditional_member_operators.gti",
+      "backend": "llvm",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "conditional-member-operators-cpp",
+      "mode": "run",
+      "source": "tests/fixtures/conditional_member_operators_cpp_supported.gti",
+      "backend": "cpp",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
       "id": "constexpr-chrono",
       "mode": "run",
       "source": "tests/fixtures/constexpr_chrono.gti",
@@ -1143,7 +1173,22 @@
         "exit_code": 0,
         "stdout": "value=7 host=gitea.example ok=1 enabled=true\ndone\n",
         "stderr": ""
-      }
+      },
+      "backend": "llvm"
+    },
+    {
+      "id": "format-cpp-temporary-rejection",
+      "mode": "diagnostic",
+      "source": "tests/fixtures/stdlib_surface_format.gti",
+      "expected": {
+        "exit_code": 65,
+        "stderr_contains": [
+          "GTI-B0003",
+          "scalar, plain-enum, and text temporary reference arguments require the LLVM backend"
+        ]
+      },
+      "backend": "cpp",
+      "optimization": "O0"
     },
     {
       "id": "format-customization",
@@ -1157,7 +1202,8 @@
         "exit_code": 0,
         "stdout": "ID=002a Record(7)\n",
         "stderr": ""
-      }
+      },
+      "backend": "cpp"
     },
     {
       "id": "format-panic-adoption",
@@ -1174,7 +1220,25 @@
         "exit_code": 0,
         "stdout": "{raw}{{raw}}\n1 2 three\n",
         "stderr": ""
-      }
+      },
+      "backend": "llvm"
+    },
+    {
+      "id": "format-panic-cpp-temporary-rejection",
+      "mode": "diagnostic",
+      "source": "tests/fixtures/panic_adoption.gti",
+      "native_sources": [
+        "tests/fixtures/panic_adoption_io.cpp"
+      ],
+      "expected": {
+        "exit_code": 65,
+        "stderr_contains": [
+          "GTI-B0003",
+          "scalar, plain-enum, and text temporary reference arguments require the LLVM backend"
+        ]
+      },
+      "backend": "cpp",
+      "optimization": "O0"
     },
     {
       "id": "forward-list-algorithms",
@@ -1299,6 +1363,36 @@
       "expected": {
         "exit_code": 0,
         "stdout": "token creation failed: 9\nnamed 18446744073709551615\n",
+        "stderr": ""
+      },
+      "backend": "cpp"
+    },
+    {
+      "id": "integral-enum-formatting-cpp-temporary-rejection",
+      "mode": "diagnostic",
+      "source": "tests/fixtures/integral_enum_formatting_temporary.gti",
+      "backend": "cpp",
+      "expected": {
+        "exit_code": 65,
+        "stderr_contains": [
+          "GTI-B0003",
+          "scalar, plain-enum, and text temporary reference arguments require the LLVM backend"
+        ]
+      },
+      "optimization": "O0"
+    },
+    {
+      "id": "integral-enum-formatting-temporary",
+      "mode": "run",
+      "source": "tests/fixtures/integral_enum_formatting_temporary.gti",
+      "backend": "llvm",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
         "stderr": ""
       }
     },
@@ -2034,6 +2128,21 @@
       "expected": {
         "exit_code": 0,
         "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "protocol-format-hash",
+      "mode": "run",
+      "source": "tests/fixtures/protocol_format_hash.gti",
+      "backend": "llvm",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "(8, 9)\n",
         "stderr": ""
       }
     },
@@ -3885,6 +3994,32 @@
       ]
     },
     {
+      "id": "format.cpp-temporary-references",
+      "source": "stdlib/std/format.gti",
+      "status": "unsupported",
+      "operations": [
+        "std::format-family temporary scalar/plain-enum/text arguments (C++ backend)"
+      ],
+      "case_ids": [
+        "format-cpp-temporary-rejection",
+        "format-panic-cpp-temporary-rejection",
+        "integral-enum-formatting-cpp-temporary-rejection"
+      ],
+      "required_instantiations": [
+        "primitive expression and text-view temporary format arguments",
+        "plain-enum factory results in a reference pack"
+      ],
+      "reason": "The C++ backend rejects the new scalar, plain-enum and text temporary reference storage shapes with GTI-B0003. LLVM executes the same fixtures at O0/O3; named enum storage, legacy custom formatters and supported owning arguments retain C++ comparator coverage.",
+      "evidence": [
+        "tests/scalar_temporary_borrow_runtime_test.py",
+        "tests/integral_enum_formatting_runtime_test.py",
+        "tests/fixtures/stdlib_surface_format.gti",
+        "tests/fixtures/panic_adoption.gti",
+        "tests/fixtures/integral_enum_formatting.gti",
+        "tests/fixtures/extensible_formatting.gti"
+      ]
+    },
+    {
       "id": "format.executable",
       "source": "stdlib/std/format.gti",
       "status": "executable",
@@ -3894,6 +4029,8 @@
         "std::format_to",
         "std::formattable<T>",
         "std::formatter<T>",
+        "std::formatting<T>",
+        "std::formatting<T>::format",
         "std::print(pattern,Args...)",
         "std::println(pattern,Args...)",
         "std::try_format",
@@ -3906,7 +4043,9 @@
         "format-customization",
         "format-panic-adoption",
         "integral-enum-formatting",
-        "integral-enum-example"
+        "integral-enum-example",
+        "protocol-format-hash",
+        "integral-enum-formatting-temporary"
       ],
       "required_instantiations": [
         "zero arguments",
@@ -3915,12 +4054,18 @@
         "counted string view with embedded zero",
         "indexed and typed format specifications",
         "custom formatter delegation and composition",
-        "recoverable value-dependent formatter rejection"
+        "recoverable value-dependent formatter rejection",
+        "conditional generic protocol formatting with nested pairs and noncopyable leaves",
+        "legacy exact formatter compatibility and protocol-first precedence",
+        "borrowed call-result plain enums retain nonzero values and source evaluation order"
       ],
       "evidence": [
         "tests/fixtures/stdlib_surface_format.gti",
         "tests/fixtures/extensible_formatting.gti",
-        "stdlib/std/format.gti"
+        "stdlib/std/format.gti",
+        "tests/protocol_format_hash_runtime_test.py",
+        "tests/integral_enum_formatting_runtime_test.py",
+        "tests/reference_parameter_packs_test.py"
       ]
     },
     {
@@ -4142,6 +4287,8 @@
       "source": "stdlib/std/functional.gti",
       "status": "executable",
       "operations": [
+        "std::default_hash<T>",
+        "std::default_hash<T>::operator()",
         "std::hash<bool>",
         "std::hash<char>",
         "std::hash<int16_t>",
@@ -4151,22 +4298,30 @@
         "std::hash<uint16_t>",
         "std::hash<uint32_t>",
         "std::hash<uint64_t>",
-        "std::hash<uint8_t>"
+        "std::hash<uint8_t>",
+        "std::hashable<T>",
+        "std::hashing<T>",
+        "std::hashing<T>::hash"
       ],
       "case_ids": [
-        "associative-hashes"
+        "associative-hashes",
+        "protocol-format-hash"
       ],
       "required_instantiations": [
         "all fixed-width signed/unsigned integers",
         "bool",
         "char",
         "application-owned exact hash specialization",
-        "move-only stored source hasher"
+        "move-only stored source hasher",
+        "conditional generic hashing, nested pairs and noncopyable leaves",
+        "legacy exact hash compatibility and protocol-first precedence"
       ],
       "evidence": [
         "stdlib/std/functional.gti",
         "tests/fixtures/associative_hash_contracts.gti",
-        "tests/associative_hash_contracts_test.py"
+        "tests/associative_hash_contracts_test.py",
+        "tests/protocol_format_hash_runtime_test.py",
+        "tests/fixtures/protocol_format_hash.gti"
       ]
     },
     {
@@ -4682,6 +4837,7 @@
         "std::map::lower_bound",
         "std::map::map",
         "std::map::mapped_type",
+        "std::map::operator[]",
         "std::map::sentinel",
         "std::map::size",
         "std::map::size_type",
@@ -4695,7 +4851,9 @@
         "associative-map-iteration",
         "associative-map-ownership",
         "associative-map-insert-result",
-        "container-member-aliases"
+        "container-member-aliases",
+        "conditional-member-operators",
+        "conditional-member-operators-cpp"
       ],
       "required_instantiations": [
         "scalar keys and values",
@@ -4704,14 +4862,17 @@
         "checked mutable and read-only traversal",
         "pair<iterator, bool> insertion and move",
         "duplicate emplacement without construction",
-        "destructor cleanup and node reuse"
+        "destructor cleanup and node reuse",
+        "conditional default insertion by owned key, existing-key reuse, exactly-once mapped-value cleanup"
       ],
       "evidence": [
         "stdlib/std/map.gti",
         "tests/associative_map_test.py",
         "tests/container_contract_failure_test.py",
         "docs/language/standard-library.md",
-        "tests/fixtures/stdlib_surface_container_aliases.gti"
+        "tests/fixtures/stdlib_surface_container_aliases.gti",
+        "tests/conditional_member_operators_test.py",
+        "tests/fixtures/conditional_member_operators.gti"
       ]
     },
     {
@@ -5694,7 +5855,8 @@
         "tests/fixtures/stdlib_surface_panic_expected.gti",
         "tests/panic_runtime_test.py",
         "tests/panic_contract_tests.cpp",
-        "stdlib/std/panic.gti"
+        "stdlib/std/panic.gti",
+        "tests/reference_parameter_packs_test.py"
       ]
     },
     {
@@ -5770,6 +5932,31 @@
         "tests/native_c_scalar_runtime_test.py",
         "examples/123-native-c-scalars.gti",
         "docs/language/native-c-interop.md"
+      ]
+    },
+    {
+      "id": "prelude.comparison-concepts",
+      "source": "stdlib/prelude.gti",
+      "status": "executable",
+      "operations": [
+        "std::equality_comparable",
+        "std::totally_ordered"
+      ],
+      "case_ids": [
+        "conditional-member-operators",
+        "conditional-member-operators-cpp",
+        "string-ordering"
+      ],
+      "required_instantiations": [
+        "available conditional equality members on user generic classes and nested pairs",
+        "missing element equality does not satisfy the structural comparison contract",
+        "ordinary scalar and owning-string total ordering"
+      ],
+      "evidence": [
+        "stdlib/prelude.gti",
+        "tests/conditional_member_operators_test.py",
+        "tests/fixtures/conditional_member_operators.gti",
+        "tests/fixtures/string_ordering.gti"
       ]
     },
     {
@@ -6599,6 +6786,7 @@
       "status": "executable",
       "operations": [
         "std::hash<std::string>",
+        "std::hashing<std::string>",
         "std::string::append",
         "std::string::as_span",
         "std::string::at",
@@ -6637,11 +6825,13 @@
         "string-ordering",
         "associative-hashes",
         "container-member-aliases",
-        "sequence-unchecked"
+        "sequence-unchecked",
+        "protocol-format-hash"
       ],
       "required_instantiations": [
         "std::to_string for every fixed-width integer family",
-        "std::to_string(float)"
+        "std::to_string(float)",
+        "owning string elements in source-protocol-hashed pair keys"
       ],
       "evidence": [
         "tests/fixtures/span_owner_dependent.gti",
@@ -6655,7 +6845,8 @@
         "tests/string_ordering_runtime_test.py",
         "tests/fixtures/associative_hash_contracts.gti",
         "stdlib/std/string.gti",
-        "tests/fixtures/stdlib_surface_container_aliases.gti"
+        "tests/fixtures/stdlib_surface_container_aliases.gti",
+        "tests/protocol_format_hash_runtime_test.py"
       ]
     },
     {
@@ -6778,14 +6969,17 @@
       "required_instantiations": [
         "explicit/default and lazy messages; scalar literal single evaluation; borrowed noncopyable object operands; source attribution and deterministic failure cleanup",
         "quoted string differences and first byte/length; floating absolute/relative tolerances, NaNs and infinities; span element/length differences",
-        "successful comparisons do not call user formatters; failing equality calls user comparison once and formats borrowed values"
+        "successful comparisons do not call user formatters; failing equality calls user comparison once and formats borrowed values",
+        "protocol-only user formatting in equality assertion failure without a legacy formatter specialization"
       ],
       "evidence": [
         "tests/fixtures/stdlib_surface_testing.gti",
         "tests/annotated_test_suite_test.py",
         "examples/annotated-tests/tests/main.gti",
         "tests/fixtures/testing_assertions.gti",
-        "tests/testing_assertions_runtime_test.py"
+        "tests/testing_assertions_runtime_test.py",
+        "tests/fixtures/protocol_testing_assertions.gti",
+        "tests/protocol_format_hash_runtime_test.py"
       ]
     },
     {
@@ -6908,6 +7102,7 @@
         "std::unordered_map::load_factor",
         "std::unordered_map::mapped_type",
         "std::unordered_map::max_load_factor",
+        "std::unordered_map::operator[]",
         "std::unordered_map::rehash",
         "std::unordered_map::reserve",
         "std::unordered_map::sentinel",
@@ -6924,7 +7119,10 @@
         "unordered-map-ownership",
         "unordered-map-load-factor",
         "unordered-map-insert-result",
-        "container-member-aliases"
+        "container-member-aliases",
+        "conditional-member-operators",
+        "conditional-member-operators-cpp",
+        "protocol-format-hash"
       ],
       "required_instantiations": [
         "scalar keys and values",
@@ -6933,14 +7131,19 @@
         "checked mutable and read-only traversal",
         "pair<iterator, bool> insertion and move",
         "duplicate emplacement without construction",
-        "destructor cleanup and node reuse"
+        "destructor cleanup and node reuse",
+        "conditional default insertion by owned key, existing-key reuse, exactly-once mapped-value cleanup",
+        "protocol-derived default hash for nested pair keys, including owning string elements"
       ],
       "evidence": [
         "stdlib/std/unordered_map.gti",
         "tests/unordered_map_test.py",
         "tests/container_contract_failure_test.py",
         "docs/language/standard-library.md",
-        "tests/fixtures/stdlib_surface_container_aliases.gti"
+        "tests/fixtures/stdlib_surface_container_aliases.gti",
+        "tests/conditional_member_operators_test.py",
+        "tests/fixtures/conditional_member_operators.gti",
+        "tests/protocol_format_hash_runtime_test.py"
       ]
     },
     {
@@ -7001,16 +7204,19 @@
         "complete-containers-collection",
         "complete-sets",
         "complete-containers-ownership",
-        "container-member-aliases"
+        "container-member-aliases",
+        "protocol-format-hash"
       ],
       "required_instantiations": [
         "int",
-        "move-only Key with collision-heavy Hash and Equal"
+        "move-only Key with collision-heavy Hash and Equal",
+        "protocol-derived default hash for nested pair keys, including owning string elements"
       ],
       "evidence": [
         "tests/complete_containers_test.py",
         "tests/fixtures/complete_containers_ownership.gti",
-        "tests/fixtures/stdlib_surface_container_aliases.gti"
+        "tests/fixtures/stdlib_surface_container_aliases.gti",
+        "tests/protocol_format_hash_runtime_test.py"
       ]
     },
     {
@@ -7034,7 +7240,8 @@
       ],
       "evidence": [
         "tests/fixtures/generic_clone.gti",
-        "tests/generic_clone_runtime_test.py"
+        "tests/generic_clone_runtime_test.py",
+        "tests/concept_conditions_test.py"
       ]
     },
     {
@@ -7044,21 +7251,29 @@
       "operations": [
         "std::make_pair",
         "std::pair::first",
+        "std::pair::operator!=",
+        "std::pair::operator==",
         "std::pair::pair",
         "std::pair::second"
       ],
       "case_ids": [
         "utility-make-pair",
         "utility-pair-constructor",
-        "constexpr-library"
+        "constexpr-library",
+        "conditional-member-operators",
+        "conditional-member-operators-cpp",
+        "protocol-format-hash"
       ],
       "evidence": [
         "tests/fixtures/stdlib_surface_utility.gti",
         "tests/fixtures/stdlib_surface_utility_pair.gti",
-        "stdlib/std/utility.gti"
+        "stdlib/std/utility.gti",
+        "tests/conditional_member_operators_test.py",
+        "tests/protocol_format_hash_runtime_test.py"
       ],
       "required_instantiations": [
-        "std::pair<int32_t,int64_t>"
+        "std::pair<int32_t,int64_t>",
+        "conditional element equality for nested pairs and unavailable-equality rejection"
       ]
     },
     {

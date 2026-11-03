@@ -8,27 +8,7 @@ import subprocess
 import tempfile
 
 from allocation_abort_runtime_test import ABORT_STATUS
-from native_fixture_build import build_fixture
-
-
-def build_llvm_fixture(command, output, *, native_sources=(), native_arguments=(),
-                       standard="c++23", optimization="O0", **options):
-    # The ordinary provider helper emits C++; LLVM fixtures instead compile
-    # providers to objects and let the production LLVM driver own linking.
-    environment = options.get("env", os.environ)
-    cxx = environment.get("GTI_CXX") or environment.get("CXX") or "c++"
-    objects = []
-    for index, source in enumerate(native_sources):
-        target = output.with_name(output.name + f"-provider-{index}.o")
-        compiled = subprocess.run(
-            [cxx, f"-std={standard}", f"-{optimization}", *native_arguments,
-             "-c", str(source), "-o", str(target)], **options)
-        if compiled.returncode != 0:
-            return compiled
-        objects.append(str(target))
-    return build_fixture(command, output,
-                         native_arguments=[*objects, *native_arguments],
-                         standard=standard, optimization=optimization, **options)
+from native_fixture_build import build_fixture, build_llvm_fixture
 
 
 def run(command, *, timeout=300):

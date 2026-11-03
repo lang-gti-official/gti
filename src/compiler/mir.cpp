@@ -8417,16 +8417,16 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction) {
       !instruction.successResultDrop &&
       (instruction.definedFailure.propagation != FailurePropagationKind::None ||
        locallyFailingBorrowIntrinsic);
-  const bool transferredBorrowedCallResult =
+  const bool publishedBorrowedValueResult =
       borrowedInvocation && instruction.loan &&
       instruction.borrowOrigin != BorrowOriginKind::None &&
       instruction.successResultDrop && instruction.result &&
-      (instruction.info.type.kind == SemanticType::Class ||
-       instruction.info.type.kind == SemanticType::Enum) &&
       instruction.info.category == ValueCategory::Value &&
       instruction.info.traits.movable &&
-      instruction.info.traits.containsBorrowedState &&
-      instruction.definedFailure.propagation != FailurePropagationKind::None;
+      (instruction.info.traits.containsBorrowedState ||
+       instruction.info.traits.drop == DropKind::Trivial) &&
+      (instruction.definedFailure.propagation != FailurePropagationKind::None ||
+       locallyFailingBorrowIntrinsic);
   const bool directInitializationResult =
       (instruction.kind == MirInstructionKind::Call ||
        instruction.kind == MirInstructionKind::Construct) &&
@@ -8437,7 +8437,7 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction) {
   if (instruction.definedFailure.empty() ||
       (instruction.destination && !trivialCommitDestination) ||
       (instruction.loan && !borrowedCallResult &&
-       !transferredBorrowedCallResult) ||
+       !publishedBorrowedValueResult) ||
       (!statePreservingOwnership && !statePreservingReinitialize) ||
       instruction.info.type.kind == SemanticType::Reference) {
     return false;
@@ -8468,8 +8468,11 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction) {
   if (borrowedCallResult) {
     return true;
   }
-  if (transferredBorrowedCallResult) {
-    return instruction.info.traits.drop == DropKind::Lexical;
+  if (publishedBorrowedValueResult) {
+    // A passive value's dynamic dependency is established by its exact loan,
+    // not necessarily by type-level borrowed-state traits. Its materialized
+    // lifetime, like an owning carrier's cleanup, starts only on success.
+    return true;
   }
   if (directInitializationResult) {
     return true;

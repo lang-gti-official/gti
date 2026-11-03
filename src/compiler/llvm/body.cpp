@@ -784,8 +784,12 @@ private:
   }
   void failedOperation() {
     const auto &term = current->terminator;
-    if (term.kind != MirTerminatorKind::Invoke || !term.failureRecord)
-      throw std::logic_error("LLVM failed operation lost its Invoke record");
+    if (term.kind != MirTerminatorKind::Invoke || !term.failureRecord ||
+        stage == nullptr || term.invokeInstruction != stage->id)
+      throw std::logic_error(
+          "LLVM failed operation lost its Invoke record in '" +
+          function.getName().str() + "', block " + std::to_string(current->id) +
+          ", instruction " + std::to_string(stage ? stage->id : 0));
     // An abandoned callee wrote no record; never read its channel.
     abandonIfRequested();
     // A compiled-library propagation-only body has no observable failure

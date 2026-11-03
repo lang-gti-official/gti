@@ -17,7 +17,7 @@ if __name__ == "__main__":
     names = ("scalar_temporary_borrow", "186-scalar-temporary-borrows",
              "187-operator-temporary-borrows", "temporary_borrow_library_clients",
              "temporary_borrow_cpp_supported", "noreturn_temporary_borrow",
-             "temporary_borrow_symbolic_producers")
+             "temporary_borrow_symbolic_producers", "borrowed_text_temporary_failure")
     terminal = root / "tests/fixtures/noreturn_temporary_borrow.gti"
     terminal_lines = terminal.read_text().splitlines()
     def terminal_site(marker):
@@ -28,6 +28,13 @@ if __name__ == "__main__":
                "failure_during_cleanup; primary [GTI-R0017] at "
                f"{terminal_site('terminal-panic')} "
                'message="terminal"; secondary [GTI-R0017] message="cleanup"\n')
+    text_failure = root / "tests/fixtures/borrowed_text_temporary_failure.gti"
+    text_lines = text_failure.read_text().splitlines()
+    def text_failure_at(marker):
+        line = next(i for i, line in enumerate(text_lines, 1)
+                    if line.endswith('// ' + marker))
+        return (f"{text_failure.name}:{line}: runtime error[GTI-R0002]: "
+                "division_by_zero in integer_division\n")
     main(names=names, llvm_modes=True,
          cpp_unsupported={name: (None if name == "temporary_borrow_cpp_supported" else
                                 "scalar, plain-enum, and text temporary reference arguments")
@@ -41,4 +48,9 @@ if __name__ == "__main__":
                     ((), (70, "2\n1\n9\n", primary)),
                     (("cleanup-fails",), (70, "2\n", cleanup))],
                 "temporary_borrow_symbolic_producers": [
-                    ((), (0, "value 7\nchoice yes\n", ""))]})
+                    ((), (0, "value 7\nchoice yes\nowned yes\n", ""))],
+                "borrowed_text_temporary_failure": [
+                    ((), (0, "produce\nbranch\nowned\nyes\ncleanup\n", "")),
+                    (("producer",), (70, "produce\ncleanup\n", text_failure_at("producer-failure"))),
+                    (("later", "fails"), (70, "produce\nbranch\ncleanup\n", text_failure_at("branch-failure"))),
+                    (("body", "now", "fails"), (70, "produce\nbranch\nowned\nyes\ncleanup\n", text_failure_at("body-failure")))]})
