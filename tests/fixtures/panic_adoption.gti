@@ -41,71 +41,71 @@ public:
 
 [[track_caller]]
 std::string through_wrapper(std::string_view pattern) {
-  return std::format(pattern, 1);
+  return std::runtime_format(pattern, 1);
 }
 
 int main(int argc, std::vector<std::string> argv) {
   unsafe { gti_test_unbuffer_stdout(); }
   if (argc == 1) {
-    auto plain = std::format("{{literal}}");
+    auto plain = std::runtime_format("{{literal}}");
     if (plain != "{literal}") { return 1; }
-    mut auto text = std::format("{} {}", std::string("owned"), std::string("second"));
-    std::format_to(text, " {{suffix}}");
-    std::format_to(text, " {}", 42);
+    mut auto text = std::runtime_format("{} {}", std::string("owned"), std::string("second"));
+    std::runtime_format_to(text, " {{suffix}}");
+    std::runtime_format_to(text, " {}", 42);
     if (text != "owned second {suffix} 42") { return 2; }
-    auto failed = std::try_format_to(text, "leak {}", Unknown());
+    auto failed = std::try_runtime_format_to(text, "leak {}", Unknown());
     if (failed || failed.error() != std::format_errc::unsupported_argument ||
         text != "owned second {suffix} 42") { return 3; }
     auto raw = std::try_print("{raw}");
     auto raw_line = std::try_println("{{raw}}");
     if (!raw || !raw_line) { return 4; }
-    std::print("{} {}", 1, 2);
-    std::println(" {}", std::string("three"));
-    auto rejected = std::try_println("LEAK {}", Unknown());
+    std::runtime_print("{} {}", 1, 2);
+    std::runtime_println(" {}", std::string("three"));
+    auto rejected = std::try_runtime_println("LEAK {}", Unknown());
     if (rejected || rejected.error() != std::print_errc::unsupported_argument) { return 5; }
-    auto mismatch = std::try_print("LEAK {} {}", 1);
+    auto mismatch = std::try_runtime_print("LEAK {} {}", 1);
     if (mismatch || mismatch.error() != std::print_errc::argument_count_mismatch) { return 6; }
-    auto invalid = std::try_print("LEAK {", 1);
+    auto invalid = std::try_runtime_print("LEAK {", 1);
     if (invalid || invalid.error() != std::print_errc::invalid_format) { return 7; }
-    auto empty = std::try_format("{}");
+    auto empty = std::try_runtime_format("{}");
     if (empty || empty.error() != std::format_errc::argument_count_mismatch) { return 8; }
-    auto success = std::try_format("{}", 42).expect("formatting failed");
+    auto success = std::try_runtime_format("{}", 42).expect("formatting failed");
     return success == "42" ? 0 : 9;
   }
   Guard outer{1};
   Guard inner{2};
   if (argc == 2) {
-    [[discard]] std::format("{"); // invalid
+    [[discard]] std::runtime_format("{"); // invalid
   }
   if (argc == 3) {
-    [[discard]] std::format("{} {}", 1); // count
+    [[discard]] std::runtime_format("{} {}", 1); // count
   }
   if (argc == 4) {
-    [[discard]] std::format("{}", Unknown()); // unsupported
+    [[discard]] std::runtime_format("{}", Unknown()); // unsupported
   }
   if (argc == 5) {
     mut std::string text{"unchanged"};
-    std::format_to(text, "{"); // append-zero
+    std::runtime_format_to(text, "{"); // append-zero
   }
   if (argc == 6) {
     mut std::string text{"unchanged"};
-    std::format_to(text, "{:s}", 1); // append-spec
+    std::runtime_format_to(text, "{:s}", 1); // append-spec
   }
   if (argc == 7) {
-    std::println("LEAK {}", Unknown()); // println-format
+    std::runtime_println("LEAK {}", Unknown()); // println-format
   }
   if (argc == 8) {
     [[discard]] through_wrapper("{"); // wrapper
   }
   if (argc == 9) {
-    auto result = std::try_println("write {}", 1);
+    auto result = std::try_runtime_println("write {}", 1);
     return !result && result.error() == std::print_errc::write_failed ? 0 : 10;
   }
   if (argc == 10) {
-    std::println("write {}", 1); // println-io
+    std::runtime_println("write {}", 1); // println-io
   }
   if (argc == 11) {
-    std::print("write {}", 1); // print-io
+    std::runtime_print("write {}", 1); // print-io
   }
   if (argc == 12) {
     std::print("raw"); // raw-io
@@ -128,7 +128,7 @@ int main(int argc, std::vector<std::string> argv) {
   }
   if (argc == 18) {
     OutputCleanup cleanup{};
-    [[discard]] std::format("{"); // cleanup-primary
+    [[discard]] std::runtime_format("{"); // cleanup-primary
   }
   return 99;
 }

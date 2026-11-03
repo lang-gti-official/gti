@@ -58,6 +58,6 @@ int main() {
 
   // Shared cursors are independently copyable. Mutable cursors exclusively
   // borrow their owner, so structural mutation waits until they are finished.
-  std::println("sparse reverse: {}; total: {}", reverse_order, total);
+  std::runtime_println("sparse reverse: {}; total: {}", reverse_order, total);
   return 0;
 }

@@ -698,10 +698,27 @@ The current implemented foundation includes:
   zeroes, and infinity/NaN ignore numeric zero-padding. Application types extend
   the protocol through exact source-defined `std::formatter<T>` specializations;
   unsupported static types fail the `std::formattable<T>` constraint at compile
-  time. Pattern, specifier, argument-count, and value-dependent formatter errors return
-  `expected<..., std::format_errc>` from the formatting `try_` APIs. Output
+  time. Pattern APIs take `std::format_pattern<Args...>`: constant patterns are
+  checked through its implicit consteval constructor, including grammar, indexes,
+  argument count and built-in presentation types. Forward this carrier through
+  generic wrappers to retain the proof. Invalid literals fail even with `try_`.
+  Dynamic patterns use explicit `std::runtime_format`, `runtime_format_to`,
+  `runtime_print`, `runtime_println`, or their `try_runtime_*` siblings. These
+  accept `string_view` directly, including owner-backed views, without a pattern
+  copy or allocation. Runtime pattern/specifier/count and value-dependent errors
+  return `expected<..., std::format_errc>` from the recoverable APIs. Output
   `try_` APIs use `print_errc`, additionally reporting stdout submission failure.
-  Plain APIs panic with the same domain reason and external caller location; and
+  Plain APIs panic with the same domain reason and external caller location.
+  Formatted `std::panic` uses the checked carrier; `std::runtime_panic` explicitly
+  accepts a dynamic pattern. Its one-argument overload, like `panic`, is raw text.
+  Raw one-argument print/println/panic operations keep
+  their literal-text behavior and do not interpret braces. Assertions retain
+  their existing deferred runtime formatting contract.
+  A custom `formatter<T>` may supply a constexpr default constructor and
+  `constexpr bool validate(format_spec&)` to reject presentations at compile time.
+  Without that optional hook, grammar/count checks still apply, and its formatter
+  retains authority over value-dependent runtime errors. Validators are library
+  policy, not a justification for unchecked memory access; and
 - `std.random` source-defined deterministic `std::random_engine` sequences
   from an explicit `uint64_t` seed, plus fallible `std::random_device` draws
   backed by bounded host entropy; and

@@ -48,7 +48,7 @@ int main() {
   for (mut int index = 0; index < 6; index++) {
     mut application::sensor_slot slot{};
     if (index % 3 == 2) {
-      slot.replace(application::labelled_sensor(std::format("probe-{}", index)));
+      slot.replace(application::labelled_sensor(std::runtime_format("probe-{}", index)));
     } else {
       slot.replace(application::counter_sensor(index + 1));
     }
@@ -61,20 +61,20 @@ int main() {
       int value = slot.get().sample(tick);
       std::string name = slot.get().name();
       std::string_view placement = slot.is_inline() ? "inline" : "boxed";
-      std::println(std::format("{} {} {}", name.view(), placement, value));
+      std::println(std::runtime_format("{} {} {}", name.view(), placement, value));
     }
   }
   // Replacing a boxed sensor with a small one frees its allocation.
   mut application::sensor_slot& probe = sensors[std::size_t(2)];
   probe.replace(application::counter_sensor(7));
   std::string name = probe.get().name();
-  std::println(std::format("{} {}", name.view(), probe.is_inline() ? "inline" : "boxed"));
+  std::println(std::runtime_format("{} {}", name.view(), probe.is_inline() ? "inline" : "boxed"));
   // Consuming invocation keeps the payload inside its owner until cleanup.
   // A second use of operation, or a live get() borrow across this call, is invalid.
   std::inline_polymorphic<application::command, 32, 8> operation{application::add(7)};
   if (!operation.is_inline()) return 1;
   int answer = std::move(operation).invoke_once<int>(35);
-  std::println(std::format("consumed inline {}", answer));
+  std::println(std::runtime_format("consumed inline {}", answer));
   if (answer != 42) return 2;
   return 0;
 }

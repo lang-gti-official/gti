@@ -10,7 +10,7 @@ class Watcher {
 public:
   Watcher(int32_t& target, int32_t id) : target(target), id(id) {}
   int32_t read() { return this.target * 10 + this.id; }
-  ~Watcher() { std::println("watcher {} saw {}", this.id, this.target); }
+  ~Watcher() { std::runtime_println("watcher {} saw {}", this.id, this.target); }
 };
 
 int32_t consume<F>(F reader) { return reader(); }
@@ -39,6 +39,6 @@ int main() {
     std::println("after consume");
   }
   base = 7;
-  std::println("total {}", total);
+  std::runtime_println("total {}", total);
   return total == 41 + 52 + 64 ? 0 : 1;
 }

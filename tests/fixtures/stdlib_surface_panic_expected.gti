@@ -12,7 +12,7 @@ void require_ready(bool ready) {
 [[track_caller]]
 void require_code(bool ready, int code) {
   if (!ready) {
-    std::panic("not ready: {}", code);
+    std::runtime_panic("not ready: {}", code);
   }
 }
 

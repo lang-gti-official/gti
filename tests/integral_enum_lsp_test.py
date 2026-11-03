@@ -11,7 +11,7 @@ def main():
               'enum class Status : uint64_t { failed = 18446744073709551615 };\n'
               'int main() { Status value = Status::failed; '
               'uint64_t raw = std::to_underlying<uint64_t, Status>(value); '
-              'std::println("{}", /* 😀 */ value); return 0; }\n')
+              'std::runtime_println("{}", /* 😀 */ value); return 0; }\n')
     with tempfile.TemporaryDirectory(prefix="gti-enum-lsp-") as temporary:
         path = pathlib.Path(temporary) / "enum.gti"
         path.write_text(source)

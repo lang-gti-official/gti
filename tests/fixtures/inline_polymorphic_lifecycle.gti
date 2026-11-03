@@ -31,7 +31,7 @@ class tracked : public meter {
   int value;
 public:
   tracked(int value) : value(value) {}
-  ~tracked() { std::println(std::format("~tracked {}", this.value)); }
+  ~tracked() { std::println(std::runtime_format("~tracked {}", this.value)); }
   int read() override { return this.value; }
   void bump(int amount) mut override {}
 };
@@ -52,15 +52,15 @@ using slot = std::inline_polymorphic<meter, 32, 8>;
 
 void report(std::string_view label, slot& value) {
   if (!value.has_value()) {
-    std::println(std::format("{} empty", label));
+    std::println(std::runtime_format("{} empty", label));
     return;
   }
-  std::println(std::format("{} {} {}", label, value.is_inline() ? "inline" : "boxed",
+  std::println(std::runtime_format("{} {} {}", label, value.is_inline() ? "inline" : "boxed",
                            value.get().read()));
 }
 
 void allocations(std::string_view label, uint64_t before) {
-  std::println(std::format("{} allocations {}", label, inline_polymorphic_allocations() - before));
+  std::println(std::runtime_format("{} allocations {}", label, inline_polymorphic_allocations() - before));
 }
 
 uint64_t counted() {
@@ -141,7 +141,7 @@ void owners() {
       inline_count++;
     }
   }
-  std::println(std::format("vector {} {} {}", many.size(), inline_count, total));
+  std::println(std::runtime_format("vector {} {} {}", many.size(), inline_count, total));
 }
 
 void callbacks() {
@@ -155,7 +155,7 @@ void callbacks() {
   start = counted();
   std::function<int(int)> moved = std::move(copy);
   allocations("function move", start);
-  std::println(std::format("function calls {} {}", small(1), moved(2)));
+  std::println(std::runtime_format("function calls {} {}", small(1), moved(2)));
 
   int64_t a = 1;
   int64_t b = 2;
@@ -165,19 +165,19 @@ void callbacks() {
   std::function<int(int)> large{
       [a, b, c, d](int value) -> int { return value + int(a + b + c + d); }};
   allocations("function large", start);
-  std::println(std::format("function large {}", large(0)));
+  std::println(std::runtime_format("function large {}", large(0)));
 
   mut std::function<int() mut> counter{step_counter()};
   [[discard]] counter();
   mut std::function<int() mut> moved_counter = std::move(counter);
-  std::println(std::format("counter {}", moved_counter()));
+  std::println(std::runtime_format("counter {}", moved_counter()));
 
   auto owned = std::make_unique<int>(5);
   start = counted();
   std::move_only_function<int()> boxed{
       [owned = std::move(owned)]() -> int { return *owned; }};
   allocations("move-only owning", start);
-  std::println(std::format("move-only {}", boxed()));
+  std::println(std::runtime_format("move-only {}", boxed()));
 
   // Transfer qualification changes the admitted targets, not their storage
   // cost: repeatable small jobs remain inline, wide and consuming jobs box.
@@ -188,17 +188,17 @@ void callbacks() {
   start = counted();
   auto transferred = std::move(transferable);
   allocations("transfer move", start);
-  std::println(std::format("transfer call {}", transferred(3)));
+  std::println(std::runtime_format("transfer call {}", transferred(3)));
   start = counted();
   std::transfer_function<int(int)> wide_transfer{
       [a, b, c, d](int value) -> int { return value + int(a + b + c + d); }};
   allocations("transfer large", start);
-  std::println(std::format("transfer wide {}", wide_transfer(0)));
+  std::println(std::runtime_format("transfer wide {}", wide_transfer(0)));
   start = counted();
   std::transfer_function<int(int) &&> once{
       [offset](int value) -> int { return value + offset; }};
   allocations("transfer once", start);
-  std::println(std::format("transfer consumed {}", std::move(once)(38)));
+  std::println(std::runtime_format("transfer consumed {}", std::move(once)(38)));
 }
 
 int main(int argc, std::vector<std::string> argv) {
@@ -206,7 +206,7 @@ int main(int argc, std::vector<std::string> argv) {
   if (argc == 1) {
     owners();
     callbacks();
-    std::println(std::format("live {}", inline_polymorphic_live()));
+    std::println(std::runtime_format("live {}", inline_polymorphic_live()));
     return 0;
   }
   if (argc == 2) {

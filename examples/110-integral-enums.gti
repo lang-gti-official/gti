@@ -24,9 +24,9 @@ public:
 
 int main() {
   if (encode_opcode(Opcode::data_alias) != uint8_t(42)) { return 1; }
-  std::println("{} opcode={:02x} bits={:08b}", Label::ready, Opcode::data,
+  std::runtime_println("{} opcode={:02x} bits={:08b}", Label::ready, Opcode::data,
                Opcode::data);
-  auto printed = std::try_println("token creation failed: {}", TokenError::expired);
+  auto printed = std::try_runtime_println("token creation failed: {}", TokenError::expired);
   if (!printed) { return 2; }
   // A payload enum is not an integral enum and needs its own formatter.
   // Wrong underlying types and implicit enum/integer conversions are rejected.

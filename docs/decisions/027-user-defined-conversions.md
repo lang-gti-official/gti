@@ -102,3 +102,10 @@ Two capabilities are deferred, each with a named prerequisite:
 A future general implicit-conversion model, conversion ranking, or a
 conversion in another context must replace this decision rather than extend
 it locally.
+
+## Revision: Checked immediate arguments (2026-11-03)
+
+[ADR 033](033-checked-immediate-arguments.md) admits one final call tier through
+implicit consteval constructors. It supersedes the blanket call exclusion here;
+conversion operators and ordinary implicit constructors remain excluded. Exact
+matching wins, with a declaration warning for same-shaped bypassing overloads.

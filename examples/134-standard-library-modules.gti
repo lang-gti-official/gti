@@ -20,7 +20,7 @@ int main() {
   values.push_back(19);
   values.push_back(23);
   std::string source = std::string("standard modules");
-  std::println(std::format("{} values from {}", values.size(), source.view()));
-  std::println(std::format("total {}", total(values)));
+  std::println(std::runtime_format("{} values from {}", values.size(), source.view()));
+  std::println(std::runtime_format("total {}", total(values)));
   return 0;
 }

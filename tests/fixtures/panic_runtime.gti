@@ -52,7 +52,7 @@ void untracked_boundary() {
 
 [[noreturn, track_caller]]
 void generic_failure<T>(T value) requires std::formattable<T> {
-  std::panic("generic {}", value);
+  std::runtime_panic("generic {}", value);
 }
 
 int terminal_value() {
@@ -70,7 +70,7 @@ void consume_three(Guard first, int second, int third) {
 
 [[track_caller]]
 int stored_failure(int value) {
-  std::panic("stored {}", value);
+  std::runtime_panic("stored {}", value);
 }
 
 struct StoredCallback<F> {
@@ -102,7 +102,7 @@ int main(int argc, std::vector<std::string> argv) {
   }
   if (argc == 3) {
     Guard inner{20};
-    std::panic("arguments {} then {}", argument(1), argument(2)); // format-site
+    std::runtime_panic("arguments {} then {}", argument(1), argument(2)); // format-site
   }
   if (argc == 4) {
     std::string message{"owned message survives cleanup"};
@@ -124,16 +124,16 @@ int main(int argc, std::vector<std::string> argv) {
   }
   if (argc == 7) {
     Guard inner{60};
-    std::panic("{", 1); // invalid-format-site
+    std::runtime_panic("{", 1); // invalid-format-site
   }
   if (argc == 8) {
     Guard inner{70};
-    std::panic("{} {}", 1); // count-site
+    std::runtime_panic("{} {}", 1); // count-site
   }
   if (argc == 9) {
     Guard inner{80};
     Uuid value = {.value = 7};
-    std::panic("{}", value); // unsupported-site
+    std::runtime_panic("{}", value); // unsupported-site
   }
   if (argc == 10 || argc == 11) {
     auto started = std::thread::start([]() -> void {
@@ -194,7 +194,7 @@ int main(int argc, std::vector<std::string> argv) {
   }
   if (argc == 20) {
     Guard inner{84};
-    std::panic("owned {} {}", std::string("first"), std::string("second")); // owned-format-site
+    std::runtime_panic("owned {} {}", std::string("first"), std::string("second")); // owned-format-site
   }
   if (argc == 21) {
     consume_three(Guard(85), terminal_argument(), argument(999));
