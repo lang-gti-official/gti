@@ -17,6 +17,10 @@ from preview_workflow import Preview, tests
 
 
 ACTIVE = {"queued", "running"}
+# Outcomes the worker itself reports on the original PR. An interrupted worker
+# cannot; `status` and every helper command name it instead.
+REPORTED = {"failed", "stale"}
+REPORT_MARKER = "<!-- gti-preview-submission: {} -->"
 SCRIPTS = ("preview_submit.py", "preview_workflow.py", "agent_workflow.py",
            "build_window.py", "remote_runner.py")
 
@@ -190,7 +194,50 @@ class Submissions:
         except Exception as error:
             state.update(phase="failed", error=str(error),
                          note="Preview only: normal task verification, merge and cleanup can continue")
-        return self.save(state)
+        self.save(state)
+        return self.save(self.report(state))
+
+    def conflicts(self, state):
+        """Unmerged paths left in the last attempt's candidate checkout."""
+        root = Path(state["attempts"][-1]) if state.get("attempts") else None
+        if root is None or not root.is_dir():
+            return []
+        result = git(root, "diff", "--name-only", "--diff-filter=U", check=False)
+        return result.stdout.split() if result.returncode == 0 else []
+
+    def report(self, state):
+        """Comment once on the original PR when its submission did not publish.
+
+        The comment is the only signal a detached failure gives the PR's
+        owner. It changes no label, review or check, so normal delivery is
+        untouched, and a comment API failure is recorded, never raised.
+        """
+        if state.get("phase") not in REPORTED or state.get("reported"):
+            return state
+        pr = state["task_record"]["pr"]
+        marker = REPORT_MARKER.format(json.dumps({"id": state["id"], "head": state["head"]}, sort_keys=True))
+        lines = [marker, f"**Preview admission {state['phase']}** for head `{state['head'][:12]}` "
+                         f"(submission `{state['id']}`).", ""]
+        reason = (state.get("error") or state.get("note") or "").strip()
+        if reason:
+            lines += ["```text", reason[:2000], "```", ""]
+        conflicts = self.conflicts(state)
+        if conflicts:
+            shown = ", ".join(f"`{path}`" for path in conflicts[:30])
+            lines += ["Unresolved paths in the candidate: " + shown
+                      + (f" and {len(conflicts) - 30} more" if len(conflicts) > 30 else ""), ""]
+        lines += [f"Worker log on the submitting host: `{state['log']}`.",
+                  "This does not block the PR. Fix the cause, then resubmit with "
+                  f"`python3 scripts/agent_workflow.py preview submit {state['task']}`."]
+        try:
+            existing = self.flow.api.request("GET", f"/issues/{pr}/comments?per_page=100") or []
+            if not any(marker in (comment.get("body") or "") for comment in existing):
+                self.flow.api.request("POST", f"/issues/{pr}/comments", {"body": "\n".join(lines)})
+            state["reported"] = self.flow.now()
+            state.pop("report_error", None)
+        except WorkflowError as error:
+            state["report_error"] = str(error)
+        return state
 
 
 if __name__ == "__main__":

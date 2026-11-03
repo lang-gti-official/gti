@@ -1182,6 +1182,19 @@ or ignored files are preserved. An exited worker is reported as interrupted;
 inspect its retained log and any remote run before resubmitting rather than
 automatically launching a duplicate uncertain run.
 
+Failures are reported, because submission success means only queued. A
+worker that ends `failed` or `stale` posts one comment on the original PR with
+the reason, any unresolved candidate paths, its log path and the resubmit
+command; a hidden marker keeps it to one comment per submission. The comment
+changes no label, review or check, and a comment API failure is recorded as
+`report_error` without changing the outcome. A worker that died cannot report
+itself, so `status` attaches `preview_attention` to every task whose latest
+submission is failed, stale or interrupted, and every helper command prints a
+one-line stderr notice naming them. A later submission, delivery of the task
+(merged, synced, completed or abandoned) or a fetched `origin/preview` that
+contains the submitted head resolves the entry. Agents relay that notice to
+the user rather than treating a queued submission as admitted.
+
 The lower-level `prepare`, `verify`, `publish`, `seed`, `resume` and `revert`
 commands remain for maintainer recovery, not mandatory feature-delivery steps.
 For an explicitly requested combined downloadable release, the production
