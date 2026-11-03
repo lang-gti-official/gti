@@ -12,6 +12,7 @@ namespace {
 int mode = 0;
 int calls = 0;
 int releases = 0;
+int size_queries = 0;
 int fail_on_call = 0;
 bool observing = false;
 struct Region {
@@ -67,11 +68,13 @@ extern "C" void provider_test_mode(std::int32_t selected) {
   mode = selected;
   calls = 0;
   releases = 0;
+  size_queries = 0;
   fail_on_call = 0;
   event_count = 0;
 }
 extern "C" std::int32_t provider_test_calls() { return calls; }
 extern "C" std::int32_t provider_test_releases() { return releases; }
+extern "C" std::int32_t provider_test_size_queries() { return size_queries; }
 extern "C" std::uint64_t provider_test_bytes(std::int32_t attempt) {
   if (attempt < 1 || attempt > calls ||
       attempt > static_cast<int>(requested_bytes.size()))
@@ -89,6 +92,10 @@ extern "C" std::int32_t provider_test_event_at(std::int32_t index) {
   return events[index];
 }
 extern "C" std::uint64_t gti_rt_native_size_max_v1() {
+  if (observing)
+    ++size_queries;
+  // Scenario selection precedes allocation; the target limit remains stable
+  // throughout each allocation transaction, including both sparse regions.
   return mode == 1 ? 4095 : (std::numeric_limits<std::size_t>::max)();
 }
 // Keep the observation seam in this injected adapter set too: pulling the

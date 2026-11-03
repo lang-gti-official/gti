@@ -5,6 +5,7 @@
 #include "gti/mir_printer.h"
 #include "gti/optimization/pass.h"
 #include "gti/optimization/report.h"
+#include "gti/optimization/safety.h"
 #include "gti/optimizer.h"
 #include "gti/support.h"
 #include "private_stdlib_fixture.h"
@@ -102,11 +103,11 @@ std::size_t functionDischarges(const lang::FrontendResult &frontend,
   return count;
 }
 
-std::size_t functionOperationDischarges(const lang::FrontendResult &frontend,
-                                        const lang::OptimizedProgram &optimized,
-                                        std::string_view name,
-                                        lang::MirSafetyCheckFamily family,
-                                        lang::MirOperation operation) {
+std::size_t functionOperationDischarges(
+    const lang::FrontendResult &frontend,
+    const lang::OptimizedProgram &optimized, std::string_view name,
+    lang::MirSafetyCheckFamily family, lang::MirOperation operation,
+    std::optional<lang::SemanticType> type = std::nullopt) {
   const lang::HirFunctionInstance *hir = findFunction(frontend, name);
   const lang::MirFunctionInstance *function =
       hir == nullptr ? nullptr : optimized.mir.findFunctionInstance(hir->id);
@@ -116,7 +117,8 @@ std::size_t functionOperationDischarges(const lang::FrontendResult &frontend,
   std::size_t count = 0;
   for (const lang::MirBlock &block : function->body.blocks) {
     for (const lang::MirInstruction &instruction : block.instructions) {
-      if (instruction.operation != operation) {
+      if (instruction.operation != operation ||
+          (type && instruction.info.type != *type)) {
         continue;
       }
       count += static_cast<std::size_t>(
@@ -1271,6 +1273,201 @@ int32_t main() {
   }
 }
 
+void testDivisionAndComposedEnvelopes() {
+  const auto frontend = lang::Frontend().analyze("division-envelopes.gti", R"(
+uint64_t normalized(uint64_t input) {
+  return input / uint64_t(4) + uint64_t(13835058055282163712);
+}
+uint64_t normalized_assign(mut uint64_t input) {
+  input /= uint64_t(4);
+  return input + uint64_t(13835058055282163712);
+}
+int32_t negative_divisor(int32_t input) {
+  return input / int32_t(-2) + int32_t(1073741823);
+}
+uint64_t too_large(uint64_t input) {
+  return input / uint64_t(2) + uint64_t(9223372036854775809);
+}
+int32_t signed_edge(int32_t input) { return input / int32_t(-1) + 1; }
+uint64_t intermediate_overflow(uint64_t input) {
+  return (input + input) / uint64_t(2);
+}
+uint64_t unknown_divisor(uint64_t input, uint64_t divisor) {
+  return input / divisor + uint64_t(1);
+}
+uint64_t average(uint64_t seed, mut uint64_t rounds) {
+  mut uint64_t first[3] = {seed % uint64_t(251), seed % uint64_t(127),
+                           seed % uint64_t(17)};
+  mut uint64_t second[3] = {};
+  while (rounds > uint64_t(0)) {
+    second[0] = (first[0] + first[1] + first[2]) / uint64_t(3);
+    first[0] = second[0];
+    rounds--;
+  }
+  return first[0] + uint64_t(18446744073709551365);
+}
+uint64_t growing(mut uint64_t rounds) {
+  mut uint64_t values[1] = {uint64_t(1)};
+  while (rounds > uint64_t(0)) {
+    values[0] = values[0] + values[0];
+    rounds--;
+  }
+  return values[0];
+}
+int32_t descending(uint64_t seed, mut uint64_t rounds) {
+  int32_t step = int32_t(seed % uint64_t(5)) + 1;
+  mut int32_t values[1] = {-1};
+  while (rounds > uint64_t(0)) {
+    values[0] = values[0] - step;
+    rounds--;
+  }
+  return values[0];
+}
+)");
+  expect(frontend.canGenerateCode(), "division envelope fixture lowers");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  for (const auto level :
+       {lang::OptimizationLevel::O2, lang::OptimizationLevel::O3}) {
+    const auto optimized = lang::OptimizationPipeline().run(
+        {.hir = frontend.hir, .mir = frontend.mir, .level = level});
+    expect(optimized.valid(), "division envelopes retain replayable proofs");
+    const auto additions = [&](std::string_view name) {
+      return functionOperationDischarges(
+          frontend, optimized, name,
+          lang::MirSafetyCheckFamily::ArithmeticOverflow,
+          lang::MirOperation::Add);
+    };
+    expect(
+        additions("normalized") == 1 && additions("normalized_assign") == 1 &&
+            additions("negative_divisor") == 1,
+        "constant division transports unsigned and reversed signed ranges (" +
+            std::to_string(additions("normalized")) + ", " +
+            std::to_string(additions("negative_divisor")) + ")");
+    expect(additions("average") == 3,
+           "composed stable envelopes survive averaging through array loops (" +
+               std::to_string(additions("average")) + ")");
+    for (const auto name : {"too_large", "signed_edge", "unknown_divisor",
+                            "growing", "intermediate_overflow"})
+      expect(additions(name) == 0,
+             std::string(name) + " retains a potentially overflowing addition");
+    expect(
+        functionOperationDischarges(
+            frontend, optimized, "descending",
+            lang::MirSafetyCheckFamily::ArithmeticOverflow,
+            lang::MirOperation::Subtract, lang::SemanticType::Int32) == 0,
+        "an expanding lower envelope must retain signed subtraction failure");
+  }
+}
+
+void testRelationalEdgeArguments() {
+  using namespace lang;
+  // Analysis-only scheduling probes use the frontend's actual intrinsic and
+  // failure contract. Unknown entry values keep intervals from deciding the
+  // check; its proof must survive simultaneous SSA edge substitution.
+  const auto frontend = analyzeTrusted("relational-edge-arguments.gti", R"(
+uint64_t checked(uint64_t index, uint64_t size) {
+  gti_internal::index_bounds_check(index, size);
+  return index;
+}
+)");
+  const auto *function = findFunction(frontend, "checked");
+  expect(frontend.canGenerateCode() && function,
+         "relational edge fixture should lower");
+  if (!frontend.canGenerateCode() || !function)
+    return;
+  const MirBodyAddress address{.kind = MirBodyKind::Function,
+                               .owner = function->id};
+  const auto *original = findMirBody(frontend.mir, address);
+  std::optional<MirInstruction> check;
+  for (const auto &block : original->blocks)
+    for (const auto &instruction : block.instructions)
+      if (instruction.intrinsic == IntrinsicKind::StorageBoundsCheck)
+        check = instruction;
+  expect(check.has_value(), "edge probe has a real checked operation");
+  if (!check)
+    return;
+  const auto probe = [&](bool loop, bool swap, bool unprovedPath) {
+    auto program = frontend.mir;
+    auto &body = *findMirBody(program, address);
+    body = {};
+    body.entry = 1;
+    body.returnType = SemanticType::UInt64;
+    for (MirValueId id = 1; id <= 6; ++id)
+      body.values.push_back(
+          {.id = id,
+           .info = {.type = id == 3 || id == 4 ? SemanticType::Bool
+                                               : SemanticType::UInt64},
+           .definitionBlock = id <= 4 ? MirBlockId{1} : MirBlockId{2},
+           .definition = id == 4 ? MirInstructionId{1} : MirInstructionId{0}});
+    const auto value = [](MirValueId id) {
+      return MirOperand{.kind = MirOperandKind::Value,
+                        .value = id,
+                        .type = id == 3 || id == 4 ? SemanticType::Bool
+                                                   : SemanticType::UInt64};
+    };
+    auto site = *check;
+    site.id = 2;
+    site.result.reset();
+    site.operands = {value(5), value(6)};
+    body.blocks = {
+        {.id = 1,
+         .parameters = {{.value = 1, .type = SemanticType::UInt64},
+                        {.value = 2, .type = SemanticType::UInt64},
+                        {.value = 3, .type = SemanticType::Bool}},
+         .instructions = {{.id = 1,
+                           .kind = MirInstructionKind::Compute,
+                           .result = 4,
+                           .operands = {value(1), value(2)},
+                           .operation = MirOperation::Less,
+                           .info = {.type = SemanticType::Bool}}},
+         .terminator = {.kind = MirTerminatorKind::Branch,
+                        .value = value(4),
+                        .target = 2,
+                        .elseTarget =
+                            unprovedPath ? MirBlockId{2} : MirBlockId{4},
+                        .targetArguments = {value(swap && !loop ? 2 : 1),
+                                            value(swap && !loop ? 1 : 2)},
+                        .elseArguments = unprovedPath
+                                             ? std::vector{value(1), value(2)}
+                                             : std::vector<MirOperand>{}}},
+        {.id = 2,
+         .parameters = {{.value = 5, .type = SemanticType::UInt64},
+                        {.value = 6, .type = SemanticType::UInt64}},
+         .instructions = {site},
+         .terminator = {.kind = MirTerminatorKind::Goto,
+                        .target = loop ? MirBlockId{3} : MirBlockId{4}}},
+        {.id = 3,
+         .terminator = {.kind = MirTerminatorKind::Branch,
+                        .value = value(3),
+                        .target = 2,
+                        .elseTarget = 4,
+                        .targetArguments = {value(swap ? 6 : 5),
+                                            value(swap ? 5 : 6)}}},
+        {.id = 4,
+         .terminator = {.kind = MirTerminatorKind::Return, .value = value(1)}}};
+    const auto analysis = analyzeMirSafetyChecks(program, address);
+    return std::any_of(
+        analysis.proofs.begin(), analysis.proofs.end(), [](const auto &proof) {
+          return proof.instruction == 2 &&
+                 proof.discharge.family == MirSafetyCheckFamily::Bounds;
+        });
+  };
+  expect(probe(false, false, false),
+         "forwarded block parameters retain the edge's order");
+  expect(!probe(false, true, false),
+         "reversing forwarded operands cannot preserve the old direction");
+  expect(probe(true, false, false),
+         "identity backedges retain the common order");
+  expect(!probe(true, true, false),
+         "swapped backedges must substitute both endpoints simultaneously");
+  expect(!probe(false, false, true),
+         "one unchecked incoming edge must prevent a relational proof");
+}
+
 void testRelationalBoundsDischarge() {
   // Runtime inputs keep calling-context intervals from proving any check;
   // only a dominating comparison between the check's own operands can.
@@ -1316,6 +1513,70 @@ uint64_t negated_form(uint64_t index, uint64_t live) {
 uint64_t offset_length(uint64_t index, uint64_t live) {
   if (index < live) {
     gti_internal::index_bounds_check(index, live + uint64_t(1));
+  }
+  return index;
+}
+
+uint64_t chain_first_strict(uint64_t index, uint64_t middle, uint64_t live) {
+  if (index < middle) {
+    if (middle <= live) {
+      gti_internal::index_bounds_check(index, live);
+    }
+  }
+  return index;
+}
+
+uint64_t chain_last_strict(uint64_t index, uint64_t middle, uint64_t live) {
+  if (index <= middle) {
+    if (middle < live) {
+      gti_internal::index_bounds_check(index, live);
+    }
+  }
+  return index;
+}
+
+uint64_t chain_cycle(uint64_t index, uint64_t middle, uint64_t live) {
+  if (index <= middle) {
+    if (middle <= index) {
+      if (middle < live) {
+        gti_internal::index_bounds_check(index, live);
+      }
+    }
+  }
+  return index;
+}
+
+uint64_t chain_non_strict(uint64_t index, uint64_t middle, uint64_t live) {
+  if (index <= middle) {
+    if (middle <= live) {
+      gti_internal::index_bounds_check(index, live);
+    }
+  }
+  return index;
+}
+
+uint64_t chain_reversed(uint64_t index, uint64_t middle, uint64_t live) {
+  if (index < middle) {
+    if (live <= middle) {
+      gti_internal::index_bounds_check(index, live);
+    }
+  }
+  return index;
+}
+
+uint64_t chain_changed(uint64_t index, mut uint64_t middle, uint64_t live) {
+  if (index < middle) {
+    middle = uint64_t(0);
+    if (middle <= live) {
+      gti_internal::index_bounds_check(index, live);
+    }
+  }
+  return index;
+}
+
+uint64_t chain_one_path(uint64_t index, uint64_t middle, uint64_t live) {
+  if (index < middle || middle <= live) {
+    gti_internal::index_bounds_check(index, live);
   }
   return index;
 }
@@ -1428,6 +1689,13 @@ int32_t main() {
   seen = greater_form(index, live);
   seen = negated_form(index, live);
   seen = offset_length(index, live);
+  seen = chain_first_strict(index, other, live);
+  seen = chain_last_strict(index, other, live);
+  seen = chain_cycle(index, other, live);
+  seen = chain_non_strict(index, other, live);
+  seen = chain_reversed(index, other, live);
+  seen = chain_changed(index, other, live);
+  seen = chain_one_path(index, other, live);
   seen = non_strict(index, live);
   seen = reversed(index, live);
   seen = index_replaced(index, live, other);
@@ -1469,7 +1737,8 @@ int32_t main() {
   };
   for (const std::string_view name :
        {"guarded", "looped", "greater_form", "negated_form", "offset_length",
-        "unrelated_write"}) {
+        "unrelated_write", "chain_first_strict", "chain_last_strict",
+        "chain_cycle"}) {
     expect(bounds(o2, name) == 1 && bounds(o3, name) == 1,
            std::string(name) +
                " should discharge its check from the dominating comparison "
@@ -1480,7 +1749,9 @@ int32_t main() {
   for (const std::string_view name :
        {"non_strict", "reversed", "index_replaced", "length_replaced",
         "different_length", "global_across_barrier", "one_path",
-        "smaller_length", "index_written_by_call", "length_written_by_call"}) {
+        "smaller_length", "index_written_by_call", "length_written_by_call",
+        "chain_non_strict", "chain_reversed", "chain_changed",
+        "chain_one_path"}) {
     expect(bounds(o2, name) == 0 && bounds(o3, name) == 0,
            std::string(name) + " must retain its bounds check");
   }
@@ -2626,6 +2897,8 @@ int main() {
   testOpaqueRuntimeCallInvalidation();
   testSourcePrefixBoundsRelation();
   testRelationalBoundsDischarge();
+  testRelationalEdgeArguments();
+  testDivisionAndComposedEnvelopes();
   testClosedIndexedElementEnvelope();
   testClosedIndexedRecordFieldEnvelope();
   testGuardedClosedCallContextWidening();
