@@ -2197,7 +2197,25 @@ private:
                  loan.source == place.id &&
                  loan.storedDependency == carrier.loan->id;
         });
-    return receiver ? carrier : MirTemporaryCarrierDependency{};
+    // A copied receiver input precedes its call's later arguments, but the
+    // result loan that borrows this shell is formed only at the call. Failure
+    // edges in those arguments must already keep the shell's dependency until
+    // its cleanup, as the completed call's result loan will require.
+    const auto copiedReceiver = [&] {
+      if (place.root != MirPlaceRootKind::Value || place.value == 0)
+        return false;
+      for (const MirBlock &block : output.blocks)
+        for (const MirInstruction &instruction : block.instructions)
+          if (instruction.kind == MirInstructionKind::CallInput &&
+              instruction.callInputRole == MirCallInputRole::Receiver &&
+              instruction.operands.size() == 1 &&
+              instruction.operands.front().kind == MirOperandKind::Value &&
+              instruction.operands.front().value == place.value)
+            return true;
+      return false;
+    };
+    return receiver || copiedReceiver() ? carrier
+                                        : MirTemporaryCarrierDependency{};
   }
 
   [[nodiscard]] std::unordered_set<MirLoanId> temporaryCarrierLoans(
