@@ -314,14 +314,15 @@ add_test(NAME focused COMMAND "$<TARGET_FILE:owner_tests>"
 class RemotePreviewTests(unittest.TestCase):
     make_packages = PreviewTests.make_packages
     api = PreviewTests.api
-    def evidence(self, root, directory):
+    def evidence(self, root, directory, timeout_scale=1):
         import preview_remote as remote
         results = {}
         for i, platform in enumerate(a.PLATFORMS):
             path = root/platform; (path/'logs').mkdir(parents=True)
             run = 'run-'+str(i+1)*32
             source = {'head': SHA, 'status': '', 'snapshot_sha256': str(i+3)*64}
-            steps = remote.plan(SHA, platform, '/exports/'+platform, 2, 2)
+            steps = remote.plan(SHA, platform, '/exports/'+platform, 2, 2,
+                                timeout_scale=timeout_scale if platform == 'linux-x64' else 1)
             request = {'id': run, 'source': source, 'build_type': 'Release',
                        'required_platform': 'Darwin' if platform=='darwin-arm64' else 'Linux', 'steps': steps}
             executed = [{'name': s['name'], 'exit_code': 0, 'argv': [v.replace('{source}', '/runs/'+run+'/source').replace('{build}', '/runs/'+run+'/build') for v in s['argv']]} for s in steps]
@@ -361,6 +362,40 @@ class RemotePreviewTests(unittest.TestCase):
             (directory/'gti-preview-linux-x64.tar.gz').write_bytes(b'changed')
             with self.assertRaisesRegex(ValueError,'checksum'):
                 remote.verify(directory,SHA,results)
+
+    def test_timeout_budget_keeps_frozen_source_and_complete_admission(self):
+        import preview_remote as remote
+        image = 'sha256:'+'a'*64
+        for scale in (0, 5):
+            with self.assertRaisesRegex(ValueError, 'timeout scale'):
+                remote.plan(SHA,'linux-x64','/exports',timeout_scale=scale)
+        plan = remote.plan(SHA,'linux-x64','/exports',image=image,timeout_scale=4)
+        self.assertEqual([step['name'] for step in plan],
+                         ['configure','test-budget','build','admission','installed','package'])
+        self.assertEqual(plan[1]['argv'][-1], '-DGTI_TEST_TIMEOUT_SCALE=4')
+        self.assertIn(image, plan[1]['argv'])
+        self.assertEqual(plan[2:], remote.plan(SHA,'linux-x64','/exports',image=image)[1:])
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);directory=root/'dist';directory.mkdir();self.make_packages(directory)
+            results=self.evidence(root,directory,timeout_scale=4)
+            remote.verify(directory,SHA,results,record=True)
+            receipt=remote.receipt(results['linux-x64'],SHA,'linux-x64')
+            self.assertEqual(receipt['test_timeout_scale'],4)
+            self.assertEqual(receipt['sha'],SHA)
+            self.assertEqual(remote.receipt(results['darwin-arm64'],SHA,'darwin-arm64')['test_timeout_scale'],1)
+            location=results['linux-x64'];request=json.loads((location/'request.json').read_text())
+            report=json.loads((location/'report.json').read_text())
+            for mutation in ('skip', 'fail', 'change'):
+                changed=copy.deepcopy(report)
+                if mutation=='skip':changed['steps'].pop(1)
+                elif mutation=='fail':changed['steps'][1]['exit_code']=1
+                else:changed['steps'][1]['argv'][-1]='-DGTI_TEST_TIMEOUT_SCALE=5'
+                (location/'report.json').write_text(json.dumps(changed))
+                with self.assertRaises(ValueError):remote.receipt(location,SHA,'linux-x64')
+            (location/'report.json').write_text(json.dumps(report))
+            request['steps'][1]['argv']=['true']
+            (location/'request.json').write_text(json.dumps(request))
+            with self.assertRaises(ValueError):remote.receipt(location,SHA,'linux-x64')
 
     def test_production_environment_rejects_newer_linux_and_mutable_images(self):
         import preview_remote as remote

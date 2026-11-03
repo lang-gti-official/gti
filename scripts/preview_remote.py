@@ -21,7 +21,7 @@ STEPS = ('configure', 'build', 'admission', 'installed', 'package')
 MARKER = 'GTI_REMOTE_PREVIEW_PACKAGE='
 
 
-def plan(sha, platform, output, jobs=4, test_jobs=4, image=None):
+def plan(sha, platform, output, jobs=4, test_jobs=4, image=None, timeout_scale=1):
     preview_release.checked_sha(sha)
     if platform not in PLATFORMS or not Path(output).is_absolute():
         raise ValueError('reviewed platform and absolute export directory required')
@@ -29,11 +29,27 @@ def plan(sha, platform, output, jobs=4, test_jobs=4, image=None):
         raise ValueError('invalid resource budget')
     if image is not None and (platform != 'linux-x64' or not re.fullmatch(r'sha256:[a-f0-9]{64}', image)):
         raise ValueError('Linux container must use its immutable image ID')
-    return [{'name': name, 'kind': 'build' if name in ('configure', 'build', 'package') else 'suite',
+    if timeout_scale not in (1, 2, 3, 4):
+        raise ValueError('test timeout scale must be between 1 and 4')
+    steps = [{'name': name, 'kind': 'build' if name in ('configure', 'build', 'package') else 'suite',
              'cwd': 'source', 'argv': ['python3', '{source}/scripts/preview_remote.py', 'step', name,
              '--sha', sha, '--platform', platform, '--build', '{build}', '--output', str(output),
              '--jobs', str(jobs), '--test-jobs', str(test_jobs)] +
              (['--container-image', image] if image else [])} for name in STEPS]
+    if timeout_scale != 1:
+        argv = ['cmake', '-S', '{source}', '-B', '{build}',
+                '-DGTI_TEST_TIMEOUT_SCALE='+str(timeout_scale)]
+        if image:
+            argv = ['docker', 'run', '--rm', '--init', '--cpus', str(jobs),
+                    '--mount', 'type=bind,source={source},target={source},readonly',
+                    '--mount', 'type=bind,source={build},target={build}',
+                    image, *argv]
+        # This is configuration only: preserve the source, compiler flags,
+        # test census and every assertion. A separate canonical step lets an
+        # operator use the existing slow-runner policy with a frozen source.
+        steps.insert(1, {'name': 'test-budget', 'kind': 'build',
+                         'cwd': 'source', 'argv': argv})
+    return steps
 
 
 def execute(argv, *, env=None, cwd=None):
@@ -180,11 +196,20 @@ def receipt(results, sha, platform):
         argv = request['steps'][0]['argv']
         value = lambda flag: argv[argv.index(flag)+1]
         image = value('--container-image') if '--container-image' in argv else None
-        expected = plan(sha, platform, value('--output'), int(value('--jobs')), int(value('--test-jobs')), image)
+        budgets = [s for s in request['steps'] if s['name'] == 'test-budget']
+        if len(budgets) > 1:
+            raise ValueError('duplicate timeout configuration')
+        timeout_scale = int(budgets[0]['argv'][-1].removeprefix('-DGTI_TEST_TIMEOUT_SCALE=')) if budgets else 1
+        expected = plan(sha, platform, value('--output'), int(value('--jobs')), int(value('--test-jobs')), image, timeout_scale)
     except (KeyError, IndexError, ValueError, TypeError) as error:
         raise ValueError('invalid remote preview plan') from error
     if request['steps'] != expected or len(report.get('steps', [])) != len(expected):
         raise ValueError('remote preview admission plan was changed or incomplete')
+    first = report['steps'][0]['argv']
+    source = first[1].removesuffix('/scripts/preview_remote.py')
+    build = first[first.index('--build')+1]
+    if Path(source).parent != Path(build).parent or Path(source).parent.name != run:
+        raise ValueError('remote command escaped its run')
     for actual, wanted in zip(report['steps'], expected):
         if actual.get('name') != wanted['name'] or actual.get('exit_code') != 0:
             raise ValueError('required remote preview step did not pass')
@@ -192,10 +217,6 @@ def receipt(results, sha, platform):
         actual_argv = actual.get('argv', [])
         if len(actual_argv) != len(wanted['argv']):
             raise ValueError('remote executed command differs from plan')
-        source = actual_argv[1].removesuffix('/scripts/preview_remote.py')
-        build = actual_argv[actual_argv.index('--build')+1]
-        if Path(source).parent != Path(build).parent or Path(source).parent.name != run:
-            raise ValueError('remote command escaped its run')
         if actual_argv != [a.replace('{source}', source).replace('{build}', build) for a in wanted['argv']]:
             raise ValueError('remote executed command differs from plan')
     truncated = json.loads((results/'truncation.json').read_text()).get('tail_only', [])
@@ -216,6 +237,7 @@ def receipt(results, sha, platform):
             'platform': platform, 'profile': PROFILE, 'repository': preview_release.REPOSITORY,
             'environment': environment,
             'run_id': run, 'snapshot_sha256': snapshot, 'files': package['files'],
+            'test_timeout_scale': timeout_scale,
             'report_sha256': digest(results/'report.json'), 'request_sha256': digest(results/'request.json')}
 
 
@@ -271,13 +293,15 @@ def main():
     parser.add_argument('--output', type=Path)
     parser.add_argument('--jobs', type=int, default=4)
     parser.add_argument('--test-jobs', type=int, default=4)
+    parser.add_argument('--timeout-scale', type=int, default=1,
+                        help='reviewed test timeout multiplier, 1 through 4; never skips tests')
     parser.add_argument('--container-image', help='immutable Ubuntu 24.04 Docker image ID for Linux')
     parser.add_argument('--results', action='append', default=[], help='PLATFORM=retained remote results directory')
     parser.add_argument('--repo', type=Path)
     parser.add_argument('--candidate')
     args = parser.parse_args(); preview_release.checked_sha(args.sha)
     if args.mode == 'plan':
-        print(json.dumps(plan(args.sha, args.platform, args.output, args.jobs, args.test_jobs, args.container_image), indent=2))
+        print(json.dumps(plan(args.sha, args.platform, args.output, args.jobs, args.test_jobs, args.container_image, args.timeout_scale), indent=2))
     elif args.mode == 'step':
         step(args.step, args.sha, args.platform, args.build, args.output, args.jobs, args.test_jobs, args.container_image)
     else:

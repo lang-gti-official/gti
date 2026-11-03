@@ -353,6 +353,12 @@ cannot silently raise the package's runtime requirements. The macOS compiler
 and runtime build targets 26.0 explicitly through CMake. GTI program checks,
 including installed consumers, use the supported implicit native host policy;
 the build's deployment-target environment must not leak into their invocations.
+For a slower runner, `plan --timeout-scale N` (1 through 4) inserts an exact
+CMake configuration step using `GTI_TEST_TIMEOUT_SCALE`. This changes only the
+bounded time allowances, including cooperating harness subprocess bounds;
+it keeps every test, mode and assertion. The receipt verifies that step and
+records the multiplier. It can be applied to a frozen source without changing
+its commit or invalidating the other platform's completed package evidence.
 Both platforms use the same
 checksum-pinned Neovim setup as CI. Receipts bind the production environment
 and any container image ID as well as source and package identities.
