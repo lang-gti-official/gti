@@ -3761,6 +3761,12 @@ it names one. Every other destination, a bare-binding, field or loan publication
 a failure site, an incomplete two-phase loan schedule, extra uses, and any
 additional lifecycle event on the staging obligation also fail closed.
 
+A moved owning value may replace a mutable field projected from an already
+reserved call-result referent, including an indexed container element. The
+entire field path must pass the ordinary concrete field/representation proof.
+The exact two-phase activation separates RHS staging from commit; the accessor
+is not evaluated again, and the containing owner retains cleanup authority.
+
 A cleanup-free ordinary-constructor result used as an exact by-value argument
 retains representation-only storage at its MIR construction point, for both
 free functions and borrowed-receiver methods/operators. The receiver proof
@@ -4578,6 +4584,15 @@ O0-O3. Separate source-composition oracles use real GTI constructors and
 destructors, not that destructor double: they cover nested payload shell moves,
 constructor rollback and ordinary/emergency failure cleanup. These do not
 select a different C04 failure transport.
+
+Raw pointer arithmetic over an exact mutex-containing object uses its native
+layout witness independently of aggregate-copy eligibility. Placement
+construction admits the selected constructor or a verified generated move;
+the latter uses the existing fresh-shell transfer and retires the consumed
+identity. Neither address calculation nor placement admission authorizes a
+bytewise copy of native mutex state. This permits source-defined containers to
+grow and index synchronized elements without changing their allocation policy
+or adding representation fields.
 
 Native-only process retirement is distinct from general source shutdown.
 Semantics excludes shell-only cleanup from the source-destructor restriction;

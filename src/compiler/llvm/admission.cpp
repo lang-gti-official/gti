@@ -3444,10 +3444,14 @@ public:
       const auto &type = stage.parameterTypes[0].arguments[0];
       if (nativeValue(type))
         return true;
-      // A selected constructor initializes mutex identity at its final address.
-      // Generated move/copy must not fall through to aggregate bit copying.
-      if (stage.constructorTarget && mutexShape(type).has_value())
-        return true;
+      // Both selected construction and generated move establish a fresh mutex
+      // identity at the final address. BodyEmitter::store routes the latter
+      // through transferMutexes; this never authorizes aggregate byte copying.
+      if (mutexShape(type).has_value())
+        return stage.constructorTarget ||
+               (stage.constructorKind == ConstructorKind::Move &&
+                stage.operands.size() == 2 &&
+                stage.operands[1].kind == MirOperandKind::Value);
       // Hierarchy storage is constructed by its selected constructor, by
       // relocating a moved owned argument, or by the generated field copy.
       if (!dispatchProofs.contains(type) ||
@@ -3644,7 +3648,8 @@ public:
     const auto &pointer = stage.operands[reversed ? 1 : 0].type;
     if (pointer.kind != SemanticType::RawPointer ||
         pointer.arguments.size() != 1 ||
-        !nativeClassPointee(pointer.arguments[0]))
+        (!nativeClassPointee(pointer.arguments[0]) &&
+         !mutexShape(pointer.arguments[0])))
       return false;
     if (stage.operation == MirOperation::PointerDifference)
       return stage.operands[1].type == pointer &&

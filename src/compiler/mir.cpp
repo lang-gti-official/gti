@@ -7979,7 +7979,9 @@ validFailureInstructionShape(const MirInstruction &instruction) {
            instruction.info.type == SemanticType::Void &&
            instruction.neverReturns == terminal.has_value() &&
            instruction.tracksCaller ==
-               intrinsicTracksCaller(instruction.intrinsic) &&
+               (instruction.intrinsicCallContract
+                    ? instruction.intrinsicCallContract->tracksCaller()
+                    : intrinsicTracksCaller(instruction.intrinsic)) &&
            instruction.operands.size() == parameters.size() &&
            (parameters.empty() ||
             instruction.operands.front().type == parameters.front()) &&
@@ -11092,6 +11094,19 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           instruction.dispatch != CallDispatch::Static || instruction.result ||
           instruction.loan || instruction.successResultDrop ||
           instruction.successResultDestination)) ||
+        (instruction.intrinsicCallContract &&
+         (instruction.kind != MirInstructionKind::Call ||
+          instruction.functionTarget ||
+          instruction.intrinsicCallContract->declaration() == 0 ||
+          instruction.intrinsicCallContract->snapshot() == 0 ||
+          instruction.intrinsicCallContract->intrinsic() ==
+              IntrinsicKind::None ||
+          instruction.intrinsicCallContract->intrinsic() !=
+              instruction.intrinsic ||
+          instruction.intrinsicCallContract->neverReturns() !=
+              instruction.neverReturns ||
+          instruction.intrinsicCallContract->tracksCaller() !=
+              instruction.tracksCaller)) ||
         (instruction.kind != MirInstructionKind::Call &&
          (instruction.neverReturns || instruction.tracksCaller)) ||
         (instruction.tracksCaller != instruction.callerLocation.has_value()) ||
@@ -11104,7 +11119,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
               instruction.callerLocation->start ||
           instruction.callerLocation->line < 1)) ||
         ((instruction.neverReturns || instruction.tracksCaller) &&
-         !instruction.functionTarget &&
+         !instruction.functionTarget && !instruction.intrinsicCallContract &&
          !intrinsicTerminalFailureOutcome(instruction.intrinsic)) ||
         (instruction.ownership &&
          instruction.ownership->kind == OwnershipEventKind::ConsumeReceiver &&

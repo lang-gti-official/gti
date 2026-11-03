@@ -18,6 +18,21 @@ element; subsequent fields and selected operators project from the reference
 carrier, not from the coarser range origin. The lowering query preserves this
 distinction without changing access permissions, active-loan rules or endpoints.
 
+A text result whose owner is a reference to a borrowed carrier retains its own
+producing loan. Its parent protects the carrier's physical storage, while the
+separate stored dependency retains the carrier's external owners. A local text
+binding is not a value copy of that differently typed entry carrier. A shared
+reborrow through a receiver's nested reference field likewise retains the
+abstract entry's selected permission; read-only access to the carrier shell
+does not erase an exclusive field's authority or upgrade the shared child.
+
+A returned carrier assembled from independent reference-returning calls keeps
+the parent of each additional input separately. Its second input is not a child
+of the first input's unrelated storage. Field-mapped return verification also
+preserves an owned receiver's explicit input borrow permission, without deriving
+writable access merely from a mutable place. These are compile-time provenance
+facts; they introduce no runtime loan state or allocation.
+
 Unique allocation of an already-built class value uses the selected generated
 copy/move policy. HIR stages a generated move as a consuming same-type value,
 not as a callable shared-reference formal. MIR reuses the separate checked
@@ -84,13 +99,21 @@ the selected declaration contract and that continuation. A terminal source
 function cannot contain a reachable `Return`.
 
 Caller transport is a separate fact from failure effects. A tracked MIR call
+to a trusted intrinsic retains an immutable, AST-free declaration contract
+issued by semantics, including its declaration identity, intrinsic identity,
+control flags and semantic snapshot. HIR checks the source call that selected
+that contract; MIR checks the flags and snapshot independently. Intrinsics do
+not acquire an ordinary executable function target merely to carry attributes.
+A tracked MIR call
 contains the exact semantic `CallerLocationOrigin`, its canonical artifact-local
 site ID, and whether the enclosing tracked function forwards its incoming token.
 `MirBody::hasCallerLocation` must agree with its concrete function declaration.
 `FailureMetadata` binds caller anchors separately from actual detector origins;
 the artifact descriptor admits the union of genuine detector outcomes and the
-bounded caller-tracked terminal outcomes at caller anchors: explicit panic,
-inactive success access, and inactive error access. A caller anchor does not
+bounded caller-tracked terminal outcomes and the checked local outcomes of
+explicitly tracked intrinsic declarations at caller anchors. This includes
+nonterminal condition checks such as missing-key detection. The metadata keeps
+this reporting inventory separate from local detector assignments. A caller anchor does not
 invent a local detector or make a failure-free wrapper fallible. Inline and
 cold record publication both select that same verified caller token; the
 detected category and detail remain those of the exact intrinsic.

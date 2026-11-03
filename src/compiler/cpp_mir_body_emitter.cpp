@@ -25708,7 +25708,9 @@ uniqueOwnerBorrowDetailSpelling(const MirProgram &program,
        instruction.operands.front().type != parameters.front()) ||
       instruction.neverReturns != terminal.has_value() ||
       instruction.tracksCaller !=
-          intrinsicTracksCaller(instruction.intrinsic) ||
+          (instruction.intrinsicCallContract
+               ? instruction.intrinsicCallContract->tracksCaller()
+               : intrinsicTracksCaller(instruction.intrinsic)) ||
       instruction.parameterTypes != parameters ||
       instruction.definedFailure.propagation != FailurePropagationKind::None ||
       instruction.localFailureSites.size() != 1 ||
@@ -27999,12 +28001,14 @@ valueRootedMoveAssignmentSlot(const MirProgram &program,
   // is evaluated. MIR activates that reservation only at replacement commit;
   // the returned address, not a native container operation, names the slot.
   const MirLoan *reservedDestination =
-      destination != nullptr && destination->root == MirPlaceRootKind::Loan &&
-              destination->projections.empty()
+      destination != nullptr && destination->root == MirPlaceRootKind::Loan
           ? body.findLoan(destination->loan)
           : nullptr;
   const bool borrowedDestination =
       reservedDestination != nullptr && reservedDestination->twoPhase &&
+      (destination->projections.empty() ||
+       moveOnlyOwnedFieldDestination(program, representations, body, *value,
+                                     *destination)) &&
       reservedDestination->kind == MirLoanKind::CallResult &&
       reservedDestination->access == AccessMode::Mutable &&
       !reservedDestination->escapes && reservedDestination->carriers.empty() &&
@@ -44381,12 +44385,11 @@ private:
     output << "::gti_internal::backend::mir_publish_failure_v1("
               "__gti_mir_failure_record, __gti_mir_failure_status_"
            << instruction.id << ", ";
-    if (intrinsicTracksCaller(instruction.intrinsic) &&
-        instruction.forwardsCallerLocation) {
+    if (instruction.tracksCaller && instruction.forwardsCallerLocation) {
       output << "__gti_mir_caller_site";
     } else {
       output << "UINT32_C("
-             << (intrinsicTracksCaller(instruction.intrinsic)
+             << (instruction.tracksCaller
                      ? instruction.callerLocationSite
                      : instruction.localFailureSites.front())
              << ')';
@@ -44427,12 +44430,11 @@ private:
     output << "GTI_FAILURE_ABI_VERSION_V2, __gti_mir_failure_status_"
            << instruction.id << ".code, __gti_mir_failure_status_"
            << instruction.id << ".detail, ";
-    if (intrinsicTracksCaller(instruction.intrinsic) &&
-        instruction.forwardsCallerLocation) {
+    if (instruction.tracksCaller && instruction.forwardsCallerLocation) {
       output << "__gti_mir_caller_site";
     } else {
       output << "UINT32_C("
-             << (intrinsicTracksCaller(instruction.intrinsic)
+             << (instruction.tracksCaller
                      ? instruction.callerLocationSite
                      : instruction.localFailureSites.front())
              << ')';

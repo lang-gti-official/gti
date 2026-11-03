@@ -6742,6 +6742,8 @@ private:
           (void)seedConcreteDeclarationType(*value.objectLayoutType);
         }
         value.neverReturns = resolved->neverReturns;
+        value.intrinsicCallContractProof =
+            model.intrinsicCallContractProof(*call);
         value.noNormalBorrowResultProof =
             model.noNormalBorrowResultProof(*call);
         value.tracksCaller = resolved->tracksCaller;

@@ -7681,6 +7681,10 @@ private:
         .hirValue = value.id,
         .callSite = value.callPlan ? value.id : 0,
         .intrinsic = value.intrinsic,
+        .intrinsicCallContract =
+            value.intrinsicCallContractProof
+                ? std::optional(value.intrinsicCallContractProof->contract())
+                : std::nullopt,
         .objectLayoutType = value.objectLayoutType,
         .neverReturns = value.neverReturns,
         .noNormalBorrowResult = value.noNormalBorrowResultProof.has_value(),
@@ -8286,6 +8290,19 @@ private:
     }
     MirPlaceId origin =
         call.noNormalBorrowResult ? 0 : borrowOriginPlace(value, originCall);
+    // A mapped reborrow through a receiver's stored reference has no local
+    // binding loan. Its abstract entry still supplies the selected external
+    // permission, including a shared child of an exclusive nested field.
+    if (originLoan == 0 && value.borrowOrigin == BorrowOriginKind::Receiver &&
+        !value.borrowFields.empty()) {
+      const auto *selected = output.findPlace(origin);
+      const auto *dependency =
+          output.findLoan(storedDependencyForPlace(origin));
+      if (selected && selected->root == MirPlaceRootKind::This &&
+          storedReferenceAccessFor(*selected) && dependency &&
+          dependency->entry && dependency->kind == MirLoanKind::Stored)
+        originLoan = dependency->id;
+    }
     // A reference field of `this` has an abstract entry Stored authority,
     // even though its receiver is not a local reference binding. Preserve
     // that authority when a checked accessor transforms the referent type.
@@ -8453,6 +8470,13 @@ private:
              (output.loans[originLoan - 1].kind == MirLoanKind::Parameter &&
               isLifecycleBoundBorrowCarrier(value.info.type) &&
               value.borrowArguments.empty() && value.borrowFields.size() <= 1 &&
+              value.borrowAccess == AccessMode::ReadOnly) ||
+             // A checked text result tied to a reference-formal carrier
+             // retains that physical borrow as well as its external owners.
+             (output.loans[originLoan - 1].kind == MirLoanKind::Parameter &&
+              output.loans[originLoan - 1].storedDependency != 0 &&
+              (value.info.type.kind == SemanticType::StringView ||
+               value.info.type.kind == SemanticType::CString) &&
               value.borrowAccess == AccessMode::ReadOnly) ||
              (output.loans[originLoan - 1].kind == MirLoanKind::CallResult &&
               value.borrowAccess == AccessMode::ReadOnly));
@@ -8707,8 +8731,23 @@ private:
           const auto source = borrowOriginPlace(selected, originCall);
           if (source == 0)
             valid = false;
+          MirLoanId inputParent = 0;
+          if (mapping.origin == BorrowOriginKind::Argument &&
+              mapping.parameter < originCall.operands.size() &&
+              mapping.parameter < value.parameterTypes.size() &&
+              value.parameterTypes[mapping.parameter].kind ==
+                  SemanticType::Reference &&
+              mapping.sourceFields.empty()) {
+            const auto inherited =
+                operandLoan(originCall.operands[mapping.parameter]);
+            const auto *authority = output.findLoan(inherited);
+            if (authority && authority->kind == MirLoanKind::CallResult &&
+                sameBorrowSource(authority->source, source))
+              inputParent = inherited;
+          }
           published.additionalDependencies.push_back(
               {.source = source,
+               .parent = inputParent,
                .designatedFields = mapping.resultFields,
                .access = mapping.access});
         }
@@ -14071,7 +14110,28 @@ private:
             // A copied value retains the external owners, not the address of
             // the reference's carrier shell. Do not rewrite the physical loan
             // or compare its independent shell permission with owner access.
-            retainedLoan = existing->id;
+            const auto *parent = output.findLoan(candidate->parent);
+            const auto *entry = output.findPlace(existing->source);
+            const bool textOwnerPublication =
+                existing->entry && entry &&
+                entry->type.kind == SemanticType::Reference &&
+                entry->type.arguments.size() == 1 &&
+                entry->type.arguments.front() != binding->info.type &&
+                (binding->info.type.kind == SemanticType::StringView ||
+                 binding->info.type.kind == SemanticType::CString) &&
+                parent && parent->entry &&
+                parent->kind == MirLoanKind::Parameter &&
+                parent->storedDependency == existing->id;
+            if (textOwnerPublication) {
+              // This local contains newly produced text, not a copy of the
+              // entry carrier. Keep its producer's lifetime and dependency;
+              // the semantic identity continues to name the external owner.
+              physicalRangeLoan = true;
+              std::erase(output.loans[existing->id - 1].carriers,
+                         *statement.binding);
+            } else {
+              retainedLoan = existing->id;
+            }
           } else if (existing != nullptr && candidate != nullptr &&
                      loanIsActive(scopes, existing->id) &&
                      (existing->access == candidate->access ||

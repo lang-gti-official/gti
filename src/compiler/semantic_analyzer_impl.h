@@ -3821,6 +3821,9 @@ private:
   symbolicRangeMemberReturnType(const SemanticType &rangeType,
                                 std::string_view member) const;
 
+  [[nodiscard]] std::vector<SemanticType>
+  symbolicCallableResultTypes(const SemanticType &receiver,
+                              std::span<const SemanticType> arguments) const;
   [[nodiscard]] std::vector<CallableCandidate> symbolicOperatorRequirements(
       OverloadedOperator kind, const SemanticType &receiverType,
       std::span<const SemanticType> argumentTypes) const;

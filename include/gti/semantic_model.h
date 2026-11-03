@@ -2127,6 +2127,48 @@ private:
   std::uint64_t snapshot_;
 };
 
+// Intrinsic execution does not create an ordinary function instance, but its
+// selected declaration still owns source contracts. This immutable, AST-free
+// witness survives MIR lowering; backends cannot manufacture an annotation.
+class IntrinsicCallContract {
+public:
+  [[nodiscard]] FunctionId declaration() const { return declaration_; }
+  [[nodiscard]] IntrinsicKind intrinsic() const { return intrinsic_; }
+  [[nodiscard]] bool neverReturns() const { return neverReturns_; }
+  [[nodiscard]] bool tracksCaller() const { return tracksCaller_; }
+  [[nodiscard]] std::uint64_t snapshot() const { return snapshot_; }
+  friend bool operator==(const IntrinsicCallContract &,
+                         const IntrinsicCallContract &) = default;
+
+private:
+  friend class SemanticModel;
+  IntrinsicCallContract(const FunctionInfo &function, std::uint64_t snapshot)
+      : declaration_(function.id), intrinsic_(function.intrinsic),
+        neverReturns_(function.neverReturns),
+        tracksCaller_(function.tracksCaller), snapshot_(snapshot) {}
+  FunctionId declaration_;
+  IntrinsicKind intrinsic_;
+  bool neverReturns_;
+  bool tracksCaller_;
+  std::uint64_t snapshot_;
+};
+
+class SemanticIntrinsicCallContractProof {
+public:
+  [[nodiscard]] const Call *source() const { return source_; }
+  [[nodiscard]] const IntrinsicCallContract &contract() const {
+    return contract_;
+  }
+
+private:
+  friend class SemanticModel;
+  SemanticIntrinsicCallContractProof(const Call &source,
+                                     IntrinsicCallContract contract)
+      : source_(&source), contract_(std::move(contract)) {}
+  const Call *source_;
+  IntrinsicCallContract contract_;
+};
+
 // Caller provenance belongs to the analyzed source occurrence, including one
 // first analyzed in a concrete generic body. HIR cannot invent a new origin.
 class SemanticCallerLocationProof {
@@ -2443,6 +2485,8 @@ public:
   ownerlessTextContractProof(const FunctionDecl &function) const;
   [[nodiscard]] std::optional<SemanticNoNormalBorrowResultProof>
   noNormalBorrowResultProof(const Call &call) const;
+  [[nodiscard]] std::optional<SemanticIntrinsicCallContractProof>
+  intrinsicCallContractProof(const Call &call) const;
 
   [[nodiscard]] const RawReferenceAssertionInfo *
   findRawReferenceAssertion(const Expr &expression) const;

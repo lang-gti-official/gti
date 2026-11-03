@@ -1,0 +1,273 @@
+#include "compiler_test_fixture.h"
+
+namespace {
+void checkTextOwnerPublication() {
+  const auto frontend = lang::Frontend().analyze(
+      "text-owner-publication.gti", R"gti(
+import std.memory;
+class ByteOwner {
+  uint8_t& byte;
+public:
+  ByteOwner(uint8_t& byte) : byte(byte) {}
+  uint8_t& get() { return this.byte; }
+};
+std::size_t view_size(ByteOwner& input) {
+  unsafe {
+    const char* first = std::typed_address<char>(std::erase_address(&input.get()));
+    std::string_view text = std::assume_string_view(first, std::size_t(1), input);
+    return text.size();
+  }
+}
+int main() {
+  uint8_t byte = uint8_t(104);
+  ByteOwner owner{byte};
+  return int(view_size(owner)) - 1;
+}
+)gti",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(frontend.canGenerateCode(),
+         "new text retains a reference carrier without pretending to copy it");
+  for (const auto &diagnostic : frontend.diagnostics)
+    if (diagnostic.severity == lang::DiagnosticSeverity::Error)
+      std::cerr << diagnostic.message << '\n';
+  if (!frontend.canGenerateCode())
+    return;
+  std::size_t checked = 0;
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &loan : function.body.loans) {
+      const auto *parent = function.body.findLoan(loan.parent);
+      const auto *dependency = function.body.findLoan(loan.storedDependency);
+      if (loan.entry || loan.kind != lang::MirLoanKind::Stored ||
+          loan.carriers.empty() || !parent || !parent->entry ||
+          parent->kind != lang::MirLoanKind::Parameter || !dependency ||
+          !dependency->entry || dependency->kind != lang::MirLoanKind::Stored)
+        continue;
+      for (int mutation = 0; mutation != 3; ++mutation) {
+        auto malformed = frontend.mir;
+        auto *body = lang::findMirBody(
+            malformed, {lang::MirBodyKind::Function, function.id});
+        if (mutation == 0)
+          body->loans[loan.id - 1].storedDependency = 0;
+        if (mutation == 1)
+          body->loans[loan.id - 1].parent = 0;
+        if (mutation == 2)
+          body->loans[dependency->id - 1].carriers.push_back(loan.carriers.front());
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "text publication rejects lost owner/shell ancestry or a forged "
+               "copy of the input carrier " + std::to_string(mutation));
+      }
+      checked++;
+    }
+  expect(checked == 1, "one local text publication has distinct physical ancestry");
+}
+
+void checkFieldReborrow() {
+  const std::string declarations = R"gti(
+class Read {
+  int& value;
+public:
+  Read(int& value) : value(value) {}
+  int get() { return this.value; }
+};
+class Write {
+  mut int& value;
+public:
+  Write(mut int& value) : value(value) {}
+  Read read() { return Read(this.value); }
+  void bump() mut { this.value++; }
+};
+class Holder {
+  mut Write value;
+public:
+  Holder(Write value) : value(std::move(value)) {}
+  int get() { auto view = this.value.read(); return view.get(); }
+};
+int main() {
+  mut int value = 4;
+  Write writer{value};
+  Holder holder{std::move(writer)};
+  return holder.get() - 4;
+}
+)gti";
+  const auto frontend = lang::Frontend().analyze(
+      "field-reborrow.gti", declarations, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  expect(frontend.canGenerateCode(),
+         "a read-only child of a nested exclusive field retains entry authority");
+  for (const auto &diagnostic : frontend.diagnostics)
+    if (diagnostic.severity == lang::DiagnosticSeverity::Error)
+      std::cerr << diagnostic.message << '\n';
+  if (!frontend.canGenerateCode())
+    return;
+  std::size_t checked = 0;
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &loan : function.body.loans) {
+      const auto *parent = function.body.findLoan(loan.parent);
+      if (loan.entry || loan.access != lang::AccessMode::ReadOnly ||
+          loan.kind != lang::MirLoanKind::Stored || !parent || !parent->entry ||
+          parent->kind != lang::MirLoanKind::Stored ||
+          parent->access != lang::AccessMode::Mutable || loan.carriers.empty())
+        continue;
+      auto malformed = frontend.mir;
+      auto *body = lang::findMirBody(
+          malformed, {lang::MirBodyKind::Function, function.id});
+      body->loans[loan.id - 1].access = lang::AccessMode::Mutable;
+      expect(!lang::verifyMirProgram(malformed).valid(),
+             "a shared field reborrow cannot forge exclusive result authority");
+      checked++;
+    }
+  expect(checked == 1, "the nested field child has one exact entry parent");
+  auto invalid = declarations;
+  const std::string original =
+      "int get() { auto view = this.value.read(); return view.get(); }";
+  invalid.replace(invalid.find(original), original.size(),
+                  "int get() mut { auto view = this.value.read(); "
+                  "this.value.bump(); return view.get(); }");
+  invalid.replace(invalid.find("Holder holder"), std::string("Holder holder").size(),
+                  "mut Holder holder");
+  const auto rejected = lang::Frontend().analyze(
+      "field-reborrow-conflict.gti", invalid, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  expect(!rejected.semanticValid &&
+             hasDiagnosticCode(rejected.diagnostics, "GTI-S2017") &&
+             !hasDiagnosticCode(rejected.diagnostics, "GTI-B0001"),
+         "an exclusive parent remains suspended while its shared child is live");
+}
+
+void checkReceiverFields() {
+  const std::string declarations = R"gti(
+struct Entry {
+  int& key;
+  mut int& value;
+  Entry(int& k, mut int& v) : key(k), value(v) {}
+};
+class Owner {
+public:
+  mut int key = 1;
+  mut int value = 2;
+  Owner() {}
+  Entry entry() mut { return Entry(this.key, this.value); }
+};
+)gti";
+  const auto frontend = lang::Frontend().analyze(
+      "receiver-field-publication.gti", declarations + R"gti(
+int main() {
+  mut Owner owner{};
+  { mut auto entry = owner.entry(); entry.value = 7; }
+  return owner.value == 7 ? 0 : 1;
+}
+)gti",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(frontend.canGenerateCode(),
+         "a mutable receiver publishes each exact field permission");
+  for (const auto &diagnostic : frontend.diagnostics)
+    if (diagnostic.severity == lang::DiagnosticSeverity::Error)
+      std::cerr << diagnostic.message << '\n';
+  if (!frontend.canGenerateCode())
+    return;
+  std::size_t checked = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &call : block.instructions) {
+        if (call.kind != lang::MirInstructionKind::Call || !call.receiver ||
+            call.receiver->kind != lang::MirOperandKind::Value ||
+            call.borrowOrigin != lang::BorrowOriginKind::Receiver ||
+            call.borrowFields.size() != 2)
+          continue;
+        auto malformed = frontend.mir;
+        auto *body = lang::findMirBody(
+            malformed, {lang::MirBodyKind::Function, function.id});
+        bool changed = false;
+        for (auto &candidateBlock : body->blocks)
+          for (auto &stage : candidateBlock.instructions)
+            if (stage.result == call.receiver->value &&
+                stage.kind == lang::MirInstructionKind::CallInput &&
+                stage.operands.size() == 1 &&
+                stage.operands.front().kind == lang::MirOperandKind::BorrowWrite) {
+              stage.operands.front().kind = lang::MirOperandKind::BorrowRead;
+              changed = true;
+            }
+        expect(changed, "returned receiver field test selects its writable input");
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "mutable place storage alone cannot upgrade a read-only input");
+        checked++;
+      }
+    }
+  }
+  expect(checked == 1, "one field-mapped receiver call checks input permission");
+  std::string readonly = declarations;
+  readonly.replace(readonly.find("entry() mut"), std::string("entry() mut").size(),
+                   "entry()");
+  const auto rejected = lang::Frontend().analyze(
+      "readonly-field-publication.gti", readonly + "int main() { return 0; }",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!rejected.semanticValid && !hasDiagnosticCode(rejected.diagnostics, "GTI-B0001"),
+         "read-only receiver cannot publish a mutable field reference");
+}
+
+void checkIndependentAccessorInputs() {
+  const auto frontend = lang::Frontend().analyze(
+      "independent-accessor-inputs.gti", R"gti(
+struct Entry {
+  int& first;
+  mut int& second;
+  Entry(int& first, mut int& second) : first(first), second(second) {}
+};
+class Slot {
+  mut int value;
+public:
+  Slot(int value) : value(value) {}
+  mut int& get() mut { return this.value; }
+};
+class Owner {
+  mut Slot first;
+  mut Slot second;
+public:
+  Owner() : first(1), second(2) {}
+  Entry entry() mut { return Entry(this.first.get(), this.second.get()); }
+};
+int main() {
+  mut Owner owner{};
+  { mut auto entry = owner.entry(); entry.second = entry.first + 6; }
+  { auto entry = owner.entry(); return entry.second == 7 ? 0 : 1; }
+}
+)gti",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(frontend.canGenerateCode(),
+         "independent accessor inputs retain their own external authorities");
+  for (const auto &diagnostic : frontend.diagnostics)
+    if (diagnostic.severity == lang::DiagnosticSeverity::Error)
+      std::cerr << diagnostic.message << '\n';
+  if (!frontend.canGenerateCode())
+    return;
+  std::size_t checked = 0;
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &loan : function.body.loans) {
+      if (loan.kind != lang::MirLoanKind::Stored || loan.entry || loan.escapes ||
+          loan.parent == 0 || loan.additionalDependencies.size() != 1 ||
+          loan.additionalDependencies.front().parent == 0 ||
+          loan.additionalDependencies.front().parent == loan.parent)
+        continue;
+      for (int mutation = 0; mutation != 2; ++mutation) {
+        auto malformed = frontend.mir;
+        auto *body = lang::findMirBody(
+            malformed, {lang::MirBodyKind::Function, function.id});
+        body->loans[loan.id - 1].additionalDependencies.front().parent =
+            mutation == 0 ? 0 : loan.parent;
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "an additional receiver field cannot lose or conflate its "
+               "accessor parent " + std::to_string(mutation));
+      }
+      checked++;
+    }
+  expect(checked == 1, "one returned carrier protects two independent accessors");
+}
+} // namespace
+
+int main() {
+  checkTextOwnerPublication();
+  checkReceiverFields();
+  checkFieldReborrow();
+  checkIndependentAccessorInputs();
+  return failures == 0 ? 0 : 1;
+}

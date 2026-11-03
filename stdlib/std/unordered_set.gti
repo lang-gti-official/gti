@@ -72,7 +72,8 @@ public:
   size_t count(K& key) { return this.entries.count(key); }
   [[discardable]] size_t erase(K& key) mut { return this.entries.erase(key); }
   void clear() mut { this.entries.clear(); }
-  void swap(mut unordered_set<K, Hash, KeyEqual>& other) mut {
+  void swap(mut unordered_set<K, Hash, KeyEqual>& other) mut
+      requires std::relocatable<Hash> && std::relocatable<KeyEqual> {
     auto previous = std::move(this.entries);
     this.entries = other.replace(std::move(previous));
   }

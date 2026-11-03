@@ -1,0 +1,38 @@
+// C++ comparison for reference publication and cleanup. Direct writes through
+// a local reference field have the independently tracked #70 emitter defect.
+import std.vector;
+mut int drops = 0;
+struct Entry {
+  int& first;
+  mut int& second;
+  Entry(int& first, mut int& second) : first(first), second(second) {}
+};
+class Owner {
+  mut int first = 3;
+  mut int second = 5;
+public:
+  Owner() {}
+  ~Owner() { drops++; }
+  Entry entry() mut { return Entry(this.first, this.second); }
+};
+class IndexedOwner {
+  mut std::vector<int> first = {7};
+  mut std::vector<int> second = {11};
+public:
+  IndexedOwner() {}
+  ~IndexedOwner() { drops++; }
+  Entry entry() mut { return Entry(this.first[std::size_t(0)], this.second[std::size_t(0)]); }
+};
+int main() {
+  {
+    mut Owner owner{};
+    { auto entry = owner.entry(); if (entry.first != 3 || entry.second != 5) { return 1; } }
+    if (drops != 0) { return 2; }
+  }
+  {
+    mut IndexedOwner owner{};
+    { auto entry = owner.entry(); if (entry.first != 7 || entry.second != 11) { return 3; } }
+    if (drops != 1) { return 4; }
+  }
+  return drops == 2 ? 0 : 5;
+}

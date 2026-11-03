@@ -3089,8 +3089,18 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
       if (!result.empty())
         return result;
     }
-    return source ? std::vector<MirLoanDependency>{{.source = *source}}
-                  : std::vector<MirLoanDependency>{};
+    // An owned receiver has no stored loan to supply its permission. Preserve
+    // the actual input borrow, not merely the mutability of its place: a
+    // read-only receiver cannot publish a writable field reference.
+    return source
+               ? std::vector<
+                     MirLoanDependency>{{.source = *source,
+                                         .access =
+                                             operand.kind ==
+                                                     MirOperandKind::BorrowWrite
+                                                 ? AccessMode::Mutable
+                                                 : AccessMode::ReadOnly}}
+               : std::vector<MirLoanDependency>{};
   };
   for (const MirBlock &block : body.blocks) {
     for (const MirInstruction &instruction : block.instructions) {
@@ -3698,6 +3708,14 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
             body, owner,
             "call's caller location differs from canonical source metadata",
             block.id, instruction.id);
+      }
+      if (instruction.intrinsicCallContract &&
+          instruction.intrinsicCallContract->snapshot() !=
+              program.semanticSnapshot()) {
+        return verificationFailure(body, owner,
+                                   "intrinsic call declaration contract "
+                                   "belongs to another semantic snapshot",
+                                   block.id, instruction.id);
       }
       if (instruction.unsafeOperation ==
               UnsafeOperationKind::DeclaredUnsafeCall &&

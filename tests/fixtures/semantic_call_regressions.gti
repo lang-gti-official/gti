@@ -1,0 +1,63 @@
+concept steps<I> = requires(mut I& p) { { ++p } -> void; };
+struct Counter { mut int at = 0; public: Counter() = default; void operator++() mut { this.at++; } };
+void step<steps I>(mut I& it) { ++it; }
+I skip<steps I>(mut I first) {
+  step(first);
+  return std::move(first);
+}
+int check_step() {
+  Counter c{};
+  Counter d = skip(c);
+  return d.at == 1 ? 0 : 1;
+}
+import std.functional;
+class table<K, H> {
+  H hasher;
+public:
+  table(H h) requires std::read_callable<H, K, uint64_t> : hasher(std::move(h)) {}
+  uint64_t slot(K key, uint64_t n) requires std::read_callable<H, K, uint64_t> {
+    return this.hasher(key) % n;
+  }
+};
+struct id_hash {
+  id_hash() = default;
+  uint64_t operator()(int& v) { return uint64_t(v); }
+};
+int check_hash() {
+  table<int, id_hash> t{id_hash()};
+  return t.slot(9, uint64_t(4)) == uint64_t(1) ? 0 : 1;
+}
+class Writer<T> {
+public:
+  Writer() = default;
+  int write(T& value) requires std::integral<T> { return int(value); }
+};
+concept Writable<T> = requires(Writer<T>& writer, T& value) {
+  { writer.write(value) } -> int;
+};
+void sink<Writable First, Writable Args...>(First first, Args... args) {}
+void forward<Writable First, Writable Args...>(First first, Args... args) {
+  sink(std::move(first), args...);
+}
+int check_pack() { forward(1, 2, 3); return 0; }
+
+concept binary_map<F, T, R> = requires(F& f, T& a, T& b) {
+  { f(a, b) } -> R;
+};
+class Binary<F> {
+  F function;
+public:
+  Binary(F function) : function(std::move(function)) {}
+  int apply(int a, int b) requires binary_map<F, int, int> {
+    return this.function(a, b) + 5;
+  }
+};
+struct Add {
+  Add() = default;
+  int operator()(int& a, int& b) { return a + b; }
+};
+int main() {
+  if (check_step() != 0 || check_hash() != 0 || check_pack() != 0) return 1;
+  Binary<Add> binary{Add()};
+  return binary.apply(3, 4) == 12 ? 0 : 2;
+}

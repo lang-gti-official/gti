@@ -760,6 +760,19 @@ SemanticModel::noNormalBorrowResultProof(const Call &call) const {
                                            analysisSeal().programSnapshot);
 }
 
+std::optional<SemanticIntrinsicCallContractProof>
+SemanticModel::intrinsicCallContractProof(const Call &call) const {
+  const auto *selected = findCall(call);
+  const auto *target = selected ? findFunction(selected->function) : nullptr;
+  if (!target || !target->id || target->intrinsic == IntrinsicKind::None ||
+      selected->intrinsic != target->intrinsic ||
+      selected->neverReturns != target->neverReturns ||
+      selected->tracksCaller != target->tracksCaller)
+    return std::nullopt;
+  return SemanticIntrinsicCallContractProof(
+      call, IntrinsicCallContract(*target, analysisSeal().programSnapshot));
+}
+
 const RawReferenceAssertionInfo *
 SemanticModel::findRawReferenceAssertion(const Expr &expression) const {
   const auto found = rawReferenceAssertions.find(&expression);

@@ -75,6 +75,7 @@ endforeach()
 
 if(Python3_Interpreter_FOUND)
   set(gti_parallel_case_suites
+    semantic_call_regressions_runtime
     consteval_runtime
     callable_return_type_runtime
     borrowed_enum_field_cleanup_runtime
