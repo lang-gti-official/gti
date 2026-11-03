@@ -3386,6 +3386,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(protocol_concepts_runtime PROPERTIES TIMEOUT 900)
   add_test(
+    NAME protocol_requirements_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/protocol_requirements_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(protocol_requirements_runtime PROPERTIES TIMEOUT 600)
+  add_test(
     NAME associated_type_families_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/associated_type_families_runtime_test.py"

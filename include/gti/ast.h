@@ -2838,11 +2838,13 @@ public:
   ConformanceDecl(Token forKeyword,
                   std::vector<GenericParameter> genericParameters,
                   Token conceptKeyword, ConceptApplication target,
-                  StmtList members)
+                  StmtList members,
+                  std::optional<RequiresClause> requiresClause = std::nullopt)
       : forKeyword_(std::move(forKeyword)),
         genericParameters_(std::move(genericParameters)),
         conceptKeyword_(std::move(conceptKeyword)), target_(std::move(target)),
-        members_(std::move(members)) {}
+        members_(std::move(members)),
+        requiresClause_(std::move(requiresClause)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitConformanceDecl(*this);
@@ -2855,6 +2857,9 @@ public:
   [[nodiscard]] const Token &conceptKeyword() const { return conceptKeyword_; }
   [[nodiscard]] const ConceptApplication &target() const { return target_; }
   [[nodiscard]] const StmtList &members() const { return members_; }
+  [[nodiscard]] const std::optional<RequiresClause> &requiresClause() const {
+    return requiresClause_;
+  }
 
 private:
   Token forKeyword_;
@@ -2862,6 +2867,7 @@ private:
   Token conceptKeyword_;
   ConceptApplication target_;
   StmtList members_;
+  std::optional<RequiresClause> requiresClause_;
 };
 
 class VariableDecl final : public StmtOfKind<StmtKind::VariableDecl> {

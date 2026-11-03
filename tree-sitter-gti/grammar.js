@@ -367,6 +367,7 @@ module.exports = grammar({
         optional(field("type_parameters", $.generic_parameter_clause)),
         "concept",
         field("concept", $.concept_application),
+        optional(field("requirements", $.requires_clause)),
         field("body", $.conformance_body),
         ";",
       ),

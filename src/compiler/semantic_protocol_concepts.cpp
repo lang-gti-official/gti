@@ -588,6 +588,12 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
                       conceptInfo.qualifiedName + "'.");
       }
     }
+    // All conformance heads are registered before their written type contracts
+    // are validated. Resolve only identities here; the lexical validation pass
+    // checks the source clause after class members and other blocks are known.
+    auto requirements = resolveRequirements(
+        declaration->requiresClause() ? &*declaration->requiresClause() : nullptr,
+        enclosing, false);
     endTypeParameterScope();
     registeringConformanceParameters = nullptr;
     conformanceTypeChecks.push_back(std::move(typeCheck));
@@ -602,6 +608,7 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
          .functionScope = scope,
          .genericParameters = std::move(parameters),
          .patterns = std::move(patterns),
+         .requirements = std::move(requirements),
          .associatedTypes = std::move(associatedTypes),
          .associatedTypeParameters = std::move(associatedTypeParameters)});
   }
@@ -829,6 +836,10 @@ auto SemanticVisitor::Impl::validateConformanceTypes(
     currentNamespace = check.namespaceScope;
     beginTypeParameterScope(check.genericParameters);
     registeringConformanceParameters = &check.genericParameters;
+    auto requirements = resolveRequirements(
+        declaration.requiresClause() ? &*declaration.requiresClause() : nullptr,
+        check.namespaceScope);
+    requirementScopes.push_back(std::move(requirements));
     for (const TypeRef *type : check.types) {
       validateType(*type);
     }
@@ -845,6 +856,7 @@ auto SemanticVisitor::Impl::validateConformanceTypes(
       endTypeParameterScope();
     }
     registeringConformanceParameters = nullptr;
+    requirementScopes.pop_back();
     endTypeParameterScope();
   }
   currentSourceUnit = enclosingUnit;
@@ -1309,6 +1321,21 @@ auto SemanticVisitor::Impl::protocolConformanceFailure(
   if (requirement.arguments.size() != conceptInfo.parameterIds.size()) {
     return failure;
   }
+  const auto key = std::pair{requirement.conceptId, requirement.arguments};
+  if (activeConformanceRequirements.size() >= maximumProjectionDepth ||
+      std::find(activeConformanceRequirements.begin(),
+                activeConformanceRequirements.end(), key) !=
+          activeConformanceRequirements.end()) {
+    failure.missingConformance = false;
+    failure.expressionFailure =
+        "Conformance requirements are cyclic or exceed the nesting limit.";
+    return failure;
+  }
+  activeConformanceRequirements.push_back(key);
+  struct RequirementScope {
+    decltype(activeConformanceRequirements) &active;
+    ~RequirementScope() { active.pop_back(); }
+  } activeScope{activeConformanceRequirements};
   const std::optional<ConformanceMatch> match =
       matchConformance(requirement.conceptId, requirement.arguments);
   if (!match) {
@@ -1322,6 +1349,19 @@ auto SemanticVisitor::Impl::protocolConformanceFailure(
       constraint->conceptExplanation = failure.conceptExplanation;
     return constraint;
   }
+  GenericSubstitution substitution;
+  for (std::size_t index = 0; index < conformance.genericParameters.size();
+       ++index) {
+    substitution.types.emplace(conformance.genericParameters[index].id,
+                               match->binding[index]);
+  }
+  auto requirements = conformance.requirements;
+  for (auto &nested : requirements) {
+    for (auto &argument : nested.arguments)
+      argument = substituteType(argument, substitution);
+  }
+  if (auto constraint = firstRequirementFailure(requirements))
+    return constraint;
   if (const auto operation =
           protocolBorrowContractFailure(conformance, match->binding)) {
     failure.missingConformance = false;
@@ -1566,6 +1606,12 @@ auto SemanticVisitor::Impl::analyzeProtocolOperationCall(
                    [&](const SemanticType &argument) {
                      return containsOpenTypeParameter(argument);
                    })) {
+    if (const auto failure =
+            protocolConformanceFailure({.conceptId = id, .arguments = arguments});
+        failure && !failure->missingConformance) {
+      reportConstraintFailure(site, *failure);
+      return fail();
+    }
     if (const auto match = matchConformance(id, arguments)) {
       const auto &conformance = conformances[match->conformance - 1];
       if (const auto failed =

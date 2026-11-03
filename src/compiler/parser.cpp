@@ -603,6 +603,33 @@ private:
     blockRequirement.expression.nodes.push_back(
         {.kind = ConstraintExpressionKind::Application, .application = 0});
     blockRequirement.expression.root = 0;
+    std::optional<RequiresClause> requiresClause;
+    if (match({TokenKind::REQUIRES})) {
+      requiresClause = RequiresClause{previous(), constraintExpression()};
+      // Operation bodies see the block's own application and its explicit
+      // admission requirements through the ordinary function requirement path.
+      auto &combined = blockRequirement.expression;
+      const auto &extra = requiresClause->expression;
+      const auto applicationOffset = combined.applications.size();
+      const auto nodeOffset = combined.nodes.size();
+      combined.applications.insert(combined.applications.end(),
+                                   extra.applications.begin(),
+                                   extra.applications.end());
+      for (auto node : extra.nodes) {
+        if (node.kind == ConstraintExpressionKind::Application) {
+          node.application += applicationOffset;
+        } else {
+          node.left += nodeOffset;
+          node.right += nodeOffset;
+        }
+        combined.nodes.push_back(std::move(node));
+      }
+      combined.nodes.push_back({.kind = ConstraintExpressionKind::Conjunction,
+                                .left = combined.root,
+                                .right = extra.root + nodeOffset,
+                                .operation = requiresClause->keyword});
+      combined.root = combined.nodes.size() - 1;
+    }
     consume(TokenKind::LEFT_BRACE, "Expect '{' before conformance block body.");
     StmtList members;
     StmtList functions;
@@ -644,7 +671,7 @@ private:
 
     auto conformance = std::make_shared<ConformanceDecl>(
         forKeyword, std::move(genericParameters), std::move(conceptKeyword),
-        std::move(target), std::move(members));
+        std::move(target), std::move(members), std::move(requiresClause));
     stampExtent(conformance, forKeyword);
     StmtList declarations;
     declarations.push_back(std::move(conformance));

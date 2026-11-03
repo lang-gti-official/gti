@@ -7151,7 +7151,8 @@ auto SemanticVisitor::Impl::containsGenericParameter(
 }
 
 auto SemanticVisitor::Impl::resolveRequirements(
-    const RequiresClause *clause, const std::vector<std::string> &scope)
+    const RequiresClause *clause, const std::vector<std::string> &scope,
+    bool validateSyntax)
     -> std::vector<AppliedConceptRequirement> {
   std::vector<AppliedConceptRequirement> result;
   if (clause == nullptr) {
@@ -7160,7 +7161,7 @@ auto SemanticVisitor::Impl::resolveRequirements(
 
   // A conformance operation inherits its block's checked header. Resolve its
   // requirement facts here without diagnosing the same written header again.
-  const bool restated = clause->keyword.generated;
+  const bool restated = clause->keyword.generated || !validateSyntax;
 
   const std::vector<std::string> enclosingNamespace = currentNamespace;
   currentNamespace = scope;
