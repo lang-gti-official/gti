@@ -67,10 +67,10 @@ std::string macroTree(std::size_t height) {
   std::string source = "#macro int32_t t0(int32_t v) { return v + 1; }\n";
   for (std::size_t level = 1; level <= height; ++level)
     source += "#macro int32_t t" + std::to_string(level) +
-              "(int32_t v) { return t" + std::to_string(level - 1) +
-              "(v) + t" + std::to_string(level - 1) + "(v); }\n";
-  return source + "int main() { return t" + std::to_string(height) +
-         "(0) - " + std::to_string(std::size_t{1} << height) + "; }\n";
+              "(int32_t v) { return t" + std::to_string(level - 1) + "(v) + t" +
+              std::to_string(level - 1) + "(v); }\n";
+  return source + "int main() { return t" + std::to_string(height) + "(0) - " +
+         std::to_string(std::size_t{1} << height) + "; }\n";
 }
 bool rejectedAt(const lang::FrontendResult &result, std::string_view message,
                 std::string_view key, std::size_t limit) {
@@ -83,14 +83,13 @@ bool rejectedAt(const lang::FrontendResult &result, std::string_view message,
     if (diagnostic.severity != lang::DiagnosticSeverity::Error)
       continue;
     ++errors;
-    found = found || (diagnostic.code == "GTI-S2124" &&
-                      diagnostic.message.find(message) != std::string::npos &&
-                      std::any_of(diagnostic.hints.begin(),
-                                  diagnostic.hints.end(),
-                                  [&](const std::string &value) {
-                                    return value.find(hint) !=
-                                           std::string::npos;
-                                  }));
+    found =
+        found || (diagnostic.code == "GTI-S2124" &&
+                  diagnostic.message.find(message) != std::string::npos &&
+                  std::any_of(diagnostic.hints.begin(), diagnostic.hints.end(),
+                              [&](const std::string &value) {
+                                return value.find(hint) != std::string::npos;
+                              }));
   }
   if (!found || errors != 1)
     for (const auto &diagnostic : result.diagnostics)
@@ -134,20 +133,18 @@ void macroResourceLimits() {
         "fan-out beyond the budget is rejected");
   lang::CompileLimits single;
   single.macroExpansions = 1;
-  std::string siblings =
-      "#macro int32_t inc(int32_t v) { return v + 1; }\n"
-      "int32_t step(int32_t x0) {\n  mut int32_t x = x0;\n";
+  std::string siblings = "#macro int32_t inc(int32_t v) { return v + 1; }\n"
+                         "int32_t step(int32_t x0) {\n  mut int32_t x = x0;\n";
   for (int index = 0; index < 300; ++index)
     siblings += "  x = inc(x);\n";
   siblings += "  return x;\n}\nint main() { return step(0) - 300; }\n";
   check(analyzeLimited(siblings, single).canGenerateCode(),
         "300 separate invocations each own a one-body budget");
-  check(rejectedAt(analyzeLimited(
-                       "#macro int32_t inc(int32_t v) { return v + 1; }\n"
-                       "int main() { return inc(inc(0)) - 2; }\n",
-                       single),
-                   "exceeds the limit of 1 macro bodies", "macro-expansions",
-                   1),
+  check(rejectedAt(
+            analyzeLimited("#macro int32_t inc(int32_t v) { return v + 1; }\n"
+                           "int main() { return inc(inc(0)) - 2; }\n",
+                           single),
+            "exceeds the limit of 1 macro bodies", "macro-expansions", 1),
         "a forced written argument expansion shares its invocation's budget");
 }
 void positiveAndMutation() {

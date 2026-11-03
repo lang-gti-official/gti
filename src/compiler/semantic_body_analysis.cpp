@@ -1122,16 +1122,15 @@ auto SemanticVisitor::Impl::visitConstexprForStmt(const ConstexprForStmt &stmt)
                      std::to_string(compileLimits.constexprForElements) +
                      " elements per statement."
                : "This 'constexpr for' statement would expand " +
-                     std::to_string(elements->size()) +
-                     " more bodies after " +
+                     std::to_string(elements->size()) + " more bodies after " +
                      std::to_string(constexprForExpandedBodies) +
                      " already expanded in this declaration, more than its "
                      "limit of " +
                      std::to_string(compileLimits.constexprForCopies) +
                      " expanded bodies per declaration.",
            "GTI-S2108");
-    diagnostics.back().hints.push_back(compileLimitHint(
-        compileLimitInfo(limit), compileLimits.*limit));
+    diagnostics.back().hints.push_back(
+        compileLimitHint(compileLimitInfo(limit), compileLimits.*limit));
     semanticModel.recordConstexprForExpansion(stmt, std::nullopt);
     return;
   }
@@ -13467,6 +13466,7 @@ auto SemanticVisitor::Impl::evaluateConstexprConstruction(
         "constructor.");
   }
   if (context.callDepth >= compileLimits.constexprDepth) {
+    recordLimitExhaustion(context, &CompileLimits::constexprDepth);
     return constexprFailure(
         callSite, ConstantEvaluationFailure::ResourceLimit,
         "The constexpr call depth exceeded the compiler limit of " +
@@ -14902,6 +14902,7 @@ auto SemanticVisitor::Impl::executeConstexprFunction(
                                     context);
   }
   if (context.callDepth >= compileLimits.constexprDepth) {
+    recordLimitExhaustion(context, &CompileLimits::constexprDepth);
     return constexprFailure(
         callSite, ConstantEvaluationFailure::ResourceLimit,
         "The constexpr call depth exceeded the compiler limit of " +

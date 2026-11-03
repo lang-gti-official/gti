@@ -990,6 +990,7 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
   }
   const std::size_t enclosingDepth = context.work->stagingDepth;
   if (enclosingDepth + context.callDepth >= compileLimits.constexprDepth) {
+    recordLimitExhaustion(context, &CompileLimits::constexprDepth);
     return constexprFailure(
         callSite, ConstantEvaluationFailure::ResourceLimit,
         "Nested constexpr staging exceeded the compiler call-depth limit.");

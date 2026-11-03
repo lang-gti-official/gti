@@ -3247,7 +3247,8 @@ void testSupportFacilities() {
         return 0;
       return lang::withSufficientStack(
                  [remaining] { return descend(remaining - 1); }) +
-             static_cast<std::size_t>(frame[0] == (remaining & 1));
+             static_cast<std::size_t>(static_cast<std::size_t>(frame[0]) ==
+                                      (remaining & 1));
     }
   };
   const std::size_t segmentsBefore = lang::nativeStackSegmentsEntered();

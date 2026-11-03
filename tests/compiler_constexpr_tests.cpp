@@ -3805,11 +3805,9 @@ void testConstexprLibrary() {
     // it reaches the call-depth limit rather than the step limit.
     lang::FrontendOptions limited = stepLimited();
     limited.limits.constexprDepth = 64;
-    const auto invalid =
-        lang::Frontend(limited)
-            .analyze("constexpr-chrono-invalid.gti",
-                     "import std.chrono;\n" + source,
-                     {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    const auto invalid = lang::Frontend(limited).analyze(
+        "constexpr-chrono-invalid.gti", "import std.chrono;\n" + source,
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
     expect(!invalid.canGenerateCode() &&
                hasDiagnosticCode(invalid.diagnostics, "GTI-S2057"),
            "chrono adoption preserves runtime-only clocks and shared constant "
@@ -5852,9 +5850,8 @@ lang::FrontendResult analyzeWithLimits(const std::string &name,
                                        lang::CompileLimits limits = {}) {
   lang::FrontendOptions options;
   options.limits = limits;
-  return lang::Frontend(options).analyze(name, source,
-                                         {standardLibraryPrelude()}, {},
-                                         {standardLibraryRoot()});
+  return lang::Frontend(options).analyze(
+      name, source, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
 }
 
 bool depthExhausted(const lang::FrontendResult &result, std::size_t limit) {
@@ -5898,11 +5895,11 @@ void testConfigurableCompileTimeDepth() {
   expect(analyzeWithLimits("depth-512.gti", recursiveDescentSource(512))
              .canGenerateCode(),
          "a 512-deep string-view recursive descent fits the default limit");
-  expect(depthExhausted(
-             analyzeWithLimits("depth-513.gti", recursiveDescentSource(513)),
-             512),
-         "the 513th nested call reports the limit, its value and how to "
-         "raise it");
+  expect(
+      depthExhausted(
+          analyzeWithLimits("depth-513.gti", recursiveDescentSource(513)), 512),
+      "the 513th nested call reports the limit, its value and how to "
+      "raise it");
   expect(analyzeWithLimits("ctor-512.gti", recursiveConstructionSource(512))
              .canGenerateCode(),
          "a constexpr constructor shares the 512-call default");
@@ -5923,10 +5920,9 @@ void testConfigurableCompileTimeDepth() {
          "a lowered limit rejects one call more and names its value");
   lang::CompileLimits deep;
   deep.constexprDepth = 2048;
-  expect(
-      analyzeWithLimits("depth-2048.gti", integerRecursionSource(2048), deep)
-          .canGenerateCode(),
-      "a raised limit admits recursion deeper than the default");
+  expect(analyzeWithLimits("depth-2048.gti", integerRecursionSource(2048), deep)
+             .canGenerateCode(),
+         "a raised limit admits recursion deeper than the default");
   expect(depthExhausted(analyzeWithLimits("depth-2049.gti",
                                           integerRecursionSource(2049), deep),
                         2048),
@@ -5937,18 +5933,18 @@ void testConfigurableCompileTimeDepth() {
   lang::CompileLimits capped;
   capped.constexprDepth = 16384;
   const std::size_t segmentsBefore = lang::nativeStackSegmentsEntered();
-  expect(analyzeWithLimits("depth-cap.gti", integerRecursionSource(16384),
-                           capped)
-             .canGenerateCode(),
-         "recursion at the 16384-call hard cap completes");
+  expect(
+      analyzeWithLimits("depth-cap.gti", integerRecursionSource(16384), capped)
+          .canGenerateCode(),
+      "recursion at the 16384-call hard cap completes");
   expect(lang::nativeStackSegmentsEntered() > segmentsBefore,
          "the hard cap needs more native stack than one thread provides, so "
          "evaluation really continued on fresh segments");
-  expect(depthExhausted(analyzeWithLimits("depth-over-cap.gti",
-                                          integerRecursionSource(16385),
-                                          capped),
-                        16384),
-         "the hard cap itself is enforced");
+  expect(
+      depthExhausted(analyzeWithLimits("depth-over-cap.gti",
+                                       integerRecursionSource(16385), capped),
+                     16384),
+      "the hard cap itself is enforced");
 
   // Nested staged analysis counts toward the same limit.
   lang::CompileLimits staged;
@@ -5973,15 +5969,15 @@ void testNativeStackSegmentsAreInvisible() {
     macros += "#macro int32_t m" + std::to_string(level) +
               "(int32_t v) { return m" + std::to_string(level - 1) +
               "(v) + 1; }\n";
-  const std::string valid =
-      macros + stagedChainSource(12).substr(
-                   0, stagedChainSource(12).find("int main()")) +
-      "constexpr int32_t fold(int32_t n) {\n"
-      "  if (n == 0) { return 0; }\n"
-      "  return fold(n - 1) + n;\n"
-      "}\n"
-      "static_assert(fold(200) == 20100);\n"
-      "int main() { return m23(0) - 24; }\n";
+  const std::string valid = macros +
+                            stagedChainSource(12).substr(
+                                0, stagedChainSource(12).find("int main()")) +
+                            "constexpr int32_t fold(int32_t n) {\n"
+                            "  if (n == 0) { return 0; }\n"
+                            "  return fold(n - 1) + n;\n"
+                            "}\n"
+                            "static_assert(fold(200) == 20100);\n"
+                            "int main() { return m23(0) - 24; }\n";
   const std::string invalid = recursiveDescentSource(300);
   lang::CompileLimits limits;
   limits.constexprDepth = 256;
@@ -5998,9 +5994,8 @@ void testNativeStackSegmentsAreInvisible() {
   expect(plainInvalid.second.find("call depth exceeded") != std::string::npos,
          "the invalid program reaches the configured call-depth limit");
 
-  const lang::NativeStackPolicy previous =
-      lang::setNativeStackPolicyForTesting(
-          {.headroom = std::size_t{1} << 40, .segment = std::size_t{4} << 20});
+  const lang::NativeStackPolicy previous = lang::setNativeStackPolicyForTesting(
+      {.headroom = std::size_t{1} << 40, .segment = std::size_t{4} << 20});
   const std::size_t segmentsBefore = lang::nativeStackSegmentsEntered();
   const auto segmented = run("segments.gti", valid);
   const auto segmentedInvalid = run("segments-invalid.gti", invalid);
@@ -6871,9 +6866,13 @@ int main() { return recurse(0); }
   expect(!exhausted.semanticValid &&
              hasDiagnosticCode(exhausted.diagnostics, "GTI-S2057") &&
              hasDiagnosticHint(exhausted.diagnostics,
-                               "shared step or call-depth limit"),
+                               "constexpr call depth exceeded the request's "
+                               "limit of 512 nested calls while executing "
+                               "'recurse'") &&
+             hasDiagnosticHint(exhausted.diagnostics,
+                               "raise it with '--constexpr-depth <n>'"),
          "immediate recursion preserves the bounded evaluator and reports "
-         "its shared resource limit");
+         "its call-depth limit, its value and how to raise it");
 }
 
 void testConstevalStatementCompletion() {

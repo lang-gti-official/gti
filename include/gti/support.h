@@ -41,9 +41,9 @@ void installCrashHandlers(std::string_view toolName);
 // thrown on a segment propagates to the caller. The switch is invisible to
 // the computation, so results never depend on where it happens.
 //
-// Architectures without a stack-switch implementation (anything but x86-64
-// and AArch64) run the segment on a helper thread of the same size instead;
-// see support.cpp for the thread-local state that cannot follow it.
+// The switch is implemented for x86-64 and AArch64 on Mach-O and ELF hosts,
+// which covers every supported GTI host. Elsewhere nothing switches and
+// recursion stays on the thread's own stack (see support.cpp).
 [[nodiscard]] bool nativeStackNearlyExhausted();
 void runOnFreshNativeStack(void (*work)(void *), void *context);
 

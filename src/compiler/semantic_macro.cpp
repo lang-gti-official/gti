@@ -541,9 +541,8 @@ auto SemanticVisitor::Impl::analyzeMacroCall(const Call &writtenCall,
     currentType = SemanticType::Unknown;
     if (std::exchange(macroLimitReported, true))
       return true;
-    auto CompileLimits::*const limit = tooDeep
-                                           ? &CompileLimits::macroDepth
-                                           : &CompileLimits::macroExpansions;
+    auto CompileLimits::*const limit =
+        tooDeep ? &CompileLimits::macroDepth : &CompileLimits::macroExpansions;
     const std::string name = callableToken(call->callee()).lexeme;
     reject(tooDeep ? "Macro invocation '" + name +
                          "' exceeds the macro nesting limit of " +

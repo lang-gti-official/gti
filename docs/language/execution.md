@@ -171,7 +171,7 @@ rejected without expanding the cycle repeatedly.
 
 Expansion has two deterministic implementation limits, configured like the
 other compile-time limits (see
-[Implementation limits](static-semantics.md#implementation-limits)):
+[Implementation limits](static-semantics.md#3112-implementation-limits)):
 `macro-depth` bounds the nested expansions active at once (guaranteed at least
 1024; the default is 1024) and `macro-expansions` bounds the bodies one
 outermost written invocation expands, counting every nested expansion and

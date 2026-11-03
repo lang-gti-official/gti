@@ -1081,12 +1081,12 @@ void checkExpansionLimits(const std::filesystem::path &root,
   expect(analyzeLimited("default-1024.gti", program(loop(1024)), defaults)
              .hirValid,
          "a 1024-element statement fits the default element limit");
-  expect(limited(analyzeLimited("default-1025.gti", program(loop(1025)),
-                                defaults),
-                 "has 1025 elements, more than its limit of 1024 elements "
-                 "per statement",
-                 "constexpr-for-elements", 1024),
-         "1025 elements name the per-statement limit and how to raise it");
+  expect(
+      limited(analyzeLimited("default-1025.gti", program(loop(1025)), defaults),
+              "has 1025 elements, more than its limit of 1024 elements "
+              "per statement",
+              "constexpr-for-elements", 1024),
+      "1025 elements name the per-statement limit and how to raise it");
 
   lang::CompileLimits elements;
   elements.constexprForElements = 8;

@@ -9,7 +9,6 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/Signals.h"
 #include "llvm/Support/TimeProfiler.h"
-#include "llvm/Support/thread.h"
 
 #include <atomic>
 #include <cstdint>
@@ -41,19 +40,34 @@
 // the original stack. Calls and returns stay balanced and the frame-pointer
 // chain links back to the caller, so backtraces cross the switch. Exceptions
 // never cross it: the entry function catches everything on the segment.
-#if (defined(__x86_64__) || defined(__aarch64__)) &&                          \
+//
+// Why not llvm::runOnNewStack (llvm/Support/ProgramStack.h): it exists only
+// from LLVM 21, while GTI supports LLVM 18 and Linux CI builds with LLVM 20;
+// distributed builds run its function on a new llvm::thread (the Homebrew
+// LLVM 23 arm64 macOS library does, by disassembly), and thread-local
+// compiler state must not change under a switch; and where it does switch
+// stacks it uses malloc'ed memory without a guard page and, as a prebuilt
+// uninstrumented library, without AddressSanitizer fiber annotations.
+//
+// Only the System V x86-64 and AAPCS64 calling conventions are implemented,
+// for Mach-O and ELF. Elsewhere (Windows x64's Microsoft ABI, other
+// architectures; none is a supported GTI host) there is no switch at all:
+// recursion stays on the thread's own stack, exactly as before segments
+// existed, rather than moving to a helper thread whose thread-local state
+// would differ.
+#if (defined(__x86_64__) || defined(__aarch64__)) &&                           \
     (defined(__APPLE__) || defined(__ELF__))
 #define GTI_NATIVE_STACK_SWITCH 1
 extern "C" void gti_run_on_native_stack(void *top, void (*entry)(void *),
                                         void *context) noexcept;
 #if defined(__APPLE__)
 #define GTI_STACK_SWITCH_PROLOGUE                                              \
-  ".text\n.p2align 4\n.globl _gti_run_on_native_stack\n"                     \
+  ".text\n.p2align 4\n.globl _gti_run_on_native_stack\n"                       \
   ".private_extern _gti_run_on_native_stack\n_gti_run_on_native_stack:\n"
 #define GTI_STACK_SWITCH_EPILOGUE ""
 #else
 #define GTI_STACK_SWITCH_PROLOGUE                                              \
-  ".pushsection .text\n.p2align 4\n.globl gti_run_on_native_stack\n"         \
+  ".pushsection .text\n.p2align 4\n.globl gti_run_on_native_stack\n"           \
   ".hidden gti_run_on_native_stack\n"                                          \
   ".type gti_run_on_native_stack,%function\ngti_run_on_native_stack:\n"
 #define GTI_STACK_SWITCH_EPILOGUE                                              \
@@ -113,6 +127,7 @@ void reportToolchainBadAlloc(void *, const char *reason, bool) {
   return llvm::StringRef(text.data(), text.size());
 }
 
+#if defined(GTI_NATIVE_STACK_SWITCH)
 // Stack policy. A recursion boundary needs `headroom` bytes below it: one
 // nested level of staged analysis or macro expansion measured 64 KiB in an
 // optimized arm64 build (160 KiB with AddressSanitizer), and the code between
@@ -192,7 +207,6 @@ thread_local bool segmentEntered = false;
   return {.low = low + regionReserve, .high = high};
 }
 
-#if defined(GTI_NATIVE_STACK_SWITCH)
 // One guard-paged mapping. The lowest page faults on overflow instead of
 // silently writing into a neighbouring allocation.
 struct StackSegment {
@@ -295,6 +309,8 @@ void enterSegment(void *raw) {
 
 } // namespace
 
+#if defined(GTI_NATIVE_STACK_SWITCH)
+
 bool nativeStackNearlyExhausted() {
   if (segmentEntered) {
     segmentEntered = false;
@@ -316,15 +332,13 @@ bool nativeStackNearlyExhausted() {
 }
 
 void runOnFreshNativeStack(void (*work)(void *), void *context) {
-  const std::size_t usable = segmentBytes();
-#if defined(GTI_NATIVE_STACK_SWITCH)
-  const StackSegment segment = acquireSegment(usable + regionReserve);
+  const StackSegment segment = acquireSegment(segmentBytes() + regionReserve);
   const std::uintptr_t base = reinterpret_cast<std::uintptr_t>(segment.base);
   const std::uintptr_t top = (base + segment.size) & ~std::uintptr_t{63};
-  SegmentCall call{.work = work,
-                   .context = context,
-                   .region = {.low = base + pageBytes() + regionReserve,
-                              .high = top}};
+  SegmentCall call{
+      .work = work,
+      .context = context,
+      .region = {.low = base + pageBytes() + regionReserve, .high = top}};
 #if defined(GTI_ADDRESS_SANITIZER)
   __sanitizer_start_switch_fiber(&call.callerFakeStack, segment.base,
                                  segment.size);
@@ -336,28 +350,6 @@ void runOnFreshNativeStack(void (*work)(void *), void *context) {
   releaseSegment(segment);
   if (call.failure)
     std::rethrow_exception(call.failure);
-#else
-  // No same-thread switch for this architecture: run the segment on a helper
-  // thread of the requested size while this one waits. Thread-local compiler
-  // state (MIR lowering's cleanup-sharing test settings and associated-type
-  // projection cycle tracking) does not follow it there, so every supported
-  // host (x86-64 and AArch64) uses the same-thread switch above instead.
-  std::exception_ptr failure;
-  llvm::thread helper(std::optional<unsigned>(static_cast<unsigned>(usable)),
-                      [&] {
-                        ++segmentsEntered;
-                        segmentEntered = true;
-                        try {
-                          work(context);
-                        } catch (...) {
-                          failure = std::current_exception();
-                        }
-                        segmentEntered = false;
-                      });
-  helper.join();
-  if (failure)
-    std::rethrow_exception(failure);
-#endif
 }
 
 NativeStackPolicy setNativeStackPolicyForTesting(NativeStackPolicy policy) {
@@ -366,6 +358,20 @@ NativeStackPolicy setNativeStackPolicyForTesting(NativeStackPolicy policy) {
 }
 
 std::size_t nativeStackSegmentsEntered() { return segmentsEntered; }
+#else
+// No same-thread switch on this host (see above): never switch.
+bool nativeStackNearlyExhausted() { return false; }
+
+void runOnFreshNativeStack(void (*work)(void *), void *context) {
+  work(context);
+}
+
+NativeStackPolicy setNativeStackPolicyForTesting(NativeStackPolicy) {
+  return {};
+}
+
+std::size_t nativeStackSegmentsEntered() { return 0; }
+#endif
 
 void installCrashHandlers(std::string_view toolName) {
   // The signal printer retains the tool name for symbolization; keep a copy
