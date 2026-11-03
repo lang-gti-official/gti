@@ -121,11 +121,13 @@ def step(name, sha, platform, build, output, jobs, test_jobs, image=None):
         env['PATH'] = str(stage/'bin') + os.pathsep + env['PATH']
         for key in ('GTI_STDLIB_PATH', 'GTI_RUNTIME_LIBRARY', 'GTI_RUNTIME_INCLUDE'):
             env.pop(key, None)
+        gti = (stage/'bin/gti').resolve()
+        lsp = (stage/'bin/gti_lsp').resolve()
         commands = [
-            ['lsp_smoke_test.py', 'gti_lsp'], ['cli_smoke_test.py', 'gti'],
-            ['project_cli_smoke_test.py', 'gti'], ['process_resource_policy_test.py', 'gti', '--installed'],
-            ['managed_thread_runtime_test.py', 'gti'],
-            ['atomic_runtime_test.py', 'gti', *[root/'tests/fixtures'/('atomic_'+n+'.gti')
+            ['lsp_smoke_test.py', lsp], ['cli_smoke_test.py', gti],
+            ['project_cli_smoke_test.py', gti], ['process_resource_policy_test.py', gti, '--installed'],
+            ['managed_thread_runtime_test.py', gti],
+            ['atomic_runtime_test.py', gti, *[root/'tests/fixtures'/('atomic_'+n+'.gti')
                 for n in ('scalar', 'concurrent', 'orders', 'fetch', 'fetch_overflow')]]]
         for script, *args in commands:
             execute(['python3', root/'tests'/script, *args], env=env, cwd=build)
