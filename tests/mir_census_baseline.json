@@ -190,44 +190,10 @@
   "variants": {
     "x86_64-unknown-linux": {
       "examples": {
-        "040-loan-flow-edges.gti": 173,
-        "058-formatted-output.gti": 256,
-        "072-filesystem-paths.gti": 194,
-        "073-constructor-local-generics.gti": 184,
-        "087-associative-containers.gti": 451,
-        "089-library-workflow.gti": 917,
-        "091-json-documents.gti": 647,
-        "092-json-codecs.gti": 618,
-        "094-binary-text-encoding.gti": 229,
-        "095-explicit-cloning.gti": 246,
-        "099-borrowed-expected.gti": 206,
-        "100-owned-error-pipelines.gti": 473,
-        "103-resource-exchange.gti": 164,
-        "104-move-only-ordering.gti": 258,
-        "106-custom-formatters.gti": 267,
-        "107-composable-io.gti": 319,
-        "110-integral-enums.gti": 250,
-        "131-inferred-references.gti": 513,
-        "134-standard-library-modules.gti": 310,
-        "135-inline-polymorphic-values.gti": 370,
-        "137-declared-attributes.gti": 248,
-        "145-live-slot-and-lane-iteration.gti": 411,
-        "147-standard-library-import.gti": 471,
-        "148-nested-configuration.gti": 633,
-        "155-conversion-operators.gti": 185,
-        "157-protocol-concepts.gti": 192,
-        "158-multi-parameter-concepts.gti": 180,
-        "159-tryable-propagation.gti": 180,
-        "161-consuming-matches.gti": 323,
-        "162-experimental-optional.gti": 216,
-        "165-borrowed-payload-results.gti": 277,
-        "166-source-optional.gti": 205,
-        "172-deferred-assertions.gti": 231,
-        "174-typed-macros.gti": 240,
-        "175-thread-local-storage.gti": 293,
-        "182-associated-type-families.gti": 281
+        "087-associative-containers.gti": 447,
+        "089-library-workflow.gti": 913
       },
-      "total": 28253
+      "total": 28186
     }
   }
 }
