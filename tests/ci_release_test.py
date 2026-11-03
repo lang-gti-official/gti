@@ -344,9 +344,13 @@ def train_contract(root):
         common_train_contract(name, text, ci, rollup)
     nightly_jobs = jobs(nightly)
 
-    # Beta: the nightly's package, suite and gate, packaging the channel-neutral archive.
+    # Beta: the nightly's package job producing the channel-neutral archive; no
+    # suite re-run (the cut's full-CI-verified parent, or the backport's own
+    # suite, is the evidence).
     beta = jobs(beta_text)
-    assert list(beta) == ["select", "package", "suite", "release-gate", "publish"], list(beta)
+    assert list(beta) == ["select", "package", "publish"], list(beta)
+    assert "merge-shards" not in beta_text and "validation_checks.py shard" not in beta_text
+    assert "check_ci_sanitizers" not in beta_text and "actions/cache/save@" not in beta_text
     header = beta_text.split("\njobs:\n", 1)[0]
     assert "  push:\n    branches:\n      - main\n      - \"beta/**\"\n" in header
     assert "schedule:" in header and "workflow_dispatch:" in header and "pull_request" not in header
@@ -357,17 +361,18 @@ def train_contract(root):
         assert writes == (["contents", "id-token", "attestations"] if job == "publish" else []), (job, writes)
     assert "if: github.repository == 'lang-gti-official/gti'" in beta["select"]
     assert "python3 tests/release_train_test.py" in beta["select"] and "select-beta" in beta["select"]
-    package, suite = beta["package"], beta["suite"]
+    package = beta["package"]
     assert re.findall(r"\{os: [^}]*platform: ([a-z0-9-]+)", package) == ["linux-x64", "darwin-arm64"]
     assert "ubuntu-24.04-arm" not in beta_text and "linux-arm64}" not in beta_text
-    for body in (package, suite):
-        assert body.count(CONFIGURE_RELEASE) == 1 and "bash scripts/configure_ci_toolchain.sh" in body
-        assert "ref: ${{ needs.select.outputs.sha }}" in body
-        assert "if: needs.select.outputs.build == 'true'" in body
+    assert package.count(CONFIGURE_RELEASE) == 1 and "bash scripts/configure_ci_toolchain.sh" in package
+    assert "ref: ${{ needs.select.outputs.sha }}" in package
+    assert "if: needs.select.outputs.build == 'true'" in package
+    release_cache = "gti-ccache-v2-release-${{ runner.os }}-${{ runner.arch }}-"
+    assert release_cache in package and release_cache in backport_text, \
+        "release builds restore the cache llvm-prebuilt.yml warms"
     shard_rows = lambda body: re.findall(r"\{os: [^}]*shards: \d+, index: \d+\}", body)
     full_jobs = jobs((workflows / "full-validation.yml").read_text())
-    assert shard_rows(suite) == shard_rows(full_jobs["integration"]), "beta runs the nightly's release shards"
-    assert shard_rows(backport_text) == shard_rows(full_jobs["integration"]), "backports run the same shards"
+    assert shard_rows(backport_text) == shard_rows(full_jobs["integration"]), "backports run the nightly's release shards"
     for check in ("lsp_smoke_test.py", "cli_smoke_test.py", "project_cli_smoke_test.py",
                   "process_resource_policy_test.py", "managed_thread_runtime_test.py",
                   "atomic_runtime_test.py", "installed_library_smoke"):
@@ -377,10 +382,8 @@ def train_contract(root):
     assert "release_train.py confirm" in package
     ordered(package, ["name: Build\n", "name: Test installed toolchain", "-DGTI_CHANNEL=stable"],
             "the archive comes from the validated stage")
-    assert 'merge-shards\n          --shard-reports "${RUNNER_TEMP}/shards" --platforms darwin,linux' in \
-        beta["release-gate"]
     publish = beta["publish"]
-    assert "needs: [select, package, release-gate]" in publish
+    assert "needs: [select, package]" in publish
     assert "group: gti-beta-publication\n      cancel-in-progress: false" in publish
     ordered(publish, ["release_train.py verify-assets", "release_train.py admit-beta",
                       "attest-build-provenance", "refs/tags/${GTI_BETA_TAG}", "release_train.py beta-notes",
