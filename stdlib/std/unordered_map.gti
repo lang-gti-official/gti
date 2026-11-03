@@ -88,6 +88,11 @@ export class unordered_map<K, V, Hash = std::hash<K>, KeyEqual = std::equal_to<K
     return added - 1;
   }
 
+  bool erase_matches<Predicate>(size_t node, mut Predicate& predicate)
+      requires std::predicate<Predicate, detail::map_entry<K, V>> {
+    return predicate(this.nodes[node - 1]->entry);
+  }
+
 public:
   using key_type = K;
   using mapped_type = V;
@@ -203,6 +208,29 @@ public:
     return this.nodes.at(position).entry.second;
   }
 
+  /// Visit each live entry once, unlink matches, and return their count.
+  [[discardable]] size_t erase_if<Predicate>(mut Predicate predicate) mut
+      requires std::predicate<Predicate, detail::map_entry<K, V>> {
+    mut size_t removed = 0;
+    for (mut size_t bucket = 0; bucket < this.buckets.size(); bucket++) {
+      mut size_t previous = 0;
+      mut size_t node = this.buckets[bucket];
+      while (node != 0) {
+        size_t next = this.nodes[node - 1]->next;
+        if (this.erase_matches(node, predicate)) {
+          this.free_slots.push_back(node);
+          if (previous == 0) { this.buckets[bucket] = next; }
+          else { this.nodes[previous - 1]->next = next; }
+          this.element_count--;
+          this.nodes[node - 1].reset();
+          removed++;
+        } else { previous = node; }
+        node = next;
+      }
+    }
+    return removed;
+  }
+
   [[discardable]] size_t erase(K& key) mut {
     if (this.buckets.empty()) { return 0; }
     size_t hash = this.hasher(key);
@@ -280,4 +308,13 @@ public:
     return iterator(this.nodes, node - 1);
   }
 };
+}
+
+namespace std {
+/// Destroy matching entries and return their count; keys are never copied.
+export [[discardable]] size_t erase_if<K, V, Hash, KeyEqual, Predicate>(
+    mut unordered_map<K, V, Hash, KeyEqual>& values, Predicate predicate)
+    requires std::predicate<Predicate, unordered_map<K, V, Hash, KeyEqual>::value_type> {
+  return values.erase_if(std::move(predicate));
+}
 }

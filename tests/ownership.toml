@@ -1006,6 +1006,37 @@ consumers = [
 ]
 
 [[area]]
+area = "stdlib-surface-tests"
+paths = [
+  "tests/stdlib_surface*.py",
+  "tests/stdlib_surface_manifest.json",
+]
+owners = [
+  "stdlib_surface",
+  "stdlib_surface_manifest",
+  "stdlib_surface_context_controls",
+]
+consumers = []
+
+[[area]]
+area = "stdlib-algorithm-breadth-tests"
+paths = [
+  "tests/generic_algorithm_breadth_test.py",
+  "tests/fixtures/algorithm_search*.gti",
+  "tests/fixtures/algorithm_mutation.gti",
+  "tests/fixtures/algorithm_boundaries.gti",
+  "tests/fixtures/algorithm_user_types.gti",
+]
+owners = [
+  "^generic_algorithm_breadth_(cpp20|cpp23|no_elide|sanitized)$",
+]
+consumers = [
+  "stdlib_surface",
+  "stdlib_surface_manifest",
+  "test_throughput_registration",
+]
+
+[[area]]
 area = "stdlib-modules"
 paths = [
   "stdlib/std.gti",
@@ -1043,6 +1074,8 @@ paths = [
   "stdlib/std/algorithm.gti",
   "stdlib/std/numeric.gti",
   "stdlib/std/detail/iterator.gti",
+  "stdlib/std/detail/sequence_removal.gti",
+  "stdlib/std/detail/key_removal.gti",
   "stdlib/std/detail/map_*",
   "stdlib/std/detail/unordered_map_iterators.gti",
 ]
@@ -1070,6 +1103,7 @@ owners = [
   "vector_scalar_constructor_runtime",
   "^generic_algorithm_breadth_(cpp20|cpp23|no_elide|sanitized)$",
   "generic_algorithm_cluster",
+  "removal_algorithms",
   "generic_algorithm_errors",
 ]
 consumers = [

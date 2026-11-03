@@ -5,12 +5,29 @@ export module algorithm;
 // element rewriting are implemented here. In-place algorithms take the owning
 // container so the exclusive borrow and the element type stay explicit;
 // iterator-pair in-place forms wait on retainable mutable cursors.
+import "detail/sequence_removal.gti";
 import std.iterator;
 import std.functional;
 import std.vector;
 import std.array;
 import std.meta;
 namespace std {
+/// Stably compact kept elements into a prefix and return its length.
+/// The sequence size is unchanged; the suffix remains initialized.
+export size_t remove_if<Range, Predicate>(mut Range& values, mut Predicate predicate)
+    requires std::detail::permutable_sequence<Range> &&
+             std::detail::indexed_predicate<Predicate, Range> {
+  return std::detail::compact_remove_if(values, predicate);
+}
+
+/// Stably compact elements unequal to value and return the retained length.
+/// The sequence size is unchanged. The comparison value must not alias it.
+export size_t remove<Range, T>(mut Range& values, T& value)
+    requires std::detail::permutable_sequence<Range> &&
+             std::detail::indexed_equality<Range, T> {
+  return std::detail::compact_remove(values, value);
+}
+
 export constexpr T min<std::totally_ordered T>(T left, T right) {
   if (right < left) {
     return std::move(right);

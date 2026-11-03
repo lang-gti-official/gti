@@ -8304,11 +8304,15 @@ assertions.
 execute search/comparison/bounds, mutable
 traversal/replacement, filtered output, and independent user-defined cursor
 fixtures at C++20/C++23 O0/O1/O3, disabled copy elision, and ASan/UBSan. The
-four partitions retain all 32 fixture/mode pairs exactly once and reserve four
+four partitions retain all 56 fixture/mode pairs exactly once and reserve four
 workers each. They run serially, with outer limits of 900/900/600/1500 seconds;
 the harness retains its 120-second ordinary compile, 1200-second sanitized
 compile and 30-second execution limits. This replaces the former 600-second
 whole-matrix limit, which could expire before one permitted sanitized compile.
+The four concrete search-suite instantiations compile in separate fixtures sharing
+the same exported assertion helper. The vector fixture also retains the mixed
+container, raw-array, set, string and iterator-navigation checks. This bounds each
+compilation on slower CI workers without raising timeouts or reducing coverage.
 The registration control rejects omitted or duplicated modes, fixture filtering,
 concurrent partitions and an outer deadline shorter than the sanitizer budget.
 The
@@ -12582,3 +12586,18 @@ Python syntax, example inventory/registration and `git diff --check` pass. Remai
 production work includes custom lifecycles, generic/constexpr recipes, complete
 source-module/re-export ownership, colliding qualified names, globals/TLS and
 artifact-aware LSP/provenance, alongside combined platform acceptance.
+
+
+### Removal algorithms
+
+`removal_algorithms` runs the complete structural compaction/erasure fixture
+under LLVM O0/O3 and the supported scalar/string comparison under C++ O3.
+Independent assertions exhaust every eight-element keep/remove pattern, verify
+retained order, destructor counts, immovable linked elements, colliding hash
+chains and node reuse. Semantic negatives reject mutable/consuming/wrong-result
+predicates, live cursor conflicts, aliased comparison values, read-only owners,
+and fixed-size erasure. LLVM O3 also proves zero allocation during 16 passes
+over 65,536 vector elements and cleanup of every owner on predicate failure.
+The full mixed generic ownership fixture currently exceeds the C++ emitter's
+consistent `uninitialized_storage` trait representation; its LLVM lifecycle
+checks remain mandatory and the scalar/string comparator is retained.

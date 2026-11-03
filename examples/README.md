@@ -303,7 +303,7 @@ is a teaching helper, not a production server.
 | `087-associative-containers.gti` | ordered and hashed dictionaries, nested borrowed insertion results, moves, and owner reactivation |
 | `088-consuming-builders.gti` | consuming builder methods and explicit receiver movement |
 | `089-library-workflow.gti` | numeric option parsing, string editing, filesystem queries, owning work queues/history/sets, and emplacement with a move-only constructor argument |
-| `090-generic-algorithms.gti` | search, mutation, replacement, filtered copying, and chaining returned output cursors |
+| `090-generic-algorithms.gti` | stable compaction, container erasure, search, mutation, replacement, filtered copying, and chaining returned output cursors |
 | `186-dynamic-json.gti` | owned dynamic objects and arrays, CSV-style construction, typed cells, checked access, explicit independent cloning, and parse/encode round trips |
 | `091-json-documents.gti` | decoding and encoding structs through reflection, optionals for `null` and absent members, pretty output, strict-grammar errors with paths and locations |
 | `092-json-codecs.gti` | a `std::json::codec` specialization for a class with an invariant, used automatically inside structs and vectors, and JSON Pointer errors through it |

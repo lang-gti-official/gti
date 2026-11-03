@@ -43,5 +43,16 @@ int main() {
       combined[std::size_t(2)] != 1 || combined[std::size_t(3)] != 2) {
     return 1;
   }
+
+  // Compaction returns the kept prefix length and leaves all slots alive.
+  auto retained = std::remove_if(selected, [](int& value) -> bool { return value == 0; });
+  if (retained != 2 || selected.size() != 4) { return 1; }
+  int zero = 0;
+  if (std::remove(selected, zero) != 2) { return 2; }
+
+  // Erasure also destroys matches and shrinks the owner, returning the count.
+  if (std::erase(selected, zero) != 2 || selected.size() != 2) { return 3; }
+  if (std::erase_if(selected, [](int& value) -> bool { return value > 8; }) != 2 ||
+      !selected.empty()) { return 4; }
   return 0;
 }
