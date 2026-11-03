@@ -6567,6 +6567,43 @@ void testCompileLimits() {
              hasDiagnosticHint(immediate.diagnostics, "used all 1000 steps") &&
              hasDiagnosticHint(immediate.diagnostics, "--constexpr-steps"),
          "an immediate invocation's exhaustion names its limit");
+  // Attribution. Find the smallest step budget that still lets recursion
+  // reach the depth limit: there, the depth trip leaves the budget exactly
+  // spent, so any step charged after the trip (while the failure unwinds)
+  // would exhaust the budget too and could re-attribute the failure. It
+  // must still be reported as the depth limit, and one step less as steps.
+  const std::string deep =
+      "constexpr uint64_t deep(uint64_t n) {\n"
+      "  mut uint64_t i = 0;\n  while (i < uint64_t(3)) { i = i + 1; }\n"
+      "  return deep(n + uint64_t(1));\n}\n"
+      "static_assert(deep(uint64_t(0)) == uint64_t(0));";
+  const auto deepWith = [&](std::size_t steps) {
+    lang::FrontendOptions options = stepLimited(steps);
+    options.limits.constexprDepth = 32;
+    return analyze(deep, std::move(options));
+  };
+  const auto byDepth = [](const lang::FrontendResult &result) {
+    return hasDiagnostic(result.diagnostics, "call depth exceeded") &&
+           !hasDiagnostic(result.diagnostics, "execution-step limit");
+  };
+  std::size_t low = 1, high = 1000000;
+  while (low < high) {
+    const std::size_t middle = low + (high - low) / 2;
+    if (byDepth(deepWith(middle)))
+      high = middle;
+    else
+      low = middle + 1;
+  }
+  const auto atEdge = deepWith(low);
+  const auto belowEdge = deepWith(low - 1);
+  expect(low > 32 && byDepth(atEdge) &&
+             hasDiagnosticHint(atEdge.diagnostics, "--constexpr-depth <n>") &&
+             hasDiagnostic(belowEdge.diagnostics,
+                           "used all " + std::to_string(low - 1) + " steps") &&
+             !byDepth(belowEdge),
+         "a request is attributed to the limit that stopped it, even when the "
+         "other limit is exhausted at the same point");
+
   const auto constructor = analyze(
       "struct Heavy {\n  uint64_t value;\n"
       "  constexpr Heavy(uint64_t n) : value(0) {\n"
