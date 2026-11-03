@@ -495,7 +495,7 @@ int main() {
 }
 )GTI");
   for (
-      const std::string &invalid :
+      const std::string invalid :
       {// Different return paths cannot select a single caller owner.
        R"GTI(std::string_view bad(ByteOwner& left, ByteOwner& right, bool branch) {
   if (branch) { auto text = view(left); return text; }
