@@ -370,21 +370,35 @@ auto SemanticVisitor::Impl::symbolicCallableResultTypes(
       if (!query.isExpressionRequirement() || query.inferredResult() ||
           item.arguments.size() <= query.parameters().size())
         return {};
-      const auto *call = exprAs<Call>(query.expression().get());
+      const auto *call = directCall(query.expression());
       if (!call || !call->typeArguments().empty() ||
           call->arguments().size() != arguments.size())
         return {};
+      const auto ungroup = [&](const ExprPtr &expression) -> const ExprPtr * {
+        const ExprPtr *value = &expression;
+        while (const auto *group = exprAs<Grouping>(value->get())) {
+          if (budget == 0)
+            return nullptr;
+          --budget;
+          value = &group->expression();
+        }
+        return value;
+      };
       const auto binding =
           [&](const ExprPtr &expression) -> std::optional<std::size_t> {
-        const Expr *value = expression.get();
-        if (const auto *move = exprAs<Call>(value)) {
-          const auto target = intrinsicCandidate(move->callee());
+        const ExprPtr *value = ungroup(expression);
+        if (value == nullptr)
+          return std::nullopt;
+        if (const auto *move = exprAs<Call>(value->get())) {
+          const ExprPtr *callee = ungroup(move->callee());
+          const auto target =
+              callee ? intrinsicCandidate(*callee) : std::nullopt;
           if (!target || target->record().intrinsic != IntrinsicKind::Move ||
               move->arguments().size() != 1)
             return std::nullopt;
-          value = move->arguments().front().get();
+          value = ungroup(move->arguments().front());
         }
-        const auto *variable = exprAs<Variable>(value);
+        const auto *variable = value ? exprAs<Variable>(value->get()) : nullptr;
         if (!variable)
           return std::nullopt;
         for (std::size_t index = 0; index < query.bindings().size(); ++index)
@@ -2182,9 +2196,7 @@ auto SemanticVisitor::Impl::evaluateConceptApplication(
     return std::nullopt;
   }
   if (requirement.arguments.size() == 1 &&
-      (requirement.arguments.front().kind == SemanticType::TypeParameter ||
-       (requirement.arguments.front().kind == SemanticType::TypePack &&
-        !requirement.arguments.front().concretePack))) {
+      requirement.arguments.front().kind == SemanticType::TypeParameter) {
     const auto declared = genericConstraintConcepts.find(
         requirement.arguments.front().genericParameterId);
     if (declared != genericConstraintConcepts.end() &&

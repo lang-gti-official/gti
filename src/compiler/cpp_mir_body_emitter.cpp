@@ -27462,13 +27462,21 @@ checkedStorageReadLoanProducer(const MirBody &body, const MirLoan &loan) {
 [[nodiscard]] bool advanceCheckedAssignmentReceiver(
     const MirBody &body, const MirLoan &loan, const MirBlock *&block,
     std::vector<MirInstruction>::const_iterator &position) {
-  if (position == block->instructions.end() ||
-      position->kind != MirInstructionKind::CallInput)
+  if (position == block->instructions.end())
     return false;
-  const MirInstruction &input = *position++;
-  if (position == block->instructions.end() ||
-      producedCallResultLoan(body, *position) != &loan ||
-      input.callSite != position->callSite)
+  if (position->kind == MirInstructionKind::CallInput) {
+    const MirInstruction &input = *position++;
+    if (position == block->instructions.end() ||
+        input.callSite != position->callSite)
+      return false;
+  } else if (position->kind != MirInstructionKind::Call ||
+             position->callSite != 0 || !position->functionTarget) {
+    return false;
+  }
+  // Selected operator calls can carry their already evaluated inputs directly.
+  // They preserve the same RHS-before-accessor order and exact result loan;
+  // requiring an explicit CallInput here rejects that existing MIR spelling.
+  if (producedCallResultLoan(body, *position) != &loan)
     return false;
   if (position->definedFailure.empty() && position->localFailureSites.empty()) {
     ++position;
@@ -28001,14 +28009,12 @@ valueRootedMoveAssignmentSlot(const MirProgram &program,
   // is evaluated. MIR activates that reservation only at replacement commit;
   // the returned address, not a native container operation, names the slot.
   const MirLoan *reservedDestination =
-      destination != nullptr && destination->root == MirPlaceRootKind::Loan
+      destination != nullptr && destination->root == MirPlaceRootKind::Loan &&
+              destination->projections.empty()
           ? body.findLoan(destination->loan)
           : nullptr;
   const bool borrowedDestination =
       reservedDestination != nullptr && reservedDestination->twoPhase &&
-      (destination->projections.empty() ||
-       moveOnlyOwnedFieldDestination(program, representations, body, *value,
-                                     *destination)) &&
       reservedDestination->kind == MirLoanKind::CallResult &&
       reservedDestination->access == AccessMode::Mutable &&
       !reservedDestination->escapes && reservedDestination->carriers.empty() &&
@@ -30119,7 +30125,35 @@ storedValueReturnLoanProducer(const MirBody &body, const MirLoan &loan) {
           block.instructions[index + 1].kind == MirInstructionKind::EndBorrow &&
           block.instructions[index + 1].loan == origin.loan &&
           block.instructions[index + 1].hirValue == instruction.hirValue;
-      if (loan.storedDependency != 0) {
+      // A text value's runtime payload is the explicitly retained SSA value.
+      // Its physical parent and logical owner are lifetime evidence, not a
+      // replacement runtime address for that payload.
+      const bool exactTextValue = [&] {
+        if ((origin.type != SemanticType::StringView &&
+             origin.type != SemanticType::CString) ||
+            origin.value == 0 || retained->escapes ||
+            !retained->designatedFields.empty() ||
+            retained->access != AccessMode::ReadOnly)
+          return false;
+        const auto *value = mir_detail::definitionFor(body, origin.value);
+        if (!value || value->result != origin.value ||
+            value->info.type != origin.type)
+          return false;
+        if (value->loan == retained->id &&
+            value->hirValue == retained->producedBy)
+          return true;
+        const auto *copy =
+            value->kind == MirInstructionKind::Load &&
+                    value->operands.size() == 1 &&
+                    value->operands.front().kind == MirOperandKind::Copy
+                ? body.findPlace(value->operands.front().place)
+                : nullptr;
+        return copy && copy->root == MirPlaceRootKind::Binding &&
+               copy->projections.empty() && copy->type == origin.type &&
+               std::find(retained->carriers.begin(), retained->carriers.end(),
+                         copy->binding) != retained->carriers.end();
+      }();
+      if (loan.storedDependency != 0 && !exactTextValue) {
         const auto *dependency = body.findLoan(loan.storedDependency);
         const auto *dependencySource =
             dependency ? body.findPlace(dependency->source) : nullptr;
@@ -30199,7 +30233,7 @@ storedValueReturnLoanProducer(const MirBody &body, const MirLoan &loan) {
       if (!immediateRetirement && !exactCopiedEntry) {
         return nullptr;
       }
-      if (exactCopiedEntry)
+      if (exactCopiedEntry || exactTextValue)
         copiedPublication = origin.value;
       producer = &instruction;
     }
@@ -40967,7 +41001,7 @@ private:
     if (instruction.kind == MirInstructionKind::Call &&
         (instruction.intrinsic == IntrinsicKind::TextViewFromAddress ||
          instruction.intrinsic == IntrinsicKind::CStringFromAddress)) {
-      if (!mir_detail::textAddressResultLoan(facts.body, instruction))
+      if (!mir_detail::textAddressResultLoan(facts.body, instruction, &program))
         throw std::logic_error(
             "verified raw text assertion lost its checked witness");
       const bool counted =
@@ -56268,7 +56302,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           const std::size_t witness =
               instruction.intrinsic == IntrinsicKind::TextViewFromAddress ? 2
                                                                           : 1;
-          if (!mir_detail::textAddressResultLoan(body, instruction) ||
+          if (!mir_detail::textAddressResultLoan(body, instruction,
+                                                 &program_) ||
               !hasCompleteCallInputSchedule(body, instruction) ||
               !typeRow(instruction.info.type) ||
               !std::all_of(instruction.operands.begin(),

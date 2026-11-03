@@ -9174,9 +9174,14 @@ auto SemanticVisitor::Impl::conflictingLoans(const SemanticLoanPlace &place,
       // A checked result can retain exclusive external permission while its
       // shared entry parent supplies only an address and lifetime. That does
       // not make the external referent part of the carrier's physical bytes.
+      const bool abstractStoredChild =
+          suspendedParentUse && loan->kind == SemanticLoanKind::StoredValue &&
+          parent != nullptr && parent->entry &&
+          parent->kind == SemanticLoanKind::StoredValue &&
+          !parent->protectsStorage;
       const bool protectsPermission =
           (loan->referenceSelection && suspendedParentUse) ||
-          publishedExternalExclusion;
+          abstractStoredChild || publishedExternalExclusion;
       return (protectsStorage || protectsPermission) && overlaps &&
              ((suspendedParentUse && !sharedReferenceAccess) ||
               requested == AccessMode::Mutable ||

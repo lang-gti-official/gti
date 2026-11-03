@@ -35,6 +35,14 @@ def main():
         assert text.count(declaration) == 1
         prelude.write_text(text.replace(declaration,
                                        "  [[track_caller]] void require_key(bool found);"))
+        capabilities = library / "std/detail/memory_capabilities.gti"
+        text = capabilities.read_text()
+        for spelling in ("export uint64_t object_size<T>();",
+                         "export uint64_t object_alignment<T>();",
+                         "export void object_construct<T, Args...>(T* address, Args... args);"):
+            assert text.count(spelling) == 1
+            text = text.replace(spelling, spelling.replace("export ", "export [[track_caller]] ", 1))
+        capabilities.write_text(text)
         mapping = library / "std/map.gti"
         text = mapping.read_text()
         assert text.count("  V& at(K& key)") == 1
@@ -64,6 +72,7 @@ def main():
             "auto guard = v[std::size_t(0)].lock(); "
             "v.push_back(std::mutex<int>(4)); return guard.get(); }\n")
         cases = [(repository / "tests/fixtures/projected_move_assignment.gti", []),
+                 (repository / "tests/fixtures/projected_move_user.gti", []),
                  (repository / "tests/fixtures/mutex_vector_storage.gti",
                   ["--execution-profile", "concurrent"]),
                  (success, []), (ordinary, [])]
@@ -79,6 +88,14 @@ def main():
                             environment), f"{source.name} {label} build")
                 require(run([str(executable)], environment),
                         f"{source.name} {label} execution")
+            source = repository / "tests/fixtures/projected_move_failure.gti"
+            executable = root / f"projected-failure-{label}"
+            require(run([str(compiler), str(source), "--backend", backend,
+                         f"-{optimization}", *extra, "-o", str(executable)],
+                        environment), f"projected failure {label} build")
+            result = run([str(executable)], environment)
+            assert (result.returncode, result.stdout) == (70, "2\n1\n"), result
+            assert "GTI-R0007" in result.stderr and "index_out_of_bounds" in result.stderr, result.stderr
             executable = root / f"failure-{label}"
             require(run([str(compiler), str(failure), "--backend", backend,
                          f"-{optimization}", *extra, "-o", str(executable)], environment),

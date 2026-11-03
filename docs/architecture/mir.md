@@ -21,10 +21,17 @@ distinction without changing access permissions, active-loan rules or endpoints.
 A text result whose owner is a reference to a borrowed carrier retains its own
 producing loan. Its parent protects the carrier's physical storage, while the
 separate stored dependency retains the carrier's external owners. A local text
-binding is not a value copy of that differently typed entry carrier. A shared
+binding is not a value copy of that differently typed entry carrier. Returning
+text publishes its exact evaluated SSA value alongside the owner loan: the
+value is the producing call's result or a copy from its retained local carrier.
+The owner address is never a substitute for the text representation. A shared
 reborrow through a receiver's nested reference field likewise retains the
 abstract entry's selected permission; read-only access to the carrier shell
 does not erase an exclusive field's authority or upgrade the shared child.
+While that shared child retains an exclusive entry, operations through the
+carrier remain suspended, including read-only methods, just as for a named
+borrowed carrier. Direct access to unrelated owned fields and shared reads
+through plain references retain their separate permissions.
 
 A returned carrier assembled from independent reference-returning calls keeps
 the parent of each additional input separately. Its second input is not a child
@@ -104,6 +111,10 @@ issued by semantics, including its declaration identity, intrinsic identity,
 control flags and semantic snapshot. HIR checks the source call that selected
 that contract; MIR checks the flags and snapshot independently. Intrinsics do
 not acquire an ordinary executable function target merely to carry attributes.
+The sealed declaration inventory retains those selected intrinsic declarations
+even without executable instances. The same semantic control witness seals
+ordinary declaration flags, including declarations without a retained body;
+each MIR intrinsic witness must equal its exact sealed declaration witness.
 A tracked MIR call
 contains the exact semantic `CallerLocationOrigin`, its canonical artifact-local
 site ID, and whether the enclosing tracked function forwards its incoming token.

@@ -2638,3 +2638,10 @@ current implementation:
   ABI unions, packing, and bit-fields; record initialization policy remains in
   safe wrappers or native factory functions rather than in the representation
   declaration.
+
+Immutable local text aliases preserve the predeclared return dependency of
+their initializer, including alias chains and nested lexical scopes. Resolved
+body analysis still verifies the exact owner and rejects an escaping local
+owner. Shadowing does not borrow a parameter's identity. Mutable text locals
+are not inferred as return relays yet: they require a path-sensitive assignment
+summary that proves one owner across every return path.

@@ -5870,6 +5870,18 @@ private:
       if (binding == nullptr)
         return std::nullopt;
       type = binding->info.type;
+    } else if (place.root == MirPlaceRootKind::This) {
+      // The unprojected receiver records the concrete owner type. Field
+      // traversal below then checks the same stored-reference boundary as
+      // for a named carrier, including nested owned fields of the receiver.
+      const auto receiver = std::find_if(
+          output.places.begin(), output.places.end(), [](const MirPlace &root) {
+            return root.root == MirPlaceRootKind::This &&
+                   root.projections.empty();
+          });
+      if (receiver == output.places.end())
+        return std::nullopt;
+      type = receiver->type;
     } else if (place.root == MirPlaceRootKind::Loan) {
       const MirLoan *loan = output.findLoan(place.loan);
       const HirValue *referent =
@@ -16180,10 +16192,13 @@ private:
                 retainedLoan.entry && !retainedLoan.designatedFields.empty();
             const bool exactDynamicTextEntry =
                 retainedLoan.kind == MirLoanKind::Stored &&
-                retainedLoan.entry && retainedLoan.designatedFields.empty() &&
+                retainedLoan.designatedFields.empty() &&
                 (value->info.type.kind == SemanticType::StringView ||
                  value->info.type.kind == SemanticType::CString) &&
                 value->info.type.kind == output.returnType.kind;
+            // Text is the produced value, not the representation of its
+            // retained owner. Preserve that SSA value even when the owner is
+            // itself a carrier reached through a physical parameter loan.
             if ((exactStoredCarrierEntry || exactDynamicTextEntry) &&
                 returnedValue == 0) {
               valid = false;

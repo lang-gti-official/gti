@@ -436,6 +436,9 @@ area = "mir"
 risk = "shared"
 paths = [
   "tests/borrow_origin_publication_tests.cpp",
+  "tests/borrow_origin_publication_runtime_test.py",
+  "tests/fixtures/borrowed_text_field_reborrow.gti",
+  "tests/fixtures/receiver_field_carriers*.gti",
   "src/compiler/mir_*",
   "src/compiler/mir.cpp",
   "include/gti/mir*",
@@ -443,6 +446,7 @@ paths = [
 owners = [
   "^mir_",
   "borrow_origin_publication",
+  "borrow_origin_publication_runtime",
   "ephemeral_carrier_mir",
   "borrowing_callbacks_mir",
   "storage_adoption_contract",
@@ -544,6 +548,8 @@ area = "backend-common"
 paths = [
   "tests/backend_contract_regressions_test.py",
   "tests/fixtures/projected_move_assignment.gti",
+  "tests/fixtures/projected_move_failure.gti",
+  "tests/fixtures/projected_move_user.gti",
   "tests/fixtures/mutex_vector_storage.gti",
   "tests/panic_contract_tests.cpp",
   "src/compiler/backend.cpp",

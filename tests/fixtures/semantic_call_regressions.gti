@@ -36,7 +36,9 @@ concept Writable<T> = requires(Writer<T>& writer, T& value) {
   { writer.write(value) } -> int;
 };
 void sink<Writable First, Writable Args...>(First first, Args... args) {}
-void forward<Writable First, Writable Args...>(First first, Args... args) {
+concept WritableAlias<T> = Writable<T>;
+concept ForwardWritable<T> = (Writable<T> && std::copyable<T>) || WritableAlias<T>;
+void forward<Writable First, ForwardWritable Args...>(First first, Args... args) {
   sink(std::move(first), args...);
 }
 int check_pack() { forward(1, 2, 3); return 0; }
@@ -56,7 +58,22 @@ struct Add {
   Add() = default;
   int operator()(int& a, int& b) { return a + b; }
 };
+mut int dropped_cursors = 0;
+struct DroppedCursor {
+  mut int at = 0;
+  DroppedCursor() = default;
+  DroppedCursor(DroppedCursor&) = delete;
+  DroppedCursor(DroppedCursor&&) = default;
+  ~DroppedCursor() { dropped_cursors++; }
+  void operator++() mut { this.at++; }
+};
 int main() {
+  {
+    DroppedCursor first{};
+    DroppedCursor next = skip(std::move(first));
+    if (next.at != 1) return 3;
+  }
+  if (dropped_cursors != 1) return 4;
   if (check_step() != 0 || check_hash() != 0 || check_pack() != 0) return 1;
   Binary<Add> binary{Add()};
   return binary.apply(3, 4) == 12 ? 0 : 2;

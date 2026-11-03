@@ -2437,7 +2437,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
               ? program.findFunctionInstance(*value.functionTarget)
               : nullptr;
       const auto &intrinsicProof = value.intrinsicCallContractProof;
-      const IntrinsicCallContract *intrinsicContract =
+      const FunctionControlContract *intrinsicContract =
           intrinsicProof ? &intrinsicProof->contract() : nullptr;
       if (intrinsicContract &&
           ((value.kind != HirValueKind::Call &&

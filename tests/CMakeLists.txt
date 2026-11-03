@@ -1089,6 +1089,9 @@ target_link_libraries(gti_borrow_origin_publication_tests PRIVATE gti_cpp_backen
 target_precompile_headers(gti_borrow_origin_publication_tests
                           REUSE_FROM gti_compiler_test_pch)
 add_test(NAME borrow_origin_publication COMMAND gti_borrow_origin_publication_tests)
+add_test(NAME borrow_origin_publication_runtime
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/borrow_origin_publication_runtime_test.py" $<TARGET_FILE:gti>)
 add_executable(gti_semantic_call_regression_tests semantic_call_regression_tests.cpp)
 target_link_libraries(gti_semantic_call_regression_tests PRIVATE gti_compiler)
 target_precompile_headers(gti_semantic_call_regression_tests

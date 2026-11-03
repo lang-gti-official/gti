@@ -2416,7 +2416,7 @@ void testConstexprOperators() {
       {"struct Item { int x; constexpr Item(int x) : x(x) {} int operator+(int "
        "n) { return this.x + n; } }; "
        "constexpr Item item = Item(1); constexpr int bad = item + 2;",
-       "does not name a constexpr function", "+ 2", 1},
+       "non-constexpr function", "+ 2", 1},
       {"struct Item { int x; constexpr Item(int x) : x(x) {} constexpr int "
        "operator+(int n) { return this.x + "
        "n; } }; "
@@ -4730,8 +4730,7 @@ constexpr RuntimePoint runtime_point = RuntimePoint(1);
              countDiagnosticCode(invalid.diagnostics, "GTI-S2057") >= 5 &&
              hasDiagnostic(invalid.diagnostics, "cannot be declared mut") &&
              hasDiagnostic(invalid.diagnostics, "requires an initializer") &&
-             hasDiagnostic(invalid.diagnostics,
-                           "does not name a constexpr function") &&
+             hasDiagnostic(invalid.diagnostics, "non-constexpr function") &&
              hasDiagnostic(invalid.diagnostics, "must be static") &&
              hasDiagnostic(invalid.diagnostics,
                            "not an available constexpr constructor"),
@@ -4749,8 +4748,7 @@ int main() {
 }
 )");
   expect(!invalidBranch.semanticValid &&
-             hasDiagnostic(invalidBranch.diagnostics,
-                           "does not name a constexpr function"),
+             hasDiagnostic(invalidBranch.diagnostics, "non-constexpr function"),
          "if constexpr should require a frontend-evaluated constant bool");
 
   const lang::FrontendResult exhausted =

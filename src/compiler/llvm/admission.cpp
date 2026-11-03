@@ -4181,7 +4181,7 @@ public:
 
   bool representedTextAddress(const MirBody &body,
                               const MirInstruction &stage) const {
-    if (!mir_detail::textAddressResultLoan(body, stage))
+    if (!mir_detail::textAddressResultLoan(body, stage, &program))
       return false;
     const std::size_t witness =
         stage.intrinsic == IntrinsicKind::TextViewFromAddress ? 2 : 1;
@@ -4547,8 +4547,9 @@ public:
         !stage.localFailureSites.empty())
       return nullptr;
     const auto &input = stage.operands.front();
-    if (input.kind != MirOperandKind::Loan || input.place || input.value ||
-        input.literal || input.type != stage.info.type)
+    if (input.kind != MirOperandKind::Loan || input.place ||
+        (text ? !input.value : input.value != 0) || input.literal ||
+        input.type != stage.info.type)
       return nullptr;
     const auto *from = body.findLoan(input.loan);
     const auto *to = body.findLoan(*stage.loan);
@@ -4578,14 +4579,14 @@ public:
                  : nullptr;
     // Fundamental text is a borrowed value, not an owning object or a reference
     // address. Preserve its complete dependency and exact returned SSA value.
-    if (from->parent || from->lifecycleBound || from->twoPhase ||
-        !from->carriers.empty() || to->lifecycleBound || to->twoPhase ||
-        !to->carriers.empty() || from->access != AccessMode::ReadOnly ||
-        stage.ownership || stage.preparedParameterDrop ||
-        stage.successResultDrop || stage.successResultDestination)
+    if (from->lifecycleBound || from->twoPhase || !from->carriers.empty() ||
+        to->lifecycleBound || to->twoPhase || !to->carriers.empty() ||
+        from->access != AccessMode::ReadOnly || stage.ownership ||
+        stage.preparedParameterDrop || stage.successResultDrop ||
+        stage.successResultDestination)
       return nullptr;
     if (term.value->kind != MirOperandKind::Value || !term.value->value ||
-        term.value->loan)
+        term.value->value != input.value || term.value->loan)
       return nullptr;
     const auto *producer = earlierLiveCallResult(
         body, block, stage, *from, referent, category, term.value->value);

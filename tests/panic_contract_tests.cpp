@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <set>
 #include <string_view>
 
 namespace {
@@ -49,6 +50,26 @@ void testIntrinsicDeclarationContract() {
     std::ofstream output(prelude);
     output << text;
   }
+  const auto capabilities = temporary / "std/detail/memory_capabilities.gti";
+  std::ifstream capabilityInput(capabilities);
+  std::string capabilityText((std::istreambuf_iterator<char>(capabilityInput)),
+                             {});
+  capabilityInput.close();
+  for (const std::string declaration :
+       {"export uint64_t object_size<T>();",
+        "export uint64_t object_alignment<T>();",
+        "export void object_construct<T, Args...>(T* address, Args... "
+        "args);"}) {
+    const auto position = capabilityText.find(declaration);
+    check(position != std::string::npos,
+          "trusted memory intrinsic declaration exists");
+    if (position != std::string::npos)
+      capabilityText.insert(position + 7, "[[track_caller]] ");
+  }
+  {
+    std::ofstream output(capabilities);
+    output << capabilityText;
+  }
   const auto analyze = [&](std::string_view name) {
     return lang::Frontend().analyze(
         std::string(name),
@@ -65,26 +86,49 @@ void testIntrinsicDeclarationContract() {
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
     return;
   }
-  std::optional<lang::IntrinsicCallContract> foreignContract;
+  std::optional<lang::FunctionControlContract> foreignContract;
   for (const auto &function : foreign.mir.functionInstances())
     for (const auto &block : function.body.blocks)
       for (const auto &instruction : block.instructions)
         if (instruction.intrinsic == lang::IntrinsicKind::RequireKey)
           foreignContract = instruction.intrinsicCallContract;
   check(foreignContract.has_value(), "foreign intrinsic witness exists");
-  bool exercised = false;
+  const auto lowered = gti_test::lowerProgram(result, result.mir, result.mir);
+  check(lang::verifyLoweredProgram(lowered).empty(),
+        "selected intrinsic declarations survive sealed inventory collection");
+  const std::set<lang::IntrinsicKind> expectedIntrinsics{
+      lang::IntrinsicKind::RequireKey, lang::IntrinsicKind::ObjectSize,
+      lang::IntrinsicKind::ObjectAlignment,
+      lang::IntrinsicKind::ObjectConstruct};
+  std::set<lang::IntrinsicKind> mirIntrinsics, hirIntrinsics;
+  unsigned mirCalls = 0, mirMutations = 0, hirCalls = 0, hirMutations = 0;
+  const auto annotated = [](lang::IntrinsicKind intrinsic) {
+    return intrinsic == lang::IntrinsicKind::RequireKey ||
+           intrinsic == lang::IntrinsicKind::ObjectSize ||
+           intrinsic == lang::IntrinsicKind::ObjectAlignment ||
+           intrinsic == lang::IntrinsicKind::ObjectConstruct;
+  };
   for (const auto &function : result.mir.functionInstances()) {
     for (const auto &block : function.body.blocks) {
       for (const auto &instruction : block.instructions) {
-        if (instruction.intrinsic != lang::IntrinsicKind::RequireKey)
+        if (instruction.intrinsicCallContract) {
+          const auto *declaration = lowered.findFunctionDeclaration(
+              instruction.intrinsicCallContract->declaration());
+          check(declaration && declaration->controlContract ==
+                                   instruction.intrinsicCallContract,
+                "every selected intrinsic has its exact semantic declaration");
+        }
+        if (!annotated(instruction.intrinsic))
           continue;
-        exercised = true;
+        mirIntrinsics.insert(instruction.intrinsic);
+        ++mirCalls;
         check(instruction.tracksCaller && instruction.intrinsicCallContract &&
                   instruction.intrinsicCallContract->declaration() != 0 &&
                   instruction.intrinsicCallContract->snapshot() ==
                       result.mir.semanticSnapshot(),
               "MIR preserves exact declaration and semantic snapshot identity");
         for (unsigned mutation = 0; mutation < 4; ++mutation) {
+          ++mirMutations;
           auto malformed = result.mir;
           auto *owner = const_cast<lang::MirFunctionInstance *>(
               malformed.findFunctionInstance(function.id));
@@ -109,12 +153,18 @@ void testIntrinsicDeclarationContract() {
       }
     }
   }
-  check(exercised, "tracked nonterminal intrinsic is exercised");
+  check(mirIntrinsics == expectedIntrinsics && mirCalls != 0 &&
+            mirMutations == mirCalls * 4,
+        "every annotated intrinsic family and all four MIR mutations are "
+        "exercised");
   for (const auto &function : result.hir.functionInstances()) {
     for (const auto &value : function.body.values) {
-      if (value.intrinsic != lang::IntrinsicKind::RequireKey)
+      if (!annotated(value.intrinsic))
         continue;
+      hirIntrinsics.insert(value.intrinsic);
+      ++hirCalls;
       for (unsigned mutation = 0; mutation < 4; ++mutation) {
+        ++hirMutations;
         auto malformed = result.hir;
         auto *owner = const_cast<lang::HirFunctionInstance *>(
             malformed.findFunctionInstance(function.id));
@@ -135,6 +185,10 @@ void testIntrinsicDeclarationContract() {
       }
     }
   }
+  check(hirIntrinsics == expectedIntrinsics && hirCalls == mirCalls &&
+            hirMutations == hirCalls * 4,
+        "every annotated intrinsic family and all four HIR mutations are "
+        "exercised");
 }
 void testContracts() {
   const auto library =

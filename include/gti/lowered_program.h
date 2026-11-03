@@ -421,6 +421,7 @@ struct LoweredFunctionDeclaration {
   bool internalLinkage = false;
   bool constexprFunction = false;
   bool requiresUnsafe = false;
+  std::optional<FunctionControlContract> controlContract;
   bool neverReturns = false;
   bool tracksCaller = false;
   bool threadConfinedCallback = false;

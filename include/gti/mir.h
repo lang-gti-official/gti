@@ -772,7 +772,7 @@ struct MirInstruction {
   std::optional<std::size_t> payloadIndex;
   std::optional<PayloadExtractionKind> payloadExtractionKind;
   IntrinsicKind intrinsic = IntrinsicKind::None;
-  std::optional<IntrinsicCallContract> intrinsicCallContract;
+  std::optional<FunctionControlContract> intrinsicCallContract;
   // Concrete queried representation; only ObjectSize/ObjectAlignment may
   // carry this field. It is not a runtime argument or a borrow origin.
   std::optional<SemanticType> objectLayoutType;

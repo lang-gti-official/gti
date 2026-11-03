@@ -18252,7 +18252,7 @@ verifyMirProgramContracts(const MirProgram &program) {
                           "type, access, origin or restoration permission"});
         if ((instruction.intrinsic == IntrinsicKind::TextViewFromAddress ||
              instruction.intrinsic == IntrinsicKind::CStringFromAddress) &&
-            !mir_detail::textAddressResultLoan(body, instruction)) {
+            !mir_detail::textAddressResultLoan(body, instruction, &program)) {
           result.errors.push_back(
               {.bodyKind = body.kind,
                .owner = owner,

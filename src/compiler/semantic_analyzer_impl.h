@@ -5114,6 +5114,12 @@ private:
   [[nodiscard]] static std::optional<FunctionReturnBorrowSummary>
   textRelaySummary(const TextRelaySources &sources);
 
+  // Lexical, immutable aliases while predeclaring one text relay. These are
+  // prospective contracts; resolved body analysis still proves exact owners.
+  const FunctionDecl *textBorrowAliasFunction = nullptr;
+  std::unordered_map<std::string, PredeclaredTextBorrowSource>
+      textBorrowAliases;
+
   // The text summaries of the outermost dynamicTextReturnBorrowSummary query,
   // per declaration. A summary whose evaluation read one lower on the stack
   // is provisional until the evaluation that read nothing lower completes.
