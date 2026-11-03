@@ -1762,6 +1762,7 @@ public:
     options.declaredConfigurationFlags = input.declaredConfigurationFlags;
     options.rawPointerAudit = input.rawPointerAudit;
     options.trustedBodies = input.trustedBodies;
+    options.limits = input.limits;
     options.analyzeRecoveredProgram = true;
     options.analyzeRecoveredSourceGraph = true;
     options.completionOffset = input.byteOffset;

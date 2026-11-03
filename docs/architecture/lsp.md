@@ -851,7 +851,10 @@ Completion keeps one worker. Every worker is a long-lived LLVM thread with an
 explicit 8 MiB stack. That avoids Darwin's 512 KiB secondary-thread default
 and ensures the compiler's bounded-depth recovery runs before native stack
 exhaustion in debug builds, without creating a new thread for every edit or
-completion request.
+completion request. Compile-time evaluation and macro expansion are not
+limited by that stack: like the compiler, a worker continues them on fresh
+stack segments of the same thread (see the frontend architecture), so editor
+analysis reaches exactly the configured compile-time limits.
 
 Completion adopts compatible trusted preambles instead of registering and
 checking the standard library again for each request. Its request-owned
@@ -940,8 +943,14 @@ infer target defines for a unique matching entry root, or any document in a
 single-target package. Shared files and ambiguous entry roots in multi-target
 packages receive no target defines: unrelated target sets are never combined.
 Inactive consumer target/profile flag names remain known for typo diagnostics,
-and both active and declared sets enter the frontend cache context. Watching a
-manifest refreshes these facts for diagnostics and completion together.
+and both active and declared sets enter the frontend cache context. The facts
+also carry the root package's `[limits]` table resolved over the defaults
+(`ProjectFacts::compileLimits()`), which analysis and completion pass as
+`FrontendOptions::limits`, so an editor reports the same compile-limit
+exhaustion as `gti check`; standalone files use the defaults. The limits enter
+the semantic cache context, so a preamble or instance analysis is never reused
+across a limit change. Watching a manifest refreshes these facts for
+diagnostics and completion together.
 Profile changes also advance every open document's analysis generation,
 invalidate token caches and queued semantic requests, and capture the exact
 profile into each analysis/completion request. In-flight old-profile results
@@ -1216,6 +1225,23 @@ ordinary diagnostics and semantic queries, but an import edit cannot repair
 syntax in the frozen source graph. Skipping discovery in that case avoids a
 workspace-wide scan whose speculative edits would all be rejected; fixing the
 syntax restores import suggestions on the next snapshot.
+
+The editor publishes the ordinary diagnostic and semantic snapshot before doing
+missing-import discovery. The compiler exposes immutable discovery: it reads that
+snapshot and returns diagnostic enrichment, without copying the semantic model
+or changing any published identities. The analysis worker performs this optional
+work after serving pending semantic requests. A newer edit cancels the candidate
+scan and speculative trials; publication also requires the same root generation,
+frontend pointer and discovery generation. Repairs, including negative searches,
+remain conservatively invalidated by source changes. Enrichment replaces only
+diagnostics, never the semantic snapshot or its tokens. Its cost is excluded from
+the edit-debounce median. The opt-in frontend trace reports `includeSuggestions`
+and `includeSuggestionsCancelled` separately from ordinary analysis.
+
+This separation addresses the error-recovery path where searching broad public
+facades for an unresolved type took seconds after the ordinary error was already
+known. CLI compilation still enriches its final diagnostics synchronously using
+the same discovery implementation and proof requirements.
 
 The service shares the bounded parsed-unit cache but retains no semantic IDs
 across snapshots. Edits preserve BOM/CRLF and follow a module header when the

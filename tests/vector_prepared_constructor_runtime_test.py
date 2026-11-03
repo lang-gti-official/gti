@@ -9,6 +9,7 @@ import tempfile
 
 from vector_scalar_constructor_runtime_test import run
 from internal_module_fixture import register_modules
+from backend_modes import is_cpp_mode, keep_cpp, native_modes
 
 
 def main():
@@ -51,11 +52,7 @@ def main():
         (0, "91\n90\n900\n", ""),
         (0, "900\n", ""),
     ]
-    modes = [(f"{standard}-{level}", ["--std", standard, f"-{level}"], [])
-             for standard in ("c++20", "c++23") for level in ("O0", "O1", "O3")]
-    modes += [("no-elide", ["--std", "c++23", "-O0"], ["-fno-elide-constructors"]),
-              ("asan-ubsan", ["--std", "c++23", "-O1"],
-               ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])]
+    modes = native_modes()
     if args.mode:
         modes = [mode for mode in modes if mode[0] == args.mode]
         if not modes:
@@ -77,16 +74,17 @@ def main():
         for mode, flags, native in modes:
             binary = pathlib.Path(directory) / mode
             command = [str(args.compiler.resolve()), str(application), *flags,
-                       "--keep-cpp", "-o", str(binary)]
+                       *keep_cpp(flags), "-o", str(binary)]
             if native:
                 command += ["--", *native]
             built = run(command, env=environment)
             if built.returncode:
                 raise AssertionError(f"{mode} build:\n{built.stdout}{built.stderr}")
-            text = binary.with_suffix(".gti.cpp").read_text()
-            if ("prefix_slots" not in text or
-                    "::new (static_cast<void *>(::gti_internal::backend::native_pointer_value(" not in text):
-                raise AssertionError("missing source prefix guard and exact final-slot construction")
+            if is_cpp_mode(flags):
+                text = binary.with_suffix(".gti.cpp").read_text()
+                if ("prefix_slots" not in text or
+                        "::new (static_cast<void *>(::gti_internal::backend::native_pointer_value(" not in text):
+                    raise AssertionError("missing source prefix guard and exact final-slot construction")
             for count, expected in enumerate(cases):
                 result = run([str(binary), *(["fail"] * count)])
                 actual = (result.returncode, result.stdout, result.stderr)

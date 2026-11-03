@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 SUCCESS_SOURCE = """\
@@ -490,20 +491,19 @@ def build(
     name: str,
     source: str,
     *,
-    standard: str = "c++23",
-    optimization: str = "-O0",
+    flags: list[str] | None = None,
     native_arguments: list[str] | None = None,
 ) -> pathlib.Path:
     source_path = root / f"{name}.gti"
     binary = executable_path(root, name)
     source_path.write_text(source, encoding="utf-8")
+    # The unoptimised level of the first selected backend is the default.
+    flags = flags if flags is not None else native_modes(levels=("O0",))[0][1]
     command = [
         str(compiler),
         "--execution-profile",
         "concurrent",
-        "--std",
-        standard,
-        optimization,
+        *flags,
         str(source_path),
         "-o",
         str(binary),
@@ -544,66 +544,59 @@ def test_success_matrix(
         "first task\n42\nclass once task\nfresh class task\n"
         "after automatic join\n"
     )
-    for standard in ("c++20", "c++23"):
-        for optimization in ("-O0", "-O3"):
-            suffix = f"{standard.replace('+', 'p')}_{optimization[1:]}"
-            binary = build(
-                compiler,
-                root,
-                f"managed_thread_{suffix}",
-                SUCCESS_SOURCE,
-                standard=standard,
-                optimization=optimization,
-            )
-            expect_process(binary, code=0, stdout=expected, stderr="")
+    for mode, flags, _native in native_modes():
+        suffix = mode.replace("+", "p").replace("-", "_")
+        binary = build(
+            compiler,
+            root,
+            f"managed_thread_{suffix}",
+            SUCCESS_SOURCE,
+            flags=flags,
+        )
+        expect_process(binary, code=0, stdout=expected, stderr="")
 
 
 def test_typed_result_matrix(
     compiler: pathlib.Path, root: pathlib.Path
 ) -> None:
-    for standard in ("c++20", "c++23"):
-        for optimization in ("-O0", "-O3"):
-            suffix = f"{standard.replace('+', 'p')}_{optimization[1:]}"
-            binary = build(
-                compiler,
-                root,
-                f"managed_thread_result_{suffix}",
-                TYPED_RESULT_SOURCE,
-                standard=standard,
-                optimization=optimization,
-            )
-            expect_process(binary, code=0, stdout="", stderr="")
+    for mode, flags, _native in native_modes():
+        suffix = mode.replace("+", "p").replace("-", "_")
+        binary = build(
+            compiler,
+            root,
+            f"managed_thread_result_{suffix}",
+            TYPED_RESULT_SOURCE,
+            flags=flags,
+        )
+        expect_process(binary, code=0, stdout="", stderr="")
 
 
 def test_typed_class_result_matrix(
     compiler: pathlib.Path, root: pathlib.Path
 ) -> None:
-    for standard in ("c++20", "c++23"):
-        for optimization in ("-O0", "-O3"):
-            suffix = f"{standard.replace('+', 'p')}_{optimization[1:]}"
-            binary = build(
-                compiler,
-                root,
-                f"managed_thread_class_result_{suffix}",
-                TYPED_CLASS_RESULT_SOURCE,
-                standard=standard,
-                optimization=optimization,
-            )
-            expect_process(binary, code=0, stdout="", stderr="")
+    for mode, flags, _native in native_modes():
+        suffix = mode.replace("+", "p").replace("-", "_")
+        binary = build(
+            compiler,
+            root,
+            f"managed_thread_class_result_{suffix}",
+            TYPED_CLASS_RESULT_SOURCE,
+            flags=flags,
+        )
+        expect_process(binary, code=0, stdout="", stderr="")
 
 
 def test_typed_class_result_cleanup(
     compiler: pathlib.Path, root: pathlib.Path
 ) -> None:
-    for standard, optimization in (("c++20", "-O0"), ("c++23", "-O3")):
-        suffix = f"{standard.replace('+', 'p')}_{optimization[1:]}"
+    for mode, flags, _native in native_modes():
+        suffix = mode.replace("+", "p").replace("-", "_")
         binary = build(
             compiler,
             root,
             f"managed_thread_class_result_cleanup_{suffix}",
             TYPED_CLASS_RESULT_CLEANUP_SOURCE,
-            standard=standard,
-            optimization=optimization,
+            flags=flags,
         )
         expect_process(
             binary,
@@ -621,8 +614,7 @@ def test_typed_result_cleanup(
         root,
         "managed_thread_result_cleanup",
         TYPED_RESULT_CLEANUP_SOURCE,
-        standard="c++23",
-        optimization="-O3",
+        flags=native_modes(levels=("O3",))[0][1],
     )
     expect_process(
         binary,
@@ -762,8 +754,7 @@ def test_stress(compiler: pathlib.Path, root: pathlib.Path) -> None:
         root,
         "managed_thread_stress",
         STRESS_SOURCE,
-        standard="c++20",
-        optimization="-O3",
+        flags=native_modes(levels=("O3",))[0][1],
     )
     expect_process(binary, code=0, stdout="", stderr="")
 
@@ -786,14 +777,13 @@ def test_automatic_join_host_failure(
         encoding="utf-8",
     )
     source_root = pathlib.Path(__file__).resolve().parent.parent
-    for standard, optimization in (("c++20", "-O0"), ("c++23", "-O3")):
+    for mode, flags, _native in native_modes():
         binary = build(
             compiler,
             root,
-            f"managed_thread_automatic_join_host_failure_{standard}_{optimization[1:]}",
+            f"managed_thread_automatic_join_host_failure_{mode.replace('+', 'p').replace('-', '_')}",
             AUTOMATIC_JOIN_HOST_FAILURE_SOURCE,
-            standard=standard,
-            optimization=optimization,
+            flags=flags,
             native_arguments=[
                 str(helper),
                 f"-I{source_root / 'runtime/src'}",

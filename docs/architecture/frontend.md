@@ -457,6 +457,25 @@ large enough to reach this source-level limit even in unoptimized builds. The
 diagnostic suggests splitting the source into shallower parts and has no fix-it
 because no single rewrite preserves intent.
 
+Compile-time recursion is not bounded by written syntax. Nested
+constant-evaluation calls (staged MIR and the compatibility interpreter),
+nested staged constexpr analysis, macro expansion, and the HIR and MIR
+lowering of expanded macro bodies recurse once per level up to the configured
+[compile-time limits](../language/static-semantics.md#3112-implementation-limits).
+Each of those recursion boundaries checks the remaining native stack
+(`nativeStackNearlyExhausted` in `include/gti/support.h`). Below a 1 MiB
+headroom (4 MiB in sanitized or unoptimized builds) the work continues on a
+fresh 8 MiB (32 MiB) guard-paged stack segment of the same thread and returns
+to the original stack when it completes. A small switch routine for x86-64 and
+AArch64 moves only the stack pointer, so thread-local state, crash recovery,
+time tracing and cancellation are unaffected, and exceptions thrown on a
+segment propagate to the caller. Depth is therefore a language limit, never a
+property of the host thread: one level of nested staging or macro expansion
+measured 64 KiB of stack in an optimized arm64 build (160 KiB under
+AddressSanitizer), so the default limits alone would need tens of MiB.
+`testNativeStackSegmentsAreInvisible` forces a switch at every boundary and
+requires byte-identical MIR and diagnostics.
+
 ## Frontend Result And Gates
 
 `FrontendResult` owns, in lifetime order:

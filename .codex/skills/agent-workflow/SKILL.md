@@ -128,7 +128,14 @@ integration is complete contributor work; report it as deferred, never as passed
    For developer-automation-only or source-only GTI stdlib changes,
    `verify --focused --checks-file ...` runs owning checks directly and records
    scope `automation` or `source-stdlib`; its diff guard rejects compiler,
-   native runtime and build-system changes.
+   native runtime and build-system changes. CI independently admits the
+   `source-stdlib` lane only with an ancestor's successful full-CI compiler and
+   identical native inputs. It runs mandatory library owners/consumers and
+   packages the changed stdlib without rebuilding the compiler. Missing artifacts,
+   new CMake registrations, routing/native/build changes or unknown paths use
+   full CI. Register new source cases in an existing owning harness or surface
+   manifest where appropriate; never omit required tests to get the cheaper lane.
+   Combined preview still uses its separate mandatory admission/build policy.
 3. After focused validation passes and the PR is published, submit every completed
    task with `preview submit <task> --tests <exact-owning-ctest-names>`. This is
    the standing default, including fixes and automation work; do not ask again.
@@ -138,7 +145,7 @@ integration is complete contributor work; report it as deferred, never as passed
    Continue normal integration without waiting for preview.
 
    Write the final PR description to a temporary file: behaviour, exactly
-   which checks ran, and "complete suite deferred to the merge queue". Unless
+   which checks ran, and "complete suite deferred to full validation". Unless
    the change is automation-only, end it with a `Validation:` block whose `T0`
    and `T1` items list the CTest names you ran, comma-separated; other items
    (`tier`, `T2`, `reproduction`, `unaffected`, `T3`) are prose:
@@ -150,7 +157,7 @@ integration is complete contributor work; report it as deferred, never as passed
    - T1: mir_full_expression, optimizer_conformance, compiler_pipeline
    - T2: llvm_place_execution, cpp_mir_body_emitter_lifecycle
    - reproduction: fails on parent <sha> with GTI-B0003, passes on the patch
-   - T3: deferred to the merge queue
+   - T3: deferred to post-integration full validation
    ```
 
    `finish` refuses a missing block or a declared test that no recorded

@@ -10,6 +10,7 @@ import sys
 import tempfile
 
 from native_symbol_spelling import native_spelling
+from backend_modes import is_cpp_mode, keep_cpp, native_modes
 
 
 FAILURE_CASES = {
@@ -128,22 +129,19 @@ def build(
     compiler: pathlib.Path,
     source: pathlib.Path,
     executable: pathlib.Path,
-    standard: str,
-    optimization: str,
+    flags: list[str],
     native_source: pathlib.Path | None = None,
-    keep_cpp: bool = False,
+    keep_text: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     command = [
         str(compiler),
         str(source),
-        "--std",
-        standard,
-        f"-{optimization}",
+        *flags,
         "-o",
         str(executable),
     ]
-    if keep_cpp:
-        command.append("--keep-cpp")
+    if keep_text:
+        command += keep_cpp(flags)
     if native_source is not None:
         command.extend(["--", str(native_source)])
     return run(command)
@@ -159,37 +157,32 @@ def main() -> int:
     compiler = pathlib.Path(sys.argv[1]).resolve()
     success_source = pathlib.Path(sys.argv[2]).resolve()
     alignment_source = pathlib.Path(sys.argv[3]).resolve()
-    configurations = [
-        (standard, optimization)
-        for standard in ("c++20", "c++23")
-        for optimization in ("O0", "O3")
-    ]
+    configurations = native_modes()
 
     with tempfile.TemporaryDirectory(prefix="gti-allocator-storage-") as temporary:
         root = pathlib.Path(temporary)
-        for standard, optimization in configurations:
-            executable = root / f"success-{standard}-{optimization}"
-            keep_cpp = standard == "c++20" and optimization == "O0"
+        for mode, flags, _native in configurations:
+            executable = root / f"success-{mode}"
+            keep_text = is_cpp_mode(flags)
             built = build(
                 compiler,
                 success_source,
                 executable,
-                standard,
-                optimization,
+                flags,
                 alignment_source,
-                keep_cpp,
+                keep_text,
             )
             if built.returncode != 0:
-                return fail(f"build success {standard} {optimization}", built)
+                return fail(f"build success {mode}", built)
             executed = run([str(executable)])
             if (
                 executed.returncode != 0
                 or executed.stdout != ""
                 or executed.stderr != ""
             ):
-                return fail(f"run success {standard} {optimization}", executed)
+                return fail(f"run success {mode}", executed)
 
-            if keep_cpp:
+            if keep_text:
                 generated = pathlib.Path(f"{executable}.gti.cpp").read_text(
                     encoding="utf-8"
                 )
@@ -214,14 +207,14 @@ def main() -> int:
         for label, (source_text, fragments) in FAILURE_CASES.items():
             source = root / f"{label}.gti"
             source.write_text(source_text, encoding="utf-8")
-            for standard, optimization in configurations:
-                executable = root / f"{label}-{standard}-{optimization}"
+            for mode, flags, _native in configurations:
+                executable = root / f"{label}-{mode}"
                 built = build(
-                    compiler, source, executable, standard, optimization
+                    compiler, source, executable, flags
                 )
                 if built.returncode != 0:
                     return fail(
-                        f"build {label} {standard} {optimization}", built
+                        f"build {label} {mode}", built
                     )
                 executed = run([str(executable)])
                 if (
@@ -230,17 +223,17 @@ def main() -> int:
                     or any(fragment not in executed.stderr for fragment in fragments)
                 ):
                     return fail(
-                        f"run {label} {standard} {optimization}", executed
+                        f"run {label} {mode}", executed
                     )
 
         source = root / "constructor-failure-cleanup.gti"
         source.write_text(CONSTRUCTOR_FAILURE_CLEANUP, encoding="utf-8")
-        for standard, optimization in configurations:
-            executable = root / f"constructor-failure-cleanup-{standard}-{optimization}"
-            built = build(compiler, source, executable, standard, optimization)
+        for mode, flags, _native in configurations:
+            executable = root / f"constructor-failure-cleanup-{mode}"
+            built = build(compiler, source, executable, flags)
             if built.returncode != 0:
                 return fail(
-                    f"build constructor-failure-cleanup {standard} {optimization}",
+                    f"build constructor-failure-cleanup {mode}",
                     built,
                 )
             executed = run([str(executable)])
@@ -253,7 +246,7 @@ def main() -> int:
                 or "constructor-failure-cleanup.gti" not in executed.stderr
             ):
                 return fail(
-                    f"run constructor-failure-cleanup {standard} {optimization}",
+                    f"run constructor-failure-cleanup {mode}",
                     executed,
                 )
 

@@ -13,6 +13,7 @@
 #include "gti/source_graph.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -307,6 +308,35 @@ void checkCorpusEntry(const std::filesystem::path &root,
 }
 } // namespace
 
+// --partition i/n keeps every n-th corpus entry (sorted), so one binary can be
+// registered as several CTest entries that together cover the corpus once.
+// Fixture checks run in every partition. An entry filter still applies.
+static void applyPartition(std::vector<std::filesystem::path> &entries,
+                           int argc, char *argv[]) {
+  for (int i = 1; i + 1 < argc; ++i) {
+    if (std::string(argv[i]) != "--partition")
+      continue;
+    const std::string spec = argv[i + 1];
+    const auto slash = spec.find('/');
+    if (slash == std::string::npos) {
+      std::cerr << "--partition expects i/n\n";
+      std::exit(2);
+    }
+    const int index = std::stoi(spec.substr(0, slash));
+    const int count = std::stoi(spec.substr(slash + 1));
+    if (count < 1 || index < 0 || index >= count) {
+      std::cerr << "--partition index out of range\n";
+      std::exit(2);
+    }
+    std::vector<std::filesystem::path> kept;
+    for (std::size_t n = 0; n < entries.size(); ++n)
+      if (static_cast<int>(n % static_cast<std::size_t>(count)) == index)
+        kept.push_back(entries[n]);
+    entries.swap(kept);
+    return;
+  }
+}
+
 int main(int argc, char *argv[]) {
   const std::filesystem::path root =
       argc > 1 ? std::filesystem::path(argv[1])
@@ -330,6 +360,7 @@ int main(int argc, char *argv[]) {
     }
   }
   std::sort(entries.begin(), entries.end());
+  applyPartition(entries, argc, argv);
   for (const std::filesystem::path &entry : entries) {
     checkCorpusEntry(root, entry);
   }

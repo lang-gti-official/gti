@@ -17,6 +17,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 @dataclass(frozen=True)
@@ -430,30 +431,27 @@ def main():
 
         run([compiler, "-std=c17", "-O2", "-c", c_path, "-o", object_path])
 
-        for optimization in ("-O0", "-O3"):
-            for standard in ("c++20", "c++23"):
-                suffix = ".exe" if os.name == "nt" else ""
-                binary = temp / f"native-record-{optimization[2:]}-{standard}{suffix}"
-                run(
-                    [
-                        gti,
-                        source_path,
-                        optimization,
-                        "--std",
-                        standard,
-                        "-o",
-                        binary,
-                        "--",
-                        object_path,
-                    ],
-                    cwd=root,
+        for mode, flags, _native in native_modes():
+            suffix = ".exe" if os.name == "nt" else ""
+            binary = temp / f"native-record-{mode}{suffix}"
+            run(
+                [
+                    gti,
+                    source_path,
+                    *flags,
+                    "-o",
+                    binary,
+                    "--",
+                    object_path,
+                ],
+                cwd=root,
+            )
+            executed = run([binary])
+            if executed.stdout != "native C record oracle passed\n":
+                raise RuntimeError(
+                    f"unexpected native oracle output for {mode}: "
+                    f"{executed.stdout!r}"
                 )
-                executed = run([binary])
-                if executed.stdout != "native C record oracle passed\n":
-                    raise RuntimeError(
-                        f"unexpected native oracle output for {optimization}/{standard}: "
-                        f"{executed.stdout!r}"
-                    )
 
     print("GTI native C record oracle passed for O0/O3 and C++20/C++23.")
 

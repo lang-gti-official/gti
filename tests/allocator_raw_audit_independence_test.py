@@ -39,12 +39,15 @@ COMPILE_TIMEOUT = 1200
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("compiler", type=pathlib.Path)
+    parser.add_argument("--source", action="append", choices=SOURCES,
+                        help="Audit only this source; repeat to select several. Default: all.")
     arguments = parser.parse_args()
     compiler = arguments.compiler.resolve()
     root = pathlib.Path(__file__).resolve().parent.parent
+    sources = [s for s in SOURCES if s in arguments.source] if arguments.source else SOURCES
     with tempfile.TemporaryDirectory(prefix="gti-allocator-audit-") as directory:
         temporary = pathlib.Path(directory)
-        for relative in SOURCES:
+        for relative in sources:
             source = root / relative
             emitted = {}
             for mode in ("off", "warn", "warn-library"):
@@ -60,7 +63,7 @@ def main() -> None:
                 emitted[mode] = output.read_bytes()
             assert emitted["off"] == emitted["warn"] == emitted["warn-library"], (
                 relative, "raw-pointer auditing changed generated code")
-    print("allocator raw-pointer audit independence passed")
+    print(f"allocator raw-pointer audit independence passed ({len(sources)} sources)")
 
 
 if __name__ == "__main__":

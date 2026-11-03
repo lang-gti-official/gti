@@ -8,6 +8,12 @@ import sys
 import tempfile
 
 from allocation_abort_runtime_test import ABORT_STATUS
+from backend_modes import cpp_only_case, is_cpp_mode, keep_cpp, native_modes
+
+# The fault provider (tests/fixtures/unique_scalar_allocation_fault.cpp) replaces
+# the C++ text's nothrow operator new; LLVM-backed programs allocate through the
+# runtime, so only the C++ profile observes the injected failure.
+FAULT_INJECTION = "allocation fault injection replaces the C++ text's nothrow operator new; the LLVM backend allocates through the runtime"
 
 def run(command):
     environment = os.environ.copy()
@@ -32,26 +38,25 @@ def main():
                             if "result(9 / divisor" in line)
     field_site = next(i for i, line in enumerate(source.read_text().splitlines(), 1)
                       if "5 / field_divisor" in line)
-    modes = [(f"{standard}-{level}", [f"-{level}", "--std", standard])
-             for standard in ("c++20", "c++23") for level in ("O0", "O1", "O3")]
-    modes.append(("sanitized", ["-O1", "--std", "c++23"]))
+    modes = native_modes()
     with tempfile.TemporaryDirectory(prefix="gti-class-allocation-") as directory:
-        for mode, flags in modes:
+        for mode, flags, native_flags in modes:
             binary = pathlib.Path(directory) / mode
             native = [str(fixtures / "unique_scalar_allocation_fault.cpp")]
             if mode == "sanitized":
                 native += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
-            command = [str(compiler), str(source), *flags, "--keep-cpp",
+            command = [str(compiler), str(source), *flags, *keep_cpp(flags),
                        "-o", str(binary), "--", *native]
             built = run(command)
             assert built.returncode == 0, (command, built.stdout, built.stderr)
-            generated = binary.with_suffix(".gti.cpp").read_text()
-            assert "// GTI verified-MIR body:" in generated
-            assert "mir_object_allocation_v1<::__gti_program::Value>" in generated
-            assert ".allocate();" in generated and ".release());" in generated
-            assert "::backend::make_unique<::__gti_program::Value>" not in generated
-            assert "mir_object_allocation_v1<::__gti_program::Implicit>" in generated
-            assert "::backend::make_unique<::__gti_program::Implicit>" not in generated
+            if is_cpp_mode(flags):
+                generated = binary.with_suffix(".gti.cpp").read_text()
+                assert "// GTI verified-MIR body:" in generated
+                assert "mir_object_allocation_v1<::__gti_program::Value>" in generated
+                assert ".allocate();" in generated and ".release());" in generated
+                assert "::backend::make_unique<::__gti_program::Value>" not in generated
+                assert "mir_object_allocation_v1<::__gti_program::Implicit>" in generated
+                assert "::backend::make_unique<::__gti_program::Implicit>" not in generated
             # Constructor parameters outlive completed fields on failure.
             # The enclosing Value destructor runs only after success.
             cases = [([], (0, "2\n6\n5\n4\n3\n1\n", "")),
@@ -72,6 +77,9 @@ def main():
                       f"<std/detail/memory_core>:{allocation_site}: runtime error[GTI-R0011]: "
                       "allocation_failure in unique_owner\n")),
                      (["implicit"] * 6, (0, "88\n77\n", ""))]
+            if not is_cpp_mode(flags):
+                cpp_only_case(FAULT_INJECTION, "allocation failures", mode)
+                cases = [case for case in cases if case[1][0] != ABORT_STATUS]
             for arguments, expected in cases:
                 result = run([str(binary), *arguments])
                 assert (result.returncode, result.stdout, result.stderr) == expected, (
