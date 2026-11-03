@@ -1410,6 +1410,9 @@ if(TARGET gti_lsp)
   add_test(NAME raw_pointer_audit_policy
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/raw_pointer_audit_policy_test.py" $<TARGET_FILE:gti> $<TARGET_FILE:gti_lsp>)
   set_tests_properties(raw_pointer_audit_policy PROPERTIES TIMEOUT 240)
+  add_test(NAME compile_limits
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/compile_limits_test.py" $<TARGET_FILE:gti> $<TARGET_FILE:gti_lsp>)
+  set_tests_properties(compile_limits PROPERTIES TIMEOUT 240)
   add_test(NAME raw_pointer_conversion_lsp
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/raw_pointer_conversion_lsp_test.py" $<TARGET_FILE:gti_lsp>)
   add_test(NAME raw_pointer_provenance_lsp

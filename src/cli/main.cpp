@@ -3651,6 +3651,13 @@ int runProjectVerify(const ProjectOptions &options, const char *driver) {
   overrides.cppStandard = options.standard;
   overrides.backend = options.backend;
   overrides.compileLimits = options.compileLimits;
+  // Like the audit policy, recorded limits are replayed unless the command
+  // line overrides them, so a build configured on its command line verifies.
+  if (recorded->compileLimits)
+    for (const lang::CompileLimitInfo &limit : lang::compileLimitTable())
+      if (!overrides.compileLimits.find(limit))
+        overrides.compileLimits.set(limit,
+                                    (*recorded->compileLimits).*limit.field);
   overrides.executionProfile = options.executionProfile;
   overrides.rawPointerAudit =
       options.rawPointerAudit.value_or(recorded->rawPointerAudit);

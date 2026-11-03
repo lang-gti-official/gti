@@ -783,7 +783,8 @@ C++ fallback. `--std` and `--keep-cpp` are C++-only: without `--backend` they
 select C++, and with `--backend llvm` they are rejected. Explicit emit modes
 keep their dedicated backend entry points rather than accepting `--backend`.
 Repeatable `-D NAME` options seed valueless GTI configuration flags
-for the invocation. Repeatable `-Wno-<group>` options (or the equivalent
+for the invocation. `--<limit> <n>` options set the per-request
+[compile limits](#compile-limits) of the invocation over the defaults. Repeatable `-Wno-<group>` options (or the equivalent
 `--disable-warning <group>`) add validated warning groups to the immutable
 `CompilationRequest`; for example, `-Wno-unused-mut` suppresses `GTI-S2096`.
 Accepted native arguments after `--` remain exact argv values; native
@@ -1280,6 +1281,55 @@ a failed source compile preserves any prior object and executable and retains
 the generated C++ for diagnosis. C compiler selection is `--cc`, then `GTI_CC`,
 then `CC`, then `cc`; C++ compilation and final linking use `--cxx`, then
 `GTI_CXX`, then `CXX`, then `c++`.
+
+### Compile limits
+
+Per-request compile-time limits (constant-evaluation steps and call depth,
+macro nesting and expansion, `constexpr for` elements and copies) are
+implementation quantities with guaranteed minimums; their language contract,
+defaults and largest settings are in
+[static semantics](../language/static-semantics.md#3112-implementation-limits).
+`CompileLimits` (`include/gti/compile_limits.h`) holds one value per limit, and
+one table there names each limit's manifest key, flag, minimum and maximum, so
+the command line, the manifest, help text, identities and reports cannot drift.
+
+Direct compilation and project `build`, `check`, `run`, `test`, `verify` and
+`install` accept `--<limit> <n>` or `--<limit>=<n>` for every limit, for example
+`--constexpr-steps 4000000`. A project sets the same names in one top-level
+table:
+
+```toml
+[limits]
+constexpr-steps = 4000000
+constexpr-depth = 1024
+```
+
+Precedence is command line, then the root package's `[limits]`, then the
+defaults. The root package is the selected package (a workspace member when
+one is selected), and its table configures the whole compilation, including
+dependency sources and compiled-library dependency plans. Like the consumer-owned
+`[build]` permissions, a dependency's `[limits]` table is parsed and validated
+with its manifest, so the package stays valid as a root, but is never applied
+to a consumer and produces no diagnostic when valid. Direct mode remains
+manifest-independent and approved `build.gti` host programs keep their fixed
+default compilation policy. A value is a decimal integer from 1 to the limit's
+largest setting; anything else is rejected rather than clamped. A repeated
+flag, a missing count or an invalid count is a usage error (exit 64). In a
+manifest, an unknown key is `GTI-B1001` with a nearest-name hint, a non-integer
+value or a non-table `limits` is `GTI-B1004`, and an out-of-range value is
+`GTI-B1005`, each at the offending TOML span.
+
+The immutable `CompilationRequest` (`compileLimits()`), the resolved
+`ProjectBuildPlan` and read-only `ProjectFacts` carry the resolved value into
+`FrontendOptions::limits`, which the frontend passes to semantic analysis and
+every worker analyzer; gti_lsp and completion use `ProjectFacts::compileLimits()`
+for the open file's project, so an editor reports the same exhaustion as a
+build. The resolved limits join the project model identity, the executable
+cache identity and the frontend's semantic cache context (preamble and
+instance-analysis reuse), so no artifact or cached analysis crosses limit
+settings. Build-report schema 2 records them as the additive `compile_limits`
+object (older reports omit it); `verify` replays the recorded limits unless the
+command line overrides one and compares them as a separate provenance fact.
 
 ### Objective-C++ bridges
 

@@ -272,6 +272,9 @@ public:
   // the abandoned analyzer is discarded. Speculative workers never receive it.
   struct AnalysisCancelled {};
   const std::atomic<bool> *cancellation = nullptr;
+  // FrontendOptions::reuseConstantEvaluations; workers share the request's
+  // StagedConstantResults, which carries it.
+  bool reuseConstantEvaluations = true;
   bool analysisCancelled = false;
   void throwIfCancelled() const {
     if (cancellation != nullptr &&
@@ -1993,6 +1996,9 @@ private:
     // user's evaluation site; this keeps the library location for a note.
     std::optional<Token> libraryLocation;
     SemanticConstantTrace trace;
+    // Set with a resource-limit failure whose limit is known: how to
+    // configure that limit (see describeLimitExhaustion).
+    std::string limitHint;
 
     [[nodiscard]] explicit operator bool() const { return value.has_value(); }
   };
@@ -2002,6 +2008,13 @@ private:
   struct ConstexprWorkBudget {
     std::size_t steps = 0;
     std::size_t stagingDepth = 0;
+    // The first per-request limit this request exhausted, and the function
+    // executing when it did. Failure-only evidence for the diagnostic.
+    struct Exhaustion {
+      std::size_t CompileLimits::*limit = nullptr;
+      std::string function;
+    };
+    std::optional<Exhaustion> exhaustion;
   };
 
   // The successful staged evaluations of one request, shared like its work
@@ -2013,6 +2026,15 @@ private:
   // took, reports its warnings again, and is used only where the evaluation's
   // step and depth limits still hold. Failures are never recorded; they run
   // and report as before.
+  //
+  // The lowered call closure (HIR and verified MIR) of a successful staging
+  // is kept too, keyed like a result without its arguments and receiver: an
+  // evaluation of the same closure with other arguments executes it again
+  // without lowering it again. A reuse charges the steps lowering consumed
+  // (nested staged constants) and replays its warnings, under the same depth
+  // rule, so neither cache can change which requests succeed. Both live for
+  // one analysis request (see resetRequestState) and therefore for one
+  // compilation or editor snapshot.
   struct StagedConstantResults {
     struct Key {
       FunctionId function = 0;
@@ -2035,6 +2057,8 @@ private:
     struct Result {
       Key key;
       ConstantValue value;
+      // A successful void execution (an immediate void statement).
+      bool voidCompletion = false;
       std::size_t steps = 0;
       // The enclosing staging plus call depth the evaluation succeeded at; a
       // shallower or equal depth leaves every nested limit at least as wide.
@@ -2045,6 +2069,15 @@ private:
     static constexpr std::size_t capacity = 65536;
     std::unordered_map<std::size_t, std::vector<Result>> results;
     std::size_t size = 0;
+    // Defined in semantic_constexpr.cpp.
+    struct Closure;
+    static constexpr std::size_t closureCapacity = 256;
+    std::unordered_map<std::size_t, std::vector<std::shared_ptr<const Closure>>>
+        closures;
+    std::size_t closureCount = 0;
+    // FrontendOptions::reuseConstantEvaluations: false disables both caches,
+    // so tests can prove a program means the same with and without them.
+    bool enabled = true;
     // Interned environments: whether a concrete reanalysis is open, then the
     // definitions and constructors a worker may execute and those HIR may
     // lower, each sorted.
@@ -2055,6 +2088,9 @@ private:
     [[nodiscard]] static bool same(const Key &left, const Key &right);
     [[nodiscard]] const Result *find(const Key &key) const;
     void record(Result result);
+    [[nodiscard]] std::shared_ptr<const Closure>
+    findClosure(const Key &key) const;
+    void recordClosure(std::shared_ptr<const Closure> closure);
     // Executor-local transient owners name allocations of one evaluation;
     // neither a key nor a result may carry one.
     [[nodiscard]] static bool reusable(const ConstantValue &value);
@@ -2067,6 +2103,9 @@ private:
     bool recordValues = true;
     bool allowVoidCompletion = false;
     const Expr *immediateRoot = nullptr;
+    // The function or constructor the compatibility interpreter is executing,
+    // named in a resource-limit diagnostic. Empty at expression level.
+    std::string_view executing;
     std::vector<std::unordered_map<SymbolId, ConstexprLocalValue>> scopes;
     std::vector<GenericSubstitution> substitutions;
     std::vector<ConstantValue> receivers;
@@ -2190,6 +2229,22 @@ private:
   [[nodiscard]] ConstexprEvaluation
   evaluateConstexprExpression(const Expr &source,
                               ConstexprInterpreter &context);
+  [[nodiscard]] ConstexprEvaluation
+  evaluateConstexprNode(const Expr &source, ConstexprInterpreter &context);
+
+  // Charges one compatibility-interpreter step to the request; false once
+  // the request's step limit is exhausted (and records that exhaustion).
+  [[nodiscard]] bool chargeConstexprStep(ConstexprInterpreter &context) const;
+  // Records the first per-request limit the request exhausted; `function`
+  // defaults to the function the compatibility interpreter is executing.
+  void recordLimitExhaustion(ConstexprInterpreter &context,
+                             std::size_t CompileLimits::*limit,
+                             std::string_view function = {}) const;
+  // Names a recorded exhaustion in a resource-limit failure: the limit, the
+  // work done and the executing function in `detail`, and the configuration
+  // hint in `limitHint`. Idempotent; other failures are unchanged.
+  void describeLimitExhaustion(ConstexprEvaluation &failure,
+                               const ConstexprInterpreter &context) const;
 
   [[nodiscard]] ConstexprEvaluation
   evaluateConstexprCall(const Expr &source, const ResolvedCallInfo &resolved,

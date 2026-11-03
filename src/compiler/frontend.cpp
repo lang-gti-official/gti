@@ -378,6 +378,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   // them; lexing and parsing do not depend on them.
   std::string frontendCacheContext =
       syntaxCacheContext + "\nlimits:" + compileLimitsIdentity(options.limits) +
+      (options.reuseConstantEvaluations ? "" : "\nconstant-reuse:off") +
       "\nsource-owners:" +
       (result.sourceGraph.sourceOwners()
            ? result.sourceGraph.sourceOwners()->resolutionIdentity()
@@ -567,6 +568,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
             nullptr, &result.sources, RawPointerAuditMode::Off,
             requireDefinitions, TrustedBodyAnalysis::Complete,
             options.sourceDebugProfile, options.limits);
+        builder.setConstantEvaluationReuse(options.reuseConstantEvaluations);
         preamble = builder.buildPreamble(Program(std::move(prefix)));
         options.preambleCache->store(std::move(key), preamble);
         if (options.workMetrics != nullptr) {
@@ -601,6 +603,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     SemanticVisitor &semantic = *semanticOwner;
     semantic.requireFunctionBodies(requiredBodies);
     semantic.setCancellation(options.cancellation);
+    semantic.setConstantEvaluationReuse(options.reuseConstantEvaluations);
     if (preamble != nullptr) {
       semantic.adoptPreamble(preamble, preambleDeclarations);
       if (options.workMetrics != nullptr)

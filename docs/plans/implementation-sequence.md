@@ -617,7 +617,7 @@ workflow determine task scope and integration.
 | Reflection clients | phases 1–3 and reflection-driven JSON delivered | `<std/json>` is the promoted reflected library since 0.409.0. Select remaining metadata/invocation/constant-execution clients from the [reflection plan](reflection.md), preserving construction, rollback and expansion budgets; do not repeat the experimental JSON gate. |
 | `L-UP-10` -> `L-UP-11` | acceptance closure, then adoption; may be co-validated | The retained borrowed-pack reproducer passes current O0/O3 probes. Complete the relevant constructor/cleanup composition matrix while adopting final-node emplacement; do not presume another compiler fix. |
 | `L-UP-12` -> `L-UP-18` | inline protocol is a new capability | Reuse delivered allocated final-address construction. Establish inline publication/rollback and structural wrapper lifecycle eligibility before claiming immovable optional support. |
-| `L-UP-14` | ready for a bounded new capability | Current staged MIR text/passive-record profile -> one constant-eligible pattern validator -> general required call-site literal validation. Dynamic formatting stays recoverable. |
+| `L-UP-14` | ready for a bounded new capability | Current staged MIR text/passive-record profile -> one constant-eligible pattern validator -> general required call-site literal validation. Dynamic formatting stays recoverable. The step-budget and immediate re-lowering blockers (audit CB-07/CB-08) are resolved by configurable per-request limits and staged-closure reuse. |
 | `L-UP-15` | ready for a bounded new capability | Ordinary method requirements and operator selection exist; extend validity-only requirements to member operators and co-deliver conditional map indexing with unrelated-type proof. |
 | `L-OWN-02` owner-tracked view fields | phases 1/2 and phase 3a nested text values implemented | Phase 3b nested reference-carrier payload/results and phase 4 contract unification remain, along with the named nested-copy/field-contract restrictions. Preserve caller-owned origins, physical carrier lifetime, cleanup and conservative whole-carrier protection. See [`L-OWN-02`](#l-own-02-owner-tracked-view-fields). |
 | `L-UP-16` | ready for a bounded new capability | Existing multi-owner carrier facts -> explicit result-projection summary -> independently useful precise read-only projection. Proxy iteration needs a separate yield contract. |
@@ -1374,6 +1374,12 @@ and select an independent row.
 
 ### L-UP-14: Validate Literal Patterns Through One Parser
 
+- **Budget prerequisite (2026-11-03):** the 4096-step request budget that
+  rejected valid format patterns beyond roughly 130 characters or 11 fields
+  (audit CB-07) is now a configurable 1048576-step default, and repeated
+  immediate validation no longer re-lowers the validator's call closure (CB-08):
+  50 identical calls cost about one. Neither is a remaining blocker for the
+  validator or for call-site validation.
 - **Current disposition (2026-10-28):** passive Expected/tryable constant
   composition is implemented, superseding the 2026-10-04 result-shape
   prerequisite. `validate_format_pattern` and its parser helpers remain
@@ -9932,8 +9938,14 @@ follow-ups:
   fully initialized structural class/struct values, ordinary constexpr
   constructors, and read-only or mutable instance methods. Constants retain exact
   declaration/type/value identity through semantics and required HIR/MIR data;
-  the backend only materializes an already-proven value. One shared 4096-step
-  budget and 64-call-depth limit cover recursive/default aggregate work.
+  the backend only materializes an already-proven value. Each request's step
+  budget and call-depth limit cover recursive/default aggregate work. Both are
+  configurable per compilation (`--constexpr-steps`/`--constexpr-depth` and the
+  root `[limits]` table) with guaranteed minimums of 1048576 steps and 512
+  calls; a staged call closure is lowered once per analysis and identical
+  successful evaluations replay with their recorded step cost (2026-11-03,
+  stdlib audit CB-07/CB-08; see
+  [implementation limits](../language/static-semantics.md#3112-implementation-limits)).
 - **Text-inspection slice (implemented):** Literal-backed string-view `size()`,
   `empty()`, and checked unsigned-byte indexing now use backend-neutral constant
   kernels selected by resolved intrinsic/type identity. Focused frontend and

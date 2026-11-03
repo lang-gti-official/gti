@@ -24,6 +24,7 @@ auto SemanticVisitor::Impl::freshRequest() const -> std::unique_ptr<Impl> {
                                       requireFunctionDefinitions, trustedBodies,
                                       sourceDebugProfile, compileLimits);
   fresh->cancellation = cancellation;
+  fresh->reuseConstantEvaluations = reuseConstantEvaluations;
   fresh->requiredFunctionBodies = requiredFunctionBodies;
   return fresh;
 }
@@ -48,6 +49,10 @@ bool SemanticVisitor::check(const Program &program) {
 
 void SemanticVisitor::setCancellation(const std::atomic<bool> *cancellation) {
   impl->cancellation = cancellation;
+}
+
+void SemanticVisitor::setConstantEvaluationReuse(bool reuse) {
+  impl->reuseConstantEvaluations = reuse;
 }
 
 bool SemanticVisitor::cancelled() const { return impl->analysisCancelled; }

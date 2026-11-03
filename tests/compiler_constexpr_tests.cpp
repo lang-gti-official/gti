@@ -5,6 +5,16 @@
 
 namespace {
 
+// Exhaustion cases written against a 4096-step request budget keep that
+// budget explicitly; the default is far larger (see testCompileLimits).
+constexpr std::size_t smallStepBudget = 4096;
+
+lang::FrontendOptions stepLimited(std::size_t steps = smallStepBudget) {
+  lang::FrontendOptions options;
+  options.limits.constexprSteps = steps;
+  return options;
+}
+
 std::filesystem::path fixtureSourcePath(const std::filesystem::path &path) {
   // Derive the identity through public source loading, not a second path
   // normalizer or a platform-dependent weakly_canonical(relative) call.
@@ -1567,7 +1577,8 @@ int main() { return twice<int32_t>(21) == 42 ? 0 : 1; }
   expect(checkedAddress,
          "constant prefix failures identify the unused checked address stage "
          "without creating a constant raw pointer");
-  const auto large = evaluate("large_array", integer(0));
+  const auto large =
+      evaluate("large_array", integer(0), {.steps = smallStepBudget});
   expect(!large &&
              large.failure == lang::ConstantEvaluationFailure::ResourceLimit,
          "default array materialization is bounded before allocating storage");
@@ -2249,8 +2260,8 @@ int main() {
       "  }\n"
       "  return 0;\n}\n"
       "static_assert(nested<1>() == 100);\nint main() { return 0; }";
-  const auto shared =
-      lang::Frontend().analyze("shared-constexpr-budget.gti", sharedSource);
+  const auto shared = lang::Frontend(stepLimited())
+                          .analyze("shared-constexpr-budget.gti", sharedSource);
   expect(!shared.canGenerateCode() &&
              std::any_of(
                  shared.diagnostics.begin(), shared.diagnostics.end(),
@@ -2703,9 +2714,10 @@ int main() { Table table = build(4); return table.total() + array_work(4) - 68; 
        "constexpr int& bad() { int value = 4; return value; }",
        "GTI-S2057"}};
   for (const auto &test : rejections) {
-    const auto rejected = lang::Frontend().analyze(
-        "constexpr-mutation-invalid.gti",
-        prefix + test.body + "\nint main() { return 0; }");
+    const auto rejected =
+        lang::Frontend(stepLimited())
+            .analyze("constexpr-mutation-invalid.gti",
+                     prefix + test.body + "\nint main() { return 0; }");
     expect(!rejected.canGenerateCode() &&
                hasDiagnosticCode(rejected.diagnostics, test.code) &&
                std::none_of(rejected.diagnostics.begin(),
@@ -3789,9 +3801,11 @@ void testConstexprLibrary() {
         "constexpr int depth(int i) { std::chrono::nanoseconds n{int64_t(i)}; "
         "if (n.count() == int64_t(0)) { return 0; } return depth(i - 1); } "
         "constexpr int value = depth(100);"}) {
-    const auto invalid = lang::Frontend().analyze(
-        "constexpr-chrono-invalid.gti", "import std.chrono;\n" + source,
-        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    const auto invalid =
+        lang::Frontend(stepLimited())
+            .analyze("constexpr-chrono-invalid.gti",
+                     "import std.chrono;\n" + source,
+                     {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
     expect(!invalid.canGenerateCode() &&
                hasDiagnosticCode(invalid.diagnostics, "GTI-S2057"),
            "chrono adoption preserves runtime-only clocks and shared constant "
@@ -4767,7 +4781,8 @@ constexpr uint64_t result = recurse(uint64_t(0));
       "resource limit");
 
   const lang::FrontendResult exhaustedAggregate =
-      lang::Frontend().analyze("exhausted-constexpr-aggregate.gti", R"(
+      lang::Frontend(stepLimited())
+          .analyze("exhausted-constexpr-aggregate.gti", R"(
 constexpr int32_t values[4096] = {};
 )");
   expect(!exhaustedAggregate.semanticValid &&
@@ -6140,6 +6155,244 @@ int main() {
          "the formatter should preserve and normalize compile-time errors");
 }
 
+// A user-defined accumulator, so the limit and reuse rules are proven with
+// ordinary source rather than a library type.
+const std::string kCompileLimitsPrelude = R"(
+struct Tally {
+  uint64_t count;
+  uint64_t sum;
+  constexpr Tally(uint64_t c, uint64_t s) : count(c), sum(s) {}
+};
+constexpr Tally accumulate(uint64_t n, uint64_t seed) {
+  mut uint64_t count = 0;
+  mut uint64_t sum = seed;
+  while (count < n) {
+    count = count + 1;
+    sum = sum + count;
+  }
+  return Tally(count, sum);
+}
+constexpr uint64_t spin(uint64_t n) { return accumulate(n, uint64_t(0)).count; }
+)";
+
+std::vector<lang::Diagnostic>
+errorsOf(const std::vector<lang::Diagnostic> &diagnostics) {
+  std::vector<lang::Diagnostic> errors;
+  for (const auto &diagnostic : diagnostics)
+    if (diagnostic.severity == lang::DiagnosticSeverity::Error)
+      errors.push_back(diagnostic);
+  return errors;
+}
+
+bool sameDiagnostics(const std::vector<lang::Diagnostic> &left,
+                     const std::vector<lang::Diagnostic> &right) {
+  return left.size() == right.size() &&
+         std::equal(left.begin(), left.end(), right.begin(),
+                    [](const auto &a, const auto &b) {
+                      return a.code == b.code && a.message == b.message &&
+                             a.primary.start == b.primary.start &&
+                             a.primary.end == b.primary.end &&
+                             a.hints == b.hints;
+                    });
+}
+
+void testCompileLimits() {
+  const auto analyze = [](const std::string &body,
+                          lang::FrontendOptions options,
+                          lang::FrontendWorkMetrics *metrics = nullptr) {
+    options.workMetrics = metrics;
+    return lang::Frontend(std::move(options))
+        .analyze("compile-limits.gti",
+                 kCompileLimitsPrelude + body + "\nint main() { return 0; }");
+  };
+  // The default request budget is Clang's -fconstexpr-steps, far above the
+  // former 4096-step budget: a loop of a few thousand iterations is valid.
+  const std::string medium = "static_assert(spin(uint64_t(5000)) == "
+                             "uint64_t(5000));";
+  const auto defaults = analyze(medium, {});
+  expect(lang::CompileLimits{}.constexprSteps == 1048576 &&
+             defaults.canGenerateCode() &&
+             errorsOf(defaults.diagnostics).empty(),
+         "the default per-request step limit admits work beyond 4096 steps");
+
+  // Lowering the limit rejects the same request with a diagnostic naming the
+  // request, the executing function, the limit and how to configure it.
+  const auto lowered = analyze(medium, stepLimited(4096));
+  const auto loweredErrors = errorsOf(lowered.diagnostics);
+  expect(!lowered.canGenerateCode() && loweredErrors.size() == 1 &&
+             loweredErrors[0].code == "GTI-S2057" &&
+             loweredErrors[0].message.find("'static_assert'") !=
+                 std::string::npos &&
+             loweredErrors[0].message.find(
+                 "used all 4096 steps of its constant-evaluation "
+                 "execution-step limit while executing 'accumulate'") !=
+                 std::string::npos &&
+             hasDiagnosticHint(lowered.diagnostics,
+                               "The limit is 4096; raise it with "
+                               "'--constexpr-steps <n>' or with "
+                               "'constexpr-steps = <n>' in the [limits] "
+                               "table of the root package's gti.toml."),
+         "step exhaustion names the request, executing function, limit, "
+         "flag and manifest key");
+
+  // A request beyond the default fails by default and succeeds once the
+  // limit is raised; the limit is per request, never per compilation.
+  const std::string large = "static_assert(spin(uint64_t(70000)) == "
+                            "uint64_t(70000));";
+  const auto largeDefault = analyze(large, {});
+  const auto largeRaised = analyze(large, stepLimited(2000000));
+  expect(
+      !largeDefault.canGenerateCode() &&
+          hasDiagnostic(largeDefault.diagnostics, "used all 1048576 steps") &&
+          largeRaised.canGenerateCode(),
+      "raising the step limit admits a request beyond the default");
+  std::string many;
+  for (int index = 0; index < 8; ++index)
+    many += "static_assert(spin(uint64_t(" + std::to_string(5000 + index) +
+            ")) > uint64_t(0));\n";
+  const auto perRequest = analyze(many, stepLimited(200000));
+  expect(perRequest.canGenerateCode(),
+         "every request has its own budget; requests never share one");
+
+  // Each request kind names itself.
+  const auto binding = analyze(
+      "constexpr uint64_t total = spin(uint64_t(5000));", stepLimited(1000));
+  expect(hasDiagnostic(binding.diagnostics,
+                       "The initializer for constexpr binding 'total' "
+                       "exceeded") &&
+             hasDiagnosticHint(binding.diagnostics, "--constexpr-steps"),
+         "a constexpr binding's exhaustion names the binding");
+  const auto condition = analyze(
+      "int pick() { if constexpr (spin(uint64_t(5000)) > uint64_t(0)) { "
+      "return 1; } else { return 0; } }",
+      stepLimited(1000));
+  expect(hasDiagnostic(condition.diagnostics, "'if constexpr'") &&
+             hasDiagnostic(condition.diagnostics, "used all 1000 steps") &&
+             hasDiagnosticHint(condition.diagnostics, "constexpr-steps = <n>"),
+         "a compile-time branch condition's exhaustion names its limit");
+  const auto immediate =
+      analyze("consteval uint64_t measured(uint64_t n) { return spin(n); }\n"
+              "uint64_t use() { return measured(uint64_t(5000)); }",
+              stepLimited(1000));
+  expect(hasDiagnosticCode(immediate.diagnostics, "GTI-S2057") &&
+             hasDiagnosticHint(immediate.diagnostics, "used all 1000 steps") &&
+             hasDiagnosticHint(immediate.diagnostics, "--constexpr-steps"),
+         "an immediate invocation's exhaustion names its limit");
+  const auto constructor = analyze(
+      "struct Heavy {\n  uint64_t value;\n"
+      "  constexpr Heavy(uint64_t n) : value(0) {\n"
+      "    mut uint64_t i = 0;\n    while (i < n) { i = i + 1; }\n  }\n};\n"
+      "constexpr Heavy heavy = Heavy(uint64_t(5000));",
+      stepLimited(1000));
+  expect(hasDiagnostic(constructor.diagnostics, "while executing 'Heavy'"),
+         "exhaustion inside a constexpr constructor names its class");
+}
+
+void testConstantEvaluationReuse() {
+  const auto analyze = [](const std::string &body, bool reuse,
+                          std::size_t steps,
+                          lang::FrontendWorkMetrics &metrics) {
+    lang::FrontendOptions options = stepLimited(steps);
+    options.reuseConstantEvaluations = reuse;
+    options.workMetrics = &metrics;
+    return lang::Frontend(std::move(options))
+        .analyze("constant-reuse.gti",
+                 kCompileLimitsPrelude + body + "\nint main() { return 0; }");
+  };
+  struct Observed {
+    lang::FrontendResult result;
+    lang::FrontendWorkMetrics metrics;
+  };
+  const auto both = [&](const std::string &body, std::size_t steps) {
+    std::pair<Observed, Observed> observed;
+    observed.first.result = analyze(body, true, steps, observed.first.metrics);
+    observed.second.result =
+        analyze(body, false, steps, observed.second.metrics);
+    expect(observed.first.result.canGenerateCode() ==
+                   observed.second.result.canGenerateCode() &&
+               sameDiagnostics(observed.first.result.diagnostics,
+                               observed.second.result.diagnostics) &&
+               observed.second.metrics.constexprStagedReuses == 0 &&
+               observed.second.metrics.constexprClosureReuses == 0,
+           "constant-evaluation reuse never changes a program's diagnostics "
+           "or validity: " +
+               body);
+    return observed;
+  };
+  const std::size_t defaultSteps = lang::CompileLimits{}.constexprSteps;
+
+  // Identical immediate void calls (the CB-08 shape): one execution, the
+  // rest replay its recorded result.
+  std::string repeated =
+      "consteval void require_total(uint64_t n, uint64_t expected) {\n"
+      "  uint64_t checked = uint64_t(1) / (accumulate(n, uint64_t(0)).sum == "
+      "expected "
+      "? uint64_t(1) : uint64_t(0));\n}\nvoid validate() {\n";
+  for (int index = 0; index < 20; ++index)
+    repeated += "  require_total(uint64_t(100), uint64_t(5050));\n";
+  repeated += "}";
+  const auto identical = both(repeated, defaultSteps);
+  expect(identical.first.result.canGenerateCode() &&
+             identical.first.metrics.constexprStagedReuses >= 19 &&
+             identical.first.metrics.constexprMirExecutions <
+                 identical.second.metrics.constexprMirExecutions,
+         "identical immediate calls execute once and replay the rest");
+
+  // Distinct arguments still reuse the lowered call closure.
+  std::string distinct = "consteval uint64_t total(uint64_t n) { return "
+                         "accumulate(n, uint64_t(0)).sum; }\nuint64_t sum() {\n"
+                         "  return uint64_t(0)";
+  for (int index = 1; index <= 20; ++index)
+    distinct += " + total(uint64_t(" + std::to_string(index) + "))";
+  distinct += ";\n}";
+  const auto closures = both(distinct, defaultSteps);
+  expect(closures.first.result.canGenerateCode() &&
+             closures.first.metrics.constexprClosureReuses >= 19 &&
+             closures.first.metrics.constexprMirExecutions ==
+                 closures.second.metrics.constexprMirExecutions,
+         "calls with new arguments execute again without lowering the call "
+         "closure again");
+
+  // A request that exceeds its budget only through repeated calls fails the
+  // same way whether the repeats replay or execute. Find the one-call cost
+  // first, then allow two calls but not three.
+  const std::string once = "static_assert(spin(uint64_t(300)) > uint64_t(0));";
+  std::size_t low = 1, high = 100000;
+  while (low < high) {
+    const std::size_t middle = low + (high - low) / 2;
+    lang::FrontendWorkMetrics unused;
+    if (analyze(once, false, middle, unused).canGenerateCode())
+      high = middle;
+    else
+      low = middle + 1;
+  }
+  const std::size_t oneCall = low;
+  const std::size_t budget = oneCall * 2 + oneCall / 2;
+  const auto twice = both("static_assert(spin(uint64_t(300)) + "
+                          "spin(uint64_t(300)) > uint64_t(0));",
+                          budget);
+  const auto thrice = both("static_assert(spin(uint64_t(300)) + "
+                           "spin(uint64_t(300)) + spin(uint64_t(300)) > "
+                           "uint64_t(0));",
+                           budget);
+  expect(oneCall > 300 && twice.first.result.canGenerateCode() &&
+             twice.first.metrics.constexprStagedReuses >= 1 &&
+             !thrice.first.result.canGenerateCode() &&
+             hasDiagnostic(thrice.first.result.diagnostics,
+                           "execution-step limit"),
+         "a replay charges the recorded steps, so exhaustion through "
+         "repeated calls is identical with and without reuse");
+
+  // Failures are never recorded as successes: each failing call reports.
+  const auto failing = both(
+      "consteval uint64_t checked(uint64_t n) { return uint64_t(1) / n; }\n"
+      "uint64_t use() { return checked(uint64_t(0)) + "
+      "checked(uint64_t(0)); }",
+      defaultSteps);
+  expect(errorsOf(failing.first.result.diagnostics).size() == 2,
+         "a failed evaluation is executed and reported at every call");
+}
+
 void testConsteval() {
   const auto valid = lang::Frontend().analyze("consteval.gti", R"(
 consteval int square(int x) { return x * x; }
@@ -6525,6 +6778,8 @@ int main() { Validator(5).check(5); return 0; }
 }
 
 constexpr NamedTest kTests[] = {
+    {"testCompileLimits", testCompileLimits},
+    {"testConstantEvaluationReuse", testConstantEvaluationReuse},
     {"testConsteval", testConsteval},
     {"testConstevalStatementCompletion", testConstevalStatementCompletion},
     {"testFixedWidthIntegers", testFixedWidthIntegers},

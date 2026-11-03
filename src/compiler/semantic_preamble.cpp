@@ -106,6 +106,7 @@ auto SemanticVisitor::Impl::adoptPreambleState() -> void {
   // preamble or with another resumed analysis.
   requestSession.constexprWork.reset();
   requestSession.stagedConstants = std::make_shared<StagedConstantResults>();
+  requestSession.stagedConstants->enabled = reuseConstantEvaluations;
   requestSession.programConcreteEffects =
       std::make_shared<ProgramConcreteEffectState>(
           *source.requestSession.programConcreteEffects);

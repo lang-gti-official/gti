@@ -139,6 +139,11 @@ public:
                       "constant evaluation finishes.";
     }
     result.steps = steps;
+    // A bulk charge that would overrun the budget fails where it is made,
+    // without a frame of its own; it is still the request's step limit.
+    if (result.failure == ConstantEvaluationFailure::ResourceLimit &&
+        result.exhaustedLimit == nullptr && stepLimitReached)
+      result.exhaustedLimit = &CompileLimits::constexprSteps;
     return result;
   }
 
@@ -326,6 +331,14 @@ private:
             .block = frame.block,
             .instruction = frame.instruction,
             .detail = std::move(detail)};
+  }
+
+  MirConstantEvaluation stepLimitFailure(const Frame &frame) {
+    auto result = fail(frame, ConstantEvaluationFailure::ResourceLimit,
+                       "Constant MIR execution-step limit exceeded.");
+    result.exhaustedLimit = &CompileLimits::constexprSteps;
+    stepLimitReached = true;
+    return result;
   }
 
   MirConstantEvaluation throughCall(MirConstantEvaluation result,
@@ -581,8 +594,10 @@ private:
   }
 
   bool charge(std::size_t amount) {
-    if (amount > limits.steps - std::min(steps, limits.steps))
+    if (amount > limits.steps - std::min(steps, limits.steps)) {
+      stepLimitReached = true;
       return false;
+    }
     steps += amount;
     return true;
   }
@@ -2209,20 +2224,16 @@ private:
     while (const auto *block = body.findBlock(frame.block)) {
       for (const auto &instruction : block->instructions) {
         frame.instruction = instruction.id;
-        if (steps++ >= limits.steps) {
-          return fail(frame, ConstantEvaluationFailure::ResourceLimit,
-                      "Constant MIR execution-step limit exceeded.");
-        }
+        if (steps++ >= limits.steps)
+          return stepLimitFailure(frame);
         auto result = execute(frame, instruction, depth);
         if (result.failure != ConstantEvaluationFailure::None)
           return result;
         applyLifecycle(frame, instruction.lifecycle);
       }
       frame.instruction = 0;
-      if (steps++ >= limits.steps) {
-        return fail(frame, ConstantEvaluationFailure::ResourceLimit,
-                    "Constant MIR execution-step limit exceeded.");
-      }
+      if (steps++ >= limits.steps)
+        return stepLimitFailure(frame);
       const auto &terminator = block->terminator;
       switch (terminator.kind) {
       case MirTerminatorKind::Goto:
@@ -2409,6 +2420,7 @@ private:
   const MirProgram &program;
   MirConstantLimits limits;
   std::size_t steps = 0;
+  bool stepLimitReached = false;
   std::vector<std::unique_ptr<Allocation>> heap;
   std::size_t heapUnits = 0;
   std::unordered_map<const MirBody *,

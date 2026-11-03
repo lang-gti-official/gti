@@ -95,6 +95,8 @@ public:
   // Stops check(program) at its next safe point once `cancellation` is set;
   // check then returns false and cancelled() reports why.
   void setCancellation(const std::atomic<bool> *cancellation);
+  // FrontendOptions::reuseConstantEvaluations. Set before check().
+  void setConstantEvaluationReuse(bool reuse);
   [[nodiscard]] bool cancelled() const;
   // Trusted prefix preamble (see SemanticPreambleCache). buildPreamble
   // analyses `prefix`, a program made of a larger program's leading

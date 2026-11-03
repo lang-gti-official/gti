@@ -630,6 +630,14 @@
       "suite": "ownership"
     },
     {
+      "name": "testCompileLimits",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testConstantEvaluationReuse",
+      "suite": "constexpr"
+    },
+    {
       "name": "testConsteval",
       "suite": "constexpr"
     },
