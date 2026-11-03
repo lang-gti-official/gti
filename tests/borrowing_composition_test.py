@@ -9,6 +9,7 @@ import sys
 import tempfile
 
 from lambda_pack_invocation_runtime_test import main as run_runtime_matrix
+from backend_modes import native_modes
 
 
 def reject_invalid_sources(compiler: pathlib.Path) -> None:
@@ -226,10 +227,10 @@ int main() {
             source = prefix + operation + "\n}\n"
             path.write_text(source)
             line = source[:source.index(f'std::panic("{message}")')].count("\n") + 1
-            for level, standard in (("O0", "c++20"), ("O3", "c++23")):
+            for level, flags, _native in native_modes():
                 executable = directory / f"{name}-{level}"
                 built = subprocess.run(
-                    [str(compiler), str(path), f"-{level}", "--std", standard,
+                    [str(compiler), str(path), *flags,
                      "-o", str(executable)], capture_output=True, text=True, timeout=120)
                 assert built.returncode == 0, (name, level, built.stdout, built.stderr)
                 result = subprocess.run([str(executable)], capture_output=True,

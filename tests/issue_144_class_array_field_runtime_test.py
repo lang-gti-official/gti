@@ -4,6 +4,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -34,39 +35,33 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="gti-issue-144-") as temporary:
         root = pathlib.Path(temporary)
-        for optimization in ("O0", "O2"):
-            for standard in ("c++20", "c++23"):
-                mode = f"{optimization}-{standard}"
-                executable = root / mode
-                built = run(
-                    [
-                        str(compiler),
-                        str(positive),
-                        f"-{optimization}",
-                        "--std",
-                        standard,
-                        "-o",
-                        str(executable),
-                    ]
-                )
-                if built.returncode != 0:
-                    return fail(f"build {mode}", built)
+        for mode, flags, native in native_modes():
+            executable = root / mode
+            built = run(
+                [
+                    str(compiler),
+                    str(positive),
+                    *flags,
+                    "-o",
+                    str(executable),
+                ]
+            )
+            if built.returncode != 0:
+                return fail(f"build {mode}", built)
 
-                executed = run([str(executable)])
-                if (
-                    executed.returncode != 0
-                    or executed.stdout != ""
-                    or executed.stderr != ""
-                ):
-                    return fail(f"run {mode}", executed)
+            executed = run([str(executable)])
+            if (
+                executed.returncode != 0
+                or executed.stdout != ""
+                or executed.stderr != ""
+            ):
+                return fail(f"run {mode}", executed)
 
         rejected = run(
             [
                 str(compiler),
                 str(move_only_copy),
-                "-O0",
-                "--std",
-                "c++23",
+                *native_modes(levels=("O0",))[0][1],
                 "-o",
                 str(root / "move-only-copy"),
             ]

@@ -38,7 +38,8 @@ FULL_VALIDATION_FILES = {"scripts/validation_checks.py", "scripts/validation_bat
 AUTOMATION_FILES = {"AGENTS.md", "CLAUDE.md", "README.md"}
 AUTOMATION_SCRIPTS = {"agent_workflow.py", "validation_batch.py", "validation_checks.py",
                       "preview_workflow.py", "preview_submit.py", "build_window.py", "bounded_log.py",
-                      "cut_release.py", "check_release_version.py", "rollup.py", "release_train.py"}
+                      "cut_release.py", "check_release_version.py", "rollup.py", "release_train.py",
+                      "full_validation_report.py"}
 # Exactly the existing harnesses that CI's workflow-regression job runs. The
 # batch, validation and preview-submit scripts are covered by agent_workflow_test.
 AUTOMATION_TESTS = {"agent_workflow_test.py", "preview_workflow_test.py", "build_window_test.py",
@@ -236,27 +237,36 @@ def ci_mode(event, paths):
 
 
 LINT_JOBS = {"plan", "formatting", "release-version", "tree-sitter", "automation-tests"}
-EVENTS = {"pull_request", "merge_group"}
+EVENTS = {"pull_request", "merge_group", "full_validation"}
+# Post-integration full validation (full-validation.yml) proves these on each
+# main head; they are not merge-gate jobs.
+FULL_VALIDATION_JOBS = {"package", "integration", "sanitizers", "llvm-sanitizers", "tsan"}
 
 
 def admission(mode, results, event="pull_request"):
-    """The one required check. A PR proves its fast checks before it may queue;
-    the merge queue proves the complete suite on the exact candidate."""
+    """The one required check. A PR proves lint and fast checks before it may
+    queue, and the merge queue proves the same on the exact candidate; the
+    complete suite runs post-integration under the `full_validation` event."""
     if event not in EVENTS:
         raise ValueError("Unknown CI event")
     if mode == "component":
         raise ValueError("Awaiting integration: a batch component cannot merge directly; finish its validated batch or withdraw admission")
-    required = set(LINT_JOBS)
-    if mode == "full":
-        # System-LLVM checks run in fast; production package and full shards gate integration.
-        required |= {"fast"} if event == "pull_request" else {"fast", "package", "integration", "sanitizers"}
-    elif mode == "source-stdlib":
-        required |= {"source-stdlib"}
-    elif mode == "draft":
-        if event != "pull_request":
-            raise ValueError("A draft cannot enter the merge queue")
-    elif mode != "automation":
-        raise ValueError("Unknown CI validation mode")
+    if event == "full_validation":
+        if mode != "full":
+            raise ValueError("Full validation runs only in full mode")
+        required = set(FULL_VALIDATION_JOBS)
+    else:
+        required = set(LINT_JOBS)
+        if mode == "full":
+            # System-LLVM build and fast checks gate both the PR and the queue.
+            required |= {"fast"}
+        elif mode == "source-stdlib":
+            required |= {"source-stdlib"}
+        elif mode == "draft":
+            if event != "pull_request":
+                raise ValueError("A draft cannot enter the merge queue")
+        elif mode != "automation":
+            raise ValueError("Unknown CI validation mode")
     missing = sorted(key for key in required if results.get(key, {}).get("result") != "success")
     if missing:
         raise ValueError("Required validation did not pass: " + ", ".join(missing))
@@ -337,6 +347,35 @@ def load_quarantine(root):
 
 def quarantined_on(table, platform):
     return sorted(name for name, platforms in table.items() if platform in platforms)
+
+
+def update_durations(table_path, reports):
+    """Fold CTest JUnit durations into the shard-balancing table, keeping the max.
+
+    Durations only grow through this path (one fast run must not undo a slow
+    contended one) and names absent from the reports keep their entries. The
+    table is a scheduling hint, never an assertion.
+    """
+    import xml.etree.ElementTree as ElementTree
+    table = json.loads(Path(table_path).read_text())
+    seconds = table.setdefault("seconds", {})
+    updated = 0
+    for report in sorted(Path(reports).rglob("*.xml")):
+        try:
+            tree = ElementTree.parse(report)
+        except ElementTree.ParseError as error:
+            raise ValueError(f"malformed JUnit report {report}: {error}") from error
+        for case in tree.iter("testcase"):
+            name, duration = case.get("name"), case.get("time")
+            if not name or duration is None or not re.fullmatch(r"[A-Za-z0-9_.-]+", name):
+                continue
+            value = round(float(duration), 1)
+            if value > float(seconds.get(name, 0)):
+                seconds[name] = value
+                updated += 1
+    table["seconds"] = dict(sorted(seconds.items()))
+    Path(table_path).write_text(json.dumps(table, indent=1) + "\n")
+    print(f"durations: {updated} entries raised, {len(seconds)} total")
 
 
 def shard_assignment(names, durations, shards, default=30.0):
@@ -477,7 +516,83 @@ def run(root, build, required, full, targets=(), extra=(), jobs=4, log=None, jun
             "compiler": str(build / "gti"), "required": sorted(required), "smoke": smoke_results}
 
 
-def run_shard(root, build, shards, index, durations, jobs=4, log=None, junit=None):
+# Tests that exist only as a convenience aggregate of entries registered on
+# their own. A sharded run executes the parts, never both, so no coverage is
+# lost and the 16-54-minute aggregates stop serialising a shard. Each aggregate
+# maps to the prefix its parts share; an aggregate is dropped only when its
+# parts are registered.
+SHARDED_AGGREGATES = {
+    "compiler_pipeline": "compiler_pipeline_",
+    "allocator_raw_audit_independence": "allocator_raw_audit_independence_",
+    "body_analysis_order": "body_analysis_order_",
+    "instance_reuse": "instance_reuse_",
+}
+# Post-integration full validation runs every registered test. The merge
+# gate's shards skip these: C++-backend-only variants of tests whose
+# shipped-default (c++23) or primary entry still runs, and generated-C++
+# corpus censuses. They stay in full validation; this is the gate's test set,
+# not a quarantine, and `--test-set full` restores them.
+GATE_EXCLUDED = {
+    "trusted_body_analysis_1", "trusted_body_analysis_2", "trusted_body_analysis_3",
+    "lowered_program_corpus_census",
+}
+# The C++ backend is deprecated and frozen. Tests whose only subject is that
+# backend's generated text or its emitter run in the scheduled C++ job
+# (cpp-backend.yml, GTI_TEST_BACKENDS=cpp), never in the gate or in full
+# validation, as rustc tests its non-primary codegen backends on their own
+# schedule. Harness-driven C++ modes are selected by GTI_TEST_BACKENDS in
+# tests/backend_modes.py; these are the CTest entries that exist only for it.
+CPP_ONLY_PREFIXES = ("cpp_mir_", "cpp_debug_artifacts", "lowered_program_corpus_census")
+# macOS does not repeat the Linux inventory. It runs the `darwin` set from
+# tests/ci_darwin_tests.json: what differs on the platform. Linux proves the
+# rest once. See AGENTS.md "Validation".
+DARWIN_TESTS = "tests/ci_darwin_tests.json"
+TEST_SETS = ("gate", "full", "darwin", "cpp")
+
+
+def darwin_set(root):
+    table = json.loads((Path(root) / DARWIN_TESTS).read_text())
+    if table.get("schema") != 1 or not isinstance(table.get("tests"), list) or not isinstance(table.get("prefixes"), list):
+        raise ValueError("tests/ci_darwin_tests.json is malformed")
+    return tuple(table["prefixes"]), set(table["tests"])
+
+
+def cpp_only(name):
+    return any(name.startswith(prefix) for prefix in CPP_ONLY_PREFIXES)
+
+
+def shard_inventory(expected, test_set="full", darwin=None):
+    """The names a sharded run of `test_set` executes, from the registered inventory.
+
+    `darwin` is (prefixes, names) from tests/ci_darwin_tests.json; the darwin
+    set needs it. A listed name that is not registered is an error, so the
+    list cannot silently rot.
+    """
+    if test_set not in TEST_SETS:
+        raise ValueError("unknown test set")
+    names = set(expected)
+    for aggregate, prefix in SHARDED_AGGREGATES.items():
+        if aggregate in names and any(name.startswith(prefix) for name in names):
+            names.discard(aggregate)
+    if test_set == "cpp":
+        return names
+    names = {name for name in names if not cpp_only(name)}
+    if test_set == "gate":
+        missing = GATE_EXCLUDED - set(expected)
+        if missing:
+            raise ValueError("Gate exclusions name unregistered tests; update GATE_EXCLUDED: " + ", ".join(sorted(missing)))
+        names -= GATE_EXCLUDED
+    elif test_set == "darwin":
+        prefixes, listed = darwin or ((), set())
+        stale = listed - set(expected)
+        if stale:
+            raise ValueError("tests/ci_darwin_tests.json names unregistered tests: " + ", ".join(sorted(stale)))
+        names = {name for name in names
+                 if name == SMOKE or name in listed or any(name.startswith(prefix) for prefix in prefixes)}
+    return names
+
+
+def run_shard(root, build, shards, index, durations, jobs=4, log=None, junit=None, test_set="full"):
     cache = build_cache(root, build)
     if not 0 <= index < shards:
         raise ValueError("shard index out of range")
@@ -488,8 +603,9 @@ def run_shard(root, build, shards, index, durations, jobs=4, log=None, junit=Non
     excluded = set(quarantined_on(load_quarantine(root), sys.platform))
     if excluded - expected:
         raise ValueError("Quarantined tests are not registered; remove them: " + ", ".join(sorted(excluded - expected)))
+    candidates = shard_inventory(expected, test_set, darwin_set(root) if test_set == "darwin" else None)
     table = json.loads(Path(durations).read_text())
-    selected = shard_assignment(expected - excluded, table["seconds"], shards, table.get("default_seconds", 30))[index]
+    selected = shard_assignment(candidates - excluded, table["seconds"], shards, table.get("default_seconds", 30))[index]
     skipped = []
     if selected:
         with tempfile.TemporaryDirectory(prefix="gti-validation-shard-") as directory:
@@ -502,7 +618,8 @@ def run_shard(root, build, shards, index, durations, jobs=4, log=None, junit=Non
     smoke_results = smoke(root, build, log) if index == 0 else []
     return {"head": git(root, "rev-parse", "HEAD"), "tree": git(root, "rev-parse", "HEAD^{tree}"),
             "platform": sys.platform, "build_type": cache["CMAKE_BUILD_TYPE"], "scope": "shard",
-            "shards": shards, "index": index, "inventory": sorted(expected), "tests": selected,
+            "shards": shards, "index": index, "inventory": sorted(candidates), "tests": selected,
+            "registered": sorted(expected), "test_set": test_set,
             "quarantined": sorted(excluded), "skipped": skipped, "smoke": smoke_results}
 
 
@@ -605,14 +722,38 @@ def cmake_argument(text):
     return match.group(1) if match.group(1) is not None else match.group(3)
 
 
+def build_targets(build):
+    """The target names a configured Ninja tree knows, or None for another generator."""
+    if not (Path(build) / "build.ninja").exists():
+        return None
+    try:
+        listing = subprocess.check_output(["ninja", "-C", str(build), "-t", "targets", "all"],
+                                          text=True, stderr=subprocess.DEVNULL)
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    # A CMake target is a linker output (`gti: CXX_EXECUTABLE_LINKER__...`)
+    # or a phony alias for one built elsewhere (`gti_x_tests: phony`); object
+    # files, the cache re-run rule and CMake's own phony bookkeeping entries
+    # (`CMakeCache.txt`) are neither.
+    names = set()
+    for line in listing.splitlines():
+        name, separator, rule = line.partition(":")
+        name, rule = name.strip(), rule.strip()
+        if separator and ("_LINKER__" in rule or (rule == "phony" and "." not in name)):
+            names.add(name)
+    return names or None
+
+
 def test_targets(build, pattern):
     """The build targets the tests matching `pattern` run, read from a configured tree.
 
     CTest learns a test's command only once it is built, so this reads the
     generated CTestTestfile.cmake files instead: every argument (or `key=path`
     argument) naming a file in the build tree is a target's output. The
-    compiler and runtime are always included. A target this misses makes its
-    test fail as not found, never pass.
+    compiler and runtime are always included. A test also receives build-tree
+    paths that are not targets (an evidence directory, a registry it writes),
+    so a Ninja tree's own target list filters the candidates; a target this
+    misses makes its test fail as not found, never pass.
     """
     build = Path(build).resolve()
     selected = re.compile(pattern)
@@ -632,6 +773,9 @@ def test_targets(build, pattern):
                             targets.add(name)
     if not matched:
         raise ValueError("No configured test matches " + pattern)
+    known = build_targets(build)
+    if known is not None:
+        targets = {name for name in targets if name in known}
     return sorted(targets)
 
 
@@ -657,6 +801,10 @@ def main(argv=None):
     shard.add_argument("--shards", type=int, required=True)
     shard.add_argument("--index", type=int, required=True)
     shard.add_argument("--durations", default="tests/ci_test_durations.json")
+    shard.add_argument("--test-set", choices=TEST_SETS, default="full")
+    refresh = sub.add_parser("durations", help="refresh the shard-balancing table from CTest JUnit reports")
+    refresh.add_argument("--reports", required=True, help="directory of ctest --output-junit XML files")
+    refresh.add_argument("--durations", default="tests/ci_test_durations.json")
     shard.add_argument("--jobs", type=int, default=4)
     shard.add_argument("--report", required=True)
     shard.add_argument("--log")
@@ -665,6 +813,7 @@ def main(argv=None):
     declared.add_argument("--build", help="re-run the declared tests in this build tree")
     declared.add_argument("--jobs", type=int, default=4)
     smoke_parser = sub.add_parser("smoke", help="run only the native O0/O3 compiler smoke")
+    smoke_parser.add_argument("--root", help="source tree whose stdlib and runtime the compiler uses (default: this checkout)")
     smoke_parser.add_argument("--build", required=True)
     smoke_parser.add_argument("--log")
     targets = sub.add_parser("test-targets", help="print the build targets the matching tests run")
@@ -690,12 +839,15 @@ def main(argv=None):
             print("Metadata-only PR edit: no compiler validation or integration acceptance is claimed.")
             return
         admission(args.mode, json.loads(args.results), args.event)
-        if args.mode == "full" and args.event == "merge_group":
+        if args.mode == "full" and args.event == "full_validation":
             if not args.shard_reports:
-                raise ValueError("The merge queue gate needs the shard reports")
+                raise ValueError("Full validation needs the shard reports")
             reports = [json.loads(path.read_text()) for path in sorted(Path(args.shard_reports).rglob("*.json"))]
             summary = merge_shards(reports, [p for p in args.platforms.split(",") if p])
             print("GTI_INTEGRATION_RESULT=" + json.dumps(summary, sort_keys=True))
+        return
+    if args.command == "durations":
+        update_durations(root / args.durations, Path(args.reports))
         return
     if args.command == "declared":
         pr = json.loads(Path(args.event).read_text()).get("pull_request") or {}
@@ -722,7 +874,7 @@ def main(argv=None):
         try:
             report = run_shard(root, Path(args.build).resolve(), args.shards, args.index,
                                root / args.durations, args.jobs, log,
-                               str(Path(args.report).with_suffix(".xml")))
+                               str(Path(args.report).with_suffix(".xml")), test_set=args.test_set)
         finally:
             if log:
                 log.close()
@@ -732,7 +884,7 @@ def main(argv=None):
     if args.command == "smoke":
         log = Path(args.log).open("w") if args.log else None
         try:
-            executed = smoke(root, Path(args.build).resolve(), log)
+            executed = smoke(Path(args.root).resolve() if args.root else root, Path(args.build).resolve(), log)
         finally:
             if log:
                 log.close()

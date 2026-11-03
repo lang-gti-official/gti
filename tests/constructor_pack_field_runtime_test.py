@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def run(command, expected=0):
@@ -28,19 +29,17 @@ def main():
     ]
     with tempfile.TemporaryDirectory(prefix="gti-constructor-pack-") as temporary:
         scratch = Path(temporary)
-        for standard in ("c++20", "c++23"):
-            for level in ("O0", "O1", "O3"):
-                for source, output in sources:
-                    executable = scratch / f"{source.stem}-{standard}-{level}"
-                    run([str(compiler), str(source), "--std", standard, f"-{level}",
-                         "--progress", "never", "-o", str(executable),
-                         "--", "-fno-elide-constructors"])
-                    result = run([str(executable)])
-                    assert result.stdout == output and result.stderr == "", result
-                    if source == strong:
-                        result = run([str(executable), "fail"], 70)
-                        assert result.stdout == "2\n1\n9\n", result
-                        assert "constructor_pack_field_forwarding.gti:31: runtime error[GTI-R0002]" in result.stderr, result
+        for mode, flags, _native in native_modes():
+            for source, output in sources:
+                executable = scratch / f"{source.stem}-{mode}"
+                run([str(compiler), str(source), *flags,
+                     "--progress", "never", "-o", str(executable)])
+                result = run([str(executable)])
+                assert result.stdout == output and result.stderr == "", result
+                if source == strong:
+                    result = run([str(executable), "fail"], 70)
+                    assert result.stdout == "2\n1\n9\n", result
+                    assert "constructor_pack_field_forwarding.gti:31: runtime error[GTI-R0002]" in result.stderr, result
         executable = scratch / "sanitized"
         run([str(compiler), str(strong), "-O1", "--progress", "never", "-o", str(executable),
              "--", "-fsanitize=address,undefined", "-fno-elide-constructors"])

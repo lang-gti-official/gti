@@ -13,6 +13,7 @@ import os
 import pathlib
 import subprocess
 import tempfile
+from backend_modes import is_cpp_mode, native_modes
 
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
@@ -49,10 +50,7 @@ def main():
     environment = dict(os.environ)
     environment.setdefault(
         "GTI_STDLIB_PATH", str(pathlib.Path(__file__).resolve().parent.parent / "stdlib"))
-    modes = [(f"cpp-{level}", ["--std", "c++23", f"-{level}"], True)
-             for level in ("O0", "O3")]
-    modes += [(f"llvm-{level}", ["--backend", "llvm", f"-{level}"], False)
-              for level in ("O0", "O1", "O2", "O3")]
+    modes = [(mode, flags, is_cpp_mode(flags)) for mode, flags, _native in native_modes()]
     with tempfile.TemporaryDirectory(prefix="gti-borrow-carrier-") as temporary:
         root = pathlib.Path(temporary)
         for mode, flags, cpp in modes:

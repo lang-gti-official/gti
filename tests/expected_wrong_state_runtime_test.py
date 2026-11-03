@@ -4,6 +4,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -59,38 +60,35 @@ int main() {
         for label, source_text, detail in cases:
             source = root / f"{label}.gti"
             source.write_text(source_text, encoding="utf8")
-            for standard in ("c++20", "c++23"):
-                for optimization in ("O0", "O3"):
-                    executable = root / f"{label}-{standard}-{optimization}"
-                    built = run(
-                        [
-                            str(compiler),
-                            str(source),
-                            "--std",
-                            standard,
-                            f"-{optimization}",
-                            "-o",
-                            str(executable),
-                        ]
+            for mode, flags, native in native_modes():
+                executable = root / f"{label}-{mode}"
+                built = run(
+                    [
+                        str(compiler),
+                        str(source),
+                        *flags,
+                        "-o",
+                        str(executable),
+                    ]
+                )
+                if built.returncode != 0:
+                    return fail(
+                        f"build {label} {mode}", built
                     )
-                    if built.returncode != 0:
-                        return fail(
-                            f"build {label} {standard} {optimization}", built
-                        )
 
-                    executed = run([str(executable)])
-                    expected_stderr = (
-                        f"{source.name}:7: runtime error[GTI-R0009]: "
-                        f"invalid_expected_access in {detail}\n"
+                executed = run([str(executable)])
+                expected_stderr = (
+                    f"{source.name}:7: runtime error[GTI-R0009]: "
+                    f"invalid_expected_access in {detail}\n"
+                )
+                if (
+                    executed.returncode != 70
+                    or executed.stdout != ""
+                    or executed.stderr != expected_stderr
+                ):
+                    return fail(
+                        f"run {label} {mode}", executed
                     )
-                    if (
-                        executed.returncode != 70
-                        or executed.stdout != ""
-                        or executed.stderr != expected_stderr
-                    ):
-                        return fail(
-                            f"run {label} {standard} {optimization}", executed
-                        )
 
     return 0
 

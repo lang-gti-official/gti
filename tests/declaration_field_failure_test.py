@@ -7,6 +7,9 @@ import tempfile
 
 from unique_class_allocation_runtime_test import run
 from allocation_abort_runtime_test import ABORT_STATUS
+from backend_modes import cpp_only_case, is_cpp_mode, native_modes
+
+FAULT_INJECTION = "allocation fault injection replaces the C++ text's nothrow operator new; the LLVM backend allocates through the runtime"
 
 
 def main():
@@ -58,18 +61,22 @@ def main():
              (70, "1\n11\n9\n", division(generated_site)),
              (70, "9\n", division(generated_site)),
              (0, "2\n30\n12\n9\n", "")]
-    modes = [(f"{std}-{opt}", ["--std", std, f"-{opt}"], [])
-             for std in ("c++20", "c++23") for opt in ("O0", "O1", "O3")]
-    modes += [("no-elide", ["--std", "c++23", "-O0"], ["-fno-elide-constructors"]),
-              ("sanitized", ["--std", "c++23", "-O1"],
-               ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])]
+    modes = native_modes()
     with tempfile.TemporaryDirectory(prefix="gti-field-failure-") as directory:
         for name, flags, native in modes:
             binary = Path(directory) / name
             built = run([str(compiler), str(source), *flags, "-o", str(binary),
                          "--", str(fixtures / "unique_scalar_allocation_fault.cpp"), *native])
             assert built.returncode == 0, (name, built.stdout, built.stderr)
-            for phase, expected in enumerate(cases):
+            phases = list(enumerate(cases))
+            if not is_cpp_mode(flags):
+                # The fault provider (tests/fixtures/unique_scalar_allocation_fault.cpp)
+                # replaces the C++ text's nothrow operator new; LLVM-backed
+                # programs allocate through the runtime.
+                cpp_only_case(FAULT_INJECTION, "allocation failure phases", name)
+                phases = [(phase, expected) for phase, expected in phases
+                          if "allocation_failure" not in expected[2]]
+            for phase, expected in phases:
                 result = run([str(binary), *(["phase"] * phase)])
                 assert (result.returncode, result.stdout, result.stderr) == expected, (
                     name, phase, result.returncode, result.stdout, result.stderr, expected)

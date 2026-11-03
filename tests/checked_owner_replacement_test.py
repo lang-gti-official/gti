@@ -6,6 +6,7 @@ import sys
 import tempfile
 
 from unique_class_allocation_runtime_test import run
+from backend_modes import is_cpp_mode, keep_cpp, native_modes
 
 
 def main():
@@ -50,10 +51,7 @@ def main():
         (70, "9\n", bounds("grid[row][column] =")),
         (70, "3\n9\n", bounds("grid[row][column] =")),
     ]
-    modes = [(f"{standard}-{opt}", ["--std", standard, f"-{opt}"], [])
-             for standard in ("c++20", "c++23") for opt in ("O0", "O1", "O3")]
-    modes.append(("sanitized", ["--std", "c++23", "-O1"],
-                  ["--", "-fsanitize=address,undefined", "-fno-omit-frame-pointer"]))
+    modes = native_modes()
     with tempfile.TemporaryDirectory(prefix="gti-checked-replacement-") as directory:
         rejected = run([str(compiler), str(source.with_name(
             "checked_owner_replacement_copy_rejected.gti")), "--emit-mir",
@@ -62,12 +60,13 @@ def main():
             rejected.returncode, rejected.stdout, rejected.stderr)
         for name, flags, native in modes:
             binary = pathlib.Path(directory) / name
-            built = run([str(compiler), str(source), *flags, "--keep-cpp",
+            built = run([str(compiler), str(source), *flags, *keep_cpp(flags),
                          "-o", str(binary), *native])
             assert built.returncode == 0, (name, built.stdout, built.stderr)
-            generated = binary.with_suffix(".gti.cpp").read_text()
-            assert "// GTI verified-MIR body:" in generated
-            assert "__gti_mir_replacement_success_" in generated
+            if is_cpp_mode(flags):
+                generated = binary.with_suffix(".gti.cpp").read_text()
+                assert "// GTI verified-MIR body:" in generated
+                assert "__gti_mir_replacement_success_" in generated
             for phase, expected in enumerate(cases):
                 result = run([str(binary), *(["phase"] * phase)])
                 actual = (result.returncode, result.stdout, result.stderr)

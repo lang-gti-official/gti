@@ -11,20 +11,20 @@
       "kind": "source-census",
       "manifest": "tests/mir_census_baseline.json",
       "member_count": 184,
-      "inventory_sha256": "19271da9d0d29a36d954f782cd38327d0765e90e60c3261a03b4a13635a568c9"
+      "inventory_sha256": "b3d9be6ce783d8579ebb9734d9c5f65be0864df93998d06a916ebb76a413cce9"
     },
     {
       "id": "registered-llvm-evidence",
       "kind": "registered-evidence-manifests",
-      "member_count": 454,
-      "inventory_sha256": "f1dd810b899ab011d01de515d757d156ef55275524f0ea5977b5d73673461119"
+      "member_count": 457,
+      "inventory_sha256": "01e314f5609e63c11b5fc2708d683fa61da82eba70de015e7ebdef430fc05688"
     },
     {
       "id": "stdlib-surface",
       "kind": "source-backed-surface-manifest",
       "manifest": "tests/stdlib_surface_manifest.json",
       "member_count": 197,
-      "inventory_sha256": "adf974543ef59cced4466b778cbb925f2d032b5e8c2615e4be85793fd39fbadd"
+      "inventory_sha256": "3d5f72a9e9fbf95907061e6d2497e561c342948bd8c9cdf3763ef0eafd77273d"
     }
   ],
   "family_obligations": [
