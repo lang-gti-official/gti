@@ -813,6 +813,7 @@ def main(argv=None):
     declared.add_argument("--build", help="re-run the declared tests in this build tree")
     declared.add_argument("--jobs", type=int, default=4)
     smoke_parser = sub.add_parser("smoke", help="run only the native O0/O3 compiler smoke")
+    smoke_parser.add_argument("--root", help="source tree whose stdlib and runtime the compiler uses (default: this checkout)")
     smoke_parser.add_argument("--build", required=True)
     smoke_parser.add_argument("--log")
     targets = sub.add_parser("test-targets", help="print the build targets the matching tests run")
@@ -883,7 +884,7 @@ def main(argv=None):
     if args.command == "smoke":
         log = Path(args.log).open("w") if args.log else None
         try:
-            executed = smoke(root, Path(args.build).resolve(), log)
+            executed = smoke(Path(args.root).resolve() if args.root else root, Path(args.build).resolve(), log)
         finally:
             if log:
                 log.close()

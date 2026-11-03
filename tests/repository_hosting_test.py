@@ -115,7 +115,7 @@ def main():
 
     preview = text(root, PREVIEW)
     expect("branches: [preview]" in preview and "preview_release.py check" in preview
-           and "preview_admission" in preview and "needs: [select, package]" in preview
+           and "validation_checks.py smoke --root . --build build" in preview and "needs: [select, package]" in preview
            and preview.count("contents: write") == 1,
            "preview must retain combined admission, exact package checks and isolated publication")
     ci, nightly, release = text(root, CI), text(root, NIGHTLY), text(root, RELEASE)
@@ -278,9 +278,10 @@ def check_rollup(root, ci, rollup, workflows):
                    f"only the rollup bot and the release cut may reference the App secrets: {workflow}")
     triggers = rollup.split("\npermissions:", 1)[0]
     expect("pull_request" not in triggers and "pull_request_target" not in rollup
-           and "workflow_run" not in triggers and "permissions: {}" in rollup
+           and "workflow_run" in triggers and "workflows: [CI]" in rollup
+           and "types: [completed]" in rollup and "permissions: {}" in rollup
            and "cancel-in-progress: false" in rollup,
-           "rollup must not run on pull-request events, and runs one at a time without cancellation")
+           "rollup uses CI completion, never pull-request execution, and runs one at a time without cancellation")
     steps = rollup.split("uses: actions/checkout@")[1:]
     expect(steps and all(re.match(r"[0-9a-f]{40} # [^\n]*\n        with:\n(?:          [^\n]*\n)*?"
                                   r"          ref: main\n", step) for step in steps)

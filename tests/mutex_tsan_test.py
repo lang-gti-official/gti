@@ -22,10 +22,10 @@ from sanitizer_support import SKIP_RETURN_CODE, thread_sanitizer_enabled
 
 
 def main() -> int:
-    if len(sys.argv) != 4:
+    if len(sys.argv) != 5:
         raise SystemExit(
             "usage: mutex_tsan_test.py /path/to/llvm-instrumented-source "
-            "/path/to/matching-clang++ mutex_concurrent.gti"
+            "/path/to/matching-clang++ /path/to/reviewed-c++ mutex_concurrent.gti"
         )
     if not thread_sanitizer_enabled():
         print("mutex ThreadSanitizer check skipped: unsupported runner")
@@ -33,11 +33,13 @@ def main() -> int:
 
     emitter = pathlib.Path(sys.argv[1]).resolve()
     native_compiler = pathlib.Path(sys.argv[2]).absolute()
-    source = pathlib.Path(sys.argv[3]).resolve()
+    runtime_compiler = pathlib.Path(sys.argv[3]).absolute()
+    source = pathlib.Path(sys.argv[4]).resolve()
 
     with tempfile.TemporaryDirectory(prefix="gti-mutex-tsan-") as scratch:
         root = pathlib.Path(scratch)
-        if not thread_sanitizer_available(native_compiler, root):
+        if not (thread_sanitizer_available(native_compiler, root)
+                and thread_sanitizer_available(runtime_compiler, root)):
             print(
                 "mutex ThreadSanitizer check skipped: native compiler does not "
                 "provide -fsanitize=thread"
@@ -45,9 +47,9 @@ def main() -> int:
             return SKIP_RETURN_CODE
 
         binary = root / source.stem
-        runtime_objects = compile_instrumented_runtime(native_compiler, root)
+        runtime_objects = compile_instrumented_runtime(runtime_compiler, root)
         build_instrumented_binary(emitter, native_compiler, source, binary,
-                                  runtime_objects)
+                                  runtime_objects, linker=runtime_compiler)
         run_under_thread_sanitizer(binary)
 
     print("mutex ThreadSanitizer check passed")

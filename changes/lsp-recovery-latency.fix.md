@@ -1,0 +1,1 @@
+Publish LSP diagnostics and semantic queries before searching for missing-import fixes, and cancel obsolete import searches when source changes so repairing errors does not wait for their speculative analysis.
