@@ -1,0 +1,96 @@
+{
+  "schema": 1,
+  "base": "e3532e6715dd6344b0085e367982a8f2d496bda1",
+  "members": [
+    {
+      "pr": 139,
+      "head": "2f892b753e1d2b6c02fa642442fb3c9af2d39b03",
+      "plan": {
+        "tier": "T2",
+        "rationale": "Rollup member #139: its declared Validation T0/T1 tests; the merge queue runs the complete suite on the combined candidate; its tier was not declared, so it is recorded as T2",
+        "regressions": [
+          "mir_program_initialization"
+        ],
+        "owning": [
+          "constexpr_text_runtime",
+          "llvm_class_execution"
+        ],
+        "cross_phase": [],
+        "unaffected": "Not assessed per member by the rollup bot; the merge queue runs every registered test",
+        "targets": [
+          "gti"
+        ],
+        "platforms": [
+          "darwin",
+          "linux"
+        ],
+        "reproduction": {
+          "exception": "Recorded in the description of #139; a rollup reproduces no member failure"
+        },
+        "broader": [
+          "constexpr_text_runtime",
+          "llvm_class_execution"
+        ]
+      }
+    },
+    {
+      "pr": 167,
+      "head": "6bfe991832320e77fa4ca28774cd44002d39701e",
+      "plan": {
+        "tier": "T2",
+        "rationale": "Rollup member #167: its declared Validation T0/T1 tests; the merge queue runs the complete suite on the combined candidate",
+        "regressions": [
+          "compiler_pipeline"
+        ],
+        "owning": [
+          "diagnostic_explanations",
+          "consuming_receiver_types",
+          "function_signature_types",
+          "stored_callable_types",
+          "conversion_operators",
+          "general_requires_semantics",
+          "generic_discovery",
+          "generic_initialization",
+          "owning_function_types",
+          "optional_compiler_contract",
+          "prvalue_direct_initialization",
+          "initialization_and_native_identity",
+          "optimizer_object_context",
+          "issues_30_33",
+          "release_version_policy",
+          "cut_release_policy"
+        ],
+        "cross_phase": [],
+        "unaffected": "Not assessed per member by the rollup bot; the merge queue runs every registered test",
+        "targets": [
+          "gti"
+        ],
+        "platforms": [
+          "darwin",
+          "linux"
+        ],
+        "reproduction": {
+          "exception": "Recorded in the description of #167; a rollup reproduces no member failure"
+        },
+        "broader": [
+          "diagnostic_explanations",
+          "consuming_receiver_types",
+          "function_signature_types",
+          "stored_callable_types",
+          "conversion_operators",
+          "general_requires_semantics",
+          "generic_discovery",
+          "generic_initialization",
+          "owning_function_types",
+          "optional_compiler_contract",
+          "prvalue_direct_initialization",
+          "initialization_and_native_identity",
+          "optimizer_object_context",
+          "issues_30_33",
+          "release_version_policy",
+          "cut_release_policy"
+        ]
+      }
+    }
+  ]
+}
