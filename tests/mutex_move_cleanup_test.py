@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 
 from sanitizer_support import SANITIZED_BUILD_TIMEOUT
+from backend_modes import native_modes
 
 
 SCALAR = """import std.mutex;
@@ -112,28 +113,26 @@ def main() -> None:
                          "failure_during_cleanup; primary [GTI-R0002] at "
                          f"secondary.gti:{body_line}; secondary [GTI-R0002]\n")),
         )
-        for standard in ("c++20", "c++23"):
-            for mode in ("O0", "O3"):
-                for source, expected in cases:
-                    executable = work / f"{source.stem}-{standard}-{mode}"
-                    command = [str(gti), str(source), "--std", standard,
-                               "--execution-profile", "concurrent", f"-{mode}",
-                               "-o", str(executable)]
-                    if args.sanitizer:
-                        command += ["--", f"-fsanitize={args.sanitizer}",
-                                    "-fno-omit-frame-pointer"]
-                    built = subprocess.run(
-                        command, cwd=root, env=env, capture_output=True, text=True,
-                        timeout=SANITIZED_BUILD_TIMEOUT if args.sanitizer else 240)
-                    if built.returncode:
-                        raise AssertionError(f"{command}\n{built.stderr[-4000:]}")
-                    ran = subprocess.run([str(executable)], env=env,
-                                         capture_output=True, text=True, timeout=30)
-                    actual = (ran.returncode, ran.stdout, ran.stderr)
-                    if actual != expected:
-                        raise AssertionError(f"{source.name} {standard} {mode}: "
-                                             f"{actual!r} != {expected!r}")
-                print(f"mutex lifetime cleanup: {standard}/{mode} {len(cases)} cases passed", flush=True)
+        for label, flags, native in native_modes():
+            for source, expected in cases:
+                executable = work / f"{source.stem}-{label}"
+                command = [str(gti), str(source), "--execution-profile", "concurrent", *flags,
+                           "-o", str(executable)]
+                if args.sanitizer:
+                    command += ["--", f"-fsanitize={args.sanitizer}",
+                                "-fno-omit-frame-pointer"]
+                built = subprocess.run(
+                    command, cwd=root, env=env, capture_output=True, text=True,
+                    timeout=SANITIZED_BUILD_TIMEOUT if args.sanitizer else 240)
+                if built.returncode:
+                    raise AssertionError(f"{command}\n{built.stderr[-4000:]}")
+                ran = subprocess.run([str(executable)], env=env,
+                                     capture_output=True, text=True, timeout=30)
+                actual = (ran.returncode, ran.stdout, ran.stderr)
+                if actual != expected:
+                    raise AssertionError(f"{source.name} {label}: "
+                                         f"{actual!r} != {expected!r}")
+            print(f"mutex lifetime cleanup: {label} {len(cases)} cases passed", flush=True)
 
 
 if __name__ == "__main__":

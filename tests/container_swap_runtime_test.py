@@ -9,6 +9,7 @@ import sys
 import tempfile
 
 from native_fixture_build import build_fixture
+from backend_modes import is_cpp_mode, keep_cpp, native_modes, optimization_level
 
 def run(command):
     environment = os.environ.copy()
@@ -22,10 +23,7 @@ def run(command):
 def main():
     compiler = Path(sys.argv[1]).resolve()
     fixtures = Path(__file__).resolve().parent / "fixtures"
-    modes = [(f"{standard}-{level}", ["--std", standard, f"-{level}"], [])
-             for standard in ("c++20", "c++23") for level in ("O0", "O1", "O3")]
-    modes.append(("sanitized", ["--std", "c++23", "-O1"],
-                  ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]))
+    modes = native_modes()
     with tempfile.TemporaryDirectory(prefix="gti-container-swap-") as directory:
         root = Path(directory)
         for mode, flags, native_flags in modes:
@@ -34,23 +32,24 @@ def main():
                 native = [fixtures / "container_swap_oracle.cpp"] if fixture == "container_swap" else []
                 command = [compiler, fixtures / f"{fixture}.gti", *flags]
                 if not native:
-                    command.append("--keep-cpp")
+                    command += keep_cpp(flags)
                 environment = os.environ.copy()
                 for option in ("ASAN_OPTIONS", "UBSAN_OPTIONS"):
                     previous = environment.get(option, "")
                     environment[option] = (previous + ":" if previous else "") + "halt_on_error=1"
                 built = build_fixture(
                     command, binary, native_sources=native, native_arguments=native_flags,
-                    standard=flags[1], optimization=flags[2][1:],
+                    optimization=optimization_level(flags),
                     capture_output=True, text=True, timeout=120, env=environment)
                 assert built.returncode == 0, (mode, fixture, built.stdout, built.stderr)
-                generated = binary.with_suffix(".gti.cpp").read_text()
-                assert "// GTI verified-MIR body:" in generated
-                # Runtime support may contain its own primitive swaps. The container
-                # operations must be emitted from verified GTI bodies, without
-                # delegating those bodies to the host standard-library swap.
-                bodies = generated.split("// GTI verified-MIR body:", 1)[1]
-                assert "std::swap(" not in bodies
+                if is_cpp_mode(flags):
+                    generated = binary.with_suffix(".gti.cpp").read_text()
+                    assert "// GTI verified-MIR body:" in generated
+                    # Runtime support may contain its own primitive swaps. The container
+                    # operations must be emitted from verified GTI bodies, without
+                    # delegating those bodies to the host standard-library swap.
+                    bodies = generated.split("// GTI verified-MIR body:", 1)[1]
+                    assert "std::swap(" not in bodies
                 executions = ([], ["fail"]) if fixture.endswith("cleanup") else ([],)
                 for arguments in executions:
                     result = run([binary, *arguments])

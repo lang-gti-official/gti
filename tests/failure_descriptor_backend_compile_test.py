@@ -4,6 +4,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from backend_modes import cpp_standard, cpp_text_modes, is_cpp_mode
 
 
 ASSERTIONS = r"""
@@ -141,46 +142,47 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="gti-failure-descriptor-") as temp:
         root = pathlib.Path(temp)
-        for standard in ("c++20", "c++23"):
-            generated = root / f"descriptor-{standard}.cpp"
-            emission = run(
-                [
-                    str(compiler),
-                    str(source),
-                    "-O0",
-                    "--std",
-                    standard,
-                    "--emit-cpp",
-                    "-o",
-                    str(generated),
-                ]
-            )
-            if emission.returncode != 0:
-                return fail(emission)
-            text = generated.read_text(encoding="utf8")
-            if text.count("#include <gti/runtime_failure.h>") != 1:
-                sys.stderr.write(
-                    f"{standard} did not include exactly one failure ABI header\n"
+        for label, flags, native in cpp_text_modes():
+            generated = root / f"descriptor-{label}.cpp"
+            if is_cpp_mode(flags):
+                emission = run(
+                    [
+                        str(compiler),
+                        str(source),
+                        "-O0",
+                        *flags,
+                        "--emit-cpp",
+                        "-o",
+                        str(generated),
+                    ]
                 )
-                return 1
-            if text.count("__gti_failure_artifact_descriptor_v1 = {") != 1:
-                sys.stderr.write(
-                    f"{standard} did not emit exactly one artifact descriptor\n"
-                )
-                return 1
-            generated.write_text(text + ASSERTIONS, encoding="utf8")
+                if emission.returncode != 0:
+                    return fail(emission)
+            if is_cpp_mode(flags):
+                text = generated.read_text(encoding="utf8")
+                if text.count("#include <gti/runtime_failure.h>") != 1:
+                    sys.stderr.write(
+                        f"{label} did not include exactly one failure ABI header\n"
+                    )
+                    return 1
+                if text.count("__gti_failure_artifact_descriptor_v1 = {") != 1:
+                    sys.stderr.write(
+                        f"{label} did not emit exactly one artifact descriptor\n"
+                    )
+                    return 1
+                generated.write_text(text + ASSERTIONS, encoding="utf8")
 
             compiled = run(
                 [
                     str(cxx),
-                    f"-std={standard}",
+                    f"-std={cpp_standard(flags)}",
                     "-D__gti_strict_ieee754=1",
                     "-I",
                     str(runtime_include),
                     "-c",
                     str(generated),
                     "-o",
-                    str(root / f"descriptor-{standard}.o"),
+                    str(root / f"descriptor-{label}.o"),
                 ]
             )
             if compiled.returncode != 0:

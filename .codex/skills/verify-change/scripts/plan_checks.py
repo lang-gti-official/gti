@@ -32,12 +32,12 @@ TEST_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*\Z")
 FAMILY = re.compile(r"\^[A-Za-z0-9_.()|*+?$\[\]-]+\Z")
 GLOB = re.compile(r"[*?\[]")
 SYSTEM_ADVICE = ("set rollup=never / validate alone; do not run a near-full suite "
-                 "locally: the merge queue runs the complete suite")
+                 "locally: post-integration full validation runs the complete suite")
 ADVISORY = (
     "The selection is a lower bound. Extend it from your own analysis of the "
     "changed invariant: name its affected consumers and add their tests. "
     "Classify the invariant, not the symptom; the complete suite is deferred to "
-    "the merge queue."
+    "post-integration full validation."
 )
 
 

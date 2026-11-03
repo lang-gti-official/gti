@@ -367,6 +367,17 @@ envelope independent of the changing dividend; the mask contributes
 `[0, mask]`. Dynamic fixed-array writes join their scalar value into the root
 envelope and never create per-element truth.
 
+Division by one exact nonzero integer transports a result interval by evaluating
+both endpoints with GTI's checked, truncating division rules. Negative divisors
+reverse the order; zero and signed-minimum divided by minus one fail closed.
+This transports successful-result facts without removing division failures.
+Add/subtract can compose both operands' existing stable envelopes, and constant
+division carries a valid composed envelope onward. This preserves bounds through
+averaging and normalization of array values. A widening edge still discards an
+envelope that expands beyond its previous bound; growing recurrences cannot
+justify removing their own overflow checks. Intermediate arithmetic must itself
+fit, so `(x + x) / 2` does not excuse an overflowing addition.
+
 For one bounded loop-carried accumulator family, safety analysis first solves
 the ordinary lattice, then derives a threshold from the existing reducible
 natural-loop forest and alias/effect facts. Every containing loop must have one
@@ -409,7 +420,22 @@ The admitted operations are deliberately narrow:
   retired, or one still-current owned field. The size may instead be a checked
   addition of a proved nonnegative amount to the ordered size, because that
   addition either produced the larger value or failed before the check. A
-  state keeps at most 64 orders. This is RT-5's body-local slice: the
+  block edge substitutes both endpoints simultaneously into its parameters,
+  including backedges that swap values. Old facts about redefined parameters
+  are retired. A bounded query follows same-domain order chains, requiring at
+  least one strict edge (`index < middle <= size` or
+  `index <= middle < size`); an all-nonstrict chain never proves a bounds
+  check. Mutable scalar equivalence uses the existing alias/write invalidation
+  at every link. The query visits each endpoint at most once per strictness
+  state and retains all contributing evidence, without materializing a
+  transitive closure in the dataflow lattice. A state keeps at most 64 orders;
+  exceeding the retention budget loses precision conservatively.
+  The chain must survive as dominating comparison edges. Boolean block
+  parameters produced by short-circuit joins do not yet carry conditional
+  order sets, so equivalent `&&` expressions may retain a check that nested
+  comparisons discharge; ordinary CFG reachability alone cannot establish
+  those conditional facts.
+  This is RT-5's body-local slice: the
   comparison and the check share a body, so a caller's loop condition does not
   reach the check inside an indexing accessor it calls; and
 - integer remainder whose divisor is an exact nonzero value. The proof removes
@@ -1496,39 +1522,145 @@ The backend contract and wrapping/poison boundary are documented under
 be measured per workload; neither mechanism establishes general bounds-check
 elimination, alias freedom, or vectorization by itself.
 
+### Private atomic storage
+
+LLVM O2/O3 can promote integer atomic read-modify-write operations on completely
+private stack storage before checked-reduction analysis. The pass validates the
+entire alloca use graph before changing any operation: fixed entry storage in
+the ordinary address space, zero-offset views, compatible integer-cell accesses
+and lifetime/debug markers. It admits nonvolatile monotonic add, subtract,
+and/or/xor and exchange. A pointer-consuming call (even `nocapture`), address
+escape, incompatible access, dynamic/nonzero offset, compare-exchange, volatile
+operation or stronger atomic ordering rejects the whole allocation.
+
+LLVM's existing RMW lowering utility preserves returned old values and ordinary
+wrapping arithmetic. SROA then promotes the private cell; this cleanup runs only
+on changed functions. Shared atomics, fences and other allocations retain their
+operations. This does not alter GTI's concurrent execution profile or relax any
+source synchronization promise. The privacy query has a 512-use budget and
+fails closed when exhausted.
+
+`llvm_private_atomics` checks exhaustive small-width values and rejected privacy,
+ordering and storage shapes. `llvm_private_atomic_runtime` explicitly compiles
+the concurrent profile at LLVM O0/O2/O3, comparing values, wrapping,
+checked failures and cleanup. The C++ backend currently rejects wrapping atomic
+RMW; that exact admission diagnostic is asserted instead of claiming a C++
+execution comparison for this fixture. An independent integer model supplies
+the expected values and cleanup, alongside LLVM O0 differential execution.
+A private atomic benchmark measures this storage
+optimization; it is not evidence about shared or contended atomics.
+
+### Bounded relative-index arithmetic
+
+At LLVM O2/O3, `checked_offsets` removes redundant unsigned-add overflow
+observations in relative-index expressions such as `low + (high - low) / 2`
+and `low + (high - low) / 2 + (high - low) / 8`. The endpoints must be stable,
+same-width integers. An independently dominating unsigned comparison proves
+`low <= high`, or an existing LLVM `sub nuw` supplies the representation-level
+poison contract. The latter is an LLVM refinement, not a new source-level MIR
+proof: if the subtraction would poison, the admitted expression propagates
+that poison into the old overflow observation. No source failure is reclassified
+as undefined behavior.
+
+A bounded structural query proves the offset is a nonnegative dyadic multiple
+of the difference, with total coefficient at most one. It handles logical
+right shifts, constant scales, sums and nested rebasing; every intermediate
+must satisfy its envelope. Freezing a potentially poisoned difference or
+offset, uncorrelated undef endpoints, signed-only ordering, a nondominating
+success edge, mixed widths and unsupported expressions retain their checks.
+The pass neither clones loops nor moves effects or removes bounds checks.
+It leaves the arithmetic result and unrelated failures intact, replacing only
+proved redundant overflow observations. Queries have 128-node/24-depth limits
+and at most 4,096 candidate/difference pairs per function.
+
+`llvm_checked_offsets` independently interprets all small-width endpoint pairs
+for admitted and rejected shapes, including event order and poison controls.
+`llvm_checked_offset_runtime` checks values, first failures and cleanup at LLVM
+O0/O2/O3 and against the existing C++ oracle, including near-maximum 64-bit
+offsets. Comparative programs remain manual performance evidence.
+
 ### Guarded checked reductions
 
 At LLVM O2/O3, a bounded representation-level pass runs after inlining and
-before vectorization. It recognizes innermost equality-terminated traversals
-whose integer index starts at zero and advances by one. The independent
+before vectorization. It recognizes innermost traversals whose integer index
+starts at a constant and advances by one. The latch continues on inequality
+or a strict signed/unsigned ordering comparison: each stops when the index
+equals the target, and an ordering comparison may stop earlier. The independent
 iteration bound comes from modular unit-step traversal, not an overflow exit,
 `nsw`/`nuw` flags, or a circular scalar-evolution proof. Comparing the current
-index permits at most `bound` backedges; comparing the next index permits
-`bound - 1` in the index's unsigned width, including a full traversal for zero.
+index permits at most `bound - initial` backedges; comparing the next index
+permits `bound - initial - 1`. Both subtractions use the index's modular width
+before widening. A next-index target equal to the initial value can require a
+complete traversal of that domain.
 
-A separate reduction starts at a nonnegative literal and carries only
-nonnegative constant additions, PHIs and selects back to its header. Its
+A separate reduction starts at a nonnegative literal or an invariant input and carries only
+nonnegative bounded additions, PHIs and selects back to its header. Uniform
+increment envelopes come from constants, constant masks, unsigned remainders
+by nonzero constants, constant logical shifts, zero extensions, truncations, nonwrapping
+bounded additions, and complete PHI/select alternatives. The bounded analysis
+uses the operations' bit-level meaning, never nowrap flags or a check that it
+will remove; cyclic or unknown bounds remain unsupported. Its
 maximum addition per iteration bounds every intermediate in that update DAG.
+A separate structural target envelope can prove that the unit-step index
+traverses a nonwrapping segment. The index and its next value can then serve as
+bounded increments, supporting conditional index-weighted sums. A next-index
+latch requires every target to be strictly above the initial index; a
+current-index latch permits equality but includes that final index. Dynamic
+target envelopes add explicit lower/upper checks on the frozen target, so a
+freeze of a poison expression cannot escape the assumed range. Truncation
+retains a narrower source envelope only when it fits the destination; otherwise
+it yields the complete unsigned destination range.
 The initial profile optimizes one reduction per transformed loop.
 The pass uses the conservative nonnegative signed range even for unsigned
 values. If the traversal's whole domain does not fit, one preheader guard
-selects a fast loop or an unchanged checked fallback. Only exit comparisons
-proved constant for the admitted range are replaced. Other checks, calls,
+selects a fast loop or an unchanged checked fallback. Exit comparisons and
+signed/unsigned addition overflow lanes proved constant for the admitted range
+are replaced. An addition's successful value can be separate from its detector,
+as happens when LLVM sinks arithmetic across a PHI join; the proof matches the
+detector's exact operands. Overflow aggregates and extracts outside the fast
+loop remain intact, including observations merged with the fallback. Other checks, calls,
 memory effects and cleanup edges retain their original order. This applies to
 ordinary counters and conditional weighted reductions without recognizing
 library declarations or type names. LLVM can then vectorize eligible loops;
 vectorization and a speedup are not guaranteed for every admitted shape.
 
+For an invariant initial value, the guard first requires its unsigned value to
+be at most the signed maximum. With maximum per-iteration increment `K > 0`,
+it then requires `backedges < (signedMax - initial) / K`. This admits the first
+update without overflowing a `backedges + 1` calculation. Subtraction remains
+unflagged and division has a nonzero constant divisor, including on rejected
+paths. The fast header range is conservatively `[0, signedMax - K]`; exact
+intermediate offsets still need their own proof. This supports sums carried
+from an outer loop without assuming the outer computation is bounded.
+
+The same fallback can also protect scalar unsigned additions of an invariant
+base and a bounded amount inside that reduction loop. An independent bound
+`amount <= K` adds the preheader condition `base <= unsignedMax - K`. This can
+remove an input or index calculation's overflow exit that would otherwise
+prevent vectorization after the sum check was removed. At most four distinct
+bases are admitted; each must already dominate the preheader, and no operand
+computation moves out of the loop. Each base is frozen once, sharing the bound
+or initial-value freeze when they are the same SSA value. All fast-loop uses,
+including separate successful arithmetic and PHI inputs, use that same value.
+A base's structural envelope is checked explicitly before substitution, so
+freezing poison cannot invalidate a bound used elsewhere in the proof. The
+original fallback and outside overflow observations remain intact. Vector
+overflow intrinsics and additions with no independent amount bound are retained.
+
 The guard and fast latch share one frozen bound so `undef` cannot select a
-small bound at entry and a different target each iteration. The first update
-must be safe independently of the bound, preserving paths that exit before a
-poison bound would originally be consumed. Cloning repairs every external PHI,
+small bound at entry and a different target each iteration. A dynamic reduction
+initial value has a separate freeze shared by its capacity guard and fast
+header; the fallback retains the original input. The guard proves the first
+update safe too, preserving paths that exit before a poison input would
+originally be consumed. Cloning repairs every external PHI,
 and each edit invalidates and reacquires function analyses. The pass rejects
 nonduplicable/convergent operations, local allocas, EH/address-taken blocks,
 already-versioned/vectorized loops, and size-optimized functions. It admits at
 most 128 instructions/16 blocks per loop, 1,024 cloned body instructions per
-function, and 32 transformations. Decreasing or dynamic steps, reset recurrences,
-outer loops containing subloops and arbitrary relational bounds remain outside
+function, and 32 transformations. Increment and recurrence tracing each have
+a 128-node work bound. Decreasing or dynamic induction steps, unbounded or
+negative increments, reset recurrences, outer loops containing subloops, and
+non-strict relational latches remain outside
 this profile.
 
 `llvm_checked_reductions` exhaustively compares small-width checked and

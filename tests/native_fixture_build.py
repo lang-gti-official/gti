@@ -15,11 +15,15 @@ def build_fixture(command, output, *, native_sources=(), native_arguments=(), na
                   standard="c++23", optimization="O0", cxx=None, **options):
     command = list(map(str, command))
     output = Path(output)
-    if not native_sources and not native_suffix:
+    llvm = "--backend" in command and command[command.index("--backend") + 1] == "llvm"
+    if (not native_sources and not native_suffix) or (llvm and not native_suffix):
+        # The LLVM driver links native sources itself, providers first.
         direct = [*command, "-o", str(output)]
-        if native_arguments:
-            direct += ["--", *map(str, native_arguments)]
+        if native_sources or native_arguments:
+            direct += ["--", *map(str, native_sources), *map(str, native_arguments)]
         return subprocess.run(direct, **options)
+    if llvm:
+        raise ValueError("a native suffix needs the C++ text; select the C++ backend")
 
     generated = output.with_suffix(".gti.cpp")
     emitted = subprocess.run(

@@ -73,6 +73,11 @@ root = "src/main.gti"
                                "codeActionLiteralSupport": {"codeActionKind": {"valueSet": ["quickfix"]}}}}}})
         notify("initialized", {})
         open_file(uri, source)
+        # Ordinary diagnostics must precede speculative missing-import fixes.
+        # This is an ordering invariant, not a host-speed timeout threshold.
+        ordinary = published(lambda p: p.get("version") == 1)
+        assert has_error_diagnostics(ordinary), ordinary
+        assert include_diagnostic(ordinary) is None, ordinary
         first = published(lambda p: include_diagnostic(p) is not None)
         diagnostic = include_diagnostic(first)
         assert diagnostic["range"]["start"] == lsp_position(source, source.index("test")), diagnostic
@@ -112,6 +117,21 @@ root = "src/main.gti"
         change(uri, 3, 'int main() { return std::gcd(12, 8); }\n')
         std = include_diagnostic(published(lambda p: p.get("version") == 3 and include_diagnostic(p)))
         assert actions(std)[0]["title"] == 'Add import std.numeric;', std
+
+        # Stop advice for an obsolete generation, including an edit that returns
+        # to exactly the old bytes. Queries must use the repaired snapshot.
+        change(uri, 4, 'int main() { return example::test(); }\n')
+        ordinary = published(lambda p: p.get("version") == 4)
+        assert include_diagnostic(ordinary) is None, ordinary
+        repaired = 'int main() { int recovered = 7; return recovered; }\n'
+        change(uri, 5, repaired)
+        published(lambda p: p.get("version") == 5 and not has_error_diagnostics(p))
+        assert actions(std) == [], "old advice cannot survive recovery"
+        definition = request("textDocument/definition", {
+            "textDocument": {"uri": uri},
+            "position": lsp_position(repaired, repaired.rindex("recovered"))})
+        assert definition["range"]["start"] == lsp_position(repaired, repaired.index("recovered")), definition
+
     finally:
         session.close()
 

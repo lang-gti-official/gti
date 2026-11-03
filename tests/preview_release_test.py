@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 import preview_release as p
 import release_artifacts as a
+import preview_build as build_preview
 
 SHA = 'c' * 40
 MANIFEST = {'schema': 1, 'features': [{'task': 'feature-a', 'head': 'd' * 40}]}
@@ -41,6 +42,94 @@ class PreviewTests(unittest.TestCase):
 
     def request(self, path):
         return self.api()(path)
+
+    def test_preview_build_smoke_and_package_contract(self):
+        # The publisher repeats no focused checks: admission ran them on the
+        # submitting host. It builds the products, proves the compiler runs
+        # native programs with the candidate's own stdlib, and packages.
+        workflow = (ROOT / '.github/workflows/preview.yml').read_text()
+        self.assertIn('touch build/.cmake/api/v1/query/codemodel-v2', workflow)
+        self.assertIn('python3 ../control/scripts/preview_build.py --source . --build build --parallel "${GTI_JOBS}" --products-only', workflow)
+        package = workflow.split('      - name: Build the installed toolchain products')[1].split('      - name: Stage toolchain')[0]
+        self.assertIn('validation_checks.py smoke --root . --build build', package)
+        self.assertNotIn('preview_admission', workflow)
+        self.assertNotIn('ctest --test-dir build', package)
+        self.assertIn('path: source/build/Testing/preview-build.json', package)
+        self.assertIn("gti-ccache-v2-release-${{ runner.os }}-${{ runner.arch }}-", workflow, 'restores the prebuilt release cache')
+        self.assertNotIn('actions/cache/save@', workflow, 'llvm-prebuilt.yml owns the release cache')
+        self.assertNotIn('check_ci_sanitizers', workflow)
+        installed = workflow.split('      - name: Test installed toolchain')[1].split('      - name: Preserve the combined source inclusion record')[0]
+        for runtime_check in ('managed_thread_runtime_test', 'atomic_runtime_test', 'process_resource_policy_test'):
+            self.assertNotIn(runtime_check, installed, 'runtime behaviour is admission evidence, not packaging evidence')
+        self.assertIn('cancel-in-progress: false', workflow)
+
+    def test_parallel_budget_reaches_nested_ctest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve(); inner = root / 'inner'; inner.mkdir()
+            worker = root / 'worker.py'
+            worker.write_text("import pathlib,sys,time\n"
+                              "root=pathlib.Path(sys.argv[1]); name=sys.argv[2]\n"
+                              "(root/name).touch()\n"
+                              "deadline=time.monotonic()+10\n"
+                              "while not all((root/n).exists() for n in ('a','b')):\n"
+                              "    assert time.monotonic()<deadline, 'nested tests ran serially'\n"
+                              "    time.sleep(.01)\n")
+            (inner / 'CTestTestfile.cmake').write_text(''.join(
+                f'add_test({name} "{sys.executable}" "{worker}" "{root}" "{name}")\n'
+                for name in ('a', 'b')))
+            (root / 'CTestTestfile.cmake').write_text(
+                f'add_test(preview_admission "ctest" "--test-dir" "{inner}" "--output-on-failure")\n'
+                'set_tests_properties(preview_admission PROPERTIES RUN_SERIAL TRUE)\n')
+            subprocess.run(['ctest', '--test-dir', str(root), '-R', '^preview_admission$',
+                            '--output-on-failure', '--no-tests=error'],
+                           env={**os.environ, 'CTEST_PARALLEL_LEVEL': '2'},
+                           check=True, capture_output=True, timeout=30)
+
+    def test_preview_target_selection_builds_real_installed_and_test_closure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve(); source = root / 'source'; source.mkdir()
+            build = root / 'build'; query = build / '.cmake/api/v1/query'; query.mkdir(parents=True)
+            (query / 'codemodel-v2').touch()
+            (source / 'main.c').write_text('int main(void) { return 0; }\n')
+            (source / 'lib.c').write_text('int value(void) { return 1; }\n')
+            (source / 'CMakeLists.txt').write_text(r'''cmake_minimum_required(VERSION 3.20)
+project(preview C)
+enable_testing()
+foreach(name IN ITEMS gti gti_lsp gti_tree_sitter owner_tests unrelated_tests)
+  add_executable(${name} main.c)
+endforeach()
+add_library(sdk STATIC lib.c)
+add_library(file_archive STATIC lib.c)
+add_library(dependency STATIC lib.c)
+target_link_libraries(gti PRIVATE dependency)
+install(TARGETS gti gti_lsp gti_tree_sitter sdk
+        RUNTIME DESTINATION bin COMPONENT gti_toolchain
+        ARCHIVE DESTINATION lib COMPONENT gti_toolchain)
+install(FILES "$<TARGET_FILE:file_archive>" DESTINATION lib COMPONENT gti_toolchain)
+add_test(NAME focused COMMAND "$<TARGET_FILE:owner_tests>"
+         "suite=$<TARGET_FILE:sdk>" "XDG_CACHE_HOME=${CMAKE_BINARY_DIR}/cache")
+''')
+            subprocess.run(['cmake', '-S', str(source), '-B', str(build), '-G', 'Ninja',
+                            '-DCMAKE_BUILD_TYPE=Release'], check=True, capture_output=True)
+            targets = build_preview.build_targets(source, build, {'focused'})
+            self.assertEqual(set(targets), {'gti', 'gti_lsp', 'gti_tree_sitter', 'sdk', 'file_archive', 'owner_tests'})
+            subprocess.run(['cmake', '--build', str(build), '--parallel', '2', '--target', *targets],
+                           check=True, capture_output=True)
+            subprocess.run(['ctest', '--test-dir', str(build), '-R', '^focused$', '--no-tests=error'],
+                           check=True, capture_output=True)
+            subprocess.run(['cmake', '--install', str(build), '--prefix', str(root / 'stage'),
+                            '--component', 'gti_toolchain'], check=True, capture_output=True)
+            self.assertTrue((build / 'libdependency.a').is_file())
+            self.assertTrue((root / 'stage/lib/libfile_archive.a').is_file())
+            self.assertFalse((build / 'unrelated_tests').exists())
+            with self.assertRaisesRegex(ValueError, 'missing configured'):
+                build_preview.build_targets(source, build, {'missing'})
+            with self.assertRaisesRegex(ValueError, 'optimized'):
+                build_preview.build_targets(root / 'wrong-source', build, {'focused'})
+            cache = build / 'CMakeCache.txt'
+            cache.write_text(cache.read_text().replace('CMAKE_BUILD_TYPE:STRING=Release', 'CMAKE_BUILD_TYPE:STRING=Debug'))
+            with self.assertRaisesRegex(ValueError, 'optimized'):
+                build_preview.build_targets(source, build, {'focused'})
 
     def test_select_and_admit(self):
         self.assertEqual(p.select(self.request, 'push', 'refs/heads/preview'), SHA)
@@ -209,12 +298,12 @@ class PreviewTests(unittest.TestCase):
                                env={**os.environ, 'GITHUB_OUTPUT': str(output)}, check=True,
                                capture_output=True)
                 self.assertEqual(output.read_text(), f"available={str(present).lower()}\n")
-        self.assertIn("hashFiles('source/CMakeLists.txt', 'source/cmake/**')", workflow)
+        self.assertIn("hashFiles('source/CMakeLists.txt', 'source/cmake/**', 'source/scripts/configure_ci_toolchain.sh')", workflow)
         self.assertIn('cancel-in-progress: false', workflow)
         self.assertIn('group: gti-preview-toolchain', workflow)
         self.assertIn('Publish validated preview without replacing a newer release', workflow)
         self.assertIn('needs: [select, package]', workflow)
-        self.assertIn("-R '^preview_admission$' --no-tests=error", workflow)
+        self.assertIn('validation_checks.py smoke --root . --build build', workflow)
         self.assertIn('-DGTI_RELEASE_BUILD=ON', workflow)
         self.assertIn('--channel preview --sha "${GTI_SOURCE_SHA}"', workflow)
         self.assertIn('ref: ${{ needs.select.outputs.control }}', workflow)

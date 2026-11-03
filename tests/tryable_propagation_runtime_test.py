@@ -18,6 +18,7 @@ import sys
 import tempfile
 
 from unique_class_allocation_runtime_test import run
+from backend_modes import native_modes
 
 # (phase, exit code, stdout integers)
 CASES = [
@@ -38,10 +39,7 @@ def main():
     last_use_source = pathlib.Path(__file__).parent / "fixtures" / "multi_owner_reference_last_use.gti"
     example = pathlib.Path(__file__).parent.parent / "examples" / "159-tryable-propagation.gti"
     borrowed_example = pathlib.Path(__file__).parent.parent / "examples" / "165-borrowed-payload-results.gti"
-    modes = [(f"{standard}-{opt}", ["--std", standard, f"-{opt}"], [])
-             for standard in ("c++20", "c++23") for opt in ("O0", "O1", "O2", "O3")]
-    modes.append(("sanitized", ["--std", "c++23", "-O1"],
-                  ["--", "-fsanitize=address,undefined", "-fno-omit-frame-pointer"]))
+    modes = native_modes()
     with tempfile.TemporaryDirectory(prefix="gti-tryable-propagation-") as directory:
         exclusive_source = pathlib.Path(directory) / "exclusive-reference.gti"
         exclusive_text = conditional_source.read_text().replace("int&", "mut int&")
