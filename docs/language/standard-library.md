@@ -389,7 +389,7 @@ The current implemented foundation includes:
   constant-time front access/push/pop, iterative clear, resize, reverse, stable
   merge/sort, removal, and adjacent uniqueness; and
 - `std.map` `std::map<K, V, Compare = std::less<K>>` and
-  `std.unordered_map` `std::unordered_map<K, V, Hash = std::hash<K>,
+  `std.unordered_map` `std::unordered_map<K, V, Hash = std::default_hash<K>,
   KeyEqual = std::equal_to<K>>` as move-only owning dictionaries with checked
   owner-tied iteration and nested-borrow insertion results; and
 - `std.iterator` public `std::input_iterator<I>`,
@@ -445,9 +445,11 @@ The current implemented foundation includes:
   iterator-aware indirect predicate/operation, and nullary `once_action`
   concepts; consuming `invoke_once`; and source-defined `less<T>`,
   `greater<T>`, `equal_to<T>`, and `not_equal_to<T>` function objects over the
-  corresponding exact comparison concepts. Exact `hash<T>` specializations
-  support fixed-width signed/unsigned integers (including their aliases),
-  `bool`, and `char`; `std.string` additionally supplies `hash<std::string>`.
+  corresponding exact comparison concepts. The `hashing<T>` protocol and
+  `default_hash<T>` adapter support generic user conformances and recursive
+  pairs. Exact `hash<T>` specializations remain supported for fixed-width
+  signed/unsigned integers (including aliases), `bool`, and `char`;
+  `std.string` additionally supplies `hash<std::string>`.
   Source-defined owning callable classes provide
   `std::function<R(Args...)>` and `std::move_only_function<R(Args...)>` for
   repeatable read-only targets with value, read-only reference, or mutable
@@ -695,9 +697,12 @@ The current implemented foundation includes:
   floating, and string presentation specifiers are supported. Default floating
   presentation is the shortest round-tripping decimal; alternate default form
   only forces a decimal point, explicit general precision retains significant
-  zeroes, and infinity/NaN ignore numeric zero-padding. Application types extend
-  the protocol through exact source-defined `std::formatter<T>` specializations;
-  unsupported static types fail the `std::formattable<T>` constraint at compile
+  zeroes, and infinity/NaN ignore numeric zero-padding. Generic application types
+  extend `std::formatting<T>` through conditional conformance blocks; exact
+  source-defined `std::formatter<T>` specializations remain supported.
+  Pairs use `(first, second)`, recursively selecting each component's default
+  presentation; pair-level flags, width, precision and type are rejected.
+  Unsupported static types fail the `std::formattable<T>` constraint at compile
   time. Pattern, specifier, argument-count, and value-dependent formatter errors return
   `expected<..., std::format_errc>` from the formatting `try_` APIs. Output
   `try_` APIs use `print_errc`, additionally reporting stdout submission failure.
@@ -1513,24 +1518,60 @@ Those operations do not turn the safe `std::allocator`/`std::storage<T>` pair
 into an unchecked owner-adoption API. `weak_ptr` still has declaration-only
 operations rather than an executable weak-ownership contract.
 
-`std.functional` declares the non-callable customization primary `std::hash<T>`.
-A package may provide a complete exact specialization for a nominal type it
-owns, such as `class std::hash<Widget> { ... };`; the specialization must expose
-an exact public read-only `std::size_t operator()(Widget&)`. Unspecialized types
-have no hash operation, so a required hash invocation fails during semantic
-analysis rather than native linking. The exact `std::read_callable<Hash, Key,
-std::size_t>` and `std::read_binary_callable<Equal, Key, Key, bool>` relationships
-express hasher and equality requirements without a container-specific compiler
-capability. Key equivalence must imply equal hash values, and both operations
-must remain consistent while keys are stored; this semantic relationship cannot
-be proved from their signatures.
+`std.functional` declares the `std::hashing<T>` protocol with the operation
+`size_t hash(T&)`, and `std.format` declares `std::formatting<T>` with
+`expected<void, format_errc> format(T&, mut string&, format_spec&)`. A package
+may implement either protocol for a nominal type it owns, including an entire
+generic family with one conditional conformance:
 
-Primitive hashes accept every value, including signed minima and unsigned
-maxima, without checked conversion overflow. `char` hashes its unsigned code
-unit and string hashing includes every byte, including embedded NULs. Hash
-values are lookup implementation details, not a portable serialization format
-or a cryptographic digest. Default hashing of floating-point, scoped-enum,
-pointer, and other unspecialized types is not currently supplied.
+```gti
+for <T> concept std::hashing<Box<T>> requires std::hashing<T> {
+  std::size_t hash(Box<T>& box) {
+    return std::hashing<T>::hash(box.value);
+  }
+};
+```
+
+The formatting operation appends to the supplied output and returns an empty
+success or a recoverable formatting error. Operations borrow their arguments;
+they introduce no ownership transfer, erased callback, vtable or allocation.
+The formatter chooses any temporary storage required by its own policy. The
+pair implementation appends parentheses and a comma-space separator directly,
+without constructing a temporary string or copying its components. Nested
+pairs and generic user families recursively select their own conformances.
+Pair-level presentation flags are not propagated to elements: only default
+presentation is accepted. See
+[example 189](../../examples/189-protocol-format-hash.gti).
+
+Compatibility has one explicit dispatch rule. `std::formattable<T>` is true
+when `formatting<T>` holds or an exact `formatter<T>` has the existing public,
+safe, read-only `format(T&, mut string&, format_spec&)` method and a default
+constructor. `std::hashable<T>` accepts `hashing<T>` or a default-constructible
+exact `hash<T>` with `size_t operator()(T&)`. If both exist, the protocol wins.
+The dispatcher otherwise constructs the legacy formatter/hasher exactly once
+for that invocation, as before. Integral-enum formatting uses its existing
+formatter; its underlying-type selection uses ordinary concept conditions.
+No blanket conformance or partial specialization is added. Direct use of an
+explicit `formatter<T>` or `hash<T>` continues to mean that class; use protocol
+operations or the public formatting APIs / `default_hash<T>` for dispatch.
+
+`std::unordered_map` and `std::unordered_set` now default `Hash` to the stateless
+`std::default_hash<K>` adapter. Its call operator requires `hashable<K>`.
+Explicit custom `Hash` template arguments keep their exact
+`std::read_callable<Hash, Key, size_t>` contract; equality still uses
+`std::read_binary_callable<Equal, Key, Key, bool>`. Pairs are hashable when both
+components are hashable, using an ordered source-defined combination with
+wrapping integer arithmetic. They are usable as keys when their element types
+also support equality. Missing component support is a semantic constraint
+failure before code generation.
+
+Key equivalence must imply equal hash values, and hashing and equality must
+remain consistent while keys are stored; signatures cannot prove this law.
+Primitive hashes accept signed minima and unsigned maxima without checked
+conversion overflow. `char` hashes its unsigned code unit and string hashing
+includes every byte, including embedded NULs. Hash values are process-local
+lookup details, not a portable serialization or cryptographic digest. Default
+hashing of floating-point, scoped-enum and pointer types is not supplied.
 
 ## 7.5 Errors And Failure
 

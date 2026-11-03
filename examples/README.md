@@ -386,6 +386,7 @@ is a teaching helper, not a production server.
 | [183-immediate-functions.gti](183-immediate-functions.gti) | Immediate functions, standalone void validation, and implicit bare-return construction composed with runtime arguments (LLVM). |
 | [184-payload-borrow-chains.gti](184-payload-borrow-chains.gti) | Return nested payload references through a parameter and receiver, and copy a sibling before a mutable payload borrow. |
 | `185-reflected-method-dispatch.gti` | a generic compile-time metadata binder calling overload-selected methods on two unrelated runtime values; LLVM execution |
+| [189-protocol-format-hash.gti](189-protocol-format-hash.gti) | Conditional conformance formats and hashes a generic user family and uses a pair as a hash-table key. |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |

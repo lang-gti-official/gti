@@ -5,6 +5,7 @@ import std.memory;
 import std.polymorphic;
 import std.iterator;
 import std.meta;
+import std.utility;
 namespace std {
 /// A non-null, non-owning GTI invocation pointer. Construction accepts one
 /// exact namespace function item or zero-capture lambda; signatures match
@@ -551,6 +552,39 @@ public:
   // executable hashing; an unsupported key must fail before native linking.
   export class hash<T> {};
 
+  /// Hashes a borrowed value without mutation or ownership transfer.
+  export concept hashing<T> {
+    size_t hash(T& value);
+  };
+
+  namespace detail {
+    concept legacy_hashable<T> = std::default_initializable<std::hash<T>> &&
+        std::read_callable<std::hash<T>, T, size_t>;
+  }
+
+  /// Protocol implementations take precedence over exact legacy specializations.
+  export concept hashable<T> = hashing<T> || detail::legacy_hashable<T>;
+
+  namespace detail {
+    size_t hash_value<T>(T& value) requires hashable<T> {
+      if constexpr (hashing<T>) {
+        return hashing<T>::hash(value);
+      } else if constexpr (legacy_hashable<T>) {
+        std::hash<T> hasher{};
+        return hasher(value);
+      }
+    }
+  }
+
+  /// Default container adapter. An explicit container Hash remains unchanged.
+  export class default_hash<T> {
+  public:
+    default_hash() = default;
+    size_t operator()(T& value) requires hashable<T> {
+      return detail::hash_value(value);
+    }
+  };
+
   // Hashes are process-local lookup values, not a serialized representation.
   // Converting a negative integer directly to size_t would be checked failure.
   // Complementing -(value + 1) also handles the minimum signed value safely.
@@ -635,5 +669,87 @@ public:
   hash() = default;
   std::size_t operator()(char& value) {
     return std::size_t(uint8_t(value));
+  }
+};
+
+for concept std::hashing<int8_t> {
+  std::size_t hash(int8_t& value) {
+    std::hash<int8_t> hasher{};
+    return hasher(value);
+  }
+};
+
+for concept std::hashing<int16_t> {
+  std::size_t hash(int16_t& value) {
+    std::hash<int16_t> hasher{};
+    return hasher(value);
+  }
+};
+
+for concept std::hashing<int32_t> {
+  std::size_t hash(int32_t& value) {
+    std::hash<int32_t> hasher{};
+    return hasher(value);
+  }
+};
+
+for concept std::hashing<int64_t> {
+  std::size_t hash(int64_t& value) {
+    std::hash<int64_t> hasher{};
+    return hasher(value);
+  }
+};
+
+for concept std::hashing<uint8_t> {
+  std::size_t hash(uint8_t& value) {
+    std::hash<uint8_t> hasher{};
+    return hasher(value);
+  }
+};
+
+for concept std::hashing<uint16_t> {
+  std::size_t hash(uint16_t& value) {
+    std::hash<uint16_t> hasher{};
+    return hasher(value);
+  }
+};
+
+for concept std::hashing<uint32_t> {
+  std::size_t hash(uint32_t& value) {
+    std::hash<uint32_t> hasher{};
+    return hasher(value);
+  }
+};
+
+for concept std::hashing<uint64_t> {
+  std::size_t hash(uint64_t& value) {
+    std::hash<uint64_t> hasher{};
+    return hasher(value);
+  }
+};
+
+for concept std::hashing<bool> {
+  std::size_t hash(bool& value) {
+    std::hash<bool> hasher{};
+    return hasher(value);
+  }
+};
+
+for concept std::hashing<char> {
+  std::size_t hash(char& value) {
+    std::hash<char> hasher{};
+    return hasher(value);
+  }
+};
+
+// Ordered combination; wrapping arithmetic is deliberate hash arithmetic.
+for <T, U> concept std::hashing<std::pair<T, U>>
+    requires std::hashable<T> && std::hashable<U> {
+  std::size_t hash(std::pair<T, U>& value) {
+    auto first = std::detail::hash_value(value.first);
+    auto second = std::detail::hash_value(value.second);
+    return first ^ gti_internal::integer_wrapping_add(
+        gti_internal::integer_wrapping_add(second, uint64_t(11400714819323198485)),
+        gti_internal::integer_wrapping_add(first << 6, first >> 2));
   }
 };
