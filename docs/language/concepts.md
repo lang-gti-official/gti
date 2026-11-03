@@ -167,11 +167,29 @@ when no call is viable. Requirements do not:
 - select a specialization; or
 - delegate validity to native C++ constraint evaluation.
 
-The bounded first version does not permit a trailing clause on an operator or
-on a virtual, pure, overriding, or interface method. Conditional operators
-would require the backend protocol to encode the same condition, while a
-polymorphic contract cannot be strengthened safely by an override. Both need a
-separate design rather than silently weakening the declared requirement.
+Non-polymorphic member operators may carry the same trailing requirements as
+ordinary methods. Exact argument matching precedes requirement checking; a
+failed requirement removes the candidate without ranking the remaining ones.
+The requirement supplies facts while checking the generic operator body, and
+is checked again for the selected concrete owner. An unused unavailable
+operator does not constrain construction or other methods of that owner.
+The selected declaration and concrete owner arguments reach HIR and MIR through
+the ordinary function-instance path; no runtime condition or backend overload
+selection is involved. This includes `operator[]`, comparisons, and `operator()`.
+
+A trailing clause remains invalid on a virtual, pure, overriding, or interface
+method, including an operator: an override cannot strengthen its polymorphic
+contract. Conditional copy/move special members are a separate capability.
+
+For example, `mut T& operator[](int key) mut requires
+std::default_initializable<T>` is available only when that application holds.
+[`190-conditional-member-operators.gti`](../../examples/190-conditional-member-operators.gti)
+demonstrates the general rule before its map and pair clients.
+Runtime uses of conditional operators require LLVM. The frozen C++ backend
+reports `GTI-B0003` for a selected conditional operator; an unused declaration
+does not prevent otherwise supported C++ compilation.
+Recursive requirement expressions fail closed: exact cycles, more than 64
+active checks, or a root query exceeding 16,384 visited type nodes are rejected.
 
 GTI therefore retains the exact unique-match rule from
 [ADR 003](../decisions/003-exact-overload-resolution.md).
@@ -1239,8 +1257,8 @@ call closure. A runtime-only operation remains ineligible for constant execution
 The implemented language does not provide general C++ requires-expressions,
 arbitrary expression requirements, negation, associated types outside a concept
 with a body, value constraints, concept or partial specialization, constraint
-subsumption, constraint-based overload ordering, conditionally available
-operators, constrained polymorphic contracts, or unrestricted compile-time
+subsumption, constraint-based overload ordering,
+constrained polymorphic contracts, or unrestricted compile-time
 reflection. Variadic callable relations, generic `operator()` requirements and
 native function pointers in these public callable relations remain outside the
 current bounded surface. Eligible namespace-scope GTI function items are

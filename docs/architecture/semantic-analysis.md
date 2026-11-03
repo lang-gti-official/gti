@@ -2661,6 +2661,10 @@ substitutions fails immediately rather than expanding a branching probe tree.
 Isolated query workers and typed-macro selection probes inherit that active
 identity stack without sharing mutable runtime flow or capture state. Changing
 concrete generic arguments remain distinct checks within the existing budget.
+Each root expression/predicate query additionally shares a 16,384-type-node
+work budget across its isolated workers. It is charged before copying query
+arguments or identities, bounding recursively expanding generic operator
+requirements even when every nested query has a distinct type.
 
 The nullary consuming-use concept is now a source expression query over an
 owned synthetic binding and `std::move(binding)()`. Its compound shape remains

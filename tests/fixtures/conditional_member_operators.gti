@@ -1,0 +1,87 @@
+import std.map;
+import std.unordered_map;
+import std.string;
+import std.utility;
+
+mut int defaults = 0;
+mut int drops = 0;
+
+class Value {
+public:
+  mut int amount;
+  Value() : amount(0) { defaults++; }
+  Value(int initial) : amount(initial) {}
+  Value(Value& other) = delete;
+  Value(Value&& other) = default;
+  ~Value() { drops++; }
+};
+class NoDefault {
+public:
+  int amount;
+  NoDefault(int initial) : amount(initial) {}
+  NoDefault(NoDefault& other) = delete;
+  NoDefault(NoDefault&& other) = default;
+};
+
+class Box<T> {
+  mut T value;
+public:
+  Box(T initial) : value(std::move(initial)) {}
+  mut T& operator[](int index) mut requires std::default_initializable<T> {
+    return this.value;
+  }
+  T& operator[](int index) requires std::copyable<T> { return this.value; }
+  bool operator==(Box<T>& other) requires std::equality_comparable<T> {
+    return this.value == other.value;
+  }
+  bool operator!=(Box<T>& other) requires std::equality_comparable<T> {
+    return !(this == other);
+  }
+  T operator()(T input) requires std::copyable<T> { return input; }
+};
+
+bool compared<std::equality_comparable T>(T& first, T& second) {
+  return first == second;
+}
+
+int main() {
+  mut Box<int> box{4};
+  box[0] = 5;
+  Box<int> equal{5};
+  Box<NoDefault> unused{NoDefault(9)};
+  if (box != equal || !(box == equal) || equal[0] != 5 || equal(7) != 7) { return 1; }
+  if (!compared(box, equal)) { return 9; }
+  static_assert(!requires(Box<NoDefault>& first, Box<NoDefault>& second) {
+    { first == second } -> bool;
+  });
+  std::pair<int, bool> a{2, true};
+  std::pair<int, bool> b{2, true};
+  std::pair<int, bool> c{3, true};
+  if (!(a == b) || a != b || !(a != c)) { return 2; }
+  std::pair<std::pair<int, bool>, int> nested{std::move(a), 9};
+  std::pair<std::pair<int, bool>, int> other{std::move(b), 9};
+  if (!(nested == other)) { return 3; }
+  if (!compared(nested, other)) { return 10; }
+  static_assert(!requires(std::pair<Value, int>& first, std::pair<Value, int>& second) {
+    { first == second } -> bool;
+  });
+  {
+    mut std::map<std::string, Value> ordered{};
+    ordered[std::string("tea")].amount = 8;
+    ordered[std::string("tea")].amount++;
+    if (ordered.size() != std::size_t(1) || defaults != 1) { return 4; }
+    std::string key = "tea";
+    if (ordered.at(key).amount != 9) { return 5; }
+    mut std::unordered_map<std::string, Value> hashed{};
+    hashed[std::string("tea")].amount = 12;
+    hashed[std::string("tea")].amount++;
+    if (hashed.size() != std::size_t(1) || defaults != 2 || hashed.at(key).amount != 13) { return 6; }
+    mut std::map<int, NoDefault> explicit_ordered{};
+    [[discard]] explicit_ordered.insert(1, NoDefault(20));
+    mut std::unordered_map<int, NoDefault> explicit_hashed{};
+    [[discard]] explicit_hashed.insert(1, NoDefault(21));
+    int one = 1;
+    if (explicit_ordered.at(one).amount != 20 || explicit_hashed.at(one).amount != 21) { return 7; }
+  }
+  return drops == 2 ? 0 : 8;
+}
