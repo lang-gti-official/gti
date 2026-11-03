@@ -1378,17 +1378,17 @@
     },
     "090-generic-algorithms.gti": {
       "declarations": -1,
-      "bodies": 439,
-      "generated_items": 328,
+      "bodies": -1,
+      "generated_items": -1,
       "generated_kinds": {
-        "program_initialization": 0,
+        "program_initialization": 1,
         "hosted_entry": 1,
-        "structural_operator_adapter": 43,
+        "structural_operator_adapter": 51,
         "callable_adapter": 21,
-        "lifecycle_cleanup": 9,
+        "lifecycle_cleanup": 13,
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
-        "concrete_instance_adapter": 255,
+        "concrete_instance_adapter": -1,
         "thread_local_storage": 0
       }
     },

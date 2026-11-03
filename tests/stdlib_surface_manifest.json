@@ -3,7 +3,7 @@
   "source_fingerprints": {
     "stdlib/prelude.gti": "ff426a31d12405cd7a6f09ad46cf76c14f7d3b0a1fadef595c6ad7a4d4d3f831",
     "stdlib/std.gti": "6bf76540ce1d32024871a3fce4b9512fd6fd494511f919db63450e2b4796a0f7",
-    "stdlib/std/algorithm.gti": "757d2e81cb5e821912cb103b0055837220810bf82466e1877b610d871e0eccfd",
+    "stdlib/std/algorithm.gti": "22fafe53603fcff57a8e277d92a34b39a600d20367844e7ccc75eb00b4cc12de",
     "stdlib/std/array.gti": "affed4f1d587a71a098ef7c9b381e6c255d8b639492abbe9a46b31e00115adde",
     "stdlib/std/assert.gti": "c34ddabb3ce77983232aa13452cf036dba6202cdbd8d2bb7e1c0d9f0a8b6d78d",
     "stdlib/std/atomic.gti": "d51045256225848941363200bff10a2fe1bf30b66915a06b89e1fce546d1aed1",
@@ -3051,6 +3051,21 @@
         "stdout": "",
         "stderr": ""
       }
+    },
+    {
+      "id": "algorithm-max-element",
+      "mode": "run",
+      "source": "tests/fixtures/algorithm_max_element.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "backend": "llvm"
     }
   ],
   "entries": [
@@ -3122,7 +3137,8 @@
         "restoring-indexed",
         "restoring-order",
         "restoring-order-example",
-        "algorithm-copy-return"
+        "algorithm-copy-return",
+        "algorithm-max-element"
       ],
       "required_instantiations": [
         "audit_iterator/audit_iterator/int32_t predicates and exact value",
@@ -3151,7 +3167,8 @@
         "tests/fixtures/generic_algorithm_copy_return.gti",
         "tests/fixtures/algorithm_search_list.gti",
         "tests/fixtures/algorithm_search_deque.gti",
-        "tests/fixtures/algorithm_search_array.gti"
+        "tests/fixtures/algorithm_search_array.gti",
+        "tests/fixtures/algorithm_max_element.gti"
       ]
     },
     {
