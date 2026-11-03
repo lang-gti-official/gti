@@ -25,6 +25,45 @@ def run(command, cwd, success=True):
     return result.stdout.strip()
 
 
+def duplicate_mapping_keys(text):
+    """Keys repeated within one YAML mapping: GitHub refuses such a workflow outright
+    (every run fails in a second with no jobs), while lenient parsers keep the last
+    key, so no job-level pin notices. Block scalars are skipped; flow mappings
+    (`- {os: ...}`) are not scanned."""
+    duplicates, stack, block_scalar = [], [], None
+    for line in text.splitlines():
+        indent = len(line) - len(line.lstrip(" "))
+        if block_scalar is not None:
+            if not line.strip() or indent > block_scalar:
+                continue
+            block_scalar = None
+        content = line.strip()
+        if not content or content.startswith("#"):
+            continue
+        if content.startswith("- "):
+            indent, content = indent + 2, content[2:].strip()
+            while stack and stack[-1][0] >= indent:
+                stack.pop()
+            stack.append((indent, set()))
+        else:
+            while stack and stack[-1][0] > indent:
+                stack.pop()
+            if not stack or stack[-1][0] < indent:
+                stack.append((indent, set()))
+        if content[:1] in "{[\"'":
+            continue
+        match = re.match(r"([A-Za-z0-9_.-]+):(\s|$)", content)
+        if not match:
+            continue
+        key, keys = match.group(1), stack[-1][1]
+        if key in keys:
+            duplicates.append(key)
+        keys.add(key)
+        if content[match.end():].strip() in (">", ">-", ">+", "|", "|-", "|+"):
+            block_scalar = indent
+    return duplicates
+
+
 def jobs(workflow):
     """Split a workflow's top-level jobs by their two-space-indented keys."""
     body = workflow.split("\njobs:\n", 1)[1]
@@ -465,6 +504,11 @@ def workflow_contract(root):
         "backport.yml", "beta.yml", "cache.yml", "ci.yml", "cpp-backend.yml", "full-validation.yml",
         "llvm-prebuilt.yml", "nightly.yml", "preview.yml", "rollback.yml", "rollup.yml", "train.yml"]
     assert not (root / ".gitea/workflows/ci.yml").exists()
+    for workflow in sorted((root / ".github/workflows").glob("*.yml")):
+        duplicates = duplicate_mapping_keys(workflow.read_text())
+        assert not duplicates, f"{workflow.name} repeats mapping keys (GitHub refuses the workflow): {duplicates}"
+    assert duplicate_mapping_keys("jobs:\n  a:\n    x: 1\n  a:\n    y: 2\n") == ["a"]
+    assert duplicate_mapping_keys("steps:\n  - name: a\n    run: |\n      k: 1\n      k: 2\n  - name: a\n") == []
     assert "branches:\n      - main" in release and "paths:" not in release
     assert release.count("-DGTI_RELEASE_BUILD=ON") == 1, "channels must share one configure"
     assert release.count('run: cmake --build build --config Release --parallel "${GTI_JOBS}"') == 1

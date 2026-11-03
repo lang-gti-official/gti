@@ -270,12 +270,11 @@ jobs:
           if-no-files-found: ignore
 
   sanitizers:
+    name: Compiler sanitizers (${{ matrix.kind }} ${{ matrix.index }}/${{ matrix.count }})
     # Every sanitized configure serializes linking (CMAKE_JOB_POOL_LINK):
     # linking several ASan/UBSan executables at once exhausted the 16 GiB
     # runner and the VM was shut down mid-build three times on 2026-11-03
     # ("runner has received a shutdown signal"). Compiles stay parallel.
-  sanitizers:
-    name: Compiler sanitizers (${{ matrix.kind }} ${{ matrix.index }}/${{ matrix.count }})
     if: needs.plan.outputs.mode == 'full'
     needs: [plan]
     # The compiler aggregate exceeded three hours serially. Split its six
