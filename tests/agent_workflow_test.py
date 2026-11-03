@@ -1369,6 +1369,45 @@ class ValidationChecks(unittest.TestCase):
         with self.assertRaises(ValueError):
             validation.admission("draft", lint, "merge_group")
 
+    def test_shard_inventory_runs_split_parts_instead_of_aggregates_and_gate_set_is_a_subset(self):
+        registered = {"smoke", "compiler_pipeline", "compiler_pipeline_frontend", "compiler_pipeline_backend",
+                      "instance_reuse", "instance_reuse_0", "instance_reuse_1", "other",
+                      *validation.GATE_EXCLUDED}
+        full = validation.shard_inventory(registered, "full")
+        # The aggregates are replaced by their registered parts; nothing else changes.
+        self.assertNotIn("compiler_pipeline", full)
+        self.assertNotIn("instance_reuse", full)
+        self.assertEqual(full, registered - {"compiler_pipeline", "instance_reuse"})
+        # Without the parts, an aggregate stays (no coverage loss on an older tree).
+        alone = {"smoke", "compiler_pipeline", "other", *validation.GATE_EXCLUDED}
+        self.assertIn("compiler_pipeline", validation.shard_inventory(alone, "full"))
+        gate = validation.shard_inventory(registered, "gate")
+        self.assertEqual(gate, full - validation.GATE_EXCLUDED)
+        self.assertTrue(gate < full)
+        self.assertIn("generic_algorithm_breadth_cpp23", registered | {"generic_algorithm_breadth_cpp23"})
+        self.assertNotIn("generic_algorithm_breadth_cpp23", validation.GATE_EXCLUDED, "the shipped default stays in the gate")
+        self.assertNotIn("trusted_body_analysis_0", validation.GATE_EXCLUDED)
+        with self.assertRaises(ValueError):
+            validation.shard_inventory({"smoke", "other"}, "gate")  # exclusions must name registered tests
+        with self.assertRaises(ValueError):
+            validation.shard_inventory(registered, "nightly")
+
+    def test_durations_refresh_keeps_the_maximum_and_ignores_unknown_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            table = Path(directory) / "durations.json"
+            table.write_text(json.dumps({"schema": 1, "default_seconds": 30, "seconds": {"a": 50.0, "b": 10.0}}))
+            reports = Path(directory) / "reports"
+            reports.mkdir()
+            (reports / "one.xml").write_text(
+                '<testsuite><testcase name="a" time="20.4"/><testcase name="b" time="33.3"/>'
+                '<testcase name="c" time="1.0"/><testcase name="bad name" time="9"/></testsuite>')
+            validation.update_durations(table, reports)
+            seconds = json.loads(table.read_text())["seconds"]
+            self.assertEqual(seconds, {"a": 50.0, "b": 33.3, "c": 1.0})
+            (reports / "broken.xml").write_text("<testsuite>")
+            with self.assertRaises(ValueError):
+                validation.update_durations(table, reports)
+
     def test_shards_partition_deterministically_and_merge_only_complete_coverage(self):
         names = ["a", "b", "c", "d", "e"]
         durations = {"a": 100, "b": 90, "c": 10, "d": 5}

@@ -17,10 +17,13 @@ on:
 permissions:
   contents: read
 
-# A newer main supersedes a warm-up still compiling an older one.
+# Warm-ups queue rather than cancel: the keys are content-derived, so a
+# superseded run still produces a cache the next run restores, and the
+# instrumented warm (over two hours cold) must be allowed to finish once.
+# The release (bundled LLVM/Clang) profile is warmed by llvm-prebuilt.yml.
 concurrency:
   group: gti-compiler-cache
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   warm:
@@ -59,10 +62,9 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.profile }}-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-${{ github.sha }}
+          key: gti-ccache-v2-${{ matrix.profile }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'scripts/configure_ci_toolchain.sh') }}
           restore-keys: |
-            gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.profile }}-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-
-            gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.profile }}-
+            gti-ccache-v2-${{ matrix.profile }}-${{ runner.os }}-${{ runner.arch }}-
       - name: Configure
         if: matrix.profile == 'native'
         run: >-
@@ -90,4 +92,4 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.profile }}-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-${{ github.sha }}
+          key: gti-ccache-v2-${{ matrix.profile }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'scripts/configure_ci_toolchain.sh') }}

@@ -206,7 +206,8 @@ def nightly_contract(root):
     full_header = full.split("\njobs:\n", 1)[0]
     assert "  push:\n    branches: [main]\n  workflow_dispatch:" in full_header
     assert "merge_group" not in full and "pull_request" not in full, "full validation runs post-integration"
-    assert "cancel-in-progress: ${{ github.event_name == 'push' }}" in full_header
+    assert "group: full-validation-${{ github.ref }}\n  cancel-in-progress: false" in full_header, \
+        "full validation runs queue; a superseded head's verdict is still channel evidence"
     integration = jobs(full)
     assert list(integration) == ["plan", "package", "integration", "sanitizers", "verdict", "report"], list(integration)
     assert "merge_group" not in jobs(ci).get("gate", "") or "package" not in jobs(ci)["gate"]
@@ -231,10 +232,14 @@ def nightly_contract(root):
         assert check in package, check
     assert '-DGTI_BUILD_ID="${GTI_NIGHTLY_SHA}"' in package and "-DGTI_EXPECTED_TAG=nightly" in package
     assert "CMakeFiles/gti_driver.dir/src/driver/build.cpp.o" in package
-    key = ("gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('CMakeLists.txt', "
-           "'cmake/**') }}-${{ github.sha }}-${{ github.run_id }}")
-    assert f"key: {key}" in package and f"key: {key}" in suite, "suite shards reuse the package objects"
-    assert "actions/cache/save@" in package and "actions/cache/save@" not in suite
+    key = ("gti-ccache-v2-release-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('CMakeLists.txt', "
+           "'cmake/**', 'scripts/configure_ci_toolchain.sh') }}")
+    assert f"key: {key}" in package and f"key: {key}" in suite, "package and shards restore the prebuilt LLVM cache"
+    prebuilt = (root / ".github/workflows/llvm-prebuilt.yml").read_text()
+    assert f"key: {key}" in prebuilt and "actions/cache/save@" in prebuilt, "llvm-prebuilt.yml owns the release cache"
+    assert "actions/cache/save@" not in package and "actions/cache/save@" not in suite, \
+        "validation runs only restore the release cache"
+    assert "needs: [plan]\n" in suite and "needs: [plan, package]" not in suite, "shards no longer wait for packaging"
     shards = re.findall(r"platform: (linux|darwin), shards: (\d+), index: (\d+)", suite)
     for platform in ("linux", "darwin"):
         rows = [(int(count), int(index)) for name, count, index in shards if name == platform]
@@ -438,8 +443,8 @@ def workflow_contract(root):
     # CI, nightly packaging and the rollup bot run on GitHub; the frozen Gitea
     # release workflow stays as written.
     assert sorted(p.name for p in (root / ".github/workflows").glob("*.yml")) == [
-        "backport.yml", "beta.yml", "cache.yml", "ci.yml", "full-validation.yml", "nightly.yml", "preview.yml",
-        "rollback.yml", "rollup.yml", "train.yml"]
+        "backport.yml", "beta.yml", "cache.yml", "ci.yml", "full-validation.yml", "llvm-prebuilt.yml",
+        "nightly.yml", "preview.yml", "rollback.yml", "rollup.yml", "train.yml"]
     assert not (root / ".gitea/workflows/ci.yml").exists()
     assert "branches:\n      - main" in release and "paths:" not in release
     assert release.count("-DGTI_RELEASE_BUILD=ON") == 1, "channels must share one configure"
@@ -460,11 +465,12 @@ def workflow_contract(root):
     native_ci = ci + full
     assert "documentation-index:" not in native_ci, "documentation must reuse the native compiler"
     assert "build/gti_docgen --stdlib stdlib" in full
-    assert "gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-native-" in ci
-    assert "gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-sanitizers-" in full
+    assert "gti-ccache-v2-native-${{ runner.os }}-${{ runner.arch }}-" in ci
+    assert "gti-ccache-v2-sanitizers-${{ runner.os }}-${{ runner.arch }}-" in full
+    assert "gti-ccache-v1" not in ci + full, "per-SHA cache keys are retired"
     for text in (ci, full):
         assert "actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9" in text
-        assert "actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9" in text
+        assert "actions/cache/save@" not in text, "only cache.yml and llvm-prebuilt.yml save caches"
         assert "path: ${{ env.CCACHE_DIR }}" in text and "secrets." not in text
     for contents, profiles in ((release, ("release",)),):
         assert contents.count("bash scripts/configure_ci_cache.sh") == len(profiles)

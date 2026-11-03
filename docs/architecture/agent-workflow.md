@@ -152,7 +152,7 @@ local race with other tasks needs closing. Nothing locks ordinary editing.
 | `cleanup <task>` | After confirmed merge/sync, remove a plain clean worktree with no ignored files and delete only unchanged integrated branches. |
 | `abandon <task> --reason <text>` | Publish the final checkpoint and close its PR with a reason, preserving branch and worktree. A task with no PR whose branch holds no commits beyond `origin/main` has nothing to preserve. Its clean worktree and branches are removed and the reason is recorded. |
 | `status [task]` | Read task records and current remote PR state. |
-| `protection [--configure]` | Audit, or establish the owner-approved `main` ruleset: pull requests, the merge queue and the `CI gate` check required; no force pushes, deletion or bypass actors. |
+| `protection [--configure]` | Audit, or establish the owner-approved `main` ruleset: pull requests, the merge queue (one entry built at a time, up to five all-green entries merged per build, a two-hour check timeout) and the `CI gate` check required; no force pushes, deletion or bypass actors. |
 
 Checkpoint paths are literal files, including exact identities for deleted
 files: Git pathspec magic, deleted-directory prefixes, directory/root staging,
@@ -718,10 +718,34 @@ advisory-CI policy. `.github/workflows/ci.yml` reports one required check,
 | `pull_request` (draft) | draft | lint and workflow regressions only; a draft cannot enter the queue |
 | `merge_group` | full | the same as a ready pull request: lint, workflow regressions and system-LLVM `fast` checks on the exact candidate (a bounded gate, as rustc and LLVM gate merges) |
 | `workflow_dispatch` on main | full | the same bounded gate, for recovery |
-| `push` to main, or `workflow_dispatch` (`full-validation.yml`) | full | post-integration full validation: production packaging and installed checks, every bundled-release `integration` shard on both platforms, and `sanitizers`; its `Full validation verdict` and retained packages are the nightly/beta/train evidence, and a failure opens the `main-broken` issue |
+| `push` to main, or `workflow_dispatch` (`full-validation.yml`) | full | post-integration full validation: production packaging and installed checks, every bundled-release `integration` shard on both platforms over the complete inventory (`--test-set full`), and `sanitizers`; its `Full validation verdict` and retained packages are the nightly/beta/train evidence, a failure opens the `main-broken` issue, and the run refreshes `tests/ci_test_durations.json` (artifact `ci-test-durations`) for shard balancing |
 | PR or merge group | source-stdlib | lint, workflow regressions, source-library owners and consumers, declared PR regressions and native smoke on both platforms using an admitted full-CI compiler; merge groups also package the new source library |
 | PR or merge group | automation | lint and workflow regressions only |
 | PR or merge group | component | always fails: a batch component cannot merge directly |
+
+`validation_checks.py shard` executes one cost-balanced shard of a test set.
+Four long aggregates (`compiler_pipeline`, `allocator_raw_audit_independence`,
+`body_analysis_order`, `instance_reuse`) are also registered as per-suite,
+per-source or corpus-partition entries; a sharded run executes the parts and
+skips the aggregate (`SHARDED_AGGREGATES`), so the same cases run spread
+across workers instead of one 16–54-minute test ending a shard alone. The
+`gate` set (`GATE_EXCLUDED`) further omits C++-backend-only variants whose
+shipped-default (c++23) or primary entry still runs, and the generated-C++
+corpus censuses; the `full` set runs everything. Every registered test carries
+its observed duration as a CTest `COST` ordering hint from
+`tests/ci_test_durations.json` (`tests/TestThroughput.cmake`), which
+`validation_checks.py durations` refreshes from JUnit reports, keeping the
+maximum.
+
+The bundled LLVM/Clang objects that production packaging and the shards need
+are prebuilt once per toolchain definition by `llvm-prebuilt.yml` (on changes
+to `CMakeLists.txt`, `cmake/`, the toolchain and cache scripts, weekly, and on
+dispatch) and saved as a `main`-scoped ccache keyed by those inputs, never by
+commit; validation runs only restore it, and the integration shards no longer
+wait for packaging. `cache.yml` warms the native and sanitizer profiles the
+same way and is never cancelled by a newer push, so the instrumented warm can
+finish once. No validation run saves a cache: per-commit keys were unreachable
+by later runs and evicted the reachable entries from the 10 GB cache.
 
 `validation_checks.py ci-mode` classifies the candidate from its diff. A
 conservative automation-only diff (docs and the workflow scripts with their own

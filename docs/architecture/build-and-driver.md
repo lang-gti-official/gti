@@ -381,6 +381,9 @@ arbitrary PR pass or merge exception still does not.
    LLVM/Clang, builds, stages `gti_toolchain` into a fresh directory, and runs
    the installed CLI/LSP/project, process-resource, managed-thread,
    atomic-runtime and installed-library consumer checks against that stage.
+   The bundled LLVM/Clang objects come from the content-keyed release cache
+   that `llvm-prebuilt.yml` maintains (see the agent-workflow document), so
+   packaging restores rather than rebuilds LLVM.
    macOS installation generates and verifies `share/gti/host-runtime.json`;
    `cmake/PackageRelease.cmake` refuses a macOS stage without it. The stage
    becomes `gti-nightly-<platform>.tar.gz` with a `.sha256` sidecar and

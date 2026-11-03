@@ -181,10 +181,9 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-native-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-${{ github.sha }}
+          key: gti-ccache-v2-native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'scripts/configure_ci_toolchain.sh') }}
           restore-keys: |
-            gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-native-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-
-            gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-native-
+            gti-ccache-v2-native-${{ runner.os }}-${{ runner.arch }}-
       - name: Configure
         run: >-
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -216,13 +215,12 @@ jobs:
           ctest --test-dir "${RUNNER_TEMP}/gti-system-library-smoke" -C Release \
             --parallel "${GTI_TEST_JOBS}" --output-on-failure
           python3 tests/process_resource_policy_test.py "${RUNNER_TEMP}/gti-system-stage/bin/gti" --installed
-      - name: Save compiler object cache
-        if: always() && steps.cache.outputs.cache-hit != 'true'
-        continue-on-error: true
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-native-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-${{ github.sha }}
+      # cache.yml owns the native cache under its content key; PR and queue
+      # runs only restore it. Per-SHA saves from queue refs were unreachable by
+      # later runs and evicted the reachable entries from the 10 GB cache.
+      - name: Report compiler cache statistics
+        if: always()
+        run: ccache --show-stats || true
 
   source-stdlib:
     name: Source stdlib (${{ matrix.platform }})

@@ -349,6 +349,35 @@ def quarantined_on(table, platform):
     return sorted(name for name, platforms in table.items() if platform in platforms)
 
 
+def update_durations(table_path, reports):
+    """Fold CTest JUnit durations into the shard-balancing table, keeping the max.
+
+    Durations only grow through this path (one fast run must not undo a slow
+    contended one) and names absent from the reports keep their entries. The
+    table is a scheduling hint, never an assertion.
+    """
+    import xml.etree.ElementTree as ElementTree
+    table = json.loads(Path(table_path).read_text())
+    seconds = table.setdefault("seconds", {})
+    updated = 0
+    for report in sorted(Path(reports).rglob("*.xml")):
+        try:
+            tree = ElementTree.parse(report)
+        except ElementTree.ParseError as error:
+            raise ValueError(f"malformed JUnit report {report}: {error}") from error
+        for case in tree.iter("testcase"):
+            name, duration = case.get("name"), case.get("time")
+            if not name or duration is None or not re.fullmatch(r"[A-Za-z0-9_.-]+", name):
+                continue
+            value = round(float(duration), 1)
+            if value > float(seconds.get(name, 0)):
+                seconds[name] = value
+                updated += 1
+    table["seconds"] = dict(sorted(seconds.items()))
+    Path(table_path).write_text(json.dumps(table, indent=1) + "\n")
+    print(f"durations: {updated} entries raised, {len(seconds)} total")
+
+
 def shard_assignment(names, durations, shards, default=30.0):
     """Deterministic cost-balanced partition: longest first onto the lightest shard."""
     if shards < 1:
@@ -487,7 +516,48 @@ def run(root, build, required, full, targets=(), extra=(), jobs=4, log=None, jun
             "compiler": str(build / "gti"), "required": sorted(required), "smoke": smoke_results}
 
 
-def run_shard(root, build, shards, index, durations, jobs=4, log=None, junit=None):
+# Tests that exist only as a convenience aggregate of entries registered on
+# their own. A sharded run executes the parts, never both, so no coverage is
+# lost and the 16-54-minute aggregates stop serialising a shard. Each aggregate
+# maps to the prefix its parts share; an aggregate is dropped only when its
+# parts are registered.
+SHARDED_AGGREGATES = {
+    "compiler_pipeline": "compiler_pipeline_",
+    "allocator_raw_audit_independence": "allocator_raw_audit_independence_",
+    "body_analysis_order": "body_analysis_order_",
+    "instance_reuse": "instance_reuse_",
+}
+# Post-integration full validation runs every registered test. The merge
+# gate's shards skip these: C++-backend-only variants of tests whose
+# shipped-default (c++23) or primary entry still runs, and generated-C++
+# corpus censuses. They stay in full validation; this is the gate's test set,
+# not a quarantine, and `--test-set full` restores them.
+GATE_EXCLUDED = {
+    "generic_algorithm_breadth_cpp20", "generic_algorithm_breadth_no_elide",
+    "generic_algorithm_breadth_sanitized",
+    "trusted_body_analysis_1", "trusted_body_analysis_2", "trusted_body_analysis_3",
+    "lowered_program_corpus_census", "cpp_mir_body_emitter_corpus",
+}
+TEST_SETS = ("gate", "full")
+
+
+def shard_inventory(expected, test_set="full"):
+    """The names a sharded run of `test_set` executes, from the registered inventory."""
+    if test_set not in TEST_SETS:
+        raise ValueError("unknown test set")
+    names = set(expected)
+    for aggregate, prefix in SHARDED_AGGREGATES.items():
+        if aggregate in names and any(name.startswith(prefix) for name in names):
+            names.discard(aggregate)
+    if test_set == "gate":
+        missing = GATE_EXCLUDED - set(expected)
+        if missing:
+            raise ValueError("Gate exclusions name unregistered tests; update GATE_EXCLUDED: " + ", ".join(sorted(missing)))
+        names -= GATE_EXCLUDED
+    return names
+
+
+def run_shard(root, build, shards, index, durations, jobs=4, log=None, junit=None, test_set="full"):
     cache = build_cache(root, build)
     if not 0 <= index < shards:
         raise ValueError("shard index out of range")
@@ -498,8 +568,9 @@ def run_shard(root, build, shards, index, durations, jobs=4, log=None, junit=Non
     excluded = set(quarantined_on(load_quarantine(root), sys.platform))
     if excluded - expected:
         raise ValueError("Quarantined tests are not registered; remove them: " + ", ".join(sorted(excluded - expected)))
+    candidates = shard_inventory(expected, test_set)
     table = json.loads(Path(durations).read_text())
-    selected = shard_assignment(expected - excluded, table["seconds"], shards, table.get("default_seconds", 30))[index]
+    selected = shard_assignment(candidates - excluded, table["seconds"], shards, table.get("default_seconds", 30))[index]
     skipped = []
     if selected:
         with tempfile.TemporaryDirectory(prefix="gti-validation-shard-") as directory:
@@ -512,7 +583,8 @@ def run_shard(root, build, shards, index, durations, jobs=4, log=None, junit=Non
     smoke_results = smoke(root, build, log) if index == 0 else []
     return {"head": git(root, "rev-parse", "HEAD"), "tree": git(root, "rev-parse", "HEAD^{tree}"),
             "platform": sys.platform, "build_type": cache["CMAKE_BUILD_TYPE"], "scope": "shard",
-            "shards": shards, "index": index, "inventory": sorted(expected), "tests": selected,
+            "shards": shards, "index": index, "inventory": sorted(candidates), "tests": selected,
+            "registered": sorted(expected), "test_set": test_set,
             "quarantined": sorted(excluded), "skipped": skipped, "smoke": smoke_results}
 
 
@@ -667,6 +739,10 @@ def main(argv=None):
     shard.add_argument("--shards", type=int, required=True)
     shard.add_argument("--index", type=int, required=True)
     shard.add_argument("--durations", default="tests/ci_test_durations.json")
+    shard.add_argument("--test-set", choices=TEST_SETS, default="full")
+    refresh = sub.add_parser("durations", help="refresh the shard-balancing table from CTest JUnit reports")
+    refresh.add_argument("--reports", required=True, help="directory of ctest --output-junit XML files")
+    refresh.add_argument("--durations", default="tests/ci_test_durations.json")
     shard.add_argument("--jobs", type=int, default=4)
     shard.add_argument("--report", required=True)
     shard.add_argument("--log")
@@ -707,6 +783,9 @@ def main(argv=None):
             summary = merge_shards(reports, [p for p in args.platforms.split(",") if p])
             print("GTI_INTEGRATION_RESULT=" + json.dumps(summary, sort_keys=True))
         return
+    if args.command == "durations":
+        update_durations(root / args.durations, Path(args.reports))
+        return
     if args.command == "declared":
         pr = json.loads(Path(args.event).read_text()).get("pull_request") or {}
         names = declared_tests(pr.get("body"))
@@ -732,7 +811,7 @@ def main(argv=None):
         try:
             report = run_shard(root, Path(args.build).resolve(), args.shards, args.index,
                                root / args.durations, args.jobs, log,
-                               str(Path(args.report).with_suffix(".xml")))
+                               str(Path(args.report).with_suffix(".xml")), test_set=args.test_set)
         finally:
             if log:
                 log.close()
