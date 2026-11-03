@@ -306,7 +306,6 @@ def example_provider_inventory(root: Path, provider: dict) -> dict:
                         "sha256": file_digest(source)})
     return {
         "manifest": manifest_path.relative_to(root).as_posix(),
-        "manifest_sha256": file_digest(manifest_path),
         "members": members,
     }
 
@@ -346,7 +345,6 @@ def stdlib_provider_inventory(root: Path, provider: dict) -> dict:
         })
     return {
         "manifest": manifest_path.relative_to(root).as_posix(),
-        "manifest_sha256": file_digest(manifest_path),
         "source_fingerprints": fingerprints,
         "cases": case_inventory,
     }

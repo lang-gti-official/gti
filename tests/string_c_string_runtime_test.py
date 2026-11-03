@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from backend_modes import is_cpp_mode, keep_cpp, native_modes
 
 
 def run(command):
@@ -29,18 +30,7 @@ def main():
     fixtures = Path(__file__).resolve().parent / "fixtures"
     source = fixtures / "string_c_string.gti"
     native = fixtures / "string_c_string.cpp"
-    modes = [
-        (f"{standard}-{level}", ["--std", standard, f"-{level}"], [])
-        for standard in ("c++20", "c++23")
-        for level in ("O0", "O1", "O3")
-    ]
-    modes.append(
-        (
-            "sanitized",
-            ["--std", "c++23", "-O1"],
-            ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"],
-        )
-    )
+    modes = native_modes()
 
     with tempfile.TemporaryDirectory(prefix="gti-string-c-string-") as directory:
         root = Path(directory)
@@ -58,7 +48,7 @@ def main():
                     compiler,
                     source,
                     *flags,
-                    "--keep-cpp",
+                    *keep_cpp(flags),
                     "-o",
                     binary,
                     "--",
@@ -67,8 +57,9 @@ def main():
                 ]
             )
             assert built.returncode == 0, (name, built.stdout, built.stderr)
-            generated = binary.with_suffix(".gti.cpp").read_text()
-            assert "// GTI verified-MIR body:" in generated
+            if is_cpp_mode(flags):
+                generated = binary.with_suffix(".gti.cpp").read_text()
+                assert "// GTI verified-MIR body:" in generated
 
             executed = run([binary])
             assert (executed.returncode, executed.stdout, executed.stderr) == (

@@ -598,11 +598,15 @@ class Workflow:
                 {"type": "required_status_checks", "parameters": {
                     "strict_required_status_checks_policy": False, "do_not_enforce_on_create": False,
                     "required_status_checks": [{"context": GATE_CHECK}]}},
-                # Group size 1: rollups, not the queue, combine compatible work.
+                # The gate is build-and-fast-checks only, so the queue merges
+                # up to five all-green entries per build. One entry builds at a
+                # time until the gate is measured under an hour (macOS runners
+                # are the scarce resource); a hung check fails in two hours,
+                # not six.
                 {"type": "merge_queue", "parameters": {
                     "merge_method": "MERGE", "grouping_strategy": "ALLGREEN",
-                    "max_entries_to_build": 2, "min_entries_to_merge": 1, "max_entries_to_merge": 1,
-                    "min_entries_to_merge_wait_minutes": 0, "check_response_timeout_minutes": 360}},
+                    "max_entries_to_build": 1, "min_entries_to_merge": 1, "max_entries_to_merge": 5,
+                    "min_entries_to_merge_wait_minutes": 0, "check_response_timeout_minutes": 120}},
             ]}
 
     def protection(self, configure=False):

@@ -4,6 +4,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def main() -> int:
@@ -20,28 +21,26 @@ def main() -> int:
                 root / "fixtures/nominal_field_explicit_failure.gti"]
     cells = 0
     with tempfile.TemporaryDirectory(prefix="gti-generic-instances-") as tmp:
-        for standard in ("c++20", "c++23"):
-            for optimization in ("O0", "O1", "O3"):
-                for source in sources + failures:
-                    target = Path(tmp) / f"{source.stem}-{standard}-{optimization}"
-                    built = subprocess.run([
-                        str(compiler), str(source), "--std", standard,
-                        f"-{optimization}", "--progress", "never", "-o", str(target),
-                    ], capture_output=True, text=True, timeout=90)
-                    if built.returncode:
-                        print(built.stdout + built.stderr, file=sys.stderr)
-                        return 1
-                    ran = subprocess.run([str(target)], capture_output=True, text=True, timeout=10)
-                    expected_failure = source in failures
-                    valid = (ran.returncode == 70 and
-                             ran.stdout == "earlier constructed\nearlier dropped\n" and
-                             "GTI-R0007" in ran.stderr) if expected_failure else (
-                             ran.returncode == 0 and not ran.stdout and not ran.stderr)
-                    if not valid:
-                        print(f"FAIL {target.name}: exit {ran.returncode}\n"
-                              f"stdout: {ran.stdout}\nstderr: {ran.stderr}", file=sys.stderr)
-                        return 1
-                    cells += 1
+        for mode, flags, _native in native_modes():
+            for source in sources + failures:
+                target = Path(tmp) / f"{source.stem}-{mode}"
+                built = subprocess.run([
+                    str(compiler), str(source), *flags, "--progress", "never", "-o", str(target),
+                ], capture_output=True, text=True, timeout=90)
+                if built.returncode:
+                    print(built.stdout + built.stderr, file=sys.stderr)
+                    return 1
+                ran = subprocess.run([str(target)], capture_output=True, text=True, timeout=10)
+                expected_failure = source in failures
+                valid = (ran.returncode == 70 and
+                         ran.stdout == "earlier constructed\nearlier dropped\n" and
+                         "GTI-R0007" in ran.stderr) if expected_failure else (
+                         ran.returncode == 0 and not ran.stdout and not ran.stderr)
+                if not valid:
+                    print(f"FAIL {target.name}: exit {ran.returncode}\n"
+                          f"stdout: {ran.stdout}\nstderr: {ran.stderr}", file=sys.stderr)
+                    return 1
+                cells += 1
     print(f"generic instance runtime: {cells} optimized native cells passed")
     return 0
 

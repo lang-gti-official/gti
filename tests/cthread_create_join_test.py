@@ -10,6 +10,7 @@ import tempfile
 from sanitizer_support import thread_sanitizer_enabled
 
 from native_symbol_spelling import native_spelling
+from backend_modes import cpp_variant_mode, is_cpp_mode, keep_cpp, native_modes
 
 
 def execute(command, expected=0, stdout=None, failure=False):
@@ -42,13 +43,9 @@ def main():
         ("cthread_foreign_rejected", [], 86, "", False, True),
         ("cthread_outstanding", [], 86, "", False, True),
     ]
-    modes = [(f"{standard}-{opt}", ["--std", standard, f"-{opt}"], [])
-             for standard in ("c++20", "c++23") for opt in ("O0", "O1", "O3")]
-    modes.append(("asan-ubsan", ["--std", "c++23", "-O1"],
-                  ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]))
+    modes = native_modes()
     if thread_sanitizer_enabled():
-        modes.append(("tsan", ["--std", "c++23", "-O1"],
-                      ["-fsanitize=thread", "-fno-omit-frame-pointer"]))
+        modes.append(cpp_variant_mode("tsan", native=["-fsanitize=thread", "-fno-omit-frame-pointer"]))
     with tempfile.TemporaryDirectory(prefix="gti-cthread-public-") as directory:
         root = pathlib.Path(directory)
         for mode, flags, native in modes:
@@ -56,7 +53,7 @@ def main():
                 binary = root / f"{mode}-{index}"
                 command = [str(compiler), str(fixtures / f"{case}.gti"), "--progress=never",
                            "--execution-profile", "concurrent", *flags, *options,
-                           "--keep-cpp", "-o", str(binary)]
+                           *keep_cpp(flags), "-o", str(binary)]
                 extra = [*native]
                 if helper:
                     extra.append(str(fixtures / "cthread_context.cpp"))
@@ -64,14 +61,15 @@ def main():
                     command.extend(["--", *extra])
                 execute(command)
                 execute([str(binary)], status, output, failure)
-                generated = binary.with_suffix(".gti.cpp").read_text()
-                spell = lambda symbol: native_spelling(generated, symbol)
-                for marker in ("// GTI verified-MIR body:",
-                               f"{spell('gti_rt_cthread_begin_v1')}();",
-                               f"{spell('gti_rt_cthread_end_v1')}();",
-                               f"{spell('gti_rt_cthread_enter_v1')}(&__gti_native_callback_"):
-                    if marker not in generated:
-                        raise AssertionError(f"{case} lost {marker!r}")
+                if is_cpp_mode(flags):
+                    generated = binary.with_suffix(".gti.cpp").read_text()
+                    spell = lambda symbol: native_spelling(generated, symbol)
+                    for marker in ("// GTI verified-MIR body:",
+                                   f"{spell('gti_rt_cthread_begin_v1')}();",
+                                   f"{spell('gti_rt_cthread_end_v1')}();",
+                                   f"{spell('gti_rt_cthread_enter_v1')}(&__gti_native_callback_"):
+                        if marker not in generated:
+                            raise AssertionError(f"{case} lost {marker!r}")
             print(f"C-thread create/join: {mode} passed", flush=True)
 
 

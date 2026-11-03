@@ -6,6 +6,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from backend_modes import is_cpp_mode, keep_cpp, native_modes
 
 
 def run(command):
@@ -73,27 +74,25 @@ def main():
 
 def run_cases(compiler, cases):
     fixtures = pathlib.Path(__file__).parent / "fixtures"
-    modes = [(f"{standard}-{level}", ["--std", standard, f"-{level}"])
-             for standard in ("c++20", "c++23") for level in ("O0", "O1", "O3")]
-    modes.append(("asan-ubsan", ["--std", "c++23", "-O1"]))
-    modes.append(("no-elide", ["--std", "c++23", "-O0"]))
+    modes = native_modes()
     with tempfile.TemporaryDirectory(prefix="gti-pack-parameters-") as temporary:
-        for mode, flags in modes:
+        for mode, flags, native in modes:
             for fixture, executions in cases.items():
                 binary = pathlib.Path(temporary) / f"{fixture}-{mode}"
                 command = [str(compiler), str(fixtures / f"{fixture}.gti"),
-                           *flags, "--keep-cpp", "-o", str(binary)]
+                           *flags, *keep_cpp(flags), "-o", str(binary)]
                 if mode == "asan-ubsan":
                     command += ["--", "-fsanitize=address,undefined",
                                 "-fno-omit-frame-pointer"]
                 elif mode == "no-elide":
-                    command += ["--", "-fno-elide-constructors"]
+                    command += []
                 built = run(command)
                 if built.returncode:
                     raise AssertionError(f"{fixture}/{mode} build:\n{built.stdout}{built.stderr}")
-                generated = binary.with_suffix(".gti.cpp").read_text()
-                if "// GTI verified-MIR body:" not in generated:
-                    raise AssertionError("missing MIR execution witness")
+                if is_cpp_mode(flags):
+                    generated = binary.with_suffix(".gti.cpp").read_text()
+                    if "// GTI verified-MIR body:" not in generated:
+                        raise AssertionError("missing MIR execution witness")
                 for count, expected in enumerate(executions):
                     result = run([str(binary), *(["fail"] * count)])
                     actual = (result.returncode, result.stdout, result.stderr)

@@ -22,7 +22,7 @@
     "stdlib/std/detail/map_iterators.gti": "1865894665173a692f71381a1190056f1c6f8f1d868590c8a84de887045f5047",
     "stdlib/std/detail/memory_capabilities.gti": "f4add458d438acc7f60ab55c981fd046db11d3fb51b8d81f371892f86243702f",
     "stdlib/std/detail/memory_core.gti": "4fbde597a84587a8108230d8ee58d8b62d7e4cd6c0791a4b22a3ea16b3ed4e37",
-    "stdlib/std/detail/memory_storage.gti": "e548b028aa64ee6b36fa66fbf87f731eb284cdc88cd4c4fa00c0ae95d6e8b3ca",
+    "stdlib/std/detail/memory_storage.gti": "38cba9de0af1fb6a4ca246ca29bfe4ae615f192d5265dee99af6f2556063f35c",
     "stdlib/std/detail/panic.gti": "c78f8a45be7af44e0379ff3c9c77448f5271538859789f252b658abb4b950154",
     "stdlib/std/detail/resource_core.gti": "3af137631b16e0c323850cafa4e43bcbb25eb168cb332d95fbecdd4301e53135",
     "stdlib/std/detail/resource_lease.gti": "f1a66da927f3a040de99b66c55cf2af1bb76779cb75f541c719d06a45c2443f4",
@@ -3666,6 +3666,8 @@
       "evidence": [
         "tests/source_prefix_owner_tests.cpp",
         "tests/source_sparse_storage_tests.cpp",
+        "tests/fixtures/process_storage_policy.gti",
+        "tests/fixtures/process_storage_query_policy.gti",
         "tests/stdlib_module_boundaries_test.py"
       ]
     },

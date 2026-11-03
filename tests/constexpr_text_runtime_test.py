@@ -6,6 +6,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def main() -> int:
@@ -16,22 +17,15 @@ def main() -> int:
     arguments = parser.parse_args()
     compiler = arguments.compiler.resolve()
     source = arguments.source.resolve()
-    modes = [(f"{optimization}-{standard}", [f"-{optimization}", "--std", standard], [])
-             for optimization in ("O0", "O1", "O2", "O3")
-             for standard in ("c++20", "c++23")]
-    if arguments.ownership_checks:
-        modes += [
-            ("asan-ubsan", ["-O1", "--std", "c++23"],
-             ["--", "-fsanitize=address,undefined", "-fno-omit-frame-pointer"]),
-            ("no-elide", ["-O0", "--std", "c++23"],
-             ["--", "-fno-elide-constructors"]),
-        ]
+    # --ownership-checks formerly added C++ sanitized and no-elide
+    # configurations; the policy runs the C++ backend in one profile.
+    modes = native_modes()
     with tempfile.TemporaryDirectory(prefix="gti-constexpr-text-") as temporary:
         root = pathlib.Path(temporary)
-        for name, flags, native_flags in modes:
+        for name, flags, native in modes:
             executable = root / f"text-{name}"
             for command in (
-                [str(compiler), str(source), *flags, "-o", str(executable), *native_flags],
+                [str(compiler), str(source), *flags, "-o", str(executable), *native],
                 [str(executable)],
             ):
                 result = subprocess.run(command, capture_output=True, text=True)

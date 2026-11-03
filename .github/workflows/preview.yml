@@ -1,6 +1,12 @@
 name: Preview toolchain
 
 # Preview is a combined-source channel, separate from full-CI nightly admission.
+# It promises a buildable early snapshot, not a validated one: each feature's
+# focused checks ran once during host-side admission (`preview verify`) before
+# its source reached the preview branch. This workflow builds the admitted
+# source with the release object cache, proves the compiler runs native
+# programs on each platform, stages, smoke-tests the installed toolchain,
+# packages and publishes. It repeats no focused checks.
 on:
   push:
     branches: [preview]
@@ -61,7 +67,9 @@ jobs:
           - {os: ubuntu-24.04, platform: linux-x64, host: Linux-X64}
           - {os: macos-26, platform: darwin-arm64, host: macOS-ARM64}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 360
+    # A warm build, the smoke and packaging take about twenty minutes; a cold
+    # compiler build is the only reason to wait longer.
+    timeout-minutes: 120
     defaults:
       run:
         working-directory: source
@@ -106,12 +114,16 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('source/CMakeLists.txt', 'source/cmake/**') }}-${{ github.sha }}-${{ github.run_id }}
+          # The release object cache that llvm-prebuilt.yml warms (bundled
+          # LLVM/Clang and the compiler); validation and preview runs only
+          # restore it, so a warm build takes minutes instead of an hour.
+          key: gti-ccache-v2-release-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('source/CMakeLists.txt', 'source/cmake/**', 'source/scripts/configure_ci_toolchain.sh') }}
           restore-keys: |
-            gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('source/CMakeLists.txt', 'source/cmake/**') }}-
-            gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-release-
-      - name: Check runner sanitizer execution
-        run: python3 scripts/check_ci_sanitizers.py --cxx "${CXX}" --sanitizer address,undefined
+            gti-ccache-v2-release-${{ runner.os }}-${{ runner.arch }}-
+      - name: Request CMake build and installation metadata
+        run: |
+          mkdir -p build/.cmake/api/v1/query
+          touch build/.cmake/api/v1/query/codemodel-v2
       - name: Configure release build
         run: >-
           cmake -S . -B build -G Ninja
@@ -122,12 +134,23 @@ jobs:
         run: >-
           cmake --build build --config Release --parallel "${GTI_JOBS}"
           --target CMakeFiles/gti_driver.dir/src/driver/build.cpp.o
-      - name: Build
-        run: python3 scripts/build_window.py --kind build -- cmake --build build --config Release --parallel "${GTI_JOBS}"
-      - name: Validate combined preview on this platform
+      - name: Build the installed toolchain products
+        # Only what the toolchain component installs (compiler, LSP, parser,
+        # bundled LLVM); no test executables.
         run: >-
-          python3 scripts/build_window.py --kind suite --
-          ctest --test-dir build --output-on-failure -R '^preview_admission$' --no-tests=error
+          python3 ../control/scripts/preview_build.py --source . --build build --parallel "${GTI_JOBS}" --products-only
+      - name: Prove the built compiler executes native programs
+        # Two programs at O0 and O3 through this candidate's stdlib and
+        # runtime: the preview promise is "it builds and runs here".
+        run: python3 ../control/scripts/validation_checks.py smoke --root . --build build
+      - name: Retain the preview build record
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: preview-checks-${{ matrix.platform }}-${{ github.run_attempt }}
+          path: source/build/Testing/preview-build.json
+          if-no-files-found: warn
+          retention-days: 14
       - name: Stage toolchain
         run: |
           stage="$(mktemp -d "${RUNNER_TEMP}/gti-stage.XXXXXXXX")"
@@ -138,17 +161,12 @@ jobs:
           export PATH="${GTI_STAGE_DIRECTORY}/bin:${PATH}"
           source="${GITHUB_WORKSPACE}/source"
           cd "${RUNNER_TEMP}"
+          # Packaging checks only: the installed CLI, LSP and project
+          # commands answer, and a consumer links the installed library.
+          # Runtime behaviour was the admission's focused checks.
           python3 "${source}/tests/lsp_smoke_test.py" gti_lsp
           python3 "${source}/tests/cli_smoke_test.py" gti
           python3 "${source}/tests/project_cli_smoke_test.py" gti
-          python3 "${source}/tests/process_resource_policy_test.py" gti --installed
-          python3 "${source}/tests/managed_thread_runtime_test.py" gti
-          python3 "${source}/tests/atomic_runtime_test.py" gti \
-            "${source}/tests/fixtures/atomic_scalar.gti" \
-            "${source}/tests/fixtures/atomic_concurrent.gti" \
-            "${source}/tests/fixtures/atomic_orders.gti" \
-            "${source}/tests/fixtures/atomic_fetch.gti" \
-            "${source}/tests/fixtures/atomic_fetch_overflow.gti"
           cmake -S "${source}/tests/installed_library_smoke" \
             -B "${RUNNER_TEMP}/gti-installed-library-smoke" -G Ninja \
             -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="${GTI_STAGE_DIRECTORY}"
@@ -191,15 +209,8 @@ jobs:
       - name: Report compiler cache statistics
         if: always()
         run: if command -v ccache >/dev/null 2>&1; then ccache --show-stats; fi
-      # Retain compatible object files for later preview builds.
-      - name: Save compiler and LLVM/Clang cache, including partial builds
-        if: always() && steps.cache.outputs.cache-primary-key != '' && steps.cache.outputs.cache-hit != 'true'
-        continue-on-error: true
-        timeout-minutes: 10
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ${{ steps.cache.outputs.cache-primary-key }}
+      # llvm-prebuilt.yml owns the release cache under its content key; a
+      # preview run only restores it.
 
   publish:
     needs: [select, package]

@@ -6,6 +6,7 @@ import sys
 import tempfile
 
 from unique_class_allocation_runtime_test import run
+from backend_modes import is_cpp_mode, keep_cpp, native_modes
 
 
 def main():
@@ -98,22 +99,20 @@ def main():
         f"{inherited.name}:{secondary}: runtime error[GTI-R0014]: "
         "failure_during_cleanup; primary [GTI-R0002] at "
         f"{inherited.name}:{primary}; secondary [GTI-R0002]\n")
-    modes = [(f"{standard}-{opt}", ["--std", standard, f"-{opt}"], [])
-             for standard in ("c++20", "c++23") for opt in ("O0", "O1", "O3")]
-    modes.append(("sanitized", ["--std", "c++23", "-O1"],
-                  ["--", "-fsanitize=address,undefined", "-fno-omit-frame-pointer"]))
+    modes = native_modes()
     with tempfile.TemporaryDirectory(prefix="gti-collection-cleanup-") as directory:
         for name, flags, native in modes:
             binary = pathlib.Path(directory) / name
-            command = [str(compiler), str(source), *flags, "--keep-cpp",
+            command = [str(compiler), str(source), *flags, *keep_cpp(flags),
                        "-o", str(binary), *native]
             built = run(command)
             assert built.returncode == 0, (command, built.stdout, built.stderr)
-            generated = binary.with_suffix(".gti.cpp").read_text()
-            # Collection policy is an ordinary source body. Cleanup still
-            # consumes the exact MIR class and element recipes.
-            assert "_prefix_drain" in generated
-            assert ".template __gti_mir_unique_cleanup_failure<" in generated
+            if is_cpp_mode(flags):
+                generated = binary.with_suffix(".gti.cpp").read_text()
+                # Collection policy is an ordinary source body. Cleanup still
+                # consumes the exact MIR class and element recipes.
+                assert "_prefix_drain" in generated
+                assert ".template __gti_mir_unique_cleanup_failure<" in generated
             for phase, expected in enumerate(cases):
                 result = run([str(binary), *(["phase"] * phase)])
                 actual = (result.returncode, result.stdout, result.stderr)

@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from backend_modes import is_cpp_mode, keep_cpp, native_modes, optimization_level
 
 
 def run(command, environment):
@@ -84,16 +85,12 @@ def main():
         (20, 70, "85\n90\n", panic("terminal-argument-site", "argument failed")),
         (21, 70, "86\n90\n", panic("terminal-argument-site", "argument failed")),
     ]
-    modes = [(f"cpp{standard}-O{level}", f"c++{standard}", f"-O{level}", [])
-             for standard in ("20", "23") for level in ("0", "1", "3")]
-    modes += [("no-elide", "c++23", "-O0", ["-fno-elide-constructors"]),
-              ("sanitized", "c++23", "-O1", ["-fsanitize=address,undefined",
-                                                 "-fno-omit-frame-pointer"])]
+    modes = native_modes()
     if arguments.quick:
-        modes = [("quick", "c++23", "-O0", [])]
+        modes = modes[:1]
     with tempfile.TemporaryDirectory(prefix="gti-panic-") as temporary:
         root = pathlib.Path(temporary)
-        for name, standard, level, native in modes:
+        for name, flags, native in modes:
             outcomes = 0
             for fixture, executions in (
                     (fixtures / "panic_direct.gti", [(0, 70, "", 'panic_direct.gti:4: runtime error[GTI-R0017]: panic: "explicit panic"\n')]),
@@ -155,13 +152,15 @@ def main():
                 if arguments.worker_only and not worker_fixture:
                     continue
                 binary = root / f"{fixture.stem}-{name}"
-                command = [str(compiler), str(fixture), "--std", standard, level,
-                           "--keep-cpp", "-o", str(binary)]
+                command = [str(compiler), str(fixture), *flags, *keep_cpp(flags),
+                           "-o", str(binary)]
                 if fixture == source or worker_fixture:
                     command += ["--execution-profile", "concurrent"]
                 if native:
                     command += ["--", *native]
-                source_owner = fixture.name == "panic_worker_shells.gti"
+                # The C++ text has no wrapping atomic read-modify-write; the
+                # fixture executes on LLVM in every mode.
+                source_owner = fixture.name == "panic_worker_shells.gti" and is_cpp_mode(flags)
                 if source_owner:
                     binary.write_bytes(b"preserved")
                     rejected = run(command, environment)
@@ -169,7 +168,7 @@ def main():
                             and "wrapping atomic read-modify-write" in rejected.stderr
                             and binary.read_bytes() == b"preserved"), rejected
                     print(f"RECORDED C++ LIMITATION {fixture.name}/{name}: wrapping atomics", flush=True)
-                    command = [str(compiler), str(fixture), "--backend", "llvm", level,
+                    command = [str(compiler), str(fixture), "--backend", "llvm", f"-{optimization_level(flags)}",
                                "--execution-profile", "concurrent", "-o", str(binary)]
                 built = run(command, environment)
                 if built.returncode:
@@ -181,7 +180,7 @@ def main():
                         shutil.copy2(fixture, retained / fixture.name)
                         sys.stderr.write(f"Failure artifacts retained at {retained}\n")
                     return 1
-                if not source_owner:
+                if not source_owner and is_cpp_mode(flags):
                     generated = binary.with_suffix(".gti.cpp").read_text()
                     assert "// GTI verified-MIR body:" in generated
                     assert "gti_rt_failure_capture_panic_v2" in generated
