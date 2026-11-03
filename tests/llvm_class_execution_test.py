@@ -850,6 +850,9 @@ def success_cases(root: Path) -> dict[str, str]:
     cases["fresh-transfer-placement"] = (
         root / "tests/fixtures/llvm_class_fresh_transfer_regression.gti").read_text(
             encoding="utf-8")
+    cases["constexpr-text-receivers"] = (
+        root / "tests/fixtures/constexpr_text_positive.gti").read_text(
+            encoding="utf-8")
     return cases
 
 
@@ -871,7 +874,8 @@ def evidence_manifest(root: Path) -> dict:
     return build_manifest(
         "llvm_class_execution", evidence_cases(root), evidence_profiles(root),
         {"shipped-example": "examples/llvm/classes-and-lifetimes.gti",
-         "fresh-transfer-placement": "tests/fixtures/llvm_class_fresh_transfer_regression.gti"})
+         "fresh-transfer-placement": "tests/fixtures/llvm_class_fresh_transfer_regression.gti",
+         "constexpr-text-receivers": "tests/fixtures/constexpr_text_positive.gti"})
 
 
 def list_evidence(root: Path) -> None:
