@@ -331,6 +331,8 @@ class RemotePreviewTests(unittest.TestCase):
                 (path/name).write_text(json.dumps(value))
             names = [f'gti-preview-{platform}.tar.gz', f'gti-preview-{platform}.tar.gz.sha256']
             package = {'sha': SHA, 'platform': platform, 'profile': a.PROFILE,
+                       'environment': ({'os':'ubuntu-24.04','image':None} if platform=='linux-x64' else
+                                       {'os':'macos','deployment_target':'26.0','image':None}),
                        'files': {n:a.digest(directory/n) for n in names}}
             (path/'logs/package.log').write_text(remote.MARKER+json.dumps(package)+'\n')
             results[platform] = path
@@ -359,6 +361,31 @@ class RemotePreviewTests(unittest.TestCase):
             (directory/'gti-preview-linux-x64.tar.gz').write_bytes(b'changed')
             with self.assertRaisesRegex(ValueError,'checksum'):
                 remote.verify(directory,SHA,results)
+
+    def test_production_environment_rejects_newer_linux_and_mutable_images(self):
+        import preview_remote as remote
+        with patch.object(remote.host,'freedesktop_os_release',return_value={'ID':'ubuntu','VERSION_ID':'26.04'}):
+            with self.assertRaisesRegex(ValueError,'24.04'):remote.production_environment('linux-x64')
+        with patch.object(remote.host,'freedesktop_os_release',return_value={'ID':'ubuntu','VERSION_ID':'24.04'}):
+            self.assertEqual(remote.production_environment('linux-x64','sha256:'+'a'*64),
+                             {'os':'ubuntu-24.04','image':'sha256:'+'a'*64})
+        with patch.object(remote.host,'mac_ver',return_value=('27.0.1',(),'')):
+            self.assertEqual(remote.production_environment('darwin-arm64')['deployment_target'],'26.0')
+        with self.assertRaisesRegex(ValueError,'immutable'):
+            remote.plan(SHA,'linux-x64','/exports',image='ubuntu:24.04')
+        self.assertEqual(remote.plan(SHA,'linux-x64','/exports',image='sha256:'+'a'*64)[0]['argv'][-2:],
+                         ['--container-image','sha256:'+'a'*64])
+
+    def test_remote_receipts_bind_production_os_and_container_identity(self):
+        import preview_remote as remote
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);directory=root/'dist';directory.mkdir();self.make_packages(directory)
+            results=self.evidence(root,directory);location=results['linux-x64'];log=location/'logs/package.log'
+            original=json.loads(log.read_text()[len(remote.MARKER):]);changed=copy.deepcopy(original)
+            changed['environment']['os']='ubuntu-26.04';log.write_text(remote.MARKER+json.dumps(changed)+'\n')
+            with self.assertRaisesRegex(ValueError,'identity'):remote.receipt(location,SHA,'linux-x64')
+            original['environment']['image']='sha256:'+'b'*64;log.write_text(remote.MARKER+json.dumps(original)+'\n')
+            with self.assertRaisesRegex(ValueError,'identity'):remote.receipt(location,SHA,'linux-x64')
 
     def test_remote_receipts_reject_skipped_changed_and_misattributed_work(self):
         import preview_remote as remote
