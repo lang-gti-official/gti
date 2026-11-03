@@ -291,7 +291,8 @@ public:
   uint64_t length() { return this.live; }
   // Publishes a caller-constructed contiguous prefix without touching objects.
   // The caller owns the exclusive lease, count <= capacity(), every newly
-  // included slot is initialized, and every removed slot is already destroyed.
+  // included slot is initialized, and every removed slot is already destroyed
+  // or its cleanup obligation has been transferred to another storage owner.
   // A fallible construction loop must publish each completed element (or use
   // its own rollback guard) before another operation can fail.
   unsafe void set_initialized_length_unchecked(uint64_t count) mut {

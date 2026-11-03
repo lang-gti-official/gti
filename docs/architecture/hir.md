@@ -849,6 +849,16 @@ yield's storage policy. Mutable-reference and ordinary by-value loop bindings
 keep their direct paths. HIR does not create temporary-reference permissions
 or infer storage from a backend representation.
 
+For an owned class with the consuming `has_next`/`take_next` protocol, semantics
+retains an alternate ordinary-call lowering in `ResolvedRangeIterationInfo`.
+HIR retains that arena along with `RangeIterationStrategy::Consuming`, so its
+source identities remain valid through generic instance reanalysis. It names
+the original owned source, a distinct mutable cursor, the selected read-only
+condition call, and the mutable owned-value call. Each written value binding
+uses ordinary initialization and cleanup; no range/element loan is invented.
+Verification checks concrete call declarations and their exact cursor receivers.
+Ordinary iterator/sentinel lowering and parser recovery syntax remain separate.
+
 When semantics marks an exact named return as an implicit move, HIR preserves
 the source place value and adds one unary `HirValueKind::Move` as the return
 root. That value carries the same ownership event, exact place identity,

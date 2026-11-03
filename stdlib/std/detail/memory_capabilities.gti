@@ -29,6 +29,7 @@ export void object_destroy<T>(T* address);
 export void object_construct<T, Args...>(T* address, Args... args);
 export void object_relocate<T>(T* destination, T* source);
 export void object_relocate_range<T>(T* destination, T* source, uint64_t count);
+export T object_take<T>(T* source);
 export gti_internal::text_view text_view_from_address<Owner>(
     const char* address, uint64_t count, Owner& owner);
 export gti_internal::c_string c_string_from_address<Owner>(

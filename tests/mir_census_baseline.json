@@ -184,7 +184,8 @@
     "183-immediate-functions.gti": 11,
     "184-payload-borrow-chains.gti": 11,
     "185-reflected-method-dispatch.gti": 47,
-    "186-dynamic-json.gti": 646
+    "186-dynamic-json.gti": 646,
+    "186-consuming-ranges.gti": 450
   },
   "total": -1,
   "target": "arm64-apple-macos",
@@ -192,7 +193,8 @@
     "x86_64-unknown-linux": {
       "examples": {
         "087-associative-containers.gti": 451,
-        "089-library-workflow.gti": 917
+        "089-library-workflow.gti": 917,
+        "186-consuming-ranges.gti": 449
       },
       "total": -1
     }
