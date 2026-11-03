@@ -48,7 +48,7 @@ def run(executable, root):
     def notify(method, params):
         session.send({"jsonrpc": "2.0", "method": method, "params": params})
 
-    def change(source):
+    def change(source, expected_code=None, require_fixes=False):
         nonlocal version
         version += 1
         if version == 1:
@@ -60,7 +60,12 @@ def run(executable, root):
         return session.receive_until(lambda message:
             message.get("method") == "textDocument/publishDiagnostics"
             and message["params"].get("uri") == uri
-            and message["params"].get("version") == version, timeout=scaled_timeout(30)
+            and message["params"].get("version") == version
+            and (expected_code is None or any(
+                d["code"] == expected_code for d in message["params"]["diagnostics"]))
+            and (not require_fixes or any(
+                d.get("data", {}).get("fixes") for d in message["params"]["diagnostics"])),
+            timeout=scaled_timeout(30)
         )["params"]["diagnostics"]
 
     def actions(diagnostic, automatic=False):
@@ -70,7 +75,7 @@ def run(executable, root):
                         "triggerKind": 2 if automatic else 1}})
 
     def repair(source, code, expected):
-        diagnostics = change(source)
+        diagnostics = change(source, expected_code=code)
         diagnostic = next(d for d in diagnostics if d["code"] == code)
         assert diagnostic["data"]["repairSnapshot"]
         assert all(f["applicability"] == "requiresReview" for f in diagnostic["data"]["fixes"])
@@ -81,7 +86,7 @@ def run(executable, root):
         changed = apply_action(offered[0], uri, version, source)
         assert changed == expected, (changed, expected)
         # Same text, new editor version: an old diagnostic is still stale.
-        fresh = next(d for d in change(source) if d["code"] == code)
+        fresh = next(d for d in change(source, expected_code=code) if d["code"] == code)
         assert actions(diagnostic) == [], "old snapshot accepted after identical-text change"
         assert len(actions(fresh)) == 1
         remaining = change(changed)
@@ -126,7 +131,7 @@ def run(executable, root):
         (root / "other.gti").write_text("export module other;\nexport namespace api { int value() { return 8; } }\n")
         notify("workspace/didChangeWatchedFiles", {"changes": [
             {"uri": (root / "other.gti").as_uri(), "type": 1}]})
-        diagnostic = next(d for d in change(source) if d.get("data", {}).get("fixes"))
+        diagnostic = next(d for d in change(source, require_fixes=True) if d.get("data", {}).get("fixes"))
         offered = actions(diagnostic)
         assert len(offered) == 2, offered
         assert len({f["repairId"] for f in diagnostic["data"]["fixes"]}) == 2
@@ -135,7 +140,7 @@ def run(executable, root):
         discovered = actions(diagnostic, automatic=True)
         assert len(discovered) == 2 and all(not item["isPreferred"] for item in discovered), discovered
         for index in range(2):
-            diagnostic = next(d for d in change(source) if d.get("data", {}).get("fixes"))
+            diagnostic = next(d for d in change(source, require_fixes=True) if d.get("data", {}).get("fixes"))
             changed = apply_action(actions(diagnostic)[index], uri, version, source)
             remaining = change(changed)
             assert not [d for d in remaining if d.get("severity") == 1], remaining

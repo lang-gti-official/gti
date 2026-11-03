@@ -133,6 +133,17 @@ def test_signature_type_visibility(executable):
                 "start": lsp_position(source, offset),
                 "end": lsp_position(source, offset + len("unique_ptr"))}, diagnostic
             assert diagnostic["relatedInformation"], diagnostic
+            # Import advice follows the ordinary visibility error; retain the
+            # exact repair assertions after the enriched publication arrives.
+            enriched = session.receive_until(lambda message:
+                message.get("method") == "textDocument/publishDiagnostics"
+                and message["params"].get("uri") == uri
+                and message["params"].get("version") == 1
+                and any(item.get("code") == "GTI-S2024" and
+                        item.get("data", {}).get("fixes")
+                        for item in message["params"]["diagnostics"]))
+            diagnostic = next(item for item in enriched["params"]["diagnostics"]
+                              if item.get("code") == "GTI-S2024")
             assert any("import std.memory;" in hint
                        for hint in diagnostic["data"]["hints"]), diagnostic
 
