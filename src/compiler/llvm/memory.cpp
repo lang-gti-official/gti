@@ -182,9 +182,10 @@ llvm::Value *Memory::allocateBytes(std::uint64_t size,
       (alignment & (alignment - 1)))
     throw BackendUnsupportedError(
         "LLVM allocation extent/alignment is not representable");
-  // Generated owner representations keep their own runtime allocation family,
-  // as the generated C++ support code does; only sealed source-policy calls
-  // (processCall) reach the injectable process provider.
+  // Generated owner representations use the runtime owner pair, which calls
+  // the same replaceable nothrow operator new as the generated C++ support
+  // code; only sealed source-policy calls (processCall) reach the injectable
+  // process provider.
   auto *call = ir.CreateCall(
       declareRuntimeService(session, RuntimeService::OwnerAllocate),
       {ir.getInt64(size), ir.getInt64(alignment)});
@@ -205,9 +206,11 @@ llvm::Value *Memory::allocateObject(const MirInstruction &instruction) {
   return address;
 }
 
-void Memory::releaseBytes(llvm::Value *address) {
+void Memory::releaseBytes(llvm::Value *address, std::uint64_t alignment) {
+  // The release selects the matching (aligned or ordinary) delete from the
+  // same alignment the allocation received.
   ir.CreateCall(declareRuntimeService(session, RuntimeService::OwnerRelease),
-                {address});
+                {address, ir.getInt64(alignment)});
 }
 
 Memory::SharedRelease Memory::releaseShared(llvm::Value *handle) {

@@ -15,7 +15,7 @@ import tempfile
 
 from allocation_abort_runtime_test import ABORT_STATUS
 from unique_class_allocation_runtime_test import run
-from backend_modes import cpp_only_case, is_cpp_mode, native_modes
+from backend_modes import native_modes
 
 
 SUCCESS = """empty empty
@@ -96,22 +96,13 @@ def main():
             built = run([str(compiler), str(source), *flags, "-o", str(binary),
                          "--", str(native), *native_flags])
             assert built.returncode == 0, (name, built.stdout, built.stderr)
-            if not is_cpp_mode(flags):
-                # The counting provider observes the C++ text's operator new;
-                # LLVM-backed programs allocate through the runtime, so only
-                # the lifecycle observations are compared there.
-                cpp_only_case("allocation counts observed through the C++ text's operator new", "allocation counts", name)
+            # Generated C++ and the LLVM backend's runtime owner pair allocate
+            # owners through the same replaceable nothrow operator new, so the
+            # counting and fault-injecting companion observes both backends
+            # identically (lang-gti-official/gti#200).
             for phase, expected in enumerate(cases):
-                if not is_cpp_mode(flags) and "allocation_failure" in expected[2]:
-                    # The fault provider replaces the C++ text's nothrow operator new.
-                    cpp_only_case("allocation fault injection through the C++ text's nothrow operator new", f"phase {phase}", name)
-                    continue
                 result = run([str(binary), *(["phase"] * phase)])
                 observed = (result.returncode, result.stdout, result.stderr)
-                if not is_cpp_mode(flags):
-                    strip = lambda text: "\n".join(line for line in text.split("\n") if " allocations " not in line)
-                    observed = (observed[0], strip(observed[1]), observed[2])
-                    expected = (expected[0], strip(expected[1]), expected[2])
                 assert observed == expected, (name, phase, observed, expected)
             print(f"inline polymorphic lifecycle: {name} passed", flush=True)
 

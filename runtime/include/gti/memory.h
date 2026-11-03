@@ -17,11 +17,13 @@ int32_t gti_rt_address_is_aligned_v1(const void *address, uint64_t alignment);
 
 // Storage for compiler-generated owner representations (unique-owner pointees,
 // shared-owner control blocks, runtime task boxes), separate from the
-// source-owned process provider below. Returns null for a zero extent, an
-// invalid alignment or exhaustion. Release accepts null and only addresses
-// returned by gti_rt_owner_allocate_v1.
+// source-owned process provider below. It uses the replaceable global nothrow
+// operator new/delete family exactly as generated C++ support code does.
+// Returns null for a zero extent, an invalid alignment or exhaustion. Release
+// accepts null; otherwise it requires an address from gti_rt_owner_allocate_v1
+// and the same alignment that allocation received.
 void *gti_rt_owner_allocate_v1(uint64_t bytes, uint64_t alignment);
-void gti_rt_owner_release_v1(void *address);
+void gti_rt_owner_release_v1(void *address, uint64_t alignment);
 
 #if defined(_WIN32)
 // Preconditions: bytes > 0; alignment is a nonzero power of two; both fit

@@ -143,6 +143,9 @@ def allocation_free_object(gti: Path, root: Path, work: Path, env: dict[str, str
         "gti_rt_posix_memalign_v1",
         "gti_rt_aligned_free_v1",
         "gti_rt_posix_free_v1",
+        # Generated owner storage uses the runtime owner pair.
+        "gti_rt_owner_allocate_v1",
+        "gti_rt_owner_release_v1",
     )
     if any(symbol in symbols.stdout for symbol in forbidden):
         raise AssertionError("ordinary closure unexpectedly retained an allocation provider")

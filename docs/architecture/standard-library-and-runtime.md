@@ -766,10 +766,10 @@ policy, including default typed factories. Prefix owners now use the same source
 provider. Other generated-program allocations remain in unique-owner
 construction and shared-owner/control-block representations in the generated
 support code. These retain their current allocation families until their own
-source/lifecycle migration is validated: native `new`/`delete` in generated
-C++, and the separate `gti_rt_owner_allocate_v1`/`gti_rt_owner_release_v1`
-runtime pair on LLVM. Neither backend routes them through the injectable
-provider adapters. Native HTTP/filesystem/thread handles
+source/lifecycle migration is validated: replaceable nothrow `new`/`delete`,
+called directly by generated C++ and through the runtime's
+`gti_rt_owner_allocate_v1`/`gti_rt_owner_release_v1` pair on LLVM. Neither
+backend routes them through the injectable provider adapters. Native HTTP/filesystem/thread handles
 also allocate host implementation objects behind their existing C ABI. Compiler
 host allocations such as emission-plan `std::make_unique` are not GTI-program
 allocations and are outside this migration.
