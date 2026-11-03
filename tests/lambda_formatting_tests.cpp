@@ -20,6 +20,16 @@ int main() {
       {"outer(inner([]() -> void {}));", "inner([]()"},
       {"start(1,[]() -> void {});", "start(1, []()"},
       {"auto action=[]() -> void {};", "auto action = []()"},
+      {"auto relay=[](mut int& value)->mut int&{return value;};",
+       "[](mut int& value) -> mut int&"},
+      {"auto read=[](mut int& value)->int&{value+=1;return value;};",
+       "[](mut int& value) -> int&"},
+      {"auto relay=[](mut imported::Cell& value)->mut imported::Cell&"
+       "{return value;};",
+       "-> mut imported::Cell&"},
+      {"auto relay=[](mut Cell& value)->mut Cell /* owner */ &"
+       "{return value;};",
+       "-> mut Cell /* owner */&"},
       {"start(/* callback */ []() -> void {});", "/* callback */ []()"},
       {"start(// callback\n[]() -> void {});", "// callback\n"},
       {"start([]() -> void {", "start([]()"},
