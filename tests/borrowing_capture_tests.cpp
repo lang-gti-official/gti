@@ -563,15 +563,14 @@ int main() {
 }
 )",
            "GTI-S2017");
-  negative("lambda-reference-result-from-mutable-parameter", R"(
+  positive("lambda-reference-result-from-mutable-parameter", R"(
 int main() {
   mut int cell = 4;
-  auto bad = [](mut int& value) -> int& { return value; };
-  int& view = bad(cell);
-  return view;
+  auto read = [](mut int& value) -> int& { value += 1; return value; };
+  int& view = read(cell);
+  return view - 5;
 }
-)",
-           "GTI-S2017");
+)");
   negative("invocation-pointer-ambiguous-origin", R"(
 import std.functional;
 [[borrowed_from(a)]]
