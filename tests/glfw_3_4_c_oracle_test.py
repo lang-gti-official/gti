@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 # Exact GLFW 3.4 GLFWAPI inventory from include/GLFW/glfw3.h. Preprocessor
@@ -471,25 +472,22 @@ def main():
                 ]
             )
 
-        for optimization in ("-O0", "-O3"):
-            for standard in ("c++20", "c++23"):
-                suffix = ".exe" if os.name == "nt" else ""
-                binary = temp / f"glfw-{optimization[2:]}-{standard}{suffix}"
-                run(
-                    [
-                        gti,
-                        fixture,
-                        optimization,
-                        "--std",
-                        standard,
-                        "-o",
-                        binary,
-                        "--",
-                        c_stub_object,
-                    ],
-                    cwd=root,
-                )
-                run([binary])
+        for mode, flags, _native in native_modes():
+            suffix = ".exe" if os.name == "nt" else ""
+            binary = temp / f"glfw-{mode}{suffix}"
+            run(
+                [
+                    gti,
+                    fixture,
+                    *flags,
+                    "-o",
+                    binary,
+                    "--",
+                    c_stub_object,
+                ],
+                cwd=root,
+            )
+            run([binary])
 
         run(
             [
@@ -511,9 +509,7 @@ def main():
             [
                 gti,
                 failure_gti,
-                "-O0",
-                "--std",
-                "c++23",
+                *native_modes(levels=("O0",))[0][1],
                 "-o",
                 failure_binary,
                 "--",

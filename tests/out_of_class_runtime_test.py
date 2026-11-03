@@ -9,6 +9,7 @@ import sys
 import tempfile
 
 from project_cli_smoke_test import executable_named, run as checked_run
+from backend_modes import is_cpp_mode, keep_cpp, native_modes
 
 
 def run(*args, **kwargs):
@@ -31,12 +32,12 @@ def main():
     with tempfile.TemporaryDirectory(prefix="gti-split-definitions-") as temporary:
         root = pathlib.Path(temporary)
         source = repository / "examples/150-out-of-class-methods.gti"
-        for standard in ("c++20", "c++23"):
-            for optimization in ("-O0", "-O1", "-O3"):
-                binary = root / f"direct-{standard}-{optimization}"
-                run([compiler, str(source), "--std", standard, optimization,
-                     "--keep-cpp", "-o", str(binary)])
-                assert run([str(binary)]).stdout == "separate definitions\n"
+        for mode, flags, native in native_modes():
+            binary = root / f"direct-{mode}"
+            run([compiler, str(source), *flags,
+                 *keep_cpp(flags), "-o", str(binary)])
+            assert run([str(binary)]).stdout == "separate definitions\n"
+            if is_cpp_mode(flags):
                 assert "// GTI verified-MIR body:" in binary.with_suffix(".gti.cpp").read_text()
 
         project = root / "factory"

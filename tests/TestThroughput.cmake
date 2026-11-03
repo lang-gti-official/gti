@@ -74,7 +74,9 @@ endforeach()
 # Which backends the runtime harnesses exercise (tests/backend_modes.py).
 # The shipped backend is the default; the deprecated C++ backend runs only
 # in the scheduled C++ job. A developer may override GTI_TEST_BACKENDS in
-# the environment of a direct harness run.
+# the environment of a direct harness run; under CTest the ENVIRONMENT
+# property below overrides the caller's environment, so a tree selects its
+# policy at configure time (`cmake -DGTI_TEST_BACKENDS=cpp <build>`).
 set(GTI_TEST_BACKENDS "llvm" CACHE STRING
   "Backends the runtime harnesses exercise: llvm, cpp or both")
 if(NOT GTI_TEST_BACKENDS MATCHES "^(llvm|cpp|both)$")
@@ -362,5 +364,12 @@ foreach(suite IN LISTS gti_throughput_tests)
   endif()
   if(suite MATCHES "(runtime|end_to_end|corpus|oracle|workflow|^stdlib_surface$)")
     set_property(TEST "${suite}" APPEND PROPERTY LABELS "end-to-end")
+  endif()
+  # The frozen C++ backend's own tests (scripts/validation_checks.py
+  # CPP_ONLY_PREFIXES, which test_throughput_registration keeps in step): the
+  # scheduled C++ job runs them; broad local runs exclude them with
+  # `-LE cpp-backend`.
+  if(suite MATCHES "^(cpp_mir_|cpp_debug_artifacts|lowered_program_corpus_census)")
+    set_property(TEST "${suite}" APPEND PROPERTY LABELS "cpp-backend")
   endif()
 endforeach()

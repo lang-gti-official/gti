@@ -18,6 +18,7 @@ import subprocess
 import tempfile
 
 from case_jobs import configured_jobs, positive_jobs, run_cases
+from backend_modes import native_modes
 
 PROFILES = ("single-threaded", "concurrent")
 
@@ -64,29 +65,34 @@ int main() {
 """
 
 
+# The unoptimised level of every selected backend; the first mode also
+# carries the single-mode cases.
+MODES = native_modes(levels=("O0",))
+
+
 def plan():
     cases = []
     for spelling, directives in (("include", includes), ("import", imports)):
         for family in FAMILIES:
             for profile in PROFILES:
-                cases.append((f"{spelling}/{family}/{profile}/c++23",
+                cases.append((f"{spelling}/{family}/{profile}/{MODES[0][0]}",
                               (f"{spelling}-{family}-{profile}",
                                directives((family,)) + EMPTY_MAIN,
-                               profile, "c++23")))
-        for standard in ("c++20", "c++23"):
+                               profile, MODES[0][1])))
+        for mode, flags, _native in MODES:
             for profile in PROFILES:
-                cases.append((f"{spelling}/all-families/{profile}/{standard}",
-                              (f"{spelling}-all-{profile}-{standard}",
+                cases.append((f"{spelling}/all-families/{profile}/{mode}",
+                              (f"{spelling}-all-{profile}-{mode}",
                                directives(FAMILIES) + EMPTY_MAIN, profile,
-                               standard)))
+                               flags)))
     # Application code may construct synchronization values only in the
     # concurrent profile, even inside an uninstantiated generic, and executing
     # an atomic operation requires it as well.
-    cases.append(("user-generic/concurrent/c++23",
-                  ("user-generic", USER_GENERIC, "concurrent", "c++23")))
-    cases.append(("concrete-atomic-dormant-mutex/concurrent/c++23",
+    cases.append((f"user-generic/concurrent/{MODES[0][0]}",
+                  ("user-generic", USER_GENERIC, "concurrent", MODES[0][1])))
+    cases.append((f"concrete-atomic-dormant-mutex/concurrent/{MODES[0][0]}",
                   ("concrete-atomic-dormant-mutex", CONCRETE_ATOMIC_DORMANT_MUTEX,
-                   "concurrent", "c++23")))
+                   "concurrent", MODES[0][1])))
     return cases
 
 
@@ -103,13 +109,13 @@ def main():
         root = pathlib.Path(scratch)
 
         def compile_case(case):
-            stem, source, profile, standard = case
+            stem, source, profile, flags = case
             path = root / f"{stem}.gti"
             path.write_text(source, encoding="utf-8")
             binary = root / stem
             built = subprocess.run(
                 [str(compiler), str(path), "--execution-profile", profile,
-                 "--std", standard, "-O0", "-o", str(binary)],
+                 *flags, "-o", str(binary)],
                 capture_output=True, text=True, timeout=300)
             if built.returncode != 0 or not binary.is_file():
                 raise AssertionError(

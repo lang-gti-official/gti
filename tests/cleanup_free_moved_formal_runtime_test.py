@@ -5,6 +5,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -57,33 +58,29 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="gti-moved-formal-") as temporary:
         root = pathlib.Path(temporary)
         source = root / fixture.name
-        for optimization in ("O0", "O3"):
-            for standard in ("c++20", "c++23"):
-                mode = f"{optimization}-{standard}"
-                for name, text, expected in cases:
-                    source.write_text(text, encoding="utf8")
-                    executable = root / f"{mode}-{name}"
-                    built = run(
-                        [
-                            str(compiler),
-                            str(source),
-                            f"-{optimization}",
-                            "--std",
-                            standard,
-                            "-o",
-                            str(executable),
-                        ]
-                    )
-                    if built.returncode != 0:
-                        return fail(f"build {mode}/{name}", built)
-                    executed = run([str(executable)])
-                    actual = (
-                        executed.returncode,
-                        executed.stdout,
-                        executed.stderr,
-                    )
-                    if actual != expected:
-                        return fail(f"run {mode}/{name}", executed)
+        for mode, flags, _native in native_modes():
+            for name, text, expected in cases:
+                source.write_text(text, encoding="utf8")
+                executable = root / f"{mode}-{name}"
+                built = run(
+                    [
+                        str(compiler),
+                        str(source),
+                        *flags,
+                        "-o",
+                        str(executable),
+                    ]
+                )
+                if built.returncode != 0:
+                    return fail(f"build {mode}/{name}", built)
+                executed = run([str(executable)])
+                actual = (
+                    executed.returncode,
+                    executed.stdout,
+                    executed.stderr,
+                )
+                if actual != expected:
+                    return fail(f"run {mode}/{name}", executed)
 
     return 0
 

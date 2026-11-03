@@ -6,6 +6,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from backend_modes import is_cpp_mode, native_modes
 
 
 MARKER = "// GTI verified-MIR body: scalar-cfg-failure-v1"
@@ -52,17 +53,16 @@ def validate_emission(
     generated: str,
     expected_bodies: int,
     label: str,
-    optimization: str,
-    standard: str,
+    mode: str,
 ) -> bool:
     if label == "unused-owning-array-parameter" and re.search(
         r"_compatibility_array_user(?:__gti_mir_failure)?\(", generated
     ):
-        sys.stderr.write(f"{optimization}/{standard} emitted the unreachable array consumer\n")
+        sys.stderr.write(f"{mode} emitted the unreachable array consumer\n")
         return False
     if generated.count(MARKER) != expected_bodies:
         sys.stderr.write(
-            f"{label} {optimization}/{standard} did not select the exact "
+            f"{label} {mode} did not select the exact "
             f"{expected_bodies}-body hosted failure component\n"
         )
         return False
@@ -75,7 +75,7 @@ def validate_emission(
     for spelling in required:
         if spelling not in generated:
             sys.stderr.write(
-                f"{optimization}/{standard} omitted hosted failure spelling "
+                f"{mode} omitted hosted failure spelling "
                 f"{spelling!r}\n"
             )
             return False
@@ -91,7 +91,7 @@ def validate_emission(
     )
     if len(signature.findall(generated)) != expected_bodies:
         sys.stderr.write(
-            f"{label} {optimization}/{standard} did not emit the exact "
+            f"{label} {mode} did not emit the exact "
             "bool/out-result/record hidden ABI for every selected body\n"
         )
         return False
@@ -104,7 +104,7 @@ def validate_emission(
         or generated[main_index:].count("::gti_rt_failure_terminate_v2(") != 1
     ):
         sys.stderr.write(
-            f"{label} {optimization}/{standard} hosted main did not own "
+            f"{label} {mode} hosted main did not own "
             "exactly one termination call\n"
         )
         return False
@@ -115,7 +115,7 @@ def validate_emission(
     )
     if firewall not in generated:
         sys.stderr.write(
-            f"{label} {optimization}/{standard} did not emit the immediate "
+            f"{label} {mode} did not emit the immediate "
             "native-exception firewall\n"
         )
         return False
@@ -123,7 +123,7 @@ def validate_emission(
     catch_body = generated[catch_at : generated.index("}", catch_at) + 1]
     if "__gti_failure_record" in catch_body or "gti_rt_failure" in catch_body:
         sys.stderr.write(
-            f"{label} {optimization}/{standard} forged or reported a GTI "
+            f"{label} {mode} forged or reported a GTI "
             "record from the native-exception firewall\n"
         )
         return False
@@ -134,16 +134,13 @@ def compile_program(
     compiler: pathlib.Path,
     source: pathlib.Path,
     output: pathlib.Path,
-    optimization: str,
-    standard: str,
+    flags: list[str],
 ) -> subprocess.CompletedProcess[bytes]:
     return run(
         [
             str(compiler),
             str(source),
-            f"-{optimization}",
-            "--std",
-            standard,
+            *flags,
             "-o",
             str(output),
         ]
@@ -169,16 +166,13 @@ def emit_program(
     compiler: pathlib.Path,
     source: pathlib.Path,
     output: pathlib.Path,
-    optimization: str,
-    standard: str,
+    flags: list[str],
 ) -> subprocess.CompletedProcess[bytes]:
     return run(
         [
             str(compiler),
             str(source),
-            f"-{optimization}",
-            "--std",
-            standard,
+            *flags,
             "--emit-cpp",
             "-o",
             str(output),
@@ -411,23 +405,18 @@ def main() -> int:
         (standard_library / "prelude.gti").write_text("", encoding="utf8")
         os.environ["GTI_STDLIB_PATH"] = str(standard_library)
         observed_identities: dict[str, bytes] = {}
-        configurations = [
-            (optimization, standard)
-            for optimization in ("O0", "O1", "O3")
-            for standard in ("c++20", "c++23")
-        ]
-        for index, (optimization, standard) in enumerate(configurations):
+        configurations = native_modes()
+        for index, (mode, flags, _native) in enumerate(configurations):
             if index % shard_count == shard - 1:
                 for label, source, _ in success_cases:
                     success_executable = root / (
-                        f"{label}-{optimization}-{standard}"
+                        f"{label}-{mode}"
                     )
                     built = compile_program(
                         compiler,
                         source,
                         success_executable,
-                        optimization,
-                        standard,
+                        flags
                     )
                     if built.returncode != 0:
                         return fail(built)
@@ -451,14 +440,13 @@ def main() -> int:
                     expected_bodies,
                 ) in failure_cases:
                     failure_executable = root / (
-                        f"{label}-{optimization}-{standard}"
+                        f"{label}-{mode}"
                     )
                     built = compile_program(
                         compiler,
                         source,
                         failure_executable,
-                        optimization,
-                        standard,
+                        flags
                     )
                     if built.returncode != 0:
                         return fail(built)
@@ -472,51 +460,51 @@ def main() -> int:
                         or match is None
                     ):
                         return fail(failed)
-                    identity_cpp = (
-                        root / f"{label}-{optimization}-{standard}-id.cpp"
-                    )
-                    identity_emission = emit_program(
-                        compiler, source, identity_cpp, optimization, standard
-                    )
-                    if identity_emission.returncode != 0:
-                        return fail(identity_emission)
-                    generated = identity_cpp.read_text(encoding="utf8")
-                    identity = artifact_identity(generated)
-                    if label not in observed_identities:
-                        observed_identities[label] = identity
-                    elif identity != observed_identities[label]:
-                        sys.stderr.write(
-                            f"{label} artifact identity changed across "
-                            "optimization or C++ standard\n"
+                    if is_cpp_mode(flags):
+                        identity_cpp = (
+                            root / f"{label}-{mode}-id.cpp"
                         )
-                        return 1
-                    if not validate_emission(
-                        generated,
-                        expected_bodies,
-                        label,
-                        optimization,
-                        standard,
-                    ):
-                        return 1
+                        identity_emission = emit_program(
+                            compiler, source, identity_cpp, flags
+                        )
+                        if identity_emission.returncode != 0:
+                            return fail(identity_emission)
+                        generated = identity_cpp.read_text(encoding="utf8")
+                        identity = artifact_identity(generated)
+                        if label not in observed_identities:
+                            observed_identities[label] = identity
+                        elif identity != observed_identities[label]:
+                            sys.stderr.write(
+                                f"{label} artifact identity changed across "
+                                "optimization or C++ standard\n"
+                            )
+                            return 1
+                        if not validate_emission(
+                            generated,
+                            expected_bodies,
+                            label,
+                            mode
+                        ):
+                            return 1
 
-                # Failure-case emission was already required for artifact
-                # identity above. Reuse it for representation validation;
-                # only success cases still need a separate emitted artifact.
-                for label, source, expected_bodies in success_cases:
-                    emitted = root / f"{label}-{optimization}-{standard}.cpp"
-                    emission = emit_program(
-                        compiler, source, emitted, optimization, standard
-                    )
-                    if emission.returncode != 0:
-                        return fail(emission)
-                    if not validate_emission(
-                        emitted.read_text(encoding="utf8"),
-                        expected_bodies,
-                        label,
-                        optimization,
-                        standard,
-                    ):
-                        return 1
+                if is_cpp_mode(flags):
+                    # Failure-case emission was already required for artifact
+                    # identity above. Reuse it for representation validation;
+                    # only success cases still need a separate emitted artifact.
+                    for label, source, expected_bodies in success_cases:
+                        emitted = root / f"{label}-{mode}.cpp"
+                        emission = emit_program(
+                            compiler, source, emitted, flags
+                        )
+                        if emission.returncode != 0:
+                            return fail(emission)
+                        if not validate_emission(
+                            emitted.read_text(encoding="utf8"),
+                            expected_bodies,
+                            label,
+                            mode
+                        ):
+                            return 1
     return 0
 
 

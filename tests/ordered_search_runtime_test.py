@@ -9,14 +9,11 @@ import subprocess
 import tempfile
 
 from case_jobs import configured_jobs, positive_jobs, run_cases
+from backend_modes import is_cpp_mode, keep_cpp, native_modes
 
 
 FIXTURES = ("ordered_search", "ordered_search_user_types", "ordered_search_failure", "ordered_search_cost")
-MODES = [(f"{standard}-{level}", ["--std", standard, f"-{level}"], [])
-         for standard in ("c++20", "c++23") for level in ("O0", "O1", "O3")]
-MODES += [("no-elide", ["--std", "c++23", "-O0"], ["-fno-elide-constructors"]),
-          ("sanitized", ["--std", "c++23", "-O1"],
-           ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])]
+MODES = native_modes()
 
 
 def negative_sources():
@@ -90,7 +87,7 @@ def main():
             name, label, flags, native = case
             binary = root / f"{name}-{label}"
             command = [str(compiler), str(fixtures / f"{name}.gti"), *flags,
-                       "--keep-cpp", "-o", str(binary)]
+                       *keep_cpp(flags), "-o", str(binary)]
             if name == "ordered_search_cost":
                 native = [*native, str(fixtures / "stdlib_adoption_allocation_counts.cpp")]
             if native:
@@ -98,8 +95,9 @@ def main():
             built = subprocess.run(command, capture_output=True, text=True,
                                    timeout=120, env=environment)
             assert built.returncode == 0, (name, label, built.stdout, built.stderr)
-            generated = binary.with_suffix(".gti.cpp").read_text()
-            assert "// GTI verified-MIR body:" in generated, (name, label)
+            if is_cpp_mode(flags):
+                generated = binary.with_suffix(".gti.cpp").read_text()
+                assert "// GTI verified-MIR body:" in generated, (name, label)
             return name, label, binary
 
         def execute_fixture(compiled):

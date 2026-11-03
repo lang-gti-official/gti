@@ -496,11 +496,15 @@ overwrites; no tag or branch is ever forced, moved or deleted.
    already hold another commit. On a `beta/X.Y` push, selection verifies the
    backports since the line's newest beta, refuses pending user-visible
    fragments, publishes nothing when `VERSION` is already stable, and numbers
-   the next beta. Beta retains its own bundled production build, installed-
-   toolchain checks, complete release-suite shards and merge-shards gate on the
-   beta commit. The nightly artifact-reuse path does not relabel a nightly
-   package as a versioned beta: the release cut changes the embedded version
-   and archive identity. The
+   the next beta. Beta retains its own bundled production build and
+   installed-toolchain checks on the beta commit, restoring the release object
+   cache `llvm-prebuilt.yml` warms; it re-runs no release suite, because a
+   main cut changes only release metadata on top of its full-CI-verified
+   parent and a line commit was proven by its backport pull request's own
+   release-suite shards and merge-shards gate (`backport.yml`). The nightly
+   artifact-reuse path does not relabel a nightly package as a versioned
+   beta: the release cut changes the embedded version and archive identity.
+   The
    serialized publish job (the only one that writes) re-verifies the asset set,
    admits the beta (the tag is absent or already at that commit, and a newer
    push did not supersede it), attests build provenance, pushes

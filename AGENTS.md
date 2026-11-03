@@ -123,8 +123,8 @@ wrapper, and neither backend defines its semantics.
 - **CI is the required integration gate.** The `main` ruleset requires pull
   requests, the merge queue and the `CI gate` check, with no bypass for any
   role. A PR's `CI gate` runs the fast checks (lint, workflow regressions, and
-  a macOS arm64 and Linux x64 build with `feedback-fast` and
-  `compiler_pipeline`); the queue's `CI gate` runs the same bounded set on the
+  a macOS arm64 and Linux x64 build with `feedback-fast`, plus
+  `compiler_pipeline` on Linux); the queue's `CI gate` runs the same bounded set on the
   exact candidate. Post-integration full validation then runs the complete
   inventory on Linux in cost-balanced bundled-release shards, the `darwin`
   set on macOS (what differs on the platform: the AArch64 LLVM backend,
@@ -181,7 +181,14 @@ wrapper, and neither backend defines its semantics.
 - Run every full build and every full or broad test suite through the shared
   build window, whether or not the helper runs it:
   `python3 scripts/build_window.py --kind build -- cmake --build <tree> ...` and
-  `python3 scripts/build_window.py --kind suite -- ctest --test-dir <tree> ...`.
+  `python3 scripts/build_window.py --kind suite -- ctest --test-dir <tree> -LE cpp-backend ...`.
+  Local runs follow the CI test policy: a configured tree exports
+  `GTI_TEST_BACKENDS=llvm` to every harness, so runtime harnesses exercise the
+  shipped backend, and the C++-only entries carry the `cpp-backend` label, so
+  broad runs exclude them. C++-backend bug fixes configure
+  `-DGTI_TEST_BACKENDS=cpp` (or `both`), run their harnesses and
+  `-L cpp-backend`, and dispatch `cpp-backend.yml` on the PR branch for
+  exact-candidate CI evidence.
   The window is one counted semaphore under the Git common directory, shared
   by every worktree and session on the machine, so concurrent agents stop
   stacking full suites on each other. Focused tests (`ctest -R '^name$'`, one
@@ -338,9 +345,12 @@ on Gitea and is unaffected. See "Published Toolchain Channels" in
 `docs/architecture/build-and-driver.md`.
 
 - **Preview** distributes the separately admitted combined `preview` source through
-  `preview.yml`, with focused combined admission, installed checks, source and
-  inclusion identity on both packaged platforms. It is not full-main CI or
-  nightly evidence and never promotes into main. `gtiup` manages preview,
+  `preview.yml`, which builds the admitted source, proves the compiler runs,
+  smoke-tests the installed toolchain and packages it with source and
+  inclusion identity on both platforms; focused admission of each submitted
+  feature happens once, on the submitting host, before the source reaches
+  the branch. Preview is an early snapshot that builds and runs, not full-main
+  CI or nightly evidence, and never promotes into main. `gtiup` manages preview,
   nightly, beta and stable toolchains; Neovim managed mode uses the selected
   matching compiler/LSP/parser without downloading its own tools. Installation
   remains opt-in. Never move the rolling preview tag by hand.
@@ -358,7 +368,8 @@ on Gitea and is unaffected. See "Published Toolchain Channels" in
 - **Beta** is `v<VERSION>-beta.<K>`, a GitHub prerelease. Every 48 hours the
   train cuts the published nightly's commit, once it has been on `main` for 24
   hours, into a `Release-Cut:` PR that the merge queue lands like any other
-  change; `beta.yml` then builds that cut commit, opens the
+  change; `beta.yml` then builds that cut commit (no suite re-run: the
+  cut's full-CI-verified parent is its evidence), opens the
   `beta/<major>.<minor>` line and publishes beta 1. Fixes reach a line only as
   `git cherry-pick -x` backports of `main` commits through `backport.yml`; a
   user-visible backport ends with a patch release cut.

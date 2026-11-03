@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def run(command: list[str], environment: dict[str, str]) -> subprocess.CompletedProcess[str]:
@@ -44,8 +45,6 @@ def main() -> int:
                 "--execution-profile",
                 "concurrent",
                 "--emit-mir",
-                "--std",
-                "c++23",
                 "-O1",
                 str(source),
                 "-o",
@@ -78,17 +77,14 @@ def main() -> int:
             sys.stderr.write("MIR lost exact function-item identity\n")
             return 1
 
-        for standard, optimization in (("c++20", "-O0"), ("c++23", "-O3")):
-            mode = f"{standard}-{optimization[1:]}"
+        for mode, flags, _native in native_modes():
             executable = root / mode
             built = run(
                 [
                     str(compiler),
                     "--execution-profile",
                     "concurrent",
-                    "--std",
-                    standard,
-                    optimization,
+                    *flags,
                     str(source),
                     "-o",
                     str(executable),

@@ -270,17 +270,25 @@ jobs:
           if-no-files-found: ignore
 
   sanitizers:
-    name: Compiler sanitizers (${{ matrix.kind }} ${{ matrix.index }}/2)
+    name: Compiler sanitizers (${{ matrix.kind }} ${{ matrix.index }}/${{ matrix.count }})
+    # Every sanitized configure serializes linking (CMAKE_JOB_POOL_LINK):
+    # linking several ASan/UBSan executables at once exhausted the 16 GiB
+    # runner and the VM was shut down mid-build three times on 2026-11-03
+    # ("runner has received a shutdown signal"). Compiles stay parallel.
     if: needs.plan.outputs.mode == 'full'
     needs: [plan]
     # The compiler aggregate exceeded three hours serially. Split its six
-    # suites across two runners, separately from the two library partitions.
-    # Every compiler partition verifies the complete manifest census first.
+    # suites across two runners. Every compiler partition verifies the
+    # complete manifest census first. Without the C++ emitter suites (now in
+    # cpp-backend.yml) the library partition fits one runner, which saves a
+    # cold instrumented build.
     strategy:
       fail-fast: false
       matrix:
-        kind: [compiler, libraries]
-        index: [1, 2]
+        include:
+          - {kind: compiler, index: 1, count: 2}
+          - {kind: compiler, index: 2, count: 2}
+          - {kind: libraries, index: 1, count: 1}
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     env:
@@ -326,6 +334,7 @@ jobs:
           -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
           -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g"
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+          -DCMAKE_JOB_POOLS=link=1 -DCMAKE_JOB_POOL_LINK=link
       - name: Build the targets the sanitizer subset runs
         # Instrumenting the whole tree took longer than the integration shards
         # while only these tests run; CTestTestfile.cmake names their targets.
@@ -348,7 +357,7 @@ jobs:
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: |
           if [[ "${{ matrix.kind }}" == "compiler" ]]; then
-            GTI_COMPILER_TEST_SHARD_INDEX="${{ matrix.index }}" GTI_COMPILER_TEST_SHARD_COUNT=2 \
+            GTI_COMPILER_TEST_SHARD_INDEX="${{ matrix.index }}" GTI_COMPILER_TEST_SHARD_COUNT="${{ matrix.count }}" \
               ctest --test-dir build-sanitized --verbose --output-on-failure --no-tests=error \
               --output-junit "${RUNNER_TEMP}/sanitizers-${{ matrix.kind }}-${{ matrix.index }}.xml" \
               -R '^compiler_pipeline$'
@@ -356,7 +365,7 @@ jobs:
             ctest --test-dir build-sanitized --verbose --output-on-failure --no-tests=error \
               --output-junit "${RUNNER_TEMP}/sanitizers-${{ matrix.kind }}-${{ matrix.index }}.xml" \
               --parallel "${GTI_TEST_JOBS}" -R "${GTI_SANITIZER_TESTS}" \
-              -E '^compiler_pipeline$' -I "${{ matrix.index }},,2"
+              -E '^compiler_pipeline$' -I "${{ matrix.index }},,${{ matrix.count }}"
           fi
       - name: Preserve sanitizer test evidence
         if: always()
@@ -368,7 +377,7 @@ jobs:
             build-sanitized/Testing/Temporary/LastTest.log
             build-sanitized/Testing/Temporary/LastTestsFailed.log
           if-no-files-found: warn
-          retention-days: 7
+          retention-days: 30
       # cache.yml owns the sanitizer cache under its content key; a validation
       # run only restores it.
       - name: Report compiler cache statistics
@@ -425,6 +434,7 @@ jobs:
           -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
           -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g"
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+          -DCMAKE_JOB_POOLS=link=1 -DCMAKE_JOB_POOL_LINK=link
       - name: Build the targets the LLVM subset runs
         run: |
           targets="$(python3 scripts/validation_checks.py test-targets --build build-sanitized --regex "${GTI_LLVM_SANITIZER_TESTS}")"
@@ -501,6 +511,21 @@ jobs:
           ctest --test-dir build --output-on-failure --no-tests=error
           --output-junit "${RUNNER_TEMP}/tsan.xml"
           --parallel "${GTI_TEST_JOBS}" -R '_tsan$'
+      - name: Require every thread-sanitizer test to run
+        # A harness exits 77 (CTest "skipped") when the native compiler has
+        # no -fsanitize=thread runtime; the first run on main passed 10/10
+        # with five of them skipped. Skips are a missing runtime, not evidence.
+        run: |
+          python3 - "${RUNNER_TEMP}/tsan.xml" <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          root = ET.parse(sys.argv[1]).getroot()
+          suite = root if root.tag == "testsuite" else root.find("testsuite")
+          tests, skipped = int(suite.get("tests", 0)), int(suite.get("skipped", 0))
+          skipped_names = [case.get("name") for case in suite.iter("testcase") if case.find("skipped") is not None]
+          print(f"thread-sanitizer tests: {tests}, skipped: {skipped} {skipped_names}")
+          if tests < 1 or skipped or skipped_names:
+              sys.exit("every registered _tsan test must execute under ThreadSanitizer")
+          PY
       - name: Preserve TSan evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

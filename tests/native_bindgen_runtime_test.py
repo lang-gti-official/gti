@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+from backend_modes import native_modes, optimization_level
 
 
 def run(command, cwd=None):
@@ -83,17 +84,13 @@ def main():
                 oracle.write_text("\n".join(checks) + "\n")
                 run([driver, f"-std={standard}", "-Werror", "-fsyntax-only",
                      "-I", root / "runtime" / "include", "-x", language, oracle])
-        modes = [(f"{standard}-{level}", standard, level, [])
-                 for standard in ("c++20", "c++23") for level in ("O0", "O1", "O3")]
-        modes.append(("sanitized", "c++23", "O1",
-                      ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]))
-        for name, standard, level, sanitizers in modes:
+        for name, flags, sanitizers in native_modes():
             native_object = work / f"native-{name}.o"
-            run([os.environ.get("CC", "cc"), "-std=c17", f"-{level}",
+            run([os.environ.get("CC", "cc"), "-std=c17", f"-{optimization_level(flags)}",
                  "-c", project / "native" / f"{binding}.c", "-o", native_object, *sanitizers])
             binary = work / name
-            run([compiler, source, "--std", standard, f"-{level}", "-o", binary,
-                 "--", native_object, "-fno-elide-constructors", *sanitizers])
+            run([compiler, source, *flags, "-o", binary,
+                 "--", native_object, *sanitizers])
             executed = run([binary])
             assert executed.stdout == "" and executed.stderr == "", executed
             print(f"{arguments.example}: {name} passed", flush=True)

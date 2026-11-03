@@ -7,6 +7,7 @@ import sys
 import tempfile
 
 from unique_class_allocation_runtime_test import run
+from backend_modes import is_cpp_mode, keep_cpp, native_modes
 
 
 def main():
@@ -67,10 +68,7 @@ def main():
         (70, "1\n9\n", ordinary(partial)),
         (70, "1\n", emergency(partial, first)),
     ])
-    modes = [(f"{standard}-{opt}", ["--std", standard, f"-{opt}"], [])
-             for standard in ("c++20", "c++23") for opt in ("O0", "O1", "O3")]
-    modes.append(("sanitized", ["--std", "c++23", "-O1"],
-                  ["--", "-fsanitize=address,undefined", "-fno-omit-frame-pointer"]))
+    modes = native_modes()
     receiver = source.with_name("temporary_constructor_argument_user_drop_gap.gti")
     receiver_site = next(i for i, line in enumerate(receiver.read_text().splitlines(), 1)
                          if "int32_t value = 7 / divisor" in line)
@@ -87,30 +85,31 @@ def main():
     with tempfile.TemporaryDirectory(prefix="gti-source-destructor-") as directory:
         for name, flags, native in modes:
             binary = pathlib.Path(directory) / name
-            command = [str(compiler), str(source), *flags, "--keep-cpp",
+            command = [str(compiler), str(source), *flags, *keep_cpp(flags),
                        "-o", str(binary), *native]
             built = run(command)
             assert built.returncode == 0, (command, built.stdout, built.stderr)
-            generated = binary.with_suffix(".gti.cpp").read_text()
-            retirements = re.findall(
-                r"^[^\n]+::~[^\n]+\(\) noexcept \{[^\n]+\}$",
-                generated, re.MULTILINE)
-            assert retirements, "source cleanup fixture lost native destructors"
-            for retirement in retirements:
-                guard = re.search(
-                    r"\{ if \(__gti_lifecycle_active_(\d+)\) \{ "
-                    r"__gti_lifecycle_cleanup_\1\(\); \} \}$", retirement)
-                assert guard, (name, "unproved native retirement guard", retirement)
-                assert f"bool __gti_lifecycle_active_{guard[1]} = true;" in generated
-            assert "mir_cleanup_sequence_v1 sequence" in generated
-            assert "if (!sequence.step(__gti_mir" in generated
-            assert "// GTI verified-MIR body:" in generated
+            if is_cpp_mode(flags):
+                generated = binary.with_suffix(".gti.cpp").read_text()
+                retirements = re.findall(
+                    r"^[^\n]+::~[^\n]+\(\) noexcept \{[^\n]+\}$",
+                    generated, re.MULTILINE)
+                assert retirements, "source cleanup fixture lost native destructors"
+                for retirement in retirements:
+                    guard = re.search(
+                        r"\{ if \(__gti_lifecycle_active_(\d+)\) \{ "
+                        r"__gti_lifecycle_cleanup_\1\(\); \} \}$", retirement)
+                    assert guard, (name, "unproved native retirement guard", retirement)
+                    assert f"bool __gti_lifecycle_active_{guard[1]} = true;" in generated
+                assert "mir_cleanup_sequence_v1 sequence" in generated
+                assert "if (!sequence.step(__gti_mir" in generated
+                assert "// GTI verified-MIR body:" in generated
             for phase, expected in enumerate(cases):
                 result = run([str(binary), *(["phase"] * phase)])
                 actual = (result.returncode, result.stdout, result.stderr)
                 assert actual == expected, (name, phase, actual, expected)
             original = pathlib.Path(directory) / f"{name}-receiver"
-            command = [str(compiler), str(receiver), *flags, "--keep-cpp",
+            command = [str(compiler), str(receiver), *flags, *keep_cpp(flags),
                        "-o", str(original), *native]
             built = run(command)
             assert built.returncode == 0, (command, built.stdout, built.stderr)

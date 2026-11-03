@@ -440,11 +440,11 @@ if(TARGET gti_lsp)
       "$<TARGET_FILE:gti_lsp>")
   set_tests_properties(conditional_capability_lsp PROPERTIES TIMEOUT 90)
 endif()
-add_test(NAME source_sparse_storage_runtime
+add_test(NAME cpp_mir_source_sparse_storage
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_sparse_storage_runtime_test.py"
     "$<TARGET_FILE:gti_source_sparse_storage_tests>" "${CMAKE_CXX_COMPILER}"
     "$<TARGET_FILE:gti_runtime>")
-set_tests_properties(source_sparse_storage_runtime PROPERTIES TIMEOUT 300)
+set_tests_properties(cpp_mir_source_sparse_storage PROPERTIES TIMEOUT 300)
 add_executable(gti_resource_protocol_tests resource_protocol_tests.cpp)
 target_link_libraries(gti_resource_protocol_tests PRIVATE gti_compiler gti_cpp_backend)
 add_test(NAME resource_protocol_contract COMMAND gti_resource_protocol_tests)
@@ -892,6 +892,12 @@ if(Python3_Interpreter_FOUND)
                    "${PROJECT_SOURCE_DIR}/tests/process_resource_policy_test.py"
                    $<TARGET_FILE:gti>)
   set_tests_properties(process_resource_policy PROPERTIES TIMEOUT 300)
+  add_test(NAME process_storage_query_runtime
+           COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/process_storage_query_runtime_test.py"
+                   "$<TARGET_FILE:gti>")
+  set_tests_properties(process_storage_query_runtime PROPERTIES
+    TIMEOUT 600
+    ENVIRONMENT "GTI_STDLIB_PATH=${PROJECT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${PROJECT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>")
   add_test(NAME cleanup_bound_borrow_runtime
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/cleanup_bound_borrow_runtime_test.py" $<TARGET_FILE:gti>)
   set_tests_properties(cleanup_bound_borrow_runtime PROPERTIES TIMEOUT 300)
@@ -1191,6 +1197,12 @@ add_executable("gti_optimizer_safety_tests"
                "${PROJECT_SOURCE_DIR}/tests/optimizer_safety_tests.cpp")
 target_link_libraries("gti_optimizer_safety_tests" PRIVATE gti_compiler)
 add_test(NAME optimizer_safety COMMAND gti_optimizer_safety_tests)
+add_test(NAME optimizer_division_envelopes
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/optimizer_division_envelopes_test.py"
+                 "$<TARGET_FILE:gti>")
+set_tests_properties(optimizer_division_envelopes PROPERTIES
+                     TIMEOUT 300)
 add_executable(gti_optimizer_raw_context_tests optimizer_raw_context_tests.cpp)
 target_link_libraries(gti_optimizer_raw_context_tests PRIVATE gti_compiler)
 add_test(NAME optimizer_raw_context COMMAND gti_optimizer_raw_context_tests)
@@ -1448,6 +1460,10 @@ add_test(NAME raw_pointer_conversion_contract COMMAND gti_raw_pointer_conversion
 add_executable(gti_borrow_origin_syntax_tests "${PROJECT_SOURCE_DIR}/tests/borrow_origin_syntax_tests.cpp")
 target_link_libraries(gti_borrow_origin_syntax_tests PRIVATE gti_compiler)
 add_test(NAME borrow_origin_syntax COMMAND gti_borrow_origin_syntax_tests)
+
+add_executable(gti_lambda_reference_tests lambda_reference_tests.cpp)
+target_link_libraries(gti_lambda_reference_tests PRIVATE gti_compiler)
+add_test(NAME lambda_reference COMMAND gti_lambda_reference_tests)
 
 add_executable(gti_discardable_result_tests "${PROJECT_SOURCE_DIR}/tests/discardable_result_tests.cpp")
 target_link_libraries(gti_discardable_result_tests PRIVATE gti_compiler)
@@ -2139,6 +2155,14 @@ add_executable(gti_llvm_checked_range_tests llvm_checked_range_tests.cpp)
 target_include_directories(gti_llvm_checked_range_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
 target_link_libraries(gti_llvm_checked_range_tests PRIVATE gti_llvm_backend)
 add_test(NAME llvm_checked_ranges COMMAND gti_llvm_checked_range_tests)
+add_executable(gti_llvm_checked_offset_tests llvm_checked_offset_tests.cpp)
+target_include_directories(gti_llvm_checked_offset_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_llvm_checked_offset_tests PRIVATE gti_llvm_backend)
+add_test(NAME llvm_checked_offsets COMMAND gti_llvm_checked_offset_tests)
+add_executable(gti_llvm_private_atomic_tests llvm_private_atomic_tests.cpp)
+target_include_directories(gti_llvm_private_atomic_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_llvm_private_atomic_tests PRIVATE gti_llvm_backend)
+add_test(NAME llvm_private_atomics COMMAND gti_llvm_private_atomic_tests)
 add_executable(gti_llvm_session_tests llvm_session_tests.cpp)
 target_include_directories(gti_llvm_session_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
 target_link_libraries(gti_llvm_session_tests PRIVATE gti_llvm_backend gti_driver gti_runtime)
@@ -2412,6 +2436,14 @@ add_test(NAME llvm_memory_mechanisms COMMAND gti_llvm_memory_mechanism_tests)
 set_tests_properties(llvm_memory_mechanisms PROPERTIES TIMEOUT 120)
 
 if(Python3_Interpreter_FOUND)
+  add_test(NAME llvm_private_atomic_runtime
+           COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_private_atomic_runtime_test.py"
+                   "$<TARGET_FILE:gti>")
+  set_tests_properties(llvm_private_atomic_runtime PROPERTIES TIMEOUT 600)
+  add_test(NAME llvm_checked_offset_runtime
+           COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_checked_offset_runtime_test.py"
+                   "$<TARGET_FILE:gti>")
+  set_tests_properties(llvm_checked_offset_runtime PROPERTIES TIMEOUT 600)
   add_test(NAME llvm_checked_reduction_runtime
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_checked_reduction_runtime_test.py"
                    "$<TARGET_FILE:gti>")
@@ -2976,7 +3008,7 @@ set_tests_properties(
 add_executable("gti_optimizer_safety_native_evidence"
                "${PROJECT_SOURCE_DIR}/tests/optimizer_safety_native_evidence.cpp")
 target_link_libraries("gti_optimizer_safety_native_evidence"
-                      PRIVATE gti_cpp_backend)
+                      PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME optimizer_safety_native_evidence
          COMMAND gti_optimizer_safety_native_evidence
                  "${CMAKE_CXX_COMPILER}")
@@ -3008,7 +3040,7 @@ if(Python3_Interpreter_FOUND)
   if(EXISTS "${PROJECT_SOURCE_DIR}/.gti-preview.json")
     add_test(NAME preview_admission
       COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/scripts/preview_examples.py"
-              "${PROJECT_BINARY_DIR}" --manifest)
+              "${PROJECT_BINARY_DIR}" --pending)
     set_tests_properties(preview_admission PROPERTIES TIMEOUT 10800 RUN_SERIAL TRUE)
   endif()
   add_test(
@@ -3040,6 +3072,15 @@ if(Python3_Interpreter_FOUND)
             --build "${PROJECT_BINARY_DIR}"
   )
   set_tests_properties(test_ownership_map PROPERTIES TIMEOUT 120)
+  # No fixture loses its last execution mode: every registered runtime harness
+  # plans LLVM execution under the default backend policy or declares why not.
+  add_test(
+    NAME execution_coverage
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/execution_coverage_test.py"
+            "${PROJECT_SOURCE_DIR}" "${PROJECT_BINARY_DIR}"
+  )
+  set_tests_properties(execution_coverage PROPERTIES TIMEOUT 300)
   add_test(
     NAME plan_checks
     COMMAND "${Python3_EXECUTABLE}"
@@ -3487,11 +3528,11 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(source_optional_protocol_runtime PROPERTIES TIMEOUT 900)
   add_test(
-    NAME payload_enum_carrier_runtime
+    NAME cpp_mir_payload_enum_carrier
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/payload_enum_carrier_runtime_test.py"
             "$<TARGET_FILE:gti>")
-  set_tests_properties(payload_enum_carrier_runtime PROPERTIES TIMEOUT 900)
+  set_tests_properties(cpp_mir_payload_enum_carrier PROPERTIES TIMEOUT 900)
 
   add_test(
     NAME composed_payload_runtime
@@ -4239,7 +4280,7 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}"
   )
   add_test(
-    NAME cpp_program_linkage
+    NAME cpp_mir_program_linkage
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/cpp_program_linkage_test.py"
             "$<TARGET_FILE:gti>"
@@ -4247,7 +4288,7 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}"
             "$<TARGET_FILE:gti_runtime>"
   )
-  set_tests_properties(cpp_program_linkage PROPERTIES TIMEOUT 120)
+  set_tests_properties(cpp_mir_program_linkage PROPERTIES TIMEOUT 120)
   add_test(
     NAME mir_backend_scalar_cfg_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -5888,6 +5929,8 @@ if(Python3_Interpreter_FOUND)
               "${PROJECT_SOURCE_DIR}/tests/managed_thread_tsan_test.py"
               "$<TARGET_FILE:gti>"
               "${PROJECT_SOURCE_DIR}/tests/fixtures/managed_thread_class_result.gti"
+              "$<TARGET_FILE:gti_llvm_instrumented_source>"
+              "${LLVM_TOOLS_BINARY_DIR}/clang++"
               "${CMAKE_CXX_COMPILER}"
     )
     set_tests_properties(managed_thread_tsan PROPERTIES TIMEOUT 300)
@@ -5901,9 +5944,9 @@ if(Python3_Interpreter_FOUND)
                 "${PROJECT_SOURCE_DIR}/tests/managed_thread_tsan_test.py"
                 "$<TARGET_FILE:gti>"
                 "${PROJECT_SOURCE_DIR}/tests/fixtures/${fixture}.gti"
-                "${CMAKE_CXX_COMPILER}"
                 "$<TARGET_FILE:gti_llvm_instrumented_source>"
                 "${LLVM_TOOLS_BINARY_DIR}/clang++"
+                "${CMAKE_CXX_COMPILER}"
       )
       set_tests_properties(${fixture}_tsan PROPERTIES TIMEOUT 300)
     endforeach()
@@ -5932,11 +5975,12 @@ if(Python3_Interpreter_FOUND)
       NAME atomic_tsan
       COMMAND "${Python3_EXECUTABLE}"
               "${PROJECT_SOURCE_DIR}/tests/atomic_tsan_test.py"
-              "$<TARGET_FILE:gti>"
+              "$<TARGET_FILE:gti_llvm_instrumented_source>"
+              "${LLVM_TOOLS_BINARY_DIR}/clang++"
+              "${CMAKE_CXX_COMPILER}"
               "${PROJECT_SOURCE_DIR}/tests/fixtures/atomic_concurrent.gti"
               "${PROJECT_SOURCE_DIR}/tests/fixtures/atomic_orders.gti"
               "${PROJECT_SOURCE_DIR}/tests/fixtures/atomic_fetch.gti"
-              "${CMAKE_CXX_COMPILER}"
               "${PROJECT_SOURCE_DIR}/tests/fixtures/atomic_wait.gti"
     )
     set_tests_properties(atomic_tsan PROPERTIES TIMEOUT 600)
@@ -5954,9 +5998,10 @@ if(Python3_Interpreter_FOUND)
       NAME mutex_tsan
       COMMAND "${Python3_EXECUTABLE}"
               "${PROJECT_SOURCE_DIR}/tests/mutex_tsan_test.py"
-              "$<TARGET_FILE:gti>"
-              "${PROJECT_SOURCE_DIR}/tests/fixtures/mutex_concurrent.gti"
+              "$<TARGET_FILE:gti_llvm_instrumented_source>"
+              "${LLVM_TOOLS_BINARY_DIR}/clang++"
               "${CMAKE_CXX_COMPILER}"
+              "${PROJECT_SOURCE_DIR}/tests/fixtures/mutex_concurrent.gti"
     )
     set_tests_properties(mutex_tsan PROPERTIES TIMEOUT 300)
     add_test(
