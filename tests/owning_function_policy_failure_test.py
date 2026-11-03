@@ -11,6 +11,7 @@ import tempfile
 
 from unique_class_allocation_runtime_test import run
 from allocation_abort_runtime_test import ABORT_STATUS
+from backend_modes import cpp_only_case, is_cpp_mode, native_modes
 
 
 def main():
@@ -48,18 +49,22 @@ def main():
              (42, "9\n", ""),
              (42, "9\n", ""),
              (42, "9\n", "")]
-    modes = [(f"{std}-{opt}", ["--std", std, f"-{opt}"], [])
-             for std in ("c++20", "c++23") for opt in ("O0", "O1", "O3")]
-    modes += [("no-elide", ["--std", "c++23", "-O0"], ["-fno-elide-constructors"]),
-              ("sanitized", ["--std", "c++23", "-O1"],
-               ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])]
+    modes = native_modes()
     with tempfile.TemporaryDirectory(prefix="gti-owning-policy-") as temporary:
         for name, flags, native in modes:
             binary = Path(temporary) / name
             built = run([str(compiler), str(source), *flags, "-o", str(binary),
                          "--", str(fixtures / "unique_scalar_allocation_fault.cpp"), *native])
             assert built.returncode == 0, (name, built.stdout, built.stderr)
-            for phase, expected in enumerate(cases):
+            phases = list(enumerate(cases))
+            if not is_cpp_mode(flags):
+                # The fault provider (tests/fixtures/unique_scalar_allocation_fault.cpp)
+                # replaces the C++ text's nothrow operator new; LLVM-backed
+                # programs allocate through the runtime.
+                cpp_only_case("allocation fault injection through the C++ text's nothrow operator new",
+                              "allocation failure phases", name)
+                phases = [(phase, expected) for phase, expected in phases if expected[0] != ABORT_STATUS]
+            for phase, expected in phases:
                 result = run([str(binary), *(["phase"] * phase)])
                 assert (result.returncode, result.stdout, result.stderr) == expected, (
                     name, phase, result.returncode, result.stdout, result.stderr, expected)

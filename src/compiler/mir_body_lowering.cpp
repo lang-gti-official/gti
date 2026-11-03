@@ -2,6 +2,7 @@
 #include "gti/mir_effects.h"
 #include "gti/mir_lowering.h"
 #include "gti/mir_verifier.h"
+#include "gti/support.h"
 #include "mir_source_debug.h"
 #include "mir_verification_queries.h"
 #include "mir_verification_support.h"
@@ -11332,6 +11333,10 @@ private:
   }
 
   void emitValueImpl(HirValueId id) {
+    // HIR nests one result region per macro expansion; its depth is bounded
+    // by CompileLimits::macroDepth rather than by written syntax.
+    if (nativeStackNearlyExhausted())
+      return onFreshNativeStack([&] { emitValueImpl(id); });
     if (id == 0 || emittedValues.contains(id)) {
       return;
     }
@@ -13680,6 +13685,8 @@ private:
   }
 
   void lowerStatement(HirStatementId id) {
+    if (nativeStackNearlyExhausted())
+      return onFreshNativeStack([&] { lowerStatement(id); });
     const HirStatement *statement = findStatement(id);
     if (statement == nullptr) {
       valid = false;
@@ -15719,7 +15726,7 @@ private:
                           output.returnType.arguments.front()))) {
               valid = false;
             } else {
-              // A read-only reference parameter's entry loan is seeded at the
+              // A reference parameter's entry loan is seeded at the
               // body entry and has no producing instruction, so its runtime
               // address lives only in the parameter's pointer carrier. The
               // fallback below reclassifies the returned loan in place, which
@@ -15736,9 +15743,9 @@ private:
               // authority while storing a call's different runtime address.
               // Publish that exact address, not the parameter pointer. The
               // verifier independently proves its unique initialization.
-              const MirLoanId published =
-                  createLoan(MirLoanKind::Return, retainedLoan.source,
-                             retainedLoan.access, *statement.value);
+              const MirLoanId published = createLoan(
+                  MirLoanKind::Return, retainedLoan.source,
+                  output.returnType.referenceAccess, *statement.value);
               output.loans[published - 1].storedDependency =
                   retainedLoan.storedDependency;
               (void)appendInstruction(
@@ -15987,9 +15994,9 @@ private:
               publicationSource = ancestor->source;
               ancestor = output.findLoan(ancestor->parent);
             }
-            const MirLoanId published =
-                createLoan(MirLoanKind::Return, publicationSource,
-                           source.access, source.producedBy);
+            const MirLoanId published = createLoan(
+                MirLoanKind::Return, publicationSource,
+                output.returnType.referenceAccess, source.producedBy);
             output.loans[published - 1].storedDependency =
                 source.storedDependency;
             output.loans[published - 1].additionalDependencies =

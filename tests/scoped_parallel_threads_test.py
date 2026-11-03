@@ -34,4 +34,12 @@ if __name__ == "__main__":
              f"-I{fixture.parents[2] / 'runtime/src'}"],
              "scoped_parallel_allocations": [
                  str(fixture.with_name("scoped_parallel_allocations.cpp"))]},
+         # The allocation oracle counts the C++ text's nothrow operator new
+         # through its provider; the LLVM backend allocates through the
+         # runtime entry, so the fixture observes nothing there (exit 6). The
+         # C++ profile keeps its execution evidence until the runtime offers an
+         # allocation hook (see the follow-up recorded in PR #199).
+         llvm_unsupported={"scoped_parallel_allocations":
+                           "exits 6 without output: the transport-allocation oracle counts the C++ "
+                           "text's nothrow operator new, which LLVM's runtime allocation entry never calls"},
          execution_profile="concurrent")

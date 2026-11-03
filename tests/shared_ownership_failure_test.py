@@ -10,16 +10,11 @@ import tempfile
 
 from unique_class_allocation_runtime_test import run
 from allocation_abort_runtime_test import ABORT_STATUS
+from backend_modes import is_cpp_mode, native_modes
 
 
 def main():
-    modes = [(f"{std}-{opt}", ["--std", std, f"-{opt}"], [])
-             for std in ("c++20", "c++23") for opt in ("O0", "O1", "O3")]
-    modes += [("no-elide", ["--std", "c++23", "-O0"], ["-fno-elide-constructors"]),
-              ("sanitized", ["--std", "c++23", "-O1"],
-               ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])]
-    modes += [(f"llvm-{level}", ["--backend", "llvm", f"-{level}"], [])
-              for level in ("O0", "O1", "O2", "O3")]
+    modes = native_modes()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("compiler", type=Path)
     parser.add_argument("--mode", action="append", choices=[mode[0] for mode in modes])
@@ -41,7 +36,7 @@ def main():
             "std::detail::shared_control", "gti_test_shared_control"), encoding="utf-8")
         for name, flags, native in modes:
             binary = Path(temporary) / name
-            cpp_limitation = "--std" in flags
+            cpp_limitation = is_cpp_mode(flags)
             if cpp_limitation:
                 binary.write_bytes(b"preserved unsupported output")
             built = run([str(compiler), str(source), *flags, "-o", str(binary),

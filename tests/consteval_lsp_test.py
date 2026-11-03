@@ -8,6 +8,24 @@ import tempfile
 from lsp_smoke_test import LspSession, lsp_position, semantic_tokens_by_position
 
 
+def recursive_descent(frames):
+    """A string-view scan exactly `frames` constexpr calls deep."""
+    text = "(" * (frames - 1) + "x"
+    return ("constexpr int32_t depth_of(std::string_view text, int32_t at) {\n"
+            "  if (text[at] == '(') { return depth_of(text, at + 1) + 1; }\n"
+            "  return 0;\n}\n"
+            f"static_assert(depth_of(\"{text}\", 0) == {frames - 1});\n")
+
+
+def macro_chain(levels):
+    """`levels` distinct macros, each expanding the next."""
+    lines = ["#macro int32_t m0(int32_t v) { return v + 1; }"]
+    lines += [f"#macro int32_t m{level}(int32_t v) {{ return m{level - 1}(v) + 1; }}"
+              for level in range(1, levels)]
+    lines.append(f"int main() {{ return m{levels - 1}(0) - {levels}; }}")
+    return "\n".join(lines) + "\n"
+
+
 SOURCE = """consteval int square(int value) { return value * value; }
 struct Port {
   int value;
@@ -117,12 +135,28 @@ int main() { validate(2); return make().value - 42; }
             assert any("Immediate declaration" in item["message"]
                        for item in error["relatedInformation"]), error
 
+            # Default limits reach the same depth on the editor's analysis
+            # workers (explicit 8 MiB threads) as in the compiler: the 1024
+            # nested expansions alone need several times that much native
+            # stack, so analysis continues on fresh stack segments.
+            assert not publish(recursive_descent(512) + macro_chain(1024))
+            diagnostics = publish(recursive_descent(513) + macro_chain(1024))
+            error = next(item for item in diagnostics if item.get("code") == "GTI-S2057")
+            assert "call depth exceeded" in error["message"], error
+            assert "--constexpr-depth <n>" in error["message"], error
+            diagnostics = publish(recursive_descent(512) + macro_chain(1025))
+            errors = [item for item in diagnostics if item.get("severity") == 1]
+            assert len(errors) == 1 and errors[0].get("code") == "GTI-S2124", diagnostics
+            assert "macro nesting limit of 1024" in errors[0]["message"], errors
+            assert "--macro-depth <n>" in errors[0]["message"], errors
+
             incomplete = "consteval int pending(int value"
             assert publish(incomplete)
             assert not publish(SOURCE)
         finally:
             session.close()
-    print("consteval LSP signatures, tokens, navigation and diagnostic edits passed")
+    print("consteval LSP signatures, tokens, navigation, diagnostic edits and "
+          "default compile-time depth limits passed")
 
 
 if __name__ == "__main__":

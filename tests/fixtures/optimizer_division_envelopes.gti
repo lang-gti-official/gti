@@ -1,0 +1,64 @@
+import std.string;
+import std.vector;
+import std.numeric;
+
+class DivisionCleanup {
+public:
+  DivisionCleanup() {}
+  ~DivisionCleanup() { std::println(22); }
+};
+
+void evaluate(int mode, int input) {
+  DivisionCleanup cleanup{};
+  uint64_t value = input < 128 ? uint64_t(input)
+                                : std::MAX_UINT64 - uint64_t(255 - input);
+  mut int32_t signed_value = int32_t(input - 128);
+  if (input == 0) signed_value = -2147483647 - 1;
+  if (input == 1) signed_value = -2147483647;
+  if (input == 254) signed_value = 2147483646;
+  if (input == 255) signed_value = 2147483647;
+  if (mode == 0) {
+    std::println(value / uint64_t(4) + uint64_t(13835058055282163712));
+    return;
+  }
+  if (mode == 1) {
+    std::println(signed_value / int32_t(-2) + int32_t(1073741823));
+    return;
+  }
+  if (mode == 2) {
+    std::println(value / uint64_t(2) + uint64_t(9223372036854775809));
+    return;
+  }
+  if (mode == 3) {
+    std::println(signed_value / int32_t(-1) + int32_t(1));
+    return;
+  }
+  if (mode == 4) {
+    mut uint64_t values[1] = {uint64_t(1)};
+    for (mut int round = 0; round < input; round++) {
+      values[0] = values[0] + values[0];
+    }
+    std::println(values[0]);
+    return;
+  }
+  if (mode == 6) {
+    std::println((value + value) / uint64_t(2));
+    return;
+  }
+  mut uint64_t first[3] = {uint64_t(input % 251), uint64_t(input % 127),
+                           uint64_t(input % 17)};
+  mut uint64_t second[3] = {};
+  for (mut int round = 0; round < 8; round++) {
+    second[0] = (first[0] + first[1] + first[2]) / uint64_t(3);
+    first[0] = second[0];
+  }
+  std::println(first[0]);
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc != 3) return 10;
+  int mode = int(argv[std::size_t(1)].size());
+  int input = int(argv[std::size_t(2)].size());
+  evaluate(mode, input);
+  return 0;
+}

@@ -6,6 +6,7 @@ import os
 import pathlib
 import subprocess
 import tempfile
+from backend_modes import native_modes
 
 
 def main():
@@ -20,9 +21,7 @@ def main():
     def site(fragment):
         return f"{fixture.name}:{next(i + 1 for i, line in enumerate(lines) if fragment in line)}:"
 
-    modes = [(standard, level, ["-fno-elide-constructors"])
-             for standard in ("20", "23") for level in ("0", "1", "3")]
-    modes.append(("23", "1", ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]))
+    modes = native_modes()
     if arguments.quick:
         modes = [("23", "0", ["-fno-elide-constructors"])]
     cases = [
@@ -36,18 +35,16 @@ def main():
     environment = dict(os.environ, ASAN_OPTIONS="halt_on_error=1",
                        UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1")
     with tempfile.TemporaryDirectory(prefix="gti-borrowed-extraction-") as temporary:
-        for standard, level, native in modes:
-            binary = pathlib.Path(temporary) / f"borrowed-cpp{standard}-O{level}"
-            command = [str(arguments.compiler.resolve()), str(fixture), "--std",
-                       f"c++{standard}", f"-O{level}", "-o", str(binary), "--", *native]
+        for label, flags, native in modes:
+            binary = pathlib.Path(temporary) / f"borrowed-cpp{label}"
+            command = [str(arguments.compiler.resolve()), str(fixture), *flags, "-o", str(binary), "--", *native]
             built = subprocess.run(command, text=True, capture_output=True,
                                    env=environment, timeout=120)
             assert built.returncode == 0, (command, built.stdout, built.stderr)
             for mode, status, output, location in cases:
                 result = subprocess.run([str(binary), *(["case"] * mode)], text=True,
                                         capture_output=True, env=environment, timeout=30)
-                assert (result.returncode, result.stdout) == (status, output), (
-                    standard, level, mode, result)
+                assert (result.returncode, result.stdout) == (status, output), (label, mode, result)
                 if location is None:
                     assert result.stderr == "", result
                 else:
@@ -55,10 +52,9 @@ def main():
                     assert "required borrowed resource" in result.stderr, result
                     assert location in result.stderr, (location, result)
                     assert "GTI-R0009" not in result.stderr, result
-            print(f"borrowed expected: C++{standard}/O{level}, {len(cases)} outcomes", flush=True)
+            print(f"borrowed expected: C++{label}, {len(cases)} outcomes", flush=True)
             example_binary = binary.with_name(binary.name + "-example")
-            example_command = [str(arguments.compiler.resolve()), str(example), "--std",
-                               f"c++{standard}", f"-O{level}", "-o", str(example_binary),
+            example_command = [str(arguments.compiler.resolve()), str(example), *flags, "-o", str(example_binary),
                                "--", *native]
             built = subprocess.run(example_command, text=True, capture_output=True,
                                    env=environment, timeout=120)
