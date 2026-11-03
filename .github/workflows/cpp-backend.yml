@@ -168,6 +168,7 @@ jobs:
           -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
           -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g"
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+          -DCMAKE_JOB_POOLS=link=1 -DCMAKE_JOB_POOL_LINK=link
       - name: Build the targets the emitter subset runs
         run: |
           targets="$(python3 scripts/validation_checks.py test-targets --build build-sanitized --regex "${GTI_SANITIZER_TESTS}")"
