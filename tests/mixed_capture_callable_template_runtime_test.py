@@ -11,6 +11,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -44,31 +45,27 @@ def main() -> int:
         prefix="gti-mixed-capture-template-"
     ) as temporary:
         root = pathlib.Path(temporary)
-        for optimization in ("O0", "O3"):
-            for standard in ("c++20", "c++23"):
-                mode = f"{optimization}-{standard}"
-                executable = root / mode
-                built = run(
-                    [
-                        str(compiler),
-                        str(source),
-                        f"-{optimization}",
-                        "--std",
-                        standard,
-                        "-o",
-                        str(executable),
-                    ]
-                )
-                if built.returncode != 0:
-                    return fail(f"build {mode}", built)
+        for mode, flags, native in native_modes():
+            executable = root / mode
+            built = run(
+                [
+                    str(compiler),
+                    str(source),
+                    *flags,
+                    "-o",
+                    str(executable),
+                ]
+            )
+            if built.returncode != 0:
+                return fail(f"build {mode}", built)
 
-                executed = run([str(executable)])
-                if (
-                    executed.returncode != 0
-                    or executed.stdout != ""
-                    or executed.stderr != ""
-                ):
-                    return fail(f"run {mode}", executed)
+            executed = run([str(executable)])
+            if (
+                executed.returncode != 0
+                or executed.stdout != ""
+                or executed.stderr != ""
+            ):
+                return fail(f"run {mode}", executed)
 
     return 0
 

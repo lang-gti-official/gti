@@ -5,6 +5,7 @@ import os
 import pathlib
 import subprocess
 import tempfile
+from backend_modes import native_modes
 
 
 def main():
@@ -66,11 +67,7 @@ int main() { std::unordered_set<int, Policy> values = {1, 2}; return int(values.
             assert "GTI-B0001" not in checked.stderr, (name, checked)
         print("container collection: 7 ownership/policy negatives passed", flush=True)
 
-        modes = [(f"{standard}-{level}", ["--std", standard, f"-{level}"], [])
-                 for standard in ("c++20", "c++23") for level in ("O0", "O1", "O3")]
-        modes += [("no-elide", ["--std", "c++23", "-O0"], ["-fno-elide-constructors"]),
-                  ("sanitized", ["--std", "c++23", "-O1"],
-                   ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])]
+        modes = native_modes()
         for label, flags, native in modes:
             for name in arguments.fixture or ("complete_containers_collection", "complete_containers_ownership",
                                                "complete_containers_collection_failure", "mixed_generic_field_initializers"):

@@ -6,6 +6,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from backend_modes import is_cpp_mode, keep_cpp, native_modes
 
 
 def run(command, environment=None):
@@ -40,44 +41,29 @@ def main():
         ASAN_OPTIONS="halt_on_error=1",
         UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
     )
-    modes = [
-        (f"{standard}-{level}", ["--std", standard, f"-{level}"], [])
-        for standard in ("c++20", "c++23")
-        for level in ("O0", "O3")
-    ]
-    modes += [
-        (
-            "no-elide",
-            ["--std", "c++23", "-O0"],
-            ["-fno-elide-constructors"],
-        ),
-        (
-            "sanitized",
-            ["--std", "c++23", "-O1"],
-            ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"],
-        ),
-    ]
+    modes = native_modes()
 
     with tempfile.TemporaryDirectory(prefix="gti-implicit-return-move-") as temp:
         root = pathlib.Path(temp)
-        for label, flags, native_flags in modes:
+        for label, flags, native in modes:
             binary = root / label
             command = [
                 str(compiler),
                 str(source),
                 *flags,
-                "--keep-cpp",
+                *keep_cpp(flags),
                 "-o",
                 str(binary),
             ]
-            if native_flags:
-                command += ["--", *native_flags]
+            if native:
+                command += ["--", *native]
             built = run(command, environment)
             require_success(built, f"{label} build")
 
-            generated = binary.with_suffix(".gti.cpp").read_text(encoding="utf8")
-            if "// GTI verified-MIR body:" not in generated:
-                raise AssertionError(f"{label}: missing verified-MIR witness")
+            if is_cpp_mode(flags):
+                generated = binary.with_suffix(".gti.cpp").read_text(encoding="utf8")
+                if "// GTI verified-MIR body:" not in generated:
+                    raise AssertionError(f"{label}: missing verified-MIR witness")
 
             executed = run([str(binary)], environment)
             require_success(executed, f"{label} execution")

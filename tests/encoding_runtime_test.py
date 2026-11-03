@@ -11,6 +11,7 @@ import tempfile
 import time
 
 from sanitizer_support import SANITIZED_BUILD_TIMEOUT
+from backend_modes import native_modes
 
 
 def main() -> int:
@@ -20,27 +21,7 @@ def main() -> int:
     compiler = pathlib.Path(sys.argv[1]).resolve()
     repository = pathlib.Path(__file__).resolve().parent.parent
     source = repository / "tests" / "fixtures" / "stdlib_surface_encoding.gti"
-    modes = [
-        (f"{standard}-{level}", ["--std", standard, f"-{level}"], [])
-        for standard in ("c++20", "c++23")
-        for level in ("O0", "O1", "O3")
-    ]
-    modes += [
-        (f"llvm-{level}", ["--backend", "llvm", f"-{level}"], [])
-        for level in ("O0", "O1", "O2", "O3")
-    ]
-    modes += [
-        (
-            "no-elide",
-            ["--std", "c++23", "-O0"],
-            ["-fno-elide-constructors"],
-        ),
-        (
-            "sanitized",
-            ["--std", "c++23", "-O1"],
-            ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"],
-        ),
-    ]
+    modes = native_modes()
     environment = dict(
         os.environ,
         GTI_STDLIB_PATH=str(repository / "stdlib"),
@@ -50,11 +31,11 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="gti-encoding-") as temporary:
         root = pathlib.Path(temporary)
-        for label, flags, native_flags in modes:
+        for label, flags, native in modes:
             binary = root / label
             command = [str(compiler), str(source), *flags, "-o", str(binary)]
-            if native_flags:
-                command += ["--", *native_flags]
+            if native:
+                command += ["--", *native]
             built = subprocess.run(
                 command,
                 capture_output=True,

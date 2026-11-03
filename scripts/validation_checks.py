@@ -722,14 +722,38 @@ def cmake_argument(text):
     return match.group(1) if match.group(1) is not None else match.group(3)
 
 
+def build_targets(build):
+    """The target names a configured Ninja tree knows, or None for another generator."""
+    if not (Path(build) / "build.ninja").exists():
+        return None
+    try:
+        listing = subprocess.check_output(["ninja", "-C", str(build), "-t", "targets", "all"],
+                                          text=True, stderr=subprocess.DEVNULL)
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    # A CMake target is a linker output (`gti: CXX_EXECUTABLE_LINKER__...`)
+    # or a phony alias for one built elsewhere (`gti_x_tests: phony`); object
+    # files, the cache re-run rule and CMake's own phony bookkeeping entries
+    # (`CMakeCache.txt`) are neither.
+    names = set()
+    for line in listing.splitlines():
+        name, separator, rule = line.partition(":")
+        name, rule = name.strip(), rule.strip()
+        if separator and ("_LINKER__" in rule or (rule == "phony" and "." not in name)):
+            names.add(name)
+    return names or None
+
+
 def test_targets(build, pattern):
     """The build targets the tests matching `pattern` run, read from a configured tree.
 
     CTest learns a test's command only once it is built, so this reads the
     generated CTestTestfile.cmake files instead: every argument (or `key=path`
     argument) naming a file in the build tree is a target's output. The
-    compiler and runtime are always included. A target this misses makes its
-    test fail as not found, never pass.
+    compiler and runtime are always included. A test also receives build-tree
+    paths that are not targets (an evidence directory, a registry it writes),
+    so a Ninja tree's own target list filters the candidates; a target this
+    misses makes its test fail as not found, never pass.
     """
     build = Path(build).resolve()
     selected = re.compile(pattern)
@@ -749,6 +773,9 @@ def test_targets(build, pattern):
                             targets.add(name)
     if not matched:
         raise ValueError("No configured test matches " + pattern)
+    known = build_targets(build)
+    if known is not None:
+        targets = {name for name in targets if name in known}
     return sorted(targets)
 
 
@@ -786,6 +813,7 @@ def main(argv=None):
     declared.add_argument("--build", help="re-run the declared tests in this build tree")
     declared.add_argument("--jobs", type=int, default=4)
     smoke_parser = sub.add_parser("smoke", help="run only the native O0/O3 compiler smoke")
+    smoke_parser.add_argument("--root", help="source tree whose stdlib and runtime the compiler uses (default: this checkout)")
     smoke_parser.add_argument("--build", required=True)
     smoke_parser.add_argument("--log")
     targets = sub.add_parser("test-targets", help="print the build targets the matching tests run")
@@ -856,7 +884,7 @@ def main(argv=None):
     if args.command == "smoke":
         log = Path(args.log).open("w") if args.log else None
         try:
-            executed = smoke(root, Path(args.build).resolve(), log)
+            executed = smoke(Path(args.root).resolve() if args.root else root, Path(args.build).resolve(), log)
         finally:
             if log:
                 log.close()

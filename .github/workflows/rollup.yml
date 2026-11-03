@@ -5,6 +5,9 @@ name: Rollup
 # code runs here: no pull-request content is checked out or executed; trial
 # merges are Git plumbing with hooks disabled and no custom merge drivers.
 on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
   schedule:
     - cron: "7,37 * * * *"
   workflow_dispatch:
@@ -30,6 +33,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+      actions: read
     outputs:
       authorized: ${{ steps.check.outputs.authorized }}
     steps:

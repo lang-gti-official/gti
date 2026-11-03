@@ -7,7 +7,8 @@ import pathlib
 import subprocess
 import tempfile
 
-from backend_modes import is_cpp_mode, native_modes, selected_backends
+from backend_modes import (check_unsupported, mode_plan, native_modes, print_mode_plan,
+                           record_symptom, selected_backends, unsupported)
 from case_jobs import configured_jobs, positive_jobs, run_cases
 from sanitizer_support import scaled_timeout
 from internal_module_fixture import private_library, private_source
@@ -15,7 +16,17 @@ from internal_module_fixture import private_library, private_source
 
 def main(names=None, cases=None, execution_profile=None, stdin_by_name=None,
          fixture_paths=None, native_inputs_by_name=None, native_arguments_by_case=None,
-         llvm_modes=False, cpp_unsupported=None, private_modules_by_name=None):
+         llvm_modes=False, cpp_unsupported=None, private_modules_by_name=None,
+         llvm_unsupported=None):
+    """Compile and execute every fixture in every mode GTI_TEST_BACKENDS selects.
+
+    `cpp_unsupported` and `llvm_unsupported` declare a backend limitation (one
+    text for every fixture, or a mapping from fixture name to text): a `GTI-`
+    diagnostic the backend must report, or the symptom of a filed backend bug
+    that must still reproduce (tests/backend_modes.py). A declared fixture
+    keeps the other backend's modes as its execution evidence. `--list-modes`
+    prints the fixture/mode plan without compiling.
+    """
     fixtures = pathlib.Path(__file__).parent / "fixtures"
     if names is None:
         names = ("lambda_pack_invocation", "stored_callable_signature",
@@ -35,12 +46,17 @@ def main(names=None, cases=None, execution_profile=None, stdin_by_name=None,
                              f"of GTI_TEST_BACKENDS={selected_backends()}.")
     parser.add_argument("--jobs", type=positive_jobs, default=configured_jobs(),
                         help="Concurrent compilations; executions stay ordered. Default: serial outside CTest.")
+    parser.add_argument("--list-modes", action="store_true",
+                        help="Print the fixture/mode plan (tests/execution_coverage_test.py) and exit.")
     arguments = parser.parse_args()
     compiler = arguments.compiler.resolve()
     if arguments.fixture:
         names = [name for name in names if name in arguments.fixture]
     if arguments.mode:
         modes = [mode for mode in modes if mode[0] in arguments.mode]
+    if arguments.list_modes:
+        print_mode_plan(mode_plan(names, modes, llvm_unsupported, cpp_unsupported))
+        return
     environment = dict(os.environ, ASAN_OPTIONS="halt_on_error=1",
                        UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1")
     with tempfile.TemporaryDirectory(prefix="gti-lambda-pack-") as temporary:
@@ -70,17 +86,21 @@ def main(names=None, cases=None, execution_profile=None, stdin_by_name=None,
             if native_arguments:
                 command += ["--", *native_arguments]
             timeout = scaled_timeout(120)
-            expected_cpp_limitation = cpp_unsupported and is_cpp_mode(flags)
-            if expected_cpp_limitation:
+            limitation = unsupported(name, flags, llvm_unsupported, cpp_unsupported)
+            if limitation:
                 binary.write_bytes(b"preserved unsupported output")
             built = subprocess.run(command, capture_output=True, text=True,
                                    timeout=timeout, env=environment)
-            if expected_cpp_limitation:
-                assert (built.returncode == 65 and "GTI-B0003" in built.stderr
-                        and cpp_unsupported in built.stderr
-                        and binary.read_bytes() == b"preserved unsupported output"), (name, label, built)
-                print(f"RECORDED C++ LIMITATION {name}/{label}: {cpp_unsupported}", flush=True)
+            if limitation and check_unsupported(built, limitation, name, label, flags):
+                assert binary.read_bytes() == b"preserved unsupported output", (name, label)
                 return name, label, None
+            if limitation:
+                # A declared bug symptom: the fixture must still fail to build
+                # or to produce its expected observations.
+                if built.returncode != 0:
+                    record_symptom(limitation, name, label, flags, True)
+                    return name, label, None
+                return name, label, (binary, limitation, flags)
             if built.returncode != 0:
                 # Keep the compiler's saved reason in detached-run evidence,
                 # rather than leaving only a temporary remote path in the log.
@@ -99,6 +119,9 @@ def main(names=None, cases=None, execution_profile=None, stdin_by_name=None,
             name, label, binary = compiled
             if binary is None:
                 return
+            limitation = flags = None
+            if isinstance(binary, tuple):
+                binary, limitation, flags = binary
             runs = (cases or {}).get(name, [((), (0, "", ""))])
             if not runs:
                 raise ValueError(f"{name} has no execution observations")
@@ -107,7 +130,12 @@ def main(names=None, cases=None, execution_profile=None, stdin_by_name=None,
                                         timeout=scaled_timeout(30), env=environment,
                                         input=(stdin_by_name or {}).get(name))
                 if (result.returncode, result.stdout, result.stderr) != expected:
+                    if limitation:
+                        record_symptom(limitation, name, label, flags, True)
+                        return
                     raise AssertionError((name, label, result))
+            if limitation:
+                record_symptom(limitation, name, label, flags, False)
 
         plan = [(f"{name}/{label}", (name, label, flags, native))
                 for label, flags, native in modes for name in names]

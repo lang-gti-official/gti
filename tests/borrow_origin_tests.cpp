@@ -1273,6 +1273,216 @@ mut int& wrong(mut Node& node) {
 int main() { return 0; }
 )gti");
 }
+void checkLambdaParameterReborrowReturns() {
+  const auto frontend = analyze("lambda-parameter-reborrow-returns.gti", R"gti(
+struct Cell {
+  mut int value;
+  Cell(int value) : value(value) {}
+};
+
+[[borrowed_from(input)]]
+mut int& invoke<F>(F& callback, mut int& input) {
+  return callback(input);
+}
+
+int through_parameter(mut int& input) {
+  auto relay = [](mut int& source) -> mut int& {
+    mut int& parent = source;
+    mut int& child = parent;
+    return child;
+  };
+  mut int& result = relay(input);
+  result += 1;
+  return result;
+}
+
+int main() {
+  auto relay = [](int delta, mut int& input) -> mut int& {
+    mut int& parent = input;
+    mut int& child = parent;
+    child += delta;
+    return child;
+  };
+  auto generic = [](mut int& input) -> mut int& {
+    mut int& parent = input;
+    mut int& child = parent;
+    return child;
+  };
+  auto field = [](mut Cell& input) -> mut int& {
+    mut Cell& parent = input;
+    mut int& child = parent.value;
+    return child;
+  };
+  auto observe = [](mut Cell& input) -> int& {
+    mut Cell& parent = input;
+    mut int& child = parent.value;
+    child += 1;
+    return child;
+  };
+  mut int number = 4;
+  mut int& selected = relay(2, number);
+  selected += 1;
+  mut int& forwarded = invoke(generic, number);
+  forwarded += 1;
+  if (through_parameter(number) != 9) return 1;
+  mut Cell cell{8};
+  mut int& projected = field(cell);
+  projected += 1;
+  int& observed = observe(cell);
+  return number + observed - 19;
+}
+)gti");
+  expect(frontend.canGenerateCode(),
+         "lambda returns relay caller-owned mutable and shared local aliases");
+  if (!frontend.canGenerateCode())
+    return;
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         "lambda parameter reborrow publications verify through ordinary MIR");
+
+  std::size_t mutableResults = 0;
+  std::size_t sharedResults = 0;
+  std::size_t detachedChildren = 0;
+  std::size_t wrongFormals = 0;
+  for (const auto &lambda : frontend.mir.lambdaInstances()) {
+    if (lambda.returnType.kind != lang::SemanticType::Reference)
+      continue;
+    expect(lambda.returnBorrowOrigin == lang::BorrowOriginKind::Argument,
+           "a returned lambda alias names the caller's formal owner");
+    if (lambda.returnBorrowAccess == lang::AccessMode::Mutable)
+      ++mutableResults;
+    else
+      ++sharedResults;
+    for (const auto &block : lambda.body.blocks) {
+      if (block.terminator.kind != lang::MirTerminatorKind::Return ||
+          !block.terminator.returnLoan)
+        continue;
+      const auto *published =
+          lambda.body.findLoan(*block.terminator.returnLoan);
+      expect(published && published->kind == lang::MirLoanKind::Return &&
+                 published->escapes && !published->entry &&
+                 published->access == lambda.returnType.referenceAccess,
+             "lambda publication retains exactly its declared result access");
+      if (!published)
+        continue;
+      for (unsigned mutation = 0; mutation < 3; ++mutation) {
+        auto malformed = frontend.mir;
+        auto *changed = const_cast<lang::MirLambdaInstance *>(
+            malformed.findLambda(lambda.id));
+        if (mutation == 0) {
+          for (auto &candidate : changed->body.loans)
+            if (candidate.id == published->id)
+              candidate.access = published->access == lang::AccessMode::Mutable
+                                     ? lang::AccessMode::ReadOnly
+                                     : lang::AccessMode::Mutable;
+        } else if (mutation == 1) {
+          for (auto &candidate : changed->body.blocks)
+            if (candidate.id == block.id)
+              candidate.terminator.returnLoan.reset();
+        } else {
+          changed->returnBorrowAccess =
+              lambda.returnBorrowAccess == lang::AccessMode::Mutable
+                  ? lang::AccessMode::ReadOnly
+                  : lang::AccessMode::Mutable;
+        }
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               mutation == 0
+                   ? "lambda return publication cannot change its permission"
+               : mutation == 1
+                   ? "lambda return publication cannot lose its escaping loan"
+                   : "lambda return summary cannot change result access");
+      }
+    }
+    for (const auto &loan : lambda.body.loans) {
+      if (loan.kind != lang::MirLoanKind::Local || loan.parent == 0)
+        continue;
+      ++detachedChildren;
+      auto malformed = frontend.mir;
+      auto *changed = const_cast<lang::MirLambdaInstance *>(
+          malformed.findLambda(lambda.id));
+      for (auto &candidate : changed->body.loans)
+        if (candidate.id == loan.id)
+          candidate.parent = 0;
+      expect(!lang::verifyMirProgram(malformed).valid(),
+             "a returned lambda alias cannot detach its checked parent");
+    }
+    if (lambda.returnBorrowParameter != 0) {
+      ++wrongFormals;
+      auto malformed = frontend.mir;
+      auto *changed = const_cast<lang::MirLambdaInstance *>(
+          malformed.findLambda(lambda.id));
+      changed->returnBorrowParameter = 0;
+      expect(!lang::verifyMirProgram(malformed).valid(),
+             "a lambda alias result cannot substitute a different formal");
+    }
+  }
+  expect(mutableResults >= 3 && sharedResults >= 1 && detachedChildren >= 4 &&
+             wrongFormals >= 1,
+         "lambda alias mutations cover access, ancestry and selected origins");
+
+  const auto rejected = [&](std::string_view name, std::string source) {
+    const auto invalid = lang::Frontend().analyze(
+        "lambda-alias-" + std::string(name) + ".gti", std::move(source));
+    expect(invalid.syntaxValid && !invalid.semanticValid &&
+               !invalid.canGenerateCode(),
+           std::string(name) + " is rejected before MIR lowering");
+    expect(std::any_of(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                       [](const auto &diagnostic) {
+                         return diagnostic.code == "GTI-S2017";
+                       }) &&
+               std::none_of(invalid.diagnostics.begin(),
+                            invalid.diagnostics.end(),
+                            [](const auto &diagnostic) {
+                              return diagnostic.code.starts_with("GTI-B");
+                            }),
+           std::string(name) + " retains a semantic ownership diagnostic");
+  };
+  rejected("local-storage", R"gti(
+int main() {
+  auto invalid = [](mut int& input) -> mut int& {
+    mut int local = 1;
+    mut int& parent = local;
+    mut int& child = parent;
+    return child;
+  };
+  return 0;
+}
+)gti");
+  rejected("capture-storage", R"gti(
+int main() {
+  mut int captured = 1;
+  mut auto invalid = [mut &captured](mut int& input) -> mut int& {
+    mut int& parent = captured;
+    mut int& child = parent;
+    return child;
+  };
+  return 0;
+}
+)gti");
+  rejected("parent-still-suspended", R"gti(
+int main() {
+  auto invalid = [](mut int& input) -> mut int& {
+    mut int& parent = input;
+    mut int& child = parent;
+    parent += 1;
+    return child;
+  };
+  return 0;
+}
+)gti");
+  rejected("caller-parameter-still-suspended", R"gti(
+int invalid(mut int& input) {
+  auto relay = [](mut int& source) -> mut int& {
+    mut int& parent = source;
+    mut int& child = parent;
+    return child;
+  };
+  mut int& result = relay(input);
+  input += 1;
+  return result;
+}
+int main() { return 0; }
+)gti");
+}
 } // namespace
 
 int main() {
@@ -1289,5 +1499,6 @@ int main() {
   checkSelectionOwners();
   checkReferenceCallSwitchSubjects();
   checkOwnerChains();
+  checkLambdaParameterReborrowReturns();
   return failures == 0 ? 0 : 1;
 }
