@@ -821,8 +821,11 @@ int main() {
 import std.format;
 import std.string;
 int main() {
+  int8_t left = -8;
+  uint64_t right = 9;
+  int count = 3;
   mut auto formatted =
-      std::try_format("left={} right={} count={}", int8_t(-8), uint64_t(9), 3);
+      std::try_format("left={} right={} count={}", left, right, count);
   if (!formatted) { return 1; }
   if (formatted.value() != "left=-8 right=9 count=3") { return 2; }
   return 0;

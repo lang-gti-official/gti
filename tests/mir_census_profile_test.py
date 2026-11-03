@@ -26,10 +26,10 @@ class ProfileControls(unittest.TestCase):
         self.assertEqual(set(linux), names)
         self.assertEqual({name: (mac[name], linux[name]) for name in names
                           if mac[name] != linux[name]}, {
-            "087-associative-containers.gti": (457, 456),
-            "089-library-workflow.gti": (923, 922),
-            "189-protocol-format-hash.gti": (452, 451),
-            "190-conditional-member-operators.gti": (526, 525),
+            "087-associative-containers.gti": (456, 455),
+            "089-library-workflow.gti": (922, 921),
+            "189-protocol-format-hash.gti": (448, 447),
+            "190-conditional-member-operators.gti": (525, 524),
         })
         lowered = json.loads((ROOT / "tests/lowered_program_census_baseline.json").read_text())
         for name, row in lowered["variants"][reviewed.TARGETS[1]]["examples"].items():
