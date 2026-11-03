@@ -156,6 +156,19 @@ void SemanticDiagnosticReporter::reportConstexprFailure(
   diagnostics.emplace_back(std::move(diagnostic));
 }
 
+void SemanticConstraintGuidance::retain(
+    const std::vector<std::string> &source) {
+  constexpr std::size_t limit = 8;
+  for (const auto &hint : source) {
+    if (std::find(hints.begin(), hints.end(), hint) != hints.end())
+      continue;
+    if (hints.size() < limit)
+      hints.push_back(hint);
+    else
+      ++omitted;
+  }
+}
+
 SemanticMemberConstraintCause
 SemanticMemberConstraintCause::retain(SemanticConstraintFailure failure) {
   SemanticMemberConstraintCause cause;
@@ -320,6 +333,17 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
                                    "from the member explanation.");
     }
   };
+  const auto appendExpressionGuidance =
+      [](Diagnostic &diagnostic, const SemanticConstraintFailure &cause) {
+        for (const auto &hint : cause.expressionGuidance.hints)
+          if (std::find(diagnostic.hints.begin(), diagnostic.hints.end(),
+                        hint) == diagnostic.hints.end())
+            diagnostic.hints.push_back(hint);
+        if (cause.expressionGuidance.omitted != 0)
+          diagnostic.hints.push_back(
+              std::to_string(cause.expressionGuidance.omitted) +
+              " additional nested requirement hints omitted.");
+      };
   const auto publish = [&](Diagnostic diagnostic) {
     if (failure.expressionFailure && failure.alternatives.empty() &&
         !failure.context.empty()) {
@@ -379,6 +403,7 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
           {tokenSpan(location), *failure.expressionFailure});
     }
     appendMemberReason(diagnostic, failure);
+    appendExpressionGuidance(diagnostic, failure);
     if (failure.conformanceBorrowOperation) {
       diagnostic.hints.push_back(
           "Operation '" + failure.conformanceBorrowOperation->lexeme +
@@ -469,6 +494,7 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
                                                   "'."});
           }
           appendMemberReason(diagnostic, alternative);
+          appendExpressionGuidance(diagnostic, alternative);
           if (alternative.expressionFailure &&
               !alternative.expressionFailure->empty())
             diagnostic.related.push_back(

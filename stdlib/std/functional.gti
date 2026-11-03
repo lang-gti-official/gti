@@ -553,35 +553,21 @@ public:
   export class hash<T> {};
 
   /// Hashes a borrowed value without mutation or ownership transfer.
-  export concept hashing<T> {
+  export [[unsatisfied("Provide std::hashing<T> for automatic hashing. For a legacy specialization, select std::unordered_map<K, V, std::hash<K>> or std::unordered_set<K, std::hash<K>> explicitly. Pair keys with legacy-only elements need an explicit composite Hash policy or element hashing protocols.")]]
+  concept hashing<T> {
     size_t hash(T& value);
   };
 
-  namespace detail {
-    concept legacy_hashable<T> = std::default_initializable<std::hash<T>> &&
-        std::read_callable<std::hash<T>, T, size_t>;
-  }
-
-  /// Protocol implementations take precedence over exact legacy specializations.
-  export concept hashable<T> = hashing<T> || detail::legacy_hashable<T>;
-
-  namespace detail {
-    size_t hash_value<T>(T& value) requires hashable<T> {
-      if constexpr (hashing<T>) {
-        return hashing<T>::hash(value);
-      } else if constexpr (legacy_hashable<T>) {
-        std::hash<T> hasher{};
-        return hasher(value);
-      }
-    }
-  }
+  /// Automatic hashing uses a protocol; legacy class policies remain explicit.
+  export [[unsatisfied("Provide std::hashing<T> for automatic hashing. For a legacy specialization, select std::unordered_map<K, V, std::hash<K>> or std::unordered_set<K, std::hash<K>> explicitly. Pair keys with legacy-only elements need an explicit composite Hash policy or element hashing protocols.")]]
+  concept hashable<T> = hashing<T>;
 
   /// Default container adapter. An explicit container Hash remains unchanged.
   export class default_hash<T> {
   public:
     default_hash() = default;
-    size_t operator()(T& value) requires hashable<T> {
-      return detail::hash_value(value);
+    size_t operator()(T& value) requires hashing<T> {
+      return hashing<T>::hash(value);
     }
   };
 
@@ -744,10 +730,10 @@ for concept std::hashing<char> {
 
 // Ordered combination; wrapping arithmetic is deliberate hash arithmetic.
 for <T, U> concept std::hashing<std::pair<T, U>>
-    requires std::hashable<T> && std::hashable<U> {
+    requires std::hashing<T> && std::hashing<U> {
   std::size_t hash(std::pair<T, U>& value) {
-    auto first = std::detail::hash_value(value.first);
-    auto second = std::detail::hash_value(value.second);
+    auto first = std::hashing<T>::hash(value.first);
+    auto second = std::hashing<U>::hash(value.second);
     return first ^ gti_internal::integer_wrapping_add(
         gti_internal::integer_wrapping_add(second, uint64_t(11400714819323198485)),
         gti_internal::integer_wrapping_add(first << 6, first >> 2));

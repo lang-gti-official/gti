@@ -1,3 +1,4 @@
+#include "../src/compiler/semantic_diagnostics.h"
 #include "gti/formatter.h"
 #include "gti/frontend.h"
 #include "gti/generic_constraint.h"
@@ -552,6 +553,69 @@ int main() { return pick(3); }
 )GTI"),
            "overload filtering retains ordinary source-predicate failures",
            "GTI-S2029");
+
+  lang::SemanticConstraintGuidance boundedGuidance;
+  std::vector<std::string> guidance;
+  for (int index = 0; index < 10; ++index)
+    guidance.push_back("hint " + std::to_string(index));
+  guidance.push_back("hint 0");
+  boundedGuidance.retain(guidance);
+  expect(boundedGuidance.hints.size() == 8 && boundedGuidance.omitted == 2 &&
+             boundedGuidance.hints.front() == "hint 0" &&
+             boundedGuidance.hints.back() == "hint 7",
+         "nested query guidance retains a bounded, deduplicated source-order "
+         "sample with an explicit omission count");
+
+  const std::string nestedHintPrefix = R"GTI(
+[[unsatisfied("Provide an application::registered conformance before dispatch.")]]
+concept registered<T> { int read(T& value); };
+struct Relay<T> {
+  int operator()(T& value) requires registered<T> { return 0; }
+public: Relay() = default;
+};
+)GTI";
+  const std::vector<std::string> nestedHintContracts{
+      R"GTI(
+concept dispatchable<T> =
+  requires(Relay<T>& relay, T& value) { { relay(value) } -> int; } ||
+  requires(Relay<T>& relay, T& value) { { (relay(value)) } -> int; };
+)GTI",
+      R"GTI(
+constexpr bool admission<T>() requires registered<T> { return true; }
+concept dispatchable<T> = admission<T>();
+)GTI"};
+  const std::string nestedHintSuffix = R"GTI(
+int dispatch<T>(T& value) requires dispatchable<T> { return 0; }
+struct Item { public: Item() = default; };
+int main() { Item value{}; return dispatch(value); }
+)GTI";
+  for (std::size_t index = 0; index < nestedHintContracts.size(); ++index) {
+    const auto source =
+        nestedHintPrefix + nestedHintContracts[index] + nestedHintSuffix;
+    const auto result =
+        check(root, directory, "nested_query_guidance_" + std::to_string(index),
+              source);
+    rejected(result, "nested query retains the concept's explanation");
+    const auto failure =
+        std::find_if(result.diagnostics.begin(), result.diagnostics.end(),
+                     [](const auto &item) { return item.code == "GTI-S2029"; });
+    expect(failure != result.diagnostics.end() && failure->fixes.empty() &&
+               std::count(failure->hints.begin(), failure->hints.end(),
+                          "Provide an application::registered conformance "
+                          "before dispatch.") == 1,
+           "expression alternatives and constexpr predicate workers retain "
+           "one actionable source-authored hint without synthetic fixes");
+    auto repaired = source;
+    repaired.insert(repaired.find("int main()"), R"GTI(
+for concept registered<Item> {
+  int read(Item& value) { return 7; }
+};
+)GTI");
+    accepted(check(root, directory,
+                   "nested_query_guidance_repaired_" + std::to_string(index),
+                   repaired),
+             "satisfying the nested protocol preserves normal query success");
+  }
 
   accepted(check(root, directory, "source_sentinel_policy", R"GTI(
 import std.iterator;

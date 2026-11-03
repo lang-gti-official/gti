@@ -210,10 +210,17 @@ The existing ordinary-function lowering remains unchanged through HIR and MIR.
 
 Formatting and hashing adopt this mechanism with `std::formatting<T>` and
 `std::hashing<T>`. Generic pairs and unrelated user families conform once,
-conditioned on their components. `formattable<T>` and `hashable<T>` accept the
-protocol or a legacy exact `formatter<T>` / `hash<T>` specialization. One source
-dispatcher chooses the protocol when both exist, otherwise the legacy adapter.
-Concrete standard-type blocks reuse existing formatter/hasher policy. No
-blanket conformance or partial specialization is introduced. The stateless
-`default_hash<T>` container adapter uses this dispatcher; explicitly selected
-container hasher types retain their existing contract.
+conditioned on their components. Formatting retains a protocol-first bridge
+for exact `formatter<T>` specializations. Automatic hashing uses only the
+protocol: `hashable<T>` means `hashing<T>` and `default_hash<T>` calls it.
+Concrete standard-type blocks reuse their known stateless hashing policy.
+No blanket conformance or partial specialization is introduced.
+
+The compatibility audit rejected reconstructing a legacy exact `hash<T>` for
+every invocation: a valid constructor-selected seed must remain attached to
+its container's policy instance. Legacy specializations therefore remain
+available directly or as explicit `unordered_map` / `unordered_set` `Hash`
+arguments. An implicit legacy-only default receives a constraint diagnostic
+with that migration. Pair elements need hashing protocols, or callers provide
+an explicit composite policy that retains element hasher state. This preserves
+state and destruction without new conditional storage or compiler exceptions.

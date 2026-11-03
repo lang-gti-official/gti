@@ -58,8 +58,9 @@ public:
   }
 };
 class std::hash<Both> {
-public:
+  // Automatic hashing must not require this inaccessible legacy constructor.
   hash() = default;
+public:
   std::size_t operator()(Both& value) { return 99; }
 };
 for concept std::formatting<Both> {
@@ -104,9 +105,8 @@ int main() {
   if (both_hash(both) != 11) { return 5; }
   std::default_hash<Box<Box<int>>> box_hash{};
   if (box_hash(box) != 7) { return 6; }
-  std::default_hash<std::pair<Legacy, int>> old_hash{};
-  auto old_hash_result = old_hash(old_pair);
-  if (old_hash_result != old_hash(old_pair)) { return 7; }
+  static_assert(!std::hashable<Legacy>);
+  static_assert(!std::hashable<std::pair<Legacy, int>>);
   mut std::unordered_map<std::pair<int, bool>, int> values{};
   values.insert(std::make_pair(1, true), 42);
   if (!values.contains(pair) || values.at(pair) != 42) { return 8; }

@@ -1554,27 +1554,44 @@ Pair-level presentation flags are not propagated to elements: only default
 presentation is accepted. See
 [example 189](../../examples/189-protocol-format-hash.gti).
 
-Compatibility has one explicit dispatch rule. `std::formattable<T>` is true
-when `formatting<T>` holds or an exact `formatter<T>` has the existing public,
-safe, read-only `format(T&, mut string&, format_spec&)` method and a default
-constructor. `std::hashable<T>` accepts `hashing<T>` or a default-constructible
-exact `hash<T>` with `size_t operator()(T&)`. If both exist, the protocol wins.
-The dispatcher otherwise constructs the legacy formatter/hasher exactly once
-for that invocation, as before. Integral-enum formatting uses its existing
-formatter; its underlying-type selection uses ordinary concept conditions.
-No blanket conformance or partial specialization is added. Direct use of an
-explicit `formatter<T>` or `hash<T>` continues to mean that class; use protocol
-operations or the public formatting APIs / `default_hash<T>` for dispatch.
+Formatting compatibility has one explicit dispatch rule. `std::formattable<T>`
+is true when `formatting<T>` holds or an exact `formatter<T>` has the existing
+public, safe, read-only `format(T&, mut string&, format_spec&)` method and a
+default constructor. If both exist, the protocol wins. The fallback constructs
+one legacy formatter for that invocation. Integral-enum formatting uses its
+existing formatter, with underlying-type selection through ordinary concept
+conditions. Direct use of an explicit `formatter<T>` continues to mean that
+class. No blanket conformance or partial specialization is added.
 
-`std::unordered_map` and `std::unordered_set` now default `Hash` to the stateless
-`std::default_hash<K>` adapter. Its call operator requires `hashable<K>`.
-Explicit custom `Hash` template arguments keep their exact
+Automatic hashing has an explicit migration boundary: `std::hashable<T>` means
+`std::hashing<T>`, and `std::unordered_map` / `std::unordered_set` default to the
+stateless `std::default_hash<K>` protocol adapter. An exact legacy `std::hash<K>`
+specialization remains available directly and as an explicit container policy:
+
+```gti
+std::unordered_map<Key, Value, std::hash<Key>> values{};
+std::unordered_set<Key, std::hash<Key>> keys{};
+```
+
+These containers retain one policy instance, including its constructor-selected
+seed or owned resources, through lookups, moves and destruction. An implicit
+legacy-only default is rejected with `GTI-S2029` and a hint showing this
+migration. Recreating a legacy policy on each hash invocation would discard
+valid instance state; it is deliberately not an automatic bridge. A type with
+both a hashing protocol and an exact legacy specialization uses only the
+protocol for automatic hashing, even when the legacy default constructor is
+inaccessible.
+
+Explicit `Hash` template arguments retain the exact
 `std::read_callable<Hash, Key, size_t>` contract; equality still uses
-`std::read_binary_callable<Equal, Key, Key, bool>`. Pairs are hashable when both
-components are hashable, using an ordered source-defined combination with
-wrapping integer arithmetic. They are usable as keys when their element types
-also support equality. Missing component support is a semantic constraint
-failure before code generation.
+`std::read_binary_callable<Equal, Key, Key, bool>`. Pairs are automatically
+hashable when both components provide hashing protocols, using an ordered
+source-defined combination with wrapping integer arithmetic. They are usable
+as keys when their element types also support equality. For legacy-only
+elements, provide element hashing protocols with stable results, or explicitly
+select a composite `Hash` object that retains its element policy instances.
+Missing component support is a semantic constraint failure before code
+generation, with the same migration guidance.
 
 Key equivalence must imply equal hash values, and hashing and equality must
 remain consistent while keys are stored; signatures cannot prove this law.

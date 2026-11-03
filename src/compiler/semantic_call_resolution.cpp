@@ -1932,9 +1932,11 @@ auto SemanticVisitor::Impl::evaluateConceptApplication(
     -> std::optional<ConstraintFailure> {
   if (requirement.syntax && requirement.syntax->predicate) {
     std::string reason;
+    SemanticConstraintGuidance guidance;
     if (constraintPredicateSatisfied(
             *requirement.syntax, requirement.arguments, &reason,
-            requirement.lookupScope ? &*requirement.lookupScope : nullptr))
+            requirement.lookupScope ? &*requirement.lookupScope : nullptr,
+            &guidance))
       return std::nullopt;
     ConstraintFailure failure{.parameter = requirement.syntax->name.last(),
                               .argument = requirement.arguments.empty()
@@ -1946,7 +1948,8 @@ auto SemanticVisitor::Impl::evaluateConceptApplication(
                                   requirement.arguments.size() == 1
                                       ? std::optional<std::size_t>(0)
                                       : std::nullopt,
-                              .expressionFailure = std::move(reason)};
+                              .expressionFailure = std::move(reason),
+                              .expressionGuidance = std::move(guidance)};
     // Preserve the fact's existing diagnostic without deriving a subject
     // from coincidentally equal arguments in a multi-parameter predicate.
     if (requirement.arguments.size() == 1) {
@@ -1961,10 +1964,12 @@ auto SemanticVisitor::Impl::evaluateConceptApplication(
   if (requirement.syntax && requirement.syntax->memberRequirement) {
     if (requirement.syntax->memberRequirement->isExpressionRequirement()) {
       std::string reason;
+      SemanticConstraintGuidance guidance;
       if (expressionRequirementSatisfied(
               *requirement.syntax->memberRequirement, requirement.arguments,
               &reason,
-              requirement.lookupScope ? &*requirement.lookupScope : nullptr))
+              requirement.lookupScope ? &*requirement.lookupScope : nullptr,
+              &guidance))
         return std::nullopt;
       const auto &query = *requirement.syntax->memberRequirement;
       const auto operation =
@@ -2006,7 +2011,8 @@ auto SemanticVisitor::Impl::evaluateConceptApplication(
           .leafApplication = requirement.syntax,
           .applicationArgumentIndex =
               unaryReceiver ? std::optional<std::size_t>(0) : std::nullopt,
-          .expressionFailure = std::move(reason)};
+          .expressionFailure = std::move(reason),
+          .expressionGuidance = std::move(guidance)};
     }
     const auto &member = requirement.syntax->memberRequirement->member();
     SemanticMemberRequirementFailure memberFailure;

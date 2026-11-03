@@ -1,0 +1,95 @@
+import std.functional;
+import std.unordered_map;
+import std.unordered_set;
+import std.utility;
+
+mut int hash_constructions = 0;
+mut int hash_drops = 0;
+uint64_t next_salt() {
+  hash_constructions++;
+  return uint64_t(hash_constructions);
+}
+
+struct SeededKey {
+  int value;
+  SeededKey(int number) : value(number) {}
+  bool operator==(SeededKey& other) { return this.value == other.value; }
+  bool operator!=(SeededKey& other) { return this.value != other.value; }
+};
+
+// Each instance is stable, while distinct instances intentionally have
+// different seeds. Reconstructing this policy during lookup loses the key.
+class std::hash<SeededKey> {
+  uint64_t salt;
+public:
+  hash() : salt(next_salt()) {}
+  hash(hash<SeededKey>& other) = delete;
+  hash(hash<SeededKey>&& other) = default;
+  ~hash() { hash_drops++; }
+  std::size_t operator()(SeededKey& key) {
+    return std::size_t(key.value) + this.salt;
+  }
+};
+
+using Pair = std::pair<SeededKey, SeededKey>;
+class PairHash {
+  std::hash<SeededKey> first;
+  std::hash<SeededKey> second;
+public:
+  PairHash() : first(std::hash<SeededKey>()), second(std::hash<SeededKey>()) {}
+  PairHash(PairHash& other) = delete;
+  PairHash(PairHash&& other) = default;
+  std::size_t operator()(Pair& key) {
+    return this.first(key.first) * uint64_t(257) + this.second(key.second);
+  }
+};
+
+int main() {
+  static_assert(!std::hashable<SeededKey>);
+  static_assert(!std::hashable<Pair>);
+  {
+    std::hash<SeededKey> direct{};
+    SeededKey key{7};
+    if (direct(key) != 8 || direct(key) != 8) { return 1; }
+  }
+  if (hash_constructions != 1 || hash_drops != 1) { return 2; }
+  {
+    mut std::unordered_map<SeededKey, int, std::hash<SeededKey>> values{};
+    [[discard]] values.insert(SeededKey(7), 42);
+    SeededKey key{7};
+    if (!values.contains(key) || values.at(key) != 42) { return 3; }
+    values.rehash(std::size_t(32));
+    auto moved = std::move(values);
+    if (!moved.contains(key) || moved.at(key) != 42) { return 4; }
+    if (hash_constructions != 2 || hash_drops != 1) { return 5; }
+  }
+  if (hash_constructions != 2 || hash_drops != 2) { return 6; }
+  {
+    mut std::unordered_set<SeededKey, std::hash<SeededKey>> values{};
+    [[discard]] values.insert(SeededKey(9));
+    SeededKey key{9};
+    values.reserve(std::size_t(64));
+    auto moved = std::move(values);
+    if (!moved.contains(key) || !moved.contains(key)) { return 7; }
+    if (hash_constructions != 3 || hash_drops != 2) { return 8; }
+  }
+  if (hash_constructions != 3 || hash_drops != 3) { return 9; }
+  {
+    mut std::unordered_map<Pair, int, PairHash> values{};
+    [[discard]] values.insert(Pair(SeededKey(3), SeededKey(4)), 17);
+    Pair key{SeededKey(3), SeededKey(4)};
+    auto moved = std::move(values);
+    if (!moved.contains(key) || moved.at(key) != 17) { return 10; }
+    if (hash_constructions != 5 || hash_drops != 3) { return 11; }
+  }
+  if (hash_constructions != 5 || hash_drops != 5) { return 12; }
+  {
+    mut std::unordered_set<Pair, PairHash> values{};
+    [[discard]] values.insert(Pair(SeededKey(5), SeededKey(6)));
+    Pair key{SeededKey(5), SeededKey(6)};
+    auto moved = std::move(values);
+    if (!moved.contains(key) || !moved.contains(key)) { return 13; }
+    if (hash_constructions != 7 || hash_drops != 5) { return 14; }
+  }
+  return hash_constructions == 7 && hash_drops == 7 ? 0 : 15;
+}

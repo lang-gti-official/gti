@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Source protocol clients, legacy adapters, nested pairs, and constraint failures."""
+"""Source protocol clients, explicit legacy hash state, and constraint failures."""
 import json
 import pathlib
 import subprocess
@@ -29,6 +29,32 @@ with tempfile.TemporaryDirectory(prefix="gti-protocol-format-hash-") as temporar
             actual = invoke([str(executable)])
             if actual != output:
                 raise AssertionError(f"unexpected output: {actual!r}")
+    legacy_fixture = ROOT / "tests/fixtures/legacy_hash_policy_state.gti"
+    for backend in ("llvm", "cpp"):
+        for optimization in ("-O0", "-O3"):
+            executable = directory / ("legacy-hash-state-" + backend + optimization)
+            invoke([str(COMPILER), str(legacy_fixture), "--backend", backend, optimization,
+                    "-o", str(executable)])
+            assert invoke([str(executable)]) == ""
+    legacy_prefix = legacy_fixture.read_text().split("int main() {", 1)[0]
+    migration_hint = "std::unordered_map<K, V, std::hash<K>>"
+    for label, statement in {
+        "legacy-default-map": "std::unordered_map<SeededKey, int> values{};",
+        "legacy-default-set": "std::unordered_set<SeededKey> values{};",
+        "legacy-default-call": "SeededKey key{7}; std::default_hash<SeededKey> hash{}; hash(key);",
+        "legacy-pair-map": "std::unordered_map<Pair, int> values{};",
+        "legacy-pair-set": "std::unordered_set<Pair> values{};",
+    }.items():
+        source = directory / (label + ".gti")
+        source.write_text(legacy_prefix + "int main() { " + statement + " return 0; }\n")
+        rejected = subprocess.run([str(COMPILER), str(source), "--emit-mir", "-o",
+                                   str(directory / (label + ".mir"))],
+                                  text=True, capture_output=True, timeout=90)
+        assert rejected.returncode == 65 and "GTI-S2029" in rejected.stderr, rejected
+        assert (migration_hint in rejected.stderr and
+                "std::unordered_set<K, std::hash<K>>" in rejected.stderr), rejected.stderr
+        if label.startswith("legacy-pair"):
+            assert "explicit composite Hash policy" in rejected.stderr, rejected.stderr
     assertion_fixture = ROOT / "tests/fixtures/protocol_testing_assertions.gti"
     assertion_line = next(index for index, line in
                           enumerate(assertion_fixture.read_text().splitlines(), 1)
@@ -49,7 +75,7 @@ with tempfile.TemporaryDirectory(prefix="gti-protocol-format-hash-") as temporar
                    "std::println(\"{}\", p); return 0; }", "std::formattable"),
         "hash": ("import std.functional; import std.utility; struct Opaque { Opaque() = default; }; "
                  "int main() { auto p = std::make_pair(Opaque(), 1); "
-                 "std::default_hash<std::pair<Opaque, int>> h{}; h(p); return 0; }", "std::hashable"),
+                 "std::default_hash<std::pair<Opaque, int>> h{}; h(p); return 0; }", "std::hashing"),
         "map_key": ("import std.unordered_map; import std.utility; struct Opaque { Opaque() = default; "
                     "bool operator==(Opaque& other) { return true; } "
                     "bool operator!=(Opaque& other) { return false; } }; "
@@ -63,4 +89,4 @@ with tempfile.TemporaryDirectory(prefix="gti-protocol-format-hash-") as temporar
         path.write_text(source)
         invoke([str(COMPILER), str(path), "--emit-mir", "-o", str(directory / (name + ".mir"))],
                success=False, expected=diagnostic)
-print("protocol formatting/hashing: fixtures, example and protocol assertion failure LLVM O0/O3, 4 rejections passed")
+print("protocol formatting/hashing: fixtures/example/assertions LLVM O0/O3, seeded legacy policies LLVM/C++ O0/O3, 9 rejections passed")

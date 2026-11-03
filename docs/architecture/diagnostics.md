@@ -1423,6 +1423,11 @@ shared inference origins, and multi-cause disjunctions retain the call primary.
 Both concrete public applications and leaf locations are structured related
 information, including across source units. No public library spelling selects
 diagnostic behavior.
+Isolated expression and constexpr-predicate requirement workers retain the
+first failing diagnostic's guidance alongside its reason. Each query keeps
+at most eight distinct hints and reports an omitted count. Ordinary failures
+and failed disjunction alternatives publish that guidance without copying
+synthetic-source fix-its or changing the failure's argument provenance.
 When several overloads fail their requirements, the existing no-exact-overload
 diagnostic retains each candidate's constraint explanation and leaf notes as
 related information; it does not replace these causes with a conversion-only

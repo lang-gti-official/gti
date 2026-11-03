@@ -33,7 +33,7 @@
     "stdlib/std/filesystem.gti": "a579044390fadec9e7854eccd4d5901f13ab85288bf71a19ee97cadad2693de6",
     "stdlib/std/format.gti": "c47af029e7f6e7a449c49cd9b4e3f9e4e876a0889a5934fb7736058950aef6a2",
     "stdlib/std/forward_list.gti": "8d39227073b9f98eb6bc83a7a7103bc630497345830bc7e618dcc01fccb917ef",
-    "stdlib/std/functional.gti": "d855a3aa7a179ddba7f259088d7e040cd9ef901f1977e8bd69edf1428a006ecc",
+    "stdlib/std/functional.gti": "5880a83e6800a696963152328ae131a87e532c63e0c741fe64eca273c5d4092c",
     "stdlib/std/http.gti": "7810cf7acaee803670f346e0103fa6c0cdfca62aca8edda538cfa880e8ae3521",
     "stdlib/std/io.gti": "8c28bff6f539a82e47f507db2cff429e74307b0dbe6128de48c0b47fd329c0b3",
     "stdlib/std/iterator.gti": "586855579c50031612b0136d001e21dd31c4387dcf115c9fe4485bd12d2577e3",
@@ -1300,6 +1300,36 @@
       "id": "functional",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_functional.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "hash-legacy-policy-state",
+      "mode": "run",
+      "source": "tests/fixtures/legacy_hash_policy_state.gti",
+      "backend": "llvm",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "hash-legacy-policy-state-cpp",
+      "mode": "run",
+      "source": "tests/fixtures/legacy_hash_policy_state.gti",
+      "backend": "cpp",
       "optimizations": [
         "O0",
         "O3"
@@ -4305,7 +4335,9 @@
       ],
       "case_ids": [
         "associative-hashes",
-        "protocol-format-hash"
+        "protocol-format-hash",
+        "hash-legacy-policy-state",
+        "hash-legacy-policy-state-cpp"
       ],
       "required_instantiations": [
         "all fixed-width signed/unsigned integers",
@@ -4314,14 +4346,17 @@
         "application-owned exact hash specialization",
         "move-only stored source hasher",
         "conditional generic hashing, nested pairs and noncopyable leaves",
-        "legacy exact hash compatibility and protocol-first precedence"
+        "explicit legacy hash policy retains constructor-selected seeds and owned state",
+        "automatic protocol hashing does not construct an inaccessible legacy policy",
+        "legacy-only implicit map/set/pair hashing fails with an explicit-policy migration hint"
       ],
       "evidence": [
         "stdlib/std/functional.gti",
         "tests/fixtures/associative_hash_contracts.gti",
         "tests/associative_hash_contracts_test.py",
         "tests/protocol_format_hash_runtime_test.py",
-        "tests/fixtures/protocol_format_hash.gti"
+        "tests/fixtures/protocol_format_hash.gti",
+        "tests/fixtures/legacy_hash_policy_state.gti"
       ]
     },
     {
@@ -7122,7 +7157,9 @@
         "container-member-aliases",
         "conditional-member-operators",
         "conditional-member-operators-cpp",
-        "protocol-format-hash"
+        "protocol-format-hash",
+        "hash-legacy-policy-state",
+        "hash-legacy-policy-state-cpp"
       ],
       "required_instantiations": [
         "scalar keys and values",
@@ -7133,7 +7170,8 @@
         "duplicate emplacement without construction",
         "destructor cleanup and node reuse",
         "conditional default insertion by owned key, existing-key reuse, exactly-once mapped-value cleanup",
-        "protocol-derived default hash for nested pair keys, including owning string elements"
+        "protocol-derived default hash for nested pair keys, including owning string elements",
+        "explicit seeded legacy and composite pair policies remain stable through lookup, rehash/reserve and container moves with exactly-once destruction"
       ],
       "evidence": [
         "stdlib/std/unordered_map.gti",
@@ -7143,7 +7181,8 @@
         "tests/fixtures/stdlib_surface_container_aliases.gti",
         "tests/conditional_member_operators_test.py",
         "tests/fixtures/conditional_member_operators.gti",
-        "tests/protocol_format_hash_runtime_test.py"
+        "tests/protocol_format_hash_runtime_test.py",
+        "tests/fixtures/legacy_hash_policy_state.gti"
       ]
     },
     {
@@ -7205,18 +7244,22 @@
         "complete-sets",
         "complete-containers-ownership",
         "container-member-aliases",
-        "protocol-format-hash"
+        "protocol-format-hash",
+        "hash-legacy-policy-state",
+        "hash-legacy-policy-state-cpp"
       ],
       "required_instantiations": [
         "int",
         "move-only Key with collision-heavy Hash and Equal",
-        "protocol-derived default hash for nested pair keys, including owning string elements"
+        "protocol-derived default hash for nested pair keys, including owning string elements",
+        "explicit seeded legacy and composite pair policies remain stable through lookup, rehash/reserve and container moves with exactly-once destruction"
       ],
       "evidence": [
         "tests/complete_containers_test.py",
         "tests/fixtures/complete_containers_ownership.gti",
         "tests/fixtures/stdlib_surface_container_aliases.gti",
-        "tests/protocol_format_hash_runtime_test.py"
+        "tests/protocol_format_hash_runtime_test.py",
+        "tests/fixtures/legacy_hash_policy_state.gti"
       ]
     },
     {

@@ -3503,7 +3503,8 @@ private:
   [[nodiscard]] bool expressionRequirementSatisfied(
       const MemberRequirement &query, std::span<const SemanticType> arguments,
       std::string *reason = nullptr,
-      const std::vector<std::string> *lookupScope = nullptr) const;
+      const std::vector<std::string> *lookupScope = nullptr,
+      SemanticConstraintGuidance *guidance = nullptr) const;
   static void
   collectRequirementTypeArguments(const Expr *expression,
                                   std::vector<const TypeRef *> &types);
@@ -3516,7 +3517,8 @@ private:
   [[nodiscard]] bool constraintPredicateSatisfied(
       const ConceptApplication &application,
       const std::vector<SemanticType> &arguments, std::string *reason,
-      const std::vector<std::string> *lookupScope = nullptr) const;
+      const std::vector<std::string> *lookupScope = nullptr,
+      SemanticConstraintGuidance *guidance = nullptr) const;
   [[nodiscard]] std::optional<PredicateCapability> predicateCapabilityFor(
       const ConceptApplication &application,
       const std::vector<SemanticType> &arguments,
