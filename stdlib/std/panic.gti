@@ -12,6 +12,12 @@ export namespace std {
     detail::panic(message);
   }
 
+  /// With no formatting arguments, preserve the raw-message panic contract.
+  [[noreturn, track_caller]]
+  constexpr void runtime_panic(string_view message) {
+    panic(message);
+  }
+
   /// Formats a terminal message. A format error uses a bounded literal fallback
   /// rather than recursively attempting to format another panic message.
   [[noreturn, track_caller]]

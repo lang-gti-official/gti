@@ -710,7 +710,8 @@ The current implemented foundation includes:
   `try_` APIs use `print_errc`, additionally reporting stdout submission failure.
   Plain APIs panic with the same domain reason and external caller location.
   Formatted `std::panic` uses the checked carrier; `std::runtime_panic` explicitly
-  accepts a dynamic pattern. Raw one-argument print/println/panic operations keep
+  accepts a dynamic pattern. Its one-argument overload, like `panic`, is raw text.
+  Raw one-argument print/println/panic operations keep
   their literal-text behavior and do not interpret braces. Assertions retain
   their existing deferred runtime formatting contract.
   A custom `formatter<T>` may supply a constexpr default constructor and
