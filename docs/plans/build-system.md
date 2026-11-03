@@ -1695,6 +1695,16 @@ and the reconciled implementation queue, not repeat their extraction.
 
 ## Remaining Build Goals (2026-10-11)
 
+The development runner's Google Spot pilot is separate from `gti build`
+semantics: one opt-in private worker reuses the SSH snapshot/executor with a
+durable conservative allowance and provider expiry. See
+[the current contract](../architecture/agent-workflow.md#opt-in-google-spot-pilot).
+Offline lifecycle tests are implemented; live owner commissioning is not
+claimed. Three-worker/cloud-first expansion requires durable off-worker results,
+an independently scheduled orphan reaper, price/cost reconciliation and one
+multi-host provisioning broker. Cloud facilities do not belong in the language
+or compilation driver.
+
 These goals feed the existing [implementation sequence](implementation-sequence.md),
 not a second milestone queue. Earlier benchmark-first or demonstrated-need
 language is superseded by ADR 012; prerequisites and acceptance still apply.

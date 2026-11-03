@@ -31,7 +31,7 @@
     "stdlib/std/environment.gti": "3a8c583446b14f97b3c3f3b1ae9dad7c206c830222bd31e8b1650e6f4d0cd826",
     "stdlib/std/experimental/optional.gti": "9ef1e87987c636fa141de4f844c264f07147e816db9c365d98f334f32689c083",
     "stdlib/std/filesystem.gti": "a579044390fadec9e7854eccd4d5901f13ab85288bf71a19ee97cadad2693de6",
-    "stdlib/std/format.gti": "6bb96b2a640689505878eeafc4ed2b75989c5821638e12114d5661ecdbe0ea67",
+    "stdlib/std/format.gti": "5d35dd4363998fc01e49138a98204b2bb02530f47d6686aae655a32657633d30",
     "stdlib/std/forward_list.gti": "8d39227073b9f98eb6bc83a7a7103bc630497345830bc7e618dcc01fccb917ef",
     "stdlib/std/functional.gti": "094c1baa47c93162e8ad139c30e5bd0070cff7c5e2343fb3fd32ca880f8437ac",
     "stdlib/std/http.gti": "7810cf7acaee803670f346e0103fa6c0cdfca62aca8edda538cfa880e8ae3521",
@@ -46,14 +46,14 @@
     "stdlib/std/numeric.gti": "fa0d3a929076f3f614ebef4c10c897c513e91712332d00b24fc58e78af5bd0cf",
     "stdlib/std/optional.gti": "a67d746ef0f8f5eb14c256b5595725febe56425cfec76fea484f5717fd1ca0d1",
     "stdlib/std/paired_span.gti": "06244b15782f49e35b229fa20238489c578305d8b09a70e9b22ba77f7d5dfffa",
-    "stdlib/std/panic.gti": "3d57fe9c9292a04c6671534abaa3fd9b9287c47247f5c2d40e686344c25cd222",
+    "stdlib/std/panic.gti": "c04ffc42512a44fee23f218cf69177637b683a28d63f3ecdd627fc03b1ace14f",
     "stdlib/std/polymorphic.gti": "009f2fe6faec263700c6d734d8db3448b25cde6cca9c9adfea2e8807ed3a594a",
     "stdlib/std/process.gti": "632b0c183f363b66872ae2c17a00516ac9b103bfd580527fc639fd0996e1324b",
     "stdlib/std/queue.gti": "38c9d92a49aa37fcd56dadaa3c2639e5c963b79efa5286f30b407016bc909eed",
     "stdlib/std/random.gti": "41d83ba6833118988fcc0559abde9042cd423a201b468c77b6f33da3cd2eabec",
     "stdlib/std/resource.gti": "dbc11a50bbad24af5830001cb8d99025e21e1054bde19c2fc43ab0338234370c",
     "stdlib/std/resource_vector.gti": "8858e551fbebd2e2e9806a71f6ee97b39a9acb43cc8b9584f681fd9b1d811f77",
-    "stdlib/std/set.gti": "51dda8c0219afea2cca82160d7f3a062f1eefac41b5959455b887dfcd277f1ae",
+    "stdlib/std/set.gti": "97eda79bfecaa7ac8fe57badcdbf7b844fe6ec3ad5f7e9805133932d361b3bb6",
     "stdlib/std/simd.gti": "c525bc03c27ff0f3921aaaa7ff03931dacad40578895dac142b0863f1b5fb9ce",
     "stdlib/std/source_location.gti": "c748203afe96c27c06465ffd6b38728becb85bcceca6e8097f75a8460eb74f95",
     "stdlib/std/span.gti": "effe13ba9bd0beeb1f04c84f17b5bd4458686ff713e3eb6756a65a8b0e8a7409",
@@ -63,7 +63,7 @@
     "stdlib/std/testing.gti": "03e0324d888081b1ee77a626f73c45170a94aa337a214732ba829880204af618",
     "stdlib/std/thread.gti": "3fc42f30db431e05b406379bfc24999dc499a1105bee59c07fc1e794b350e77a",
     "stdlib/std/unordered_map.gti": "2607e891338a065a85f88b7d030da7104bdbcddbf220e193f1484eec92bcb7a1",
-    "stdlib/std/unordered_set.gti": "beefd607c3c90ac64cae71baec51e9808919b7fe6a5f362ec7c2e29351138da0",
+    "stdlib/std/unordered_set.gti": "9c8ac3a227a0dbd7e0dd519ae3bc2e09bebf54bb26ea8ad80d5bb8a8d177f7d9",
     "stdlib/std/utility.gti": "983e0584b5bf5c1850f0f648ebc579a53586e1e0f5f5d28c23d4fc88155343b5",
     "stdlib/std/vector.gti": "cde0716d40cb6a718404427ee2daa68b38ffa15603b00d49145caf5997b7c44f"
   },
@@ -2307,6 +2307,20 @@
       }
     },
     {
+      "id": "set-swap-contract",
+      "mode": "run",
+      "source": "tests/fixtures/set_swap_contract.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
       "id": "shared-ptr",
       "mode": "run",
       "source": "tests/fixtures/shared_ownership.gti",
@@ -3917,12 +3931,14 @@
         "counted string view with embedded zero",
         "indexed and typed format specifications",
         "custom formatter delegation and composition",
-        "recoverable value-dependent formatter rejection"
+        "recoverable value-dependent formatter rejection",
+        "unformattable first, middle and last argument rejected at public call"
       ],
       "evidence": [
         "tests/fixtures/stdlib_surface_format.gti",
         "tests/fixtures/extensible_formatting.gti",
-        "stdlib/std/format.gti"
+        "stdlib/std/format.gti",
+        "tests/stdlib_api_contracts_test.py"
       ]
     },
     {
@@ -5690,13 +5706,15 @@
       ],
       "required_instantiations": [
         "raw counted message",
-        "formatted int argument"
+        "formatted int argument",
+        "unformattable first, middle and last argument rejected at public call"
       ],
       "evidence": [
         "tests/fixtures/stdlib_surface_panic_expected.gti",
         "tests/panic_runtime_test.py",
         "tests/panic_contract_tests.cpp",
-        "stdlib/std/panic.gti"
+        "stdlib/std/panic.gti",
+        "tests/stdlib_api_contracts_test.py"
       ]
     },
     {
@@ -6263,16 +6281,19 @@
         "complete-containers-collection",
         "complete-sets",
         "complete-containers-ownership",
-        "container-member-aliases"
+        "container-member-aliases",
+        "set-swap-contract"
       ],
       "required_instantiations": [
         "int",
-        "move-only Key and stateful Compare"
+        "move-only Key and stateful Compare",
+        "relocatable policy swap with state preserved; borrowed policy rejected at call"
       ],
       "evidence": [
         "tests/complete_containers_test.py",
         "tests/fixtures/complete_containers_ownership.gti",
-        "tests/fixtures/stdlib_surface_container_aliases.gti"
+        "tests/fixtures/stdlib_surface_container_aliases.gti",
+        "tests/stdlib_api_contracts_test.py"
       ]
     },
     {
@@ -7003,16 +7024,19 @@
         "complete-containers-collection",
         "complete-sets",
         "complete-containers-ownership",
-        "container-member-aliases"
+        "container-member-aliases",
+        "set-swap-contract"
       ],
       "required_instantiations": [
         "int",
-        "move-only Key with collision-heavy Hash and Equal"
+        "move-only Key with collision-heavy Hash and Equal",
+        "relocatable policy swap with state preserved; borrowed policy rejected at call"
       ],
       "evidence": [
         "tests/complete_containers_test.py",
         "tests/fixtures/complete_containers_ownership.gti",
-        "tests/fixtures/stdlib_surface_container_aliases.gti"
+        "tests/fixtures/stdlib_surface_container_aliases.gti",
+        "tests/stdlib_api_contracts_test.py"
       ]
     },
     {

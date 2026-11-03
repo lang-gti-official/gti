@@ -872,6 +872,12 @@ owning callable wrappers. An ordinary wrapper or lambda establishes a new
 call site; it does not magically preserve its external caller. Explicit
 tracked wrappers forward the incoming location instead.
 
+A trusted intrinsic uses the attributes of its selected declaration, including
+when it checks a condition and can return normally. Its intrinsic identity does
+not replace that declaration's `track_caller` contract. An untracked source
+wrapper still anchors the location inside its own body; annotating the wrapper
+as well forwards its caller's location through the intrinsic.
+
 Terminal-flow checking retains the existing switch boundary: a `default`
 arm or a semantically exhaustive closed payload-enum switch covers every
 path. Listing all named values of an ordinary integral enum does not prove

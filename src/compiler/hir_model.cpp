@@ -2436,6 +2436,23 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           value.kind == HirValueKind::Call && value.functionTarget
               ? program.findFunctionInstance(*value.functionTarget)
               : nullptr;
+      const auto &intrinsicProof = value.intrinsicCallContractProof;
+      const FunctionControlContract *intrinsicContract =
+          intrinsicProof ? &intrinsicProof->contract() : nullptr;
+      if (intrinsicContract &&
+          ((value.kind != HirValueKind::Call &&
+            (value.neverReturns || value.tracksCaller)) ||
+           value.functionTarget || intrinsicProof->source() != value.source ||
+           intrinsicContract->declaration() == 0 ||
+           intrinsicContract->intrinsic() == IntrinsicKind::None ||
+           intrinsicContract->intrinsic() != value.intrinsic ||
+           intrinsicContract->snapshot() !=
+               semantics.analysisSeal().programSnapshot ||
+           intrinsicContract->neverReturns() != value.neverReturns ||
+           intrinsicContract->tracksCaller() != value.tracksCaller)) {
+        result.errors.emplace_back("HIR intrinsic call lost its selected "
+                                   "semantic declaration contract");
+      }
       const bool expectedTerminal =
           (value.kind == HirValueKind::Call &&
            intrinsicTerminalFailureOutcome(value.intrinsic)) ||
@@ -2465,7 +2482,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       }
       const bool expectedTracking =
           (value.kind == HirValueKind::Call &&
-           intrinsicTracksCaller(value.intrinsic)) ||
+           (intrinsicContract ? intrinsicContract->tracksCaller()
+                              : intrinsicTracksCaller(value.intrinsic))) ||
           (contractTarget != nullptr && contractTarget->tracksCaller);
       const auto &callerProof = value.callerLocationProof;
       if (value.neverReturns != expectedTerminal ||
