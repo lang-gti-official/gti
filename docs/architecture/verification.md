@@ -9723,7 +9723,11 @@ evidence. Every `_tsan` harness (`managed_thread_tsan_test.py`, which
 backend's own emission and never C++-backend output: the test-only
 `gti_llvm_instrumented_source` helper emits the publicly admitted verified
 program as thread-sanitizer-attributed LLVM IR, the matching Clang compiles that
-IR and the fixture's runtime dependency closure with `-fsanitize=thread`, `nm -u`
+IR with `-fsanitize=thread`, the platform's reviewed compiler
+(`CMAKE_CXX_COMPILER`, the only profile `runtime/src/atomic_lane.h` admits:
+GCC 14 on Linux x86_64, where the LLVM-matching Clang is rejected) compiles
+the fixture's runtime dependency closure with `-fsanitize=thread` and links
+the binary against its own thread-sanitizer runtime, `nm -u`
 must show `__tsan_read`/`__tsan_write` on the fixture object (plus instrumented
 `__tsan_atomic` operations of any width for the public atomic fixtures and
 `__tsan_atomic64` for the wrapping-atomic source owners), and the linked binary runs three
