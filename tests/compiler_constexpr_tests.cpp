@@ -850,10 +850,10 @@ int main() {
   }
   expect(formattedOutput.canGenerateCode() &&
              lang::verifyMirProgram(formattedOutput.mir).valid() &&
-             concreteFoldValues == 2 && concreteFoldElements == 4,
+             concreteFoldValues == 2 && concreteFoldElements == 6,
          "source-defined formatting should use two verified ordered folds for "
-         "counting and appending the concrete trailing integral pack after "
-         "handling the first argument directly");
+         "counting and appending all three arguments in the concrete integral "
+         "pack");
   const std::string formattedGenerated = gti_test::emitCppText(formattedOutput);
   expect(formattedGenerated.find("std::format(") == std::string::npos &&
              formattedGenerated.find("std::vformat") == std::string::npos &&
