@@ -280,9 +280,11 @@ Further goals, not implemented by this slice:
   profile diagnoses this shape rather than requiring a native C++ move or
   silently relocating a pinned payload. Acceptance must include deleted-move
   user types and cleanup-failure paths with no intermediate relocation.
-- Constant-context macro calls require the staged verified-MIR evaluation
-  profile from L-CONST-01, preserving phase timing and diagnostic/resource
-  limits. This slice does not add another AST execution rule.
+- Constant-context macro calls use the staged verified-MIR evaluation profile
+  from L-CONST-01, preserving phase timing and diagnostic/resource limits.
+  Since lazy closure staging (2026-11-03, issues #174/#175), a macro such as
+  `std::assert` inside a constexpr function runs through constexpr bindings and
+  immediate calls alike; no AST macro execution rule exists or is planned.
 - Escaping or memoized lazy values require a separate lifetime/forcing/storage
   contract; they are not silently provided by expression parameters.
 
@@ -617,14 +619,14 @@ workflow determine task scope and integration.
 | Reflection clients | phases 1–3 and reflection-driven JSON delivered | `<std/json>` is the promoted reflected library since 0.409.0. Select remaining metadata/invocation/constant-execution clients from the [reflection plan](reflection.md), preserving construction, rollback and expansion budgets; do not repeat the experimental JSON gate. |
 | `L-UP-10` -> `L-UP-11` | acceptance closure, then adoption; may be co-validated | The retained borrowed-pack reproducer passes current O0/O3 probes. Complete the relevant constructor/cleanup composition matrix while adopting final-node emplacement; do not presume another compiler fix. |
 | `L-UP-12` -> `L-UP-18` | inline protocol is a new capability | Reuse delivered allocated final-address construction. Establish inline publication/rollback and structural wrapper lifecycle eligibility before claiming immovable optional support. |
-| `L-UP-14` | ready for a bounded new capability | Current staged MIR text/passive-record profile -> one constant-eligible pattern validator -> general required call-site literal validation. Dynamic formatting stays recoverable. |
+| `L-UP-14` | ready for a bounded new capability | Current staged MIR text/passive-record profile -> one constant-eligible pattern validator -> general required call-site literal validation. Dynamic formatting stays recoverable. A constant-eligible formatter also gives compile-time panics formatted messages (issue #174 follow-up), including single-argument `std::assert`. |
 | `L-UP-15` | ready for a bounded new capability | Ordinary method requirements and operator selection exist; extend validity-only requirements to member operators and co-deliver conditional map indexing with unrelated-type proof. |
 | `L-OWN-02` owner-tracked view fields | phases 1/2 and phase 3a nested text values implemented | Phase 3b nested reference-carrier payload/results and phase 4 contract unification remain, along with the named nested-copy/field-contract restrictions. Preserve caller-owned origins, physical carrier lifetime, cleanup and conservative whole-carrier protection. See [`L-OWN-02`](#l-own-02-owner-tracked-view-fields). |
 | `L-UP-16` | ready for a bounded new capability | Existing multi-owner carrier facts -> explicit result-projection summary -> independently useful precise read-only projection. Proxy iteration needs a separate yield contract. |
 | `L-UP-17` | ready for a bounded recoverable-owner slice | Typed allocation results and lifetime rollback exist. Preserve selected construction, unpublished ownership and once-only arguments; co-deliver recoverable unique allocation without pretending all packs/immovable cases are covered. |
 | `E-EMBED-01B/C`, `B-LIB-02`, `T-EMBED-01`, `Q-EMBED-01` | infallible LLVM context/wrapper/project-library workflow implemented; full campaign partial | Complete fallible closure containment, editor integration and installed load/call/fail/unload/reload/platform acceptance. Preserve the existing generated header, immutable generations, cache/report/clean and C/C++ host fixtures; see [embedding delivery](#engine-embedding-delivery-campaign). |
 | Native import `C-08B` | ordinary foreign objects implemented | Exact external-storage identity, unsafe loads/stores, inert addresses, explicit owner-witness borrowing, headers and bindgen cover scalar, recursive pointer, callback and passive-record objects. TLS/volatile and top-level arrays require their general access/address contracts. |
-| `L-CONST-01` extension | mutable-builder, ordinary-enum and passive-result profiles implemented; further profiles ready to select | Checked references, constructor defaults/reference inputs, void helpers, non-consuming mutable methods/operators, ordinary enums and passive Expected composition use staged verified MIR. Select remaining stored-reference, pack, owning/sum or operator profiles with runtime parity and shared budgets; do not grow a permanent duplicate AST rule. |
+| `L-CONST-01` extension | mutable-builder, ordinary-enum and passive-result profiles implemented; one lazy rule and compile-time panics implemented; further profiles ready to select | Checked references, constructor defaults/reference inputs, void helpers, non-consuming mutable methods/operators, ordinary enums and passive Expected composition use staged verified MIR. Call closures stage lazily for every constant context, and an executed panic reports its message. Select remaining stored-reference, pack, owning/sum or operator profiles with runtime parity and shared budgets; do not grow a permanent duplicate AST rule. |
 | `T-LSP` latency client | trusted-body/preamble/instance reuse delivered; edit cancellation/debounce, library concept/storage-effect reuse, staged constant-call memoization and unchanged-source replay delivered through 0.486.1 | Re-measure current workloads before selecting reuse/adoption costs. The 0.423.0 timing is historical, not today's bottleneck ranking. [LSP evolution](lsp-evolution.md#per-keystroke-analysis-cost) records remaining identity/invalidation and completion work. |
 | `RT-2` through `RT-12` | independent goals with technical prerequisites | Use the [current optimization disposition](optimization.md#pr-166-audit-disposition-2026-10-09), not retired minimum-speedup admission rules. RT-12 recovers the optimizer proofs and exit sharing that the source-defined `expected` (0.449.0) gave up by owner decision; its tests mark the lost controls as recovery-pending. Its closed-call proofs and failure closure are delivered in 0.468.0 ([RT-12](optimization.md)); exit sharing for exits that construct the result remains. Select one proof/transform/representation family with correctness replay and performance acceptance. RT-9's sort slice (introsort) is delivered in 0.410.1. RT-1's cold failure-edge slice is delivered (2026-10-12); `hashmap` lookups are the remaining inlining headroom. RT-5's body-local slice is delivered (2026-10-13) and changes no program on its own; crossing an accessor is the remaining work, with a measured ceiling of about 20% on one loop shape ([RT-5](optimization.md#rt-5-no-relational-facts-between-indices-and-lengths)). RT-4's refresh currently reaches four probe helpers, so it should follow discharge improvements (RT-2, RT-3, RT-5); see [its measured reach](optimization.md#rt-4-infallibility-is-not-refreshed-after-discharge). |
 | Shared failure-cleanup tails (`M-FAIL-01`) | function and lambda bodies delivered in 0.402.2; their scalar normal exits in 0.421.1 | Continuation records entered by `ContinueFailure` share identical failure-cleanup suffixes, and normal exits returning nothing, a scalar or a scalar error share exit ladders; see the M-FAIL-01 entry below. Remaining: constructor, field-initializer, destructor, module and hosted-startup bodies; exits returning owning, class or borrowed results; path-dependent steps stay private. |
@@ -1381,6 +1383,12 @@ and select an independent row.
   contract is implemented. Make the shared parser constant-eligible, then
   implement call-site enforcement; adding constexpr to one wrapper alone
   would not diagnose every invalid literal call. This remains a capability row.
+- **Compile-time panic messages (2026-11-03, issue #174):** an executed
+  `std::panic(std::string_view)` already fails a constant request with its
+  message. Formatted panic messages, including the single-argument
+  `std::assert` failure text, are a follow-up step of this item once substep A
+  makes the formatter constant-eligible. Until then an executed formatted panic
+  fails the request as a runtime-only call.
 - **Prerequisite/client:** the current literal-text/passive-record MIR profile.
   Substep A is a shared constant-eligible validator; substep B's call-site
   validation requires A's passing evidence. Adopt the general explicit
@@ -9927,6 +9935,19 @@ follow-ups:
   defaults retain exact identity through the same frontend-owned constant
   model. The remaining AST interpreter is a compatibility path for unmigrated
   profiles, not the intended endpoint for future execution facilities.
+- **One lazy rule and compile-time panics (2026-11-03, issues #174/#175):**
+  staging lowers only completed constexpr callees. Every other callee keeps a
+  signature-only declaration body, so only executed operations must be
+  compile-time capable in constexpr bindings, `static_assert`, `if constexpr`
+  and immediate calls alike. An executed runtime-only call or terminal failure
+  is an authoritative verified-MIR result and never falls back to the AST
+  interpreter. The trusted runtime-terminal panic operation fails the request
+  with its message. `[[track_caller]]` frames move the reported location to the
+  user's call, and `std::panic(std::string_view)` is an ordinary constexpr
+  wrapper. Remaining: formatted messages (`L-UP-14` substep A); macro-body
+  failure locations inside trusted library macros; and the shared step/depth
+  budgets and immediate-call caching from the in-flight limits work, whose
+  cache must store results consistent with lazy staging.
 - **Implemented scope:** The existing evaluator admits concrete type/pack
   and `uint64_t` value-generic calls, exact scoped enums, concrete fixed arrays,
   fully initialized structural class/struct values, ordinary constexpr

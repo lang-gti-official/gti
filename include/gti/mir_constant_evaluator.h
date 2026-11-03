@@ -30,6 +30,8 @@ struct MirConstantEvaluation {
   MirInstructionId instruction = 0;
   std::size_t steps = 0;
   std::string detail;
+  // For RuntimeOnlyCall, the signature-only callee execution reached.
+  HirFunctionInstanceId runtimeCallee = 0;
   struct CallSite {
     MirBodyAddress body;
     MirBlockId block = 0;

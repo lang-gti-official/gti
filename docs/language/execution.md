@@ -1258,6 +1258,12 @@ native exception or ABI unwinding as the language contract. Cleanup propagation
 is compiler-managed, non-resumable language failure unwinding represented by
 explicit control-flow edges; GTI has no source handler or resume mechanism.
 
+A panic or other terminal failure that executes during compile-time evaluation
+is not a defined runtime failure. It fails that constant request with a
+`GTI-S2057` compile diagnostic carrying the panic's message (static semantics
+§3.11). No failure record is produced, no cleanup runs, and no executable is
+built.
+
 An ordinary failure carries one immutable fixed-size, versioned, copyable,
 allocation-free record containing:
 
@@ -1632,7 +1638,8 @@ observable effects. The current implementation and acceptance status is tracked
 in S-ALLOC-08/S-ALLOC-09; this permission is not a guarantee that every eligible
 allocation is optimized away.
 
-Compile-time diagnostics, compiler resource exhaustion, IEEE-754 nontrapping
+Compile-time diagnostics, including compile-time panics, compiler resource
+exhaustion, IEEE-754 nontrapping
 results, explicit `expected` errors, native error/sentinel values,
 best-effort cleanup-service errors, and violated unsafe raw-pointer or native
 obligations are not defined runtime failures. Unsafe obligation violations

@@ -1,0 +1,64 @@
+// One lazy compile-time rule (issues #174 and #175): an unexecuted
+// runtime-only call, panic, assertion or macro never rejects a request, and
+// the same function gives the same value at compile time and at run time.
+import std.assert;
+import std.panic;
+
+int runtime_only(int v) { return v - 1; }
+
+constexpr int clamp_positive(int v) {
+  if (v < 0) { return runtime_only(v); }
+  return v;
+}
+
+constexpr int checked_half(int v) {
+  if (v % 2 != 0) { std::panic("odd {}", v); }
+  return v / 2;
+}
+
+constexpr int checked_third(int v) {
+  if (v % 3 != 0) { std::panic("not a multiple of three"); }
+  return v / 3;
+}
+
+#macro guard_even(int v) { if (v % 2 != 0) { std::panic("odd {}", v); } }
+
+constexpr int asserted_quarter(int v) {
+  std::assert(v % 4 == 0);
+  guard_even(v);
+  std::assert(v >= 0, "asserted_quarter needs a non-negative value");
+  return v / 4;
+}
+
+consteval int immediate_clamp(int v) { return clamp_positive(v); }
+consteval int immediate_half(int v) { return checked_half(v); }
+consteval int immediate_third(int v) { return checked_third(v); }
+consteval int immediate_quarter(int v) { return asserted_quarter(v); }
+
+constexpr int bound_clamp = clamp_positive(5);
+constexpr int bound_half = checked_half(8);
+constexpr int bound_third = checked_third(9);
+constexpr int bound_quarter = asserted_quarter(12);
+static_assert(checked_third(12) == 4);
+static_assert(asserted_quarter(16) == 4);
+
+int runtime_input(int value) { return value; }
+
+int main() {
+  mut int failures = 0;
+  if constexpr (checked_third(6) != 2) { failures += 1; }
+  // Compile-time values agree with run-time evaluation of the same bodies.
+  if (bound_clamp != clamp_positive(runtime_input(5))) { failures += 1; }
+  if (bound_half != checked_half(runtime_input(8))) { failures += 1; }
+  if (bound_third != checked_third(runtime_input(9))) { failures += 1; }
+  if (bound_quarter != asserted_quarter(runtime_input(12))) { failures += 1; }
+  if (immediate_clamp(3) != clamp_positive(runtime_input(3))) { failures += 1; }
+  if (immediate_half(6) != checked_half(runtime_input(6))) { failures += 1; }
+  if (immediate_third(9) != checked_third(runtime_input(9))) { failures += 1; }
+  if (immediate_quarter(20) != asserted_quarter(runtime_input(20))) {
+    failures += 1;
+  }
+  // The runtime-only branch still runs at run time.
+  if (clamp_positive(runtime_input(-5)) != -6) { failures += 1; }
+  return failures;
+}
