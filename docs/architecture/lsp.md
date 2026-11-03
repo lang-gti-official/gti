@@ -3,6 +3,14 @@
 Status: Current implementation, with future symbol/index work explicitly
 separated below.
 
+Concept tests in expression positions use the constraint resolver's concept
+symbol and type-argument occurrences. Hover, definition, references, semantic
+tokens and wrong-arity diagnostics therefore use the same identities as a
+requires-clause application. An incomplete angle application may temporarily
+produce parser diagnostics; a repaired buffer rebuilds those compiler facts.
+Tree-sitter distinguishes a concept application from an explicit generic call,
+and formatting retains compact type angles before Boolean operators.
+
 Associated type families use compiler-owned protocol member and input-binder
 symbols. Declaration, conformance definition and projected member uses share
 the exact contract identity; renamed family inputs retain their own independent

@@ -15025,6 +15025,10 @@ auto SemanticVisitor::Impl::expressionToken(const Expr &expression) -> Token {
     return static_cast<const LayoutQuery &>(expression).keyword();
   case ExprKind::MemberRequirement:
     return static_cast<const MemberRequirement &>(expression).keyword();
+  case ExprKind::ConceptTest:
+    return static_cast<const ConceptTest &>(expression)
+        .application()
+        .name.last();
   case ExprKind::LiteralExpr:
     return static_cast<const LiteralExpr &>(expression).token();
   case ExprKind::Logical:

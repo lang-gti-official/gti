@@ -860,3 +860,10 @@ namespace-qualified types, overloads and borrowed APIs from two compiled librari
 
 The [compiled type forwarding example](compiled-type-forwarding/README.md) shares
 dependency-owned records and enums through a chain and diamond of compiled libraries.
+
+[`188-concept-conditions.gti`](188-concept-conditions.gti) tests a named structural
+concept and a protocol concept in `if constexpr`, then invokes the selected
+contract. `static_assert` and a Boolean binding demonstrate conjunction,
+disjunction and negation. Build and run with `gti examples/188-concept-conditions.gti
+--backend llvm -O2 -o /tmp/concept-conditions` and `/tmp/concept-conditions`;
+success exits with 0 and prints nothing.

@@ -3368,6 +3368,16 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(conversion_operators_runtime PROPERTIES TIMEOUT 600)
+  add_test(NAME concept_conditions
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/concept_conditions_test.py"
+      "$<TARGET_FILE:gti>")
+  set_tests_properties(concept_conditions PROPERTIES TIMEOUT 300)
+  if(TARGET gti_lsp)
+    add_test(NAME concept_conditions_lsp
+      COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/concept_conditions_lsp_test.py"
+        "$<TARGET_FILE:gti_lsp>")
+    set_tests_properties(concept_conditions_lsp PROPERTIES TIMEOUT 120)
+  endif()
   add_test(
     NAME protocol_concepts_runtime
     COMMAND "${Python3_EXECUTABLE}"

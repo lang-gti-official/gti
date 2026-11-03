@@ -134,6 +134,9 @@ auto SemanticVisitor::Impl::collectRequirementTypeArguments(
     collectRequirementTypeArguments(group->expression().get(), types);
   } else if (const auto *get = exprAs<Get>(expression)) {
     collectRequirementTypeArguments(get->object().get(), types);
+  } else if (const auto *test = exprAs<ConceptTest>(expression)) {
+    for (const auto &argument : test->application().arguments)
+      types.push_back(&argument);
   } else if (const auto *query = exprAs<MemberRequirement>(expression)) {
     if (!query->isExpressionRequirement())
       types.push_back(&query->receiver());
