@@ -340,8 +340,10 @@ class PreviewTests(unittest.TestCase):
     def test_seed_builds_only_example_dependencies_but_features_build_all(self):
         seed = Preview(self.flow).prepare(None, self.root / "seed", [])
         _, executed = self.verify(seed)
-        self.assertEqual(executed[1], ["cmake", "--build", "out/preview-build", "--parallel", "4",
-                                      "--target", "gti", "gti_runtime", "gti_lsp"])
+        # The example gate's checks name C++ unit binaries; preview_build
+        # selects them with the installed toolchain products.
+        self.assertEqual(executed[1], ["python3", "scripts/preview_build.py", "--source", ".",
+                                      "--build", "out/preview-build", "--parallel", "4"])
         self.feature()
         feature = self.prepare()
         _, executed = self.verify(feature)

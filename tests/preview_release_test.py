@@ -88,8 +88,9 @@ class PreviewTests(unittest.TestCase):
     def test_preview_target_selection_builds_real_installed_and_test_closure(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve(); source = root / 'source'; source.mkdir()
-            build = root / 'build'; query = build / '.cmake/api/v1/query'; query.mkdir(parents=True)
-            (query / 'codemodel-v2').touch()
+            # Configured without a file-API query, as a local preview seed is:
+            # target selection must request the model and reconfigure.
+            build = root / 'build'
             (source / 'main.c').write_text('int main(void) { return 0; }\n')
             (source / 'lib.c').write_text('int value(void) { return 1; }\n')
             (source / 'CMakeLists.txt').write_text(r'''cmake_minimum_required(VERSION 3.20)
@@ -112,7 +113,9 @@ add_test(NAME focused COMMAND "$<TARGET_FILE:owner_tests>"
 ''')
             subprocess.run(['cmake', '-S', str(source), '-B', str(build), '-G', 'Ninja',
                             '-DCMAKE_BUILD_TYPE=Release'], check=True, capture_output=True)
+            self.assertFalse((build / '.cmake/api/v1/reply').exists())
             targets = build_preview.build_targets(source, build, {'focused'})
+            self.assertTrue((build / '.cmake/api/v1/query/codemodel-v2').is_file())
             self.assertEqual(set(targets), {'gti', 'gti_lsp', 'gti_tree_sitter', 'sdk', 'file_archive', 'owner_tests', 'census_helper'})
             subprocess.run(['cmake', '--build', str(build), '--parallel', '2', '--target', *targets],
                            check=True, capture_output=True)
