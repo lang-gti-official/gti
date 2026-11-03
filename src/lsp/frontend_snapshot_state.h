@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gti/frontend_cache.h"
+#include "gti/include_suggestions.h"
 #include "gti/instance_analysis_cache.h"
 #include "gti/semantic_preamble.h"
 
@@ -34,6 +35,7 @@ struct FrontendSourceSnapshot {
   std::shared_ptr<FrontendCache> cache;
   std::shared_ptr<InstanceAnalysisCache> instanceCache;
   std::shared_ptr<SemanticPreambleCache> preambleCache;
+  std::shared_ptr<IncludeDiscoveryCache> includeDiscoveryCache;
   std::unordered_map<std::string, std::uint64_t> generations;
   std::unordered_map<std::string, std::uint64_t> digests;
 };
@@ -52,8 +54,13 @@ public:
 
   // Advances the identity before an overlay or disk change is analysed.
   // Previously learned digests for the path become unreachable immediately;
-  // their physical rows are reclaimed by the bounded cache's LRU.
+  // their physical rows are reclaimed by the bounded cache's LRU. Import
+  // discovery rows that read the path are dropped.
   std::uint64_t invalidate(std::string_view canonicalPath);
+
+  // A project-model change (manifest, lockfile, module map, created or
+  // removed source) can change how every candidate interface resolves.
+  void invalidateIncludeDiscovery();
 
   [[nodiscard]] FrontendSourceSnapshot capture() const;
 
@@ -70,6 +77,8 @@ public:
   [[nodiscard]] std::shared_ptr<FrontendCache> cache() const;
   [[nodiscard]] std::shared_ptr<InstanceAnalysisCache> instanceCache() const;
   [[nodiscard]] std::shared_ptr<SemanticPreambleCache> preambleCache() const;
+  [[nodiscard]] std::shared_ptr<IncludeDiscoveryCache>
+  includeDiscoveryCache() const;
 
 private:
   std::shared_ptr<FrontendCache> sharedCache;
@@ -80,6 +89,9 @@ private:
   // identities, so source invalidation needs no explicit eviction here: a
   // changed library unit or project shape simply selects another generation.
   std::shared_ptr<InstanceAnalysisCache> sharedInstanceCache;
+  // Candidate interface scans for missing-import discovery. Rows compare the
+  // source text they read before reuse; invalidation reclaims them early.
+  std::shared_ptr<IncludeDiscoveryCache> sharedIncludeDiscoveryCache;
   mutable std::mutex mutex;
   std::unordered_map<std::string, std::uint64_t> generations;
   std::unordered_map<std::string, std::uint64_t> digests;
