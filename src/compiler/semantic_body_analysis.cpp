@@ -8233,6 +8233,13 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
   bool rejectedConsumingReceiver = false;
   std::optional<CallableCandidate> rejectedMutableFunction;
   bool rejectedCompilerPrivate = false;
+  struct OwnershipRejectedOverload {
+    const CallableCandidate *source = nullptr;
+    CallableCandidate function;
+    std::vector<SemanticType> argumentTypes;
+    std::vector<std::size_t> argumentIndices;
+  };
+  std::vector<OwnershipRejectedOverload> ownershipRejected;
   for (const CallableCandidate &candidate : callee->overloads) {
     ContextualCallArguments candidateArguments = argumentAnalysis;
     if (!acceptsArgumentShape(candidate, candidateArguments.types) ||
@@ -8257,6 +8264,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       continue;
     }
     bool exact = true;
+    std::vector<std::size_t> ownershipRejectedIndices;
     for (std::size_t index = 0; index < candidateArguments.types.size();
          ++index) {
       const CallArgumentMatchKind match = functionCallArgumentMatch(
@@ -8264,6 +8272,18 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
           expr.arguments()[index], candidateArguments.deferred[index]);
       if (match == CallArgumentMatchKind::Mismatch) {
         exact = false;
+        // A by-value parameter whose type matches exactly, rejected only
+        // because the written value category cannot initialize it, keeps the
+        // candidate as the call's explanation; any other mismatch drops it.
+        if (!candidateArguments.deferred[index] &&
+            index < resolved.parameterTypes.size() &&
+            callArgumentRejectedByOwnership(resolved.parameterTypes[index],
+                                            candidateArguments.types[index],
+                                            expr.arguments()[index])) {
+          ownershipRejectedIndices.push_back(index);
+          continue;
+        }
+        ownershipRejectedIndices.clear();
         break;
       }
       if (match == CallArgumentMatchKind::EphemeralReadBorrow) {
@@ -8271,6 +8291,13 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       }
     }
     if (!exact) {
+      if (!ownershipRejectedIndices.empty() &&
+          (isCompilerTrustedRequester(expr.paren()) ||
+           !resolved.compilerPrivate)) {
+        ownershipRejected.push_back({&candidate, std::move(resolved),
+                                     std::move(candidateArguments.types),
+                                     std::move(ownershipRejectedIndices)});
+      }
       continue;
     }
     const CallReceiverMode receiverMode =
@@ -8421,6 +8448,30 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       }
       if (viable.empty() && constraintFailures.size() == 1) {
         reportConstraintFailure(expr.paren(), constraintFailures.front());
+        currentType = SemanticType::Unknown;
+        return;
+      }
+      if (viable.empty() && constraintFailures.empty() &&
+          ownershipRejected.size() == 1) {
+        // Exactly one overload accepts every argument type and is rejected
+        // only because a by-value argument cannot be copied or moved. Report
+        // that cause at the argument, as a single-candidate call does, rather
+        // than listing every overload of the set.
+        const OwnershipRejectedOverload &rejected = ownershipRejected.front();
+        for (const std::size_t index : rejected.argumentIndices) {
+          const std::size_t diagnosticCount = diagnostics.size();
+          reportCallArgumentMismatch(
+              index, rejected.function.parameterTypes[index],
+              rejected.argumentTypes[index], expr.arguments()[index],
+              "Function", &rejected.function);
+          if (diagnostics.size() > diagnosticCount &&
+              rejected.source->declaration != nullptr) {
+            diagnostics.back().related.push_back(
+                {tokenSpan(rejected.source->declaration->name()),
+                 "Exact-type candidate: " +
+                     functionSignatureSpelling(*rejected.source)});
+          }
+        }
         currentType = SemanticType::Unknown;
         return;
       }
