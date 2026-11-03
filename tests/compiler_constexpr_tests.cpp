@@ -2691,7 +2691,7 @@ int main() { Table table = build(4); return table.total() + array_work(4) - 68; 
        "GTI-S2057"},
       {"constexpr void recurse(mut int& value) { "
        "if (value > 0) { value--; recurse(value); } } "
-       "constexpr int bad() { mut int value = 100; recurse(value); return "
+       "constexpr int bad() { mut int value = 600; recurse(value); return "
        "value; } "
        "constexpr int constant = bad();",
        "GTI-S2057"},
