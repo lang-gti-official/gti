@@ -95,8 +95,15 @@ def verify(directory, sha, run_id, attempt, repository, consume=False, channel="
             path.unlink()
 
 
+# Post-integration full validation produces the channel packages; the merge
+# gate (ci.yml) proves only build and fast checks. A source-library merge run
+# of ci.yml may still seed compiler reuse.
+FULL_VALIDATION_WORKFLOW = ".github/workflows/full-validation.yml"
+
+
 def release_evidence(repository, sha, request, full_only=False):
-    """Accept full or source-library merge CI, or a full main recovery dispatch.
+    """Accept a successful full validation of a main head (push or dispatch), or a
+    source-library or LSP-lane merge CI run that reused an admitted compiler.
 
     With full_only, source-library jobs cannot seed compiler reuse.
     Latest-attempt jobs and attempt-qualified artifact names prohibit mixing
@@ -104,12 +111,16 @@ def release_evidence(repository, sha, request, full_only=False):
     """
     from resolve_release_source import repository_path
     base = repository_path(repository)
-    runs = request(f"{base}/actions/workflows/ci.yml/runs?head_sha={sha}&per_page=100")
-    for run in runs.get("workflow_runs", []):
-        event, branch = run.get("event"), run.get("head_branch", "")
-        allowed = (event == "merge_group" and branch.startswith("gh-readonly-queue/main/")) or \
-                  (event == "workflow_dispatch" and branch == "main")
-        if not (allowed and run.get("head_sha") == sha and run.get("path") == ".github/workflows/ci.yml"
+    runs = list(request(f"{base}/actions/workflows/full-validation.yml/runs?head_sha={sha}&per_page=100")
+                .get("workflow_runs", []))
+    if not full_only:
+        runs += request(f"{base}/actions/workflows/ci.yml/runs?head_sha={sha}&per_page=100").get("workflow_runs", [])
+    for run in runs:
+        event, branch, path = run.get("event"), run.get("head_branch", ""), run.get("path")
+        full_run = path == FULL_VALIDATION_WORKFLOW and branch == "main" and event in {"push", "workflow_dispatch"}
+        source_run = path == ".github/workflows/ci.yml" and event == "merge_group" \
+            and branch.startswith("gh-readonly-queue/main/")
+        if not ((full_run or source_run) and run.get("head_sha") == sha
                 and run.get("status") == "completed" and run.get("conclusion") == "success"
                 and (run.get("repository") or {}).get("full_name") == repository
                 and (run.get("head_repository") or {}).get("full_name") == repository):
@@ -125,7 +136,7 @@ def release_evidence(repository, sha, request, full_only=False):
                 break
         else:
             raise ValueError("job inventory exceeded bound")
-        required = {"CI gate", *(f"Release package ({platform})" for platform in PLATFORMS),
+        required = {"Full validation verdict", *(f"Release package ({platform})" for platform in PLATFORMS),
                     *(f"Integration ({platform} {index}/{count})"
                       for platform, count in (("linux", 6), ("darwin", 5)) for index in range(count))}
         def passed(names):
@@ -134,9 +145,9 @@ def release_evidence(repository, sha, request, full_only=False):
                        matches[0].get("conclusion") == "success" for name in names)
         source_required = {"CI gate", *(f"Source stdlib ({platform})" for platform in PLATFORMS)}
         lsp_required = {"CI gate", *(f"LSP ({platform})" for platform in PLATFORMS)}
-        full = passed(required)
-        lsp = passed(lsp_required)
-        if not full and (full_only or event != "merge_group" or not (passed(source_required) or lsp)):
+        full = full_run and passed(required)
+        lsp = source_run and passed(lsp_required)
+        if not full and (full_only or not source_run or not (passed(source_required) or lsp)):
             continue
         artifacts = request(f"{base}/actions/runs/{run_id}/artifacts?per_page=100")
         if artifacts.get("total_count", 0) > 100:

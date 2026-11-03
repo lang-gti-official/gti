@@ -2716,6 +2716,7 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
           evaluateConstexprConstruction(nullptr, resolved, {}, paren, context);
       if (!result.genericDependency) {
         if (!result.value) {
+          describeLimitExhaustion(result, context);
           reportImmediateEvaluationFailure(paren, resolved.declaration->name(),
                                            result);
           return;

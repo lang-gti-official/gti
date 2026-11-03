@@ -2,6 +2,7 @@
 #include "gti/mir_effects.h"
 #include "gti/mir_lowering.h"
 #include "gti/mir_verifier.h"
+#include "gti/support.h"
 #include "mir_source_debug.h"
 #include "mir_verification_queries.h"
 #include "mir_verification_support.h"
@@ -11312,6 +11313,10 @@ private:
   }
 
   void emitValueImpl(HirValueId id) {
+    // HIR nests one result region per macro expansion; its depth is bounded
+    // by CompileLimits::macroDepth rather than by written syntax.
+    if (nativeStackNearlyExhausted())
+      return onFreshNativeStack([&] { emitValueImpl(id); });
     if (id == 0 || emittedValues.contains(id)) {
       return;
     }
@@ -13660,6 +13665,8 @@ private:
   }
 
   void lowerStatement(HirStatementId id) {
+    if (nativeStackNearlyExhausted())
+      return onFreshNativeStack([&] { lowerStatement(id); });
     const HirStatement *statement = findStatement(id);
     if (statement == nullptr) {
       valid = false;

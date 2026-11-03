@@ -317,7 +317,18 @@ managed directories after the user has stopped processes using them.
 current preview source with `.gti-preview.json`, uses the reviewed production
 configuration on Linux x64 and macOS arm64, runs combined `preview_admission`
 (included feature checks and automated examples) and installed-toolchain checks
-on each platform, then packages that validated stage. The separate `preview`
+on each platform, then packages that validated stage. The publisher requests
+CMake's file-API metadata and builds only targets referenced by those checks
+and the complete `gti_toolchain` install component, including bundled LLVM
+archives installed as files. Native dependencies remain CMake-owned. It does
+not build unrelated test executables. Candidate-owned example and manifest
+selection remain unchanged; missing registered checks fail admission.
+
+The nested admission CTest inherits `CTEST_PARALLEL_LEVEL` from the runner's
+CPU/memory-bounded `GTI_TEST_JOBS`, preserving CTest resource locks and serial
+tests. One shared suite reservation covers the aggregate. Selection, build
+scope and nested timings are retained in `preview-checks-<platform>-<attempt>`
+artifacts, including on failure. The separate `preview`
 prerelease uses `gti-preview-<platform>.tar.gz` names, checksums, embedded and
 release `BUILD_ID`, `PREVIEW_SOURCE`, inclusion metadata and run/attempt-bound
 provenance. Publication verifies both platforms, attests archives, and requires
@@ -412,14 +423,17 @@ and native-input digest. Missing compatible evidence selects full CI. See the
 This successful integration also qualifies for nightly publication; an
 arbitrary PR pass or merge exception still does not.
 
-1. **Build and validate in integration.** Full `ci.yml` integration builds
-   production archives on `ubuntu-24.04` (`linux-x64`) and `macos-26`
+1. **Build and validate after integration.** `full-validation.yml`, on every
+   main head, builds production archives on `ubuntu-24.04` (`linux-x64`) and `macos-26`
    (`darwin-arm64`). Each uses the reviewed compiler from
    `scripts/configure_ci_toolchain.sh`, configures
    `-DCMAKE_BUILD_TYPE=Release -DGTI_RELEASE_BUILD=ON` with pinned bundled
    LLVM/Clang, builds, stages `gti_toolchain` into a fresh directory, and runs
    the installed CLI/LSP/project, process-resource, managed-thread,
    atomic-runtime and installed-library consumer checks against that stage.
+   The bundled LLVM/Clang objects come from the content-keyed release cache
+   that `llvm-prebuilt.yml` maintains (see the agent-workflow document), so
+   packaging restores rather than rebuilds LLVM.
    macOS installation generates and verifies `share/gti/host-runtime.json`;
    `cmake/PackageRelease.cmake` refuses a macOS stage without it. The stage
    becomes `gti-nightly-<platform>.tar.gz` with a `.sha256` sidecar and
@@ -428,14 +442,14 @@ arbitrary PR pass or merge exception still does not.
    configuration, reusing the packaging job's object cache, and retains the
    separate sanitizer gates and system-LLVM fast checks, including the Linux
    system-LLVM installed consumers. The coverage gate proves each platform's inventory
-   ran exactly once. Packaging is a required part of the full `CI gate`.
+   ran exactly once. Packaging is a required part of the `Full validation
+   verdict`; the merge gate (`CI gate`) proves only build and fast checks.
 2. **Select validated artifacts.** Nightly runs only from main's own definition
    in `lang-gti-official/gti`. It takes main head, or a dispatched exact 40-hex
    commit on main. `scripts/resolve_release_source.py select-nightly` requires
-   successful full CI for that exact commit and its retained production
-   artifacts. Normally this is the `merge_group` run of
-   `.github/workflows/ci.yml` on `gh-readonly-queue/main/...`; a full main-only
-   CI dispatch also qualifies for commissioning or artifact recovery. PR runs,
+   successful full validation for that exact commit and its retained production
+   artifacts: the `push` run of `.github/workflows/full-validation.yml` on
+   `main`, or a dispatch of it for commissioning or artifact recovery. PR runs,
    automation-only passes and merge exceptions alone are not release evidence.
    Scheduled selection skips unchanged main. There is no fallback that stamps
    an older compiler with a new commit when the selected source has no artifacts.
@@ -822,7 +836,8 @@ C++ fallback. `--std` and `--keep-cpp` are C++-only: without `--backend` they
 select C++, and with `--backend llvm` they are rejected. Explicit emit modes
 keep their dedicated backend entry points rather than accepting `--backend`.
 Repeatable `-D NAME` options seed valueless GTI configuration flags
-for the invocation. Repeatable `-Wno-<group>` options (or the equivalent
+for the invocation. `--<limit> <n>` options set the per-request
+[compile limits](#compile-limits) of the invocation over the defaults. Repeatable `-Wno-<group>` options (or the equivalent
 `--disable-warning <group>`) add validated warning groups to the immutable
 `CompilationRequest`; for example, `-Wno-unused-mut` suppresses `GTI-S2096`.
 Accepted native arguments after `--` remain exact argv values; native
@@ -1319,6 +1334,55 @@ a failed source compile preserves any prior object and executable and retains
 the generated C++ for diagnosis. C compiler selection is `--cc`, then `GTI_CC`,
 then `CC`, then `cc`; C++ compilation and final linking use `--cxx`, then
 `GTI_CXX`, then `CXX`, then `c++`.
+
+### Compile limits
+
+Per-request compile-time limits (constant-evaluation steps and call depth,
+macro nesting and expansion, `constexpr for` elements and copies) are
+implementation quantities with guaranteed minimums; their language contract,
+defaults and largest settings are in
+[static semantics](../language/static-semantics.md#3112-implementation-limits).
+`CompileLimits` (`include/gti/compile_limits.h`) holds one value per limit, and
+one table there names each limit's manifest key, flag, minimum and maximum, so
+the command line, the manifest, help text, identities and reports cannot drift.
+
+Direct compilation and project `build`, `check`, `run`, `test`, `verify` and
+`install` accept `--<limit> <n>` or `--<limit>=<n>` for every limit, for example
+`--constexpr-steps 4000000`. A project sets the same names in one top-level
+table:
+
+```toml
+[limits]
+constexpr-steps = 4000000
+constexpr-depth = 1024
+```
+
+Precedence is command line, then the root package's `[limits]`, then the
+defaults. The root package is the selected package (a workspace member when
+one is selected), and its table configures the whole compilation, including
+dependency sources and compiled-library dependency plans. Like the consumer-owned
+`[build]` permissions, a dependency's `[limits]` table is parsed and validated
+with its manifest, so the package stays valid as a root, but is never applied
+to a consumer and produces no diagnostic when valid. Direct mode remains
+manifest-independent and approved `build.gti` host programs keep their fixed
+default compilation policy. A value is a decimal integer from 1 to the limit's
+largest setting; anything else is rejected rather than clamped. A repeated
+flag, a missing count or an invalid count is a usage error (exit 64). In a
+manifest, an unknown key is `GTI-B1001` with a nearest-name hint, a non-integer
+value or a non-table `limits` is `GTI-B1004`, and an out-of-range value is
+`GTI-B1005`, each at the offending TOML span.
+
+The immutable `CompilationRequest` (`compileLimits()`), the resolved
+`ProjectBuildPlan` and read-only `ProjectFacts` carry the resolved value into
+`FrontendOptions::limits`, which the frontend passes to semantic analysis and
+every worker analyzer; gti_lsp and completion use `ProjectFacts::compileLimits()`
+for the open file's project, so an editor reports the same exhaustion as a
+build. The resolved limits join the project model identity, the executable
+cache identity and the frontend's semantic cache context (preamble and
+instance-analysis reuse), so no artifact or cached analysis crosses limit
+settings. Build-report schema 2 records them as the additive `compile_limits`
+object (older reports omit it); `verify` replays the recorded limits unless the
+command line overrides one and compares them as a separate provenance fact.
 
 ### Objective-C++ bridges
 

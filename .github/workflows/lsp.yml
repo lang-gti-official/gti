@@ -3,7 +3,9 @@ on:
   push:
     branches: [main]
   workflow_run:
-    workflows: [CI]
+    # CI supplies merge-queue source-stdlib/LSP lane packages; Full validation
+    # supplies the complete packages of each main head.
+    workflows: [CI, Full validation]
     types: [completed]
   workflow_dispatch:
 permissions:
@@ -14,7 +16,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   publish:
-    if: github.repository == 'lang-gti-official/gti' && (github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && (github.event.workflow_run.event == 'merge_group' || github.event.workflow_run.event == 'workflow_dispatch')))
+    if: github.repository == 'lang-gti-official/gti' && (github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && (github.event.workflow_run.event == 'merge_group' || github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')))
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:

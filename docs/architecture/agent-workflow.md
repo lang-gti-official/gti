@@ -152,7 +152,7 @@ local race with other tasks needs closing. Nothing locks ordinary editing.
 | `cleanup <task>` | After confirmed merge/sync, remove a plain clean worktree with no ignored files and delete only unchanged integrated branches. |
 | `abandon <task> --reason <text>` | Publish the final checkpoint and close its PR with a reason, preserving branch and worktree. A task with no PR whose branch holds no commits beyond `origin/main` has nothing to preserve. Its clean worktree and branches are removed and the reason is recorded. |
 | `status [task]` | Read task records and current remote PR state. |
-| `protection [--configure]` | Audit, or establish the owner-approved `main` ruleset: pull requests, the merge queue and the `CI gate` check required; no force pushes, deletion or bypass actors. |
+| `protection [--configure]` | Audit, or establish the owner-approved `main` ruleset: pull requests, the merge queue (one entry built at a time, up to five all-green entries merged per build, a two-hour check timeout) and the `CI gate` check required; no force pushes, deletion or bypass actors. |
 
 Checkpoint paths are literal files, including exact identities for deleted
 files: Git pathspec magic, deleted-directory prefixes, directory/root staging,
@@ -280,8 +280,8 @@ the Git common directory:
 | `ubuntu-8` | `root@100.81.111.76` | Ubuntu; 8 vCPUs, 13 GB RAM | 3 / 6 |
 
 Selection is explicit, not automatic failover or test sharding: inspect
-`status --all`, then choose an idle appropriate host. Linux evidence does not
-replace macOS-only acceptance. `run --platform Darwin` or `--platform Linux`
+`status --all`, then choose an idle appropriate host. Tests in the `darwin`
+set need macOS evidence; Linux proves the rest once. `run --platform Darwin` or `--platform Linux`
 rejects a mismatched selection before uploading; the worker also verifies the
 required platform before executing steps. Configure validates the actual OS.
 
@@ -491,9 +491,13 @@ Failure to confirm cancellation prevents publication. `--pr-only` also withdraws
 intent. New work after a confirmed merge belongs to a new task. The `main` ruleset requires
 pull requests, the merge queue and the `CI gate` status check, denies force
 pushes and deletion, and has no bypass actors, administrators included. The
-queue builds each candidate on the current `main`, runs the complete suite and
-merges it only if `CI gate` passes; it removes a failing PR and rebuilds the
-entries behind it. The last handoff record stays `rollup`, `awaiting-ci` or `queued` until refreshed;
+queue builds each candidate on the current `main`, runs the bounded gate
+(build and fast checks on both platforms) and merges it only if `CI gate`
+passes; it removes a failing PR and rebuilds the entries behind it. The
+complete suite runs after integration on each main head
+(`full-validation.yml`); a red main is reported in the `main-broken` issue and
+is fixed forward or reverted, and no channel selects a main commit full
+validation has not passed. The last handoff record stays `rollup`, `awaiting-ci` or `queued` until refreshed;
 GitHub owns the transition and failures/conflicts still need repair. Once GitHub reports
 the merge, and `sync` (or a repeated `finish`) then advances local main. Do not force a merge
 or bypass a server rule. Release workflows run after integration and need not
@@ -504,21 +508,22 @@ The library sanitizer jobs partition `cpp_mir_body_emitter_lifecycle` through
 its existing `--list` / `--test NAME` protocol. Each job runs half of the sorted
 named-case inventory serially under the unchanged 5,400-second aggregate bound;
 native integration still runs the ordinary aggregate CTest. The sanitizer jobs
-retain per-case outcomes and durations. The final gate requires both reports
-for its exact candidate, identical inventories, and every named case passing
+retain per-case outcomes and durations. The full validation verdict requires both reports
+for its exact main head, identical inventories, and every named case passing
 exactly once. Missing, stale, failed or timed-out case evidence fails the gate.
 Compiler sanitizer jobs build only the targets of `compiler_pipeline`; library
 jobs retain the library subset targets. This avoids filling runner disks with
 unexecuted sanitizer library binaries in compiler jobs.
 This avoids assigning the entire lifecycle suite to one library shard without
 removing sanitizer coverage or increasing timeouts. Runner termination still
-fails integration; this scheduling change does not claim to repair host loss.
+fails full validation; this scheduling change does not claim to repair host loss.
 
 ## Risk-based batch validation
 
 The risk tiers below select how broad a change's focused checks must be. The
 batch commands that follow are the degraded-mode path: in normal operation each
-PR goes through the merge queue, which runs the complete suite.
+PR goes through the merge queue, which runs the bounded gate; post-integration
+full validation runs the complete suite on the merged result.
 
 Per-change validation establishes that a patch fixes its motivating problem
 and preserves the affected rules. Integration validation establishes that the
@@ -609,7 +614,7 @@ on a declared platform. All unscoped tests/checks remain required everywhere.
 Do not include credentials. Every declared gate is executed; plans are not
 permission to omit required checks. `platforms` lists hosts on which the
 combined full campaign must pass; CI's Linux native/sanitizer jobs are additional
-server gates and do not substitute for required macOS evidence.
+server gates, and macOS evidence is required only for the `darwin` test set.
 
 ```sh
 python3 scripts/agent_workflow.py batch enroll my-fix \
@@ -711,11 +716,45 @@ advisory-CI policy. `.github/workflows/ci.yml` reports one required check,
 | --- | --- | --- |
 | `pull_request` (ready) | full | lint (formatting, release version, Tree-sitter), workflow regressions, and `fast` on macOS arm64 and Linux x64 (`feedback-fast`, `compiler_pipeline` and the PR's declared T0/T1 tests) |
 | `pull_request` (draft) | draft | lint and workflow regressions only; a draft cannot enter the queue |
-| `merge_group` | full | lint, workflow regressions, system-LLVM `fast` checks, production packaging and installed checks, every bundled-release `integration` shard on both platforms, and `sanitizers` |
-| `workflow_dispatch` on main | full | the same full integration and production packaging gates, for release commissioning/recovery |
+| `merge_group` | full | the same as a ready pull request: lint, workflow regressions and system-LLVM `fast` checks on the exact candidate (a bounded gate, as rustc and LLVM gate merges) |
+| `workflow_dispatch` on main | full | the same bounded gate, for recovery |
+| `push` to main, or `workflow_dispatch` (`full-validation.yml`) | full | post-integration full validation: production packaging and installed checks, bundled-release `integration` shards (Linux over the complete inventory, `--test-set full`; macOS over the `darwin` set, `--test-set darwin`), the compiler `sanitizers`, the LLVM-backend sanitizers and the thread sanitizer, all with `GTI_TEST_BACKENDS=llvm`; its `Full validation verdict` and retained packages are the nightly/beta/train evidence, a failure opens the `main-broken` issue, and the run refreshes `tests/ci_test_durations.json` (artifact `ci-test-durations`) for shard balancing |
 | PR or merge group | source-stdlib | lint, workflow regressions, source-library owners and consumers, declared PR regressions and native smoke on both platforms using an admitted full-CI compiler; merge groups also package the new source library |
+| PR or merge group | lsp | lint, workflow regressions and the `lsp` lane on both platforms: the adapter rebuilt against an admitted full-CI compiler SDK, registered LSP/editor consumers, declared PR regressions, native smoke and installed checks; merge groups also package the complete toolchain with the reused compiler's provenance |
 | PR or merge group | automation | lint and workflow regressions only |
 | PR or merge group | component | always fails: a batch component cannot merge directly |
+
+`validation_checks.py shard` executes one cost-balanced shard of a test set.
+The deprecated C++ backend runs only in `cpp-backend.yml` (weekly and on
+dispatch; `--test-set cpp` over the full inventory with
+`GTI_TEST_BACKENDS=cpp`, plus the C++ emitter's own tests under ASan/UBSan);
+its failure opens the `cpp-backend` issue and never blocks the queue, full
+validation or a channel. Harness mode tables come from
+`tests/backend_modes.py`: `llvm-O0` and `llvm-O3` by default, `c++23 -O3` under
+`GTI_TEST_BACKENDS=cpp`. The C++-only CTest entries (`cpp_mir_*`,
+`cpp_debug_artifacts`, `lowered_program_corpus_census`) run only there.
+Four long aggregates (`compiler_pipeline`, `allocator_raw_audit_independence`,
+`body_analysis_order`, `instance_reuse`) are also registered as per-suite,
+per-source or corpus-partition entries; a sharded run executes the parts and
+skips the aggregate (`SHARDED_AGGREGATES`), so the same cases run spread
+across workers instead of one 16–54-minute test ending a shard alone. The
+`gate` set (`GATE_EXCLUDED`) further omits C++-backend-only variants whose
+shipped-default (c++23) or primary entry still runs, and the generated-C++
+corpus censuses; the `full` set runs everything. Every registered test carries
+its observed duration as a CTest `COST` ordering hint from
+`tests/ci_test_durations.json` (`tests/TestThroughput.cmake`), which
+`validation_checks.py durations` refreshes from JUnit reports, keeping the
+maximum.
+
+The bundled LLVM/Clang objects that production packaging and the shards need
+are prebuilt once per toolchain definition by `llvm-prebuilt.yml` (on changes
+to `CMakeLists.txt`, `cmake/`, the toolchain and cache scripts, weekly, and on
+dispatch) and saved as a `main`-scoped ccache keyed by those inputs, never by
+commit; validation runs only restore it, and the integration shards no longer
+wait for packaging. `cache.yml` warms the native and sanitizer profiles the
+same way and is never cancelled by a newer push, so the instrumented warm can
+finish once. No validation run saves a cache: per-commit keys were unreachable
+by later runs and evicted the reachable entries from the 10 GB cache.
 
 `validation_checks.py ci-mode` classifies the candidate from its diff. A
 conservative automation-only diff (docs and the workflow scripts with their own
@@ -849,7 +888,11 @@ build, CI, test-registration or unknown path retains full integration. A missing
 full-CI ancestor SDK or unequal shared-input identity also selects full CI.
 Contributors still record focused owning evidence and submit through the normal
 preview/PR lifecycle; this lane is not a local-validation exemption. Both platform
-LSP jobs must pass the CI gate. Reused compiler provenance is mandatory when
+LSP jobs must pass the CI gate: like `source-stdlib`, the lane is a mode-gated
+`ci.yml` job that runs on pull requests and merge groups, never a
+post-integration job. The full-CI SDK it reuses comes from `full-validation.yml`
+on a main head, and `lsp.yml` publishes components after a successful `CI`
+merge-group run or `Full validation` run. Reused compiler provenance is mandatory when
 nightly consumes their complete packages. LSP-only evidence cannot seed another
 compiler SDK. Independent component publication is detached after integration
 and does not require an agent to poll publication or install anything.

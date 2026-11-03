@@ -31,7 +31,8 @@ def eligible(paths):
 
 def baseline(repository, head, api=source.request, root=ROOT):
     compatibility = lsp_compatibility.identity(root, head)
-    runs = api(f"repos/{repository}/actions/workflows/ci.yml/runs?status=success&per_page=100")
+    # Retained full-CI SDKs come from post-integration full validation of main.
+    runs = api(f"repos/{repository}/actions/workflows/full-validation.yml/runs?status=success&per_page=100")
     seen = set()
     for run in runs.get("workflow_runs", []):
         sha = run.get("head_sha", "")

@@ -23,6 +23,8 @@ struct ProjectBuildOverrides {
   ConfigurationFlags configurationFlags;
   WarningPolicy warningPolicy;
   std::optional<BackendKind> backend;
+  // Command-line limit settings; they override the root package's [limits].
+  CompileLimitOverrides compileLimits;
 };
 
 // Native compiler selections supplied by the caller rather than the
@@ -178,6 +180,13 @@ public:
   }
   [[nodiscard]] ProjectBuildPlan
   withCompiledBuildDependencies(std::vector<ProjectBuildPlan> plans) const;
+  [[nodiscard]] ProjectBuildPlan withCompileLimits(CompileLimits limits) const;
+  // Resolved per-request limits for this compilation: command line over the
+  // root (selected) package's [limits] table over defaults. They are part of
+  // the project model identity.
+  [[nodiscard]] const CompileLimits &compileLimits() const {
+    return resolvedCompileLimits;
+  }
 
   [[nodiscard]] const std::filesystem::path &manifestPath() const;
   [[nodiscard]] const std::filesystem::path &packageRoot() const;
@@ -255,6 +264,7 @@ private:
   bool sourceDebugInfo = false;
   RawPointerAuditMode rawPointerAuditMode = RawPointerAuditMode::Off;
   bool reportLibraryAuditFindings = false;
+  CompileLimits resolvedCompileLimits;
 };
 
 class ProjectMetadata final {

@@ -334,6 +334,8 @@ consumers = [
 [[area]]
 area = "constexpr"
 paths = [
+  "src/compiler/compile_limits.cpp",
+  "include/gti/compile_limits.h",
   "src/compiler/constant_evaluator.cpp",
   "src/compiler/mir_constant_evaluator.cpp",
   "src/compiler/semantic_constexpr.cpp",
@@ -342,6 +344,7 @@ paths = [
 ]
 owners = [
   "^constexpr_",
+  "compile_limits",
   "macro_values_semantic_ir",
   "macro_values_runtime",
   "macro_fresh_callables",
@@ -1299,6 +1302,7 @@ owners = [
 consumers = [
   "lsp_project_facts",
   "lsp_configuration",
+  "compile_limits",
   "llvm_cache_project_workflows",
   "native_packages",
   "module_discovery_lsp",
@@ -1398,6 +1402,7 @@ owners = [
   "package_registry_auth_cli",
   "missing_definition_cli_lsp",
   "executable_entry_cli_lsp",
+  "compile_limits",
 ]
 consumers = [
   "compiler_failure_reducer",
@@ -1456,6 +1461,7 @@ owners = [
 consumers = [
   "neovim_lsp_configuration",
   "package_registry_cli",
+  "compile_limits",
 ]
 
 [[area]]
@@ -1578,6 +1584,7 @@ paths = [
   "scripts/resolve_release_source.py",
   "scripts/release_artifacts.py",
   "scripts/release_train.py",
+  "scripts/full_validation_report.py",
   "scripts/bundle_macos_runtime.py",
   "cmake/PackageRelease.cmake",
 ]
@@ -1877,7 +1884,7 @@ reason = "interactive Neovim highlight comparison tool run by hand"
 
 [[area]]
 area = "preview-release"
-paths = ["scripts/preview_release.py", ".github/workflows/preview.yml"]
+paths = ["scripts/preview_release.py", "scripts/preview_build.py", ".github/workflows/preview.yml"]
 owners = ["preview_release", "ci_release"]
 consumers = ["preview_workflow", "neovim_gtiup"]
 risk = "system"
