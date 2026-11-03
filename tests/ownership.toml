@@ -1575,6 +1575,7 @@ paths = [
   "scripts/resolve_release_source.py",
   "scripts/release_artifacts.py",
   "scripts/release_train.py",
+  "scripts/full_validation_report.py",
   "scripts/bundle_macos_runtime.py",
   "cmake/PackageRelease.cmake",
 ]
