@@ -3684,6 +3684,7 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
             "${PROJECT_SOURCE_DIR}"
             "${PROJECT_SOURCE_DIR}/tests/mir_census_baseline.json"
+            --lowered-census "$<TARGET_FILE:gti_lowered_program_census>"
   )
   add_test(
     NAME mir_cutover_corpus_oracle

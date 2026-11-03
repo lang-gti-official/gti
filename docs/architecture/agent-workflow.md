@@ -1034,6 +1034,10 @@ automatically launching a duplicate uncertain run.
 
 The lower-level `prepare`, `verify`, `publish`, `seed`, `resume` and `revert`
 commands remain for maintainer recovery, not mandatory feature-delivery steps.
+For an explicitly requested combined downloadable release, the production
+remote plan and exact-package admission in `scripts/preview_remote.py` can
+supply both-platform evidence to this same candidate lifecycle. See
+[remote preview distribution](build-and-driver.md#managed-toolchains-and-preview-distribution).
 For example, `preview prepare my-task --worktree /absolute/new-candidate
 --tests owning_test`, followed by `preview verify CANDIDATE` and
 `preview publish CANDIDATE`, still supports explicit local validation settings.
