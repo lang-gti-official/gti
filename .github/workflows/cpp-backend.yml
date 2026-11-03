@@ -80,11 +80,16 @@ jobs:
           restore-keys: |
             gti-ccache-v2-release-${{ runner.os }}-${{ runner.arch }}-
       - name: Configure release build
+        # The backend policy is a configure-time cache variable: every CTest
+        # entry carries GTI_TEST_BACKENDS in its ENVIRONMENT property, which
+        # overrides the job environment, so the job's env alone would run the
+        # shipped backend's modes (as the first scheduled run did).
         run: >-
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DGTI_RELEASE_BUILD=ON
           -DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF
+          -DGTI_TEST_BACKENDS=cpp
           -DGTI_TEST_TIMEOUT_SCALE=3
       - name: Run this shard of the C++ backend suite
         env:
@@ -158,6 +163,7 @@ jobs:
           -DCMAKE_BUILD_TYPE=RelWithDebInfo
           -DGTI_BUILD_LSP=OFF
           -DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF
+          -DGTI_TEST_BACKENDS=cpp
           -DGTI_TEST_TIMEOUT_SCALE=6
           -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
           -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g"
