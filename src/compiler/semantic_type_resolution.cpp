@@ -2735,13 +2735,14 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
                            resolved.declaration->isConsteval() &&
                            !insideImmediateFunction();
     if (immediate && !immediateConstructionDependent(resolved)) {
-      ConstexprInterpreter context = makeConstexprInterpreter(true);
+      ConstexprInterpreter context = makeConstexprInterpreter();
       context.requireMir = true;
       context.recordValues = false;
       ConstexprEvaluation result =
           evaluateConstexprConstruction(nullptr, resolved, {}, paren, context);
       if (!result.genericDependency) {
         if (!result.value) {
+          describeLimitExhaustion(result, context);
           reportImmediateEvaluationFailure(paren, resolved.declaration->name(),
                                            result);
           return;
@@ -5269,8 +5270,8 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
         return;
     }
   }
-  // A lambda's contract is one read-only reference parameter: beyond the
-  // stable physical-origin check above, the returned reference must derive
+  // A lambda's contract selects one reference parameter with sufficient
+  // access: beyond the stable physical-origin check above, its result derives
   // from that parameter. Field paths, dependency lists, receivers and
   // globals belong to function declarations.
   if (function == nullptr) {
@@ -5281,12 +5282,12 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
     Diagnostic diagnostic = makeDiagnostic(
         std::move(code), DiagnosticPhase::Semantics, expressionToken(value),
         "Returned " + std::string(description) +
-            " must derive from the lambda's read-only parameter '" +
+            " must derive from the lambda's selected parameter '" +
             source->name.lexeme + "'.");
     diagnostic.hints.emplace_back(
-        "Return the parameter or a place reached through it; locals, copies, "
-        "captures and temporaries cannot provide a lambda's borrowed "
-        "result.");
+        "Return the parameter or a place reached through it; local reference "
+        "aliases may relay that parameter, but local objects, copies, captures "
+        "and temporaries cannot provide a lambda's borrowed result.");
     diagnostics.emplace_back(std::move(diagnostic));
     return;
   }

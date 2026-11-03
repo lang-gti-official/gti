@@ -5,6 +5,16 @@
 
 namespace {
 
+// Exhaustion cases written against a 4096-step request budget keep that
+// budget explicitly; the default is far larger (see testCompileLimits).
+constexpr std::size_t smallStepBudget = 4096;
+
+lang::FrontendOptions stepLimited(std::size_t steps = smallStepBudget) {
+  lang::FrontendOptions options;
+  options.limits.constexprSteps = steps;
+  return options;
+}
+
 std::filesystem::path fixtureSourcePath(const std::filesystem::path &path) {
   // Derive the identity through public source loading, not a second path
   // normalizer or a platform-dependent weakly_canonical(relative) call.
@@ -1567,7 +1577,8 @@ int main() { return twice<int32_t>(21) == 42 ? 0 : 1; }
   expect(checkedAddress,
          "constant prefix failures identify the unused checked address stage "
          "without creating a constant raw pointer");
-  const auto large = evaluate("large_array", integer(0));
+  const auto large =
+      evaluate("large_array", integer(0), {.steps = smallStepBudget});
   expect(!large &&
              large.failure == lang::ConstantEvaluationFailure::ResourceLimit,
          "default array materialization is bounded before allocating storage");
@@ -2023,6 +2034,16 @@ int main() { return 0; }
          "alternating source queries and constexpr staging reject cycles "
          "through the existing resource diagnostic rather than exhausting "
          "the compiler stack");
+  // Staging nests at most 64 levels whatever the (default 512) call-depth
+  // limit, and a definition staged inside its own staging is named cyclic.
+  expect(
+      hasDiagnostic(cyclicSourceQuery.diagnostics,
+                    "Nested constexpr staging depth (64) exceeded: 'cycle' "
+                    "is staged again while its own staging is in "
+                    "progress") &&
+          !hasDiagnostic(cyclicSourceQuery.diagnostics, "call depth exceeded"),
+      "nested staging is bounded separately from the call depth and a "
+      "cyclic staged definition is reported as such");
   const auto fixture = std::filesystem::path(__FILE__).parent_path() /
                        "fixtures/constexpr_dependent_branches.gti";
   std::ifstream input(fixture);
@@ -2249,8 +2270,8 @@ int main() {
       "  }\n"
       "  return 0;\n}\n"
       "static_assert(nested<1>() == 100);\nint main() { return 0; }";
-  const auto shared =
-      lang::Frontend().analyze("shared-constexpr-budget.gti", sharedSource);
+  const auto shared = lang::Frontend(stepLimited())
+                          .analyze("shared-constexpr-budget.gti", sharedSource);
   expect(!shared.canGenerateCode() &&
              std::any_of(
                  shared.diagnostics.begin(), shared.diagnostics.end(),
@@ -2680,7 +2701,7 @@ int main() { Table table = build(4); return table.total() + array_work(4) - 68; 
        "GTI-S2057"},
       {"constexpr void recurse(mut int& value) { "
        "if (value > 0) { value--; recurse(value); } } "
-       "constexpr int bad() { mut int value = 100; recurse(value); return "
+       "constexpr int bad() { mut int value = 600; recurse(value); return "
        "value; } "
        "constexpr int constant = bad();",
        "GTI-S2057"},
@@ -2703,9 +2724,10 @@ int main() { Table table = build(4); return table.total() + array_work(4) - 68; 
        "constexpr int& bad() { int value = 4; return value; }",
        "GTI-S2057"}};
   for (const auto &test : rejections) {
-    const auto rejected = lang::Frontend().analyze(
-        "constexpr-mutation-invalid.gti",
-        prefix + test.body + "\nint main() { return 0; }");
+    const auto rejected =
+        lang::Frontend(stepLimited())
+            .analyze("constexpr-mutation-invalid.gti",
+                     prefix + test.body + "\nint main() { return 0; }");
     expect(!rejected.canGenerateCode() &&
                hasDiagnosticCode(rejected.diagnostics, test.code) &&
                std::none_of(rejected.diagnostics.begin(),
@@ -3789,7 +3811,11 @@ void testConstexprLibrary() {
         "constexpr int depth(int i) { std::chrono::nanoseconds n{int64_t(i)}; "
         "if (n.count() == int64_t(0)) { return 0; } return depth(i - 1); } "
         "constexpr int value = depth(100);"}) {
-    const auto invalid = lang::Frontend().analyze(
+    // A 64-call depth keeps the recursion inside the small step budget, so
+    // it reaches the call-depth limit rather than the step limit.
+    lang::FrontendOptions limited = stepLimited();
+    limited.limits.constexprDepth = 64;
+    const auto invalid = lang::Frontend(limited).analyze(
         "constexpr-chrono-invalid.gti", "import std.chrono;\n" + source,
         {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
     expect(!invalid.canGenerateCode() &&
@@ -4767,7 +4793,8 @@ constexpr uint64_t result = recurse(uint64_t(0));
       "resource limit");
 
   const lang::FrontendResult exhaustedAggregate =
-      lang::Frontend().analyze("exhausted-constexpr-aggregate.gti", R"(
+      lang::Frontend(stepLimited())
+          .analyze("exhausted-constexpr-aggregate.gti", R"(
 constexpr int32_t values[4096] = {};
 )");
   expect(!exhaustedAggregate.semanticValid &&
@@ -5766,6 +5793,252 @@ int main() { return 0; }
          "concurrent global policy without a privileged exemption");
 }
 
+// A string-view recursive-descent scan that is exactly `frames` constexpr
+// calls deep: one per '(' plus the call that reads the terminator.
+std::string recursiveDescentSource(std::size_t frames) {
+  std::string text(frames - 1, '(');
+  text += 'x';
+  return "constexpr int32_t depth_of(std::string_view text, int32_t at) {\n"
+         "  if (text[at] == '(') { return depth_of(text, at + 1) + 1; }\n"
+         "  return 0;\n"
+         "}\n"
+         "static_assert(depth_of(\"" +
+         text + "\", 0) == " + std::to_string(frames - 1) +
+         ");\n"
+         "int main() { return 0; }\n";
+}
+
+// Integer recursion exactly `frames` constexpr calls deep. Unlike the text
+// scan, every frame stays small, so even the hard cap needs little memory.
+std::string integerRecursionSource(std::size_t frames) {
+  return "constexpr int32_t descend(int32_t n) {\n"
+         "  if (n == 0) { return 0; }\n"
+         "  return descend(n - 1) + 1;\n"
+         "}\n"
+         "static_assert(descend(" +
+         std::to_string(frames - 1) + ") == " + std::to_string(frames - 1) +
+         ");\n"
+         "int main() { return 0; }\n";
+}
+
+// A user-defined accumulator whose constexpr constructor runs an ordinary
+// recursive constexpr function: `frames` nested calls including the
+// constructor's own.
+std::string recursiveConstructionSource(std::size_t frames) {
+  const std::string remaining = std::to_string(frames - 2);
+  return "constexpr int32_t count(int32_t remaining) {\n"
+         "  if (remaining == 0) { return 0; }\n"
+         "  return count(remaining - 1) + 1;\n"
+         "}\n"
+         "struct Tally {\n"
+         "  int32_t total;\n"
+         "  constexpr Tally(int32_t remaining) : total(count(remaining)) {}\n"
+         "};\n"
+         "constexpr int32_t total = Tally(" +
+         remaining + ").total;\n" + "static_assert(total == " + remaining +
+         ");\n" + "int main() { return 0; }\n";
+}
+
+// `levels` nested staged evaluations: each concrete instance's compile-time
+// branch needs the next instance's value before it can be analysed.
+std::string stagedChainSource(std::size_t levels) {
+  return "constexpr int32_t chain<uint64_t N>() {\n"
+         "  if constexpr (N == 0) { return 0; }\n"
+         "  else {\n"
+         "    if constexpr (chain<N - 1>() >= 0) { return int32_t(N); }\n"
+         "    else { return -1; }\n"
+         "  }\n"
+         "}\n"
+         "static_assert(chain<" +
+         std::to_string(levels - 1) + ">() == " + std::to_string(levels - 1) +
+         ");\n"
+         "int main() { return 0; }\n";
+}
+
+lang::FrontendResult analyzeWithLimits(const std::string &name,
+                                       const std::string &source,
+                                       lang::CompileLimits limits = {}) {
+  lang::FrontendOptions options;
+  options.limits = limits;
+  return lang::Frontend(options).analyze(
+      name, source, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+}
+
+bool depthExhausted(const lang::FrontendResult &result, std::size_t limit) {
+  return !result.semanticValid &&
+         hasDiagnosticCode(result.diagnostics, "GTI-S2057") &&
+         hasDiagnostic(result.diagnostics, "call depth exceeded") &&
+         hasDiagnosticHint(result.diagnostics,
+                           "The limit is " + std::to_string(limit) +
+                               "; raise it with '--constexpr-depth <n>' or "
+                               "with 'constexpr-depth = <n>'") &&
+         !hasDiagnosticCode(result.diagnostics, "GTI-B0001");
+}
+
+std::string diagnosticText(const std::vector<lang::Diagnostic> &diagnostics) {
+  std::string text;
+  for (const lang::Diagnostic &diagnostic : diagnostics) {
+    text += diagnostic.code + " " + std::to_string(diagnostic.primary.start) +
+            "-" + std::to_string(diagnostic.primary.end) + " " +
+            diagnostic.message + "\n";
+    for (const auto &related : diagnostic.related)
+      text += "  " + std::to_string(related.span.start) + " " +
+              related.message + "\n";
+    for (const auto &hint : diagnostic.hints)
+      text += "  hint " + hint + "\n";
+  }
+  return text;
+}
+
+void testConfigurableCompileTimeDepth() {
+  const lang::CompileLimits defaults;
+  expect(defaults.constexprDepth == 512 &&
+             lang::compileLimitInfo(&lang::CompileLimits::constexprDepth)
+                     .guaranteedMinimum == 512 &&
+             lang::compileLimitInfo(&lang::CompileLimits::constexprDepth)
+                     .maximum == 16384,
+         "constexpr depth defaults to C++'s 512 recursive invocations with a "
+         "16384 hard cap");
+
+  // The default admits exactly 512 nested calls, by function and through a
+  // constexpr constructor.
+  expect(analyzeWithLimits("depth-512.gti", recursiveDescentSource(512))
+             .canGenerateCode(),
+         "a 512-deep string-view recursive descent fits the default limit");
+  expect(
+      depthExhausted(
+          analyzeWithLimits("depth-513.gti", recursiveDescentSource(513)), 512),
+      "the 513th nested call reports the limit, its value and how to "
+      "raise it");
+  expect(analyzeWithLimits("ctor-512.gti", recursiveConstructionSource(512))
+             .canGenerateCode(),
+         "a constexpr constructor shares the 512-call default");
+  expect(depthExhausted(analyzeWithLimits("ctor-513.gti",
+                                          recursiveConstructionSource(513)),
+                        512),
+         "constructor-driven recursion stops at the same limit");
+
+  // The configured value is the limit, lowered or raised.
+  lang::CompileLimits shallow;
+  shallow.constexprDepth = 16;
+  expect(analyzeWithLimits("depth-16.gti", recursiveDescentSource(16), shallow)
+             .canGenerateCode(),
+         "a lowered limit still admits exactly its own depth");
+  expect(depthExhausted(analyzeWithLimits("depth-17.gti",
+                                          recursiveDescentSource(17), shallow),
+                        16),
+         "a lowered limit rejects one call more and names its value");
+  lang::CompileLimits deep;
+  deep.constexprDepth = 2048;
+  expect(analyzeWithLimits("depth-2048.gti", integerRecursionSource(2048), deep)
+             .canGenerateCode(),
+         "a raised limit admits recursion deeper than the default");
+  expect(depthExhausted(analyzeWithLimits("depth-2049.gti",
+                                          integerRecursionSource(2049), deep),
+                        2048),
+         "a raised limit is still a limit");
+
+  // The hard cap is reachable: depth depends on the configured value, never
+  // on the host thread's stack.
+  lang::CompileLimits capped;
+  capped.constexprDepth = 16384;
+  const std::size_t segmentsBefore = lang::nativeStackSegmentsEntered();
+  expect(
+      analyzeWithLimits("depth-cap.gti", integerRecursionSource(16384), capped)
+          .canGenerateCode(),
+      "recursion at the 16384-call hard cap completes");
+  expect(lang::nativeStackSegmentsEntered() > segmentsBefore,
+         "the hard cap needs more native stack than one thread provides, so "
+         "evaluation really continued on fresh segments");
+  expect(
+      depthExhausted(analyzeWithLimits("depth-over-cap.gti",
+                                       integerRecursionSource(16385), capped),
+                     16384),
+      "the hard cap itself is enforced");
+
+  // Nested staged analysis counts toward the same limit.
+  lang::CompileLimits staged;
+  staged.constexprDepth = 24;
+  expect(analyzeWithLimits("staged-24.gti", stagedChainSource(24), staged)
+             .canGenerateCode(),
+         "24 nested staged evaluations fit a 24-call limit");
+  const auto stagedOver =
+      analyzeWithLimits("staged-25.gti", stagedChainSource(25), staged);
+  expect(!stagedOver.semanticValid &&
+             hasDiagnosticCode(stagedOver.diagnostics, "GTI-S2057") &&
+             !hasDiagnosticCode(stagedOver.diagnostics, "GTI-B0001"),
+         "nested staged evaluation shares the call-depth limit");
+}
+
+// A segment switch is invisible: forcing one at every recursion boundary
+// (constant-evaluation calls, staged analysis, macro expansion, HIR and MIR
+// lowering of expanded bodies) yields byte-identical MIR and diagnostics.
+void testNativeStackSegmentsAreInvisible() {
+  std::string macros = "#macro int32_t m0(int32_t v) { return v + 1; }\n";
+  for (int level = 1; level < 24; ++level)
+    macros += "#macro int32_t m" + std::to_string(level) +
+              "(int32_t v) { return m" + std::to_string(level - 1) +
+              "(v) + 1; }\n";
+  const std::string valid = macros +
+                            stagedChainSource(12).substr(
+                                0, stagedChainSource(12).find("int main()")) +
+                            "constexpr int32_t fold(int32_t n) {\n"
+                            "  if (n == 0) { return 0; }\n"
+                            "  return fold(n - 1) + n;\n"
+                            "}\n"
+                            "static_assert(fold(200) == 20100);\n"
+                            "int main() { return m23(0) - 24; }\n";
+  const std::string invalid = recursiveDescentSource(300);
+  lang::CompileLimits limits;
+  limits.constexprDepth = 256;
+  const auto run = [&](const std::string &name, const std::string &source) {
+    const auto result = analyzeWithLimits(name, source, limits);
+    return std::pair{lang::MirPrinter().print(result.mir),
+                     diagnosticText(result.diagnostics) +
+                         (result.canGenerateCode() ? "valid" : "invalid")};
+  };
+  const auto plain = run("segments.gti", valid);
+  const auto plainInvalid = run("segments-invalid.gti", invalid);
+  expect(plain.second == "valid" && !plain.first.empty(),
+         "the segment-switch program is valid: " + plain.second);
+  expect(plainInvalid.second.find("call depth exceeded") != std::string::npos,
+         "the invalid program reaches the configured call-depth limit");
+
+  const lang::NativeStackPolicy previous = lang::setNativeStackPolicyForTesting(
+      {.headroom = std::size_t{1} << 40, .segment = std::size_t{4} << 20});
+  const std::size_t segmentsBefore = lang::nativeStackSegmentsEntered();
+  const auto segmented = run("segments.gti", valid);
+  const auto segmentedInvalid = run("segments-invalid.gti", invalid);
+  const std::size_t segments =
+      lang::nativeStackSegmentsEntered() - segmentsBefore;
+  lang::setNativeStackPolicyForTesting(previous);
+  expect(segments > 200,
+         "the forced policy switched segments at every boundary");
+  expect(segmented.first == plain.first,
+         "segment switches leave the produced MIR byte-identical");
+  expect(segmented.second == plain.second &&
+             segmentedInvalid.second == plainInvalid.second,
+         "segment switches leave diagnostics byte-identical");
+
+  // Errors raised on a segment reach the caller with their identity, through
+  // nested segments.
+  struct Raised {
+    int value;
+  };
+  const auto forced = lang::setNativeStackPolicyForTesting(
+      {.headroom = std::size_t{1} << 40, .segment = std::size_t{1} << 20});
+  int caught = 0;
+  try {
+    lang::withSufficientStack([] {
+      return lang::withSufficientStack([]() -> int { throw Raised{7}; });
+    });
+  } catch (const Raised &raised) {
+    caught = raised.value;
+  }
+  lang::setNativeStackPolicyForTesting(forced);
+  expect(caught == 7, "an exception thrown on a nested segment propagates");
+}
+
 void testCompileTimeConditionals() {
   lang::Lexer lexer;
   const std::string source = R"(
@@ -6140,6 +6413,322 @@ int main() {
          "the formatter should preserve and normalize compile-time errors");
 }
 
+// A user-defined accumulator, so the limit and reuse rules are proven with
+// ordinary source rather than a library type.
+const std::string kCompileLimitsPrelude = R"(
+struct Tally {
+  uint64_t count;
+  uint64_t sum;
+  constexpr Tally(uint64_t c, uint64_t s) : count(c), sum(s) {}
+};
+constexpr Tally accumulate(uint64_t n, uint64_t seed) {
+  mut uint64_t count = 0;
+  mut uint64_t sum = seed;
+  while (count < n) {
+    count = count + 1;
+    sum = sum + count;
+  }
+  return Tally(count, sum);
+}
+constexpr uint64_t spin(uint64_t n) { return accumulate(n, uint64_t(0)).count; }
+)";
+
+std::vector<lang::Diagnostic>
+errorsOf(const std::vector<lang::Diagnostic> &diagnostics) {
+  std::vector<lang::Diagnostic> errors;
+  for (const auto &diagnostic : diagnostics)
+    if (diagnostic.severity == lang::DiagnosticSeverity::Error)
+      errors.push_back(diagnostic);
+  return errors;
+}
+
+bool sameDiagnostics(const std::vector<lang::Diagnostic> &left,
+                     const std::vector<lang::Diagnostic> &right) {
+  return left.size() == right.size() &&
+         std::equal(left.begin(), left.end(), right.begin(),
+                    [](const auto &a, const auto &b) {
+                      return a.code == b.code && a.message == b.message &&
+                             a.primary.start == b.primary.start &&
+                             a.primary.end == b.primary.end &&
+                             a.hints == b.hints;
+                    });
+}
+
+void testCompileLimits() {
+  const auto analyze = [](const std::string &body,
+                          lang::FrontendOptions options,
+                          lang::FrontendWorkMetrics *metrics = nullptr) {
+    options.workMetrics = metrics;
+    return lang::Frontend(std::move(options))
+        .analyze("compile-limits.gti",
+                 kCompileLimitsPrelude + body + "\nint main() { return 0; }");
+  };
+  // The default request budget is Clang's -fconstexpr-steps, far above the
+  // former 4096-step budget: a loop of a few thousand iterations is valid.
+  const std::string medium = "static_assert(spin(uint64_t(5000)) == "
+                             "uint64_t(5000));";
+  const auto defaults = analyze(medium, {});
+  expect(lang::CompileLimits{}.constexprSteps == 1048576 &&
+             defaults.canGenerateCode() &&
+             errorsOf(defaults.diagnostics).empty(),
+         "the default per-request step limit admits work beyond 4096 steps");
+
+  // Lowering the limit rejects the same request with a diagnostic naming the
+  // request, the executing function, the limit and how to configure it.
+  const auto lowered = analyze(medium, stepLimited(4096));
+  const auto loweredErrors = errorsOf(lowered.diagnostics);
+  expect(!lowered.canGenerateCode() && loweredErrors.size() == 1 &&
+             loweredErrors[0].code == "GTI-S2057" &&
+             loweredErrors[0].message.find("'static_assert'") !=
+                 std::string::npos &&
+             loweredErrors[0].message.find(
+                 "used all 4096 steps of its constant-evaluation "
+                 "execution-step limit while executing 'accumulate'") !=
+                 std::string::npos &&
+             hasDiagnosticHint(lowered.diagnostics,
+                               "The limit is 4096; raise it with "
+                               "'--constexpr-steps <n>' or with "
+                               "'constexpr-steps = <n>' in the [limits] "
+                               "table of the root package's gti.toml."),
+         "step exhaustion names the request, executing function, limit, "
+         "flag and manifest key");
+
+  // A request beyond the default fails by default and succeeds once the
+  // limit is raised; the limit is per request, never per compilation.
+  const std::string large = "static_assert(spin(uint64_t(70000)) == "
+                            "uint64_t(70000));";
+  const auto largeDefault = analyze(large, {});
+  const auto largeRaised = analyze(large, stepLimited(2000000));
+  expect(
+      !largeDefault.canGenerateCode() &&
+          hasDiagnostic(largeDefault.diagnostics, "used all 1048576 steps") &&
+          largeRaised.canGenerateCode(),
+      "raising the step limit admits a request beyond the default");
+  std::string many;
+  for (int index = 0; index < 8; ++index)
+    many += "static_assert(spin(uint64_t(" + std::to_string(5000 + index) +
+            ")) > uint64_t(0));\n";
+  const auto perRequest = analyze(many, stepLimited(200000));
+  expect(perRequest.canGenerateCode(),
+         "every request has its own budget; requests never share one");
+
+  // The audit's motivating client: a user-written literal-pattern validator
+  // run by an immediate call. A 300-character, 24-field pattern needs far
+  // more than the former 4096-step budget.
+  std::string pattern;
+  for (int index = 0; index < 24; ++index)
+    pattern += "field {} ";
+  pattern += std::string(100, 'x');
+  const std::string validator =
+      "struct PatternScan {\n  uint64_t fields;\n  bool valid;\n"
+      "  constexpr PatternScan(uint64_t f, bool v) : fields(f), valid(v) {}\n"
+      "};\n"
+      "constexpr PatternScan scan_pattern(std::string_view pattern) {\n"
+      "  mut uint64_t at = 0;\n  mut uint64_t fields = 0;\n"
+      "  while (at < pattern.size()) {\n"
+      "    if (pattern[at] == '{') {\n"
+      "      if (at + 1 < pattern.size() && pattern[at + 1] == '}') {\n"
+      "        fields = fields + 1;\n        at = at + 2;\n        continue;\n"
+      "      }\n      return PatternScan(fields, false);\n    }\n"
+      "    if (pattern[at] == '}') { return PatternScan(fields, false); }\n"
+      "    at = at + 1;\n  }\n  return PatternScan(fields, true);\n}\n"
+      "consteval void require_pattern(std::string_view pattern, uint64_t "
+      "expected) {\n  PatternScan scan = scan_pattern(pattern);\n"
+      "  uint64_t checked = uint64_t(1) / (scan.valid && scan.fields == "
+      "expected ? uint64_t(1) : uint64_t(0));\n}\n"
+      "void validate() {\n  require_pattern(\"" +
+      pattern + "\", uint64_t(24));\n}";
+  const auto withLibrary = [&](lang::FrontendOptions options) {
+    return lang::Frontend(std::move(options))
+        .analyze("compile-limits-pattern.gti",
+                 validator + "\nint main() { return 0; }",
+                 {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  };
+  const auto longPattern = withLibrary({});
+  const auto longPatternOldBudget = withLibrary(stepLimited(4096));
+  expect(longPattern.canGenerateCode() &&
+             !longPatternOldBudget.canGenerateCode() &&
+             hasDiagnosticHint(longPatternOldBudget.diagnostics,
+                               "while executing 'scan_pattern'"),
+         "a long literal pattern validates within the default request "
+         "budget but not the former 4096-step budget");
+
+  // Each request kind names itself.
+  const auto binding = analyze(
+      "constexpr uint64_t total = spin(uint64_t(5000));", stepLimited(1000));
+  expect(hasDiagnostic(binding.diagnostics,
+                       "The initializer for constexpr binding 'total' "
+                       "exceeded") &&
+             hasDiagnosticHint(binding.diagnostics, "--constexpr-steps"),
+         "a constexpr binding's exhaustion names the binding");
+  const auto condition = analyze(
+      "int pick() { if constexpr (spin(uint64_t(5000)) > uint64_t(0)) { "
+      "return 1; } else { return 0; } }",
+      stepLimited(1000));
+  expect(hasDiagnostic(condition.diagnostics, "'if constexpr'") &&
+             hasDiagnostic(condition.diagnostics, "used all 1000 steps") &&
+             hasDiagnosticHint(condition.diagnostics, "constexpr-steps = <n>"),
+         "a compile-time branch condition's exhaustion names its limit");
+  const auto immediate =
+      analyze("consteval uint64_t measured(uint64_t n) { return spin(n); }\n"
+              "uint64_t use() { return measured(uint64_t(5000)); }",
+              stepLimited(1000));
+  expect(hasDiagnosticCode(immediate.diagnostics, "GTI-S2057") &&
+             hasDiagnosticHint(immediate.diagnostics, "used all 1000 steps") &&
+             hasDiagnosticHint(immediate.diagnostics, "--constexpr-steps"),
+         "an immediate invocation's exhaustion names its limit");
+  // Attribution. Find the smallest step budget that still lets recursion
+  // reach the depth limit: there, the depth trip leaves the budget exactly
+  // spent, so any step charged after the trip (while the failure unwinds)
+  // would exhaust the budget too and could re-attribute the failure. It
+  // must still be reported as the depth limit, and one step less as steps.
+  const std::string deep =
+      "constexpr uint64_t deep(uint64_t n) {\n"
+      "  mut uint64_t i = 0;\n  while (i < uint64_t(3)) { i = i + 1; }\n"
+      "  return deep(n + uint64_t(1));\n}\n"
+      "static_assert(deep(uint64_t(0)) == uint64_t(0));";
+  const auto deepWith = [&](std::size_t steps) {
+    lang::FrontendOptions options = stepLimited(steps);
+    options.limits.constexprDepth = 32;
+    return analyze(deep, std::move(options));
+  };
+  const auto byDepth = [](const lang::FrontendResult &result) {
+    return hasDiagnostic(result.diagnostics, "call depth exceeded") &&
+           !hasDiagnostic(result.diagnostics, "execution-step limit");
+  };
+  std::size_t low = 1, high = 1000000;
+  while (low < high) {
+    const std::size_t middle = low + (high - low) / 2;
+    if (byDepth(deepWith(middle)))
+      high = middle;
+    else
+      low = middle + 1;
+  }
+  const auto atEdge = deepWith(low);
+  const auto belowEdge = deepWith(low - 1);
+  expect(low > 32 && byDepth(atEdge) &&
+             hasDiagnosticHint(atEdge.diagnostics, "--constexpr-depth <n>") &&
+             hasDiagnostic(belowEdge.diagnostics,
+                           "used all " + std::to_string(low - 1) + " steps") &&
+             !byDepth(belowEdge),
+         "a request is attributed to the limit that stopped it, even when the "
+         "other limit is exhausted at the same point");
+
+  const auto constructor = analyze(
+      "struct Heavy {\n  uint64_t value;\n"
+      "  constexpr Heavy(uint64_t n) : value(0) {\n"
+      "    mut uint64_t i = 0;\n    while (i < n) { i = i + 1; }\n  }\n};\n"
+      "constexpr Heavy heavy = Heavy(uint64_t(5000));",
+      stepLimited(1000));
+  expect(hasDiagnostic(constructor.diagnostics, "while executing 'Heavy'"),
+         "exhaustion inside a constexpr constructor names its class");
+}
+
+void testConstantEvaluationReuse() {
+  const auto analyze = [](const std::string &body, bool reuse,
+                          std::size_t steps,
+                          lang::FrontendWorkMetrics &metrics) {
+    lang::FrontendOptions options = stepLimited(steps);
+    options.reuseConstantEvaluations = reuse;
+    options.workMetrics = &metrics;
+    return lang::Frontend(std::move(options))
+        .analyze("constant-reuse.gti",
+                 kCompileLimitsPrelude + body + "\nint main() { return 0; }");
+  };
+  struct Observed {
+    lang::FrontendResult result;
+    lang::FrontendWorkMetrics metrics;
+  };
+  const auto both = [&](const std::string &body, std::size_t steps) {
+    std::pair<Observed, Observed> observed;
+    observed.first.result = analyze(body, true, steps, observed.first.metrics);
+    observed.second.result =
+        analyze(body, false, steps, observed.second.metrics);
+    expect(observed.first.result.canGenerateCode() ==
+                   observed.second.result.canGenerateCode() &&
+               sameDiagnostics(observed.first.result.diagnostics,
+                               observed.second.result.diagnostics) &&
+               observed.second.metrics.constexprStagedReuses == 0 &&
+               observed.second.metrics.constexprClosureReuses == 0,
+           "constant-evaluation reuse never changes a program's diagnostics "
+           "or validity: " +
+               body);
+    return observed;
+  };
+  const std::size_t defaultSteps = lang::CompileLimits{}.constexprSteps;
+
+  // Identical immediate void calls (the CB-08 shape): one execution, the
+  // rest replay its recorded result.
+  std::string repeated =
+      "consteval void require_total(uint64_t n, uint64_t expected) {\n"
+      "  uint64_t checked = uint64_t(1) / (accumulate(n, uint64_t(0)).sum == "
+      "expected "
+      "? uint64_t(1) : uint64_t(0));\n}\nvoid validate() {\n";
+  for (int index = 0; index < 20; ++index)
+    repeated += "  require_total(uint64_t(100), uint64_t(5050));\n";
+  repeated += "}";
+  const auto identical = both(repeated, defaultSteps);
+  expect(identical.first.result.canGenerateCode() &&
+             identical.first.metrics.constexprStagedReuses >= 19 &&
+             identical.first.metrics.constexprMirExecutions <
+                 identical.second.metrics.constexprMirExecutions,
+         "identical immediate calls execute once and replay the rest");
+
+  // Distinct arguments still reuse the lowered call closure.
+  std::string distinct = "consteval uint64_t total(uint64_t n) { return "
+                         "accumulate(n, uint64_t(0)).sum; }\nuint64_t sum() {\n"
+                         "  return uint64_t(0)";
+  for (int index = 1; index <= 20; ++index)
+    distinct += " + total(uint64_t(" + std::to_string(index) + "))";
+  distinct += ";\n}";
+  const auto closures = both(distinct, defaultSteps);
+  expect(closures.first.result.canGenerateCode() &&
+             closures.first.metrics.constexprClosureReuses >= 19 &&
+             closures.first.metrics.constexprMirExecutions ==
+                 closures.second.metrics.constexprMirExecutions,
+         "calls with new arguments execute again without lowering the call "
+         "closure again");
+
+  // A request that exceeds its budget only through repeated calls fails the
+  // same way whether the repeats replay or execute. Find the one-call cost
+  // first, then allow two calls but not three.
+  const std::string once = "static_assert(spin(uint64_t(300)) > uint64_t(0));";
+  std::size_t low = 1, high = 100000;
+  while (low < high) {
+    const std::size_t middle = low + (high - low) / 2;
+    lang::FrontendWorkMetrics unused;
+    if (analyze(once, false, middle, unused).canGenerateCode())
+      high = middle;
+    else
+      low = middle + 1;
+  }
+  const std::size_t oneCall = low;
+  const std::size_t budget = oneCall * 2 + oneCall / 2;
+  const auto twice = both("static_assert(spin(uint64_t(300)) + "
+                          "spin(uint64_t(300)) > uint64_t(0));",
+                          budget);
+  const auto thrice = both("static_assert(spin(uint64_t(300)) + "
+                           "spin(uint64_t(300)) + spin(uint64_t(300)) > "
+                           "uint64_t(0));",
+                           budget);
+  expect(oneCall > 300 && twice.first.result.canGenerateCode() &&
+             twice.first.metrics.constexprStagedReuses >= 1 &&
+             !thrice.first.result.canGenerateCode() &&
+             hasDiagnostic(thrice.first.result.diagnostics,
+                           "execution-step limit"),
+         "a replay charges the recorded steps, so exhaustion through "
+         "repeated calls is identical with and without reuse");
+
+  // Failures are never recorded as successes: each failing call reports.
+  const auto failing = both(
+      "consteval uint64_t checked(uint64_t n) { return uint64_t(1) / n; }\n"
+      "uint64_t use() { return checked(uint64_t(0)) + "
+      "checked(uint64_t(0)); }",
+      defaultSteps);
+  expect(errorsOf(failing.first.result.diagnostics).size() == 2,
+         "a failed evaluation is executed and reported at every call");
+}
+
 void testConsteval() {
   const auto referenceInput =
       lang::Frontend().analyze("checked-reference.gti", R"(
@@ -6186,8 +6775,9 @@ int main() { return consume(7); }
 )");
   expect(!bounded.canGenerateCode() &&
              hasDiagnosticHint(bounded.diagnostics,
-                               "shared step or call-depth limit"),
-         "the enlarged immediate budget remains deterministic and bounded");
+                               "execution-step limit while executing "
+                               "'Checked'"),
+         "immediate construction stays bounded by the request's step limit");
 
   const std::string checked = R"(
 struct Checked {
@@ -6519,9 +7109,13 @@ int main() { return recurse(0); }
   expect(!exhausted.semanticValid &&
              hasDiagnosticCode(exhausted.diagnostics, "GTI-S2057") &&
              hasDiagnosticHint(exhausted.diagnostics,
-                               "shared step or call-depth limit"),
+                               "constexpr call depth exceeded the request's "
+                               "limit of 512 nested calls while executing "
+                               "'recurse'") &&
+             hasDiagnosticHint(exhausted.diagnostics,
+                               "raise it with '--constexpr-depth <n>'"),
          "immediate recursion preserves the bounded evaluator and reports "
-         "its shared resource limit");
+         "its call-depth limit, its value and how to raise it");
 }
 
 void testConstevalStatementCompletion() {
@@ -6679,6 +7273,8 @@ int main() { Validator(5).check(5); return 0; }
 }
 
 constexpr NamedTest kTests[] = {
+    {"testCompileLimits", testCompileLimits},
+    {"testConstantEvaluationReuse", testConstantEvaluationReuse},
     {"testConsteval", testConsteval},
     {"testConstevalStatementCompletion", testConstevalStatementCompletion},
     {"testFixedWidthIntegers", testFixedWidthIntegers},
@@ -6714,6 +7310,9 @@ constexpr NamedTest kTests[] = {
     {"testStaticStorageAndMembers", testStaticStorageAndMembers},
     {"testConcurrentGlobalPolicy", testConcurrentGlobalPolicy},
     {"testCompileTimeConditionals", testCompileTimeConditionals},
+    {"testConfigurableCompileTimeDepth", testConfigurableCompileTimeDepth},
+    {"testNativeStackSegmentsAreInvisible",
+     testNativeStackSegmentsAreInvisible},
 };
 
 } // namespace

@@ -2055,9 +2055,9 @@ conversions plus lossless `uint8_t(char)`/`char(uint8_t)` code-unit conversion.
 Integer operations use the language's checked domains.
 Floating literals, arithmetic, comparisons, integer conversions, signed zero,
 infinities, and NaNs use the selected binary32 or binary64 rules in execution
-semantics. Evaluation has one shared 4096-step budget, including recursively
-synthesized default array elements, and a 64-call-depth limit. It reports
-integer overflow, integer zero divisors, invalid shifts, out-of-range
+semantics. Each request has one step budget, including recursively
+synthesized default array elements, and one call-depth limit (see
+[3.11.2](#3112-implementation-limits)). It reports integer overflow, integer zero divisors, invalid shifts, out-of-range
 conversions, non-constant references, unsupported operations, and resource
 exhaustion at source locations.
 
@@ -2204,7 +2204,7 @@ flow must be checked again for each concrete instance; the symbolic primary is
 not an executable flow proof. A concrete instance must select every branch
 before HIR lowering. Nested constexpr predicates may themselves require staged
 concrete analysis; their execution shares the enclosing constant request's
-step budget and a bounded staging/call depth.
+step budget and call-depth limit ([3.11.2](#3112-implementation-limits)).
 
 Concrete non-negative integer constexpr values may supply fixed-array extents
 and `uint64_t` value-generic arguments. These uses refer to the declaration's
@@ -2238,10 +2238,11 @@ Allocation identities are symbolic and confined to one evaluation request.
 All allocations must be reclaimed before the outer request completes. A helper
 may return an owner to another helper, but an allocation, ownership handle or
 active-cleanup object cannot become a persistent constexpr binding. Return a
-passive summary instead. The existing step/depth limits also cover destruction
-and heap operations. Each request allows at most 1024 allocation identities and
-65536 live logical storage units (one per value/aggregate node plus each text
-byte), independent of target layout. Exhaustion is a semantic diagnostic.
+passive summary instead. The request's step and depth limits also cover
+destruction and heap operations. Each request allows at most 1024 allocation
+identities and 65536 live logical storage units (one per value/aggregate node
+plus each text byte), independent of target layout. Exhaustion is a semantic
+diagnostic.
 
 Shared ownership, virtual/recursive owning destruction, raw-memory/provider
 allocation protocols, stored-reference carriers, unions and
@@ -2288,13 +2289,9 @@ otherwise runtime-only substitutions. Immediate declarations cannot become
 function items or native callbacks; this bounded rule also excludes references
 to them used only during constant evaluation.
 
-Execution uses staged, canonical verified MIR with a shared 262144-step budget
-for a fresh immediate request and a 64-call-depth limit. A nested request inherits
-its enclosing budget, including the ordinary constant-context 4096-step budget.
-Identical successful staged requests reuse request-local results keyed by exact
-constructor/function identity, substitutions, constants and completed definitions;
-reuse still charges the original work and checks depth. It never retries an immediate request through
-the compatibility AST function interpreter. Runtime-dependent arguments,
+Execution uses staged, canonical verified MIR and the request's step and
+call-depth limits ([3.11.2](#3112-implementation-limits)). It never retries an
+immediate request through the compatibility AST function interpreter. Runtime-dependent arguments,
 unsupported executed operations, arithmetic failures and resource exhaustion
 produce `GTI-S2057`, with the invocation and failing operation retained. Executing
 a constant-eligible literal-message `std::panic` fails the request with the
@@ -2329,6 +2326,85 @@ See [`183-immediate-functions.gti`](../../examples/183-immediate-functions.gti)
 for an immediate calculation, standalone void validation, bare-return
 construction, and a checked port combined with runtime data.
 
+### 3.11.2 Implementation Limits
+
+Compile-time work is bounded per request. As with C++ implementation
+quantities, each limit below has a guaranteed minimum that every GTI
+implementation supports: a program whose requests stay within every minimum is
+portable. An implementation's defaults may exceed a minimum, and a compilation
+may configure each limit. No limit accumulates across a module, a package or a
+compilation; there is no aggregate compile-time budget.
+
+A constant-evaluation request is one constexpr binding initializer, one
+`static_assert` condition, one `if constexpr` condition, one fixed-array extent
+or value-generic argument, or one immediate (`consteval`) invocation. Its nested
+calls, its staged concrete analysis and the compile-time predicates that
+analysis requires share the request's step budget and call depth. A macro
+request is one outermost written macro invocation together with every
+invocation its expansion produces. `constexpr for` limits apply per statement
+(elements) and per enclosing declaration (copies).
+
+| Limit | Bounds | Guaranteed minimum | Default | Largest setting |
+| --- | --- | ---: | ---: | ---: |
+| `constexpr-steps` | Constant-evaluation steps per request | 1048576 | 1048576 | 4294967295 |
+| `constexpr-depth` | Nested constant-evaluation calls per request, including staging | 512 | 512 | 16384 |
+| `macro-depth` | Nested macro invocations | 1024 | 1024 | 4096 |
+| `macro-expansions` | Macro bodies expanded by one outermost invocation | 4096 | 8192 | 32768 |
+| `constexpr-for-elements` | Elements of one `constexpr for` statement | 1024 | 1024 | 16384 |
+| `constexpr-for-copies` | `constexpr for` body copies per declaration | 4096 | 4096 | 16384 |
+
+The defaults of the two constant-evaluation limits are Clang's
+`-fconstexpr-steps` and `-fconstexpr-depth` defaults. A step is one unit of
+evaluator work: one executed MIR instruction or terminator, or one expression
+or statement of the compatibility interpreter, with bulk charges for copying
+and traversing aggregate storage. The count is deterministic for a compiler
+version and identical on every host, but it is not a cross-implementation cost
+model. The per-request transient allocation bounds above (1024 identities and
+65536 storage units) are fixed.
+
+Nested staging is bounded separately, at a fixed 64 levels (guaranteed minimum
+64). A staged evaluation nests when it begins while another staged evaluation
+of the same request is still being lowered, for example a constexpr function
+whose `if constexpr` condition calls a constexpr function that must itself be
+staged. Each level currently copies the semantic analysis state, so the
+512-call default would let a cyclic definition hold several gigabytes before
+it is rejected (measured: 3.3 GB, or 11.7 GB with the standard library
+imported, against 0.46 GB and 2.7 GB at 64 levels). Exceeding it reports
+`GTI-S2057` naming the nested staging depth; when the function being staged is
+already being staged further out, the diagnostic names the recursive or cyclic
+definition. Calls executed within one staged evaluation remain bounded only by
+`constexpr-depth`. This bound is not configurable and will rise when staging
+shares its analysis snapshot.
+
+A compilation's limits come from the command line (`--<limit> <n>` or
+`--<limit>=<n>`), then the root package's `gti.toml` `[limits]` table entry of
+the same name, then the defaults. The root (selected) package's table applies
+to the whole compilation, including code from its dependencies; a dependency's
+`[limits]` table is validated with its manifest but never applied, like a C++
+per-compilation flag. A setting is an integer from 1 to the largest setting.
+Settings below a guaranteed minimum are accepted but make a program depend on
+its configuration. Direct single-file compilation has no manifest and uses only
+the command line, and editor analysis applies the same root-package table as
+a build. See [the driver contract](../architecture/build-and-driver.md#compile-limits).
+
+Reaching any limit, up to its largest setting, reports that limit's
+diagnostic: the depth of nested evaluation, staged analysis, macro expansion
+and the lowering of expanded bodies does not depend on the host's native stack.
+Exceeding a constant-evaluation limit reports `GTI-S2057` at the request. The
+diagnostic names the request, the limit and its value and the function that was
+executing, and its hint names the command-line flag and manifest key that
+configure the limit. Exceeding a macro limit or a `constexpr for` limit
+reports that construct's own diagnostic with the same configuration hint.
+
+Within one compilation or editor snapshot, the compiler may reuse the lowered
+call closure of a staged evaluation, and the result of an earlier successful
+evaluation with the same callee, generic arguments, constant arguments and
+available definitions. A reused result charges the steps its original
+evaluation consumed, and either reuse applies only where the original
+evaluation's step and depth requirements still fit. Reuse therefore never
+changes which requests succeed, the values they produce or the diagnostics
+reported. Failed evaluations are never reused.
+
 ## 3.12 Compile-Time Iteration And Reflection
 
 ### 3.12.1 `constexpr for`
@@ -2362,9 +2438,10 @@ condition: no copy is analyzed, and each concrete instance expands the
 statement with the substituted sequence. A declaration of a function, class,
 enum, concept, alias or namespace inside the body is rejected (`GTI-S2109`);
 a sequence that is not such a class is rejected (`GTI-S2107`). Expansion is
-bounded: at most 1024 elements per statement and 4096 expanded copies per
-declaration (`GTI-S2108`), counted separately from the constant-evaluation
-step budget. A diagnostic produced inside a copy carries related information
+bounded by the `constexpr-for-elements` limit per statement and the
+`constexpr-for-copies` limit per declaration (`GTI-S2108`;
+[3.11.2](#3112-implementation-limits)), counted separately from the
+constant-evaluation step budget. A diagnostic produced inside a copy carries related information
 naming the element; a diagnostic that every copy produces identically is
 reported once.
 

@@ -5,6 +5,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 INCOMING_CLEANUP_CHECK = (
@@ -47,30 +48,26 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="gti-class-move-assign-") as temporary:
         root = pathlib.Path(temporary)
-        for optimization in ("O0", "O3"):
-            for standard in ("c++20", "c++23"):
-                mode = f"{optimization}-{standard}"
-                executable = root / mode
-                built = run(
-                    [
-                        str(compiler),
-                        str(positive),
-                        f"-{optimization}",
-                        "--std",
-                        standard,
-                        "-o",
-                        str(executable),
-                    ]
-                )
-                if built.returncode != 0:
-                    return fail(f"build {mode}", built)
-                executed = run([str(executable)])
-                if (
-                    executed.returncode != 0
-                    or executed.stdout != ""
-                    or executed.stderr != ""
-                ):
-                    return fail(f"run {mode}", executed)
+        for mode, flags, native in native_modes():
+            executable = root / mode
+            built = run(
+                [
+                    str(compiler),
+                    str(positive),
+                    *flags,
+                    "-o",
+                    str(executable),
+                ]
+            )
+            if built.returncode != 0:
+                return fail(f"build {mode}", built)
+            executed = run([str(executable)])
+            if (
+                executed.returncode != 0
+                or executed.stdout != ""
+                or executed.stderr != ""
+            ):
+                return fail(f"run {mode}", executed)
 
         generated_path = root / "class-move-assignment.cpp"
         emitted = run(
@@ -152,9 +149,7 @@ def main() -> int:
             [
                 str(compiler),
                 str(negative),
-                "-O0",
-                "--std",
-                "c++23",
+                *native_modes(levels=("O0",))[0][1],
                 "-o",
                 str(root / "move-only-copy-assign"),
             ]

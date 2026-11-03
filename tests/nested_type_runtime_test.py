@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def run(command, expected=0):
@@ -21,28 +22,27 @@ def main():
     os.environ["GTI_STDLIB_PATH"] = str(repository / "stdlib")
     with tempfile.TemporaryDirectory(prefix="gti-nested-types-") as directory:
         scratch = Path(directory)
-        for standard in ("c++20", "c++23"):
-            for optimization in ("O0", "O1", "O3"):
-                executable = scratch / f"nested-{standard}-{optimization}"
-                run([str(compiler), str(repository / "tests/fixtures/named_nested_types.gti"),
-                     "--std", standard, f"-{optimization}", "--progress", "never",
-                     "-o", str(executable), "--", "-fno-elide-constructors"])
-                executed = run([str(executable)])
-                assert executed.stdout == "nested types\n" and executed.stderr == "", executed
+        for mode, flags, _native in native_modes():
+            executable = scratch / f"nested-{mode}"
+            run([str(compiler), str(repository / "tests/fixtures/named_nested_types.gti"),
+                 *flags, "--progress", "never",
+                 "-o", str(executable)])
+            executed = run([str(executable)])
+            assert executed.stdout == "nested types\n" and executed.stderr == "", executed
 
-                owning = scratch / f"owning-{standard}-{optimization}"
-                run([str(compiler), str(repository / "tests/fixtures/named_nested_ownership.gti"),
-                     "--std", standard, f"-{optimization}", "--progress", "never",
-                     "-o", str(owning), "--", "-fno-elide-constructors"])
-                executed = run([str(owning)])
-                assert executed.stdout == "2\n1\n" and executed.stderr == "", executed
-                failed = run([str(owning), "fail"], expected=70)
-                assert failed.stdout == "2\n1\n" and "GTI-R0006" in failed.stderr, failed
+            owning = scratch / f"owning-{mode}"
+            run([str(compiler), str(repository / "tests/fixtures/named_nested_ownership.gti"),
+                 *flags, "--progress", "never",
+                 "-o", str(owning)])
+            executed = run([str(owning)])
+            assert executed.stdout == "2\n1\n" and executed.stderr == "", executed
+            failed = run([str(owning), "fail"], expected=70)
+            assert failed.stdout == "2\n1\n" and "GTI-R0006" in failed.stderr, failed
 
         example = repository / "examples/148-nested-configuration.gti"
-        for standard, optimization in (("c++20", "O0"), ("c++23", "O3")):
-            executable = scratch / f"config-{standard}-{optimization}"
-            run([str(compiler), str(example), "--std", standard, f"-{optimization}",
+        for mode, flags, _native in native_modes():
+            executable = scratch / f"config-{mode}"
+            run([str(compiler), str(example), *flags,
                  "--progress", "never", "-o", str(executable)])
             executed = run([str(executable)])
             assert executed.stdout == (
@@ -165,9 +165,9 @@ int main() {
   }
 }
 ''', encoding="utf-8")
-        for standard, optimization in (("c++20", "O0"), ("c++23", "O3")):
-            executable = scratch / f"native-{standard}-{optimization}"
-            run([str(compiler), str(native_consumer), "--std", standard, f"-{optimization}",
+        for mode, flags, _native in native_modes():
+            executable = scratch / f"native-{mode}"
+            run([str(compiler), str(native_consumer), *flags,
                  "--progress", "never", "-o", str(executable), "--", str(native_object)])
             executed = run([str(executable)])
             assert executed.stdout == "" and executed.stderr == "", executed
@@ -197,9 +197,9 @@ int main() {
   return network.port == 80 && value.value == 11 ? 0 : 1;
 }
 ''', encoding="utf-8")
-        for standard, optimization in (("c++20", "O0"), ("c++23", "O3")):
-            executable = scratch / f"imported-{standard}-{optimization}"
-            run([str(compiler), str(consumer), "--std", standard, f"-{optimization}",
+        for mode, flags, _native in native_modes():
+            executable = scratch / f"imported-{mode}"
+            run([str(compiler), str(consumer), *flags,
                  "--progress", "never", "-o", str(executable)])
             executed = run([str(executable)])
             assert executed.stdout == "" and executed.stderr == "", executed

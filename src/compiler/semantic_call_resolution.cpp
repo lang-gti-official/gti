@@ -364,12 +364,11 @@ auto SemanticVisitor::Impl::analyzeDeferredCallableCall(
       diagnostics.emplace_back(std::move(diagnostic));
       valid = false;
     } else if (returnType.kind == SemanticType::Reference &&
-               returnType.referenceAccess == AccessMode::ReadOnly &&
                currentReturnBorrowContract() &&
                (currentReturnBorrowContract()->origin ==
                     BorrowOriginKind::Argument ||
                 currentReturnBorrowContract()->deferred)) {
-      // A read-only reference result relays the selected callable's own
+      // A checked reference result relays the selected callable's own
       // result-origin contract. The enclosing body names the parameter the
       // relayed result borrows; each concrete instance verifies that the
       // selected callable's origin reaches exactly that parameter.
@@ -506,7 +505,6 @@ auto SemanticVisitor::Impl::validateCallableReturn(
     // result-origin contract: the call result borrows that argument, and
     // the enclosing body's return summary decides whether it may escape.
     if (returnType.kind == SemanticType::Reference &&
-        returnType.referenceAccess == AccessMode::ReadOnly &&
         callableResultOriginContract(call))
       return true;
     Diagnostic diagnostic = makeDiagnostic(
@@ -6981,7 +6979,7 @@ auto SemanticVisitor::Impl::applyCheckedArgument(const ExprPtr &argument,
     return false;
   if (!insideImmediateFunction() &&
       !immediateConstructionDependent(*construction)) {
-    auto context = makeConstexprInterpreter(true);
+    auto context = makeConstexprInterpreter();
     context.requireMir = true;
     context.recordValues = false;
     const auto operand = evaluateConstexprExpression(*argument, context);

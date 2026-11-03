@@ -83,6 +83,9 @@ struct FrontendWorkMetrics {
   // Staged constant evaluations replayed from an earlier success of the same
   // request instead of executing again.
   std::size_t constexprStagedReuses = 0;
+  // Staged constant evaluations that executed a call closure lowered earlier
+  // in the same request instead of lowering it again.
+  std::size_t constexprClosureReuses = 0;
   std::size_t semanticRawAuditQueries = 0;
 
   void clear() {
@@ -132,6 +135,7 @@ struct FrontendWorkMetrics {
     semanticBorrowSummaryFunctions = 0;
     constexprMirExecutions = 0;
     constexprStagedReuses = 0;
+    constexprClosureReuses = 0;
     semanticRawAuditQueries = 0;
   }
 };

@@ -94,8 +94,9 @@ void SemanticDiagnosticReporter::reportConstexprFailure(
               "' reads a binding that is not constexpr.";
     break;
   case ConstantEvaluationFailure::ResourceLimit:
-    message = "The constexpr initializer exceeded the compiler's bounded "
-              "evaluation limit.";
+    message = "The initializer for constexpr binding '" +
+              declaration.name().lexeme +
+              "' exceeded the compiler's bounded evaluation limit.";
     hint = "Reduce constexpr recursion or loop work, or split the "
            "calculation into smaller constexpr bindings.";
     break;

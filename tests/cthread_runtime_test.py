@@ -9,6 +9,7 @@ import tempfile
 from sanitizer_support import thread_sanitizer_enabled
 
 from native_symbol_spelling import native_spelling
+from backend_modes import cpp_variant_mode, is_cpp_mode, keep_cpp, native_modes
 
 
 def execute(command, *, quiet=False):
@@ -27,15 +28,10 @@ def main():
     fixtures = pathlib.Path(__file__).resolve().parent / "fixtures"
     with tempfile.TemporaryDirectory(prefix="gti-cthread-") as temporary:
         root = pathlib.Path(temporary)
-        modes = [
-            (f"{standard}-{optimization}", ["--std", standard, f"-{optimization}"])
-            for standard in ("c++20", "c++23")
-            for optimization in ("O0", "O1", "O3")
-        ]
-        modes.append(("sanitized", ["--std", "c++23", "-O1"]))
+        modes = native_modes()
         if thread_sanitizer_enabled():
-            modes.append(("tsan", ["--std", "c++23", "-O1"]))
-        for name, flags in modes:
+            modes.append(cpp_variant_mode("tsan"))
+        for name, flags, native_flags in modes:
             for fixture in (
                 "cthread_yield", "cthread_yield_concurrent", "cthread_yield_call_count",
                 "cthread_identity", "cthread_identity_concurrent",
@@ -44,7 +40,7 @@ def main():
                 binary = root / f"{fixture}-{name}{suffix}"
                 command = [
                     str(compiler), str(fixtures / f"{fixture}.gti"),
-                    *flags, "--keep-cpp", "-o", str(binary),
+                    *flags, *keep_cpp(flags), "-o", str(binary),
                 ]
                 if fixture.endswith("concurrent"):
                     command.extend(["--execution-profile", "concurrent"])
@@ -71,16 +67,17 @@ def main():
                     command.extend(["--", *native])
                 execute(command)
                 execute([str(binary)], quiet=True)
-                emitted = binary.with_suffix(".gti.cpp").read_text()
-                if "// GTI verified-MIR body:" not in emitted:
-                    raise AssertionError("missing verified-MIR production witness")
-                yield_call = native_spelling(emitted, "gti_rt_cthread_yield_v1")
-                if emitted.count(f"{yield_call}(") < 2:
-                    raise AssertionError("yield lost its native call or declaration")
-                if fixture.startswith("cthread_identity"):
-                    current_call = native_spelling(emitted, "gti_rt_cthread_current_v1")
-                    if emitted.count(f"{current_call}(") < 2:
-                        raise AssertionError("identity lost its native call or declaration")
+                if is_cpp_mode(flags):
+                    emitted = binary.with_suffix(".gti.cpp").read_text()
+                    if "// GTI verified-MIR body:" not in emitted:
+                        raise AssertionError("missing verified-MIR production witness")
+                    yield_call = native_spelling(emitted, "gti_rt_cthread_yield_v1")
+                    if emitted.count(f"{yield_call}(") < 2:
+                        raise AssertionError("yield lost its native call or declaration")
+                    if fixture.startswith("cthread_identity"):
+                        current_call = native_spelling(emitted, "gti_rt_cthread_current_v1")
+                        if emitted.count(f"{current_call}(") < 2:
+                            raise AssertionError("identity lost its native call or declaration")
             print(f"cthread yield/identity: {name} passed", flush=True)
 
 

@@ -9,6 +9,7 @@ from cthread_mutex_test import run
 from sanitizer_support import thread_sanitizer_enabled
 
 from native_symbol_spelling import native_spelling
+from backend_modes import cpp_variant_mode, is_cpp_mode, keep_cpp, native_modes, optimization_level
 
 
 def main():
@@ -18,18 +19,14 @@ def main():
     cxx = pathlib.Path(sys.argv[2]).absolute()
     root = pathlib.Path(__file__).resolve().parent.parent
     fixtures = root / "tests/fixtures"
-    modes = [(f"{std}-{opt}", std, opt, []) for std in ("c++20", "c++23")
-             for opt in ("O0", "O1", "O3")]
-    modes.append(("asan-ubsan", "c++23", "O1",
-                  ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]))
+    modes = native_modes()
     if thread_sanitizer_enabled():
-        modes.append(("tsan", "c++23", "O1",
-                      ["-fsanitize=thread", "-fno-omit-frame-pointer"]))
+        modes.append(cpp_variant_mode("tsan", native=["-fsanitize=thread", "-fno-omit-frame-pointer"]))
     with tempfile.TemporaryDirectory(prefix="gti-cthread-condition-") as directory:
         output = pathlib.Path(directory)
-        for mode, std, opt, sanitizers in modes:
+        for mode, flags, sanitizers in modes:
             native = output / f"native-{mode}"
-            run([cxx, f"-std={std}", f"-{opt}", *sanitizers,
+            run([cxx, "-std=c++23", f"-{optimization_level(flags)}", *sanitizers,
                  "-Wall", "-Wextra", "-Werror", "-pthread",
                  "-I", root / "runtime/include", "-I", root / "runtime/src",
                  root / "runtime/src/cthread_mutex.cpp",
@@ -39,8 +36,7 @@ def main():
             run([native, "reacquire-failure"], 86)
             for fixture in ("cthread_condition", "cthread_condition_concurrent", "cthread_condition_destroy"):
                 binary = output / f"{fixture}-{mode}"
-                command = [compiler, fixtures / f"{fixture}.gti", "--progress=never", "--std", std,
-                           f"-{opt}", "--keep-cpp", "--execution-profile", "concurrent", "-o", binary]
+                command = [compiler, fixtures / f"{fixture}.gti", "--progress=never", *flags, *keep_cpp(flags), "--execution-profile", "concurrent", "-o", binary]
                 extra = [*sanitizers]
                 if fixture.endswith(("concurrent", "destroy")):
                     extra += [fixtures / "cthread_condition_context.cpp"]
@@ -48,16 +44,18 @@ def main():
                     command += ["--", *extra]
                 run(command)
                 run([binary], 86 if fixture.endswith("destroy") else 0)
-                generated = binary.with_suffix(".gti.cpp").read_text()
+                if is_cpp_mode(flags):
+                    generated = binary.with_suffix(".gti.cpp").read_text()
                 # The invalid-destroy fixture does not wait. Check the native
                 # operation it actually exercises; unused wait wrappers are
                 # correctly absent after reachable-only lowering.
                 operations = (("destroy",) if fixture.endswith("destroy")
                               else ("wait", "timedwait", "destroy"))
-                if ("// GTI verified-MIR body:" not in generated or
-                        any(f"::{native_spelling(generated, 'gti_rt_cnd_' + op + '_v1')}("
-                            not in generated for op in operations)):
-                    raise AssertionError(f"{fixture} lost its MIR/native-call witness")
+                if is_cpp_mode(flags):
+                    if ("// GTI verified-MIR body:" not in generated or
+                            any(f"::{native_spelling(generated, 'gti_rt_cnd_' + op + '_v1')}("
+                                not in generated for op in operations)):
+                        raise AssertionError(f"{fixture} lost its MIR/native-call witness")
             print(f"C-thread condition: {mode} passed", flush=True)
 
 

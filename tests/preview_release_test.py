@@ -43,15 +43,24 @@ class PreviewTests(unittest.TestCase):
     def request(self, path):
         return self.api()(path)
 
-    def test_preview_build_and_parallel_admission_contract(self):
+    def test_preview_build_smoke_and_package_contract(self):
+        # The publisher repeats no focused checks: admission ran them on the
+        # submitting host. It builds the products, proves the compiler runs
+        # native programs with the candidate's own stdlib, and packages.
         workflow = (ROOT / '.github/workflows/preview.yml').read_text()
         self.assertIn('touch build/.cmake/api/v1/query/codemodel-v2', workflow)
-        self.assertIn('python3 ../control/scripts/preview_build.py --source . --build build', workflow)
-        admission = workflow.split('      - name: Validate combined preview on this platform')[1].split('      - name: Stage toolchain')[0]
-        self.assertIn('export CTEST_PARALLEL_LEVEL="${GTI_TEST_JOBS}"', admission)
-        self.assertIn("-R '^preview_admission$' --no-tests=error", admission)
-        self.assertIn('path: source/build/Testing', admission)
-        self.assertNotIn('ctest --test-dir build --parallel', admission)
+        self.assertIn('python3 ../control/scripts/preview_build.py --source . --build build --parallel "${GTI_JOBS}" --products-only', workflow)
+        package = workflow.split('      - name: Build the installed toolchain products')[1].split('      - name: Stage toolchain')[0]
+        self.assertIn('validation_checks.py smoke --root . --build build', package)
+        self.assertNotIn('preview_admission', workflow)
+        self.assertNotIn('ctest --test-dir build', package)
+        self.assertIn('path: source/build/Testing/preview-build.json', package)
+        self.assertIn("gti-ccache-v2-release-${{ runner.os }}-${{ runner.arch }}-", workflow, 'restores the prebuilt release cache')
+        self.assertNotIn('actions/cache/save@', workflow, 'llvm-prebuilt.yml owns the release cache')
+        self.assertNotIn('check_ci_sanitizers', workflow)
+        installed = workflow.split('      - name: Test installed toolchain')[1].split('      - name: Preserve the combined source inclusion record')[0]
+        for runtime_check in ('managed_thread_runtime_test', 'atomic_runtime_test', 'process_resource_policy_test'):
+            self.assertNotIn(runtime_check, installed, 'runtime behaviour is admission evidence, not packaging evidence')
         self.assertIn('cancel-in-progress: false', workflow)
 
     def test_parallel_budget_reaches_nested_ctest(self):
@@ -289,12 +298,12 @@ add_test(NAME focused COMMAND "$<TARGET_FILE:owner_tests>"
                                env={**os.environ, 'GITHUB_OUTPUT': str(output)}, check=True,
                                capture_output=True)
                 self.assertEqual(output.read_text(), f"available={str(present).lower()}\n")
-        self.assertIn("hashFiles('source/CMakeLists.txt', 'source/cmake/**')", workflow)
+        self.assertIn("hashFiles('source/CMakeLists.txt', 'source/cmake/**', 'source/scripts/configure_ci_toolchain.sh')", workflow)
         self.assertIn('cancel-in-progress: false', workflow)
         self.assertIn('group: gti-preview-toolchain', workflow)
         self.assertIn('Publish validated preview without replacing a newer release', workflow)
         self.assertIn('needs: [select, package]', workflow)
-        self.assertIn("-R '^preview_admission$' --no-tests=error", workflow)
+        self.assertIn('validation_checks.py smoke --root . --build build', workflow)
         self.assertIn('-DGTI_RELEASE_BUILD=ON', workflow)
         self.assertIn('--channel preview --sha "${GTI_SOURCE_SHA}"', workflow)
         self.assertIn('ref: ${{ needs.select.outputs.control }}', workflow)

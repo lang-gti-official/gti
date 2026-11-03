@@ -1374,6 +1374,12 @@ and select an independent row.
 
 ### L-UP-14: Validate Literal Patterns Through One Parser
 
+- **Budget prerequisite (2026-11-03):** the 4096-step request budget that
+  rejected valid format patterns beyond roughly 130 characters or 11 fields
+  (audit CB-07) is now a configurable 1048576-step default, and repeated
+  immediate validation no longer re-lowers the validator's call closure (CB-08):
+  50 identical calls cost about one. Neither is a remaining blocker for the
+  validator or for call-site validation.
 - **Delivered (2026-11-03, #169):** the source parser is constant-eligible and
   `format_pattern<Args...>` applies the general checked immediate argument tier.
   Grammar, indexing, count and built-in presentation failures are caller-span
@@ -1385,9 +1391,10 @@ and select an independent row.
   evaluation semantics are unchanged.
 - **Companion decisions:** a declaration warning exposes same-shaped exact
   overloads that bypass validation; literal-message panic failures retain library
-  text; fresh immediate requests have a deterministic 262144-step/64-depth
-  budget and reuse exact request-local staged results with original-work charges;
-  hover names the selected checked constructor. See [ADR 033](../decisions/033-checked-immediate-arguments.md).
+  text; immediate requests run under the configurable per-request step and
+  call-depth limits (`constexpr-steps`, `constexpr-depth`) and reuse exact
+  request-local staged results with original-work charges; hover names the
+  selected checked constructor. See [ADR 033](../decisions/033-checked-immediate-arguments.md).
 - **Boundary:** one parser and canonical verified MIR; no public type-name
   recognition, AST retry, operator conversion, conversion ranking or inference
   through the checked parameter. C++ declines aggregate constant publication
@@ -9925,8 +9932,18 @@ follow-ups:
   fully initialized structural class/struct values, ordinary constexpr
   constructors, and read-only or mutable instance methods. Constants retain exact
   declaration/type/value identity through semantics and required HIR/MIR data;
-  the backend only materializes an already-proven value. One shared 4096-step
-  budget and 64-call-depth limit cover recursive/default aggregate work.
+  the backend only materializes an already-proven value. Each request's step
+  budget and call-depth limit cover recursive/default aggregate work. Both are
+  configurable per compilation (`--constexpr-steps`/`--constexpr-depth` and the
+  root `[limits]` table) with guaranteed minimums of 1048576 steps and 512
+  calls; a staged call closure is lowered once per analysis and identical
+  successful evaluations replay with their recorded step cost (2026-11-03,
+  stdlib audit CB-07/CB-08; see
+  [implementation limits](../language/static-semantics.md#3112-implementation-limits)).
+  Nested staging stays at a fixed 64 levels because each staging level copies
+  the semantic model (a cyclic definition held 3.3-11.7 GB at 512 levels).
+  **Follow-up:** share the staged worker's analysis snapshot across nesting
+  levels, then raise or remove the separate staging bound.
 - **Text-inspection slice (implemented):** Literal-backed string-view `size()`,
   `empty()`, and checked unsigned-byte indexing now use backend-neutral constant
   kernels selected by resolved intrinsic/type identity. Focused frontend and

@@ -35,11 +35,13 @@ public library type. User-defined checked ports and durations prove the rule.
   caller-span `GTI-S2057` with the library message and existing trace. The
   identity-bound terminal panic operation supplies that message. This is the
   prerequisite slice of #174; formatted compile-time messages remain there.
-- Fresh immediate requests receive 262144 steps and 64 calls of depth. Nested
-  requests inherit their enclosing budget. The existing request-local staged
-  result cache keys exact callable identity, substitutions, constants and
-  completed definitions. Reuse charges original work and checks depth, so cache
-  warmth never changes acceptance. Ordinary constant contexts retain 4096 steps.
+- Immediate requests run under the request's configurable step and call-depth
+  limits (`CompileLimits`: `constexpr-steps`, `constexpr-depth`), the same
+  limits as every other constant context. Nested requests inherit their
+  enclosing budget. The existing request-local staged result cache keys exact
+  callable identity, substitutions, constants and completed definitions. Reuse
+  charges original work and checks depth, so cache warmth never changes
+  acceptance.
 - Hover reports the argument index, checked type and selected implicit immediate
   constructor. No new syntax or Tree-sitter rule is required.
 

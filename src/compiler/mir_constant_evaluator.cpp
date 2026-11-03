@@ -1,5 +1,6 @@
 #include "gti/mir_constant_evaluator.h"
 #include "gti/mir_verifier.h"
+#include "gti/support.h"
 #include "mir_verification_queries.h"
 
 #include <algorithm>
@@ -139,12 +140,19 @@ public:
                       "constant evaluation finishes.";
     }
     result.steps = steps;
+    // A bulk charge that would overrun the budget fails where it is made,
+    // without a frame of its own; it is still the request's step limit.
+    if (result.failure == ConstantEvaluationFailure::ResourceLimit &&
+        result.exhaustedLimit == nullptr && stepLimitReached)
+      result.exhaustedLimit = &CompileLimits::constexprSteps;
     return result;
   }
 
 private:
   ConstantEvaluationFailure persistentValue(const ConstantValue &value,
                                             std::size_t depth = 0) {
+    if (nativeStackNearlyExhausted())
+      return onFreshNativeStack([&] { return persistentValue(value, depth); });
     const auto *node = std::get_if<ConstantAggregateValue>(&value);
     if (!node)
       return ConstantEvaluationFailure::None;
@@ -326,6 +334,23 @@ private:
             .block = frame.block,
             .instruction = frame.instruction,
             .detail = std::move(detail)};
+  }
+
+  MirConstantEvaluation stepLimitFailure(const Frame &frame) {
+    auto result = fail(frame, ConstantEvaluationFailure::ResourceLimit,
+                       "Constant MIR execution-step limit exceeded.");
+    result.exhaustedLimit = &CompileLimits::constexprSteps;
+    stepLimitReached = true;
+    return result;
+  }
+
+  // limits.callDepth is what remains of the request's configured depth after
+  // any enclosing staged evaluations; the caller names the configured value.
+  MirConstantEvaluation depthLimitFailure(const Frame &frame) {
+    auto result = fail(frame, ConstantEvaluationFailure::ResourceLimit,
+                       "The constexpr call depth exceeded the compiler limit.");
+    result.exhaustedLimit = &CompileLimits::constexprDepth;
+    return result;
   }
 
   MirConstantEvaluation throughCall(MirConstantEvaluation result,
@@ -581,8 +606,10 @@ private:
   }
 
   bool charge(std::size_t amount) {
-    if (amount > limits.steps - std::min(steps, limits.steps))
+    if (amount > limits.steps - std::min(steps, limits.steps)) {
+      stepLimitReached = true;
       return false;
+    }
     steps += amount;
     return true;
   }
@@ -648,6 +675,9 @@ private:
   ConstantEvaluationFailure measureValue(const ConstantValue &value,
                                          std::size_t &units,
                                          std::size_t depth = 0) {
+    if (nativeStackNearlyExhausted())
+      return onFreshNativeStack(
+          [&] { return measureValue(value, units, depth); });
     if (depth >= limits.callDepth || !charge(1) || units >= limits.heapUnits)
       return ConstantEvaluationFailure::ResourceLimit;
     ++units;
@@ -1114,10 +1144,15 @@ private:
 
   MirConstantEvaluation destroy(const MirDropType &recipe, Location location,
                                 Frame &caller, std::size_t depth) {
+    if (nativeStackNearlyExhausted())
+      return onFreshNativeStack(
+          [&] { return destroy(recipe, location, caller, depth); });
     if (!recipe.requiresActiveCleanup)
       return {};
-    if (!charge(1) || depth >= limits.callDepth)
+    if (!charge(1))
       return fail(caller, ConstantEvaluationFailure::ResourceLimit);
+    if (depth >= limits.callDepth)
+      return depthLimitFailure(caller);
     if (!storageType(recipe.type) || recipe.polymorphicCleanup ||
         recipe.recursiveCleanup || recipe.lambdaInstance)
       return fail(caller, ConstantEvaluationFailure::UnsupportedType,
@@ -2066,6 +2101,16 @@ private:
               std::optional<Location> receiverOrigin = {},
               AccessMode receiverAccess = AccessMode::ReadOnly,
               std::optional<Location> *referenceResult = nullptr) {
+    // Every executed call, constructor and destructor body enters here, one
+    // native frame chain per nested call; the depth bound is limits.callDepth
+    // (CompileLimits::constexprDepth), never the host stack.
+    if (nativeStackNearlyExhausted())
+      return onFreshNativeStack([&] {
+        return executeBody(
+            body, address, returnType, parameterTypes, parameterBindings,
+            arguments, depth, std::move(receiver), argumentOrigins,
+            std::move(receiverOrigin), receiverAccess, referenceResult);
+      });
     Frame frame{
         .body = body,
         .address = address,
@@ -2081,10 +2126,8 @@ private:
         .receiver = std::move(receiver),
         .receiverOrigin = std::move(receiverOrigin),
         .receiverAccess = receiverAccess};
-    if (depth >= limits.callDepth) {
-      return fail(frame, ConstantEvaluationFailure::ResourceLimit,
-                  "The constexpr call depth exceeded the compiler limit.");
-    }
+    if (depth >= limits.callDepth)
+      return depthLimitFailure(frame);
     for (const auto &obligation : body.dropObligations) {
       frame.liveDrops[obligation.id] = obligation.initiallyActive;
       if (!storageType(obligation.dropType.type)) {
@@ -2218,20 +2261,16 @@ private:
     while (const auto *block = body.findBlock(frame.block)) {
       for (const auto &instruction : block->instructions) {
         frame.instruction = instruction.id;
-        if (steps++ >= limits.steps) {
-          return fail(frame, ConstantEvaluationFailure::ResourceLimit,
-                      "Constant MIR execution-step limit exceeded.");
-        }
+        if (steps++ >= limits.steps)
+          return stepLimitFailure(frame);
         auto result = execute(frame, instruction, depth);
         if (result.failure != ConstantEvaluationFailure::None)
           return result;
         applyLifecycle(frame, instruction.lifecycle);
       }
       frame.instruction = 0;
-      if (steps++ >= limits.steps) {
-        return fail(frame, ConstantEvaluationFailure::ResourceLimit,
-                    "Constant MIR execution-step limit exceeded.");
-      }
+      if (steps++ >= limits.steps)
+        return stepLimitFailure(frame);
       const auto &terminator = block->terminator;
       switch (terminator.kind) {
       case MirTerminatorKind::Goto:
@@ -2418,6 +2457,7 @@ private:
   const MirProgram &program;
   MirConstantLimits limits;
   std::size_t steps = 0;
+  bool stepLimitReached = false;
   std::vector<std::unique_ptr<Allocation>> heap;
   std::size_t heapUnits = 0;
   std::unordered_map<const MirBody *,

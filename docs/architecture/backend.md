@@ -6182,7 +6182,8 @@ The C++ comparator still relocates nested/default scalar fields in
 address-sensitive probes, and rejects the class-array argument/copy/move and
 side-effecting reference-initializer fixtures in its representation vocabulary.
 These cases have explicit native-only
-oracles, not claimed C++ parity; supported comparators still run C++20/C++23.
+oracles, not claimed C++ parity; the scheduled C++ job runs supported
+comparators at `c++23 -O3` only.
 `llvm_target_layout_abi` observes exact post-failure cleanup traces after real
 checked field, array and prepared-return calls, not just terminal exit codes.
 
