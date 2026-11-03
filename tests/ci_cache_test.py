@@ -18,23 +18,24 @@ def values(path):
 
 def warmup_contract(repository, bash):
     workflow = (repository / ".github/workflows/cache.yml").read_text()
-    ci = (repository / ".github/workflows/ci.yml").read_text()
+    def block(name):
+        return workflow.split("      - name: " + name + "\n", 1)[1].split("      - ", 1)[0]
     def step(name):
-        block = workflow.split("      - name: " + name + "\n", 1)[1].split("      - ", 1)[0]
-        lines = block.split("        run: |\n", 1)[1].splitlines()
+        lines = block(name).split("        run: |\n", 1)[1].splitlines()
         return "\n".join(line[10:] for line in lines if line.startswith("          "))
     build = step("Build compiler cache inputs")
     cleanup = step("Release warmup scratch space before cache upload")
     assert workflow.index("run: ccache --cleanup") < workflow.index("name: Build compiler cache inputs")
     assert workflow.index("name: Release warmup scratch space") < workflow.index("name: Save the cache under main")
-    assert "if: always()" in workflow.split("name: Release warmup scratch space", 1)[1].split("      - ", 1)[0]
-    # Main owns reusable native/sanitizer caches. Release packaging must still
-    # write the run-specific cache consumed by its integration jobs.
-    save_blocks = re.findall(r"      - name: Save compiler object cache\n(.*?)(?=\n  [a-z]|\Z)", ci, re.S)
-    assert len(save_blocks) == 2
-    assert all("github.ref == 'refs/heads/main'" in block.split("uses:", 1)[0] for block in save_blocks)
-    package = ci.split("      - name: Save compiler and LLVM/Clang cache, including partial builds", 1)[1].split("uses:", 1)[0]
-    assert "github.ref" not in package, "integration shards still need their packaging job's cache"
+    assert "if: always()" in block("Release warmup scratch space before cache upload")
+    # Main owns the reusable native/sanitizer caches and writes them only from a
+    # warmup whose build ran to completion; validation runs only restore them.
+    assert "id: build" in block("Build compiler cache inputs")
+    save = block("Save the cache under main")
+    assert re.search(r"if: steps\.build\.outcome == 'success' && steps\.cache\.outputs\.cache-hit != 'true'", save), save
+    for validation in ("ci.yml", "full-validation.yml"):
+        text = (repository / ".github/workflows" / validation).read_text()
+        assert "actions/cache/save@" not in text, f"{validation} must only restore the main caches"
     for profile, build_dir, expected in (("native", "build", ["gti", "gti_lsp"]),
                                          ("sanitizers", "build-sanitized", ["gti"])):
         with tempfile.TemporaryDirectory(prefix="gti-cache-warmup-") as temporary:

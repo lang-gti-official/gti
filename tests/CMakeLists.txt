@@ -962,8 +962,27 @@ if(Python3_Interpreter_FOUND)
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/allocator_raw_audit_independence_test.py" $<TARGET_FILE:gti>)
   # 36 compilations, two thirds of them auditing every trusted body: about
   # 280 s on an Apple M-series host and 674 s on an idle 8-vCPU Linux
-  # runner. See COMPILE_TIMEOUT in the test.
+  # runner (54 min under a contended shard). See COMPILE_TIMEOUT in the test.
   set_tests_properties(allocator_raw_audit_independence PROPERTIES TIMEOUT 2400)
+  # The same 36 compilations as 12 independent entries, one source each, so a
+  # sharded suite run spreads them across workers instead of serialising a
+  # 54-minute test. The aggregate stays for direct callers; the shard runner
+  # excludes it when the per-source entries are present.
+  foreach(gti_audit_source IN ITEMS
+      examples/147-standard-library-import.gti examples/121-programmable-allocators.gti
+      examples/125-manual-object-lifetimes.gti examples/126-conditional-thread-capabilities.gti
+      examples/128-inline-object-pool.gti tests/fixtures/arena_placement.gti
+      tests/fixtures/object_construction.gti tests/fixtures/object_relocation.gti
+      tests/fixtures/programmable_allocators.gti tests/fixtures/resource_container_usage.gti
+      tests/fixtures/resource_region_contracts.gti tests/fixtures/uninitialized_carrier.gti)
+    get_filename_component(gti_audit_stem "${gti_audit_source}" NAME_WE)
+    string(REGEX REPLACE "[^A-Za-z0-9_]" "_" gti_audit_stem "${gti_audit_stem}")
+    add_test(NAME allocator_raw_audit_independence_${gti_audit_stem}
+      COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/allocator_raw_audit_independence_test.py"
+              $<TARGET_FILE:gti> --source "${gti_audit_source}")
+    set_tests_properties(allocator_raw_audit_independence_${gti_audit_stem} PROPERTIES TIMEOUT 1200)
+    set_property(TEST allocator_raw_audit_independence_${gti_audit_stem} APPEND PROPERTY LABELS "allocator-audit")
+  endforeach()
 endif()
 add_executable(gti_shared_ownership_tests shared_ownership_tests.cpp)
 target_link_libraries(gti_shared_ownership_tests PRIVATE gti_compiler)
@@ -1023,6 +1042,25 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/compiler_test_manifest.json"
             ${GTI_COMPILER_TEST_AGGREGATE_ARGUMENTS}
   )
+  # The aggregate is one 16-24 minute test that cannot be scheduled around.
+  # Each suite also registers on its own so a sharded suite run spreads them
+  # across workers; every entry verifies the complete manifest census first,
+  # exactly as the aggregate does. The aggregate stays for the fast gate and
+  # for `ctest -R '^compiler_pipeline$'` callers; the shard runner excludes it
+  # when the per-suite entries are present (see validation_checks.py).
+  foreach(gti_compiler_suite_binding IN LISTS GTI_COMPILER_TEST_AGGREGATE_ARGUMENTS)
+    string(REGEX REPLACE "=.*$" "" gti_compiler_suite "${gti_compiler_suite_binding}")
+    add_test(
+      NAME compiler_pipeline_${gti_compiler_suite}
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/compiler_test_aggregate.py"
+              ${GTI_COMPILER_TEST_PROCESS_OPTIONS}
+              --suite "${gti_compiler_suite}"
+              "${PROJECT_SOURCE_DIR}/tests/compiler_test_manifest.json"
+              ${GTI_COMPILER_TEST_AGGREGATE_ARGUMENTS}
+    )
+    set_property(TEST compiler_pipeline_${gti_compiler_suite} APPEND PROPERTY LABELS "compiler-suite")
+  endforeach()
   add_test(
     NAME partitioned_test_protocol
     COMMAND "${Python3_EXECUTABLE}"
@@ -1267,6 +1305,18 @@ add_test(NAME raw_borrow_contract COMMAND gti_raw_borrow_tests)
 add_executable(gti_body_analysis_order_tests "${PROJECT_SOURCE_DIR}/tests/body_analysis_order_tests.cpp")
 target_link_libraries(gti_body_analysis_order_tests PRIVATE gti_compiler)
 add_test(NAME body_analysis_order COMMAND gti_body_analysis_order_tests)
+# The corpus walk is 27 minutes under a contended shard. Four partitions by
+# entry filter run the fixtures once each plus a quarter of the corpus; the
+# aggregate stays for direct callers and the shard runner excludes it when
+# the partitions are present. Entries are selected by the binary's optional
+# filter argument, so no case, assertion or timeout changes.
+foreach(gti_order_partition RANGE 0 3)
+  add_test(NAME body_analysis_order_${gti_order_partition}
+    COMMAND gti_body_analysis_order_tests "${PROJECT_SOURCE_DIR}"
+            --partition ${gti_order_partition}/4)
+  set_tests_properties(body_analysis_order_${gti_order_partition} PROPERTIES TIMEOUT 900)
+  set_property(TEST body_analysis_order_${gti_order_partition} APPEND PROPERTY LABELS "corpus-partition")
+endforeach()
 add_executable(gti_trusted_body_analysis_tests "${PROJECT_SOURCE_DIR}/tests/trusted_body_analysis_tests.cpp")
 target_link_libraries(gti_trusted_body_analysis_tests PRIVATE gti_compiler)
 # Each entry has independent complete/reachable and preamble-cache comparisons.
@@ -1300,6 +1350,12 @@ add_executable(gti_instance_reuse_tests "${PROJECT_SOURCE_DIR}/tests/instance_re
 target_link_libraries(gti_instance_reuse_tests PRIVATE gti_compiler)
 add_test(NAME instance_reuse COMMAND gti_instance_reuse_tests "${PROJECT_SOURCE_DIR}")
 set_tests_properties(instance_reuse PROPERTIES TIMEOUT 900)
+foreach(gti_reuse_partition RANGE 0 3)
+  add_test(NAME instance_reuse_${gti_reuse_partition}
+    COMMAND gti_instance_reuse_tests "${PROJECT_SOURCE_DIR}" --partition ${gti_reuse_partition}/4)
+  set_tests_properties(instance_reuse_${gti_reuse_partition} PROPERTIES TIMEOUT 900)
+  set_property(TEST instance_reuse_${gti_reuse_partition} APPEND PROPERTY LABELS "corpus-partition")
+endforeach()
 add_executable(gti_reflection_tests "${PROJECT_SOURCE_DIR}/tests/reflection_tests.cpp")
 target_link_libraries(gti_reflection_tests PRIVATE gti_compiler)
 add_test(NAME reflection_semantics COMMAND gti_reflection_tests)
@@ -1410,6 +1466,9 @@ if(TARGET gti_lsp)
   add_test(NAME raw_pointer_audit_policy
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/raw_pointer_audit_policy_test.py" $<TARGET_FILE:gti> $<TARGET_FILE:gti_lsp>)
   set_tests_properties(raw_pointer_audit_policy PROPERTIES TIMEOUT 240)
+  add_test(NAME compile_limits
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/compile_limits_test.py" $<TARGET_FILE:gti> $<TARGET_FILE:gti_lsp>)
+  set_tests_properties(compile_limits PROPERTIES TIMEOUT 240)
   add_test(NAME raw_pointer_conversion_lsp
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/raw_pointer_conversion_lsp_test.py" $<TARGET_FILE:gti_lsp>)
   add_test(NAME raw_pointer_provenance_lsp
@@ -3524,6 +3583,8 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}"
             --cmake "${CMAKE_COMMAND}"
   )
+  add_test(NAME source_stdlib_ci
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_stdlib_ci_test.py")
   add_test(NAME preview_release
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/preview_release_test.py")
   add_test(
@@ -3693,37 +3754,16 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}"
   )
   set_tests_properties(stdlib_modules PROPERTIES TIMEOUT 600)
-  # Preserve the complete four-fixture/eight-mode matrix without an outer
-  # deadline shorter than one of its permitted sanitized compilations.
-  foreach(standard IN ITEMS 20 23)
-    add_test(
-      NAME generic_algorithm_breadth_cpp${standard}
-      COMMAND "${Python3_EXECUTABLE}"
-              "${PROJECT_SOURCE_DIR}/tests/generic_algorithm_breadth_test.py"
-              "$<TARGET_FILE:gti>"
-              --mode "c++${standard}-O0"
-              --mode "c++${standard}-O1"
-              --mode "c++${standard}-O3"
-    )
-    set_tests_properties(generic_algorithm_breadth_cpp${standard}
-                         PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE)
-  endforeach()
+  # One entry: the harness runs the backends GTI_TEST_BACKENDS selects
+  # (tests/backend_modes.py). The former c++20, no-elide and sanitized
+  # variants were C++-backend-only configurations nothing ships.
   add_test(
-    NAME generic_algorithm_breadth_no_elide
+    NAME generic_algorithm_breadth
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/generic_algorithm_breadth_test.py"
-            "$<TARGET_FILE:gti>" --mode no-elide
+            "$<TARGET_FILE:gti>"
   )
-  set_tests_properties(generic_algorithm_breadth_no_elide
-                       PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE)
-  add_test(
-    NAME generic_algorithm_breadth_sanitized
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/generic_algorithm_breadth_test.py"
-            "$<TARGET_FILE:gti>" --mode sanitized
-  )
-  set_tests_properties(generic_algorithm_breadth_sanitized
-                       PROPERTIES TIMEOUT 1500 RUN_SERIAL TRUE)
+  set_tests_properties(generic_algorithm_breadth PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE)
   add_test(
     NAME ordered_search_runtime
     COMMAND "${Python3_EXECUTABLE}"
