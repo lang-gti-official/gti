@@ -989,7 +989,7 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
     return std::nullopt;
   }
   const std::size_t enclosingDepth = context.work->stagingDepth;
-  if (enclosingDepth + context.callDepth >= constexprCallDepthLimit) {
+  if (enclosingDepth + context.callDepth >= compileLimits.constexprDepth) {
     return constexprFailure(
         callSite, ConstantEvaluationFailure::ResourceLimit,
         "Nested constexpr staging exceeded the compiler call-depth limit.");
@@ -1202,7 +1202,8 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
   const MirConstantLimits limits{
       .steps = compileLimits.constexprSteps -
                std::min(context.work->steps, compileLimits.constexprSteps),
-      .callDepth = constexprCallDepthLimit - context.work->stagingDepth + 1};
+      .callDepth =
+          compileLimits.constexprDepth - context.work->stagingDepth + 1};
   auto result = [&] {
     const PhaseTimeScope evaluateScope("constexpr-staged-evaluate");
     return construction

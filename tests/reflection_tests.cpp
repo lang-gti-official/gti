@@ -1027,6 +1027,103 @@ int main() { return 0; }
   }
 }
 
+// `constexpr for` limits come from the compilation's CompileLimits.
+void checkExpansionLimits(const std::filesystem::path &root,
+                          const std::filesystem::path &directory) {
+  const auto analyzeLimited = [&](const std::string &name,
+                                  const std::string &source,
+                                  lang::CompileLimits limits) {
+    const std::filesystem::path path = directory / name;
+    std::ofstream(path) << source;
+    lang::FrontendOptions options;
+    options.stopAfter = lang::FrontendPhase::Hir;
+    options.limits = limits;
+    return lang::Frontend(options).analyze(path, std::nullopt,
+                                           {root / "stdlib/prelude.gti"}, {},
+                                           {root / "stdlib"});
+  };
+  const auto loop = [](std::size_t elements) {
+    std::string list;
+    for (std::size_t index = 0; index < elements; ++index)
+      list += index == 0 ? "int32_t" : ", int32_t";
+    return "  constexpr for (auto x : std::meta::list<" + list +
+           ">()) { total = total + uint64_t(1); }\n";
+  };
+  const auto program = [](const std::string &loops) {
+    return "import std.meta;\nint main() {\n  mut uint64_t total = 0;\n" +
+           loops + "  return int(total);\n}\n";
+  };
+  const auto limited = [](const lang::FrontendResult &result,
+                          std::string_view message, std::string_view key,
+                          std::size_t limit) {
+    const std::string hint = "The limit is " + std::to_string(limit) +
+                             "; raise it with '--" + std::string(key) +
+                             " <n>' or with '" + std::string(key) + " = <n>'";
+    return countCode(result, "GTI-S2108") == 1 &&
+           std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                       [&](const lang::Diagnostic &diagnostic) {
+                         return diagnostic.code == "GTI-S2108" &&
+                                diagnostic.message.find(message) !=
+                                    std::string::npos &&
+                                std::any_of(diagnostic.hints.begin(),
+                                            diagnostic.hints.end(),
+                                            [&](const std::string &value) {
+                                              return value.find(hint) !=
+                                                     std::string::npos;
+                                            });
+                       });
+  };
+
+  const lang::CompileLimits defaults;
+  expect(defaults.constexprForElements == 1024 &&
+             defaults.constexprForCopies == 4096,
+         "constexpr for defaults to 1024 elements and 4096 copies");
+  expect(analyzeLimited("default-1024.gti", program(loop(1024)), defaults)
+             .hirValid,
+         "a 1024-element statement fits the default element limit");
+  expect(limited(analyzeLimited("default-1025.gti", program(loop(1025)),
+                                defaults),
+                 "has 1025 elements, more than its limit of 1024 elements "
+                 "per statement",
+                 "constexpr-for-elements", 1024),
+         "1025 elements name the per-statement limit and how to raise it");
+
+  lang::CompileLimits elements;
+  elements.constexprForElements = 8;
+  expect(analyzeLimited("elements-8.gti", program(loop(8)), elements).hirValid,
+         "a lowered element limit admits exactly its own size");
+  expect(limited(analyzeLimited("elements-9.gti", program(loop(9)), elements),
+                 "more than its limit of 8 elements per statement",
+                 "constexpr-for-elements", 8),
+         "a lowered element limit rejects one more element");
+  elements.constexprForElements = 2048;
+  expect(analyzeLimited("elements-2048.gti", program(loop(2048)), elements)
+             .hirValid,
+         "a raised element limit admits a larger statement");
+
+  lang::CompileLimits copies;
+  copies.constexprForCopies = 10;
+  expect(analyzeLimited("copies-10.gti", program(loop(5) + loop(5)), copies)
+             .hirValid,
+         "copies accumulate across one declaration up to the limit");
+  expect(limited(analyzeLimited("copies-15.gti",
+                                program(loop(5) + loop(5) + loop(5)), copies),
+                 "would expand 5 more bodies after 10 already expanded in "
+                 "this declaration, more than its limit of 10",
+                 "constexpr-for-copies", 10),
+         "the per-declaration copy limit names its value and how to raise it");
+  expect(analyzeLimited("copies-separate.gti",
+                        "import std.meta;\n"
+                        "uint64_t first() {\n  mut uint64_t total = 0;\n" +
+                            loop(10) +
+                            "  return total;\n}\n"
+                            "int main() {\n  mut uint64_t total = first();\n" +
+                            loop(10) + "  return int(total);\n}\n",
+                        copies)
+             .hirValid,
+         "separate declarations never share a copy budget");
+}
+
 int main() {
   const std::filesystem::path root =
       std::filesystem::path(__FILE__).parent_path().parent_path();
@@ -1044,6 +1141,7 @@ int main() {
   checkMethodInvocation(root, directory);
   checkDefaults(root, directory);
   checkClassAssertions(root, directory);
+  checkExpansionLimits(root, directory);
   std::filesystem::remove_all(directory);
   if (failures != 0) {
     std::cerr << failures << " failure(s)\n";

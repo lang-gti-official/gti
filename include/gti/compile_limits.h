@@ -27,12 +27,16 @@ struct CompileLimits {
   // Constant-evaluation steps per request (Clang -fconstexpr-steps).
   std::size_t constexprSteps = 1048576;
   // Nested constant-evaluation calls, including staged evaluation, per
-  // request (Clang -fconstexpr-depth).
-  std::size_t constexprDepth = 64;
-  // Nested macro invocations.
-  std::size_t macroDepth = 64;
-  // Macro bodies expanded per analysis request.
-  std::size_t macroExpansions = 4096;
+  // request (Clang -fconstexpr-depth; C++ [implimits] recursive constexpr
+  // invocations).
+  std::size_t constexprDepth = 512;
+  // Nested macro invocations (the analogue of Clang -ftemplate-depth; C++
+  // [implimits] recursively nested template instantiations).
+  std::size_t macroDepth = 1024;
+  // Macro bodies expanded by one outermost written macro invocation,
+  // including every nested expansion it causes. Separate invocations never
+  // share this budget.
+  std::size_t macroExpansions = 8192;
   // Elements of one `constexpr for` statement.
   std::size_t constexprForElements = 1024;
   // `constexpr for` body copies expanded per declaration.
