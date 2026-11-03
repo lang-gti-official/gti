@@ -666,12 +666,11 @@ void checkCorpusEntry(const std::filesystem::path &root,
 }
 } // namespace
 
-
 // --partition i/n keeps every n-th corpus entry (sorted), so one binary can be
 // registered as several CTest entries that together cover the corpus once.
 // Fixture checks run in every partition. An entry filter still applies.
-static void applyPartition(std::vector<std::filesystem::path> &entries, int argc,
-                           char *argv[]) {
+static void applyPartition(std::vector<std::filesystem::path> &entries,
+                           int argc, char *argv[]) {
   for (int i = 1; i + 1 < argc; ++i) {
     if (std::string(argv[i]) != "--partition")
       continue;
