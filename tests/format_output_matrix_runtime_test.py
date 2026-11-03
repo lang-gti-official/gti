@@ -116,7 +116,7 @@ def main() -> int:
         source.write_text(program(), encoding="utf8")
         for level in ("O0", "O3"):
             executable = root / f"format-matrix-{level}"
-            built = subprocess.run([str(compiler), str(source), f"-{level}", "-o", str(executable)],
+            built = subprocess.run([str(compiler), str(source), "--backend", "llvm", f"-{level}", "-o", str(executable)],
                                    text=True, capture_output=True, timeout=600)
             if built.returncode != 0:
                 sys.stderr.write(built.stdout + built.stderr)
