@@ -260,6 +260,9 @@ def nightly_contract(root):
     assert "cpp_mir" not in integration["sanitizers"], "the C++ emitter is sanitized only in cpp-backend.yml"
     cpp = (root / ".github/workflows/cpp-backend.yml").read_text()
     assert "GTI_TEST_BACKENDS: cpp" in cpp and "--test-set cpp" in cpp and "cpp_mir_body_emitter" in cpp
+    # CTest's per-test ENVIRONMENT property (from the configure-time cache
+    # default) overrides a job's environment, so the policy must be configured.
+    assert cpp.count("-DGTI_TEST_BACKENDS=cpp") == 2, "every C++ job configure selects the C++ backend policy"
     assert "merge_group" not in cpp and "pull_request" not in cpp, "the C++ backend never gates"
     assert "schedule:" in cpp.split("\njobs:\n", 1)[0]
     assert "validation_checks.py ci-gate" in verdict and "--event full_validation" in verdict
