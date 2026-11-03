@@ -799,7 +799,8 @@ void verifyBoundedRecursion() {
         "recursive range specialization is not idempotent");
   for (unsigned shape = 0; shape != 10; ++shape) {
     auto *original = module.getFunction("recursive" + std::to_string(shape));
-    auto *bounded = module.getFunction((original->getName() + ".bounded").str());
+    auto *bounded =
+        module.getFunction((original->getName() + ".bounded").str());
     if ((bounded != nullptr) != (shape < 3))
       throw std::runtime_error("recursive specialization crossed its boundary");
     if (!bounded)

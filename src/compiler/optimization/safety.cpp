@@ -4282,10 +4282,10 @@ mayAliasRepresentedGlobal(const MirBody &body,
 // An owning prepared value is distinct from every surviving caller object.
 // Restrict this to closed scalar records with no address-bearing inventory or
 // active cleanup; a nominally generated move alone also permits pointers.
-[[nodiscard]] bool independentPreparedReceiver(const MirProgram &program,
-                                               const MirBody &body,
-                                               const MirOperand &operand,
-                                               bool receiverLocalWritesOnly = false) {
+[[nodiscard]] bool
+independentPreparedReceiver(const MirProgram &program, const MirBody &body,
+                            const MirOperand &operand,
+                            bool receiverLocalWritesOnly = false) {
   if (operand.kind != MirOperandKind::Value || !operand.value)
     return false;
   const auto *input = definingInstruction(body, operand.value);
@@ -4331,17 +4331,14 @@ mayAliasRepresentedGlobal(const MirBody &body,
   return scalarInventory(scalarInventory, operand.type);
 }
 
-void invalidateClosedCallInputs(const MirProgram &program, const MirBody &body,
-                                const MirPlaceAliasEscapeAnalysis &aliases,
-                                const MirInstruction &instruction,
-                                MirBodyAddress address, MirBodyAddress target,
-                                bool opaqueEffects,
-                                LiveMemoryBarrier liveMemoryBarrier,
-                                bool pointerRelayOnly,
-                                bool frameLocalWritesOnly,
-                                bool receiverLocalWritesOnly,
-                                const MirLocalCaptureAnalysis *captures,
-                                AbstractState &state) {
+void invalidateClosedCallInputs(
+    const MirProgram &program, const MirBody &body,
+    const MirPlaceAliasEscapeAnalysis &aliases,
+    const MirInstruction &instruction, MirBodyAddress address,
+    MirBodyAddress target, bool opaqueEffects,
+    LiveMemoryBarrier liveMemoryBarrier, bool pointerRelayOnly,
+    bool frameLocalWritesOnly, bool receiverLocalWritesOnly,
+    const MirLocalCaptureAnalysis *captures, AbstractState &state) {
   const auto killUnknownMemory = [&](const MirBody &body,
                                      AbstractState &state) {
     const auto uncaptured = preserveUncapturedLocals(
@@ -10576,8 +10573,8 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
         const bool receiverField =
             (constructor || (function && function->receiverMutability ==
                                              ReceiverMutability::Mutable)) &&
-            place->root == MirPlaceRootKind::This &&
-            ownFields(*place) && ownFields(*place)->size() == 1 &&
+            place->root == MirPlaceRootKind::This && ownFields(*place) &&
+            ownFields(*place)->size() == 1 &&
             passiveType(passiveType, place->type, 0);
         const bool local =
             ownedBinding(*place) && passiveType(passiveType, place->type, 0);
@@ -11297,11 +11294,12 @@ scalarStoreProfile(const MirProgram &program, MirBodyAddress address,
             instruction.kind == MirInstructionKind::Assign) &&
            instruction.operands.size() == 1 && instruction.destination &&
            !effect.invokesRuntime &&
-           std::all_of(instruction.lifecycle.begin(), instruction.lifecycle.end(),
-                       [](const MirLifecycleEvent &event) {
-                         return event.kind == MirLifecycleEventKind::Initialize ||
-                                event.kind == MirLifecycleEventKind::Reparent;
-                       }));
+           std::all_of(
+               instruction.lifecycle.begin(), instruction.lifecycle.end(),
+               [](const MirLifecycleEvent &event) {
+                 return event.kind == MirLifecycleEventKind::Initialize ||
+                        event.kind == MirLifecycleEventKind::Reparent;
+               }));
       if (!passive ||
           (instruction.destination && !ownedStorage(*instruction.destination)))
         return false;
@@ -11485,7 +11483,8 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
     return result;
   }
   result.summary.complete = true;
-  result.summary.freshStorage = freshStorageProfile(program, address, *body, round);
+  result.summary.freshStorage =
+      freshStorageProfile(program, address, *body, round);
 
   result.summary.relocatedPrefix = summarizeRelocatedPrefix(
       program, address, *body, aliases, incoming, round);
@@ -11508,7 +11507,8 @@ analyzeContextualBody(const MirProgram &program, MirBodyAddress address,
     result.summary.liveMemoryBarrier =
         std::max(result.summary.liveMemoryBarrier, state.liveMemoryBarrier);
 
-  if (result.summary.hasOpaqueEffects && result.summary.freshStorage.supported &&
+  if (result.summary.hasOpaqueEffects &&
+      result.summary.freshStorage.supported &&
       result.summary.freshStorage.releasedParameters.empty())
     result.summary.liveMemoryBarrier = LiveMemoryBarrier::FreshStorage;
 

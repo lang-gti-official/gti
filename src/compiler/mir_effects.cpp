@@ -993,10 +993,10 @@ bool isMirStructuralFinalAddressConstruction(
                   }))
     return false;
   return isMirStructuralValueType(program, instruction.operands.back().type,
-                                instruction.constructorKind ==
-                                        ConstructorKind::Copy
-                                    ? MirStructuralValueOperation::Copy
-                                    : MirStructuralValueOperation::Move);
+                                  instruction.constructorKind ==
+                                          ConstructorKind::Copy
+                                      ? MirStructuralValueOperation::Copy
+                                      : MirStructuralValueOperation::Move);
 }
 
 bool isMirStructuralValueTransfer(const MirProgram &program,
@@ -1032,8 +1032,8 @@ bool isMirStructuralValueTransfer(const MirProgram &program,
         instruction.operands.front().kind != MirOperandKind::Move)))
     return false;
   return isMirStructuralValueType(program, instruction.info.type,
-                                copy ? MirStructuralValueOperation::Copy
-                                     : MirStructuralValueOperation::Move);
+                                  copy ? MirStructuralValueOperation::Copy
+                                       : MirStructuralValueOperation::Move);
 }
 
 bool isMirStructuralPayloadExtraction(const MirProgram &program,
@@ -1054,7 +1054,7 @@ bool isMirStructuralPayloadExtraction(const MirProgram &program,
              SynchronizationOperationKind::None &&
          program.findPayloadEnum(mirInstructionEnumType(instruction)) &&
          isMirStructuralValueType(program, mirInstructionEnumType(instruction),
-                                MirStructuralValueOperation::Move);
+                                  MirStructuralValueOperation::Move);
 }
 
 bool isMirStructuralValueDrop(const MirProgram &program,
@@ -1074,7 +1074,7 @@ bool isMirStructuralValueDrop(const MirProgram &program,
                        return event.kind == MirLifecycleEventKind::Drop;
                      }) &&
          isMirStructuralValueType(program, instruction.info.type,
-                                MirStructuralValueOperation::Drop);
+                                  MirStructuralValueOperation::Drop);
 }
 
 namespace {
