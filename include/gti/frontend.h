@@ -74,6 +74,9 @@ struct FrontendOptions {
   std::unordered_map<std::string, std::uint64_t> sourceDigests;
   bool suggestIncludes = true;
   std::vector<IncludeSearchRoot> includeSearchRoots;
+  // Candidate scans shared across discoveries (see IncludeDiscoveryCache).
+  // Editor snapshots set it; one-shot checks and builds do not.
+  std::shared_ptr<IncludeDiscoveryCache> includeDiscoveryCache;
   // Lower to MIR only the instances reachable from the program roots. The
   // complete program is still analyzed, so diagnostics are unchanged; artifact
   // builds set this, while inspection of every declaration's lowering does
@@ -192,5 +195,10 @@ private:
 
   FrontendOptions options;
 };
+
+// The target and configuration identity these options give lexical and
+// parsed cache rows (`FrontendUnitCacheKey::context`). Callers that memoize
+// syntax-level facts derived from those rows key them by the same identity.
+[[nodiscard]] std::string frontendCacheContext(const FrontendOptions &options);
 
 } // namespace lang

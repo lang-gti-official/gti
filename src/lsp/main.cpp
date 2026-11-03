@@ -2519,6 +2519,7 @@ private:
   invalidateProjectSnapshotsLocked(std::vector<AnalysisRequest> &requests) {
     requests.clear();
     ++includeDiscoveryGeneration;
+    frontendSnapshots.invalidateIncludeDiscovery();
     for (const auto &[uri, source] : documents) {
       (void)source;
       // The token cache stays: publication compares the new tokens with it
@@ -3490,6 +3491,9 @@ private:
     frontendOptions.declaredConfigurationFlags =
         project.configuration.declaredConfigurationFlags();
     frontendOptions.includeSearchRoots = project.includeSearchRoots;
+    // Candidate scans are shared by every snapshot's import discovery.
+    frontendOptions.includeDiscoveryCache =
+        request.frontendSources.includeDiscoveryCache;
     for (const lang::Diagnostic &diagnostic : project.diagnostics) {
       result.diagnostics.push_back(convertDiagnostic(
           diagnostic, project.sources, rootPath, uri, source));

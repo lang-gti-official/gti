@@ -2,9 +2,12 @@
 
 #include "gti/source_owner.h"
 
+#include <cstddef>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -19,6 +22,57 @@ struct IncludeSearchRoot {
   std::filesystem::path directory;
   std::optional<std::string> anglePrefix;
   std::vector<std::filesystem::path> excludedDirectories;
+};
+
+struct IncludeDiscoveryCacheLimits {
+  // Candidate interfaces and source texts remembered at once (least recently
+  // used evicted). Each row is one interface's syntax-level facts.
+  std::size_t maximumEntries = 4096;
+};
+
+struct IncludeDiscoveryCacheStats {
+  std::size_t lexiconEntries = 0;
+  std::size_t scanEntries = 0;
+  std::size_t lexiconHits = 0;
+  std::size_t lexiconMisses = 0;
+  std::size_t scanHits = 0;
+  std::size_t scanMisses = 0;
+  // Speculative frontend analyses run, and those avoided because the
+  // candidate surface cannot spell a qualifier the use still needs.
+  std::size_t trials = 0;
+  std::size_t qualifierSkips = 0;
+};
+
+// Missing-import discovery facts that depend only on candidate source text:
+// each text's token spellings, and each candidate interface's export surface
+// (declaration names and units) from its parse-only load. A row is reused
+// only while its context (target, configuration flags, source-owner
+// resolution identity, prelude and library roots) is unchanged and every
+// source it read still has the same text, so reuse never changes a
+// suggestion. Rows never hold semantic identities, and the speculative
+// analysis that proves each fix always runs again. Thread-safe; an editor
+// shares one instance across its snapshots.
+class IncludeDiscoveryCache final {
+public:
+  class Rows;
+
+  explicit IncludeDiscoveryCache(IncludeDiscoveryCacheLimits limits = {});
+  ~IncludeDiscoveryCache();
+
+  IncludeDiscoveryCache(const IncludeDiscoveryCache &) = delete;
+  IncludeDiscoveryCache &operator=(const IncludeDiscoveryCache &) = delete;
+
+  // Drops rows that read `canonicalPath`. Reuse already compares source
+  // text, so this reclaims memory early rather than preventing stale rows.
+  void invalidate(std::string_view canonicalPath);
+  void clear();
+  [[nodiscard]] IncludeDiscoveryCacheStats stats() const;
+
+  // Storage owned by discovery's implementation.
+  [[nodiscard]] Rows &rows() const { return *storage; }
+
+private:
+  std::unique_ptr<Rows> storage;
 };
 
 // Enrich unresolved-name diagnostics using actual source declarations and a
