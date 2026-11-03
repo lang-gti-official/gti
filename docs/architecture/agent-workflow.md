@@ -919,7 +919,16 @@ orders them by priority, then the time their gate passed, then number, and
 merges each exact head onto current `main` with `--no-ff`, up to six members. A
 PR that conflicts with `main` is skipped and labelled `needs-rebase` with a
 comment; one that conflicts only with an earlier member waits for a later
-rollup. The bot never resolves conflicts. A single eligible member enters the
+rollup. The bot never resolves conflicts. `reconcile` applies the same label
+and comment to every open, non-draft PR on `main` that no longer merges
+cleanly, whichever path it was on: the merge queue drops a conflicting entry
+without a run, a status or a comment, and merge-when-ready never fires, so a
+PR that waited while `main` moved otherwise vanishes from every pipeline (on
+2026-11-03, 13 of 31 open PRs). The census baselines
+(`tests/mir_census_baseline.json`, `tests/lowered_program_census_baseline.json`)
+store per-example counts only, never totals, and the LLVM readiness provider
+inventories hash example and stdlib sources rather than those manifest files,
+so two PRs conflict there only when they change the same example. A single eligible member enters the
 merge queue alone, so it cannot wait indefinitely for a second PR. With no
 eligible members it does nothing. Otherwise it commits `.gti-validation/batches/rollup-<date>-<n>.json`
 (the batch manifest schema that `validation_checks.py full` checks) and opens
