@@ -197,7 +197,7 @@ auto SemanticVisitor::Impl::immediateConstructionDependent(
 auto SemanticVisitor::Impl::reportImmediateEvaluationFailure(
     const Token &site, const Token &declaration,
     const ConstexprEvaluation &result) -> void {
-  report(site, "Consteval invocation must be evaluated during compilation.",
+  report(site, result.failure == ConstantEvaluationFailure::LibraryFailure ? result.detail : "Consteval invocation must be evaluated during compilation.",
          "GTI-S2057");
   auto &diagnostic = diagnostics.back();
   if (!result.detail.empty())
@@ -307,7 +307,7 @@ auto SemanticVisitor::Impl::enforceImmediateInvocation(const Expr &expression,
       macroStatementContext != nullptr &&
       macroStatementContext->expression().get() == &expression;
   const Token site = expressionToken(expression);
-  ConstexprInterpreter context = makeConstexprInterpreter();
+  ConstexprInterpreter context = makeConstexprInterpreter(true);
   context.requireMir = true;
   context.recordValues = false;
   context.allowVoidCompletion = voidStatement;
@@ -854,7 +854,7 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
   if (reuseKey) {
     const auto *reused = stagedConstants->find(*reuseKey);
     if (reused != nullptr && reused->depth >= depth &&
-        context.work->steps + reused->steps <= constexprExpressionStepLimit) {
+        context.work->steps + reused->steps <= context.work->limit) {
       context.work->steps += reused->steps;
       appendStagedWarnings(reused->warnings);
       if (reused->nativeObjectLayout)
@@ -974,8 +974,8 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
     }
   }
   const MirConstantLimits limits{
-      .steps = constexprExpressionStepLimit -
-               std::min(context.work->steps, constexprExpressionStepLimit),
+      .steps = context.work->limit -
+               std::min(context.work->steps, context.work->limit),
       .callDepth = constexprCallDepthLimit - context.work->stagingDepth + 1};
   auto result = [&] {
     const PhaseTimeScope evaluateScope("constexpr-staged-evaluate");

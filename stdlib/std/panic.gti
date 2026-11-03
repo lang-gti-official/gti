@@ -8,7 +8,7 @@ import "detail/panic.gti";
 export namespace std {
   /// Stops normal execution after preserving the message and running cleanup.
   [[noreturn, track_caller]]
-  void panic(string_view message) {
+  constexpr void panic(string_view message) {
     detail::panic(message);
   }
 

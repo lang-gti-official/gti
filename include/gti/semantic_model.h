@@ -1471,6 +1471,7 @@ struct ResolvedCallInfo {
   // the first ordinary source-function argument. The AST still owns it; all
   // consumers must use resolvedCallArgument/count rather than written indices.
   const ExprPtr *argumentReceiver = nullptr;
+  std::vector<std::pair<std::size_t, ResolvedConstructionInfo>> checkedArguments;
 };
 
 [[nodiscard]] inline bool

@@ -8090,7 +8090,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     }
     valid = applyFunctionTypeArguments(resolved, explicitTypeArguments,
                                        explicitValueArguments, argumentTypes,
-                                       expr.arguments(), expr.paren()) &&
+                                       expr.arguments(), expr.paren(), true) &&
             valid;
     if (valid &&
         reportUnsupportedCallableReturn(candidate, resolved, expr.paren())) {
@@ -8104,7 +8104,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     if (tryInstantiateFunction(candidate, explicitTypeArguments,
                                explicitValueArguments, argumentTypes,
                                expr.arguments(), trial, resolvedTypeArguments,
-                               resolvedValueArguments, &constraintFailure)) {
+                               resolvedValueArguments, &constraintFailure, true)) {
       resolved = std::move(trial);
     } else if (hasConstraintFailure(constraintFailure)) {
       if (valid) {
@@ -8154,6 +8154,12 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
         if (match == CallArgumentMatchKind::EphemeralReadBorrow) {
           ephemeralBorrowArguments.push_back(index);
         } else if (match == CallArgumentMatchKind::Mismatch) {
+          if (checkedArgumentPotential(expr.arguments()[index], argumentTypes[index], resolved.parameterTypes[index])) {
+            const Token parameter = index < resolved.declaration->parameters().size()
+                ? resolved.declaration->parameters()[index].name : resolved.declaration->name();
+            valid = applyCheckedArgument(expr.arguments()[index], argumentTypes[index], resolved.parameterTypes[index], parameter) && valid;
+            continue;
+          }
           if (isContextualArrayArgument(expr.arguments()[index])) {
             const auto *initializer =
                 exprAs<ArrayInitializer>(expr.arguments()[index].get());
@@ -8226,6 +8232,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     std::vector<std::size_t> ephemeralBorrowArguments;
     ContextualCallArguments argumentAnalysis;
     CallReceiverMode receiverMode = CallReceiverMode::None;
+    std::vector<std::size_t> checkedArguments;
   };
   std::vector<ViableOverload> viable;
   std::vector<ConstraintFailure> constraintFailures;
@@ -8250,21 +8257,26 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
                                 explicitValueArguments,
                                 candidateArguments.types, expr.arguments(),
                                 resolved, resolvedTypeArguments,
-                                resolvedValueArguments, &constraintFailure)) {
+                                resolvedValueArguments, &constraintFailure, true)) {
       if (hasConstraintFailure(constraintFailure)) {
         constraintFailures.emplace_back(std::move(constraintFailure));
       }
       continue;
     }
     bool exact = true;
+    std::vector<std::size_t> checkedArguments;
     for (std::size_t index = 0; index < candidateArguments.types.size();
          ++index) {
       const CallArgumentMatchKind match = functionCallArgumentMatch(
           resolved, index, candidateArguments.types[index],
           expr.arguments()[index], candidateArguments.deferred[index]);
       if (match == CallArgumentMatchKind::Mismatch) {
-        exact = false;
-        break;
+        if (checkedArgumentPotential(expr.arguments()[index], candidateArguments.types[index], resolved.parameterTypes[index])) {
+          checkedArguments.push_back(index);
+        } else {
+          exact = false;
+          break;
+        }
       }
       if (match == CallArgumentMatchKind::EphemeralReadBorrow) {
         resolvedEphemeralBorrowArguments.push_back(index);
@@ -8297,10 +8309,17 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
                       std::move(resolvedTypeArguments),
                       std::move(resolvedValueArguments),
                       std::move(resolvedEphemeralBorrowArguments),
-                      std::move(candidateArguments), receiverMode});
+                      std::move(candidateArguments), receiverMode, std::move(checkedArguments)});
   }
 
-  if (std::any_of(viable.begin(), viable.end(),
+  // Checked construction is a final tier; no numeric or receiver ranking
+  // chooses between its candidates.
+  const bool ordinaryTier = std::any_of(viable.begin(), viable.end(),
+      [](const ViableOverload &candidate) { return candidate.checkedArguments.empty(); });
+  if (ordinaryTier)
+    std::erase_if(viable, [](const ViableOverload &candidate) { return !candidate.checkedArguments.empty(); });
+
+  if (ordinaryTier && std::any_of(viable.begin(), viable.end(),
                   [](const ViableOverload &candidate) {
                     return candidate.ephemeralBorrowArguments.empty();
                   })) {
@@ -8309,7 +8328,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     });
   }
 
-  if (std::any_of(viable.begin(), viable.end(),
+  if (ordinaryTier && std::any_of(viable.begin(), viable.end(),
                   [](const ViableOverload &candidate) {
                     return candidate.function.receiverMutability ==
                            ReceiverMutability::Consuming;
@@ -8359,9 +8378,9 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
                   }) &&
       accessorResultUse(*callUse, readOnlyAccessor->function.returnType) ==
           ResultUseAccess::ReadOnly;
-  if (readOnlyAccessorUse) {
+  if (ordinaryTier && readOnlyAccessorUse) {
     std::erase_if(viable, mutableForm);
-  } else if (std::any_of(viable.begin(), viable.end(), mutableForm)) {
+  } else if (ordinaryTier && std::any_of(viable.begin(), viable.end(), mutableForm)) {
     std::erase_if(viable, readOnlyForm);
   }
 
@@ -8380,7 +8399,8 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       rankingArgumentTypes[index] = SemanticType::Unknown;
     }
   }
-  retainBestCallConversionMatches(
+  if (ordinaryTier)
+    retainBestCallConversionMatches(
       viable, rankingArgumentTypes,
       [](const ViableOverload &candidate) -> const std::vector<SemanticType> & {
         return candidate.function.parameterTypes;
@@ -8436,6 +8456,15 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     return;
   }
 
+  for (const auto index : viable.front().checkedArguments) {
+    const auto &selected = viable.front().function;
+    const Token parameter = index < selected.declaration->parameters().size()
+        ? selected.declaration->parameters()[index].name : selected.declaration->name();
+    if (!applyCheckedArgument(expr.arguments()[index], argumentTypes[index], selected.parameterTypes[index], parameter)) {
+      currentType = SemanticType::Unknown;
+      return;
+    }
+  }
   if (argumentAnalysis.hasDeferred() &&
       !finishContextualCallArguments(
           viable.front().function.parameterTypes, expr.arguments(),
@@ -12931,12 +12960,14 @@ auto SemanticVisitor::Impl::analyzeParameterDefaults(
   }
 }
 
-auto SemanticVisitor::Impl::makeConstexprInterpreter() const
+auto SemanticVisitor::Impl::makeConstexprInterpreter(bool immediate) const
     -> ConstexprInterpreter {
   ConstexprInterpreter context;
   context.work = requestSession.constexprWork
                      ? requestSession.constexprWork
                      : std::make_shared<ConstexprWorkBudget>();
+  if (immediate && !requestSession.constexprWork)
+    context.work->limit = 262144;
   if (!instanceTypeSubstitution.empty() || !instanceValueSubstitution.empty()) {
     context.substitutions.push_back({.types = instanceTypeSubstitution,
                                      .values = instanceValueSubstitution});
@@ -13325,7 +13356,7 @@ auto SemanticVisitor::Impl::evaluateConstexprMutation(
 auto SemanticVisitor::Impl::defaultConstexprValue(
     const SemanticType &type, ConstexprInterpreter &context) const
     -> ConstantEvaluation {
-  if (context.work->steps++ >= constexprExpressionStepLimit) {
+  if (context.work->steps++ >= context.work->limit) {
     return {.failure = ConstantEvaluationFailure::ResourceLimit};
   }
   if (const std::optional<CheckedIntegerDomain> domain =
@@ -13691,7 +13722,7 @@ auto SemanticVisitor::Impl::evaluateConstexprExpression(
 
 auto SemanticVisitor::Impl::evaluateConstexprExpression(
     const Expr &source, ConstexprInterpreter &context) -> ConstexprEvaluation {
-  if (context.work->steps++ >= constexprExpressionStepLimit) {
+  if (context.work->steps++ >= context.work->limit) {
     return constexprFailure(expressionToken(source),
                             ConstantEvaluationFailure::ResourceLimit);
   }
@@ -14520,7 +14551,7 @@ auto SemanticVisitor::Impl::executeConstexprStatement(
   if (statement == nullptr) {
     return {};
   }
-  if (context.work->steps++ >= constexprExpressionStepLimit) {
+  if (context.work->steps++ >= context.work->limit) {
     return constexprStatementFailure(
         constexprFailure({}, ConstantEvaluationFailure::ResourceLimit));
   }

@@ -6141,6 +6141,63 @@ int main() {
 }
 
 void testConsteval() {
+  const std::string checked = R"(
+struct Checked {
+  int value;
+  implicit consteval Checked(int value) : value(value) { int proof = 1 / (value > 0 ? 1 : 0); }
+};
+int consume(Checked checked, int runtime) { return checked.value + runtime; }
+)";
+  const auto accepted = lang::Frontend().analyze("checked-argument.gti", checked + R"(
+int forward(Checked checked, int runtime) { return consume(checked, runtime); }
+struct Tagged<Args...> {
+  int value;
+  implicit consteval Tagged(int value) : value(value) {}
+};
+int variadic<Args...>(Tagged<Args...> checked, Args... args) { return checked.value; }
+int run(int runtime) { return forward(7, runtime) + variadic(3, runtime, true); }
+int main() { return run(2) - 12; }
+)");
+  for (const auto &diagnostic : accepted.diagnostics)
+    if (diagnostic.severity == lang::DiagnosticSeverity::Error)
+      std::cerr << diagnostic.message << '\n';
+  expect(accepted.canGenerateCode() && lang::verifyMirProgram(accepted.mir).valid(),
+         "checked arguments publish values and generic packs are inferred from other arguments");
+
+  const auto runtime = lang::Frontend().analyze("checked-runtime.gti", checked +
+      "int run(int runtime) { return consume(runtime, 0); }");
+  expect(!runtime.canGenerateCode() && hasDiagnosticCode(runtime.diagnostics, "GTI-S2057") &&
+             hasDiagnostic(runtime.diagnostics, "parameter 'checked' must be a compile-time constant"),
+         "runtime checked arguments name the parameter and required constant");
+
+  for (const std::string source : {
+      checked + "int main(){return consume(0,0);}",
+      "struct P{int value; implicit P(int v):value(v){}}; void f(P p){} int main(){f(1);return 0;}",
+      "struct P{int value; consteval P(int v):value(v){}}; void f(P p){} int main(){f(1);return 0;}",
+      "struct P{int value; implicit consteval P(int64_t v):value(int(v)){}}; void f(P p){} int main(){f(1);return 0;}",
+      "struct A{int value; implicit consteval A(int v):value(v){}}; struct P{A value; implicit consteval P(A v):value(v){}}; void f(P p){} int main(){f(1);return 0;}",
+      "struct A{implicit consteval operator int(){return 1;}}; void f(int p){} int main(){A a{};f(a);return 0;}",
+      checked + "void f(Checked& p){} int main(){f(1);return 0;}",
+      checked + "struct Other{int value;implicit consteval Other(int v):value(v){}}; void f(Checked p){} void f(Other p){} int main(){f(1);return 0;}",
+      "struct P{int value;implicit consteval P(int v):value(v){} implicit consteval P(int v,int extra=0):value(v+extra){}}; void f(P p){} int main(){f(1);return 0;}",
+      "struct P<T>{int value;implicit consteval P(int v):value(v){}}; void f<T>(P<T> p){} int main(){f(1);return 0;}",
+      checked + "struct F{F()=default; int operator()(Checked p){return p.value;}}; int main(){F f{}; return f(1);}",
+      checked + "struct F{F()=default; int operator[](Checked p){return p.value;}}; int main(){F f{}; return f[1];}"
+  }) {
+    const auto rejected = lang::Frontend().analyze("checked-fence.gti", source);
+    expect(!rejected.canGenerateCode() && std::none_of(rejected.diagnostics.begin(), rejected.diagnostics.end(),
+        [](const auto &diagnostic){ return diagnostic.code.starts_with("GTI-B"); }),
+        "checked argument fence rejects before backend: " + source);
+  }
+
+  const auto shadow = lang::Frontend().analyze("checked-shadow.gti", checked + R"(
+int choose(Checked p) { return p.value; }
+int choose(int p) { return p; }
+int main() { return choose(0); }
+)");
+  expect(shadow.canGenerateCode() && hasDiagnosticCode(shadow.diagnostics, "GTI-S2125"),
+         "exact overload wins but declaration warns that validation can be bypassed");
+
   const auto valid = lang::Frontend().analyze("consteval.gti", R"(
 consteval int square(int x) { return x * x; }
 constexpr int twice(int x) { return x * 2; }

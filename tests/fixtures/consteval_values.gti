@@ -109,7 +109,7 @@ int check(int runtime_input) {
          integer_choice_value(choices[0]) == 17 &&
          integer_choice_value(choices[1]) == 0 &&
          use_port(port, runtime_input) == 451 &&
-         use_port(Port(80), runtime_input) == 88 &&
+         use_port(80, runtime_input) == 88 &&
          cleanup_value() == immediate_cleanup() &&
          allocation_value() == immediate_allocation() &&
          immediate_effects() == 182 &&

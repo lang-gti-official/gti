@@ -1671,11 +1671,11 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
     const std::vector<CompileTimeValue> &valueArguments,
     std::vector<AnalyzedCallArgument> arguments, const Token &paren,
     bool requireExactNullParameter, bool contextualConstruction,
-    std::vector<const ConstructorInfo *> *candidateProbe) -> void {
+    std::vector<const ConstructorInfo *> *candidateProbe, bool checkedArgument) -> void {
   selectConstructorCallArguments(&construction, nullptr, classId, typeArguments,
                                  valueArguments, std::move(arguments), paren,
                                  requireExactNullParameter,
-                                 contextualConstruction, candidateProbe);
+                                 contextualConstruction, candidateProbe, checkedArgument);
 }
 
 auto SemanticVisitor::Impl::selectConstructorCallArguments(
@@ -1684,7 +1684,7 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
     const std::vector<CompileTimeValue> &valueArguments,
     std::vector<AnalyzedCallArgument> arguments, const Token &paren,
     bool requireExactNullParameter, bool contextualConstruction,
-    std::vector<const ConstructorInfo *> *candidateProbe) -> void {
+    std::vector<const ConstructorInfo *> *candidateProbe, bool checkedArgument) -> void {
   if ((construction == nullptr) == (emptyReturn == nullptr) ||
       (emptyReturn != nullptr &&
        (emptyReturn->value() || !arguments.empty() || !contextualConstruction ||
@@ -1827,6 +1827,10 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
   }
   for (const ConstructorInfo *candidatePointer : candidates) {
     const ConstructorInfo &constructor = *candidatePointer;
+    if (checkedArgument && (!constructor.implicitConstruction ||
+                            !constructor.declaration ||
+                            !constructor.declaration->isConsteval()))
+      continue;
     // A declaration constructs only through a constructor declared implicit.
     if (contextualConstruction && !constructor.implicitConstruction) {
       continue;
@@ -1951,6 +1955,17 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
       for (std::size_t index = fixedCount; index < arguments.size(); ++index) {
         parameterTypes.push_back(arguments[index].type);
       }
+    }
+    if (checkedArgument) {
+      if (arguments.size() != 1 || parameterTypes.empty())
+        continue;
+      const auto &parameter = parameterTypes.front();
+      const auto &observed = parameter.kind == SemanticType::Reference &&
+                                     parameter.referenceAccess == AccessMode::ReadOnly &&
+                                     parameter.arguments.size() == 1
+                                 ? parameter.arguments.front() : parameter;
+      if (observed != arguments.front().type)
+        continue;
     }
     bool exact = true;
     std::optional<std::size_t> rejectedArgument;
@@ -2096,7 +2111,8 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
   for (const AnalyzedCallArgument &argument : arguments) {
     argumentTypes.emplace_back(argument.type);
   }
-  retainBestCallConversionMatches(viable, argumentTypes,
+  if (!checkedArgument)
+    retainBestCallConversionMatches(viable, argumentTypes,
                                   [](const ViableConstructor &candidate)
                                       -> const std::vector<SemanticType> & {
                                     return candidate.parameterTypes;
@@ -2709,7 +2725,7 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
                            resolved.declaration->isConsteval() &&
                            !insideImmediateFunction();
     if (immediate && !immediateConstructionDependent(resolved)) {
-      ConstexprInterpreter context = makeConstexprInterpreter();
+      ConstexprInterpreter context = makeConstexprInterpreter(true);
       context.requireMir = true;
       context.recordValues = false;
       ConstexprEvaluation result =
