@@ -1035,11 +1035,16 @@ For example, `preview prepare my-task --worktree /absolute/new-candidate
 `preview publish CANDIDATE`, still supports explicit local validation settings.
 
 `verify` configures and builds an optimized compiler from the combined source,
-reruns the focused checks of **every included feature**, and runs the fixed
-`preview_examples.py` gate. This covers the numbered corpus at O0/C++20 and
-O3/C++23, practical HTTP examples and established automated
-project/native harnesses. Missing, disabled or skipped required tests fail
-admission, including focused tests. One-off checks must be registered with
+runs the focused checks of the features **this candidate admits** (those whose
+merge is not yet in the published preview; `preview_examples.py --pending`,
+which the registered `preview_admission` gate also uses), and runs the fixed
+`preview_examples.py` gate. Preview promises that each admitted feature
+compiled and passed its own focused checks once; it does not re-prove every
+earlier feature on every admission. The fixed gate covers the numbered corpus,
+practical HTTP examples and established automated project/native harnesses
+under the tree's backend policy (`GTI_TEST_BACKENDS`, LLVM by default).
+Missing, disabled or skipped required tests fail admission, including focused
+tests. `--manifest` replays every included feature for maintainer recovery. One-off checks must be registered with
 CTest first; focused names are deduplicated for execution while their owning
 PR identities remain in the manifest. New nested example directories require an explicit coverage update;
 the allocator helper is exercised by its numbered client. Objective-C++ execution is required on macOS and explicitly reported
@@ -1094,6 +1099,18 @@ resolution and the combined candidate must pass the normal preview gates.
 Low-level/failed preview candidates and source installations are retained intentionally; do not
 delete them while another user may rely on their commits or installed paths.
 No automatic pruning/resetting of modified worktrees is performed.
+
+`preview.yml` (push to `preview`, or dispatch) publishes what admission
+accepted and repeats no focused checks: on each packaged platform it restores
+the release object cache `llvm-prebuilt.yml` warms, builds only the installed
+toolchain products (`preview_build.py --products-only`), proves the compiler
+executes native programs at O0 and O3 with the candidate's own stdlib and
+runtime (`validation_checks.py smoke --root .`), stages, runs the installed
+CLI/LSP/project and consumer-library smoke, packages, records identity and
+checksums, then attests and publishes. A warm run takes about twenty minutes
+per platform; the previous design re-ran every admitted feature's focused
+checks and the example gate on both platforms (50–90 minutes) on top of a
+cold compiler build, for three- to four-hour walls.
 
 ## Preservation and cleanup
 

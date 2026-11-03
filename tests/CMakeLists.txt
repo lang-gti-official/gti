@@ -3036,7 +3036,7 @@ if(Python3_Interpreter_FOUND)
   if(EXISTS "${PROJECT_SOURCE_DIR}/.gti-preview.json")
     add_test(NAME preview_admission
       COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/scripts/preview_examples.py"
-              "${PROJECT_BINARY_DIR}" --manifest)
+              "${PROJECT_BINARY_DIR}" --pending)
     set_tests_properties(preview_admission PROPERTIES TIMEOUT 10800 RUN_SERIAL TRUE)
   endif()
   add_test(
