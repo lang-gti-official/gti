@@ -25,6 +25,7 @@ CASES = (
     ("captured_reference_ranges.gti", [], "1039\n89\n", True),
     ("local_holder_views.gti", [], "6\n9\n9\n", True),
     ("nested_holder_accessors.gti", [], "4\n60\n", False),
+    ("exclusive_carrier_temporary_views.gti", [], "20\n2\n2\n", True),
 )
 
 

@@ -1,0 +1,50 @@
+// A view returned from a carrier that holds an exclusive stored reference
+// borrows the carrier's own storage. A member call on that temporary view
+// retains the carrier's external authority for the full expression.
+import std.span;
+import std.vector;
+import std.format;
+
+class Source {
+public:
+  mut int reads = 0;
+  Source() = default;
+};
+
+class Reader {
+  mut Source& source;
+  mut std::vector<uint8_t> window{};
+public:
+  Reader(mut Source& source) : source(source) {}
+  void refill(uint8_t first, uint8_t second) mut {
+    this.source.reads += 1;
+    this.window.clear();
+    this.window.push_back(first);
+    this.window.push_back(second);
+  }
+  void drain() mut { this.window.clear(); }
+  std::span<uint8_t> pending() {
+    auto all = this.window.as_span();
+    return all.subspan(std::size_t(0), this.window.size());
+  }
+};
+
+int main() {
+  mut Source source{};
+  {
+    mut Reader reader{source};
+    if (!reader.pending().empty()) { return 1; }
+    reader.refill(uint8_t(3), uint8_t(4));
+    std::size_t first = reader.pending().size();
+    bool filled = !reader.pending().empty();
+    reader.drain();
+    std::size_t drained = reader.pending().size();
+    reader.refill(uint8_t(5), uint8_t(6));
+    auto bound = reader.pending();
+    std::println("{}", first * std::size_t(10) + drained);
+    std::println("{}", bound.size());
+    if (!filled) { return 2; }
+  }
+  std::println("{}", source.reads);
+  return 0;
+}
