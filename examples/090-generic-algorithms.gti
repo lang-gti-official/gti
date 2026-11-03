@@ -5,13 +5,10 @@ import std.map;
 import std.set;
 import std.string;
 import std.vector;
-<<<<<<< HEAD
 import std.utility;
-=======
 
 using ProfitEntry = std::map<std::string, float>::value_type;
 
->>>>>>> ed48598cadf32d259278a5b24338dd76b400a405
 int main() {
   // Sequence search is generic; the returned cursor keeps its owner borrowed.
   std::list<int> priorities = {2, 4, 4, 9};
@@ -39,7 +36,6 @@ int main() {
                [](int& value) -> bool { return value > 3; });
   for (auto& value : selected) { std::println(value); }
 
-<<<<<<< HEAD
   // Continue from copy's returned cursor by moving its exclusive permission.
   // The destination cannot be accessed separately until that loan ends.
   std::vector<int> batch = {1, 2};
@@ -63,7 +59,6 @@ int main() {
   if (std::erase(selected, zero) != 2 || selected.size() != 2) { return 3; }
   if (std::erase_if(selected, [](int& value) -> bool { return value > 8; }) != 2 ||
       !selected.empty()) { return 4; }
-=======
   // Rank dictionary entries by their mapped values, without copying keys.
   mut std::map<std::string, float> profit_change{};
   profit_change.insert(std::string("Acme"), float(-4));
@@ -74,6 +69,5 @@ int main() {
       });
   // Empty ranges return an end position; ties keep the first in traversal order.
   if (greatest != profit_change.end()) { std::println((*greatest).first); }
->>>>>>> ed48598cadf32d259278a5b24338dd76b400a405
   return 0;
 }

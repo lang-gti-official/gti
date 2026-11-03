@@ -1222,6 +1222,23 @@ syntax in the frozen source graph. Skipping discovery in that case avoids a
 workspace-wide scan whose speculative edits would all be rejected; fixing the
 syntax restores import suggestions on the next snapshot.
 
+The editor publishes the ordinary diagnostic and semantic snapshot before doing
+missing-import discovery. The compiler exposes immutable discovery: it reads that
+snapshot and returns diagnostic enrichment, without copying the semantic model
+or changing any published identities. The analysis worker performs this optional
+work after serving pending semantic requests. A newer edit cancels the candidate
+scan and speculative trials; publication also requires the same root generation,
+frontend pointer and discovery generation. Repairs, including negative searches,
+remain conservatively invalidated by source changes. Enrichment replaces only
+diagnostics, never the semantic snapshot or its tokens. Its cost is excluded from
+the edit-debounce median. The opt-in frontend trace reports `includeSuggestions`
+and `includeSuggestionsCancelled` separately from ordinary analysis.
+
+This separation addresses the error-recovery path where searching broad public
+facades for an unresolved type took seconds after the ordinary error was already
+known. CLI compilation still enriches its final diagnostics synchronously using
+the same discovery implementation and proof requirements.
+
 The service shares the bounded parsed-unit cache but retains no semantic IDs
 across snapshots. Edits preserve BOM/CRLF and follow a module header when the
 requesting file has one. Multiple valid files produce separate, deterministic,

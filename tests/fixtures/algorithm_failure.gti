@@ -38,13 +38,10 @@ int main(int argc, std::vector<std::string> argv) {
     auto absent = std::min_element(empty.begin(), empty.end());
     std::println(*absent);
   }
-<<<<<<< HEAD
-  if (argc == 5) { std::copy(input.begin(), input.end(), output.begin_mut()); }
-=======
+  if (argc == 6) { std::copy(input.begin(), input.end(), output.begin_mut()); }
   if (argc == 5) {
     auto greatest = std::max_element(input.begin(), input.end(), failing_order());
     std::println(*greatest);
   }
->>>>>>> ed48598cadf32d259278a5b24338dd76b400a405
   return 1;
 }

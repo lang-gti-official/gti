@@ -18,11 +18,8 @@ import std.deque;
 import std.array;
 import std.set;
 import std.string;
-<<<<<<< HEAD
 import std.utility;
-=======
 import std.map;
->>>>>>> ed48598cadf32d259278a5b24338dd76b400a405
 """
     negatives = {
         "overlapping-transform": 'int main() { mut std::vector<int> x = {1}; std::transform(x, x, [](int& n) -> int { return n + 1; }); return 0; }',
@@ -97,31 +94,20 @@ import std.map;
                 assert "GTI-S2024" not in checked.stderr, checked.stderr
             if name == "copy-owner":
                 assert "error[GTI-S2003]" in checked.stderr and "Cannot copy assign" in checked.stderr, checked.stderr
-<<<<<<< HEAD
         for backend, level in (("cpp", "O0"), ("cpp", "O3"),
                                ("llvm", "O0"), ("llvm", "O3")):
             binary = root / f"{backend}-{level}"
             build = subprocess.run([str(compiler), str(repository / "tests/fixtures/algorithm_failure.gti"),
                                     "--backend", backend, f"-{level}", "-o", str(binary)],
                                    env=environment, capture_output=True, text=True, timeout=120)
-=======
-        for backend, level in ((b, o) for b in ("cpp", "llvm") for o in ("O0", "O3")):
-            binary = root / f"{backend}-{level}"
-            build = subprocess.run([str(compiler), str(repository / "tests/fixtures/algorithm_failure.gti"),
-                                    "--backend", backend, f"-{level}", "-o", str(binary)], env=environment, capture_output=True, text=True, timeout=120)
->>>>>>> ed48598cadf32d259278a5b24338dd76b400a405
             assert build.returncode == 0, build
-            for count in range(5):
+            for count in range(6):
                 result = subprocess.run([str(binary), *(["fail"] * count)], env=environment,
                                         capture_output=True, text=True, timeout=30)
                 expected = "77\n99\n" if count == 4 else "99\n"
                 assert result.returncode == 70 and result.stdout == expected, (count, result)
                 assert "runtime error[GTI-R" in result.stderr, result
-<<<<<<< HEAD
-    print(f"generic algorithms: {len(negatives)} semantic rejections and 20 failure cleanups passed")
-=======
-    print(f"generic algorithms: {len(negatives)} semantic rejections and twenty failure cleanups passed")
->>>>>>> ed48598cadf32d259278a5b24338dd76b400a405
+    print(f"generic algorithms: {len(negatives)} semantic rejections and 24 failure cleanups passed")
 
 
 if __name__ == "__main__":
