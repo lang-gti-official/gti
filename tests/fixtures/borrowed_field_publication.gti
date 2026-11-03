@@ -1,0 +1,78 @@
+import std.string;
+import std.utility;
+import std.vector;
+
+std::string_view relay(std::string_view value) { return value; }
+
+struct TextReader {
+  std::string_view& text;
+  TextReader(std::string_view& text) : text(text) {}
+  std::size_t copied_size() {
+    std::string_view copy = this.text;
+    return copy.size();
+  }
+  std::size_t relayed_size() {
+    std::string_view copy = relay(this.text);
+    return copy.size();
+  }
+};
+
+class Writer {
+public:
+  mut int32_t& target;
+  Writer(mut int32_t& target) : target(target) {}
+};
+
+class NestedWriter {
+public:
+  mut Writer writer;
+  NestedWriter(mut int32_t& target) : writer(Writer(target)) {}
+};
+
+class Cursor<T> {
+public:
+  T& current;
+  Cursor(T& value) : current(value) {}
+};
+
+// Both concrete instances must keep the same deferred-field policy while
+// their native referent types remain distinct.
+class Holder<T> {
+public:
+  std::vector<int32_t> buffer;
+  T cursor;
+  Holder(T cursor)
+      : buffer(std::vector<int32_t>()), cursor(std::move(cursor)) {}
+};
+
+int32_t staged_scalar_callee(mut int32_t value) {
+  auto twice = [](int32_t x) -> int32_t { return x * 2; };
+  return twice(value = 5) + value;
+}
+
+int main() {
+  std::string owner{"owner"};
+  std::string_view view = owner.view();
+  TextReader reader{view};
+  if (reader.copied_size() != 5 || reader.relayed_size() != 5) return 1;
+  mut int32_t target = 1;
+  {
+    mut Writer writer{target};
+    writer.target = 7;
+    writer.target += 2;
+  }
+  if (target != 9) return 2;
+  {
+    mut NestedWriter nested{target};
+    nested.writer.target = 11;
+    nested.writer.target += 2;
+  }
+  if (target != 13) return 3;
+  int32_t first = 3;
+  int64_t second = 7;
+  Holder<Cursor<int32_t>> a{Cursor<int32_t>(first)};
+  Holder<Cursor<int64_t>> b{Cursor<int64_t>(second)};
+  if (a.cursor.current != 3 || b.cursor.current != 7) return 4;
+  if (staged_scalar_callee(1) != 15) return 5;
+  return 0;
+}

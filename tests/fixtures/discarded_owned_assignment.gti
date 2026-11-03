@@ -1,0 +1,66 @@
+// Discarded conditional/comma assignments never copy the stored owner.
+import std.utility;
+import std.vector;
+import std.string;
+mut int drops = 0;
+mut int last = 0;
+mut bool report = false;
+mut int calls = 0;
+class Ticket {
+public:
+  int value;
+  Ticket(int value) : value(value) {}
+  ~Ticket() { drops++; last = this.value; if (report) { std::println(this.value); } }
+};
+int choose(bool condition, mut Ticket target, Ticket first, Ticket second) {
+  condition ? (target = std::move(first)) : (target = std::move(second));
+  return target.value;
+}
+int comma(mut Ticket target, Ticket source) {
+  int result = ((target = std::move(source)), 3);
+  return target.value + result;
+}
+int nested(bool condition, mut Ticket target, Ticket source) {
+  ((condition ? ((target = std::move(source)), 4) : 5), 6);
+  return target.value;
+}
+int short_circuit(bool condition, mut Ticket target, Ticket source) {
+  condition && (((target = std::move(source)), true));
+  return target.value;
+}
+int& reference_with_effect(int& value) {
+  calls++;
+  return value;
+}
+int increment(mut Ticket target, mut Ticket source) {
+  mut int index = 0;
+  for (; index < 1; ((target = std::move(source)), (source = Ticket(9)), index++)) {}
+  return target.value;
+}
+int fail_after(bool condition, mut Ticket target, Ticket first, Ticket second, int divisor) {
+  ((condition ? (target = std::move(first)) : (target = std::move(second))), 8 / divisor); // sequence failure
+  return target.value;
+}
+int main(int argc, std::vector<std::string> argv) {
+  if (argc > 1) {
+    report = true;
+    return fail_after(argc == 2, Ticket(1), Ticket(5), Ticket(7), 0);
+  }
+  if (choose(true, Ticket(1), Ticket(5), Ticket(7)) != 5 || drops != 3) { return 1; }
+  if (choose(false, Ticket(1), Ticket(5), Ticket(7)) != 7 || drops != 6) { return 2; }
+  if (comma(Ticket(1), Ticket(5)) != 8 || drops != 8) { return 3; }
+  if (nested(true, Ticket(1), Ticket(5)) != 5 || drops != 10) { return 4; }
+  if (nested(false, Ticket(1), Ticket(5)) != 1 || drops != 12) { return 5; }
+  if (increment(Ticket(1), Ticket(5)) != 5 || drops != 15) { return 6; }
+  // Actual owned temporary arms still die at the enclosing full expression.
+  (true ? Ticket(19) : Ticket(20)), (last = 0);
+  if (drops != 16 || last != 19) { return 7; }
+  // Discarding the boolean result preserves short-circuit execution and cleanup.
+  if (short_circuit(false, Ticket(1), Ticket(7)) != 1 || drops != 18) { return 8; }
+  if (short_circuit(true, Ticket(1), Ticket(7)) != 7 || drops != 20) { return 9; }
+  // Nested discarded reference results must still evaluate their call.
+  int value = 7;
+  [[discard]] ((reference_with_effect(value)));
+  if (calls != 1 || value != 7) { return 10; }
+  return 0;
+}
