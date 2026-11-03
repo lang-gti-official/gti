@@ -1767,7 +1767,7 @@ generic-qualified-enumerator
    a call as its root. The semantic restrictions above make this a bounded
    pack operation rather than the C++ fold-expression family. *)
 
-lambda-expression      = lambda-capture-list parameter-clause "->" type block ;
+lambda-expression      = lambda-capture-list parameter-clause "->" [ "mut" ] type block ;
 
 lambda-capture-list    = "[" [ lambda-capture { "," lambda-capture } ] "]" ;
 
@@ -1778,7 +1778,12 @@ lambda-capture         = IDENTIFIER
                          "(" IDENTIFIER ")" ;
 
 (* Lambda parameters and returns are explicit and calls use exact type
-   matching. A bare listed capture is an immutable value snapshot of a
+   matching. The optional return `mut` requires a checked-reference type.
+   A reference result must derive from its unique eligible parameter:
+   mutable results require mutable input, while read-only results may
+   reborrow either access mode. Local reference aliases preserve that origin;
+   local objects and captures cannot provide an escaping result.
+   A bare listed capture is an immutable value snapshot of a
    copyable local binding. `[owned = std::move(source)]` is the only init
    capture: it moves one available movable local or by-value parameter into an
    immutable environment field and immediately leaves `source` moved.
