@@ -3308,6 +3308,13 @@ that the selected call actually returns a borrow from that source. Merely
 calling a method on an owner does not prove this. Local owners, by-value owning
 parameters, and fresh temporary owners cannot supply an escaping view.
 
+Immutable local text aliases preserve the predeclared return dependency of
+their initializer, including alias chains and nested lexical scopes. Resolved
+body analysis still verifies the exact owner and rejects an escaping local
+owner. Shadowing does not borrow a parameter's identity. Mutable text locals
+are not inferred as return relays yet: they require a path-sensitive assignment
+summary that proves one owner across every return path.
+
 A relay may also return a string literal on another path, for example
 `if (empty) { return ""; }` before returning an owner's view. A `c_string`
 relay may similarly return `nullptr`. These lifetime-independent alternatives

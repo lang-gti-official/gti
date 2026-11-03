@@ -1090,6 +1090,19 @@ target_link_libraries(gti_carrier_shell_reference_tests PRIVATE gti_cpp_backend)
 target_precompile_headers(gti_carrier_shell_reference_tests
                           REUSE_FROM gti_compiler_test_pch)
 add_test(NAME carrier_shell_references COMMAND gti_carrier_shell_reference_tests)
+add_executable(gti_borrow_origin_publication_tests borrow_origin_publication_tests.cpp)
+target_link_libraries(gti_borrow_origin_publication_tests PRIVATE gti_cpp_backend)
+target_precompile_headers(gti_borrow_origin_publication_tests
+                          REUSE_FROM gti_compiler_test_pch)
+add_test(NAME borrow_origin_publication COMMAND gti_borrow_origin_publication_tests)
+add_test(NAME borrow_origin_publication_runtime
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/borrow_origin_publication_runtime_test.py" $<TARGET_FILE:gti>)
+add_executable(gti_semantic_call_regression_tests semantic_call_regression_tests.cpp)
+target_link_libraries(gti_semantic_call_regression_tests PRIVATE gti_compiler)
+target_precompile_headers(gti_semantic_call_regression_tests
+                          REUSE_FROM gti_compiler_test_pch)
+add_test(NAME semantic_call_regressions COMMAND gti_semantic_call_regression_tests)
 add_test(NAME carrier_reference_runtime
   COMMAND "${Python3_EXECUTABLE}"
           "${PROJECT_SOURCE_DIR}/tests/carrier_reference_runtime_test.py" $<TARGET_FILE:gti>)
@@ -1285,8 +1298,7 @@ target_link_libraries(gti_trusted_body_analysis_tests PRIVATE gti_compiler)
 # Keep all entries and fixture checks, but do not put the entire growing corpus
 # under one platform-dependent aggregate deadline.
 file(GLOB gti_trusted_body_entries CONFIGURE_DEPENDS
-  "${PROJECT_SOURCE_DIR}/examples/*.gti"
-  "${PROJECT_SOURCE_DIR}/stdlib/tests/*.gti")
+  "${PROJECT_SOURCE_DIR}/examples/*.gti")
 list(SORT gti_trusted_body_entries)
 foreach(gti_trusted_partition RANGE 0 3)
   set(gti_trusted_partition_entries)
@@ -1308,6 +1320,28 @@ foreach(gti_trusted_partition RANGE 0 3)
   set_tests_properties(trusted_body_analysis_${gti_trusted_partition}
     PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE)
 endforeach()
+add_test(NAME stdlib_package_runtime
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/stdlib_package_runtime_test.py" $<TARGET_FILE:gti>)
+set_tests_properties(stdlib_package_runtime PROPERTIES TIMEOUT 720)
+add_test(NAME stdlib_api_contracts
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/stdlib_api_contracts_test.py" $<TARGET_FILE:gti>)
+set_tests_properties(stdlib_api_contracts PROPERTIES TIMEOUT 300)
+add_test(NAME backend_contract_regressions
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/backend_contract_regressions_test.py" $<TARGET_FILE:gti>)
+set_tests_properties(backend_contract_regressions PROPERTIES TIMEOUT 600)
+add_test(NAME semantic_call_regressions_runtime
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/semantic_call_regressions_runtime_test.py" $<TARGET_FILE:gti>
+          --mode llvm-O0 --mode llvm-O3 --mode c++23-O0 --mode c++23-O3)
+if(TARGET gti_lsp)
+  add_test(NAME semantic_call_regressions_lsp
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/semantic_call_regressions_lsp_test.py" $<TARGET_FILE:gti_lsp>)
+  set_tests_properties(semantic_call_regressions_lsp PROPERTIES TIMEOUT 120)
+endif()
 add_executable(gti_instance_reuse_tests "${PROJECT_SOURCE_DIR}/tests/instance_reuse_tests.cpp")
 target_link_libraries(gti_instance_reuse_tests PRIVATE gti_compiler)
 add_test(NAME instance_reuse COMMAND gti_instance_reuse_tests "${PROJECT_SOURCE_DIR}")

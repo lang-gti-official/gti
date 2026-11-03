@@ -42,8 +42,8 @@ def verify_algorithm_partitions(tests):
 
 
 def verify_trusted_body_partitions(tests, repository):
-    expected = sorted(path.resolve() for directory in ("examples", "stdlib/tests")
-                      for path in (repository / directory).glob("*.gti"))
+    # The module-based stdlib package is built/executed by stdlib_package_runtime.
+    expected = sorted(path.resolve() for path in (repository / "examples").glob("*.gti"))
     partitions = [test for test in tests
                   if test["name"].startswith("trusted_body_analysis")]
     if {test["name"] for test in partitions} != {
