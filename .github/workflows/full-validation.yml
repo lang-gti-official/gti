@@ -271,6 +271,10 @@ jobs:
 
   sanitizers:
     name: Compiler sanitizers (${{ matrix.kind }} ${{ matrix.index }}/${{ matrix.count }})
+    # Every sanitized configure serializes linking (CMAKE_JOB_POOL_LINK):
+    # linking several ASan/UBSan executables at once exhausted the 16 GiB
+    # runner and the VM was shut down mid-build three times on 2026-11-03
+    # ("runner has received a shutdown signal"). Compiles stay parallel.
     if: needs.plan.outputs.mode == 'full'
     needs: [plan]
     # The compiler aggregate exceeded three hours serially. Split its six
@@ -330,6 +334,7 @@ jobs:
           -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
           -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g"
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+          -DCMAKE_JOB_POOLS=link=1 -DCMAKE_JOB_POOL_LINK=link
       - name: Build the targets the sanitizer subset runs
         # Instrumenting the whole tree took longer than the integration shards
         # while only these tests run; CTestTestfile.cmake names their targets.
@@ -429,6 +434,7 @@ jobs:
           -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
           -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g"
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+          -DCMAKE_JOB_POOLS=link=1 -DCMAKE_JOB_POOL_LINK=link
       - name: Build the targets the LLVM subset runs
         run: |
           targets="$(python3 scripts/validation_checks.py test-targets --build build-sanitized --regex "${GTI_LLVM_SANITIZER_TESTS}")"

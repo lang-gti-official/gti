@@ -2146,6 +2146,18 @@ failed candidates, and the presence or absence of any instantiation cannot
 change the generic declaration. Tooling presents the source declaration as
 instance-dependent `auto` rather than selecting an arbitrary concrete type.
 
+A lambda's checked-reference result records its selected argument origin and
+result access in `LambdaReturnContext` and `LambdaInfo`. Parameter inference
+uses the shared return-summary machinery with a checked-reference reborrow
+policy: a mutable result requires mutable input, and a read-only result may
+weaken mutable input authority. Every return independently proves that it
+reaches the selected parameter through ordinary reference/field ancestry.
+Capture origins and local storage still fail that proof. Concrete generic
+reanalysis retains the selected expanded argument index and access, so HIR
+and MIR consume the same contract. This extends direct and generic lambda
+invocation without changing named-function inference or the existing
+signature-erased invocation-pointer contract.
+
 A lambda type separates physical closure shape from concrete identity. Its
 ordinary type arguments hold the result, parameters, and captures; dedicated
 identity fields retain the lexical declaration plus the enclosing

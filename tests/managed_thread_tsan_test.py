@@ -73,13 +73,19 @@ def thread_sanitizer_available(native_compiler: pathlib.Path, root: pathlib.Path
     return probe.returncode == 0
 
 
-def compile_instrumented_runtime(native_compiler: pathlib.Path,
+def compile_instrumented_runtime(runtime_compiler: pathlib.Path,
                                  root: pathlib.Path) -> list[str]:
-    """Compile RUNTIME_UNITS once with the native thread sanitizer."""
+    """Compile RUNTIME_UNITS once with the reviewed native compiler's thread sanitizer.
+
+    runtime/src/atomic_lane.h admits only the reviewed compiler profile for
+    the platform (GCC 14 on Linux x86_64, Apple clang 21 or Homebrew clang 23
+    on macOS arm64), so the runtime is compiled by CMAKE_CXX_COMPILER, as in
+    production, not by the LLVM-matching clang that compiles the emitted IR.
+    """
     objects = []
     for unit in RUNTIME_UNITS:
         runtime_object = root / f"runtime-{unit}.o"
-        compiled = execute([str(native_compiler), "-std=c++20", "-O1", "-g",
+        compiled = execute([str(runtime_compiler), "-std=c++20", "-O1", "-g",
                             "-fsanitize=thread", "-fno-omit-frame-pointer",
                             "-fno-strict-aliasing", "-pthread",
                             "-I" + str(REPOSITORY / "runtime/include"),
@@ -96,12 +102,15 @@ def compile_instrumented_runtime(native_compiler: pathlib.Path,
 def build_instrumented_binary(emitter: pathlib.Path, native_compiler: pathlib.Path,
                               source: pathlib.Path, binary: pathlib.Path,
                               runtime_objects: list[str], *,
-                              markers: tuple[str, ...] = INSTRUMENTED_MARKERS) -> None:
+                              markers: tuple[str, ...] = INSTRUMENTED_MARKERS,
+                              linker: pathlib.Path | None = None) -> None:
     """Emit `source` through the LLVM backend with TSan attributes, then link it.
 
     The emitter writes `<binary>.ll`; the matching native compiler instruments
     it, and `nm -u` must show `markers` so an uninstrumented object cannot
-    pass by linking to the sanitizer runtime alone.
+    pass by linking to the sanitizer runtime alone. `linker` (the reviewed
+    runtime compiler) links the object with the instrumented runtime units
+    and its own thread-sanitizer runtime.
     """
     library = pathlib.Path(os.environ.get("GTI_STDLIB_PATH", REPOSITORY / "stdlib"))
     emitted = execute([str(emitter), str(library), str(source), str(binary), "O1",
@@ -120,7 +129,7 @@ def build_instrumented_binary(emitter: pathlib.Path, native_compiler: pathlib.Pa
     symbols = execute(["nm", "-u", object_path])
     assert (symbols.returncode == 0
             and all(marker in symbols.stdout for marker in markers)), (source.name, symbols)
-    linked = execute([str(native_compiler), "-fsanitize=thread", "-pthread",
+    linked = execute([str(linker or native_compiler), "-fsanitize=thread", "-pthread",
                       object_path, *runtime_objects, "-o", str(binary)])
     if linked.returncode != 0:
         raise AssertionError(
@@ -140,10 +149,10 @@ def run_under_thread_sanitizer(binary: pathlib.Path, *, iterations: int = 3) -> 
 
 
 def main() -> int:
-    if len(sys.argv) != 5:
+    if len(sys.argv) != 6:
         raise SystemExit(
             "usage: managed_thread_tsan_test.py /path/to/gti fixture.gti "
-            "/path/to/llvm-instrumented-source /path/to/matching-clang++"
+            "/path/to/llvm-instrumented-source /path/to/matching-clang++ /path/to/reviewed-c++"
         )
     if not thread_sanitizer_enabled():
         print("managed thread ThreadSanitizer check skipped: unsupported runner")
@@ -153,11 +162,13 @@ def main() -> int:
     source = pathlib.Path(sys.argv[2]).resolve()
     emitter = pathlib.Path(sys.argv[3]).resolve()
     native_compiler = pathlib.Path(sys.argv[4]).absolute()
+    runtime_compiler = pathlib.Path(sys.argv[5]).absolute()
     source_owner = source.stem in SOURCE_OWNER_FIXTURES
 
     with tempfile.TemporaryDirectory(prefix="gti-managed-thread-tsan-") as scratch:
         root = pathlib.Path(scratch)
-        if not thread_sanitizer_available(native_compiler, root):
+        if not (thread_sanitizer_available(native_compiler, root)
+                and thread_sanitizer_available(runtime_compiler, root)):
             print(
                 "managed thread ThreadSanitizer check skipped: native compiler "
                 "does not provide -fsanitize=thread"
@@ -172,10 +183,11 @@ def main() -> int:
                     and "wrapping atomic read-modify-write" in rejected.stderr), rejected
 
         binary = root / source.stem
-        runtime_objects = compile_instrumented_runtime(native_compiler, root)
+        runtime_objects = compile_instrumented_runtime(runtime_compiler, root)
         build_instrumented_binary(
             emitter, native_compiler, source, binary, runtime_objects,
-            markers=WRAPPING_ATOMIC_MARKERS if source_owner else INSTRUMENTED_MARKERS)
+            markers=WRAPPING_ATOMIC_MARKERS if source_owner else INSTRUMENTED_MARKERS,
+            linker=runtime_compiler)
         run_under_thread_sanitizer(binary)
 
     print("managed thread ThreadSanitizer check passed")

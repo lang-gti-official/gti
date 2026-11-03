@@ -890,8 +890,8 @@ the ownership-map coverage check and the planner's tests.
 
 A complete queue run is long and hosted macOS concurrency is small, so the
 queue's group size is one and rollups combine compatible work instead.
-`scripts/rollup.py`, run by `.github/workflows/rollup.yml` every 30 minutes,
-on dispatch, and on an exact `/rollup` comment from a writer, composes several
+`scripts/rollup.py`, run by `.github/workflows/rollup.yml` after CI completes,
+every 30 minutes, on dispatch, and on an exact `/rollup` comment from a writer, composes several
 green PRs into one queue entry. Only `main`'s code runs; PR content is never
 checked out or executed, and merges are Git plumbing with hooks disabled.
 
@@ -919,8 +919,18 @@ orders them by priority, then the time their gate passed, then number, and
 merges each exact head onto current `main` with `--no-ff`, up to six members. A
 PR that conflicts with `main` is skipped and labelled `needs-rebase` with a
 comment; one that conflicts only with an earlier member waits for a later
-rollup. The bot never resolves conflicts. With fewer than two members it does
-nothing. Otherwise it commits `.gti-validation/batches/rollup-<date>-<n>.json`
+rollup. The bot never resolves conflicts. `reconcile` applies the same label
+and comment to every open, non-draft PR on `main` that no longer merges
+cleanly, whichever path it was on: the merge queue drops a conflicting entry
+without a run, a status or a comment, and merge-when-ready never fires, so a
+PR that waited while `main` moved otherwise vanishes from every pipeline (on
+2026-11-03, 13 of 31 open PRs). The census baselines
+(`tests/mir_census_baseline.json`, `tests/lowered_program_census_baseline.json`)
+store per-example counts only, never totals, and the LLVM readiness provider
+inventories hash example and stdlib sources rather than those manifest files,
+so two PRs conflict there only when they change the same example. A single eligible member enters the
+merge queue alone, so it cannot wait indefinitely for a second PR. With no
+eligible members it does nothing. Otherwise it commits `.gti-validation/batches/rollup-<date>-<n>.json`
 (the batch manifest schema that `validation_checks.py full` checks) and opens
 `Rollup of N pull requests`, labelled `rollup=never`, listing each member and
 carrying a `Validation:` block whose T0/T1 items are the deduplicated union of
@@ -944,6 +954,16 @@ before its rollup is queued makes the rollup stale: the bot closes it and the
 members return to the pool. Close a rollup PR to stop it. Bisection of a
 failed rollup is future work. Every command takes `--dry-run`. The bot writes
 only with its GitHub App installation token; see `.github/README.md`.
+
+CI completion is a wakeup, not acceptance evidence. The authorization job
+checks the canonical repository and CI workflow identity, and the bot executes
+only `main`'s code without downloading run artifacts or checking out a PR.
+It queries current PR heads and gates again before any queue operation. Failed
+and cancelled CI runs also wake reconciliation; they do not qualify a PR for
+integration. Admission requires the latest CI run for that exact head to finish
+successfully and its own matching check suite's gate to pass; an older green
+draft gate cannot substitute for pending ready-for-review validation. The
+scheduled trigger remains a recovery fallback.
 
 Automation-only and source-only GTI stdlib local owning checks may use
 `verify --focused`, which checks the actual diff and does not reserve a
@@ -1035,11 +1055,16 @@ For example, `preview prepare my-task --worktree /absolute/new-candidate
 `preview publish CANDIDATE`, still supports explicit local validation settings.
 
 `verify` configures and builds an optimized compiler from the combined source,
-reruns the focused checks of **every included feature**, and runs the fixed
-`preview_examples.py` gate. This covers the numbered corpus at O0/C++20 and
-O3/C++23, practical HTTP examples and established automated
-project/native harnesses. Missing, disabled or skipped required tests fail
-admission, including focused tests. One-off checks must be registered with
+runs the focused checks of the features **this candidate admits** (those whose
+merge is not yet in the published preview; `preview_examples.py --pending`,
+which the registered `preview_admission` gate also uses), and runs the fixed
+`preview_examples.py` gate. Preview promises that each admitted feature
+compiled and passed its own focused checks once; it does not re-prove every
+earlier feature on every admission. The fixed gate covers the numbered corpus,
+practical HTTP examples and established automated project/native harnesses
+under the tree's backend policy (`GTI_TEST_BACKENDS`, LLVM by default).
+Missing, disabled or skipped required tests fail admission, including focused
+tests. `--manifest` replays every included feature for maintainer recovery. One-off checks must be registered with
 CTest first; focused names are deduplicated for execution while their owning
 PR identities remain in the manifest. New nested example directories require an explicit coverage update;
 the allocator helper is exercised by its numbered client. Objective-C++ execution is required on macOS and explicitly reported
@@ -1094,6 +1119,18 @@ resolution and the combined candidate must pass the normal preview gates.
 Low-level/failed preview candidates and source installations are retained intentionally; do not
 delete them while another user may rely on their commits or installed paths.
 No automatic pruning/resetting of modified worktrees is performed.
+
+`preview.yml` (push to `preview`, or dispatch) publishes what admission
+accepted and repeats no focused checks: on each packaged platform it restores
+the release object cache `llvm-prebuilt.yml` warms, builds only the installed
+toolchain products (`preview_build.py --products-only`), proves the compiler
+executes native programs at O0 and O3 with the candidate's own stdlib and
+runtime (`validation_checks.py smoke --root .`), stages, runs the installed
+CLI/LSP/project and consumer-library smoke, packages, records identity and
+checksums, then attests and publishes. A warm run takes about twenty minutes
+per platform; the previous design re-ran every admitted feature's focused
+checks and the example gate on both platforms (50–90 minutes) on top of a
+cold compiler build, for three- to four-hour walls.
 
 ## Preservation and cleanup
 
