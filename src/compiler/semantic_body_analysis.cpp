@@ -3465,12 +3465,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
            "GTI-S2039");
   }
   if (stmt.requiresClause()) {
-    if (stmt.operatorName()) {
-      report(stmt.requiresClause()->keyword,
-             "Trailing requires clauses are not supported on operator "
-             "declarations in the bounded requirements model.",
-             "GTI-S2049");
-    } else if (polymorphic) {
+    if (polymorphic) {
       report(stmt.requiresClause()->keyword,
              "Trailing requires clauses are not supported on polymorphic "
              "methods in the bounded requirements model.",
