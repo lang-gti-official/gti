@@ -243,6 +243,314 @@
         "85a96e81e07dc5e8c7663c6122be6d29d7661c1f"
       ],
       "merge": "85a96e81e07dc5e8c7663c6122be6d29d7661c1f"
+    },
+    {
+      "task": "preview-accepted-refresh",
+      "pr": 119,
+      "head": "83a7a5248ce2e54b66564170dd60d6f45dd3a72e",
+      "tests": [
+        "agent_workflow",
+        "preview_workflow",
+        "repository_hosting"
+      ],
+      "contributions": [
+        "f85815eb71cd3c555ac593bcdbb217cb49b2e258"
+      ],
+      "merge": "f85815eb71cd3c555ac593bcdbb217cb49b2e258"
+    },
+    {
+      "task": "issue-reconciliation",
+      "pr": 143,
+      "head": "082d7cf9516d5ea39be05224c0ee321921df8f1b",
+      "tests": [
+        "borrowed_field_publication_runtime",
+        "carrier_shell_references",
+        "compiler_pipeline",
+        "complete_borrow_summaries",
+        "cpp_mir_body_emitter_census",
+        "cpp_mir_body_emitter_corpus",
+        "cpp_mir_body_emitter_corpus_protocol",
+        "cpp_mir_body_emitter_lifecycle",
+        "cpp_mir_body_emitter_text",
+        "documentation_index",
+        "llvm_admission",
+        "llvm_borrowed_dispatch_regressions",
+        "llvm_coverage_evidence",
+        "llvm_dispatch_layout",
+        "mir_census_regression",
+        "mir_full_expression",
+        "object_lifetime_contract",
+        "optimizer_conformance",
+        "optimizer_safety",
+        "owning_expression_transfers",
+        "package_registry_cli"
+      ],
+      "contributions": [
+        "0b524ded2bbcb1b470f821b02c0a842b0ee4f8bd"
+      ],
+      "merge": "0b524ded2bbcb1b470f821b02c0a842b0ee4f8bd"
+    },
+    {
+      "task": "runtime-workload-parity",
+      "pr": 131,
+      "head": "8c2f2ee230c71127c9954fab76be50a1841af537",
+      "tests": [
+        "compiler_pipeline",
+        "container_contract_failure",
+        "llvm_bounded_recursion_runtime",
+        "llvm_checked_offset_runtime",
+        "llvm_checked_offsets",
+        "llvm_checked_range_runtime",
+        "llvm_checked_ranges",
+        "llvm_checked_reduction_runtime",
+        "llvm_checked_reductions",
+        "llvm_checked_square_runtime",
+        "llvm_dispatch_execution",
+        "llvm_dispatch_layout",
+        "llvm_loop_invariants",
+        "llvm_memory_contracts",
+        "llvm_memory_execution",
+        "llvm_optimization_pipeline",
+        "llvm_scalar_execution",
+        "optimizer_analyses",
+        "optimizer_object_context",
+        "optimizer_object_context_runtime",
+        "optimizer_prefix_relocation",
+        "optimizer_prefix_relocation_runtime",
+        "optimizer_safety",
+        "source_prefix_string_runtime",
+        "stdlib_adoption_runtime",
+        "stdlib_surface_manifest",
+        "string_operations_runtime",
+        "unordered_map"
+      ],
+      "contributions": [
+        "c4c473f6128948164b2d57078fd3cd686db76c83"
+      ],
+      "merge": "c4c473f6128948164b2d57078fd3cd686db76c83"
+    },
+    {
+      "task": "dynamic-json",
+      "pr": 122,
+      "head": "477028c1f479e25ff7a7196c43acc7a8700ea1d3",
+      "tests": [
+        "cmake_test_ownership",
+        "compiler_pipeline",
+        "json_dynamic_runtime",
+        "json_runtime",
+        "optimized_test_compiler_policy",
+        "partitioned_test_protocol",
+        "plan_checks",
+        "source_text_pipeline",
+        "stdlib_module_boundaries",
+        "stdlib_modules",
+        "stdlib_surface_context_controls",
+        "stdlib_surface_manifest",
+        "test_case_jobs",
+        "test_ownership_map",
+        "test_throughput_registration"
+      ],
+      "contributions": [
+        "f102842021559969b4eb9525e3bcb290827ff299"
+      ],
+      "merge": "f102842021559969b4eb9525e3bcb290827ff299"
+    },
+    {
+      "task": "removal-algorithms",
+      "pr": 124,
+      "head": "01665b5eb36dbaba2efa187173eacbea2a596117",
+      "tests": [
+        "associative_map",
+        "cmake_test_ownership",
+        "compiler_pipeline",
+        "complete_containers",
+        "container_swap_runtime",
+        "documentation_index",
+        "forward_list_runtime",
+        "generic_algorithm_breadth_cpp20",
+        "generic_algorithm_breadth_cpp23",
+        "generic_algorithm_breadth_no_elide",
+        "generic_algorithm_breadth_sanitized",
+        "generic_algorithm_cluster",
+        "generic_algorithm_errors",
+        "map_mutable_entry_projection",
+        "mir_census_profile_controls",
+        "plan_checks",
+        "removal_algorithms",
+        "stdlib_module_boundaries",
+        "stdlib_modules",
+        "stdlib_surface_context_controls",
+        "stdlib_surface_manifest",
+        "test_case_jobs",
+        "test_ownership_map",
+        "test_throughput_registration",
+        "unordered_map"
+      ],
+      "contributions": [
+        "3e10c926e94ba080160bd11e9c98e229b54d8f48"
+      ],
+      "merge": "3e10c926e94ba080160bd11e9c98e229b54d8f48"
+    },
+    {
+      "task": "lambda-reference-returns",
+      "pr": 133,
+      "head": "b57f0f7526e3a3e9e574d5ddddeb070f73fbeabf",
+      "tests": [
+        "borrow_origin",
+        "borrow_origin_syntax",
+        "borrowing_callbacks_lsp",
+        "borrowing_callbacks_mir",
+        "borrowing_capture_semantics",
+        "lambda_formatting",
+        "lambda_reference",
+        "llvm_callable_execution"
+      ],
+      "contributions": [
+        "5bbd7991922fa4a53d791d2d1abca2f8348e3bc9"
+      ],
+      "merge": "5bbd7991922fa4a53d791d2d1abca2f8348e3bc9"
+    },
+    {
+      "task": "vector-contains",
+      "pr": 137,
+      "head": "0c6dacb41b49787e1cbe2d22dc2bd92f57be4634",
+      "tests": [
+        "complete_containers",
+        "llvm_readiness_collection_controls",
+        "stdlib_surface_context_controls",
+        "stdlib_surface_manifest"
+      ],
+      "contributions": [
+        "229a3e2eec311b35bab175a8a6af5cf0b35ce980"
+      ],
+      "merge": "229a3e2eec311b35bab175a8a6af5cf0b35ce980"
+    },
+    {
+      "task": "consuming-iteration",
+      "pr": 138,
+      "head": "42d338c2c50258da4242e6a0f2bb6a4c40a0c7a5",
+      "tests": [
+        "compiler_pipeline",
+        "consuming_range",
+        "consuming_range_cpp_boundary",
+        "consuming_range_lsp",
+        "consuming_range_runtime",
+        "consuming_receiver_types",
+        "generic_discovery",
+        "llvm_memory_contracts",
+        "llvm_memory_mechanisms",
+        "local_reference_inference",
+        "lsp_protocol",
+        "mir_full_expression",
+        "mir_program_initialization",
+        "mutable_range_runtime",
+        "object_lifetime_contract",
+        "object_relocation_runtime",
+        "optimizer_conformance",
+        "optimizer_safety",
+        "passive_range_temporary_runtime",
+        "raw_access_contract",
+        "readonly_range_over_mutable_result_runtime",
+        "reference_parameter_range_runtime",
+        "stdlib_surface_manifest",
+        "structural_relocation",
+        "structural_relocation_runtime",
+        "uninitialized_carrier_contract",
+        "user_dual_range_lifetime"
+      ],
+      "contributions": [
+        "e72ec14bab97c297e37c6a336d009c99a6725dbb"
+      ],
+      "merge": "e72ec14bab97c297e37c6a336d009c99a6725dbb"
+    },
+    {
+      "task": "constexpr-text-runtime",
+      "pr": 139,
+      "head": "2f892b753e1d2b6c02fa642442fb3c9af2d39b03",
+      "tests": [
+        "constexpr_text_runtime",
+        "llvm_class_execution",
+        "mir_program_initialization"
+      ],
+      "contributions": [
+        "207612dd2d4f8236dd4caa4388d4c14caf2d35ba"
+      ],
+      "merge": "207612dd2d4f8236dd4caa4388d4c14caf2d35ba"
+    },
+    {
+      "task": "max-element-comparator",
+      "pr": 141,
+      "head": "ed48598cadf32d259278a5b24338dd76b400a405",
+      "tests": [
+        "compiler_pipeline",
+        "generic_algorithm_breadth_cpp20",
+        "generic_algorithm_breadth_cpp23",
+        "generic_algorithm_breadth_no_elide",
+        "generic_algorithm_breadth_sanitized",
+        "generic_algorithm_cluster",
+        "generic_algorithm_errors",
+        "llvm_coverage_evidence",
+        "llvm_readiness_collection_controls",
+        "stdlib_modules",
+        "stdlib_surface_context_controls",
+        "stdlib_surface_manifest"
+      ],
+      "contributions": [
+        "3cace5a60e9478dae374f1b36e8d87577eb19ad3"
+      ],
+      "merge": "3cace5a60e9478dae374f1b36e8d87577eb19ad3"
+    },
+    {
+      "task": "lsp-recovery-latency",
+      "pr": 144,
+      "head": "57e8ef8cda37d3f43691f3c49c373c7f4f877971",
+      "tests": [
+        "code_snippets",
+        "compiler_pipeline",
+        "diagnostic_explanations",
+        "documentation_index",
+        "frontend_cache_invalidation",
+        "generic_method_tooling",
+        "include_suggestions",
+        "lsp_include_suggestions",
+        "lsp_protocol",
+        "lsp_repair_contract",
+        "macro_expansion_queries",
+        "module_queries",
+        "out_of_class_lsp",
+        "raw_pointer_audit_policy"
+      ],
+      "contributions": [
+        "0074a535d1be7977d4d9eb9bef436c00b0412418"
+      ],
+      "merge": "0074a535d1be7977d4d9eb9bef436c00b0412418"
+    },
+    {
+      "task": "carrier-temporary-member-call",
+      "pr": 168,
+      "head": "6d1a103c26a21c8540585986404b5c83ea76a42d",
+      "tests": [
+        "borrow_carrier_receivers",
+        "borrow_carrier_receivers_runtime",
+        "borrowed_receiver_carriers_regressions",
+        "carrier_reference_runtime",
+        "carrier_shell_references",
+        "cleanup_bound_borrow",
+        "cleanup_bound_borrow_runtime",
+        "compiler_pipeline",
+        "composable_io_runtime",
+        "cpp_mir_body_emitter_lifecycle",
+        "cursor_carrier_publication",
+        "ephemeral_carrier_mir",
+        "ephemeral_carrier_receiver_runtime",
+        "issue_147_stored_reference_field_read_runtime",
+        "retained_borrowed_call_result_runtime",
+        "temporary_argument_borrow_runtime"
+      ],
+      "contributions": [
+        "2817556d436756eb31ab7ba1199266d2bd76ae8c"
+      ],
+      "merge": "2817556d436756eb31ab7ba1199266d2bd76ae8c"
     }
   ],
   "removed": [],
