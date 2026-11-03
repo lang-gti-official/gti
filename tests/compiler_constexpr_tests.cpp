@@ -2691,7 +2691,7 @@ int main() { Table table = build(4); return table.total() + array_work(4) - 68; 
        "GTI-S2057"},
       {"constexpr void recurse(mut int& value) { "
        "if (value > 0) { value--; recurse(value); } } "
-       "constexpr int bad() { mut int value = 100; recurse(value); return "
+       "constexpr int bad() { mut int value = 600; recurse(value); return "
        "value; } "
        "constexpr int constant = bad();",
        "GTI-S2057"},
@@ -3801,11 +3801,13 @@ void testConstexprLibrary() {
         "constexpr int depth(int i) { std::chrono::nanoseconds n{int64_t(i)}; "
         "if (n.count() == int64_t(0)) { return 0; } return depth(i - 1); } "
         "constexpr int value = depth(100);"}) {
-    const auto invalid =
-        lang::Frontend(stepLimited())
-            .analyze("constexpr-chrono-invalid.gti",
-                     "import std.chrono;\n" + source,
-                     {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    // A 64-call depth keeps the recursion inside the small step budget, so
+    // it reaches the call-depth limit rather than the step limit.
+    lang::FrontendOptions limited = stepLimited();
+    limited.limits.constexprDepth = 64;
+    const auto invalid = lang::Frontend(limited).analyze(
+        "constexpr-chrono-invalid.gti", "import std.chrono;\n" + source,
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
     expect(!invalid.canGenerateCode() &&
                hasDiagnosticCode(invalid.diagnostics, "GTI-S2057"),
            "chrono adoption preserves runtime-only clocks and shared constant "
@@ -5781,6 +5783,252 @@ int main() { return 0; }
          "concurrent global policy without a privileged exemption");
 }
 
+// A string-view recursive-descent scan that is exactly `frames` constexpr
+// calls deep: one per '(' plus the call that reads the terminator.
+std::string recursiveDescentSource(std::size_t frames) {
+  std::string text(frames - 1, '(');
+  text += 'x';
+  return "constexpr int32_t depth_of(std::string_view text, int32_t at) {\n"
+         "  if (text[at] == '(') { return depth_of(text, at + 1) + 1; }\n"
+         "  return 0;\n"
+         "}\n"
+         "static_assert(depth_of(\"" +
+         text + "\", 0) == " + std::to_string(frames - 1) +
+         ");\n"
+         "int main() { return 0; }\n";
+}
+
+// Integer recursion exactly `frames` constexpr calls deep. Unlike the text
+// scan, every frame stays small, so even the hard cap needs little memory.
+std::string integerRecursionSource(std::size_t frames) {
+  return "constexpr int32_t descend(int32_t n) {\n"
+         "  if (n == 0) { return 0; }\n"
+         "  return descend(n - 1) + 1;\n"
+         "}\n"
+         "static_assert(descend(" +
+         std::to_string(frames - 1) + ") == " + std::to_string(frames - 1) +
+         ");\n"
+         "int main() { return 0; }\n";
+}
+
+// A user-defined accumulator whose constexpr constructor runs an ordinary
+// recursive constexpr function: `frames` nested calls including the
+// constructor's own.
+std::string recursiveConstructionSource(std::size_t frames) {
+  const std::string remaining = std::to_string(frames - 2);
+  return "constexpr int32_t count(int32_t remaining) {\n"
+         "  if (remaining == 0) { return 0; }\n"
+         "  return count(remaining - 1) + 1;\n"
+         "}\n"
+         "struct Tally {\n"
+         "  int32_t total;\n"
+         "  constexpr Tally(int32_t remaining) : total(count(remaining)) {}\n"
+         "};\n"
+         "constexpr int32_t total = Tally(" +
+         remaining + ").total;\n" + "static_assert(total == " + remaining +
+         ");\n" + "int main() { return 0; }\n";
+}
+
+// `levels` nested staged evaluations: each concrete instance's compile-time
+// branch needs the next instance's value before it can be analysed.
+std::string stagedChainSource(std::size_t levels) {
+  return "constexpr int32_t chain<uint64_t N>() {\n"
+         "  if constexpr (N == 0) { return 0; }\n"
+         "  else {\n"
+         "    if constexpr (chain<N - 1>() >= 0) { return int32_t(N); }\n"
+         "    else { return -1; }\n"
+         "  }\n"
+         "}\n"
+         "static_assert(chain<" +
+         std::to_string(levels - 1) + ">() == " + std::to_string(levels - 1) +
+         ");\n"
+         "int main() { return 0; }\n";
+}
+
+lang::FrontendResult analyzeWithLimits(const std::string &name,
+                                       const std::string &source,
+                                       lang::CompileLimits limits = {}) {
+  lang::FrontendOptions options;
+  options.limits = limits;
+  return lang::Frontend(options).analyze(
+      name, source, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+}
+
+bool depthExhausted(const lang::FrontendResult &result, std::size_t limit) {
+  return !result.semanticValid &&
+         hasDiagnosticCode(result.diagnostics, "GTI-S2057") &&
+         hasDiagnostic(result.diagnostics, "call depth exceeded") &&
+         hasDiagnosticHint(result.diagnostics,
+                           "The limit is " + std::to_string(limit) +
+                               "; raise it with '--constexpr-depth <n>' or "
+                               "with 'constexpr-depth = <n>'") &&
+         !hasDiagnosticCode(result.diagnostics, "GTI-B0001");
+}
+
+std::string diagnosticText(const std::vector<lang::Diagnostic> &diagnostics) {
+  std::string text;
+  for (const lang::Diagnostic &diagnostic : diagnostics) {
+    text += diagnostic.code + " " + std::to_string(diagnostic.primary.start) +
+            "-" + std::to_string(diagnostic.primary.end) + " " +
+            diagnostic.message + "\n";
+    for (const auto &related : diagnostic.related)
+      text += "  " + std::to_string(related.span.start) + " " +
+              related.message + "\n";
+    for (const auto &hint : diagnostic.hints)
+      text += "  hint " + hint + "\n";
+  }
+  return text;
+}
+
+void testConfigurableCompileTimeDepth() {
+  const lang::CompileLimits defaults;
+  expect(defaults.constexprDepth == 512 &&
+             lang::compileLimitInfo(&lang::CompileLimits::constexprDepth)
+                     .guaranteedMinimum == 512 &&
+             lang::compileLimitInfo(&lang::CompileLimits::constexprDepth)
+                     .maximum == 16384,
+         "constexpr depth defaults to C++'s 512 recursive invocations with a "
+         "16384 hard cap");
+
+  // The default admits exactly 512 nested calls, by function and through a
+  // constexpr constructor.
+  expect(analyzeWithLimits("depth-512.gti", recursiveDescentSource(512))
+             .canGenerateCode(),
+         "a 512-deep string-view recursive descent fits the default limit");
+  expect(
+      depthExhausted(
+          analyzeWithLimits("depth-513.gti", recursiveDescentSource(513)), 512),
+      "the 513th nested call reports the limit, its value and how to "
+      "raise it");
+  expect(analyzeWithLimits("ctor-512.gti", recursiveConstructionSource(512))
+             .canGenerateCode(),
+         "a constexpr constructor shares the 512-call default");
+  expect(depthExhausted(analyzeWithLimits("ctor-513.gti",
+                                          recursiveConstructionSource(513)),
+                        512),
+         "constructor-driven recursion stops at the same limit");
+
+  // The configured value is the limit, lowered or raised.
+  lang::CompileLimits shallow;
+  shallow.constexprDepth = 16;
+  expect(analyzeWithLimits("depth-16.gti", recursiveDescentSource(16), shallow)
+             .canGenerateCode(),
+         "a lowered limit still admits exactly its own depth");
+  expect(depthExhausted(analyzeWithLimits("depth-17.gti",
+                                          recursiveDescentSource(17), shallow),
+                        16),
+         "a lowered limit rejects one call more and names its value");
+  lang::CompileLimits deep;
+  deep.constexprDepth = 2048;
+  expect(analyzeWithLimits("depth-2048.gti", integerRecursionSource(2048), deep)
+             .canGenerateCode(),
+         "a raised limit admits recursion deeper than the default");
+  expect(depthExhausted(analyzeWithLimits("depth-2049.gti",
+                                          integerRecursionSource(2049), deep),
+                        2048),
+         "a raised limit is still a limit");
+
+  // The hard cap is reachable: depth depends on the configured value, never
+  // on the host thread's stack.
+  lang::CompileLimits capped;
+  capped.constexprDepth = 16384;
+  const std::size_t segmentsBefore = lang::nativeStackSegmentsEntered();
+  expect(
+      analyzeWithLimits("depth-cap.gti", integerRecursionSource(16384), capped)
+          .canGenerateCode(),
+      "recursion at the 16384-call hard cap completes");
+  expect(lang::nativeStackSegmentsEntered() > segmentsBefore,
+         "the hard cap needs more native stack than one thread provides, so "
+         "evaluation really continued on fresh segments");
+  expect(
+      depthExhausted(analyzeWithLimits("depth-over-cap.gti",
+                                       integerRecursionSource(16385), capped),
+                     16384),
+      "the hard cap itself is enforced");
+
+  // Nested staged analysis counts toward the same limit.
+  lang::CompileLimits staged;
+  staged.constexprDepth = 24;
+  expect(analyzeWithLimits("staged-24.gti", stagedChainSource(24), staged)
+             .canGenerateCode(),
+         "24 nested staged evaluations fit a 24-call limit");
+  const auto stagedOver =
+      analyzeWithLimits("staged-25.gti", stagedChainSource(25), staged);
+  expect(!stagedOver.semanticValid &&
+             hasDiagnosticCode(stagedOver.diagnostics, "GTI-S2057") &&
+             !hasDiagnosticCode(stagedOver.diagnostics, "GTI-B0001"),
+         "nested staged evaluation shares the call-depth limit");
+}
+
+// A segment switch is invisible: forcing one at every recursion boundary
+// (constant-evaluation calls, staged analysis, macro expansion, HIR and MIR
+// lowering of expanded bodies) yields byte-identical MIR and diagnostics.
+void testNativeStackSegmentsAreInvisible() {
+  std::string macros = "#macro int32_t m0(int32_t v) { return v + 1; }\n";
+  for (int level = 1; level < 24; ++level)
+    macros += "#macro int32_t m" + std::to_string(level) +
+              "(int32_t v) { return m" + std::to_string(level - 1) +
+              "(v) + 1; }\n";
+  const std::string valid = macros +
+                            stagedChainSource(12).substr(
+                                0, stagedChainSource(12).find("int main()")) +
+                            "constexpr int32_t fold(int32_t n) {\n"
+                            "  if (n == 0) { return 0; }\n"
+                            "  return fold(n - 1) + n;\n"
+                            "}\n"
+                            "static_assert(fold(200) == 20100);\n"
+                            "int main() { return m23(0) - 24; }\n";
+  const std::string invalid = recursiveDescentSource(300);
+  lang::CompileLimits limits;
+  limits.constexprDepth = 256;
+  const auto run = [&](const std::string &name, const std::string &source) {
+    const auto result = analyzeWithLimits(name, source, limits);
+    return std::pair{lang::MirPrinter().print(result.mir),
+                     diagnosticText(result.diagnostics) +
+                         (result.canGenerateCode() ? "valid" : "invalid")};
+  };
+  const auto plain = run("segments.gti", valid);
+  const auto plainInvalid = run("segments-invalid.gti", invalid);
+  expect(plain.second == "valid" && !plain.first.empty(),
+         "the segment-switch program is valid: " + plain.second);
+  expect(plainInvalid.second.find("call depth exceeded") != std::string::npos,
+         "the invalid program reaches the configured call-depth limit");
+
+  const lang::NativeStackPolicy previous = lang::setNativeStackPolicyForTesting(
+      {.headroom = std::size_t{1} << 40, .segment = std::size_t{4} << 20});
+  const std::size_t segmentsBefore = lang::nativeStackSegmentsEntered();
+  const auto segmented = run("segments.gti", valid);
+  const auto segmentedInvalid = run("segments-invalid.gti", invalid);
+  const std::size_t segments =
+      lang::nativeStackSegmentsEntered() - segmentsBefore;
+  lang::setNativeStackPolicyForTesting(previous);
+  expect(segments > 200,
+         "the forced policy switched segments at every boundary");
+  expect(segmented.first == plain.first,
+         "segment switches leave the produced MIR byte-identical");
+  expect(segmented.second == plain.second &&
+             segmentedInvalid.second == plainInvalid.second,
+         "segment switches leave diagnostics byte-identical");
+
+  // Errors raised on a segment reach the caller with their identity, through
+  // nested segments.
+  struct Raised {
+    int value;
+  };
+  const auto forced = lang::setNativeStackPolicyForTesting(
+      {.headroom = std::size_t{1} << 40, .segment = std::size_t{1} << 20});
+  int caught = 0;
+  try {
+    lang::withSufficientStack([] {
+      return lang::withSufficientStack([]() -> int { throw Raised{7}; });
+    });
+  } catch (const Raised &raised) {
+    caught = raised.value;
+  }
+  lang::setNativeStackPolicyForTesting(forced);
+  expect(caught == 7, "an exception thrown on a nested segment propagates");
+}
+
 void testCompileTimeConditionals() {
   lang::Lexer lexer;
   const std::string source = R"(
@@ -6659,9 +6907,13 @@ int main() { return recurse(0); }
   expect(!exhausted.semanticValid &&
              hasDiagnosticCode(exhausted.diagnostics, "GTI-S2057") &&
              hasDiagnosticHint(exhausted.diagnostics,
-                               "shared step or call-depth limit"),
+                               "constexpr call depth exceeded the request's "
+                               "limit of 512 nested calls while executing "
+                               "'recurse'") &&
+             hasDiagnosticHint(exhausted.diagnostics,
+                               "raise it with '--constexpr-depth <n>'"),
          "immediate recursion preserves the bounded evaluator and reports "
-         "its shared resource limit");
+         "its call-depth limit, its value and how to raise it");
 }
 
 void testConstevalStatementCompletion() {
@@ -6856,6 +7108,9 @@ constexpr NamedTest kTests[] = {
     {"testStaticStorageAndMembers", testStaticStorageAndMembers},
     {"testConcurrentGlobalPolicy", testConcurrentGlobalPolicy},
     {"testCompileTimeConditionals", testCompileTimeConditionals},
+    {"testConfigurableCompileTimeDepth", testConfigurableCompileTimeDepth},
+    {"testNativeStackSegmentsAreInvisible",
+     testNativeStackSegmentsAreInvisible},
 };
 
 } // namespace

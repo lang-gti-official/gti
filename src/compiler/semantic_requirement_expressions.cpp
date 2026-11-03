@@ -158,6 +158,8 @@ auto SemanticVisitor::Impl::unevaluatedExpressionWorker() const
   worker->nextExpansion = nextExpansion;
   worker->macroExpansionDepth = macroExpansionDepth;
   worker->macroExpandedBodies = macroExpandedBodies;
+  worker->macroOutermostInvocation = macroOutermostInvocation;
+  worker->macroLimitReported = macroLimitReported;
   worker->macroActiveBodies = macroActiveBodies;
   worker->semanticModel.beginSpeculativeDelta(semanticModel);
   worker->semanticModel.setFunctionDemandSink(nullptr);
@@ -741,8 +743,10 @@ auto SemanticVisitor::Impl::constraintPredicateSatisfied(
                 activeRequirementQueries.end(),
                 identity) != activeRequirementQueries.end())
     return reject("Constraint predicates contain a recursive query cycle.");
-  if (expressionRequirementDepth >= constexprCallDepthLimit)
-    return reject("Constraint predicates exceed the 64-query recursion limit.");
+  if (expressionRequirementDepth >= constraintQueryDepthLimit)
+    return reject("Constraint predicates exceed the " +
+                  std::to_string(constraintQueryDepthLimit) +
+                  "-query recursion limit.");
   ++expressionRequirementDepth;
   activeRequirementQueries.push_back(std::move(identity));
   struct PopDepth {

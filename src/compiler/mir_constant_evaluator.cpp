@@ -1,5 +1,6 @@
 #include "gti/mir_constant_evaluator.h"
 #include "gti/mir_verifier.h"
+#include "gti/support.h"
 #include "mir_verification_queries.h"
 
 #include <algorithm>
@@ -150,6 +151,8 @@ public:
 private:
   ConstantEvaluationFailure persistentValue(const ConstantValue &value,
                                             std::size_t depth = 0) {
+    if (nativeStackNearlyExhausted())
+      return onFreshNativeStack([&] { return persistentValue(value, depth); });
     const auto *node = std::get_if<ConstantAggregateValue>(&value);
     if (!node)
       return ConstantEvaluationFailure::None;
@@ -338,6 +341,15 @@ private:
                        "Constant MIR execution-step limit exceeded.");
     result.exhaustedLimit = &CompileLimits::constexprSteps;
     stepLimitReached = true;
+    return result;
+  }
+
+  // limits.callDepth is what remains of the request's configured depth after
+  // any enclosing staged evaluations; the caller names the configured value.
+  MirConstantEvaluation depthLimitFailure(const Frame &frame) {
+    auto result = fail(frame, ConstantEvaluationFailure::ResourceLimit,
+                       "The constexpr call depth exceeded the compiler limit.");
+    result.exhaustedLimit = &CompileLimits::constexprDepth;
     return result;
   }
 
@@ -663,6 +675,9 @@ private:
   ConstantEvaluationFailure measureValue(const ConstantValue &value,
                                          std::size_t &units,
                                          std::size_t depth = 0) {
+    if (nativeStackNearlyExhausted())
+      return onFreshNativeStack(
+          [&] { return measureValue(value, units, depth); });
     if (depth >= limits.callDepth || !charge(1) || units >= limits.heapUnits)
       return ConstantEvaluationFailure::ResourceLimit;
     ++units;
@@ -1129,10 +1144,15 @@ private:
 
   MirConstantEvaluation destroy(const MirDropType &recipe, Location location,
                                 Frame &caller, std::size_t depth) {
+    if (nativeStackNearlyExhausted())
+      return onFreshNativeStack(
+          [&] { return destroy(recipe, location, caller, depth); });
     if (!recipe.requiresActiveCleanup)
       return {};
-    if (!charge(1) || depth >= limits.callDepth)
+    if (!charge(1))
       return fail(caller, ConstantEvaluationFailure::ResourceLimit);
+    if (depth >= limits.callDepth)
+      return depthLimitFailure(caller);
     if (!storageType(recipe.type) || recipe.polymorphicCleanup ||
         recipe.recursiveCleanup || recipe.lambdaInstance)
       return fail(caller, ConstantEvaluationFailure::UnsupportedType,
@@ -2072,6 +2092,16 @@ private:
               std::optional<Location> receiverOrigin = {},
               AccessMode receiverAccess = AccessMode::ReadOnly,
               std::optional<Location> *referenceResult = nullptr) {
+    // Every executed call, constructor and destructor body enters here, one
+    // native frame chain per nested call; the depth bound is limits.callDepth
+    // (CompileLimits::constexprDepth), never the host stack.
+    if (nativeStackNearlyExhausted())
+      return onFreshNativeStack([&] {
+        return executeBody(
+            body, address, returnType, parameterTypes, parameterBindings,
+            arguments, depth, std::move(receiver), argumentOrigins,
+            std::move(receiverOrigin), receiverAccess, referenceResult);
+      });
     Frame frame{
         .body = body,
         .address = address,
@@ -2087,10 +2117,8 @@ private:
         .receiver = std::move(receiver),
         .receiverOrigin = std::move(receiverOrigin),
         .receiverAccess = receiverAccess};
-    if (depth >= limits.callDepth) {
-      return fail(frame, ConstantEvaluationFailure::ResourceLimit,
-                  "The constexpr call depth exceeded the compiler limit.");
-    }
+    if (depth >= limits.callDepth)
+      return depthLimitFailure(frame);
     for (const auto &obligation : body.dropObligations) {
       frame.liveDrops[obligation.id] = obligation.initiallyActive;
       if (!storageType(obligation.dropType.type)) {

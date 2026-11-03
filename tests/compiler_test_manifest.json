@@ -758,6 +758,14 @@
       "suite": "constexpr"
     },
     {
+      "name": "testConfigurableCompileTimeDepth",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testNativeStackSegmentsAreInvisible",
+      "suite": "constexpr"
+    },
+    {
       "name": "testGenericAdvisorySoundness",
       "suite": "diagnostics"
     },

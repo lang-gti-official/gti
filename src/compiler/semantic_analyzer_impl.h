@@ -2127,7 +2127,15 @@ private:
     ConstexprEvaluation failure;
   };
 
-  static constexpr std::size_t constexprCallDepthLimit = 64;
+  // Fixed compiler work bounds on recursive semantic queries. They are not
+  // the configurable constant-evaluation call depth (CompileLimits) and do
+  // not change with it.
+  // Nested expression-requirement (constraint predicate) queries.
+  static constexpr std::size_t constraintQueryDepthLimit = 64;
+  // Transparent predicate calls traced to a trusted type-fact query.
+  static constexpr std::size_t predicateCapabilityDepthLimit = 64;
+  // Concrete class reanalyses one layout query may have open at once.
+  static constexpr std::size_t layoutAssertionDepthLimit = 64;
   // Concrete class instances one layout query may validate. A compiler work
   // bound on instance discovery, not a constant-evaluation step limit.
   static constexpr std::size_t layoutAssertionInstanceLimit = 4096;
@@ -5836,8 +5844,15 @@ private:
   const Call *macroStatementCall = nullptr;
   const ExpressionStmt *macroStatementContext = nullptr;
   std::unordered_set<const Expr *> macroProbeArguments;
+  // Active nested expansions, and the bodies expanded so far by the
+  // outermost written invocation that contains them
+  // (CompileLimits::macroDepth and ::macroExpansions).
   std::size_t macroExpansionDepth = 0;
   std::size_t macroExpandedBodies = 0;
+  // That outermost invocation, named by limit diagnostics, and whether it
+  // already reported exhausting a limit (reported once per invocation).
+  std::optional<SourceSpan> macroOutermostInvocation;
+  bool macroLimitReported = false;
   std::vector<std::pair<const FunctionDecl *, std::size_t>> macroActiveBodies;
   [[nodiscard]] const MacroLookupContext *
   macroContext(const Token &token) const;
@@ -5877,9 +5892,8 @@ private:
                         const std::vector<CompileTimeValue> &valueArguments);
   [[nodiscard]] bool validMacroBody(const Stmt &statement,
                                     std::size_t ownLoopDepth = 0) const;
-  static constexpr std::size_t kConstexprForElementLimit = 1024;
-  static constexpr std::size_t kConstexprForBodyLimit = 4096;
-  // Bodies expanded by `constexpr for` inside the declaration being analysed.
+  // Bodies expanded by `constexpr for` inside the declaration being analysed
+  // (CompileLimits::constexprForCopies).
   std::size_t constexprForExpandedBodies = 0;
 
   [[nodiscard]] bool isNumericLibraryUnit(SourceUnitId sourceUnit) const;

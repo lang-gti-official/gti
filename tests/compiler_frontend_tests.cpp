@@ -3236,6 +3236,26 @@ void testSupportFacilities() {
          "ending a time trace that was never started must fail cleanly");
   expect(lang::timeTraceAvailable() == lang::targetTripleParsingAvailable(),
          "LLVM-backed facilities should agree on availability");
+
+  // Recursion far deeper than any thread stack continues on fresh,
+  // guard-paged segments of the same thread.
+  struct Deep {
+    static std::size_t descend(std::size_t remaining) {
+      volatile char frame[512] = {};
+      frame[0] = static_cast<char>(remaining & 1);
+      if (remaining == 0)
+        return 0;
+      return lang::withSufficientStack(
+                 [remaining] { return descend(remaining - 1); }) +
+             static_cast<std::size_t>(static_cast<std::size_t>(frame[0]) ==
+                                      (remaining & 1));
+    }
+  };
+  const std::size_t segmentsBefore = lang::nativeStackSegmentsEntered();
+  expect(Deep::descend(100000) == 100000,
+         "boundary-guarded recursion completes far beyond one thread stack");
+  expect(lang::nativeStackSegmentsEntered() > segmentsBefore,
+         "that recursion really ran on additional stack segments");
 }
 
 void testConcreteCallableSemanticFailure() {

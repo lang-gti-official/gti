@@ -842,7 +842,10 @@ Completion keeps one worker. Every worker is a long-lived LLVM thread with an
 explicit 8 MiB stack. That avoids Darwin's 512 KiB secondary-thread default
 and ensures the compiler's bounded-depth recovery runs before native stack
 exhaustion in debug builds, without creating a new thread for every edit or
-completion request.
+completion request. Compile-time evaluation and macro expansion are not
+limited by that stack: like the compiler, a worker continues them on fresh
+stack segments of the same thread (see the frontend architecture), so editor
+analysis reaches exactly the configured compile-time limits.
 
 Editor analysis requests `FrontendOptions::stopAfter = Hir`. HIR is the
 compiler-owned discovery point for concrete generic instances, so stopping at
