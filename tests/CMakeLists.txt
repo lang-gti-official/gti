@@ -5927,6 +5927,7 @@ if(Python3_Interpreter_FOUND)
               "${PROJECT_SOURCE_DIR}/tests/fixtures/managed_thread_class_result.gti"
               "$<TARGET_FILE:gti_llvm_instrumented_source>"
               "${LLVM_TOOLS_BINARY_DIR}/clang++"
+              "${CMAKE_CXX_COMPILER}"
     )
     set_tests_properties(managed_thread_tsan PROPERTIES TIMEOUT 300)
     foreach(fixture shared_mutex_threads transfer_function_threads
@@ -5941,6 +5942,7 @@ if(Python3_Interpreter_FOUND)
                 "${PROJECT_SOURCE_DIR}/tests/fixtures/${fixture}.gti"
                 "$<TARGET_FILE:gti_llvm_instrumented_source>"
                 "${LLVM_TOOLS_BINARY_DIR}/clang++"
+                "${CMAKE_CXX_COMPILER}"
       )
       set_tests_properties(${fixture}_tsan PROPERTIES TIMEOUT 300)
     endforeach()
@@ -5971,6 +5973,7 @@ if(Python3_Interpreter_FOUND)
               "${PROJECT_SOURCE_DIR}/tests/atomic_tsan_test.py"
               "$<TARGET_FILE:gti_llvm_instrumented_source>"
               "${LLVM_TOOLS_BINARY_DIR}/clang++"
+              "${CMAKE_CXX_COMPILER}"
               "${PROJECT_SOURCE_DIR}/tests/fixtures/atomic_concurrent.gti"
               "${PROJECT_SOURCE_DIR}/tests/fixtures/atomic_orders.gti"
               "${PROJECT_SOURCE_DIR}/tests/fixtures/atomic_fetch.gti"
@@ -5993,6 +5996,7 @@ if(Python3_Interpreter_FOUND)
               "${PROJECT_SOURCE_DIR}/tests/mutex_tsan_test.py"
               "$<TARGET_FILE:gti_llvm_instrumented_source>"
               "${LLVM_TOOLS_BINARY_DIR}/clang++"
+              "${CMAKE_CXX_COMPILER}"
               "${PROJECT_SOURCE_DIR}/tests/fixtures/mutex_concurrent.gti"
     )
     set_tests_properties(mutex_tsan PROPERTIES TIMEOUT 300)
