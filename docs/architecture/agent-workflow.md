@@ -198,7 +198,7 @@ one-minute test to seventeen minutes and made timing-sensitive LSP tests
 flake, so every worktree and session of a repository shares one window:
 
 ```sh
-python3 scripts/build_window.py --kind suite -- ctest --test-dir build-release -j 12 --test-load 12
+python3 scripts/build_window.py --kind suite -- ctest --test-dir build-release -j 12 --test-load 12 -LE cpp-backend
 python3 scripts/build_window.py --kind build -- cmake --build build-release -j 8
 python3 scripts/build_window.py --status
 ```
@@ -358,7 +358,7 @@ use the **same directory and counts**; for the Mini:
 
 ```sh
 GTI_BUILD_WINDOW_DIR=/private/tmp/gti-remote-runner/window python3 scripts/build_window.py --kind build -- cmake --build build-release -j 6
-GTI_BUILD_WINDOW_DIR=/private/tmp/gti-remote-runner/window python3 scripts/build_window.py --kind suite -- ctest --test-dir build-release -j 12 --test-load 12
+GTI_BUILD_WINDOW_DIR=/private/tmp/gti-remote-runner/window python3 scripts/build_window.py --kind suite -- ctest --test-dir build-release -j 12 --test-load 12 -LE cpp-backend
 ```
 
 On Ubuntu, set `GTI_BUILD_WINDOW_DIR=/tmp/gti-remote-runner/window` and
@@ -714,7 +714,7 @@ advisory-CI policy. `.github/workflows/ci.yml` reports one required check,
 
 | Event | Mode | Jobs the gate requires |
 | --- | --- | --- |
-| `pull_request` (ready) | full | lint (formatting, release version, Tree-sitter), workflow regressions, and `fast` on macOS arm64 and Linux x64 (`feedback-fast`, `compiler_pipeline` and the PR's declared T0/T1 tests) |
+| `pull_request` (ready) | full | lint (formatting, release version, Tree-sitter), workflow regressions, and `fast` on macOS arm64 and Linux x64 (`feedback-fast` and the PR's declared T0/T1 tests on both; `compiler_pipeline` on Linux, where the platform-independent unit suites are proven once) |
 | `pull_request` (draft) | draft | lint and workflow regressions only; a draft cannot enter the queue |
 | `merge_group` | full | the same as a ready pull request: lint, workflow regressions and system-LLVM `fast` checks on the exact candidate (a bounded gate, as rustc and LLVM gate merges) |
 | `workflow_dispatch` on main | full | the same bounded gate, for recovery |
@@ -731,7 +731,15 @@ its failure opens the `cpp-backend` issue and never blocks the queue, full
 validation or a channel. Harness mode tables come from
 `tests/backend_modes.py`: `llvm-O0` and `llvm-O3` by default, `c++23 -O3` under
 `GTI_TEST_BACKENDS=cpp`. The C++-only CTest entries (`cpp_mir_*`,
-`cpp_debug_artifacts`, `lowered_program_corpus_census`) run only there.
+`cpp_debug_artifacts`, `lowered_program_corpus_census`) run only there; they
+carry the CTest label `cpp-backend`, which `test_throughput_registration`
+keeps equal to `CPP_ONLY_PREFIXES`. Local validation follows the same policy:
+a configured tree exports `GTI_TEST_BACKENDS` (`llvm` by default) to every
+harness, and broad local runs pass `-LE cpp-backend`. A C++-backend bug fix
+configures `-DGTI_TEST_BACKENDS=cpp` (or `both`), runs its harnesses and
+`-L cpp-backend` locally, and gets exact-candidate CI evidence by dispatching
+the weekly workflow on its branch (`gh workflow run cpp-backend.yml --ref
+<branch>`); the gate's declared-test re-run stays on the shipped backend.
 Four long aggregates (`compiler_pipeline`, `allocator_raw_audit_independence`,
 `body_analysis_order`, `instance_reuse`) are also registered as per-suite,
 per-source or corpus-partition entries; a sharded run executes the parts and

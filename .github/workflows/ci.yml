@@ -191,13 +191,21 @@ jobs:
       - name: Build
         # Keep going after a failure so one run reports every compile error.
         run: cmake --build build --parallel "${GTI_JOBS}" -- -k 0
-      - name: Run fast feedback and compiler pipeline
+      - name: Run fast feedback
         env:
           GTI_TEST_BACKENDS: llvm
         run: >-
           ctest --test-dir build --output-on-failure --no-tests=error
           --parallel "${GTI_TEST_JOBS}" -L feedback-fast
-          && ctest --test-dir build --output-on-failure --no-tests=error -R '^compiler_pipeline$'
+      - name: Run the compiler pipeline
+        # Frontend/MIR unit suites carry no platform dependence: Linux proves
+        # them once per candidate, and the macOS fast job stays with the
+        # feedback set and the declared tests.
+        if: matrix.platform == 'linux'
+        env:
+          GTI_TEST_BACKENDS: llvm
+        run: >-
+          ctest --test-dir build --output-on-failure --no-tests=error -R '^compiler_pipeline$'
       - name: Re-run the tests this pull request declares
         if: github.event_name == 'pull_request'
         # The body is untrusted: the script validates every name and passes

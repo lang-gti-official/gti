@@ -11377,7 +11377,7 @@ as the tests they inspect.
 python3 scripts/build_window.py --kind suite -- \
     ctest --test-dir build --parallel 4 --output-on-failure -L feedback-fast
 python3 scripts/build_window.py --kind suite -- \
-    ctest --test-dir build --parallel 4 --output-on-failure -L coverage-full
+    ctest --test-dir build --parallel 4 --output-on-failure -L coverage-full -LE cpp-backend
 python3 scripts/build_window.py --kind suite -- \
     python3 tests/owning_function_runtime_test.py build/gti --jobs 1
 ```
@@ -11397,7 +11397,7 @@ cmake -S . -B build -DGTI_TEST_CASE_JOBS=4
 python3 scripts/build_window.py --kind build -- \
     cmake --build build --parallel 12
 python3 scripts/build_window.py --kind suite -- \
-    ctest --test-dir build --parallel 12 --test-load 12 --output-on-failure
+    ctest --test-dir build --parallel 12 --test-load 12 --output-on-failure -LE cpp-backend
 ```
 
 `--test-load` makes CTest wait to start a test while the host's load average
