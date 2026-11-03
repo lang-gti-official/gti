@@ -2324,8 +2324,9 @@ private:
         next->kind == Kind::RightBracket || next->kind == Kind::RightBrace ||
         next->kind == Kind::Colon ||
         (next->kind == Kind::Operator &&
-         (next->text == "||" || next->text == "==" || next->text == "!=" ||
-          next->text == "?"))) {
+         (next->text == "&&" || next->text == "||" || next->text == "==" ||
+          next->text == "!=" || next->text == "?")) ||
+        next->text == "and" || next->text == "or") {
       return true;
     }
     if (next->kind == Kind::Operator &&

@@ -67,6 +67,7 @@ int main() {
   if (dispatch(integer) != -1) { return 6; }
   Box cloned = std::clone(box);
   if (cloned.read() != 7 || std::clone(integer) != 9) { return 7; }
+  if (!is_readable<Box>() || is_readable<int>()) { return 10; }
   bool ordinary = has_read<Box>;
   if (!ordinary || !identity(std::integral<int>)) { return 8; }
   int a = 1;

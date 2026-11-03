@@ -798,3 +798,13 @@ const immediateConversionRow = fixtureLines.findIndex((line) =>
   line.includes("consteval operator int()"),
 );
 requireCapture(immediateConversionRow, "consteval", "keyword.modifier");
+
+// Angle applications in Boolean expressions name concepts; explicit calls keep
+// the function capture. Both use the same type-argument highlighting as clauses.
+const conceptConditionCaptures = queryCaptures(
+  "highlights", path.join(__dirname, "concept_conditions.gti"));
+for (const [text, name] of [["sized", "type"], ["integral", "type"], ["invoke", "function.call"]]) {
+  if (!conceptConditionCaptures.some((capture) => capture.text === text && capture.name === name && capture.row === (text === "invoke" ? 2 : 1))) {
+    throw new Error(`Missing concept-condition @${name} capture for ${text}`);
+  }
+}

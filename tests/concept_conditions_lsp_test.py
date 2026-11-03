@@ -16,6 +16,7 @@ def main():
         "int main() { Box box{}; bool value = /* 😀 */ sized<Box>; "
         "return int(measure(box)); }\n"
         "static_assert(sized<Box> && !sized<int> || std::integral<int>);\n"
+        "static_assert(sized<Box> and std::integral<int> or sized<int>);\n"
     )
     with tempfile.TemporaryDirectory(prefix="gti-concept-conditions-lsp-") as directory:
         uri = (pathlib.Path(directory) / "main.gti").as_uri()
@@ -63,7 +64,7 @@ def main():
             assert location["uri"] == uri, definition
             assert location["range"]["start"] == lsp_position(source, source.index("sized")), definition
             references = request("textDocument/references", {**params, "context": {"includeDeclaration": True}})
-            assert len(references) == 5, references
+            assert len(references) == 7, references
             tokens = semantic_tokens_by_position(request("textDocument/semanticTokens/full", {
                 "textDocument": {"uri": uri}})["data"])
             pos = params["position"]
@@ -88,6 +89,7 @@ def main():
                 "textDocument": {"uri": uri}, "options": {"tabSize": 2, "insertSpaces": True}})
             formatted = edits[0]["newText"] if edits else source
             assert "sized<Box> && !sized<int> || std::integral<int>" in formatted, formatted
+            assert "sized<Box> and std::integral<int> or sized<int>" in formatted, formatted
             change(5, formatted)
             assert not diagnostics(5)
             edits_again = request("textDocument/formatting", {
