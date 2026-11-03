@@ -233,6 +233,12 @@ class Preview:
             # require all targets.
             steps[1]["argv"] = ["python3", "scripts/preview_build.py", "--source", ".",
                                 "--build", build, "--parallel", str(jobs)]
+            # preview_build reads the CMake file-API model. Request it before
+            # configuring, so a candidate whose own preview_build predates
+            # the reconfigure fallback still finds a reply.
+            query = build + "/.cmake/api/v1/query"
+            steps[:0] = [{"kind": "build", "argv": ["cmake", "-E", "make_directory", query]},
+                         {"kind": "build", "argv": ["cmake", "-E", "touch", query + "/codemodel-v2"]}]
         steps.append({"kind": "suite", "argv": ["python3", "scripts/preview_examples.py", build,
                                                  *["--focused=" + name for name in focused]]})
         for index, step in enumerate(steps):

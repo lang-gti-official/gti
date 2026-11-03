@@ -342,7 +342,11 @@ class PreviewTests(unittest.TestCase):
         _, executed = self.verify(seed)
         # The example gate's checks name C++ unit binaries; preview_build
         # selects them with the installed toolchain products.
-        self.assertEqual(executed[1], ["python3", "scripts/preview_build.py", "--source", ".",
+        self.assertEqual(executed[:2], [
+            ["cmake", "-E", "make_directory", "out/preview-build/.cmake/api/v1/query"],
+            ["cmake", "-E", "touch", "out/preview-build/.cmake/api/v1/query/codemodel-v2"]])
+        self.assertEqual(executed[2][:2], ["cmake", "-S"])
+        self.assertEqual(executed[3], ["python3", "scripts/preview_build.py", "--source", ".",
                                       "--build", "out/preview-build", "--parallel", "4"])
         self.feature()
         feature = self.prepare()
