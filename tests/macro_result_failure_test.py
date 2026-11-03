@@ -6,6 +6,7 @@ import os
 import pathlib
 import subprocess
 import tempfile
+from backend_modes import is_cpp_mode, keep_cpp, native_modes
 
 
 def main():
@@ -46,25 +47,19 @@ def main():
         (5, 70, "created\nlocal\nreceived\nresult\nouter\n" +
          failure("result-cleanup-panic", "result cleanup")),
     ]
-    modes = [(f"cpp{standard}-O{level}", f"c++{standard}", f"-O{level}", [])
-             for standard in (20, 23) for level in (0, 3)]
-    modes += [
-        ("no-elide", "c++23", "-O0", ["-fno-elide-constructors"]),
-        ("sanitized", "c++23", "-O1", ["-fsanitize=address,undefined",
-                                         "-fno-omit-frame-pointer"]),
-    ]
+    modes = native_modes()
     if arguments.quick:
         modes = modes[:1]
     with tempfile.TemporaryDirectory(prefix="gti-macro-result-failure-") as temporary:
-        for name, standard, optimization, native in modes:
+        for name, flags, native in modes:
             binary = pathlib.Path(temporary) / name
-            command = [str(arguments.compiler.resolve()), str(source), "--std", standard,
-                       optimization, "--keep-cpp", "-o", str(binary), "--", *native]
+            command = [str(arguments.compiler.resolve()), str(source), *flags, *keep_cpp(flags), "-o", str(binary), "--", *native]
             built = subprocess.run(command, capture_output=True, text=True,
                                    env=environment, timeout=180)
             assert built.returncode == 0, (command, built.stdout, built.stderr)
-            generated = binary.with_suffix(".gti.cpp").read_text()
-            assert "// GTI verified-MIR body:" in generated
+            if is_cpp_mode(flags):
+                generated = binary.with_suffix(".gti.cpp").read_text()
+                assert "// GTI verified-MIR body:" in generated
             for mode, status, trace in cases:
                 ran = subprocess.run([str(binary), *(["mode"] * mode)],
                                      capture_output=True, text=True,

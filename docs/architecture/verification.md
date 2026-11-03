@@ -26,6 +26,23 @@ full validation proves the complete inventory on Linux x64 and the `darwin`
 set on macOS arm64 (what differs on the platform) before the change can
 reach nightly; the deprecated C++ backend is proven weekly at `c++23 -O3`.
 
+Runtime harnesses take their modes from `tests/backend_modes.py`
+(`native_modes()`: `llvm-O0` and `llvm-O3` under the default
+`GTI_TEST_BACKENDS=llvm`, `cpp-c++23-O3` under `cpp`, all three under `both`)
+and never spell `--std`, `--backend cpp` or a bare `--keep-cpp` themselves.
+Assertions on the emitted C++ text run only for modes where `is_cpp_mode(flags)`
+holds, with `keep_cpp(flags)` requesting the text; `cpp_text_modes()` serves
+`--emit-cpp` probes, and `cpp_variant_mode` a harness's own C++-text variant
+such as a thread-sanitizer run. A fixture the LLVM backend cannot execute is
+declared, never skipped: `llvm_unsupported` (mirroring `cpp_unsupported` in
+`lambda_pack_invocation_runtime_test.main`) asserts the exact rejection, or
+that a filed bug symptom still reproduces, while the C++ profile keeps the
+fixture's execution evidence. `execution_coverage` inventories every registered
+harness that receives `gti`, runs the shared main's `--list-modes` plan under
+the default policy, rejects a hard-coded backend spelling outside its named
+contract allowlist, and so fails whenever a fixture would lose its last
+execution mode.
+
 ## Owned inline consumption (unreleased)
 
 The user-facing slice is allocation-free small once-invoked callbacks and

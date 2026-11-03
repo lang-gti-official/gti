@@ -5,6 +5,12 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from backend_modes import check_unsupported, native_modes, unsupported
+
+# The LLVM backend rejects the bridge fixture's raw unsafe operation; the C++
+# profile keeps its execution evidence (tests/backend_modes.py).
+LLVM_UNSUPPORTED = ("executable LLVM lowering is not implemented yet for "
+                    "UnsafeOperationKind.Raw")
 
 
 def run(command, *, cwd=None, expected=0):
@@ -401,44 +407,35 @@ extern "C" NativePoint cpp_apply_offset(NativePoint value, Offset offset) {
             ]
         )
 
-        for optimization in ("-O0", "-O3"):
-            for standard in ("c++20", "c++23"):
-                cpp_object = temp / f"bridge-{standard}.o"
-                run(
-                    [
-                        cpp_compiler,
-                        f"-std={standard}",
-                        "-O2",
-                        *include_arguments,
-                        "-c",
-                        cpp_path,
-                        "-o",
-                        cpp_object,
-                    ]
+        for mode, flags, _native in native_modes():
+            cpp_object = temp / f"bridge-{mode}.o"
+            run(
+                [
+                    cpp_compiler,
+                    "-std=c++23",
+                    "-O2",
+                    *include_arguments,
+                    "-c",
+                    cpp_path,
+                    "-o",
+                    cpp_object,
+                ]
+            )
+            suffix = ".exe" if os.name == "nt" else ""
+            binary = temp / f"bridge-{mode}{suffix}"
+            command = [str(part) for part in (gti, source_path, *flags, "-o", binary, "--", c_object, cpp_object)]
+            limitation = unsupported("bridge", flags, llvm_unsupported=LLVM_UNSUPPORTED)
+            if limitation:
+                built = subprocess.run(command, cwd=root, capture_output=True, text=True, check=False)
+                check_unsupported(built, limitation, "bridge", mode, flags)
+                continue
+            run(command, cwd=root)
+            executed = run([binary])
+            if executed.stdout != "native C/C++ bridge header passed\n":
+                raise RuntimeError(
+                    f"unexpected output for {mode}: "
+                    f"{executed.stdout!r}"
                 )
-                suffix = ".exe" if os.name == "nt" else ""
-                binary = temp / f"bridge-{optimization[2:]}-{standard}{suffix}"
-                run(
-                    [
-                        gti,
-                        source_path,
-                        optimization,
-                        "--std",
-                        standard,
-                        "-o",
-                        binary,
-                        "--",
-                        c_object,
-                        cpp_object,
-                    ],
-                    cwd=root,
-                )
-                executed = run([binary])
-                if executed.stdout != "native C/C++ bridge header passed\n":
-                    raise RuntimeError(
-                        f"unexpected output for {optimization}/{standard}: "
-                        f"{executed.stdout!r}"
-                    )
 
     print("GTI generated native header passed C17 and C++20/C++23 oracles.")
 

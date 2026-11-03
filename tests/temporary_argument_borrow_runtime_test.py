@@ -4,6 +4,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -256,66 +257,61 @@ int main() {
         source = root / "temporary-argument.gti"
         source.write_text(source_text, encoding="utf8")
 
-        for standard in ("c++20", "c++23"):
-            for optimization in ("O0", "O3"):
-                executable = root / f"temporary-argument-{standard}-{optimization}"
+        for mode, flags, native in native_modes():
+            executable = root / f"temporary-argument-{mode}"
+            built = run(
+                [
+                    str(compiler),
+                    str(source),
+                    *flags,
+                    "-o",
+                    str(executable),
+                ]
+            )
+            if built.returncode != 0:
+                return fail(built)
+            executed = run([str(executable)])
+            if executed.returncode != 0:
+                sys.stderr.write(
+                    "temporary argument selection, order, or cleanup failed "
+                    f"for {mode}: "
+                    f"exit={executed.returncode} stdout={executed.stdout!r} "
+                    f"stderr={executed.stderr!r}\n"
+                )
+                return 1
+
+            for label, failure_source_text, cleanup_started in failure_cases:
+                failure_source = root / f"{label}.gti"
+                failure_source.write_text(failure_source_text, encoding="utf8")
+                failure_executable = root / f"{label}-{mode}"
                 built = run(
                     [
                         str(compiler),
-                        str(source),
-                        "--std",
-                        standard,
-                        f"-{optimization}",
+                        str(failure_source),
+                        *flags,
                         "-o",
-                        str(executable),
+                        str(failure_executable),
                     ]
                 )
                 if built.returncode != 0:
                     return fail(built)
-                executed = run([str(executable)])
-                if executed.returncode != 0:
+                executed = run([str(failure_executable)])
+                observed_cleanup = (
+                    "GTI-R0014" in executed.stderr
+                    and "failure_during_cleanup" in executed.stderr
+                )
+                if (
+                    executed.returncode != 70
+                    or observed_cleanup != cleanup_started
+                    or "GTI-R0001" not in executed.stderr
+                ):
                     sys.stderr.write(
-                        "temporary argument selection, order, or cleanup failed "
-                        f"for {standard} {optimization}: "
+                        f"{label} did not preserve temporary argument "
+                        f"activation and cleanup for {mode}: "
                         f"exit={executed.returncode} stdout={executed.stdout!r} "
                         f"stderr={executed.stderr!r}\n"
                     )
                     return 1
-
-                for label, failure_source_text, cleanup_started in failure_cases:
-                    failure_source = root / f"{label}.gti"
-                    failure_source.write_text(failure_source_text, encoding="utf8")
-                    failure_executable = root / f"{label}-{standard}-{optimization}"
-                    built = run(
-                        [
-                            str(compiler),
-                            str(failure_source),
-                            "--std",
-                            standard,
-                            f"-{optimization}",
-                            "-o",
-                            str(failure_executable),
-                        ]
-                    )
-                    if built.returncode != 0:
-                        return fail(built)
-                    executed = run([str(failure_executable)])
-                    observed_cleanup = (
-                        "GTI-R0014" in executed.stderr
-                        and "failure_during_cleanup" in executed.stderr
-                    )
-                    if (
-                        executed.returncode != 70
-                        or observed_cleanup != cleanup_started
-                        or "GTI-R0001" not in executed.stderr
-                    ):
-                        sys.stderr.write(
-                            f"{label} did not preserve temporary argument "
-                            f"activation and cleanup for {standard} {optimization}: "
-                            f"exit={executed.returncode} stdout={executed.stdout!r} "
-                            f"stderr={executed.stderr!r}\n"
-                        )
-                        return 1
 
     return 0
 

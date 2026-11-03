@@ -9,6 +9,7 @@ import statistics
 import subprocess
 import tempfile
 import time
+from backend_modes import is_cpp_mode, keep_cpp, native_modes
 
 
 def main():
@@ -27,11 +28,7 @@ def main():
         return subprocess.run(command, env=environment, capture_output=True,
                               text=True, timeout=timeout)
 
-    modes = [(f"{standard}-{level}", [f"-{level}", "--std", standard], [])
-             for standard in ("c++20", "c++23") for level in ("O0", "O1", "O3")]
-    modes += [("no-elide", ["-O0", "--std", "c++23"], ["-fno-elide-constructors"]),
-              ("sanitized", ["-O1", "--std", "c++23"],
-               ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])]
+    modes = native_modes()
     if options.mode:
         unknown = set(options.mode) - {mode[0] for mode in modes}
         assert not unknown, f"unknown modes: {sorted(unknown)}"
@@ -46,13 +43,14 @@ def main():
                             "forward_list_raw_node_projection"):
                 source = repository / "tests/fixtures" / f"{fixture}.gti"
                 binary = directory / f"{fixture}-{name}"
-                command = [str(compiler), str(source), *flags, "--keep-cpp", "-o", str(binary)]
+                command = [str(compiler), str(source), *flags, *keep_cpp(flags), "-o", str(binary)]
                 if native:
                     command += ["--", *native]
                 result = run(command)
                 assert result.returncode == 0, (name, fixture, result.stdout, result.stderr)
-                emitted = binary.with_suffix(".gti.cpp").read_text()
-                assert "// GTI verified-MIR body:" in emitted
+                if is_cpp_mode(flags):
+                    emitted = binary.with_suffix(".gti.cpp").read_text()
+                    assert "// GTI verified-MIR body:" in emitted
                 arguments = range(5) if fixture.endswith("failure") else range(1)
                 for count in arguments:
                     result = run([str(binary), *(["fail"] * count)], timeout=30)
@@ -77,9 +75,10 @@ def main():
         if not options.semantic_only:
             binary = directory / "forward-list-cost"
             started = time.monotonic()
+            cost_flags = native_modes(levels=("O3",))[0][1]
             result = run([
                 str(compiler), str(repository / "tests/fixtures/forward_list_iterator_cost.gti"),
-                "-O3", "--std", "c++23", "--keep-cpp", "-o", str(binary), "--",
+                *cost_flags, *keep_cpp(cost_flags), "-o", str(binary), "--",
                 str(repository / "tests/fixtures/stdlib_adoption_allocation_counts.cpp"),
                 str(repository / "tests/fixtures/forward_list_iterator_cost.cpp"),
             ])
@@ -101,7 +100,8 @@ def main():
             print(f"forward-list cost: 128={small}ns, 256={large}ns, "
                   f"ratio={large / small:.3f}, 0 traversal allocations; "
                   f"binary={binary.stat().st_size} bytes, "
-                  f"C++={binary.with_suffix('.gti.cpp').stat().st_size} bytes, "
+                  + (f"C++={binary.with_suffix('.gti.cpp').stat().st_size} bytes, "
+                     if is_cpp_mode(cost_flags) else "") +
                   f"build={build_seconds:.3f}s", flush=True)
 
         prefix = """import std.forward_list;

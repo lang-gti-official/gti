@@ -4,6 +4,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from backend_modes import cpp_text_modes, is_cpp_mode, native_modes
 
 
 MARKER = "// GTI verified-MIR body: scalar-cfg-v1"
@@ -80,7 +81,7 @@ def failure_function_definition(generated: str, source_name: str) -> str:
     return function_definition(generated, f"{source_name}__gti_mir_failure")
 
 
-def validate_family(generated: str, optimization: str, standard: str) -> bool:
+def validate_family(generated: str, level: str, label: str) -> bool:
     # Only StaticTarget's initializer bodies and the empty module remain structural
     # invariants; function coverage is checked by exact source name below so
     # unrelated prelude additions do not create count churn.
@@ -90,24 +91,24 @@ def validate_family(generated: str, optimization: str, standard: str) -> bool:
         or generated.count(f"{MARKER} module-instance") != 1
     ):
         sys.stderr.write(
-            f"{optimization}/{standard} did not select exactly the verified "
+            f"{level}/{label} did not select exactly the verified "
             "scalar MIR bodies plus the initializer and module markers\n"
         )
         return False
     for name in UNREACHABLE:
         if function_definition(generated, name) or failure_function_definition(generated, name):
-            sys.stderr.write(f"{optimization}/{standard} emitted unreachable body {name}\n")
+            sys.stderr.write(f"{level}/{label} emitted unreachable body {name}\n")
             return False
     for name in SELECTED:
         if MARKER not in function_definition(generated, name):
             sys.stderr.write(
-                f"{optimization}/{standard} did not select {name} from MIR\n"
+                f"{level}/{label} did not select {name} from MIR\n"
             )
             return False
     for name in FAILURE_SELECTED:
         if FAILURE_MARKER not in failure_function_definition(generated, name):
             sys.stderr.write(
-                f"{optimization}/{standard} did not select {name} through "
+                f"{level}/{label} did not select {name} through "
                 "the explicit failure-form MIR ABI\n"
             )
             return False
@@ -115,7 +116,7 @@ def validate_family(generated: str, optimization: str, standard: str) -> bool:
             generated, name
         ):
             sys.stderr.write(
-                f"{optimization}/{standard} retained an ordinary wrapper "
+                f"{level}/{label} retained an ordinary wrapper "
                 f"for failure-form function {name}\n"
             )
             return False
@@ -123,7 +124,7 @@ def validate_family(generated: str, optimization: str, standard: str) -> bool:
         generated, "direct_cross_namespace"
     ):
         sys.stderr.write(
-            f"{optimization}/{standard} did not retain exact qualified "
+            f"{level}/{label} did not retain exact qualified "
             "cross-namespace target identity\n"
         )
         return False
@@ -142,64 +143,65 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="gti-mir-scalar-direct-") as temporary:
         root = pathlib.Path(temporary)
         emitted_by_mode: dict[tuple[str, str], str] = {}
-        for optimization in ("O0", "O1", "O3"):
-            for standard in ("c++20", "c++23"):
-                executable = root / f"direct-{optimization}-{standard}"
-                built = run(
-                    [
-                        str(compiler),
-                        str(source),
-                        f"-{optimization}",
-                        "--std",
-                        standard,
-                        "-o",
-                        str(executable),
-                    ]
-                )
-                if built.returncode != 0:
-                    return fail(built)
-                executed = run([str(executable)])
-                if executed.returncode != 0:
-                    return fail(executed)
+        for mode, flags, _native in native_modes():
+            executable = root / f"direct-{mode}"
+            built = run(
+                [
+                    str(compiler),
+                    str(source),
+                    *flags,
+                    "-o",
+                    str(executable),
+                ]
+            )
+            if built.returncode != 0:
+                return fail(built)
+            executed = run([str(executable)])
+            if executed.returncode != 0:
+                return fail(executed)
 
-                emitted = root / f"direct-{optimization}-{standard}.cpp"
-                emission = run(
-                    [
-                        str(compiler),
-                        str(source),
-                        f"-{optimization}",
-                        "--std",
-                        standard,
-                        "--emit-cpp",
-                        "-o",
-                        str(emitted),
-                    ]
-                )
-                if emission.returncode != 0:
-                    return fail(emission)
-                generated = emitted.read_text(encoding="utf8")
-                if not validate_family(generated, optimization, standard):
-                    return 1
-                emitted_by_mode[(optimization, standard)] = generated
-        for standard in ("c++20", "c++23"):
+        # The C++ text probes: every level of the C++ profile, for the
+        # per-level representation checks and the cross-level comparison.
+        for label, flags, _native in cpp_text_modes():
+            for level in ("O0", "O1", "O3"):
+                emitted = root / f"direct-{label}-{level}.cpp"
+                if is_cpp_mode(flags):
+                    emission = run(
+                        [
+                            str(compiler),
+                            str(source),
+                            *flags,
+                                f"-{level}",
+                            "--emit-cpp",
+                            "-o",
+                            str(emitted),
+                        ]
+                    )
+                    if emission.returncode != 0:
+                        return fail(emission)
+                    generated = emitted.read_text(encoding="utf8")
+                    if not validate_family(generated, level, label):
+                        return 1
+                    emitted_by_mode[(level, label)] = generated
+        for label, _flags, _native in cpp_text_modes():
             o0_literal = function_definition(
-                emitted_by_mode[("O0", standard)], "direct_literal"
+                emitted_by_mode[("O0", label)], "direct_literal"
             )
             o1_literal = function_definition(
-                emitted_by_mode[("O1", standard)], "direct_literal"
+                emitted_by_mode[("O1", label)], "direct_literal"
             )
             o3_literal = function_definition(
-                emitted_by_mode[("O3", standard)], "direct_literal"
+                emitted_by_mode[("O3", label)], "direct_literal"
             )
             if not o0_literal or o0_literal == o1_literal:
                 sys.stderr.write(
-                    f"O1/{standard} direct literal did not reflect its "
+                    f"O1/{label} direct literal did not reflect its "
                     "verified identity-fold rewrite\n"
                 )
                 return 1
             if not o1_literal or o1_literal != o3_literal:
                 sys.stderr.write(
-                    f"O1/O3 {standard} direct literals did not preserve the "
+                    f"O1/O3 {label} direct literals did not preserve the "
                     "same verified identity fold\n"
                 )
                 return 1

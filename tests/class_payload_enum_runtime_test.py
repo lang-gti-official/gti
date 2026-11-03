@@ -5,6 +5,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -383,31 +384,28 @@ def main() -> int:
         source = root / "class-payload.gti"
         source.write_text(SOURCE, encoding="utf8")
 
-        for standard in ("c++20", "c++23"):
-            for optimization in ("O0", "O3"):
-                executable = root / f"class-payload-{standard}-{optimization}"
-                built = run(
-                    [
-                        str(compiler),
-                        str(source),
-                        "--std",
-                        standard,
-                        f"-{optimization}",
-                        "-o",
-                        str(executable),
-                    ]
-                )
-                if built.returncode != 0:
-                    return fail(built)
+        for mode, flags, _native in native_modes():
+            executable = root / f"class-payload-{mode}"
+            built = run(
+                [
+                    str(compiler),
+                    str(source),
+                    *flags,
+                    "-o",
+                    str(executable),
+                ]
+            )
+            if built.returncode != 0:
+                return fail(built)
 
-                executed = run([str(executable)])
-                if executed.returncode != 0:
-                    sys.stderr.write(
-                        "class payload enum behavior failed for "
-                        f"{standard} {optimization}: exit={executed.returncode} "
-                        f"stdout={executed.stdout!r} stderr={executed.stderr!r}\n"
-                    )
-                    return 1
+            executed = run([str(executable)])
+            if executed.returncode != 0:
+                sys.stderr.write(
+                    "class payload enum behavior failed for "
+                    f"{mode}: exit={executed.returncode} "
+                    f"stdout={executed.stdout!r} stderr={executed.stderr!r}\n"
+                )
+                return 1
 
         rejected = root / "class-payload-move-only-binding.gti"
         rejected.write_text(MOVE_ONLY_BINDING, encoding="utf8")
@@ -436,36 +434,33 @@ def main() -> int:
 
         boundary = root / "class-payload-by-value-boundary.gti"
         boundary.write_text(BY_VALUE_BOUNDARY, encoding="utf8")
-        for standard in ("c++20", "c++23"):
-            for optimization in ("O0", "O3"):
-                executable = root / (
-                    f"class-payload-transport-{standard}-{optimization}"
+        for mode, flags, _native in native_modes():
+            executable = root / (
+                f"class-payload-transport-{mode}"
+            )
+            built = run(
+                [
+                    str(compiler),
+                    str(boundary),
+                    *flags,
+                    "-o",
+                    str(executable),
+                ]
+            )
+            if built.returncode != 0:
+                return fail(built)
+            executed = run([str(executable)])
+            if (executed.returncode != 0 or
+                    executed.stdout != "drop\n" * 7):
+                sys.stderr.write(
+                    "owning payload-enum function, method, constructor, "
+                    "and lambda transport must preserve one cleanup for "
+                    f"{mode}: "
+                    f"exit={executed.returncode} "
+                    f"stdout={executed.stdout!r} "
+                    f"stderr={executed.stderr!r}\n"
                 )
-                built = run(
-                    [
-                        str(compiler),
-                        str(boundary),
-                        "--std",
-                        standard,
-                        f"-{optimization}",
-                        "-o",
-                        str(executable),
-                    ]
-                )
-                if built.returncode != 0:
-                    return fail(built)
-                executed = run([str(executable)])
-                if (executed.returncode != 0 or
-                        executed.stdout != "drop\n" * 7):
-                    sys.stderr.write(
-                        "owning payload-enum function, method, constructor, "
-                        "and lambda transport must preserve one cleanup for "
-                        f"{standard} {optimization}: "
-                        f"exit={executed.returncode} "
-                        f"stdout={executed.stdout!r} "
-                        f"stderr={executed.stderr!r}\n"
-                    )
-                    return 1
+                return 1
 
         copy_boundary = root / "class-payload-copy-boundary.gti"
         copy_boundary.write_text(COPY_BOUNDARY, encoding="utf8")
@@ -490,35 +485,32 @@ def main() -> int:
 
         failure_source = root / "class-payload-defined-failure.gti"
         failure_source.write_text(FAILURE_SOURCE, encoding="utf8")
-        for standard in ("c++20", "c++23"):
-            for optimization in ("O0", "O3"):
-                executable = root / (
-                    f"class-payload-failure-{standard}-{optimization}"
+        for mode, flags, native in native_modes():
+            executable = root / (
+                f"class-payload-failure-{mode}"
+            )
+            built = run(
+                [
+                    str(compiler),
+                    str(failure_source),
+                    *flags,
+                    "-o",
+                    str(executable),
+                ]
+            )
+            if built.returncode != 0:
+                return fail(built)
+            executed = run([str(executable)])
+            if executed.returncode != 70 or executed.stdout != "drop\n":
+                sys.stderr.write(
+                    "defined failure must drop the active alternative "
+                    "exactly once for "
+                    f"{mode}: "
+                    f"exit={executed.returncode} "
+                    f"stdout={executed.stdout!r} "
+                    f"stderr={executed.stderr!r}\n"
                 )
-                built = run(
-                    [
-                        str(compiler),
-                        str(failure_source),
-                        "--std",
-                        standard,
-                        f"-{optimization}",
-                        "-o",
-                        str(executable),
-                    ]
-                )
-                if built.returncode != 0:
-                    return fail(built)
-                executed = run([str(executable)])
-                if executed.returncode != 70 or executed.stdout != "drop\n":
-                    sys.stderr.write(
-                        "defined failure must drop the active alternative "
-                        "exactly once for "
-                        f"{standard} {optimization}: "
-                        f"exit={executed.returncode} "
-                        f"stdout={executed.stdout!r} "
-                        f"stderr={executed.stderr!r}\n"
-                    )
-                    return 1
+                return 1
 
     print("class payload enum runtime behavior verified")
     return 0

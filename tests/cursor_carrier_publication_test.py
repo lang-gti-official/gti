@@ -9,6 +9,7 @@ import tempfile
 
 from case_jobs import configured_jobs, positive_jobs, run_cases
 from contiguous_iterator_completion_test import MODES
+from backend_modes import is_cpp_mode, keep_cpp
 
 
 def main():
@@ -30,12 +31,13 @@ def main():
                 label, flags, native = case
                 executable = output / label
                 command = [str(compiler), str(fixture), *flags, "--progress=never",
-                           "--keep-cpp", "-o", str(executable)]
+                           *keep_cpp(flags), "-o", str(executable)]
                 if native:
                     command += ["--", *native]
                 result = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=180)
                 assert result.returncode == 0, (label, result.stdout, result.stderr)
-                assert "// GTI verified-MIR body:" in executable.with_suffix(".gti.cpp").read_text()
+                if is_cpp_mode(flags):
+                    assert "// GTI verified-MIR body:" in executable.with_suffix(".gti.cpp").read_text()
                 return label, executable
 
             def observe(case):

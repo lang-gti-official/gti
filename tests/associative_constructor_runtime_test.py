@@ -9,6 +9,7 @@ import sys
 import tempfile
 
 from lambda_pack_invocation_runtime_test import main as successful_cases
+from backend_modes import native_modes
 
 
 def main():
@@ -24,11 +25,7 @@ def main():
                             "associative_owned_argument"))
     compiler = Path(sys.argv[1]).resolve()
     source = Path(__file__).parent / "fixtures/associative_owned_argument_failure.gti"
-    modes = [(f"{standard}-{level}", ["--std", standard, f"-{level}"], [])
-             for standard in ("c++20", "c++23") for level in ("O0", "O1", "O3")]
-    modes += [("no-elide", ["--std", "c++23", "-O0"], ["-fno-elide-constructors"]),
-              ("sanitized", ["--std", "c++23", "-O1"],
-               ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])]
+    modes = native_modes()
     selected = [sys.argv[index + 1] for index, value in enumerate(sys.argv)
                 if value == "--mode"]
     if selected:

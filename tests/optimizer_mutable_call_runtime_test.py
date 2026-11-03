@@ -6,6 +6,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 PRELUDE = """import std.string;
@@ -54,22 +55,20 @@ def main():
             source.write_text(text)
             failure_line = next(index for index, line in enumerate(text.splitlines(), 1)
                                 if "return " in line)
-            for standard in ("c++20", "c++23"):
-                for level in ("O0", "O2", "O3"):
-                    label = f"{name}-{standard}-{level}"
-                    executable = root / label
-                    built = subprocess.run(
-                        [str(compiler), str(source), "--std", standard,
-                         f"-{level}", "-o", str(executable)],
-                        capture_output=True, text=True, timeout=120, check=False)
-                    assert built.returncode == 0, (label, built.stdout, built.stderr)
-                    result = subprocess.run([str(executable)], capture_output=True,
-                                            text=True, timeout=30, check=False)
-                    assert (result.returncode, result.stdout) == (70, "cleaned\n"), (
-                        label, result.returncode, result.stdout, result.stderr)
-                    expected = (rf"{re.escape(source.name)}:{failure_line}: runtime "
-                                r"error\[GTI-R0001\]: integer_overflow in addition\n")
-                    assert re.fullmatch(expected, result.stderr), (label, result.stderr)
+            for mode, flags, native in native_modes():
+                label = f"{name}-{mode}"
+                executable = root / label
+                built = subprocess.run(
+                    [str(compiler), str(source), *flags, "-o", str(executable)],
+                    capture_output=True, text=True, timeout=120, check=False)
+                assert built.returncode == 0, (label, built.stdout, built.stderr)
+                result = subprocess.run([str(executable)], capture_output=True,
+                                        text=True, timeout=30, check=False)
+                assert (result.returncode, result.stdout) == (70, "cleaned\n"), (
+                    label, result.returncode, result.stdout, result.stderr)
+                expected = (rf"{re.escape(source.name)}:{failure_line}: runtime "
+                            r"error\[GTI-R0001\]: integer_overflow in addition\n")
+                assert re.fullmatch(expected, result.stderr), (label, result.stderr)
             print(f"mutable-call arithmetic proofs: {name} passed (6 modes)", flush=True)
 
 
