@@ -7661,6 +7661,12 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
         return;
       }
     }
+    {
+      const auto parameters = calleeType.nativeFunctionParameterTypes();
+      adoptFittingContextualIntegerLiteralArguments(
+          std::vector<SemanticType>(parameters.begin(), parameters.end()),
+          expr.arguments(), argumentTypes, &argumentAnalysis.deferred);
+    }
     analyzeNativeIndirectCall(expr, calleeType, argumentTypes);
     return;
   }
@@ -7677,6 +7683,10 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
         return;
       }
     }
+    adoptFittingContextualIntegerLiteralArguments(
+        std::vector<SemanticType>(calleeType.lambdaParameterTypes().begin(),
+                                  calleeType.lambdaParameterTypes().end()),
+        expr.arguments(), argumentTypes, &argumentAnalysis.deferred);
     analyzeLambdaCall(expr, calleeType, argumentTypes);
     return;
   }
@@ -7693,6 +7703,11 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
         return;
       }
     }
+    adoptFittingContextualIntegerLiteralArguments(
+        std::vector<SemanticType>(
+            calleeType.functionItemParameterTypes().begin(),
+            calleeType.functionItemParameterTypes().end()),
+        expr.arguments(), argumentTypes, &argumentAnalysis.deferred);
     analyzeFunctionItemCall(expr, calleeType, argumentTypes);
     return;
   }
@@ -8147,12 +8162,15 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       return;
     } else {
       std::vector<std::size_t> ephemeralBorrowArguments;
+      std::vector<std::size_t> literalArguments;
       for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
         const CallArgumentMatchKind match = functionCallArgumentMatch(
             resolved, index, argumentTypes[index], expr.arguments()[index],
             argumentAnalysis.deferred[index]);
         if (match == CallArgumentMatchKind::EphemeralReadBorrow) {
           ephemeralBorrowArguments.push_back(index);
+        } else if (match == CallArgumentMatchKind::ContextualIntegerLiteral) {
+          literalArguments.push_back(index);
         } else if (match == CallArgumentMatchKind::Mismatch) {
           if (isContextualArrayArgument(expr.arguments()[index])) {
             const auto *initializer =
@@ -8183,6 +8201,11 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
           }
           valid = false;
         }
+      }
+      if (valid) {
+        adoptContextualIntegerLiteralArguments(resolved.parameterTypes,
+                                               expr.arguments(), argumentTypes,
+                                               literalArguments);
       }
       if (valid && argumentAnalysis.hasDeferred()) {
         valid = finishContextualCallArguments(
@@ -8224,6 +8247,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     std::vector<SemanticType> typeArguments;
     std::vector<CompileTimeValue> valueArguments;
     std::vector<std::size_t> ephemeralBorrowArguments;
+    std::vector<std::size_t> contextualIntegerLiteralArguments;
     ContextualCallArguments argumentAnalysis;
     CallReceiverMode receiverMode = CallReceiverMode::None;
   };
@@ -8245,6 +8269,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     std::vector<SemanticType> resolvedTypeArguments;
     std::vector<CompileTimeValue> resolvedValueArguments;
     std::vector<std::size_t> resolvedEphemeralBorrowArguments;
+    std::vector<std::size_t> resolvedLiteralArguments;
     ConstraintFailure constraintFailure;
     if (!tryInstantiateFunction(candidate, explicitTypeArguments,
                                 explicitValueArguments,
@@ -8268,6 +8293,8 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       }
       if (match == CallArgumentMatchKind::EphemeralReadBorrow) {
         resolvedEphemeralBorrowArguments.push_back(index);
+      } else if (match == CallArgumentMatchKind::ContextualIntegerLiteral) {
+        resolvedLiteralArguments.push_back(index);
       }
     }
     if (!exact) {
@@ -8297,16 +8324,23 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
                       std::move(resolvedTypeArguments),
                       std::move(resolvedValueArguments),
                       std::move(resolvedEphemeralBorrowArguments),
+                      std::move(resolvedLiteralArguments),
                       std::move(candidateArguments), receiverMode});
   }
 
+  // Exact candidates form the first tier. A candidate reached only through
+  // a call-only temporary borrow or a written integer literal's adopted type
+  // is considered when no exact candidate exists, and selection still
+  // requires one unique candidate; neither mismatch kind ranks candidates.
+  const auto fallbackCandidate = [](const ViableOverload &candidate) {
+    return !candidate.ephemeralBorrowArguments.empty() ||
+           !candidate.contextualIntegerLiteralArguments.empty();
+  };
   if (std::any_of(viable.begin(), viable.end(),
-                  [](const ViableOverload &candidate) {
-                    return candidate.ephemeralBorrowArguments.empty();
+                  [&](const ViableOverload &candidate) {
+                    return !fallbackCandidate(candidate);
                   })) {
-    std::erase_if(viable, [](const ViableOverload &candidate) {
-      return !candidate.ephemeralBorrowArguments.empty();
-    });
+    std::erase_if(viable, fallbackCandidate);
   }
 
   if (std::any_of(viable.begin(), viable.end(),
@@ -8431,11 +8465,24 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       }
       reportOverloadResolutionFailure(expr, *callee, argumentTypes,
                                       exactMatches, constraintFailures);
+      if (!viable.empty() &&
+          std::all_of(
+              viable.begin(), viable.end(),
+              [](const ViableOverload &candidate) {
+                return !candidate.contextualIntegerLiteralArguments.empty();
+              })) {
+        appendContextualIntegerLiteralAmbiguityHint(
+            viable.front().contextualIntegerLiteralArguments);
+      }
     }
     currentType = SemanticType::Unknown;
     return;
   }
 
+  adoptContextualIntegerLiteralArguments(
+      viable.front().function.parameterTypes, expr.arguments(),
+      viable.front().argumentAnalysis.types,
+      viable.front().contextualIntegerLiteralArguments);
   if (argumentAnalysis.hasDeferred() &&
       !finishContextualCallArguments(
           viable.front().function.parameterTypes, expr.arguments(),

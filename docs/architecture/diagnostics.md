@@ -762,6 +762,13 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   token, retain a negative sign in the message, and emit only the range
   diagnostic rather than cascading with unary-unsigned or mixed-operand
   errors. No replacement is universally correct, so do not attach a fix-it.
+- A written integer literal argument that fits no exact candidate keeps the
+  call's exact-type diagnostic (`GTI-S2003`, `GTI-S2012`, `GTI-S2022`) and
+  adds a hint naming the literal's value and the parameter type it does not
+  fit. When several candidates accept the literal and none matches exactly,
+  the ambiguity diagnostic (`GTI-S2013`, or `GTI-S2022` for operators) adds a
+  hint naming the literal argument positions and the explicit conversion
+  form; GTI never ranks those candidates.
 - `GTI-S2033` owns the obsolete unqualified `string` spelling. Explain the
   implemented ownership choice: `std::string` after `import std.string;` is
   owning, while prelude-provided `std::string_view` is non-owning. Do not offer

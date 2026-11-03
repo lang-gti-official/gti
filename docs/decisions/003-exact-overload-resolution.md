@@ -59,3 +59,31 @@ as well as call operators. The compiler records the selected receiver mode;
 the C++ backend does not perform receiver-overload resolution. This permits
 builder chains to reuse owned intermediate storage without copying every
 intermediate or weakening named-value availability and borrow checks.
+
+## Revision: Contextual integer literal arguments (2026-11-03)
+
+A written integer literal has no type of its own until a context gives it
+one: value-assignment contexts and the one-literal operand rule already type a
+literal by its destination. The same rule now reaches call, constructor, base
+initializer and operator arguments, through the proof structure this record
+already accepts for call-only temporary borrows, not through conversion
+ranking.
+
+A literal argument is a bare integer literal, optionally parenthesized and
+optionally carrying one unary sign. Named values and named constants keep
+their declared types and never qualify. Selection first resolves every
+candidate whose parameters match exactly, with the literal at its default
+type. If that tier is non-empty, every fallback candidate is discarded. Only
+when it is empty are candidates considered whose sole mismatches are eligible
+temporary borrows or literal arguments whose mathematical value fits an
+integer parameter of another integer type, and selection still requires one
+unique candidate within that tier. The selected parameter type becomes the
+literal's type; the value was proved representable, so no runtime conversion
+exists. A literal that fits several such candidates is ambiguous and keeps
+the explicit conversion. Floating-point parameters, generic inference from a
+literal, and any non-literal argument are unchanged.
+
+Consequence: adding an exactly matching overload later can change which
+candidate a literal call selects, exactly as the temporary-borrow fallback
+already allows. The owner accepted that evolution hazard in exchange for
+`f(4)`, `values[0]`, `values.push_back(1)` and `Counter{3}` needing no cast.

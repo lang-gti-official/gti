@@ -1234,7 +1234,9 @@ unsigned-integer-type  = "uint" | "uint8_t" | "uint16_t" | "uint32_t"
    source import or a `std::` qualifier.
    `int` is an exact alias for `int32_t`; `uint` is an exact alias for
    `uint32_t`. Integer literals use int32_t, int64_t, or uint64_t according to
-   their value, and may initialize any integer type when they are in range.
+   their value, may initialize any integer type when they are in range, and
+   adopt the integer parameter type of the unique fitting call, constructor
+   or operator candidate when no candidate matches exactly.
    Variable conversions may widen only when every source value fits the
    destination. As in C++, arithmetic promotes all 8- and 16-bit integers to
    int32_t. Mixed

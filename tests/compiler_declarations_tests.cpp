@@ -13179,6 +13179,178 @@ int main() { return 0; }
          "argument type");
 }
 
+void testContextualIntegerLiteralArguments() {
+  lang::FrontendResult accepted = lang::Frontend().analyze(
+      "contextual-integer-literal-arguments.gti", R"(
+import std.vector;
+
+class Counter {
+  std::size_t count;
+public:
+  Counter(std::size_t count) : count(count) {}
+  std::size_t get() { return this.count; }
+};
+
+class Wide : public Counter {
+public:
+  Wide() : Counter(7) {}
+};
+
+class Table {
+  mut int elements[2] = {10, 20};
+public:
+  Table() = default;
+  int operator[](uint64_t index) { return this.elements[index]; }
+  int operator()(uint64_t index, int64_t offset) {
+    return this.elements[index] + int(offset);
+  }
+};
+
+std::size_t twice(std::size_t value) { return value * 2; }
+int pick(int value) { return value; }
+uint64_t pick(uint64_t value) { return value; }
+uint8_t narrow(uint8_t value) { return value; }
+int64_t widen(int64_t value) { return value; }
+std::size_t relay(std::size_t value) { return twice(value); }
+std::size_t take(int values[2], std::size_t count) {
+  return std::size_t(values[0]) + std::size_t(values[1]) + count;
+}
+
+int main() {
+  std::size_t doubled = twice(4);
+  std::size_t parenthesized = twice((4));
+  int chosen = pick(5);
+  mut std::vector<std::size_t> values{};
+  values.push_back(1);
+  std::size_t first = values[0];
+  Counter counter{3};
+  Wide wide{};
+  Table table{};
+  int element = table[1];
+  int shifted = table(0, -3);
+  auto lambda = [](std::size_t value) -> std::size_t { return value + 1; };
+  std::size_t next = lambda(9);
+  uint8_t small = narrow(200);
+  int64_t negative = widen(-5);
+  std::size_t relayed = relay(2);
+  std::size_t taken = take({1, 2}, 3);
+  if (doubled != 8 || parenthesized != 8 || chosen != 5 || first != 1 ||
+      counter.get() != 3 || wide.get() != 7 || element != 20 ||
+      shifted != 7 || next != 10 || small != 200 || negative != -5 ||
+      relayed != 4 || taken != 6) {
+    return 1;
+  }
+  return 0;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(accepted.canGenerateCode() && accepted.diagnostics.empty(),
+         "a written integer literal argument should adopt the unique fitting "
+         "integer parameter type of a function, method, constructor, base "
+         "initializer, operator, and lambda call");
+
+  lang::FrontendResult ambiguous = lang::Frontend().analyze(
+      "ambiguous-integer-literal-arguments.gti", R"(
+uint8_t amb(uint8_t value) { return value; }
+uint64_t amb(uint64_t value) { return value; }
+
+class Amb {
+  uint64_t value;
+public:
+  Amb(uint8_t value) : value(value) {}
+  Amb(uint64_t value) : value(value) {}
+};
+
+int main() {
+  uint64_t selected = amb(5);
+  Amb constructed{5};
+  return 0;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!ambiguous.canGenerateCode() &&
+             countDiagnosticCode(ambiguous.diagnostics, "GTI-S2013") == 2 &&
+             hasDiagnostic(ambiguous.diagnostics,
+                           "multiple constructors accept the written integer "
+                           "literal") &&
+             hasDiagnosticHint(ambiguous.diagnostics,
+                               "fits more than one candidate parameter type"),
+         "a literal that fits several candidate parameter types with no exact "
+         "candidate should stay ambiguous rather than ranked");
+
+  lang::FrontendResult exactTier = lang::Frontend().analyze(
+      "exact-tier-integer-literal-arguments.gti", R"(
+int pick(int value) { return value; }
+uint64_t pick(uint64_t value) { return value; }
+
+int main() {
+  uint64_t mismatch = pick(5);
+  return 0;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!exactTier.canGenerateCode() &&
+             hasDiagnosticCode(exactTier.diagnostics, "GTI-S2003") &&
+             hasDiagnostic(exactTier.diagnostics,
+                           "Cannot initialize 'mismatch' of type 'uint64_t' "
+                           "with a value of type 'int32_t'"),
+         "an exact int32_t candidate should win the first tier, so the "
+         "uint64_t overload is never selected by a plain literal");
+
+  lang::FrontendResult rejected = lang::Frontend().analyze(
+      "rejected-integer-literal-arguments.gti", R"(
+import std.vector;
+
+class Table {
+  mut int elements[2] = {10, 20};
+public:
+  Table() = default;
+  int operator[](uint64_t index) { return this.elements[index]; }
+};
+
+class Narrow {
+  uint8_t value;
+public:
+  Narrow(uint8_t value) : value(value) {}
+};
+
+std::size_t twice(std::size_t value) { return value * 2; }
+uint8_t narrow(uint8_t value) { return value; }
+constexpr int named = 3;
+
+int main() {
+  uint8_t overflow = narrow(300);
+  std::size_t negative = twice(-1);
+  int plain = 1;
+  std::size_t variable = twice(plain);
+  std::size_t constant = twice(named);
+  Narrow wide{256};
+  Table table{};
+  int element = table[-1];
+  return 0;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!rejected.canGenerateCode() &&
+             countDiagnosticCode(rejected.diagnostics, "GTI-S2003") == 4 &&
+             hasDiagnosticCode(rejected.diagnostics, "GTI-S2012") &&
+             hasDiagnosticCode(rejected.diagnostics, "GTI-S2022") &&
+             hasDiagnosticHint(rejected.diagnostics,
+                               "Integer literal '300' does not fit the "
+                               "parameter type 'uint8_t'") &&
+             hasDiagnosticHint(rejected.diagnostics,
+                               "Integer literal '-1' does not fit the "
+                               "parameter type 'uint64_t'") &&
+             hasDiagnosticHint(rejected.diagnostics,
+                               "Integer literal '256' does not fit the "
+                               "parameter type 'uint8_t'") &&
+             hasDiagnosticHint(rejected.diagnostics,
+                               "Calls require exact argument types"),
+         "a literal outside the parameter range, a named value, and a named "
+         "constant keep the exact-type rejection with a value-specific hint "
+         "for the literal");
+}
+
 constexpr NamedTest kTests[] = {
     {"testDependentRequiresArgumentAdmission",
      testDependentRequiresArgumentAdmission},
@@ -13252,6 +13424,8 @@ constexpr NamedTest kTests[] = {
     {"testConcreteApplicationSpecialMembers",
      testConcreteApplicationSpecialMembers},
     {"testDefaultParameters", testDefaultParameters},
+    {"testContextualIntegerLiteralArguments",
+     testContextualIntegerLiteralArguments},
 };
 
 } // namespace

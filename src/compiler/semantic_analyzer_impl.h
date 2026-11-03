@@ -4078,7 +4078,34 @@ private:
     Mismatch,
     Exact,
     EphemeralReadBorrow,
+    // A written integer literal whose mathematical value fits an integer
+    // parameter of another type. The literal has no type of its own until
+    // selection; it adopts the parameter type of the unique candidate chosen
+    // in the fallback tier. A named value never qualifies.
+    ContextualIntegerLiteral,
   };
+
+  [[nodiscard]] bool
+  contextualIntegerLiteralArgumentFits(const SemanticType &parameter,
+                                       const SemanticType &argument,
+                                       const ExprPtr &expression) const;
+
+  SemanticType
+  adoptContextualIntegerLiteralArgument(const ExprPtr &expression,
+                                        const SemanticType &parameter);
+
+  void adoptContextualIntegerLiteralArguments(
+      std::span<const SemanticType> parameterTypes, const ExprList &arguments,
+      std::vector<SemanticType> &argumentTypes,
+      std::span<const std::size_t> indices);
+
+  void adoptFittingContextualIntegerLiteralArguments(
+      std::span<const SemanticType> parameterTypes, const ExprList &arguments,
+      std::vector<SemanticType> &argumentTypes,
+      const std::vector<bool> *deferred = nullptr);
+
+  void appendContextualIntegerLiteralAmbiguityHint(
+      std::span<const std::size_t> indices);
 
   [[nodiscard]] bool
   ephemeralBorrowResultSupported(const CallableCandidate &function) const;

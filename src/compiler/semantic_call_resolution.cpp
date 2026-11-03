@@ -6080,13 +6080,34 @@ auto SemanticVisitor::Impl::resolveSymbolicOperator(
     for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
       if (!exactOperatorArgumentMatches(candidate.parameterTypes[index],
                                         argumentTypes[index],
-                                        arguments[index])) {
+                                        arguments[index]) &&
+          !contextualIntegerLiteralArgumentFits(candidate.parameterTypes[index],
+                                                argumentTypes[index],
+                                                arguments[index])) {
         return true;
       }
     }
     return candidate.receiverMutability == ReceiverMutability::Mutable &&
            !mutableReceiver;
   });
+  // A written integer literal keeps a proved form viable only when no form
+  // matches it exactly; the literal then adopts the selected parameter type.
+  const auto needsLiteralAdoption = [&](const CallableCandidate &candidate) {
+    for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
+      if (!exactOperatorArgumentMatches(candidate.parameterTypes[index],
+                                        argumentTypes[index],
+                                        arguments[index])) {
+        return true;
+      }
+    }
+    return false;
+  };
+  if (std::any_of(viable.begin(), viable.end(),
+                  [&](const CallableCandidate &candidate) {
+                    return !needsLiteralAdoption(candidate);
+                  })) {
+    std::erase_if(viable, needsLiteralAdoption);
+  }
   // Mirror the concrete structural selection: a mutable receiver prefers
   // the mutable-receiver form when the requirements prove both.
   if (mutableReceiver && std::any_of(viable.begin(), viable.end(),
@@ -6115,6 +6136,13 @@ auto SemanticVisitor::Impl::resolveSymbolicOperator(
   if (selected.requiresUnsafeFact && unsafeDepth == 0) {
     report(token, "The required operator needs an unsafe block.", "GTI-S2029");
     return std::nullopt;
+  }
+  for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
+    if (!exactOperatorArgumentMatches(selected.parameterTypes[index],
+                                      argumentTypes[index], arguments[index])) {
+      (void)adoptContextualIntegerLiteralArgument(
+          arguments[index], selected.parameterTypes[index]);
+    }
   }
   const AccessMode receiverAccess =
       receiverAllowsMutation(selected.receiverMutability)
@@ -6317,6 +6345,7 @@ auto SemanticVisitor::Impl::resolveOperator(
   struct ViableOperator {
     CallableCandidate function;
     CallReceiverMode receiverMode = CallReceiverMode::None;
+    std::vector<std::size_t> contextualIntegerLiteralArguments;
   };
   std::vector<ViableOperator> viable;
   for (const CallableCandidate &declared : overloadSet.overloads) {
@@ -6354,6 +6383,7 @@ auto SemanticVisitor::Impl::resolveOperator(
       continue;
     }
     bool exact = true;
+    std::vector<std::size_t> literalArguments;
     for (std::size_t index = 0; index < concreteArguments.size(); ++index) {
       const auto &argument = concreteArguments[index];
       if (argument.type != SemanticType::Unknown &&
@@ -6364,6 +6394,13 @@ auto SemanticVisitor::Impl::resolveOperator(
                 : exactOperatorArgumentMatches(candidate.parameterTypes[index],
                                                argument.type,
                                                *argument.expression))) {
+        if (!argument.forwardedPackElement && argument.expression != nullptr &&
+            contextualIntegerLiteralArgumentFits(
+                candidate.parameterTypes[index], argument.type,
+                *argument.expression)) {
+          literalArguments.push_back(index);
+          continue;
+        }
         exact = false;
         break;
       }
@@ -6404,9 +6441,23 @@ auto SemanticVisitor::Impl::resolveOperator(
       rejectedCompilerPrivate = true;
       continue;
     }
-    viable.push_back({.function = candidate, .receiverMode = receiverMode});
+    viable.push_back(
+        {.function = candidate,
+         .receiverMode = receiverMode,
+         .contextualIntegerLiteralArguments = std::move(literalArguments)});
   }
 
+  // Exact candidates form the first tier; a candidate that a written integer
+  // literal fits remains only when no exact candidate exists.
+  const auto literalFallback = [](const ViableOperator &candidate) {
+    return !candidate.contextualIntegerLiteralArguments.empty();
+  };
+  if (std::any_of(viable.begin(), viable.end(),
+                  [&](const ViableOperator &candidate) {
+                    return !literalFallback(candidate);
+                  })) {
+    std::erase_if(viable, literalFallback);
+  }
   if (preferReadOnlyReceiver &&
       std::any_of(viable.begin(), viable.end(),
                   [](const ViableOperator &candidate) {
@@ -6543,14 +6594,53 @@ auto SemanticVisitor::Impl::resolveOperator(
               : "GTI operator calls do not perform implicit conversions, rank "
                 "candidates, reverse operands, or use ADL; match the exact "
                 "parameter types and ownership requirements.");
+      for (const CallableCandidate &candidate : overloadSet.overloads) {
+        if (candidate.parameterTypes.size() != concreteArguments.size())
+          continue;
+        for (std::size_t index = 0; index < concreteArguments.size(); ++index) {
+          const auto &argument = concreteArguments[index];
+          const std::optional<IntegerConstant> literal =
+              !argument.forwardedPackElement &&
+                      argument.expression != nullptr &&
+                      isInteger(candidate.parameterTypes[index]) &&
+                      isInteger(argument.type) &&
+                      isContextualIntegerLiteral(argument.expression->get())
+                  ? integerConstant(argument.expression->get())
+                  : std::nullopt;
+          if (!literal ||
+              integerFits(candidate.parameterTypes[index], *literal))
+            continue;
+          diagnostic.hints.emplace_back(
+              "Integer literal '" + std::string(literal->negative ? "-" : "") +
+              std::to_string(literal->magnitude) +
+              "' does not fit the parameter type '" +
+              typeSpelling(candidate.parameterTypes[index]) +
+              "'; a literal adopts an integer parameter type only when its "
+              "value is representable.");
+          break;
+        }
+      }
       diagnostics.emplace_back(std::move(diagnostic));
     } else {
       report(token, "Use of " + object + " is ambiguous.", "GTI-S2022");
+      if (std::all_of(viable.begin(), viable.end(), literalFallback)) {
+        appendContextualIntegerLiteralAmbiguityHint(
+            viable.front().contextualIntegerLiteralArguments);
+      }
     }
     return std::nullopt;
   }
 
   const CallableCandidate &selected = viable.front().function;
+  for (const std::size_t index :
+       viable.front().contextualIntegerLiteralArguments) {
+    if (index >= concreteArguments.size() ||
+        concreteArguments[index].expression == nullptr) {
+      continue;
+    }
+    concreteArguments[index].type = adoptContextualIntegerLiteralArgument(
+        *concreteArguments[index].expression, selected.parameterTypes[index]);
+  }
   requireFunctionDefinition(selected, token);
   const CallReceiverMode selectedReceiverMode = viable.front().receiverMode;
   if (selected.receiverMutability == ReceiverMutability::Consuming &&
