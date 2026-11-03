@@ -168,6 +168,10 @@ std::optional<AnalysisConfiguration> ProjectFacts::analysisConfiguration(
       resolvedDeclaredConfigurationFlags);
 }
 
+const CompileLimits &ProjectFacts::compileLimits() const {
+  return resolvedCompileLimits;
+}
+
 const std::string &ProjectFacts::modelIdentity() const {
   return resolvedModelIdentity;
 }
@@ -207,6 +211,8 @@ ProjectFacts projectFactsFromWorkspace(const ProjectWorkspace &workspace) {
   facts.resolvedDeclaredConfigurationFlags =
       workspace.declaredConfigurationFlags();
   facts.resolvedDefaultProfile = selectDefaultProfileName(manifest.profiles());
+  facts.resolvedCompileLimits =
+      resolveCompileLimits(manifest.limits().values, {});
 
   facts.resolvedProfiles.reserve(manifest.profiles().size());
   for (const ProjectProfile &profile : manifest.profiles()) {

@@ -8200,8 +8200,9 @@ samples establish a compact allocation-free successful consumer, not a
 statistically significant compile-time or runtime speedup. Constant construction
 does additional bounded compiler work: location traversal and immutable
 aggregate replacement are charged, and updating an array copies its backing
-elements. Larger tables still have to fit the shared 4096-step budget; this
-feature neither removes runtime checks nor raises that resource bound.
+elements. Larger tables still have to fit the request's step budget (4096 steps
+when this was recorded; now a configurable compile limit); this feature neither
+removes runtime checks nor raises that resource bound.
 
 `testConstexprReadOnlyReferences` and `constexpr_readonly_references_runtime`
 cover checked read-only parameters, local bindings, returned field/index
