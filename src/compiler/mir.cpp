@@ -5838,6 +5838,33 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                                std::to_string(parent),
                            block.id, instruction.id);
           }
+          const auto inheritedFormalShell = [&](const MirLoan &other) {
+            const auto &result = body.loans[loan - 1];
+            const auto &selected = body.loans[parent - 1];
+            if (!other.entry || other.kind != MirLoanKind::Parameter ||
+                active[other.id - 1] != MirLoanFlowState::Active ||
+                result.kind != MirLoanKind::Stored ||
+                result.access != AccessMode::ReadOnly ||
+                selected.kind != MirLoanKind::Stored ||
+                selected.access != AccessMode::ReadOnly ||
+                active[parent - 1] != MirLoanFlowState::Active)
+              return false;
+            const auto *dependency = body.findLoan(other.storedDependency);
+            if (!dependency || !abstractStoredEntry(body, *dependency) ||
+                other.source != dependency->source ||
+                active[dependency->id - 1] == MirLoanFlowState::Inactive ||
+                !isLoanAncestor(body, dependency->id, parent))
+              return false;
+            const auto access = abstractStoredAccess(*dependency, childPlace);
+            // The exact formal shell and its abstract external entry are one
+            // incoming authority. A shared descendant keeps that relationship
+            // through its checked parent; it does not acquire a competing
+            // physical-shell borrow. Owned fields and unrelated aliases remain
+            // ordinary overlapping loans.
+            return access.referent && !access.invalidReferentProjection &&
+                   loanPermitsPlace(body, *dependency, childPlace,
+                                    AccessMode::ReadOnly, bindingLoans, active);
+          };
           for (const MirLoan &other : body.loans) {
             if (other.id == parent ||
                 active[other.id - 1] == MirLoanFlowState::Inactive ||
@@ -5845,7 +5872,8 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                 (selectedAlias != 0 &&
                  (other.id == selectedAlias ||
                   isLoanAncestor(body, other.id, selectedAlias))) ||
-                abstractAuthorityForLoan(other, body.loans[loan - 1])) {
+                abstractAuthorityForLoan(other, body.loans[loan - 1]) ||
+                inheritedFormalShell(other)) {
               continue;
             }
             const MirCanonicalPlace otherPlace =

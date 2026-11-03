@@ -322,6 +322,11 @@ int main() {
   chained.replace(chained.find(original), original.size(),
                   "int get() { auto view = this.value.read(); "
                   "auto child = view.subview(); return child.get(); }");
+  const std::string formalChain =
+      "int through_formal(mut Write& input, mut Write& unrelated) { "
+      "auto view = input.read(); auto child = view.subview(); "
+      "return child.get(); } ";
+  chained.insert(chained.find("int main()"), formalChain);
   const auto sharedChain = lang::Frontend().analyze(
       "field-reborrow-shared-chain.gti", chained, {standardLibraryPrelude()},
       {}, {standardLibraryRoot()});
@@ -329,6 +334,7 @@ int main() {
       sharedChain.canGenerateCode(),
       "a readonly subview preserves an existing exclusive-owner child chain");
   std::size_t checkedChain = 0;
+  std::size_t checkedFormals = 0;
   if (sharedChain.canGenerateCode())
     for (const auto &function : sharedChain.mir.functionInstances())
       for (const auto &loan : function.body.loans) {
@@ -350,10 +356,61 @@ int main() {
                  "a shared subview cannot discard its parent or substitute its "
                  "owner shell");
         }
+        for (const auto &formal : function.body.loans) {
+          if (!formal.entry || formal.kind != lang::MirLoanKind::Parameter ||
+              formal.storedDependency != parent->parent)
+            continue;
+          const auto unrelated = std::find_if(
+              function.body.loans.begin(), function.body.loans.end(),
+              [&](const auto &other) {
+                return other.entry &&
+                       other.kind == lang::MirLoanKind::Parameter &&
+                       other.id != formal.id && other.storedDependency != 0;
+              });
+          expect(unrelated != function.body.loans.end(),
+                 "formal-shell mutation has an independent owner control");
+          if (unrelated == function.body.loans.end())
+            continue;
+          for (int mutation = 0; mutation != 3; ++mutation) {
+            auto malformed = sharedChain.mir;
+            auto *body = lang::findMirBody(
+                malformed, {lang::MirBodyKind::Function, function.id});
+            if (mutation == 0)
+              body->loans[formal.id - 1].source = unrelated->source;
+            if (mutation == 1)
+              body->loans[formal.id - 1].storedDependency =
+                  unrelated->storedDependency;
+            if (mutation == 2)
+              body->loans[loan.id - 1].access = lang::AccessMode::Mutable;
+            expect(!lang::verifyMirProgram(malformed).valid(),
+                   "shared descendants require the exact formal shell, owner "
+                   "dependency and readonly permission");
+          }
+          checkedFormals++;
+        }
         checkedChain++;
       }
   expect(checkedChain != 0,
          "shared subview exercises an exact intermediate parent");
+  expect(checkedFormals != 0,
+         "shared subview exercises exact formal-shell authority mutations");
+  auto formalConflict = chained;
+  const auto formalPosition = formalConflict.find(formalChain);
+  formalConflict.replace(
+      formalPosition, formalChain.size(),
+      "int through_formal(mut Write& input, mut Write& unrelated) { "
+      "auto view = input.read(); auto child = view.subview(); "
+      "input.bump(); return child.get(); } ");
+  const auto conflicting = lang::Frontend().analyze(
+      "field-reborrow-formal-conflict.gti", formalConflict,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!conflicting.semanticValid &&
+             std::any_of(conflicting.diagnostics.begin(),
+                         conflicting.diagnostics.end(),
+                         [](const auto &diagnostic) {
+                           return diagnostic.code == "GTI-S2017";
+                         }),
+         "a live shared descendant still excludes mutable formal access");
   auto disjoint = declarations;
   disjoint.replace(disjoint.find("mut Write value;"),
                    std::string("mut Write value;").size(),

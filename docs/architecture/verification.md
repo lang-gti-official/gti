@@ -8076,6 +8076,9 @@ whole-program HIR exists, covering array extents, static assertions, and
 discarded-branch exclusion. Completed-body closure tests reject missing roots
 and callees; ordinary failure-metadata/MIR verification still succeeds, while
 whole-program backend publication rejects the intentionally unsealed closure.
+Tracked-intrinsic staging also retains the exact semantic snapshot, rejects
+foreign declaration witnesses and erased snapshot identity, and proves that
+this identity alone never permits whole-program backend publication.
 Required-expression arithmetic failures retain their semantic diagnostic code
 and original source operator. Existing enum and returned-view evaluation stays
 covered while those families await MIR-profile migration.

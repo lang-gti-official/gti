@@ -77,6 +77,12 @@ public:
   }
 };
 
+std::size_t shared_prefix(mut std::mutable_span<uint8_t>& input) {
+  auto view = input.as_span();
+  auto prefix = view.subspan(std::size_t(0), view.size());
+  return prefix.size();
+}
+
 int main() {
   uint8_t bytes[2] = {uint8_t(104), uint8_t(0)};
   uint8_t& byte = bytes[0];
@@ -91,7 +97,8 @@ int main() {
   mut std::vector<uint8_t> data = {uint8_t(104), uint8_t(105)};
   { auto view = data.as_span(); if (check_span(view) != 0) { return 2; } }
   {
-    auto storage = data.as_mutable_span();
+    mut auto storage = data.as_mutable_span();
+    if (shared_prefix(storage) != std::size_t(2)) { return 9; }
     mut Stream stream{std::move(storage)};
     if (stream.inspect() != std::size_t(2)) { return 3; }
     if (stream.inspect_mut() != std::size_t(2)) { return 4; }

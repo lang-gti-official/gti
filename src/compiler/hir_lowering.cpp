@@ -193,10 +193,13 @@ private:
     constantFunctions = completedFunctions;
     constantConstructors = completedConstructors;
     constantClosure = true;
-    // Preserve source-unit/target identity for failure origins without
-    // claiming completed whole-program semantic analysis.
+    // Preserve source and declaration-proof identity without claiming completed
+    // whole-program semantic analysis. The absent active-statement inventory
+    // still prevents this partial closure from passing whole-program sealing.
     output.program.semanticAnalysisSeal = {
-        .target = target, .sourceGraph = semantics.analysisSeal().sourceGraph};
+        .programSnapshot = semantics.analysisSeal().programSnapshot,
+        .target = target,
+        .sourceGraph = semantics.analysisSeal().sourceGraph};
   }
 
   HirLoweringResult finishConstant() {
