@@ -962,25 +962,40 @@ local owner's text is not such a borrow: its result is a view of that owner
 (see [owner-tracked view fields](ownership-and-lifetimes.md#owner-tracked-view-fields)).
 Consuming members cannot return any reference or tracked borrowed state.
 
-For an ordinary GTI function or non-operator method call, a direct fresh
-construction, GTI function call, or GTI value-operator result may initialize an
-exact read-only `T&` parameter for that invocation
-only. An explicit `std::move(local)` of a whole local or parameter may do the
-same, as an explicitly moved receiver does: the move transfers the local into a
-temporary that the enclosing full expression owns and destroys, and the local
-is moved on every later path.
-Overload selection first considers every otherwise-exact candidate that needs
-no temporary argument borrow. Only when that tier is empty does it consider
-otherwise-exact candidates whose mismatch consists solely of one or more such
-fresh values targeting read-only references; selection still requires one
-unique candidate within the active tier. The selected callable must have a
-body, use GTI linkage, and return `void`, a scalar, or an owned value without
-tracked borrowed state. Mutable references, moves of a projection, native or
-callback targets, compound producers, borrowed-state values, and results that
-could retain the argument loan remain ill-formed. Transparent parentheses do
-not change eligibility. A temporary borrowed inside a conditionally evaluated
-operand, such as the right operand of `||`, lives to the end of the enclosing
-full expression only on the path that created it.
+For an ordinary GTI function, method, or member operator call, a supported
+fresh value may initialize an exact read-only `T&` parameter for that invocation
+only. This includes integer, floating, Boolean and character literals and
+built-in value expressions, scalar-backed enum results, direct record or
+payload-enum construction, and GTI function or value-operator results. A string
+literal may similarly supply an ownerless text-view temporary. Unknown or
+transient text dependencies are not admitted by this literal rule. Built-in
+assignment values and conditional values retain their ordinary full-expression
+semantics. Transparent parentheses do not change eligibility.
+
+An explicit `std::move(local)` of a whole local or parameter may do the same:
+the move transfers the local into a temporary owned by the enclosing full
+expression, and the local is moved on every later path. A temporary carrier may
+contain borrowed state only when its ordinary construction or source factory
+proves stable external owner dependencies. Those dependencies stay live through
+the carrier's full-expression cleanup.
+
+Overload selection first considers every otherwise-exact candidate needing no
+temporary argument borrow. Only when that tier is empty does it consider
+candidates requiring such readonly borrows. Ordinary functions preserve their
+existing conversion ranking, including a same-type value overload's preference
+over a reference overload. Operators retain unique exact selection within each
+tier: same-type `T` and `T&` operators remain ambiguous for an existing place.
+One readonly-reference operator can observe both places and temporaries; no new
+operator preference or constraint ranking is introduced.
+
+The selected callable must have a body and GTI linkage. Its result must not
+retain the temporary parameter: a reference or borrowed value derived solely
+from other caller-owned arguments or the receiver is permitted when its exact
+origin summary proves that exclusion. Untracked raw/native addresses, unknown
+borrowed results, mutable reference parameters, moved projections, native and
+callback targets remain rejected. A temporary inside a conditionally evaluated
+operand lives until the enclosing full-expression boundary only on the path
+that created it.
 
 The same call-scoped read-only parameter boundary admits an exact fresh lambda,
 an explicitly moved lambda local, or a selected GTI function item. The selected

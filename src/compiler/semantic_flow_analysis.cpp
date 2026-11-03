@@ -8897,8 +8897,15 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
   const bool callable =
       info != nullptr && (info->type.kind == SemanticType::Lambda ||
                           info->type.kind == SemanticType::FunctionItem);
+  const bool scalar = info != nullptr &&
+      (isPassiveScalarValueType(info->type) ||
+       (info->type.kind == SemanticType::Enum && !payloadEnum));
+  const bool literalText = info != nullptr &&
+      info->type.kind == SemanticType::StringView &&
+      exprAs<LiteralExpr>(transparentTemporaryProducer(expression)) != nullptr;
   if (info == nullptr || info->category != ValueCategory::Value ||
-      (info->type.kind != SemanticType::Class && !payloadEnum && !callable)) {
+      (info->type.kind != SemanticType::Class && !payloadEnum && !callable &&
+       !scalar && !literalText)) {
     return result;
   }
   result.type = info->type;
@@ -8906,7 +8913,7 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
     result.failure = FreshTemporaryValueFailure::ExplicitMove;
     return result;
   }
-  if (!payloadEnum && !callable) {
+  if (!payloadEnum && !callable && !scalar && !literalText) {
     const ClassInfo *record = classInfo(info->type);
     if (record == nullptr || (record->kind != ClassKind::Class &&
                               record->kind != ClassKind::Struct)) {
@@ -8922,6 +8929,17 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
   const Expr *producer = transparentTemporaryProducer(expression);
   if (producer == nullptr) {
     result.failure = FreshTemporaryValueFailure::UnsupportedProducer;
+    return result;
+  }
+  // Built-in scalar operations produce self-contained values. Calls and
+  // overloaded operators still need the source-body proof below.
+  if (literalText ||
+      (scalar && semanticModel.findOperator(*producer) == nullptr &&
+       (exprAs<LiteralExpr>(producer) || exprAs<Conversion>(producer) ||
+        exprAs<Unary>(producer) || exprAs<Binary>(producer) ||
+        exprAs<Logical>(producer) || exprAs<QualifiedName>(producer)))) {
+    result.eligible = true;
+    result.failure = FreshTemporaryValueFailure::None;
     return result;
   }
   if (callable) {
@@ -9062,16 +9080,15 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
   return result;
 }
 
-auto SemanticVisitor::Impl::freshTemporaryReceiverValue(
+auto SemanticVisitor::Impl::freshTemporaryBorrowValue(
     const ExprPtr &expression) -> FreshTemporaryValueAssessment {
   FreshTemporaryValueAssessment result = freshTemporaryValue(expression);
   if (result.failure != FreshTemporaryValueFailure::BorrowedState) {
     return result;
   }
 
-  // A carrier is materialized only for its immediate receiver use. Its
-  // established stored-borrow summary, not the public type name, supplies the
-  // external dependency. Keep this separate from temporary argument admission.
+  // A carrier is materialized for one immediate invocation. Its established
+  // stored-borrow summary supplies the stable external dependency.
   const Expr *producer = transparentTemporaryProducer(expression);
   if (producer == nullptr) {
     result.failure = FreshTemporaryValueFailure::UnsupportedProducer;
@@ -9119,6 +9136,11 @@ auto SemanticVisitor::Impl::freshTemporaryReceiverValue(
   result.eligible = true;
   result.failure = FreshTemporaryValueFailure::None;
   return result;
+}
+
+auto SemanticVisitor::Impl::freshTemporaryReceiverValue(
+    const ExprPtr &expression) -> FreshTemporaryValueAssessment {
+  return freshTemporaryBorrowValue(expression);
 }
 
 auto SemanticVisitor::Impl::freshTemporaryMethodSupported(

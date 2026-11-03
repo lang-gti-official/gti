@@ -2499,6 +2499,17 @@ retain their own origins instead of being folded under that parent.
 
 ## Temporary Value Call Capabilities
 
+`functionCallArgumentMatch` and operator resolution share the exact-then-temporary
+viability tiers. `ResolvedCallInfo` and `ResolvedOperatorInfo` publish the selected
+`ephemeralBorrowArguments`; HIR preserves them as `ReadTemporaryBorrow` inputs.
+The producer proof admits passive scalar operations, plain-enum results and
+ownerless string literals as well as aggregate temporaries. The target proof
+uses the temporary parameter index to exclude that parameter from every returned
+borrow origin; a result retaining a different caller-owned argument is valid.
+Untracked pointer-like results remain rejected. MIR independently rechecks the
+producer, per-parameter result contract, full-expression obligation and loan end.
+No backend reclassifies source expressions or selects overloads.
+
 Resolved ordinary method calls and class `operator()` calls retain a
 `CallReceiverMode` alongside the exact selected target. The mode distinguishes
 read-only and mutable source places, reusable values, consuming receivers, and
@@ -2507,11 +2518,10 @@ freshness: ordinary construction, by-value GTI calls, typed macro result regions
 and value-producing GTI operators qualify for the bounded ephemeral-borrow
 contract. A concrete self-contained macro result uses its checked expansion and
 exact result type as producer authority, not an invented executable function
-call. The ordinary selected-target confinement, non-borrowing result, linkage,
-access and loan rules still apply. Receiver-only
-materialization also accepts owned movable class values from conditional
-expressions, lambda calls and copy/move construction; this does not broaden
-ephemeral argument borrowing. Reusable
+call. The ordinary selected-target confinement, parameter-specific result-origin,
+linkage, access and loan rules still apply. Conditional and built-in assignment
+results share argument materialization; lambda calls and copy/move construction
+retain their separate receiver support. Reusable
 targets remain non-static with non-borrowing results, apart from the existing
 nonescaping read-observation exception. A virtual target, including an
 override or interface implementation, keeps `CallDispatch::Virtual`: dispatch
@@ -2524,9 +2534,9 @@ type and lifecycle traits. Expression value category and access remain
 unchanged, preventing the receiver-only capability from authorizing general
 mutable-place operations.
 
-`freshTemporaryReceiverValue` extends that receiver assessment, but not
-`freshTemporaryValue`'s separate temporary-argument contract, to direct
-ordinary GTI construction/calls producing a class with a nonempty proven stable
+`freshTemporaryBorrowValue` extends the shared producer assessment for both
+receivers and readonly temporary arguments to direct ordinary GTI
+construction/calls producing a class with a nonempty proven stable
 stored-dependency set. It reuses `storedBorrowDependencies`, the resolved producer
 summary, and the existing stable-storage query. Native, virtual, unresolved,
 or temporary-owner production fails closed. Multiple proven stable origins

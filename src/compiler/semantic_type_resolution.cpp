@@ -1071,32 +1071,68 @@ auto SemanticVisitor::Impl::callArgumentMatches(const SemanticType &parameter,
 }
 
 auto SemanticVisitor::Impl::ephemeralBorrowResultSupported(
-    const CallableCandidate &function) const -> bool {
-  if (function.returnBorrowOrigin != BorrowOriginKind::None ||
-      typeTraits(function.returnType).containsBorrowedState) {
+    const CallableCandidate &function,
+    std::optional<std::size_t> temporaryParameter) const -> bool {
+  // Untracked addresses never establish a safe escape boundary.
+  if (function.returnType.kind == SemanticType::RawPointer ||
+      function.returnType.kind == SemanticType::NativeFunction ||
+      function.returnType.kind == SemanticType::CString)
     return false;
-  }
-  switch (function.returnType.kind) {
-  case SemanticType::Reference:
-  case SemanticType::StringView:
-  case SemanticType::CString:
-  case SemanticType::RawPointer:
-  case SemanticType::NativeFunction:
-    return false;
-  default:
+  const bool borrowed = function.returnBorrowOrigin != BorrowOriginKind::None ||
+                        function.returnType.kind == SemanticType::Reference ||
+                        function.returnType.kind == SemanticType::StringView ||
+                        typeTraits(function.returnType).containsBorrowedState;
+  if (!borrowed)
     return true;
+  if (!temporaryParameter)
+    return false;
+  if (function.returnBorrowOrigin == BorrowOriginKind::None) {
+    const FunctionInfo *declaration = semanticModel.findFunction(function.id);
+    if (!declaration && instanceBaseModel)
+      declaration = instanceBaseModel->findFunction(function.id);
+    if (!declaration)
+      return false;
+    // Use the same concrete return contract query as instance analysis and
+    // selected call publication. A generic moved result transports exactly
+    // its by-value parameter's dependencies, not the observer parameters.
+    const auto summary = functionReturnBorrowSummary(
+        function.returnType, function.parameterTypes, function.ownerClass,
+        function.staticMember, function.record().intrinsic,
+        exactMovedReturnParameter(*declaration));
+    if (summary.origin == BorrowOriginKind::None)
+      return false;
+    CallableCandidate concrete = function;
+    concrete.returnBorrowOrigin = summary.origin;
+    concrete.returnBorrowParameter = summary.parameter;
+    concrete.returnBorrowParameters = summary.parameters;
+    concrete.returnBorrowFields = summary.fields;
+    return ephemeralBorrowResultSupported(concrete, temporaryParameter);
   }
+  // Results may retain other caller-owned inputs, never this argument's
+  // full-expression temporary storage.
+  if (function.returnBorrowOrigin == BorrowOriginKind::Argument &&
+      (function.returnBorrowParameter == *temporaryParameter ||
+       std::find(function.returnBorrowParameters.begin(),
+                 function.returnBorrowParameters.end(), *temporaryParameter) !=
+           function.returnBorrowParameters.end()))
+    return false;
+  return std::none_of(function.returnBorrowFields.begin(),
+                      function.returnBorrowFields.end(), [&](const auto &field) {
+    return field.origin == BorrowOriginKind::None ||
+           (field.origin == BorrowOriginKind::Argument &&
+            field.parameter == *temporaryParameter);
+  });
 }
 
 auto SemanticVisitor::Impl::ephemeralBorrowTargetSupported(
-    const CallableCandidate &function) const -> bool {
+    const CallableCandidate &function,
+    std::optional<std::size_t> temporaryParameter) const -> bool {
   if (function.id == 0 || function.declaration == nullptr ||
       function.bodyDeclaration()->body() == nullptr ||
       function.declaration->runtimeBinding() ||
       function.declaration->hasCLinkage() ||
-      function.declaration->operatorName() ||
       function.record().intrinsic != IntrinsicKind::None ||
-      !ephemeralBorrowResultSupported(function)) {
+      !ephemeralBorrowResultSupported(function, temporaryParameter)) {
     return false;
   }
   const FunctionInfo *target = semanticModel.findFunction(function.id);
@@ -1110,15 +1146,14 @@ auto SemanticVisitor::Impl::ephemeralBorrowTargetSupported(
 
 auto SemanticVisitor::Impl::ephemeralTemporaryArgumentMatches(
     const CallableCandidate &function, const SemanticType &parameter,
-    const SemanticType &argument, const ExprPtr &expression) const -> bool {
+    const SemanticType &argument, const ExprPtr &expression,
+    std::size_t parameterIndex) -> bool {
   if (parameter.kind != SemanticType::Reference ||
       parameter.referenceAccess != AccessMode::ReadOnly ||
       parameter.arguments.size() != 1 ||
       parameter.arguments.front() != argument ||
-      (argument.kind != SemanticType::Class && !payloadEnumType(argument) &&
-       argument.kind != SemanticType::Lambda &&
-       argument.kind != SemanticType::FunctionItem) ||
-      !expression || !ephemeralBorrowTargetSupported(function)) {
+      !isTemporaryBorrowReferentType(argument) ||
+      !expression || !ephemeralBorrowTargetSupported(function, parameterIndex)) {
     return false;
   }
   if (argument.kind == SemanticType::FunctionItem &&
@@ -1151,20 +1186,21 @@ auto SemanticVisitor::Impl::ephemeralTemporaryArgumentMatches(
     return exprAs<Variable>(source) != nullptr && info != nullptr &&
            info->category == ValueCategory::Value && info->type == argument &&
            info->traits.movable && !info->traits.containsBorrowedState &&
-           (argument.kind == SemanticType::Lambda ||
-            payloadEnumType(argument) ||
+           (isPassiveScalarValueType(argument) ||
+            argument.kind == SemanticType::Enum ||
+            argument.kind == SemanticType::Lambda ||
             (record != nullptr && (record->kind == ClassKind::Class ||
                                    record->kind == ClassKind::Struct)));
   }
   const FreshTemporaryValueAssessment assessment =
-      freshTemporaryValue(expression);
+      freshTemporaryBorrowValue(expression);
   return assessment.eligible && assessment.type == argument;
 }
 
 auto SemanticVisitor::Impl::functionCallArgumentMatch(
     const CallableCandidate &function, std::size_t index,
     const SemanticType &argument, const ExprPtr &expression,
-    bool deferred) const -> CallArgumentMatchKind {
+    bool deferred) -> CallArgumentMatchKind {
   if (index >= function.parameterTypes.size()) {
     return CallArgumentMatchKind::Mismatch;
   }
@@ -1196,7 +1232,7 @@ auto SemanticVisitor::Impl::functionCallArgumentMatch(
       (argument.kind != SemanticType::FunctionItem || itemContract == nullptr ||
        itemContract->boundary == CallableBoundary::Confined) &&
       ephemeralTemporaryArgumentMatches(function, parameter, argument,
-                                        expression)) {
+                                        expression, index)) {
     return CallArgumentMatchKind::EphemeralReadBorrow;
   }
   return CallArgumentMatchKind::Mismatch;
@@ -1228,17 +1264,16 @@ auto SemanticVisitor::Impl::reportCallArgumentMismatch(
       if (parameter.referenceAccess == AccessMode::Mutable) {
         reason = argumentLabel + std::to_string(index + 1) +
                  " cannot bind a mutable reference to a temporary.";
-      } else if (argument.kind == SemanticType::Class ||
-                 payloadEnumType(argument)) {
+      } else if (isTemporaryBorrowReferentType(argument)) {
         const FreshTemporaryValueAssessment assessment =
-            freshTemporaryValue(expression);
+            freshTemporaryBorrowValue(expression);
         if (assessment.eligible && function != nullptr &&
-            !ephemeralBorrowTargetSupported(*function)) {
-          reason = !ephemeralBorrowResultSupported(*function)
+            !ephemeralBorrowTargetSupported(*function, index)) {
+          reason = !ephemeralBorrowResultSupported(*function, index)
                        ? argumentLabel + std::to_string(index + 1) +
                              " cannot borrow a temporary because the "
-                             "selected function may return a reference or "
-                             "value containing tracked borrowed state."
+                             "selected function may retain this argument in "
+                             "its returned reference or borrowed value."
                        : argumentLabel + std::to_string(index + 1) +
                              " cannot borrow a temporary through a native, "
                              "callback, unresolved, or declaration-only "
@@ -1262,8 +1297,8 @@ auto SemanticVisitor::Impl::reportCallArgumentMismatch(
             break;
           case FreshTemporaryValueFailure::UnsupportedProducer:
             reason = argumentLabel + std::to_string(index + 1) +
-                     " is not a supported fresh record producer or passive "
-                     "payload-enum construction.";
+                     " is not a supported fresh value producer with a "
+                     "proven lifetime and dependency contract.";
             break;
           case FreshTemporaryValueFailure::None:
           case FreshTemporaryValueFailure::NotClassValue:
@@ -1275,7 +1310,7 @@ auto SemanticVisitor::Impl::reportCallArgumentMismatch(
           makeDiagnostic("GTI-S2017", DiagnosticPhase::Semantics,
                          expressionToken(expression), std::move(reason));
       if (function != nullptr && function->declaration != nullptr &&
-          !ephemeralBorrowTargetSupported(*function)) {
+          !ephemeralBorrowTargetSupported(*function, index)) {
         diagnostic.related.push_back(
             {tokenSpan(function->declaration->name()),
              "Selected function's result and linkage contract is declared "

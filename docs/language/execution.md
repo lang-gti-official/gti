@@ -232,7 +232,7 @@ full-expression boundary. Defined failure before production activates no
 obligation, while failure during a later argument or the method discharges the
 active receiver obligation exactly once before propagation.
 
-For an admitted fresh class-value argument to an exact read-only reference,
+For an admitted fresh value argument to an exact read-only reference,
 the producer runs at that argument's written position after all earlier inputs
 have stabilized. Successful production activates one full-expression-owned
 temporary, materializes its place, and begins one read loan. Later arguments
@@ -241,7 +241,9 @@ The argument loan ends immediately after invocation, before full-expression
 cleanup destroys the temporary. Producer failure activates neither loan nor
 drop; failure in a later argument or the selected body ends every active
 temporary-argument loan in reverse order and destroys its temporary exactly
-once while propagating the original failure.
+once while propagating the original failure. Scalar and scalar-enum temporary
+obligations have trivial destruction but retain the same explicit lifetime and
+loan endpoints. Operators use this same ordered input schedule.
 
 A bounded comma-pack fold invokes its already selected call once for each
 concrete element in source-pack order. For each element, its fixed named-place

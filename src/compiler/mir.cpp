@@ -671,8 +671,10 @@ findMirTemporaryMaterialization(const MirBody &body, const MirPlace &place,
                  (instruction.kind == MirInstructionKind::Call ||
                   instruction.kind == MirInstructionKind::Construct ||
                   (instruction.kind == MirInstructionKind::Compute &&
-                   instruction.operation == MirOperation::PayloadConstruct &&
-                   instruction.info.type.kind == SemanticType::Enum) ||
+                   (isPassiveScalarValueType(instruction.info.type) ||
+                    instruction.info.type.kind == SemanticType::Enum ||
+                    (instruction.info.type.kind == SemanticType::StringView &&
+                     instruction.operation == MirOperation::Literal))) ||
                   (instruction.kind == MirInstructionKind::Compute &&
                    ((instruction.operation == MirOperation::Closure &&
                      instruction.info.type.kind == SemanticType::Lambda) ||
@@ -2207,6 +2209,19 @@ verifyMirScalarInitializationFlow(const MirBody &body, std::size_t owner,
         !tracksScalarInitialization(place)) {
       continue;
     }
+    // Full-expression value temporaries use the lifecycle verifier's exact
+    // Initialize/Drop flow, including conditional creation and failed producers.
+    // Do not impose the unrelated local-scalar Initialize instruction protocol
+    // on a producer that initializes its destination through lifecycle events.
+    if (place.root == MirPlaceRootKind::Temporary &&
+        std::any_of(body.dropObligations.begin(), body.dropObligations.end(),
+                    [&](const auto &drop) {
+                      return drop.kind == MirDropObligationKind::Value &&
+                             drop.place == place.id &&
+                             drop.value == place.sourceValue &&
+                             drop.fullExpression != 0;
+                    }))
+      continue;
     const auto existing =
         std::find_if(representatives.begin(), representatives.end(),
                      [&](MirPlaceId representative) {
@@ -11722,11 +11737,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           input.info.type.kind != SemanticType::Reference ||
           input.info.type.referenceAccess != AccessMode::ReadOnly ||
           input.info.type.arguments.size() != 1 ||
-          (input.info.type.arguments.front().kind != SemanticType::Class &&
-           input.info.type.arguments.front().kind != SemanticType::Enum &&
-           input.info.type.arguments.front().kind != SemanticType::Lambda &&
-           input.info.type.arguments.front().kind !=
-               SemanticType::FunctionItem) ||
+          !isTemporaryBorrowReferentType(input.info.type.arguments.front()) ||
           input.info.category != ValueCategory::Value ||
           operand.kind != MirOperandKind::BorrowRead ||
           operand.type != input.info.type) {
@@ -11763,6 +11774,13 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
             producer->operation == MirOperation::FunctionItem &&
             producer->functionTarget && !producer->lambdaTarget &&
             !producer->constructorTarget));
+      const bool scalarComputation =
+          producer && producer->kind == MirInstructionKind::Compute &&
+          (isPassiveScalarValueType(referent) ||
+           (referent.kind == SemanticType::Enum &&
+            producer->operation != MirOperation::PayloadConstruct) ||
+           (referent.kind == SemanticType::StringView &&
+            producer->operation == MirOperation::Literal));
       const bool ordinaryConstruction =
           producer != nullptr &&
           producer->kind == MirInstructionKind::Construct &&
@@ -11818,7 +11836,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
               bool(captureDependency) ||
           !sameCallInputTraits(producer->info.traits, source->info.traits) ||
           (!ordinaryConstruction && !generatedDefault && !ordinaryCall &&
-           !payloadConstruction && !callableConstruction && !joinedTemporary &&
+           !scalarComputation && !payloadConstruction && !callableConstruction && !joinedTemporary &&
            producer->kind != MirInstructionKind::Move)) {
         return false;
       }
@@ -12695,10 +12713,9 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           !loan.additionalSources().empty() || source == nullptr ||
           (source->root != MirPlaceRootKind::Value && !hiddenSlot) ||
           !source->projections.empty() ||
-          (source->type.kind != SemanticType::Class &&
-           source->type.kind != SemanticType::Lambda &&
-           (receiver || (source->type.kind != SemanticType::Enum &&
-                         source->type.kind != SemanticType::FunctionItem))) ||
+          !isTemporaryBorrowReferentType(source->type) ||
+          (receiver && source->type.kind != SemanticType::Class &&
+           source->type.kind != SemanticType::Lambda) ||
           source->access != AccessMode::Mutable ||
           source->traits.containsBorrowedState != receiver ||
           (!receiver && loan.storedDependency != 0)) {
@@ -15870,7 +15887,15 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
         }
       }
       const auto exactEndPrefix = [&](const MirBlock *endingBlock,
-                                      std::size_t begin) -> bool {
+                                      std::size_t begin,
+                                      bool failedInvocation = false) -> bool {
+        // Failure cleanup first retires the call's provisional result loan.
+        // It cannot retain a temporary input (program result-origin proof).
+        if (failedInvocation && endingBlock && invocation.loan &&
+            begin < endingBlock->instructions.size() &&
+            endingBlock->instructions[begin].kind == MirInstructionKind::EndBorrow &&
+            endingBlock->instructions[begin].loan == invocation.loan)
+          ++begin;
         if (endingBlock == nullptr || begin + temporaryArgumentLoans.size() >
                                           endingBlock->instructions.size()) {
           return false;
@@ -15895,7 +15920,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
             block.terminator.invokeInstruction == invocation.id;
         if (invoke) {
           if (!exactEndPrefix(body.findBlock(block.terminator.target), 0) ||
-              !exactEndPrefix(body.findBlock(block.terminator.elseTarget), 0)) {
+              !exactEndPrefix(body.findBlock(block.terminator.elseTarget), 0, true)) {
             return failure(
                 body, owner,
                 "temporary argument loans must end in reverse order at the "

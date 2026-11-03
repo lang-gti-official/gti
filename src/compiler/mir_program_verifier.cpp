@@ -1546,15 +1546,32 @@ exactInPlaceConstructionRoles(const std::vector<SemanticType> &arguments,
 // reference-like results, including untracked raw/native address values.
 [[nodiscard]] bool
 supportsEphemeralBorrowResult(const MirFunctionInstance *target,
-                              const ExpressionInfo &result) {
-  return target != nullptr &&
-         target->returnType.kind != SemanticType::Reference &&
-         target->returnType.kind != SemanticType::StringView &&
-         target->returnType.kind != SemanticType::CString &&
-         target->returnType.kind != SemanticType::RawPointer &&
-         target->returnType.kind != SemanticType::NativeFunction &&
-         target->returnBorrowOrigin == BorrowOriginKind::None &&
-         !result.traits.containsBorrowedState;
+                              const ExpressionInfo &result,
+                              std::optional<std::size_t> parameter = std::nullopt) {
+  if (!target || target->returnType.kind == SemanticType::RawPointer ||
+      target->returnType.kind == SemanticType::NativeFunction ||
+      target->returnType.kind == SemanticType::CString)
+    return false;
+  const bool borrowed = target->returnBorrowOrigin != BorrowOriginKind::None ||
+                        target->returnType.kind == SemanticType::Reference ||
+                        target->returnType.kind == SemanticType::StringView ||
+                        result.traits.containsBorrowedState;
+  if (!borrowed)
+    return true;
+  if (!parameter || target->returnBorrowOrigin == BorrowOriginKind::None)
+    return false;
+  if (target->returnBorrowOrigin == BorrowOriginKind::Argument &&
+      (target->returnBorrowParameter == *parameter ||
+       std::find(target->returnBorrowParameters.begin(),
+                 target->returnBorrowParameters.end(), *parameter) !=
+           target->returnBorrowParameters.end()))
+    return false;
+  return std::none_of(target->returnBorrowFields.begin(),
+                      target->returnBorrowFields.end(), [&](const auto &field) {
+    return field.origin == BorrowOriginKind::None ||
+           (field.origin == BorrowOriginKind::Argument &&
+            field.parameter == *parameter);
+  });
 }
 
 [[nodiscard]] std::optional<MirPlaceId>
@@ -2338,6 +2355,15 @@ uniqueMirClassInstanceForType(const MirProgram &program,
                target->returnType == argumentPlace->type &&
                (target->returnBorrowOrigin == BorrowOriginKind::None ||
                 retainedCarrier));
+        } else if (producer && argumentPlace &&
+                   producer->kind == MirInstructionKind::Compute &&
+                   producer->info.type == argumentPlace->type &&
+                   (isPassiveScalarValueType(argumentPlace->type) ||
+                    (argumentPlace->type.kind == SemanticType::Enum &&
+                     program.findPayloadEnum(argumentPlace->type) == nullptr) ||
+                    (argumentPlace->type.kind == SemanticType::StringView &&
+                     producer->operation == MirOperation::Literal))) {
+          exactProducer = true;
         } else if (producer != nullptr && argumentPlace != nullptr &&
                    producer->kind == MirInstructionKind::Compute &&
                    producer->operation == MirOperation::PayloadConstruct &&
@@ -2392,7 +2418,7 @@ uniqueMirClassInstanceForType(const MirProgram &program,
                                       CallableBoundary::Confined;
                          }));
         const bool supportedResult =
-            supportsEphemeralBorrowResult(functionTarget, instruction.info);
+            supportsEphemeralBorrowResult(functionTarget, instruction.info, index);
         const std::size_t argumentObligations =
             argumentPlace == nullptr
                 ? 0
@@ -2409,7 +2435,6 @@ uniqueMirClassInstanceForType(const MirProgram &program,
         if (functionTarget == nullptr ||
             functionTarget->definitionKind != MirDefinitionKind::Source ||
             functionTarget->linkage != LanguageLinkage::Gti ||
-            functionTarget->overloadedOperator ||
             argumentInput->callInputIndex != index ||
             index >= functionTarget->parameterTypes.size() ||
             functionTarget->parameterTypes[index] != argumentInput->info.type ||

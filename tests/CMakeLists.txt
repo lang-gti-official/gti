@@ -6233,3 +6233,14 @@ if(GTI_RELEASE_BUILD)
     "GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>"
   )
 endif()
+
+add_executable(gti_scalar_temporary_borrow_tests scalar_temporary_borrow_tests.cpp)
+target_link_libraries(gti_scalar_temporary_borrow_tests PRIVATE gti_compiler)
+add_test(NAME scalar_temporary_borrow COMMAND gti_scalar_temporary_borrow_tests)
+
+if(Python3_Interpreter_FOUND)
+  add_test(NAME scalar_temporary_borrow_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/scalar_temporary_borrow_runtime_test.py"
+            "$<TARGET_FILE:gti>" --mode llvm-O0 --mode llvm-O3)
+  set_tests_properties(scalar_temporary_borrow_runtime PROPERTIES TIMEOUT 600)
+endif()

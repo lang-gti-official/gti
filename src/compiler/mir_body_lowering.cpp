@@ -6136,10 +6136,7 @@ private:
     const HirValue *temporary = findValue(id);
     // Semantics admits fresh class, struct and payload-enum values here.
     if (temporary == nullptr ||
-        (temporary->info.type.kind != SemanticType::Class &&
-         temporary->info.type.kind != SemanticType::Enum &&
-         temporary->info.type.kind != SemanticType::Lambda &&
-         temporary->info.type.kind != SemanticType::FunctionItem) ||
+        !isTemporaryBorrowReferentType(temporary->info.type) ||
         temporary->info.category != ValueCategory::Value ||
         (temporary->info.traits.containsBorrowedState &&
          !allowBorrowedCarrier &&
@@ -7460,10 +7457,7 @@ private:
       if (type.kind != SemanticType::Reference ||
           type.referenceAccess != AccessMode::ReadOnly ||
           type.arguments.size() != 1 ||
-          (type.arguments.front().kind != SemanticType::Class &&
-           type.arguments.front().kind != SemanticType::Enum &&
-           type.arguments.front().kind != SemanticType::Lambda &&
-           type.arguments.front().kind != SemanticType::FunctionItem) ||
+          !isTemporaryBorrowReferentType(type.arguments.front()) ||
           input.operands.front().kind != MirOperandKind::BorrowRead ||
           input.operands.front().type != type || source == nullptr ||
           !materialization || !source->projections.empty() ||
@@ -10518,6 +10512,25 @@ private:
     const MirOperand left = conditionOperand(value.operands[0]);
     const std::vector<TemporaryDrop> leftTemporaryDrops = temporaryDrops;
     const MirPlaceId temporary = logicalTemporary(value);
+    const MirDropObligationId resultObligation =
+        dropObligationForValue(value.id, temporary);
+    const auto initialize = [&](MirOperand operand) {
+      MirInstruction stage{.kind = MirInstructionKind::Initialize,
+                           .hirValue = value.id,
+                           .destination = temporary,
+                           .operands = {std::move(operand)},
+                           .info = ExpressionInfo{
+                               .type = SemanticType::Bool,
+                               .category = ValueCategory::Place,
+                               .access = AccessMode::Mutable,
+                               .traits = value.info.traits}};
+      if (resultObligation != 0) {
+        appendLifecycle(stage, {.kind = MirLifecycleEventKind::Initialize,
+                                .target = resultObligation});
+        registerTemporary(resultObligation);
+      }
+      (void)appendInstruction(std::move(stage));
+    };
     const MirBlockId rightBlock = appendBlock();
     const MirBlockId shortCircuitBlock = appendBlock();
     const MirBlockId mergeBlock = appendBlock();
@@ -10533,17 +10546,9 @@ private:
     current = shortCircuitBlock;
     scopes = incomingScopes;
     temporaryDrops = leftTemporaryDrops;
-    (void)appendInstruction(
-        {.kind = MirInstructionKind::Initialize,
-         .hirValue = value.id,
-         .destination = temporary,
-         .operands = {{.kind = MirOperandKind::Constant,
-                       .literal = Literal{!conjunction},
-                       .type = SemanticType::Bool}},
-         .info = ExpressionInfo{.type = SemanticType::Bool,
-                                .category = ValueCategory::Place,
-                                .access = AccessMode::Mutable,
-                                .traits = value.info.traits}});
+    initialize({.kind = MirOperandKind::Constant,
+                .literal = Literal{!conjunction},
+                .type = SemanticType::Bool});
     OpenBranch shortCircuit{.end = current,
                             .scopes = scopes,
                             .transfers = incomingTransferEndpoints};
@@ -10555,15 +10560,7 @@ private:
     temporaryDrops = leftTemporaryDrops;
     callTransferredLoanEndpoints = incomingTransferEndpoints;
     const MirOperand right = conditionOperand(value.operands[1]);
-    (void)appendInstruction(
-        {.kind = MirInstructionKind::Initialize,
-         .hirValue = value.id,
-         .destination = temporary,
-         .operands = {right},
-         .info = ExpressionInfo{.type = SemanticType::Bool,
-                                .category = ValueCategory::Place,
-                                .access = AccessMode::Mutable,
-                                .traits = value.info.traits}});
+    initialize(right);
     endAddedLoans(incomingScopes);
     OpenBranch rightBranch{.end = current,
                            .scopes = scopes,
