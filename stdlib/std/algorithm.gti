@@ -10,15 +10,39 @@ import std.functional;
 import std.vector;
 namespace std {
 namespace detail {
-// Boolean form of the cursor jump requirement for `if constexpr` (a concept-id
-// is not an expression). The ordered searches move their own cursor parameter
-// in place, so they select the jump themselves rather than through
-// std::advance, which would need to borrow that by-value parameter.
+// Movement for the ordered searches. Their own requires clauses already admit
+// the cursor, so these unconstrained helpers select the jump or the sized
+// distance with plain requirement tests. Calling std::advance or std::distance
+// instead re-resolves those constrained overload sets in every search instance,
+// which doubled the compile time of search-heavy programs. A search moves its
+// own by-value cursor parameter inline, because lending that parameter as
+// `mut I&` is not accepted yet (issue #148).
 constexpr bool cursor_jumps<I>() {
   return requires(mut I& position, std::ptrdiff_t distance) {
     { position += distance } -> void;
     { position -= distance } -> void;
   };
+}
+constexpr bool sized_distance<I, S>() {
+  return requires(I& position, S& end) { { position - end } -> std::ptrdiff_t; };
+}
+size_t search_length<I, S>(mut I first, S last) {
+  if constexpr (sized_distance<I, S>()) {
+    ptrdiff_t difference = first - last;
+    gti_internal::require_container_argument(difference <= 0);
+    return size_t(-difference);
+  } else {
+    mut size_t count = 0;
+    while (first != last) { ++first; count++; }
+    return count;
+  }
+}
+void search_step<I>(mut I& cursor, size_t count) {
+  if constexpr (cursor_jumps<I>()) {
+    cursor += ptrdiff_t(count);
+  } else {
+    for (mut size_t step = 0; step < count; step++) { ++cursor; }
+  }
 }
 }
 
@@ -599,11 +623,11 @@ export bool binary_search<Iterator, Sentinel, T>(mut Iterator first,
            std::sentinel_for<Sentinel, Iterator> &&
            std::dereferences_to<Iterator, T> &&
            std::totally_ordered<T> {
-  mut size_t remaining = size_t(std::distance(first, last));
+  mut size_t remaining = detail::search_length(first, last);
   while (remaining > 0) {
     size_t half = remaining / 2;
     mut Iterator middle = first;
-    std::advance(middle, half);
+    detail::search_step(middle, half);
     if (*middle < value) {
       if constexpr (detail::cursor_jumps<Iterator>()) {
         first += ptrdiff_t(half + size_t(1));
@@ -785,11 +809,11 @@ export Iterator partition_point<Iterator, Sentinel, Predicate>(
     mut Iterator first, Sentinel last, mut Predicate predicate)
   requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
            std::indirect_predicate<Predicate, Iterator> {
-  mut size_t remaining = size_t(std::distance(first, last));
+  mut size_t remaining = detail::search_length(first, last);
   while (remaining > 0) {
     size_t half = remaining / 2;
     mut Iterator middle = first;
-    std::advance(middle, half);
+    detail::search_step(middle, half);
     if (predicate(*middle)) {
       if constexpr (detail::cursor_jumps<Iterator>()) {
         first += ptrdiff_t(half + size_t(1));
@@ -805,11 +829,11 @@ export Iterator partition_point<Iterator, Sentinel, Predicate>(
 export Iterator lower_bound<Iterator, Sentinel, T>(mut Iterator first, Sentinel last, T& value)
   requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
            std::dereferences_to<Iterator, T> && std::totally_ordered<T> {
-  mut size_t remaining = size_t(std::distance(first, last));
+  mut size_t remaining = detail::search_length(first, last);
   while (remaining > 0) {
     size_t half = remaining / 2;
     mut Iterator middle = first;
-    std::advance(middle, half);
+    detail::search_step(middle, half);
     if (*middle < value) {
       if constexpr (detail::cursor_jumps<Iterator>()) {
         first += ptrdiff_t(half + size_t(1));
@@ -825,11 +849,11 @@ export Iterator lower_bound<Iterator, Sentinel, T>(mut Iterator first, Sentinel 
 export Iterator upper_bound<Iterator, Sentinel, T>(mut Iterator first, Sentinel last, T& value)
   requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
            std::dereferences_to<Iterator, T> && std::totally_ordered<T> {
-  mut size_t remaining = size_t(std::distance(first, last));
+  mut size_t remaining = detail::search_length(first, last);
   while (remaining > 0) {
     size_t half = remaining / 2;
     mut Iterator middle = first;
-    std::advance(middle, half);
+    detail::search_step(middle, half);
     if (!(value < *middle)) {
       if constexpr (detail::cursor_jumps<Iterator>()) {
         first += ptrdiff_t(half + size_t(1));
@@ -850,11 +874,11 @@ export Iterator lower_bound<Iterator, Sentinel, T, Compare>(
     mut Iterator first, Sentinel last, T& value, mut Compare compare)
   requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
            std::dereferences_to<Iterator, T> && std::comparator<Compare, T> {
-  mut size_t remaining = size_t(std::distance(first, last));
+  mut size_t remaining = detail::search_length(first, last);
   while (remaining > 0) {
     size_t half = remaining / 2;
     mut Iterator middle = first;
-    std::advance(middle, half);
+    detail::search_step(middle, half);
     if (compare(*middle, value)) {
       if constexpr (detail::cursor_jumps<Iterator>()) {
         first += ptrdiff_t(half + size_t(1));
@@ -871,11 +895,11 @@ export Iterator upper_bound<Iterator, Sentinel, T, Compare>(
     mut Iterator first, Sentinel last, T& value, mut Compare compare)
   requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
            std::dereferences_to<Iterator, T> && std::comparator<Compare, T> {
-  mut size_t remaining = size_t(std::distance(first, last));
+  mut size_t remaining = detail::search_length(first, last);
   while (remaining > 0) {
     size_t half = remaining / 2;
     mut Iterator middle = first;
-    std::advance(middle, half);
+    detail::search_step(middle, half);
     if (!compare(value, *middle)) {
       if constexpr (detail::cursor_jumps<Iterator>()) {
         first += ptrdiff_t(half + size_t(1));
@@ -892,13 +916,13 @@ export bool binary_search<Iterator, Sentinel, T, Compare>(
     mut Iterator first, Sentinel last, T& value, mut Compare compare)
   requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
            std::dereferences_to<Iterator, T> && std::comparator<Compare, T> {
-  mut size_t remaining = size_t(std::distance(first, last));
+  mut size_t remaining = detail::search_length(first, last);
   // Find the lower bound without transferring or copying the comparator:
   // its state must also survive the final reverse-order equivalence check.
   while (remaining > 0) {
     size_t half = remaining / 2;
     mut Iterator middle = first;
-    std::advance(middle, half);
+    detail::search_step(middle, half);
     if (compare(*middle, value)) {
       if constexpr (detail::cursor_jumps<Iterator>()) {
         first += ptrdiff_t(half + size_t(1));
