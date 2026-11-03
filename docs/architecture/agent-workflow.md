@@ -410,14 +410,16 @@ processes and written before creation. It is pinned to one project/account and
 currency. Do not delete it to reclaim space or reset limits. Missing/corrupt
 history, unresolved creation or failed cleanup blocks admission. This is a
 cooperating-tool allowance, not a security boundary against an operator with
-Google credentials or permission to edit the journal.
+Google credentials or permission to edit the journal. Entire-state deletion or
+restoration from an old backup can reset its history; it is persistent state,
+not a disposable cache. Missing history is detected while its pool marker remains.
 
 Creation requests a provider-enforced maximum runtime, Spot termination action DELETE,
 no automatic restart and an auto-deleted boot disk. Returned resource facts are
 verified. The runtime cap is independent of the controller's wall clock; the
 journal's UTC expiry is a conservative reaping deadline, not a reason to restart
 or renew a VM. IAP SSH uses provider-fetched guest host keys, never disabled host-key
-checking. Normal completion, errors, cancellation and SIGTERM attempt VM/disk
+checking, and explicitly disables agent/port forwarding. Normal completion, errors, cancellation and SIGTERM attempt VM/disk
 cleanup and verify absence before releasing the slot. A lost insert response
 is quarantined even when a list currently shows no VM: absence cannot prove an
 in-flight creation will not finish. An operator must reconcile that ambiguity;

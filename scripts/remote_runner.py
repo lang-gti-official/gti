@@ -790,7 +790,7 @@ def connection(config, action, run_id=None, input_path=None, output_path=None):
                    "--project=" + config["gcp_project"], "--zone=" + config["gcp_zone"],
                    "--tunnel-through-iap", "--strict-host-key-checking=yes", "--ssh-key-expire-after=10m",
                    "--ssh-flag=-oUserKnownHostsFile=" + config["known_hosts"],
-                   *["--ssh-flag=" + option for option in ("-oBatchMode=yes", "-oConnectTimeout=10",
+                   *["--ssh-flag=" + option for option in ("-oBatchMode=yes", "-oForwardAgent=no", "-oClearAllForwardings=yes", "-oConnectTimeout=10",
                                                           "-oServerAliveInterval=15", "-oServerAliveCountMax=3")],
                    "--command=" + remote]
     elif config.get("transport", "ssh") == "tailscale":

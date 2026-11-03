@@ -352,6 +352,8 @@ class SpotRunner(unittest.TestCase):
             argv = command.call_args.args[0]
             self.assertIn("--tunnel-through-iap", argv)
             self.assertIn("--strict-host-key-checking=yes", argv)
+            self.assertIn("--ssh-flag=-oForwardAgent=no", argv)
+            self.assertIn("--ssh-flag=-oClearAllForwardings=yes", argv)
             self.assertFalse(any("StrictHostKeyChecking=no" in a for a in argv))
 
     def test_plan_is_offline_and_default_example_cannot_run(self):
