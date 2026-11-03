@@ -924,7 +924,10 @@ and comment to every open, non-draft PR on `main` that no longer merges
 cleanly, whichever path it was on: the merge queue drops a conflicting entry
 without a run, a status or a comment, and merge-when-ready never fires, so a
 PR that waited while `main` moved otherwise vanishes from every pipeline (on
-2026-11-03, 13 of 31 open PRs). The census baselines
+2026-11-03, 13 of 31 open PRs). An open rollup that no longer merges with
+`main` is closed the same way, with a comment, so its members return to the
+pool and the next `compose` rebuilds from current heads instead of leaving
+them "busy" behind a rollup the queue would drop without a verdict. The census baselines
 (`tests/mir_census_baseline.json`, `tests/lowered_program_census_baseline.json`)
 store per-example counts only, never totals, and the LLVM readiness provider
 inventories hash example and stdlib sources rather than those manifest files,
