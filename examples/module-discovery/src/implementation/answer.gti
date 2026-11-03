@@ -1,0 +1,7 @@
+module demo.counter;
+
+namespace demo {
+  int answer() {
+    return 40 + adjustment();
+  }
+}

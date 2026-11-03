@@ -6,7 +6,7 @@ description: Carry GTI implementation tasks through isolated branches, published
 # GTI Agent Workflow
 
 The normal implementation outcome is a PR that is ready, with its focused
-validation recorded, and handed to integration: labelled for a rollup or in the
+validation recorded, and handed to integration: labelled for a rollup, registered for GitHub merge-when-ready, or in the
 merge queue. The queue merges it, and `sync`
 brings the primary checkout to current `main` for the user's local installer.
 The repository owner's standing authorization is in `AGENTS.md`. Explicit
@@ -128,7 +128,14 @@ integration is complete contributor work; report it as deferred, never as passed
    For developer-automation-only or source-only GTI stdlib changes,
    `verify --focused --checks-file ...` runs owning checks directly and records
    scope `automation` or `source-stdlib`; its diff guard rejects compiler,
-   native runtime and build-system changes.
+   native runtime and build-system changes. CI independently admits the
+   `source-stdlib` lane only with an ancestor's successful full-CI compiler and
+   identical native inputs. It runs mandatory library owners/consumers and
+   packages the changed stdlib without rebuilding the compiler. Missing artifacts,
+   new CMake registrations, routing/native/build changes or unknown paths use
+   full CI. Register new source cases in an existing owning harness or surface
+   manifest where appropriate; never omit required tests to get the cheaper lane.
+   Combined preview still uses its separate mandatory admission/build policy.
 3. After focused validation passes and the PR is published, submit every completed
    task with `preview submit <task> --tests <exact-owning-ctest-names>`. This is
    the standing default, including fixes and automation work; do not ask again.
@@ -138,7 +145,7 @@ integration is complete contributor work; report it as deferred, never as passed
    Continue normal integration without waiting for preview.
 
    Write the final PR description to a temporary file: behaviour, exactly
-   which checks ran, and "complete suite deferred to the merge queue". Unless
+   which checks ran, and "complete suite deferred to full validation". Unless
    the change is automation-only, end it with a `Validation:` block whose `T0`
    and `T1` items list the CTest names you ran, comma-separated; other items
    (`tier`, `T2`, `reproduction`, `unaffected`, `T3`) are prose:
@@ -150,7 +157,7 @@ integration is complete contributor work; report it as deferred, never as passed
    - T1: mir_full_expression, optimizer_conformance, compiler_pipeline
    - T2: llvm_place_execution, cpp_mir_body_emitter_lifecycle
    - reproduction: fails on parent <sha> with GTI-B0003, passes on the patch
-   - T3: deferred to the merge queue
+   - T3: deferred to post-integration full validation
    ```
 
    `finish` refuses a missing block or a declared test that no recorded
@@ -163,8 +170,20 @@ integration is complete contributor work; report it as deferred, never as passed
    Risk-system diff (build/toolchain files, workflows, test registration, CI
    configuration scripts, runtime ABI/layout headers), a PR labelled
    `rollup=never` or `rollup-failed`, or `finish --no-rollup` instead joins the
-   merge queue alone pinned to the verified head, and the task becomes
-   `queued`. Both `rollup` and `queued` are normal completion points.
+   merge queue alone through GitHub's native merge-when-ready. The request
+   checks the verified head atomically. Pending required checks/reviews produce
+   `awaiting-ci`; GitHub enters the queue when requirements pass (`queued`).
+   `rollup`, `awaiting-ci` and `queued` are normal completion points. Do not poll
+   healthy PR CI or keep an agent alive to retry queue entry. `status` reports
+   live `remote_integration` separately from the last recorded phase. Failures
+   and conflicts still require repair. A rejected registration is not a handoff;
+   report the error and retry only after its cause is resolved. Lost responses
+   are recoverable by retry: existing remote intent/queue membership is reused.
+   Later changes must use `checkpoint`/`reconcile`, which cancel pending intent
+   and queue membership before pushing and invalidate old validation. GitHub's
+   expected-head guard applies at registration, not to arbitrary later direct
+   pushes; never push around this helper after handing off. `--pr-only`
+   withdraws existing integration intent before stopping ready for review.
    Use `--pr-only` when the user requested review before integration.
 4. The queue merges asynchronously. Run `sync <task>` (or `finish` again) once
    it has merged. A PR merged as part of a rollup counts as merged, including
@@ -224,7 +243,8 @@ synced, and any cleanup exception. State that the checkout is ready for the
 installer only after sync.
 Run the installer automatically only when the user asked for installation.
 After delivering the requested outcome, rename the chat `Complete — <task>`.
-A queued or rollup-labelled task whose focused validation is recorded is
-complete; title it `Complete — <task> (queued)` until it merges. A batch component handed off for
+A task with confirmed GitHub merge-when-ready, queue entry or rollup label and
+recorded focused validation is complete; title it `Complete — <task> (awaiting CI)`
+or `Complete — <task> (queued)` as applicable until it merges. A batch component handed off for
 integration is `Handed off — <task>`.
 Explicit PR-only or local-only requests use their requested delivery boundary.

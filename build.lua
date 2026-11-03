@@ -1,3 +1,9 @@
+-- gtiup owns the complete compiler/LSP/parser installation in managed mode.
+-- Keep this guard even with build=false in the recommended Lazy specification.
+if vim.g.gti_toolchain == "gtiup" then
+  return
+end
+
 local source = debug.getinfo(1, "S").source
 local path = source:sub(1, 1) == "@" and source:sub(2) or source
 local root = vim.fs.dirname(vim.uv.fs_realpath(path) or path)

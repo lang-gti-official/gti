@@ -60,6 +60,74 @@ std::vector<Token> Lexer::scan(std::string sourceText, std::string sourceName) {
   return std::move(tokens);
 }
 
+std::vector<Token> Lexer::scanModuleHeader(std::istream &input,
+                                           std::string sourceName) {
+  std::string text;
+  std::size_t chunk = 4096;
+  for (;;) {
+    const auto offset = text.size();
+    text.resize(offset + chunk);
+    input.read(text.data() + offset, static_cast<std::streamsize>(chunk));
+    text.resize(offset + static_cast<std::size_t>(input.gcount()));
+    auto result = scanModuleHeader(std::move(text), sourceName);
+    // A token/comment/UTF-8 sequence may straddle a read boundary. Retry an
+    // exhausted prefix with more input before interpreting its diagnostics.
+    // Geometric growth keeps arbitrarily long leading trivia linear in size.
+    if (!input || current < source.size() ||
+        (result.size() > 1 &&
+         result[result.size() - 2].kind == TokenKind::SEMICOLON))
+      return result;
+    text = std::move(source);
+    chunk = text.size();
+  }
+}
+
+std::vector<Token> Lexer::scanModuleHeader(std::string sourceText,
+                                           std::string sourceName) {
+  reset(std::move(sourceName));
+  source = std::move(sourceText);
+  if (source_text::hasUtf8Bom(source))
+    current = source_text::utf8Bom.size();
+  while (!isAtEnd()) {
+    start = current;
+    const auto before = tokens.size();
+    scanToken();
+    if (hadError())
+      break;
+    if (tokens.size() == before)
+      continue;
+    const auto count = tokens.size();
+    const bool exported = tokens.front().kind == TokenKind::EXPORT;
+    const auto prefix = exported ? 2U : 1U;
+    if (count == 1) {
+      if (!exported && tokens.front().kind != TokenKind::MODULE)
+        break;
+    } else if (exported && count == 2) {
+      if (tokens.back().kind != TokenKind::MODULE)
+        break;
+    } else {
+      const bool identifier = (count - prefix) % 2 == 1;
+      if (tokens.back().kind !=
+          (identifier ? TokenKind::IDENTIFIER : TokenKind::DOT))
+        break;
+    }
+  }
+  // Validate only the consumed prefix. Unused module bodies are not admitted
+  // or diagnosed merely because their declarations were discovered.
+  const auto prefix = std::string_view(source).substr(0, current);
+  if (const auto invalid = source_text::firstInvalidUtf8(prefix))
+    report("GTI-L0013", "Source text is not valid UTF-8.", *invalid,
+           *invalid + 1);
+  if (const auto carriage = source_text::firstLoneCarriageReturn(prefix))
+    report("GTI-L0014",
+           "A carriage return must be followed by a line feed; use LF or "
+           "CRLF line endings.",
+           *carriage, *carriage + 1);
+  start = current;
+  addToken(TokenKind::END_OF_FILE);
+  return std::move(tokens);
+}
+
 std::vector<Token> Lexer::scanForCompletion(std::string sourceText,
                                             std::size_t byteOffset,
                                             std::string sourceName) {

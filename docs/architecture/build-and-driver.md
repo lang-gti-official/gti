@@ -281,6 +281,80 @@ Builds default to all detected logical CPUs (one if detection is unavailable),
 at normal process priority. `--jobs N` overrides the job count; the dry-run and
 normal output both report the selected parallelism.
 
+### Managed toolchains and preview distribution
+
+[`gtiup`](https://github.com/lang-gti-official/gtiup) is a standalone C++
+toolchain manager maintained, tested and released in its own repository. Its
+manager binaries and installer need neither Python nor a compiler. Its CI never
+builds GTI or LLVM; compiler archive publication stays in this repository. The bootstrap
+places `gtiup`, `gti` and `gti_lsp` proxies in `$GTIUP_HOME/bin` (default
+`~/.gtiup/bin`). Installation is explicit; neither compiler invocation nor
+Neovim downloads a missing selection. The manager resolves command overrides,
+`GTIUP_TOOLCHAIN`, the nearest ancestor `gti-toolchain` file, then the persisted
+user default. Explicit version tags remain separate from moving channel
+selections. The selected compiler and language server resolve to real paths in
+one immutable, checksum-named directory with their matching packaged resources.
+
+Downloads use fixed canonical GitHub release URLs. The manager checks archive
+checksums, source identity (`BUILD_ID` for rolling channels), packaged VERSION,
+and preview inclusion metadata before atomically updating settings under a
+process lock. Extraction rejects path traversal, special files, hard links,
+symlink-parent writes and symlink targets containing parent traversal. Install
+and update fail closed on absent or revoked releases; they never substitute an
+older or different channel. Existing installations stay usable offline; release
+revocations are checked during download, not every compiler invocation.
+GitHub publication attestations are available separately; the manager's trust
+boundary is HTTPS downloads plus published checksums and embedded identity.
+Updates retain old immutable directories; explicit `gc` removes unreferenced
+managed directories after the user has stopped processes using them.
+
+`.github/workflows/preview.yml` builds downloadable packages after a canonical
+`preview` branch push, or an explicit dispatch from main. It selects the exact
+current preview source with `.gti-preview.json`, uses the reviewed production
+configuration on Linux x64 and macOS arm64, runs combined `preview_admission`
+(included feature checks and automated examples) and installed-toolchain checks
+on each platform, then packages that validated stage. The publisher requests
+CMake's file-API metadata and builds only targets referenced by those checks
+and the complete `gti_toolchain` install component, including bundled LLVM
+archives installed as files. Native dependencies remain CMake-owned. It does
+not build unrelated test executables. Candidate-owned example and manifest
+selection remain unchanged; missing registered checks fail admission.
+
+The nested admission CTest inherits `CTEST_PARALLEL_LEVEL` from the runner's
+CPU/memory-bounded `GTI_TEST_JOBS`, preserving CTest resource locks and serial
+tests. One shared suite reservation covers the aggregate. Selection, build
+scope and nested timings are retained in `preview-checks-<platform>-<attempt>`
+artifacts, including on failure. The separate `preview`
+prerelease uses `gti-preview-<platform>.tar.gz` names, checksums, embedded and
+release `BUILD_ID`, `PREVIEW_SOURCE`, inclusion metadata and run/attempt-bound
+provenance. Publication verifies both platforms, attests archives, and requires
+the candidate to remain in the admitted preview branch's ancestry, with its
+packaged inclusion manifest equal to the committed source manifest. Branch
+advancement alone does not invalidate a successful build. An explicit, unrestored
+feature withdrawal still blocks candidates containing that feature.
+
+The rolling tag advances only to a descendant of its existing source commit;
+an older candidate is a successful no-op, and divergent history is rejected.
+An exact tag lease prevents a concurrent tag update from being overwritten.
+The workflow serializes publishers with `cancel-in-progress: false`, retaining
+the running build while pending submissions consolidate into the next build.
+Same-commit retries may complete an interrupted upload after the tag moved.
+BUILD_ID is uploaded last so a racing installer rejects inconsistent assets.
+
+This does not qualify preview artifacts for nightly or advance main. Preview
+can include features whose original PR review and complete integration are
+pending. Nightly still requires successful full CI on its selected main source;
+beta/stable promotion is unchanged. Preview source admission and package
+publication are asynchronous: a source branch can advance before downloadable
+packages finish. A completed build may publish while newer source is pending,
+but cannot replace a newer published snapshot. Thus steady submissions do not
+starve publication. Publication order follows source ancestry, not run IDs or
+completion times.
+A workflow retry must rerun both package jobs in the same attempt. Initial
+commissioning requires this orchestration on main and a published preview source.
+Neovim managed mode delegates compiler/LSP/parser selection to gtiup; it installs
+only editor configuration and never an independent language-server version.
+
 ### GitHub nightly publication
 
 `.github/workflows/nightly.yml` runs daily at 02:00 UTC and on manual dispatch.
@@ -288,14 +362,28 @@ It publishes only the rolling `nightly` channel. Stable `v<VERSION>` releases
 come from the [release train](#github-release-train), which cuts the commit
 this workflow published.
 
-1. **Build and validate in integration.** Full `ci.yml` integration builds
-   production archives on `ubuntu-24.04` (`linux-x64`) and `macos-26`
+Source-only standard-library merge groups may instead reuse an ancestor's
+validated production compiler when all native inputs match exactly. They run
+the affected library owners/consumers and installed checks on both platforms,
+then package the candidate's new stdlib with unchanged compiler/runtime binaries.
+`BUILD_ID` identifies the assembled source revision; `COMPILER_ORIGIN.json` and
+artifact provenance retain the compiler's original revision, full CI run/attempt
+and native-input digest. Missing compatible evidence selects full CI. See the
+[source-only CI contract](agent-workflow.md#required-ci-and-the-merge-queue).
+This successful integration also qualifies for nightly publication; an
+arbitrary PR pass or merge exception still does not.
+
+1. **Build and validate after integration.** `full-validation.yml`, on every
+   main head, builds production archives on `ubuntu-24.04` (`linux-x64`) and `macos-26`
    (`darwin-arm64`). Each uses the reviewed compiler from
    `scripts/configure_ci_toolchain.sh`, configures
    `-DCMAKE_BUILD_TYPE=Release -DGTI_RELEASE_BUILD=ON` with pinned bundled
    LLVM/Clang, builds, stages `gti_toolchain` into a fresh directory, and runs
    the installed CLI/LSP/project, process-resource, managed-thread,
    atomic-runtime and installed-library consumer checks against that stage.
+   The bundled LLVM/Clang objects come from the content-keyed release cache
+   that `llvm-prebuilt.yml` maintains (see the agent-workflow document), so
+   packaging restores rather than rebuilds LLVM.
    macOS installation generates and verifies `share/gti/host-runtime.json`;
    `cmake/PackageRelease.cmake` refuses a macOS stage without it. The stage
    becomes `gti-nightly-<platform>.tar.gz` with a `.sha256` sidecar and
@@ -304,14 +392,14 @@ this workflow published.
    configuration, reusing the packaging job's object cache, and retains the
    separate sanitizer gates and system-LLVM fast checks, including the Linux
    system-LLVM installed consumers. The coverage gate proves each platform's inventory
-   ran exactly once. Packaging is a required part of the full `CI gate`.
+   ran exactly once. Packaging is a required part of the `Full validation
+   verdict`; the merge gate (`CI gate`) proves only build and fast checks.
 2. **Select validated artifacts.** Nightly runs only from main's own definition
    in `lang-gti-official/gti`. It takes main head, or a dispatched exact 40-hex
    commit on main. `scripts/resolve_release_source.py select-nightly` requires
-   successful full CI for that exact commit and its retained production
-   artifacts. Normally this is the `merge_group` run of
-   `.github/workflows/ci.yml` on `gh-readonly-queue/main/...`; a full main-only
-   CI dispatch also qualifies for commissioning or artifact recovery. PR runs,
+   successful full validation for that exact commit and its retained production
+   artifacts: the `push` run of `.github/workflows/full-validation.yml` on
+   `main`, or a dispatch of it for commissioning or artifact recovery. PR runs,
    automation-only passes and merge exceptions alone are not release evidence.
    Scheduled selection skips unchanged main. There is no fallback that stamps
    an older compiler with a new commit when the selected source has no artifacts.
@@ -408,11 +496,15 @@ overwrites; no tag or branch is ever forced, moved or deleted.
    already hold another commit. On a `beta/X.Y` push, selection verifies the
    backports since the line's newest beta, refuses pending user-visible
    fragments, publishes nothing when `VERSION` is already stable, and numbers
-   the next beta. Beta retains its own bundled production build, installed-
-   toolchain checks, complete release-suite shards and merge-shards gate on the
-   beta commit. The nightly artifact-reuse path does not relabel a nightly
-   package as a versioned beta: the release cut changes the embedded version
-   and archive identity. The
+   the next beta. Beta retains its own bundled production build and
+   installed-toolchain checks on the beta commit, restoring the release object
+   cache `llvm-prebuilt.yml` warms; it re-runs no release suite, because a
+   main cut changes only release metadata on top of its full-CI-verified
+   parent and a line commit was proven by its backport pull request's own
+   release-suite shards and merge-shards gate (`backport.yml`). The nightly
+   artifact-reuse path does not relabel a nightly package as a versioned
+   beta: the release cut changes the embedded version and archive identity.
+   The
    serialized publish job (the only one that writes) re-verifies the asset set,
    admits the beta (the tag is absent or already at that commit, and a newer
    push did not supersede it), attests build provenance, pushes
@@ -698,7 +790,8 @@ C++ fallback. `--std` and `--keep-cpp` are C++-only: without `--backend` they
 select C++, and with `--backend llvm` they are rejected. Explicit emit modes
 keep their dedicated backend entry points rather than accepting `--backend`.
 Repeatable `-D NAME` options seed valueless GTI configuration flags
-for the invocation. Repeatable `-Wno-<group>` options (or the equivalent
+for the invocation. `--<limit> <n>` options set the per-request
+[compile limits](#compile-limits) of the invocation over the defaults. Repeatable `-Wno-<group>` options (or the equivalent
 `--disable-warning <group>`) add validated warning groups to the immutable
 `CompilationRequest`; for example, `-Wno-unused-mut` suppresses `GTI-S2096`.
 Accepted native arguments after `--` remain exact argv values; native
@@ -1196,6 +1289,55 @@ the generated C++ for diagnosis. C compiler selection is `--cc`, then `GTI_CC`,
 then `CC`, then `cc`; C++ compilation and final linking use `--cxx`, then
 `GTI_CXX`, then `CXX`, then `c++`.
 
+### Compile limits
+
+Per-request compile-time limits (constant-evaluation steps and call depth,
+macro nesting and expansion, `constexpr for` elements and copies) are
+implementation quantities with guaranteed minimums; their language contract,
+defaults and largest settings are in
+[static semantics](../language/static-semantics.md#3112-implementation-limits).
+`CompileLimits` (`include/gti/compile_limits.h`) holds one value per limit, and
+one table there names each limit's manifest key, flag, minimum and maximum, so
+the command line, the manifest, help text, identities and reports cannot drift.
+
+Direct compilation and project `build`, `check`, `run`, `test`, `verify` and
+`install` accept `--<limit> <n>` or `--<limit>=<n>` for every limit, for example
+`--constexpr-steps 4000000`. A project sets the same names in one top-level
+table:
+
+```toml
+[limits]
+constexpr-steps = 4000000
+constexpr-depth = 1024
+```
+
+Precedence is command line, then the root package's `[limits]`, then the
+defaults. The root package is the selected package (a workspace member when
+one is selected), and its table configures the whole compilation, including
+dependency sources and compiled-library dependency plans. Like the consumer-owned
+`[build]` permissions, a dependency's `[limits]` table is parsed and validated
+with its manifest, so the package stays valid as a root, but is never applied
+to a consumer and produces no diagnostic when valid. Direct mode remains
+manifest-independent and approved `build.gti` host programs keep their fixed
+default compilation policy. A value is a decimal integer from 1 to the limit's
+largest setting; anything else is rejected rather than clamped. A repeated
+flag, a missing count or an invalid count is a usage error (exit 64). In a
+manifest, an unknown key is `GTI-B1001` with a nearest-name hint, a non-integer
+value or a non-table `limits` is `GTI-B1004`, and an out-of-range value is
+`GTI-B1005`, each at the offending TOML span.
+
+The immutable `CompilationRequest` (`compileLimits()`), the resolved
+`ProjectBuildPlan` and read-only `ProjectFacts` carry the resolved value into
+`FrontendOptions::limits`, which the frontend passes to semantic analysis and
+every worker analyzer; gti_lsp and completion use `ProjectFacts::compileLimits()`
+for the open file's project, so an editor reports the same exhaustion as a
+build. The resolved limits join the project model identity, the executable
+cache identity and the frontend's semantic cache context (preamble and
+instance-analysis reuse), so no artifact or cached analysis crosses limit
+settings. Build-report schema 2 records them as the additive `compile_limits`
+object (older reports omit it); `verify` replays the recorded limits unless the
+command line overrides one and compares them as a separate provenance fact.
+
 ### Objective-C++ bridges
 
 `cpp-sources` also accepts exact `.mm` paths for a selected macOS target.
@@ -1543,7 +1685,56 @@ containment and public-map rules; compiler trust remains a separate provenance f
 
 ### Source Module Registration
 
-Source packages can declare a public module map independently of file layout:
+Project resolution discovers source modules under `[package].source-root`
+(`src` by default). Leading `export module name;` declarations supply interfaces;
+leading `module name;` declarations supply private implementation membership.
+Filenames do not determine logical names or namespaces. This discovery applies
+to the root package and declared dependency packages alike; direct single-file
+compilation remains manifest-independent.
+
+The compiler lexer reads a small prefix through the leading declaration for
+discovery, using the same header parser as source loading. It extends that
+prefix when a comment, token or UTF-8 sequence crosses a read boundary; it does
+not read a large unused body into memory. An unused module body is not parsed,
+checked or lowered. Directory traversal and implementation order are sorted,
+and overlapping roots do not duplicate files. Within each selected root, hidden
+entries, `build` directories, directory symlinks and nested packages are not
+traversed. Explicit roots can select contained hidden/generated directories or
+directory aliases, but cannot cross a nested package boundary. Source
+file symlinks must stay inside their owning package. A missing default `src`
+directory is allowed for projects using explicit paths elsewhere.
+A nested `gti.toml` remains a package boundary even when it is a broken
+symlink; a damaged child manifest never makes its private sources part of the
+parent package.
+
+Optional settings customize discovery; they do not enable it:
+
+```toml
+[module-discovery]
+roots = ["src", "generated"]
+exclude = ["src/core/windows", "src/experimental.gti"]
+```
+
+Roots replace the default and must be existing package-contained directories.
+Exclusions are package-relative file or directory paths, not glob patterns;
+they apply before module membership is collected. `roots = []` selects fully
+explicit registration. Excluding a file symlink excludes that entry, without
+excluding its independently discovered target or requiring that target to exist
+or belong to the package. Exclusions also work through contained directory
+aliases used as explicit roots. Unexcluded file links still undergo all package
+and duplicate-file checks. Platform/backend folder names have no implicit meaning:
+select the desired roots/exclusions or explicit implementation lists before
+building. This first implementation does not add conditional discovery tables.
+
+All discovered interfaces enter the package's public module map; only their
+explicitly exported declarations become visible to consumers. Private
+implementation files never become independently importable public interfaces.
+Discovery cannot cross a nested package boundary or grant a dependency new
+aliases. Saved header changes, file creation/removal and implementation
+membership changes are reflected on the next project resolution and in its
+model/cache identity. Loaded source bytes retain their existing cache checks.
+
+Source packages can also declare explicit selections independently of file layout:
 
 ```toml
 [modules]
@@ -1559,8 +1750,11 @@ the package, including through symlinks. Duplicate physical files, portable
 case-fold name collisions, invalid names/types and missing paths are rejected
 by manifest loading. The frontend additionally requires the file to begin with
 `export module` using the registered name. Paths need not be under `source-root`;
-public module resolution uses these explicit registrations rather than deriving
-paths from that field. For example, the registered geometry interface is:
+an explicit selection wins over discovered interfaces with that exact name.
+Without an explicit selection, duplicate interfaces and portable case-fold name
+collisions are errors. An explicitly registered file is not also discovered
+under another name; the frontend still checks that its header matches its
+registration. For example, the selected geometry interface is:
 
 ```gti
 // src/geometry_api.gti
@@ -1580,18 +1774,19 @@ dependency aliases resolve; re-exporting declarations never leaks aliases.
 Direct compilation remains manifest-independent and can write a relative
 quoted import instead.
 
-An optional table registers bodies separately from interfaces:
+An optional table selects bodies separately from interfaces:
 
 ```toml
 [module-implementations]
 geometry = ["src/geometry_impl.gti"]
 ```
 
-Each key must already occur in `[modules]`. Values are arrays of existing,
+Each key must name a discovered or explicitly selected interface. Values are arrays of existing,
 package-contained, relative `.gti` file paths. Duplicate physical registration,
 interface/implementation overlap, non-files and symlink escapes are rejected.
 An implementation begins with `module geometry;`, matching its registered
-interface name. Its interface is implicitly available through shared module
+interface name. An explicit list replaces automatic implementation discovery
+for that module, including when the list is empty. Its interface is implicitly available through shared module
 identity; imports are still required for other dependencies used by its bodies.
 Importing the registered interface automatically loads these files, including
 when it is reached through a dependency package. Unused module registrations
@@ -1602,12 +1797,15 @@ loaded implementation bytes participate in source keys, reports and editor
 snapshot invalidation. Private implementation roots are traversed before the
 entry root in deterministic registration/discovery order, with their own
 ordinary source dependencies first. Existing initialization/lifetime rules
-still apply. No source directories are scanned, no implementation file needs
+still apply. No implementation file needs
 to be imported directly by a consumer, and no independently linked GTI object is added.
 Direct mode still does not discover a manifest: use explicit source edges or
 project mode for registered implementations. `examples/window-factory` is a
 runnable project illustrating this arrangement: its factory and private concrete
 types share the `window` module across three registered implementation files.
+`examples/module-discovery` demonstrates the same shared module identity with
+one interface and two implementation files discovered without either table;
+`module_discovery_runtime` owns its runnable and cache-invalidation coverage.
 
 `ProjectPackage` and immutable `PackageSourceRoot` values carry these maps;
 `SourceLoader` owns language resolution. Registrations are part of project

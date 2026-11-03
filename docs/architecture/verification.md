@@ -1,5 +1,48 @@
 # Compiler Verification
 
+## Default module discovery
+
+`project_model` owns declaration-driven registration, explicit interface and
+implementation precedence (including empty lists), overlapping/custom roots,
+exclusions, malformed settings, reserved/portable names, exact collision spans,
+missing defaults, symlink aliases/escapes/cycles and nested package boundaries.
+`source_text_pipeline` compares streamed and in-memory header lexing across
+UTF-8, CRLF, nested comments and token read boundaries, including exact error
+codes/ranges. A large unused body must consume only the initial header buffer.
+
+`module_discovery_runtime` builds the runnable no-table example and covers
+cache hits, interface/implementation path and name changes, content changes,
+removal/recovery, duplicate interfaces, unused versus imported cycles, explicit
+platform alternatives, private visibility, dependency aliases, short `main`
+imports, re-exports and workspace selection. It executes LLVM dev and release
+artifacts, and retains the manifest-independent direct compilation boundary.
+`module_discovery_lsp` covers watched additions/removals, duplicate recovery,
+overlays/close, definition navigation, new/renamed/removed headers saved without
+a watcher, and a trace assertion that body-only saves do not repeat analysis.
+
+The affected source-module, driver, cache and LSP consumers, `compiler_pipeline`
+and native O0/O3 smoke remain focused acceptance obligations. Post-integration
+full validation proves the complete inventory on Linux x64 and the `darwin`
+set on macOS arm64 (what differs on the platform) before the change can
+reach nightly; the deprecated C++ backend is proven weekly at `c++23 -O3`.
+
+Runtime harnesses take their modes from `tests/backend_modes.py`
+(`native_modes()`: `llvm-O0` and `llvm-O3` under the default
+`GTI_TEST_BACKENDS=llvm`, `cpp-c++23-O3` under `cpp`, all three under `both`)
+and never spell `--std`, `--backend cpp` or a bare `--keep-cpp` themselves.
+Assertions on the emitted C++ text run only for modes where `is_cpp_mode(flags)`
+holds, with `keep_cpp(flags)` requesting the text; `cpp_text_modes()` serves
+`--emit-cpp` probes, and `cpp_variant_mode` a harness's own C++-text variant
+such as a thread-sanitizer run. A fixture the LLVM backend cannot execute is
+declared, never skipped: `llvm_unsupported` (mirroring `cpp_unsupported` in
+`lambda_pack_invocation_runtime_test.main`) asserts the exact rejection, or
+that a filed bug symptom still reproduces, while the C++ profile keeps the
+fixture's execution evidence. `execution_coverage` inventories every registered
+harness that receives `gti`, runs the shared main's `--list-modes` plan under
+the default policy, rejects a hard-coded backend spelling outside its named
+contract allowlist, and so fails whenever a fixture would lose its last
+execution mode.
+
 ## Owned inline consumption (unreleased)
 
 The user-facing slice is allocation-free small once-invoked callbacks and
@@ -2122,6 +2165,19 @@ One shape remains outside this slice: success extraction from
 elements of such an enum are covered by the fixed-array element section.
 
 ## Callable-result projection prerequisites (0.447.0)
+
+`lambda_reference` covers mutable parameter-derived lambda results, read-only
+reborrows of mutable parameters, nested aliases and concrete generic relays.
+It checks unrelated record projections and rejects ambiguous origins, local or
+captured escapes, access upgrades, conflicting owner use and unsupported
+signature erasure. `borrow_origin` additionally mutates return loans, parent
+links, summary access and selected formal indices. `borrow_origin_syntax` and
+`lambda_formatting` preserve result-access tokens and formatting;
+`borrowing_callbacks_lsp` checks accepted forms, hover, formatting, conflict
+diagnostics and recovery. The `lambda_parameter_reference_results` fixture in
+`llvm_callable_execution` exercises scalar, record and string composition
+through the existing MIR backends, including LLVM O0–O3. Example 156 demonstrates
+all three forms. These checks extend the earlier read-only lambda contract.
 
 `callable_return_type` covers exact result projection for signatures, function
 items, lambdas and native pointers, contextual item inference, void/reference
@@ -7498,6 +7554,12 @@ explicit `--local` installation and activation behavior. These orchestration tes
 preview admission separately requires its optimized build and automated
 example gates on the combined source. Workflow changes do not themselves
 claim that a preview candidate or installed toolchain has been validated.
+`preview_release` also configures a small real CMake project, builds the exact
+installed/test target closure, installs its component, and confirms unrelated
+test binaries stay unbuilt. A nested CTest rendezvous verifies that the bounded
+parallel budget reaches the inner tests even when the aggregate is RUN_SERIAL.
+The production preview still runs every included feature and example gate;
+these orchestration fixtures do not replace candidate validation.
 
 `build_window` exercises `scripts/build_window.py` in a temporary directory:
 slot files record owner pid, time, kind and command and disappear on release;
@@ -8169,8 +8231,9 @@ samples establish a compact allocation-free successful consumer, not a
 statistically significant compile-time or runtime speedup. Constant construction
 does additional bounded compiler work: location traversal and immutable
 aggregate replacement are charged, and updating an array copies its backing
-elements. Larger tables still have to fit the shared 4096-step budget; this
-feature neither removes runtime checks nor raises that resource bound.
+elements. Larger tables still have to fit the request's step budget (4096 steps
+when this was recorded; now a configurable compile limit); this feature neither
+removes runtime checks nor raises that resource bound.
 
 `testConstexprReadOnlyReferences` and `constexpr_readonly_references_runtime`
 cover checked read-only parameters, local bindings, returned field/index
@@ -9317,11 +9380,11 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `runtime_failure_header_coexistence` | the compiler's semantic `gti/failure.h` and runtime C `gti/runtime_failure.h` contracts coexist in one translation unit and link through both archives |
 | `managed_thread_semantic_ir` | exact private capability identity; consumed transfer-safe `void()` and owned-result task selection; result-type and transfer-denial causes; HIR/MIR/Lowered adapter inventory; spawn/join/result-take-or-abandon synchronization and ownership; profile/target rejection; optimizer preservation; and fail-closed missing, duplicate, reordered, retargeted, and forged records |
 | `managed_thread_runtime` | version-one opaque runtime ABI; creation cleanup exactly once; recoverable join-state preservation and post-join write publication; typed result take/abandon exactly once; exact ordinary/emergency record and descriptor handoff, including task-object cleanup; observer silence on the worker; native fault seams; and repeated plus simultaneous spawn/join stress |
-| `managed_thread_end_to_end` / `managed_thread_tsan` | public source-defined `std::thread` and `std::thread_result<Result>` through direct and project workflows; lambda, owned capture, fresh/overloaded nominal callable, typed named/closure tasks, explicit cleanup-free and cleanup-owning class-result join/extraction, handle move, deterministic destructor autojoin and unobserved-result cleanup, exact body/capture/nested-worker failure and `GTI-R0014` handoff, injected automatic-join `GTI-R0012`, 128-worker repeated stress, O0/O3 across C++20/C++23, and class-result publication under ThreadSanitizer where supported |
+| `managed_thread_end_to_end` / `managed_thread_tsan` | public source-defined `std::thread` and `std::thread_result<Result>` through direct and project workflows; lambda, owned capture, fresh/overloaded nominal callable, typed named/closure tasks, explicit cleanup-free and cleanup-owning class-result join/extraction, handle move, deterministic destructor autojoin and unobserved-result cleanup, exact body/capture/nested-worker failure and `GTI-R0014` handoff, injected automatic-join `GTI-R0012`, 128-worker repeated stress, O0/O3 across C++20/C++23, and class-result publication under ThreadSanitizer (instrumenting the LLVM backend's own emission) where supported |
 | `function_item_semantic_ir` | declaration-order-independent exact namespace-function selection through a generic algorithm and managed-thread `void`/result tasks; nominal semantic/HIR/MIR/Lowered identity; optimizer and private C++ tag preservation; compiler-backed hover/definition; direct-call and native-callback isolation; no-context, mismatch, ambiguity, capture, storage, and escape diagnostics; and fail-closed missing-target, nominal-ID, signature, and class-owner mutations |
 | `function_item_runtime` | exact namespace function items through a source-defined algorithm plus managed `void()` and owned-result tasks; deterministic MIR identity; C++20/O0 and C++23/O3 build and execution without a raw/native function pointer |
 | `atomic_semantic_ir` | closed scalar domain and rejected near misses; dormant-import/profile/target/private-capability boundaries; immutable global admission; exact SC defaults plus every legal explicit load/store/exchange/CAS success/failure order in HIR/MIR; rejection of operation-illegal tag combinations before backend entry; optimizer barrier preservation; sealed C++20/C++23 vocabulary; and fail-closed forged operation/order/provenance mutations |
-| `atomic_end_to_end` / `atomic_tsan` | scalar construction/load/store/exchange/strong-CAS success, failure, observation, movement, and every explicit order overload; managed-thread CAS contention; the SC store-buffer litmus; deterministic release/acquire publication with relaxed payload access; O0/O3 under C++20/C++23; repeated stress; and ThreadSanitizer where supported |
+| `atomic_end_to_end` / `atomic_tsan` | scalar construction/load/store/exchange/strong-CAS success, failure, observation, movement, and every explicit order overload; managed-thread CAS contention; the SC store-buffer litmus; deterministic release/acquire publication with relaxed payload access; O0/O3 under C++20/C++23; repeated stress; and ThreadSanitizer over the LLVM backend's emission where supported |
 | `mutex_move_cleanup_runtime` | C++20/23 O0/O3 moved trivial/nontrivial mutex owners and moved guards; exactly-once reverse payload cleanup; inactive moved-from native shells leave primary records unchanged; active secondary failure preserves the emergency envelope and abandons later cleanup. A retained-C++ oracle repair, not native LLVM mutex acceptance. |
 | `expected_wrong_state_runtime` | wrong-state `expected.value()` and `expected.error()` terminate through `GTI-R0009` at O0/O3 under C++20/C++23 rather than inheriting native-library behavior |
 | `expected_propagation_runtime` | exact once-only, left-to-right `?` evaluation; `expected<void, E>` forwarding; named-operand copy versus prvalue/`std::move` move behavior; active-alternative error transport; and ordinary branch/return cleanup at O0/O3 under C++20/C++23 |
@@ -9629,6 +9692,12 @@ cache. Sanitizer jobs have their own runner budgets; one job's successful build
 does not satisfy another job's test gate. A failure in any required job keeps
 the CI gate red and prevents its artifacts from qualifying for nightly.
 
+Hosted CI provisions checksum-pinned Neovim 0.11.5 before CMake configuration
+through `configure_ci_editor.py`, so editor tests are registered on both supported
+platforms. T0/T1 declarations name checks available on both platforms; record
+platform-specific checks such as `macos_installed_runtime` separately in the PR
+evidence. Missing or disabled declared tests remain a hard failure.
+
 CI and release jobs use the job's detected available processor count for both
 compilation and CTest. `scripts/configure_ci_resources.sh` uses `nproc` (not
 `nproc --all`), then host-appropriate `sysctl` or `getconf` when unavailable;
@@ -9655,13 +9724,28 @@ remain external policy; the helper prints the processors and memory it saw so
 a killed compile can be read against them. A small ASan/UBSan preflight
 fails early when that mandatory capability is broken. ThreadSanitizer execution
 is an explicit host capability controlled by
-`GTI_ENABLE_THREAD_SANITIZER_TESTS`, which defaults to enabled. The hosted
-workflows disable it: Docker/host environments that cannot reserve the required
+`GTI_ENABLE_THREAD_SANITIZER_TESTS`, which defaults to enabled; the hosted
+`tsan` job of `full-validation.yml` configures it on and runs every `_tsan`
+CTest. Docker/host environments that cannot reserve the required
 shadow-memory mapping have not passed the dedicated TSAN preflight. Mixed runtime matrices keep
 their ordinary and ASan/UBSan modes; dedicated TSAN CTests report an explicit
 skip with return code 77. A compatible dedicated runner must pass the TSAN
 preflight and leave the option enabled before its result counts as race-checking
-evidence.
+evidence. Every `_tsan` harness (`managed_thread_tsan_test.py`, which
+`atomic_tsan_test.py` and `mutex_tsan_test.py` import) sanitizes the LLVM
+backend's own emission and never C++-backend output: the test-only
+`gti_llvm_instrumented_source` helper emits the publicly admitted verified
+program as thread-sanitizer-attributed LLVM IR, the matching Clang compiles that
+IR with `-fsanitize=thread`, the platform's reviewed compiler
+(`CMAKE_CXX_COMPILER`, the only profile `runtime/src/atomic_lane.h` admits:
+GCC 14 on Linux x86_64, where the LLVM-matching Clang is rejected) compiles
+the fixture's runtime dependency closure with `-fsanitize=thread` and links
+the binary against its own thread-sanitizer runtime, `nm -u`
+must show `__tsan_read`/`__tsan_write` on the fixture object (plus instrumented
+`__tsan_atomic` operations of any width for the public atomic fixtures and
+`__tsan_atomic64` for the wrapping-atomic source owners), and the linked binary runs three
+times with `halt_on_error=1`. The wrapping-atomic source owners additionally pin
+the frozen C++ backend's `GTI-B0003` rejection, which emits nothing.
 Release build-tree tests derive their resource overrides from the final CTest
 inventory, including every CLI/LSP test; installed-consumer checks retain clean,
 relocatable discovery without those overrides. Their C
@@ -11338,7 +11422,7 @@ as the tests they inspect.
 python3 scripts/build_window.py --kind suite -- \
     ctest --test-dir build --parallel 4 --output-on-failure -L feedback-fast
 python3 scripts/build_window.py --kind suite -- \
-    ctest --test-dir build --parallel 4 --output-on-failure -L coverage-full
+    ctest --test-dir build --parallel 4 --output-on-failure -L coverage-full -LE cpp-backend
 python3 scripts/build_window.py --kind suite -- \
     python3 tests/owning_function_runtime_test.py build/gti --jobs 1
 ```
@@ -11358,7 +11442,7 @@ cmake -S . -B build -DGTI_TEST_CASE_JOBS=4
 python3 scripts/build_window.py --kind build -- \
     cmake --build build --parallel 12
 python3 scripts/build_window.py --kind suite -- \
-    ctest --test-dir build --parallel 12 --test-load 12 --output-on-failure
+    ctest --test-dir build --parallel 12 --test-load 12 --output-on-failure -LE cpp-backend
 ```
 
 `--test-load` makes CTest wait to start a test while the host's load average

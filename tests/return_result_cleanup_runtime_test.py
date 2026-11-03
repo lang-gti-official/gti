@@ -6,6 +6,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def main():
@@ -23,11 +24,7 @@ def main():
     expected += [(0, "2\n1\n9\n", ""), (70, "2\n1\n9\n", primary)]
     expected += [(0, "2\n1\n9\n", ""), (70, "2\n1\n9\n", primary),
                  (70, "2\n1\n", double)]
-    modes = [(f"{standard}-{level}", ["--std", standard, f"-{level}"], [])
-             for standard in ("c++20", "c++23") for level in ("O0", "O1", "O3")]
-    modes += [("no-elide", ["--std", "c++23", "-O0"], ["-fno-elide-constructors"]),
-              ("sanitized", ["--std", "c++23", "-O1"],
-               ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])]
+    modes = native_modes()
     environment = dict(os.environ, ASAN_OPTIONS="halt_on_error=1",
                        UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1")
     with tempfile.TemporaryDirectory(prefix="gti-return-result-") as temporary:

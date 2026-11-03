@@ -21,11 +21,14 @@ case "$(uname -s)" in
     fi
     # GCC 14 is the reviewed Linux x86_64 profile; LLVM 20 matches the pinned
     # release LLVM and ships in noble-updates. Ubuntu packages the Clang CMake
-    # package (and the clang the LLVM tests run) in clang-20, not libclang-20-dev.
+    # package (and the clang the LLVM tests run) in clang-20, not libclang-20-dev,
+    # and clang's sanitizer runtimes (compiler-rt, which the ThreadSanitizer
+    # harnesses need for `clang++-20 -fsanitize=thread`) in libclang-rt-20-dev,
+    # which --no-install-recommends leaves out.
     sudo apt-get update
     sudo apt-get install -y --no-install-recommends \
       build-essential ccache clang-20 cmake g++-14 gcc-14 ninja-build \
-      libcurl4-openssl-dev llvm-20-dev libclang-20-dev
+      libcurl4-openssl-dev llvm-20-dev libclang-20-dev libclang-rt-20-dev
     cc=gcc-14
     cxx=g++-14
     llvm_dir=/usr/lib/llvm-20/lib/cmake/llvm
@@ -60,3 +63,6 @@ fi
   echo "LLVM_DIR=${llvm_dir}"
 } >> "${GTI_CI_ENV_FILE}"
 echo "CI toolchain: $("${cxx}" --version | head -n 1); LLVM ${llvm_dir}"
+
+# Editor checks must be registered on hosted runners, including PR builds.
+python3 "${repository}/scripts/configure_ci_editor.py"

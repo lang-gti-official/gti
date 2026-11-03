@@ -58,7 +58,7 @@ tooling that consume them. For the changed paths the planner prints:
   runtime services and allocation, CMake/toolchain, CI and release workflows,
   test infrastructure) means set rollup=never and validate the change alone,
   never combined with other changes; still do not run a near-full suite
-  locally, because the merge queue runs it;
+  locally, because post-integration full validation runs it;
 - **uncovered** paths that no area owns. Add an area, or an `[[unowned]]`
   entry with its reason, in the same change; `tests/ownership_map_test.py`
   fails while a tracked file under `src/`, `include/`, `runtime/`, `stdlib/`,
@@ -142,7 +142,13 @@ invalid setup cheaply; they do not replace required broad coverage.
    through the shared build window,
    `python3 scripts/build_window.py --kind build|suite -- <command>`, so
    concurrent sessions share the host; focused `-R` selections and
-   single-file compiles run directly.
+   single-file compiles run directly. Local runs follow the CI test policy:
+   a configured tree exports `GTI_TEST_BACKENDS=llvm` to every harness, so
+   runtime harnesses prove the shipped backend, and broad CTest runs exclude
+   the C++-only entries with `-LE cpp-backend`. Only a C++-backend bug fix
+   configures `-DGTI_TEST_BACKENDS=cpp` (or `both`), runs its harnesses and
+   `-L cpp-backend`, and dispatches `cpp-backend.yml` on its branch for
+   exact-candidate CI evidence.
 3. Select completion coverage from the changed invariant and affected consumer
    graph, as described in the canonical verification document. An independent
    isolated subsystem change can complete with owning, cross-phase and required
@@ -153,8 +159,8 @@ invalid setup cheaply; they do not replace required broad coverage.
    coverage. Keep
    `scripts/local_language_audit.py --full` non-gating; turn any bug it finds
    into a minimal deterministic regression in the owning suite.
-   The complete suite is never a contributor gate: the merge queue runs it on
-   the exact candidate on every required platform. Platform, runtime and
+   The complete suite is never a contributor gate: post-integration full
+   validation runs it on each main head on every required platform. Platform, runtime and
    performance obligations that the queue does not cover (for example a
    benchmark comparison under ADR 012) remain yours to run and record.
 4. Run `git diff --check` and inspect the complete scoped diff for unintended
@@ -176,8 +182,8 @@ the checks at any point; cost controls never waive the resulting obligations.
 
 ## Report The Result
 
-Record the focused checks with `verify`, then hand the task to the merge queue
-with `finish`. Report "focused validation passed; complete suite deferred to
+Record the focused checks with `verify`, then hand the task to integration
+with `finish` (rollup, native merge-when-ready, or queue entry). Report "focused validation passed; complete suite deferred to
 the merge queue", with the exact source, risk tier and rationale, tests,
 before-fix evidence, platforms and retained logs. A complete-suite failure in
 the queue is attributed to the change that introduced it; helpers may assist
@@ -189,7 +195,7 @@ Validation:
 - owning semantic suite passes
 - affected MIR/LLVM tests pass
 - relevant runtime tests pass
-- complete suite deferred to the merge queue
+- complete suite deferred to post-integration full validation
 ```
 
 Report:
@@ -206,5 +212,15 @@ Do not call a change verified while a required gate is failing or unrun. State
 evidence outstanding.
 
 The merge queue's `CI gate` is the required integration gate. Do not poll it or
-duplicate it locally; report the PR as queued, and report a queue failure
+duplicate it locally; report the confirmed handoff as awaiting CI or queued, and report a queue failure
 honestly rather than as a pass.
+
+### Source-only standard library CI
+
+For a diff confined to GTI stdlib sources and allowed source tests/metadata/docs,
+local focused checks use an existing optimized compiler. CI additionally requires
+a compatible retained full-CI compiler, verifies its native inputs, and runs the
+owning/consumer checks against the candidate stdlib on both platforms. Unknown
+paths, native/build/test-routing changes and missing artifacts fall back to full
+CI. This does not waive runtime, rejection, performance or example evidence.
+See `docs/architecture/agent-workflow.md#required-ci-and-the-merge-queue`.

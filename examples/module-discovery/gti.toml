@@ -1,0 +1,9 @@
+manifest-version = 1
+
+[package]
+name = "module-discovery"
+version = "0.1.0"
+
+[targets.demo]
+kind = "executable"
+root = "src/main.gti"

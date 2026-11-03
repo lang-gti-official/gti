@@ -1250,7 +1250,15 @@ pack retain an explicit HIR receiver and lower to the same receiver stage
 followed by concrete argument stages. The call keeps its exact lambda
 identity, capability and flattened signature; ordinary program verification
 rejects a missing receiver or forged parameter type. No native pack matching
-selects the GTI call. A cleanup-free moved environment has no full-expression
+selects the GTI call. A parameter-derived reference result retains the selected
+formal and declared result access. Returning an entry reference or a local
+child reborrow publishes the result's access, which may preserve mutable
+authority or weaken it to read-only. The ordinary ancestry proof still reaches
+the exact parameter; verification rejects changed argument indices, detached
+parent loans, missing return loans and access stronger than the retained loan.
+It also checks that the return summary access matches the declared reference
+type. No new MIR instruction or runtime lifetime state is introduced.
+A cleanup-free moved environment has no full-expression
 obligation, so its receiver is a `Value` stage of the exact Move rather than a
 `MoveValue`; the once-callable receiver proof follows that stage to the Move
 and still requires its exact ownership event.

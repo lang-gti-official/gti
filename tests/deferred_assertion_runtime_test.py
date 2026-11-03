@@ -6,6 +6,7 @@ import os
 import pathlib
 import subprocess
 import tempfile
+from backend_modes import cpp_modes, cpp_variant_mode, is_cpp_mode, keep_cpp, native_modes
 
 
 def main():
@@ -32,28 +33,27 @@ def main():
         assert len(found) == 1, marker
         return f"{failures.name}:{found[0]}"
 
-    modes = [(f"cpp{standard}-O{level}", f"c++{standard}", f"-O{level}", [])
-             for standard in (20, 23) for level in (0, 1, 3)]
-    modes += [("no-elide", "c++23", "-O0", ["-fno-elide-constructors"]),
-              ("native-NDEBUG", "c++23", "-O3", ["-DNDEBUG"]),
-              ("sanitized", "c++23", "-O1", ["-fsanitize=address,undefined",
-                                               "-fno-omit-frame-pointer"])]
+    modes = native_modes()
+    if cpp_modes():
+        # The native define reaches only the C++ text's host compilation.
+        modes.append(cpp_variant_mode("native-NDEBUG", "O3", ["-DNDEBUG"]))
     if args.quick:
         modes = modes[:1]
     with tempfile.TemporaryDirectory(prefix="gti-deferred-runtime-") as temporary:
-        for name, standard, level, native in modes:
+        for name, flags, native in modes:
             for disabled in (False, True):
-                flags = ["-D", "NDEBUG"] if disabled else []
+                defines = ["-D", "NDEBUG"] if disabled else []
                 for source in (fixtures / "deferred_assertions.gti", failures, *examples):
                     binary = pathlib.Path(temporary) / f"{name}-{disabled}-{source.stem}"
                     command = [str(args.compiler.resolve()), str(source),
-                               "--std", standard, level, *flags, "--keep-cpp",
+                               *flags, *defines, *keep_cpp(flags),
                                *( ["--execution-profile", "concurrent"] if source == failures else []),
-                               "-o", str(binary), "--", *native]
+                               "-o", str(binary), *(["--", *native] if native else [])]
                     built = subprocess.run(command, capture_output=True, text=True,
                                            env=environment, timeout=180)
                     assert built.returncode == 0, (command, built.stdout, built.stderr)
-                    assert "// GTI verified-MIR body:" in binary.with_suffix(".gti.cpp").read_text()
+                    if is_cpp_mode(flags):
+                        assert "// GTI verified-MIR body:" in binary.with_suffix(".gti.cpp").read_text()
                     modes_to_run = range(17) if source == failures else (0,)
                     for mode in modes_to_run:
                         ran = subprocess.run([str(binary), *(["x"] * mode)],

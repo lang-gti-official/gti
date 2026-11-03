@@ -6,6 +6,7 @@
 
 #include "gti/driver/dependencies.h"
 #include "manifest_source.h"
+#include "module_discovery.h"
 
 #define TOML_EXCEPTIONS 0
 #include "toml.hpp"
@@ -1509,6 +1510,54 @@ toolchainExecutable(const toml::table &table, std::string_view field,
   return value;
 }
 
+// `[limits] <key> = <n>`: every key names one CompileLimits entry and every
+// value is an integer from 1 to that limit's maximum. The table is validated
+// in every manifest so a package stays valid as a root, but only the root
+// package's settings configure a compilation.
+ProjectLimitSettings parseLimits(const toml::table &document,
+                                 std::string_view sourceName,
+                                 std::string_view source,
+                                 std::vector<Diagnostic> &diagnostics) {
+  ProjectLimitSettings settings;
+  const toml::node *node = document.get("limits");
+  if (node == nullptr)
+    return settings;
+  settings.declaration = sourceSpan(sourceName, source, *node);
+  const toml::table *table = node->as_table();
+  if (table == nullptr) {
+    diagnostics.push_back(buildDiagnostic("GTI-B1004", settings.declaration,
+                                          "Manifest field 'limits' must be a "
+                                          "table."));
+    return settings;
+  }
+  std::vector<std::string_view> names;
+  for (const CompileLimitInfo &limit : compileLimitTable())
+    names.push_back(limit.key);
+  validateFields(*table, names, "limits", sourceName, source, diagnostics);
+  for (const CompileLimitInfo &limit : compileLimitTable()) {
+    const toml::node *value = table->get(limit.key);
+    if (value == nullptr)
+      continue;
+    const SourceSpan span = sourceSpan(sourceName, source, *value);
+    const std::optional<std::int64_t> integer = value->value<std::int64_t>();
+    if (!value->is_integer() || !integer) {
+      diagnostics.push_back(buildDiagnostic("GTI-B1004", span,
+                                            "Limit '" + std::string(limit.key) +
+                                                "' must be an integer."));
+      continue;
+    }
+    std::string error;
+    if (const auto accepted = validateCompileLimitValue(
+            limit, static_cast<long long>(*integer), error)) {
+      settings.values.set(limit, *accepted);
+    } else {
+      diagnostics.push_back(
+          buildDiagnostic("GTI-B1005", span, "Invalid limit: " + error));
+    }
+  }
+  return settings;
+}
+
 // `[toolchains.<triple>]` declares the native toolchain a cross build uses.
 // The table key is normalized through the compiler's own triple vocabulary,
 // so the manifest cannot introduce a second spelling table, and two keys
@@ -1778,7 +1827,7 @@ ProjectManifest::ProjectManifest(
     std::optional<ProjectWorkspaceManifest> workspace,
     ProjectBuildSettings build,
     std::vector<ProjectBindgenImport> bindgenImports,
-    std::vector<ProjectToolchain> toolchains)
+    std::vector<ProjectToolchain> toolchains, ProjectLimitSettings limits)
     : manifestPath(std::move(path)), rootPath(manifestPath.parent_path()),
       packageIdentity(std::move(package)), projectTargets(std::move(targets)),
       buildProfiles(std::move(profiles)),
@@ -1786,7 +1835,8 @@ ProjectManifest::ProjectManifest(
       workspaceManifest(std::move(workspace)),
       projectBuildSettings(std::move(build)),
       projectBindgenImports(std::move(bindgenImports)),
-      projectToolchains(std::move(toolchains)) {}
+      projectToolchains(std::move(toolchains)),
+      projectLimits(std::move(limits)) {}
 
 std::string_view projectTargetKindName(ProjectTargetKind kind) {
   switch (kind) {
@@ -1847,6 +1897,10 @@ const ProjectBuildSettings &ProjectManifest::build() const {
 
 const std::vector<ProjectToolchain> &ProjectManifest::toolchains() const {
   return projectToolchains;
+}
+
+const ProjectLimitSettings &ProjectManifest::limits() const {
+  return projectLimits;
 }
 
 const ProjectToolchain *
@@ -2017,7 +2071,8 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
   validateFields(document,
                  {"manifest-version", "package", "targets", "profiles",
                   "dependencies", "workspace", "build", "bindgen", "toolchains",
-                  "modules", "module-implementations"},
+                  "limits", "modules", "module-implementations",
+                  "module-discovery"},
                  "top-level manifest", sourceName, source, result.diagnostics);
 
   if (const toml::node *version =
@@ -2305,6 +2360,101 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
     }
   }
 
+  detail::ModuleDiscoverySettings discovery{.roots = {package.sourceRoot},
+                                            .declaration =
+                                                package.sourceRootDeclaration};
+  if (const auto *node = document.get("module-discovery")) {
+    discovery.declaration = sourceSpan(sourceName, source, *node);
+    const auto *table = node->as_table();
+    if (!table) {
+      result.diagnostics.push_back(buildDiagnostic(
+          "GTI-B1004", discovery.declaration,
+          "Manifest field 'module-discovery' must be a table."));
+    } else {
+      validateFields(*table, {"roots", "exclude"}, "module discovery",
+                     sourceName, source, result.diagnostics);
+      for (const auto field : {"roots", "exclude"}) {
+        const auto *pathsNode = table->get(field);
+        if (!pathsNode)
+          continue;
+        const auto *paths = pathsNode->as_array();
+        auto &destination = std::string_view(field) == "roots"
+                                ? discovery.roots
+                                : discovery.exclusions;
+        destination.clear();
+        if (std::string_view(field) == "roots")
+          discovery.explicitRoots = true;
+        if (!paths) {
+          result.diagnostics.push_back(buildDiagnostic(
+              "GTI-B1004", sourceSpan(sourceName, source, *pathsNode),
+              "Module discovery '" + std::string(field) +
+                  "' must be an array of package-relative paths."));
+          continue;
+        }
+        for (const auto &pathNode : *paths) {
+          const auto spelling = pathNode.value<std::string>();
+          const auto where = sourceSpan(sourceName, source, pathNode);
+          if (!spelling) {
+            result.diagnostics.push_back(
+                buildDiagnostic("GTI-B1004", where,
+                                "A module discovery path must be a string."));
+            continue;
+          }
+          const std::filesystem::path relative(*spelling);
+          if (spelling->empty() || spelling->find('\0') != std::string::npos ||
+              spelling->find_first_of("*?[") != std::string::npos ||
+              isAbsoluteOnSupportedHost(*spelling, relative)) {
+            result.diagnostics.push_back(buildDiagnostic(
+                "GTI-B1103", where,
+                "Module discovery paths must be relative file or directory "
+                "paths, without wildcard patterns."));
+            continue;
+          }
+          const auto authored = (packageRoot / relative).lexically_normal();
+          if (!pathIsWithin(packageRoot, authored)) {
+            result.diagnostics.push_back(buildDiagnostic(
+                "GTI-B1104", where,
+                "Module discovery path escapes its owning package."));
+            continue;
+          }
+          std::error_code pathError;
+          if (std::string_view(field) == "exclude") {
+            // Excluding an entry must not require opening its target. Keep
+            // the authored path so broken and out-of-package links can be
+            // excluded safely. Resolve parent aliases, but do not exclude a
+            // real source merely because a file symlink to it was excluded.
+            destination.push_back(authored);
+            auto resolved = std::filesystem::weakly_canonical(
+                                authored.parent_path(), pathError) /
+                            authored.filename();
+            if (!pathError && pathIsWithin(packageRoot, resolved) &&
+                resolved != authored)
+              destination.push_back(resolved);
+            if (std::filesystem::is_directory(authored, pathError)) {
+              resolved = std::filesystem::canonical(authored, pathError);
+              if (!pathError && pathIsWithin(packageRoot, resolved) &&
+                  resolved != authored)
+                destination.push_back(resolved);
+            }
+            continue;
+          }
+          const auto resolved = std::filesystem::weakly_canonical(
+              packageRoot / relative, pathError);
+          if (pathError || !pathIsWithin(packageRoot, resolved)) {
+            result.diagnostics.push_back(buildDiagnostic(
+                "GTI-B1104", where,
+                "Module discovery path escapes its owning package."));
+            continue;
+          }
+          destination.push_back(resolved);
+        }
+      }
+    }
+  }
+  const auto discovered = detail::discoverModules(
+      packageRoot, discovery, result.sources, result.diagnostics);
+  detail::addDiscoveredInterfaces(package, discovered, result.diagnostics);
+
   if (const auto *node = document.get("module-implementations")) {
     const auto *table = node->as_table();
     if (table == nullptr) {
@@ -2323,7 +2473,8 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
         if (module == package.modules.end()) {
           result.diagnostics.push_back(buildDiagnostic(
               "GTI-B1005", declaration,
-              "An implementation must name a module registered in [modules]."));
+              "An implementation must name a discovered or explicitly "
+              "registered module."));
           continue;
         }
         const auto *paths = pathsNode.as_array();
@@ -2386,6 +2537,8 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
     }
   }
 
+  detail::addDiscoveredImplementations(package, discovered, result.diagnostics);
+
   std::vector<ProjectDependency> dependencies = parseDependencies(
       document, packageRoot, sourceName, source, result.diagnostics);
   std::optional<ProjectWorkspaceManifest> workspace = parseWorkspace(
@@ -2436,6 +2589,9 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
       }
     }
   }
+
+  ProjectLimitSettings limits =
+      parseLimits(document, sourceName, source, result.diagnostics);
 
   std::vector<ProjectTarget> targets;
   if (const toml::node *targetsNode = document.get("targets")) {
@@ -2930,10 +3086,10 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
               return left.name < right.name;
             });
   result.status = ManifestLoadStatus::Success;
-  result.manifest.emplace(manifestPath, std::move(package), std::move(targets),
-                          std::move(profiles), std::move(dependencies),
-                          std::move(workspace), std::move(build),
-                          std::move(bindgenImports), std::move(toolchains));
+  result.manifest.emplace(
+      manifestPath, std::move(package), std::move(targets), std::move(profiles),
+      std::move(dependencies), std::move(workspace), std::move(build),
+      std::move(bindgenImports), std::move(toolchains), std::move(limits));
   return result;
 }
 

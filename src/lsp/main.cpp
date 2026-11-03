@@ -5,6 +5,7 @@
 #include "gti/frontend.h"
 #include "gti/language_queries.h"
 #include "gti/lexer.h"
+#include "gti/module_name.h"
 #include "gti/standard_library.h"
 #include "gti/support.h"
 #include "gti/token.h"
@@ -1851,6 +1852,7 @@ struct DocumentAnalysis {
   bool auditAvailable = false;
   std::shared_ptr<const lang::FrontendResult> frontend;
   lang::FrontendWorkMetrics workMetrics;
+  std::optional<lang::FrontendOptions> includeSuggestionOptions;
   std::uint64_t frontendElapsedMicroseconds = 0;
   std::unordered_map<std::string, lang::lsp::FrontendSourceIdentity>
       sourceIdentities;
@@ -1889,6 +1891,9 @@ struct ProjectAnalysisInputs {
   lang::RawPointerAuditMode rawPointerAudit = lang::RawPointerAuditMode::Off;
   bool rawPointerAuditLibraryFindings = false;
   lang::driver::AnalysisConfiguration configuration;
+  // The root package's [limits] (the same resolution builds use); defaults
+  // for a standalone file.
+  lang::CompileLimits compileLimits;
   std::vector<lang::PackageSourceRoot> packageSourceRoots;
   lang::WarningPolicy warnings;
   lang::driver::PackageWarningPolicy packageWarnings;
@@ -1898,6 +1903,27 @@ struct ProjectAnalysisInputs {
   lang::ProgramRequest program;
   std::vector<lang::IncludeSearchRoot> includeSearchRoots;
 };
+
+// A save can change project membership without a filesystem-watcher event.
+// Observe only the compiler's leading declaration, so body-only saves retain
+// the existing no-reanalysis behavior. No project resolution or build occurs.
+std::optional<std::uint64_t>
+savedModuleHeaderDigest(const std::filesystem::path &path) {
+  std::error_code error;
+  if (!std::filesystem::is_regular_file(path, error))
+    return std::nullopt;
+  std::ifstream input(path, std::ios::binary);
+  if (!input)
+    return std::nullopt;
+  lang::Lexer lexer;
+  const auto tokens = lexer.scanModuleHeader(input, path.string());
+  if (input.bad())
+    return std::nullopt;
+  if (!lang::startsModuleDeclaration(tokens))
+    return 0;
+  return lang::sourceTextDigest(
+      std::string_view(lexer.sourceText()).substr(0, tokens.back().position));
+}
 
 ProjectAnalysisInputs resolveProjectAnalysisInputs(
     const std::filesystem::path &entryPath,
@@ -1928,6 +1954,7 @@ ProjectAnalysisInputs resolveProjectAnalysisInputs(
   }
 
   const lang::driver::ProjectFacts &facts = *project.facts;
+  result.compileLimits = facts.compileLimits();
   const std::string &profileName =
       requestedProfile ? *requestedProfile : facts.defaultProfileName();
   const auto *profile = facts.findProfile(profileName);
@@ -2231,12 +2258,17 @@ private:
       return;
     }
     const std::string uri = documentKeyFromUri(clientUri);
+    const auto openedPath = filePathFromUri(uri);
+    const auto savedHeader =
+        openedPath ? savedModuleHeaderDigest(*openedPath) : std::nullopt;
     std::vector<AnalysisRequest> requests;
     {
       const std::lock_guard lock(stateMutex);
       clientUris[uri] = clientUri;
       openClientUris[uri].insert(clientUri);
       const bool alreadyOpen = documents.contains(uri);
+      if (!alreadyOpen && openedPath && openedPath->extension() == ".gti")
+        savedModuleHeaders.emplace(uri, savedHeader);
       documents[uri] = stringMember(document, "text");
       if (const std::optional<std::filesystem::path> path =
               filePathFromUri(uri)) {
@@ -2318,7 +2350,11 @@ private:
     // skips the rest of its quiet period.
     const std::string uri =
         documentKeyFromUri(stringMember(member(params, "textDocument"), "uri"));
+    const auto path = filePathFromUri(uri);
+    const auto savedHeader =
+        path ? savedModuleHeaderDigest(*path) : std::nullopt;
     bool woken = false;
+    std::vector<AnalysisRequest> requests;
     {
       const std::lock_guard lock(stateMutex);
       if (const auto pending = pendingAudits.find(uri);
@@ -2326,7 +2362,14 @@ private:
         pending->second.readyAt = SteadyClock::now();
         woken = true;
       }
+      if (const auto found = savedModuleHeaders.find(uri);
+          found != savedModuleHeaders.end() && found->second != savedHeader) {
+        found->second = savedHeader;
+        invalidateProjectSnapshotsLocked(requests);
+      }
     }
+    rejectPendingSemanticRequests(requests, -32801, "Content modified");
+    scheduleAnalyses(std::move(requests));
     if (woken) {
       auditCondition.notify_all();
     }
@@ -2373,6 +2416,7 @@ private:
       }
       pendingAudits.erase(uri);
       documents.erase(uri);
+      savedModuleHeaders.erase(uri);
       if (const std::optional<std::filesystem::path> path =
               filePathFromUri(uri)) {
         const std::string canonical = canonicalPath(*path).string();
@@ -2421,6 +2465,10 @@ private:
         const std::string uri = documentKeyFromUri(clientUri);
         const std::optional<std::filesystem::path> changedPath =
             filePathFromUri(clientUri);
+        if (changedPath && changedPath->extension() == ".gti")
+          // Saved declarations and file creation/removal can change the
+          // discovered module map, even without a prior dependency edge.
+          projectModelChanged = true;
         if (changedPath && (changedPath->filename() == "gti.toml" ||
                             changedPath->filename() == "gti.lock" ||
                             changedPath->filename() == "module-map.json")) {
@@ -3387,6 +3435,8 @@ private:
                                           : lang::RawPointerAuditMode::Off;
     frontendOptions.reportLibraryAuditFindings =
         project.rawPointerAuditLibraryFindings;
+    // Publish ordinary diagnostics/queries before speculative import trials.
+    frontendOptions.suggestIncludes = false;
     frontendOptions.analyzeRecoveredProgram = true;
     frontendOptions.analyzeRecoveredSourceGraph = true;
     frontendOptions.requireEntryPoint = project.requireEntryPoint;
@@ -3425,6 +3475,7 @@ private:
     frontendOptions.declaredConfigurationFlags =
         project.configuration.declaredConfigurationFlags();
     frontendOptions.includeSearchRoots = project.includeSearchRoots;
+    frontendOptions.limits = project.compileLimits;
     for (const lang::Diagnostic &diagnostic : project.diagnostics) {
       result.diagnostics.push_back(convertDiagnostic(
           diagnostic, project.sources, rootPath, uri, source));
@@ -3451,6 +3502,12 @@ private:
     // `frontend.diagnostics`. No editor query reads HIR, so it is released
     // here instead of being retained with every open document's snapshot.
     frontend.hir = lang::HirProgram{};
+    frontend.includeSuggestionsRequested =
+        !request.audit && lang::canSuggestIncludes(frontend);
+    if (frontend.includeSuggestionsRequested) {
+      result.includeSuggestionOptions = frontendOptions;
+      result.includeSuggestionOptions->workMetrics = nullptr;
+    }
     result.frontend =
         std::make_shared<const lang::FrontendResult>(std::move(frontend));
     if (result.frontend->cancelled)
@@ -3798,6 +3855,7 @@ private:
                  // the audit is background work (see `runAuditWorker`).
                  .rawPointerAudit = lang::RawPointerAuditMode::Off,
                  .trustedBodies = lang::TrustedBodyAnalysis::Reachable,
+                 .limits = project.compileLimits,
                  .preludePaths = {standardLibrary.prelude},
                  .sourceOverrides = request.sourceOverrides,
                  .standardLibraryRoots = {standardLibrary.root},
@@ -3879,9 +3937,6 @@ private:
         // once, from its final text, and stops a running analysis of the
         // document, whose result would only be discarded.
         request.readyAt = now + updateDebounceLocked(request.uri);
-        if (const auto running = activeAnalysisCancellations.find(request.uri);
-            running != activeAnalysisCancellations.end())
-          running->second->store(true, std::memory_order_relaxed);
         break;
       case AnalysisTrigger::Opened:
       case AnalysisTrigger::ProjectChanged:
@@ -3981,8 +4036,8 @@ private:
       // guard remains the narrow compiler-only boundary documented in the LSP
       // architecture, and neither step holds shared state.
       GuardedAnalysis guarded;
+      ProjectAnalysisInputs project;
       try {
-        ProjectAnalysisInputs project;
         if (const std::optional<std::filesystem::path> path =
                 filePathFromUri(request.uri)) {
           project = resolveProjectAnalysisInputs(*path, request.projectProfile,
@@ -3997,6 +4052,9 @@ private:
         guarded.status = GuardedAnalysisStatus::Failed;
         guarded.failure = "unknown exception during project resolution";
       }
+      const auto analysisDuration =
+          std::chrono::duration_cast<std::chrono::microseconds>(
+              SteadyClock::now() - analysisStart);
       // A newer edit stopped this analysis: its partial result is dropped and
       // the pending request for the newer text runs next.
       const bool superseded =
@@ -4023,7 +4081,29 @@ private:
                   guarded.analysis->frontend->includeSuggestionsRequested);
         }
         try {
+          // Retain only the shared immutable frontend and small publication
+          // metadata. Import discovery never mutates the published snapshot.
+          const auto frontend = guarded.analysis->frontend;
+          const auto adviceOptions = guarded.analysis->includeSuggestionOptions;
           publishAnalysis(request, std::move(*guarded.analysis));
+          bool refresh = false;
+          {
+            const std::lock_guard lock(stateMutex);
+            activeIncludeSuggestionUris.insert(request.uri);
+            if (semanticTokenRefreshPending && pendingAnalyses.empty() &&
+                activeAnalysisUris.size() ==
+                    activeIncludeSuggestionUris.size()) {
+              semanticTokenRefreshPending = false;
+              refresh = true;
+            }
+          }
+          if (refresh)
+            requestSemanticTokenRefresh();
+          if (frontend && adviceOptions &&
+              !request.cancellation->load(std::memory_order_relaxed)) {
+            enrichIncludeSuggestions(request, project, frontend,
+                                     *adviceOptions);
+          }
         } catch (const std::exception &error) {
           std::cerr << "LSP publication failed: " << error.what() << '\n';
           rejectPendingSemanticGeneration(request.uri, request.generation,
@@ -4052,15 +4132,14 @@ private:
       {
         const std::lock_guard lock(stateMutex);
         activeAnalysisUris.erase(request.uri);
+        activeIncludeSuggestionUris.erase(request.uri);
         activeAnalysisCancellations.erase(request.uri);
         // A stopped analysis's partial duration says nothing about the
         // document's cost.
         if (!superseded) {
           std::deque<std::chrono::microseconds> &history =
               analysisDurations[request.uri];
-          history.push_back(
-              std::chrono::duration_cast<std::chrono::microseconds>(
-                  SteadyClock::now() - analysisStart));
+          history.push_back(analysisDuration);
           if (history.size() > analysisDurationHistory) {
             history.pop_front();
           }
@@ -4069,7 +4148,7 @@ private:
         // idle. Clients may answer a refresh by discarding and re-requesting
         // the tokens of every open document, so it is never sent per result.
         if (semanticTokenRefreshPending && pendingAnalyses.empty() &&
-            activeAnalysisUris.empty()) {
+            activeAnalysisUris.size() == activeIncludeSuggestionUris.size()) {
           semanticTokenRefreshPending = false;
           sendRefresh = true;
         }
@@ -4130,6 +4209,91 @@ private:
       (void)result.analysis.release();
     }
     return result;
+  }
+
+  void enrichIncludeSuggestions(
+      const AnalysisRequest &request, const ProjectAnalysisInputs &project,
+      const std::shared_ptr<const lang::FrontendResult> &frontend,
+      const lang::FrontendOptions &options) {
+    const auto path = filePathFromUri(request.uri);
+    if (!path)
+      return;
+    const auto start = SteadyClock::now();
+    // The compiler owns candidate discovery and validation; the protocol owns
+    // only scheduling and publication. As with primary analysis, no shared
+    // server state is touched inside crash recovery.
+    std::unique_ptr<lang::IncludeSuggestionResult> advice;
+    const bool completed = lang::runGuarded([&] {
+      try {
+        advice = std::make_unique<lang::IncludeSuggestionResult>(
+            lang::discoverIncludeSuggestions(
+                *frontend, options, *path, {standardLibrary.prelude},
+                request.sourceOverrides, {standardLibrary.root},
+                project.packageSourceRoots));
+      } catch (...) {
+        advice.reset();
+      }
+    });
+    if (!completed) {
+      (void)advice.release();
+      return;
+    }
+    if (frontendTracePath) {
+      recordFrontendWork(advice && !advice->cancelled
+                             ? "includeSuggestions"
+                             : "includeSuggestionsCancelled",
+                         request.uri, request.generation,
+                         std::chrono::duration_cast<std::chrono::microseconds>(
+                             SteadyClock::now() - start)
+                             .count(),
+                         {});
+    }
+    if (!advice || advice->cancelled ||
+        request.cancellation->load(std::memory_order_relaxed))
+      return;
+    // Negative discovery keeps the already-published errors unchanged.
+    // Avoid a second identical publication (and needless editor redraw).
+    if (std::equal(advice->diagnostics.begin(), advice->diagnostics.end(),
+                   frontend->diagnostics.begin(), frontend->diagnostics.end(),
+                   [](const auto &left, const auto &right) {
+                     return left.fixes.size() == right.fixes.size();
+                   }))
+      return;
+    std::vector<LspDiagnostic> diagnostics;
+    const auto rootPath = canonicalPath(*path).string();
+    for (const auto &diagnostic : project.diagnostics)
+      diagnostics.push_back(convertDiagnostic(
+          diagnostic, project.sources, rootPath, request.uri, request.source));
+    for (const auto &diagnostic : advice->diagnostics) {
+      if (project.warnings.suppresses(diagnostic) ||
+          project.packageWarnings.suppresses(diagnostic, frontend->sourceGraph))
+        continue;
+      diagnostics.push_back(convertDiagnostic(diagnostic, frontend->sources,
+                                              rootPath, request.uri,
+                                              request.source));
+    }
+    std::vector<DiagnosticPublication> publications;
+    {
+      const std::lock_guard lock(stateMutex);
+      const auto snapshot = analysisSnapshots.find(request.uri);
+      if (snapshot == analysisSnapshots.end() ||
+          snapshot->second.generation != request.generation ||
+          snapshot->second.frontend != frontend ||
+          request.includeDiscoveryGeneration != includeDiscoveryGeneration)
+        return;
+      std::unordered_set<std::string> affected{request.uri};
+      for (const auto &old : diagnosticsByRoot[request.uri])
+        affected.insert(old.uri);
+      for (auto &diagnostic : diagnostics) {
+        affected.insert(diagnostic.uri);
+        if (!diagnostic.fixes.empty())
+          diagnostic.repairSnapshot =
+              request.uri + ":" + std::to_string(request.generation);
+      }
+      diagnosticsByRoot[request.uri] = std::move(diagnostics);
+      publications = publicationsForLocked(affected);
+    }
+    publish(std::move(publications));
   }
 
   void publishAnalysis(const AnalysisRequest &request,
@@ -4511,6 +4675,10 @@ private:
   // than when the replacement publishes. A shared-dependency edit otherwise
   // holds a stale and a new whole-program result for every dependant at once.
   std::uint64_t advanceAnalysisGenerationLocked(const std::string &uri) {
+    // Includes close/reopen and project changes, not only ordinary edits.
+    if (const auto running = activeAnalysisCancellations.find(uri);
+        running != activeAnalysisCancellations.end())
+      running->second->store(true, std::memory_order_relaxed);
     if (const auto snapshot = analysisSnapshots.find(uri);
         snapshot != analysisSnapshots.end() && snapshot->second.frontend) {
       retireFrontendLocked(std::move(snapshot->second.frontend));
@@ -4941,6 +5109,8 @@ private:
   std::unordered_map<std::string, std::unordered_set<std::string>>
       openClientUris;
   std::unordered_map<std::string, std::string> documents;
+  std::unordered_map<std::string, std::optional<std::uint64_t>>
+      savedModuleHeaders;
   std::unordered_map<std::string, std::int64_t> documentVersions;
   std::unordered_map<std::string, std::vector<LspDiagnostic>> diagnosticsByRoot;
   std::unordered_map<std::string,
@@ -4990,6 +5160,8 @@ private:
   std::unordered_set<std::string> canceledRequests;
   // Documents whose analysis is running on a pool worker.
   std::unordered_set<std::string> activeAnalysisUris;
+  // Roots whose semantic publication is complete; import advice may still run.
+  std::unordered_set<std::string> activeIncludeSuggestionUris;
   // The cancellation flag of each document's running analysis.
   std::unordered_map<std::string, std::shared_ptr<std::atomic<bool>>>
       activeAnalysisCancellations;

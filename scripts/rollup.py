@@ -222,9 +222,21 @@ def rollup_body(base, members, block):
 
 
 def authorize(event_name, event, api):
-    """Whether this event may run the bot: schedule/dispatch, or an exact `/rollup` from a writer."""
+    """Authorize trusted wakeups; CI completion only wakes a fresh server-side audit."""
     if event_name in {"schedule", "workflow_dispatch"}:
         return True
+    if event_name == "workflow_run":
+        run = event.get("workflow_run") or {}
+        if (event.get("action") != "completed" or run.get("status") != "completed"
+                or (event.get("repository") or {}).get("full_name") != workflow.REPOSITORY):
+            return False
+        try:
+            ci = api.request("GET", "/actions/workflows/ci.yml") or {}
+        except workflow.WorkflowError:
+            return False
+        # Never trust a workflow's display name or run artifacts. The bot uses
+        # main's code and independently queries current heads and their gates.
+        return bool(ci.get("id") and run.get("workflow_id") == ci["id"])
     if event_name != "issue_comment" or event.get("action") != "created":
         return False
     comment = event.get("comment") or {}
@@ -335,9 +347,20 @@ class Rollup:
         return self.api.request("GET", f"/pulls/{number}")
 
     def gate(self, sha):
+        query = urllib.parse.urlencode({"head_sha": sha, "per_page": 100})
+        workflows = (self.runs_api.request("GET", "/actions/workflows/ci.yml/runs?" + query) or {}).get("workflow_runs", [])
+        latest = max(workflows, key=lambda run: run.get("id", 0)) if workflows else None
+        # Ready-for-review and rerun events can start new validation without
+        # changing the source SHA. Its gate job may not exist until its needs
+        # finish; an older successful draft gate must not admit that candidate.
+        if not latest or latest.get("status") != "completed":
+            return None
+        if latest.get("conclusion") != "success":
+            return latest
         query = urllib.parse.urlencode({"check_name": GATE, "per_page": 100})
         runs = [run for run in (self.api.request("GET", f"/commits/{sha}/check-runs?{query}") or {}).get("check_runs", [])
-                if run.get("name") == GATE]
+                if run.get("name") == GATE and latest.get("check_suite_id")
+                and (run.get("check_suite") or {}).get("id") == latest["check_suite_id"]]
         return max(runs, key=lambda run: run.get("id", 0)) if runs else None
 
     def queued(self):
@@ -471,7 +494,14 @@ class Rollup:
             members.append({"pr": number, "head": head, "title": pr.get("title"), "declared": candidate["declared"]})
         report["members"] = [{"pr": m["pr"], "head": m["head"]} for m in members]
         if len(members) < 2:
-            report["reason"] = "fewer than two members"
+            report["enqueued"] = []
+            if members:
+                member = members[0]
+                self.enqueue_pr(self.pull(member["pr"]), member["head"])
+                report["enqueued"].append(member["pr"])
+                report["reason"] = "single eligible member queued alone"
+            else:
+                report["reason"] = "no eligible members"
             return report
         branch, path = self.identity(base)
         record = {"schema": 1, "base": base, "members": [
@@ -523,16 +553,48 @@ class Rollup:
     def reconcile(self):
         main = self.fetch_main()
         queued, history = self.queued(), self.queue_runs()
-        report = {"waiting": [], "failed": [], "requeued": [], "stale": [], "integrated": [], "invalid": []}
+        report = {"waiting": [], "failed": [], "requeued": [], "stale": [], "integrated": [], "invalid": [],
+                  "conflicting": [], "rebased": []}
         for pr in self.pulls("open"):
             if is_rollup(pr):
                 self.reconcile_open(pr, queued, history, report)
+            else:
+                self.flag_conflict(pr, main, report)
         horizon = self.now() - timedelta(days=self.merged_days)
         for pr in self.pulls("closed", pages=1):
             merged = pr.get("merged_at")
             if is_rollup(pr) and merged and datetime.fromisoformat(merged.replace("Z", "+00:00")) >= horizon:
                 self.reconcile_merged(pr, main, report)
         return report
+
+    def flag_conflict(self, pr, main, report):
+        """Label an open PR that no longer merges with main, whichever path it takes.
+
+        The merge queue drops a conflicting entry without a run, a status or a
+        comment, and merge-when-ready simply never fires, so a PR that waited
+        while main moved disappears from every pipeline unnoticed (2026-11-03:
+        13 of 31 open PRs). `compose` already flags rollup candidates; this
+        covers `rollup=never` and auto-merge PRs too. The bot never resolves
+        conflicts; the label clears once the PR merges cleanly again.
+        """
+        number = pr["number"]
+        if pr.get("draft") or (pr.get("base") or {}).get("ref") != "main":
+            return
+        head = self.fetch_pull(number)
+        if head is None:
+            return
+        if self.merge_tree(main, head) is None:
+            report["conflicting"].append(number)
+            if REBASE not in labels(pr):
+                self.label(number, REBASE)
+                self.comment(number, f"This PR conflicts with `main` at `{main}`. The merge queue drops a conflicting "
+                                     "entry without a run or a comment and merge-when-ready never fires, so nothing "
+                                     "will integrate it until it is reconciled. Merge `main` (regenerating any "
+                                     "census baselines on the merged tree), push, and re-queue; the bot removes "
+                                     "`needs-rebase` once it merges cleanly. The bot never resolves conflicts.")
+        elif REBASE in labels(pr):
+            self.unlabel(number, REBASE)
+            report["rebased"].append(number)
 
     def reconcile_open(self, pr, queued, history, report):
         number, head = pr["number"], pr["head"]["sha"]

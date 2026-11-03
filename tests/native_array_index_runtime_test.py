@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes, optimization_level
 
 
 DECLARATIONS = r'''
@@ -94,20 +95,16 @@ def main():
         root = Path(directory)
         c_source = root / "grid.c"
         c_source.write_text(NATIVE)
-        modes = [(standard, level, []) for standard in ("c++20", "c++23")
-                 for level in ("O0", "O1", "O3")]
-        modes.append(("c++23", "O1", ["-fsanitize=address,undefined",
-                                       "-fno-omit-frame-pointer"]))
-        for standard, level, sanitizers in modes:
+        for mode, flags, sanitizers in native_modes():
             native = root / "grid.o"
-            checked([os.environ.get("CC", "cc"), "-std=c17", f"-{level}",
+            checked([os.environ.get("CC", "cc"), "-std=c17", f"-{optimization_level(flags)}",
                      "-c", c_source, "-o", native, *sanitizers])
             for name, source in cases.items():
                 path = root / f"{name}.gti"
                 path.write_text(DECLARATIONS + source)
                 binary = root / name
-                checked([compiler, path, "--std", standard, f"-{level}",
-                         "-o", binary, "--", native, "-fno-elide-constructors", *sanitizers])
+                checked([compiler, path, *flags,
+                         "-o", binary, "--", native, *sanitizers])
                 executed = run([binary])
                 if name == "values":
                     assert executed.returncode == 0 and not executed.stdout and not executed.stderr, executed
@@ -116,7 +113,7 @@ def main():
                     assert "runtime error[GTI-R0007]: index_out_of_bounds in fixed_array" in executed.stderr, executed
                     assert all(marker not in executed.stderr for marker in
                                ("AddressSanitizer", "UndefinedBehaviorSanitizer", "runtime error:")), executed
-            print(f"native array indexing {standard} {level} {sanitizers}: passed", flush=True)
+            print(f"native array indexing {mode}: passed", flush=True)
 
 
 if __name__ == "__main__":

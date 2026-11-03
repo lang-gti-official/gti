@@ -1,6 +1,8 @@
 #pragma once
 
+#include "gti/diagnostic.h"
 #include "gti/token.h"
+#include <span>
 #include <string_view>
 
 namespace lang {
@@ -30,6 +32,51 @@ namespace lang {
       return true;
     name.remove_prefix(separator + 1);
   }
+}
+
+struct ModuleHeader {
+  Token declaration;
+  SourceSpan span;
+  bool interface = false;
+  std::size_t tokenEnd = 0;
+};
+
+[[nodiscard]] inline bool
+startsModuleDeclaration(std::span<const Token> tokens) {
+  return !tokens.empty() &&
+         (tokens[0].kind == TokenKind::MODULE ||
+          (tokens.size() > 1 && tokens[0].kind == TokenKind::EXPORT &&
+           tokens[1].kind == TokenKind::MODULE));
+}
+
+// Shared by source loading and project discovery; neither invents a second
+// interpretation of a module's spelling or leading declaration.
+[[nodiscard]] inline std::optional<ModuleHeader>
+parseModuleHeader(std::span<const Token> tokens) {
+  if (tokens.size() < 3 || !startsModuleDeclaration(tokens))
+    return std::nullopt;
+  const bool interface = tokens[0].kind == TokenKind::EXPORT;
+  const std::size_t first = interface ? 2 : 1;
+  std::size_t at = first;
+  std::string name;
+  while (at < tokens.size() && tokens[at].kind == TokenKind::IDENTIFIER) {
+    name += tokens[at++].lexeme;
+    if (at >= tokens.size() || tokens[at].kind != TokenKind::DOT)
+      break;
+    name += '.';
+    ++at;
+  }
+  if (!isModuleName(name) || at >= tokens.size() ||
+      tokens[at].kind != TokenKind::SEMICOLON)
+    return std::nullopt;
+  Token declaration = tokens[first];
+  declaration.lexeme = std::move(name);
+  return ModuleHeader{std::move(declaration),
+                      {tokens[first].source, tokens[first].position,
+                       tokens[at - 1].position + tokens[at - 1].lexeme.size(),
+                       tokens[first].line},
+                      interface,
+                      at + 1};
 }
 
 } // namespace lang

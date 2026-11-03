@@ -41,6 +41,10 @@ class GitHub:
         self.lose_close_response = False
         self.before_enqueue = None
         self.ready_calls = []
+        self.pending_checks = False
+        self.auto_calls = []
+        self.lose_auto_response = False
+        self.reject_disable = False
 
     def effective_rules(self):
         return [rule for ruleset in self.rulesets if ruleset["enforcement"] == "active"
@@ -133,16 +137,41 @@ class GitHub:
 
     def graphql(self, query, variables):
         pr = self.pr(int(variables["id"].split("_")[1]))
+        if "node(id:" in query:
+            return {"node": {"headRefOid": pr["head"]["sha"], "merged": pr["merged"],
+                             "isInMergeQueue": bool(pr.get("in_queue")),
+                             "autoMergeRequest": pr.get("auto_merge")}}
+        if "disablePullRequestAutoMerge" in query:
+            if self.reject_disable:
+                raise Error("disable refused")
+            pr["auto_merge"] = None
+            return {"disablePullRequestAutoMerge": {"clientMutationId": None}}
+        if "dequeuePullRequest" in query:
+            pr["in_queue"] = False
+            return {"dequeuePullRequest": {"clientMutationId": None}}
         if "markPullRequestReadyForReview" in query:
             self.ready_calls.append(pr["number"])
             pr["draft"] = False
             return {"markPullRequestReadyForReview": {"clientMutationId": None}}
-        if "enqueuePullRequest" not in query:
+        if "enablePullRequestAutoMerge" in query:
+            if self.reject_enqueue or variables["head"] != pr["head"]["sha"]:
+                raise Error("server rejected the merge queue entry")
+            self.auto_calls.append(variables["head"])
+            pr["auto_merge"] = {"enabledAt": "now"}
+            if self.lose_auto_response:
+                self.lose_auto_response = False
+                raise Error("lost auto-merge response")
+            if self.pending_checks:
+                return {"enablePullRequestAutoMerge": {"clientMutationId": None}}
+        elif "enqueuePullRequest" not in query:
             raise AssertionError(query)
+        elif self.pending_checks:
+            raise Error('Required status check "CI gate" is expected')
         if (self.reject_enqueue or pr["draft"] or variables["head"] != pr["head"]["sha"]
                 or not {"merge_queue", "required_status_checks"} <= {r["type"] for r in self.effective_rules()}):
             raise Error("server rejected the merge queue entry")
         self.enqueued.append((pr["number"], variables["head"]))
+        pr["in_queue"] = True
         if self.before_enqueue:
             self.before_enqueue()
         if not self.queue_async:
@@ -157,7 +186,7 @@ class GitHub:
         tree = git(self.remote, "merge-tree", "--write-tree", base, head).splitlines()[0]
         commit = git(self.remote, "commit-tree", tree, "-p", base, "-p", head, "-m", "Merge queue candidate")
         git(self.remote, "update-ref", "refs/heads/main", commit)
-        pr.update(merged=True, state="closed", merge_commit_sha=commit)
+        pr.update(merged=True, state="closed", merge_commit_sha=commit, in_queue=False, auto_merge=None)
 
 
 class DeclaredTests(unittest.TestCase):
@@ -397,6 +426,87 @@ class Lifecycle(unittest.TestCase):
         self.assertEqual(len(self.api.enqueued), 1)
         self.api.merge_queue_head()
         self.assertEqual(self.flow.finish("task", "description", rollup=False)["phase"], "synced")
+
+    def test_pending_ci_is_a_durable_handoff_not_an_enqueue_error(self):
+        self.ready()
+        self.api.pending_checks = True
+        state = self.flow.finish("task", "description", rollup=False)
+        self.assertEqual(state["phase"], "awaiting-ci")
+        self.assertEqual(state["handoff"]["head"], state["verified"]["head"])
+        self.assertEqual(self.api.enqueued, [])
+        self.flow.finish("task", "description", rollup=False)
+        self.assertEqual(len(self.api.auto_calls), 1)
+        self.assertEqual(self.flow.status("task")[0]["remote_integration"], "awaiting-ci")
+        # GitHub observes a passing check and queues it without another helper call.
+        self.api.pending_checks = False
+        self.api.queue_async = True
+        self.api.graphql(module.Workflow.ENQUEUE, {"id": "PR_1", "head": state["verified"]["head"]})
+        self.assertEqual(self.flow.status("task")[0]["remote_integration"], "queued")
+        self.assertEqual(self.flow.finish("task", "description", rollup=False)["phase"], "queued")
+        self.assertEqual(len(self.api.auto_calls), 1)
+
+    def test_lost_auto_response_recovers_without_rearming(self):
+        self.ready()
+        self.api.pending_checks = True
+        self.api.lose_auto_response = True
+        with self.assertRaisesRegex(Error, "lost auto-merge"):
+            self.flow.finish("task", "description", rollup=False)
+        self.assertEqual(self.flow.finish("task", "description", rollup=False)["phase"], "awaiting-ci")
+        self.assertEqual(len(self.api.auto_calls), 1)
+
+    def test_checkpoint_cancels_handoff_before_publishing_a_new_head(self):
+        self.ready()
+        self.api.pending_checks = True
+        self.flow.finish("task", "description", rollup=False)
+        self.checkpoint("changed after handoff\n")
+        self.assertIsNone(self.api.prs[0]["auto_merge"])
+        self.assertNotIn("handoff", self.flow.load("task"))
+        self.assertNotIn("verified", self.flow.load("task"))
+        with self.assertRaisesRegex(Error, "recorded validation"):
+            self.flow.finish("task", "description", rollup=False)
+
+    def test_cancellation_failure_prevents_push(self):
+        self.ready()
+        self.api.pending_checks = True
+        state = self.flow.finish("task", "description", rollup=False)
+        self.api.reject_disable = True
+        with self.assertRaisesRegex(Error, "disable refused"):
+            self.checkpoint("changed after handoff\n")
+        self.assertEqual(self.api.pr(1)["head"]["sha"], state["verified"]["head"])
+
+    def test_reconcile_and_pr_only_withdraw_pending_intent(self):
+        self.ready()
+        self.api.pending_checks = True
+        self.flow.finish("task", "description", rollup=False)
+        self.flow.finish("task", "description", pr_only=True)
+        self.assertIsNone(self.api.prs[0]["auto_merge"])
+        self.flow.finish("task", "description", rollup=False)
+        self.advance_remote()
+        self.flow.reconcile("task")
+        self.assertIsNone(self.api.prs[0]["auto_merge"])
+        self.assertNotIn("verified", self.flow.load("task"))
+
+    def test_new_checkpoint_withdraws_existing_queue_entry(self):
+        self.ready()
+        self.api.queue_async = True
+        self.flow.finish("task", "description", rollup=False)
+        self.checkpoint("new head after queue entry\n")
+        self.assertFalse(self.api.prs[0]["in_queue"])
+        self.assertIsNone(self.api.prs[0]["auto_merge"])
+        self.assertNotIn("queued", self.flow.load("task"))
+
+    def test_changed_head_cannot_arm_auto_merge(self):
+        self.ready()
+        self.api.pending_checks = True
+        graphql = self.api.graphql
+        def raced(query, variables):
+            if "enablePullRequestAutoMerge" in query:
+                variables = {**variables, "head": "0" * 40}
+            return graphql(query, variables)
+        self.api.graphql = raced
+        with self.assertRaisesRegex(Error, "server rejected"):
+            self.flow.finish("task", "description", rollup=False)
+        self.assertEqual(self.api.auto_calls, [])
 
     def test_new_commit_and_dirty_files_refuse_merge(self):
         self.ready()
@@ -1124,15 +1234,15 @@ def batch_plan(**changes):
 
 
 class ValidationChecks(unittest.TestCase):
-    def test_source_library_focused_scope_is_narrow_and_does_not_change_ci(self):
+    def test_source_library_focused_scope_matches_ci_candidate_eligibility(self):
         source = ["stdlib/std/encoding.gti"]
         allowed = ["stdlib/std/encoding.gti", "tests/fixtures/encoding.gti",
                    "tests/encoding_runtime_test.py", "examples/094-encoding.gti",
                    "examples/README.md", "stdlib/README.md", "docs/language/encoding.md",
-                   "VERSION", "CHANGELOG.md", "tests/stdlib_surface_manifest.json",
+                   "changes/encoding.feature.md", "tests/stdlib_surface_manifest.json",
                    "tests/mir_census_baseline.json", "tests/lowered_program_census_baseline.json"]
         self.assertEqual(validation.focused_scope(source + allowed), "source-stdlib")
-        self.assertEqual(validation.ci_mode({}, source + allowed), "full")
+        self.assertEqual(validation.ci_mode({}, source + allowed), "source-stdlib")
         self.assertEqual(validation.focused_scope(["docs/index.md"]), "automation")
         self.assertIsNone(validation.focused_scope(["tests/encoding_runtime_test.py"]))
         for path in ("src/compiler/foo.cpp", "include/gti/type.h", "runtime/host.cpp",
@@ -1213,24 +1323,36 @@ class ValidationChecks(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validation.build_cache(root, build)
 
-    def test_ci_gate_requires_fast_checks_on_prs_and_the_suite_in_the_queue(self):
+    def test_ci_gate_requires_fast_checks_and_full_validation_proves_the_suite(self):
         lint = {name: {"result": "success"} for name in validation.LINT_JOBS}
-        pr = {**lint, "fast": {"result": "success"}}
-        queue = {**lint, "fast": {"result": "success"}, "package": {"result": "success"}, "integration": {"result": "success"}, "sanitizers": {"result": "success"}}
-        validation.admission("full", pr, "pull_request")
-        validation.admission("full", queue, "merge_group")
-        with self.assertRaises(ValueError):
-            validation.admission("full", pr, "merge_group")
+        gate = {**lint, "fast": {"result": "success"}}
+        suite = {name: {"result": "success"} for name in validation.FULL_VALIDATION_JOBS}
+        # The PR and the merge queue prove the same bounded set.
+        validation.admission("full", gate, "pull_request")
+        validation.admission("full", gate, "merge_group")
         with self.assertRaises(ValueError):
             validation.admission("full", lint, "pull_request")
-        for results, event in ((pr, "pull_request"), (queue, "merge_group")):
-            for name in results:
-                failed = copy.deepcopy(results)
+        with self.assertRaises(ValueError):
+            validation.admission("full", lint, "merge_group")
+        for event in ("pull_request", "merge_group"):
+            for name in gate:
+                failed = copy.deepcopy(gate)
                 failed[name]["result"] = "skipped"
                 with self.assertRaises(ValueError):
                     validation.admission("full", failed, event)
+        # Post-integration full validation requires packaging, every shard and the sanitizers.
+        validation.admission("full", suite, "full_validation")
+        for name in suite:
+            failed = copy.deepcopy(suite)
+            failed[name]["result"] = "failure"
+            with self.assertRaises(ValueError):
+                validation.admission("full", failed, "full_validation")
         with self.assertRaises(ValueError):
-            validation.admission("full", queue, "push")
+            validation.admission("full", gate, "full_validation")
+        with self.assertRaises(ValueError):
+            validation.admission("automation", suite, "full_validation")
+        with self.assertRaises(ValueError):
+            validation.admission("full", gate, "push")
 
     def test_ci_draft_and_component_report_incomplete_integration(self):
         lint = {name: {"result": "success"} for name in validation.LINT_JOBS}
@@ -1246,6 +1368,55 @@ class ValidationChecks(unittest.TestCase):
         validation.admission("draft", lint, "pull_request")
         with self.assertRaises(ValueError):
             validation.admission("draft", lint, "merge_group")
+
+    def test_shard_inventory_runs_split_parts_instead_of_aggregates_and_gate_set_is_a_subset(self):
+        cpp_only = {"cpp_mir_body_emitter_text", "cpp_debug_artifacts", "lowered_program_corpus_census"}
+        registered = {"smoke", "compiler_pipeline", "compiler_pipeline_frontend", "compiler_pipeline_backend",
+                      "instance_reuse", "instance_reuse_0", "instance_reuse_1", "other", "llvm_backend_scalar",
+                      *validation.GATE_EXCLUDED, *cpp_only}
+        aggregates = {"compiler_pipeline", "instance_reuse"}
+        full = validation.shard_inventory(registered, "full")
+        # The aggregates are replaced by their registered parts; the C++-only tests leave for the weekly job.
+        self.assertNotIn("compiler_pipeline", full)
+        self.assertNotIn("instance_reuse", full)
+        self.assertEqual(full, registered - aggregates - cpp_only)
+        # Only the scheduled C++ set runs the frozen backend's own tests.
+        self.assertEqual(validation.shard_inventory(registered, "cpp"), registered - aggregates)
+        # Without the parts, an aggregate stays (no coverage loss on an older tree).
+        alone = {"smoke", "compiler_pipeline", "other", *validation.GATE_EXCLUDED}
+        self.assertIn("compiler_pipeline", validation.shard_inventory(alone, "full"))
+        gate = validation.shard_inventory(registered, "gate")
+        self.assertEqual(gate, full - validation.GATE_EXCLUDED)
+        self.assertTrue(gate < full)
+        self.assertNotIn("generic_algorithm_breadth", validation.GATE_EXCLUDED, "the shipped default stays in the gate")
+        self.assertFalse(validation.cpp_only("generic_algorithm_breadth"))
+        self.assertNotIn("trusted_body_analysis_0", validation.GATE_EXCLUDED)
+        # macOS runs only the platform-specific inventory: listed names and prefixed families.
+        darwin = validation.shard_inventory(registered, "darwin", (("llvm_",), {"other"}))
+        self.assertEqual(darwin, {"other", "llvm_backend_scalar"})
+        self.assertTrue(darwin < full)
+        with self.assertRaises(ValueError):
+            validation.shard_inventory(registered, "darwin", ((), {"missing"}))  # stale names fail the shard
+        with self.assertRaises(ValueError):
+            validation.shard_inventory({"smoke", "other"}, "gate")  # exclusions must name registered tests
+        with self.assertRaises(ValueError):
+            validation.shard_inventory(registered, "nightly")
+
+    def test_durations_refresh_keeps_the_maximum_and_ignores_unknown_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            table = Path(directory) / "durations.json"
+            table.write_text(json.dumps({"schema": 1, "default_seconds": 30, "seconds": {"a": 50.0, "b": 10.0}}))
+            reports = Path(directory) / "reports"
+            reports.mkdir()
+            (reports / "one.xml").write_text(
+                '<testsuite><testcase name="a" time="20.4"/><testcase name="b" time="33.3"/>'
+                '<testcase name="c" time="1.0"/><testcase name="bad name" time="9"/></testsuite>')
+            validation.update_durations(table, reports)
+            seconds = json.loads(table.read_text())["seconds"]
+            self.assertEqual(seconds, {"a": 50.0, "b": 33.3, "c": 1.0})
+            (reports / "broken.xml").write_text("<testsuite>")
+            with self.assertRaises(ValueError):
+                validation.update_durations(table, reports)
 
     def test_shards_partition_deterministically_and_merge_only_complete_coverage(self):
         names = ["a", "b", "c", "d", "e"]
@@ -1325,6 +1496,25 @@ class ValidationChecks(unittest.TestCase):
             with self.subTest(label), self.assertRaises(ValueError):
                 validation.merge_shards(reports, ["darwin", "linux"])
 
+    def test_test_targets_keeps_only_names_the_ninja_tree_builds(self):
+        # A test also receives build-tree paths that are not targets (an
+        # evidence directory, a registry it writes); feeding those to
+        # `cmake --build --target` fails the whole build step.
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory).resolve()
+            (build / "tests").mkdir()
+            (build / "tests" / "CTestTestfile.cmake").write_text(
+                f'add_test("llvm_wait" "/usr/bin/python3" "/src/w.py" "{build}/gti_llvm_wait_tests" "{build}/atomic-wait-service-evidence" "{build}/registry.tsv")\n')
+            self.assertEqual(validation.test_targets(build, "^llvm_wait$"),
+                             ["atomic-wait-service-evidence", "gti", "gti_llvm_wait_tests", "gti_runtime", "registry.tsv"])
+            original = validation.build_targets
+            validation.build_targets = lambda tree: {"all", "gti", "gti_runtime", "gti_llvm_wait_tests"}
+            try:
+                self.assertEqual(validation.test_targets(build, "^llvm_wait$"),
+                                 ["gti", "gti_llvm_wait_tests", "gti_runtime"])
+            finally:
+                validation.build_targets = original
+
     def test_test_targets_reads_configured_commands_without_a_build(self):
         with tempfile.TemporaryDirectory() as directory:
             build = Path(directory).resolve()
@@ -1384,6 +1574,7 @@ class ValidationChecks(unittest.TestCase):
                     for sensitive in ("src/compiler/parser.cpp", "runtime/src/memory.cpp",
                                       "stdlib/std.gti", "tests/CMakeLists.txt", "CMakeLists.txt",
                                       ".github/workflows/ci.yml", ".github/workflows/cache.yml",
+                                      ".github/workflows/full-validation.yml",
                                       ".github/workflows/nightly.yml", ".github/workflows/beta.yml",
                                       ".github/workflows/new.yml", "scripts/validation_checks.py",
                                       "scripts/validation_batch.py", "scripts/named_test_shards.py",
@@ -1524,7 +1715,8 @@ class CIEnvironment(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="gti-ci-context-") as temporary:
             root = Path(temporary) / "runner workspace"
             (root / "scripts").mkdir(parents=True)
-            shutil.copy2(ROOT / "scripts/validation_checks.py", root / "scripts/validation_checks.py")
+            for name in ("validation_checks.py", "source_stdlib_ci.py", "release_artifacts.py", "preview_examples.py"):
+                shutil.copy2(ROOT / "scripts" / name, root / "scripts" / name)
             git(root, "init", "-b", "main")
             git(root, "config", "user.name", "CI Test")
             git(root, "config", "user.email", "test@example.invalid")
@@ -1540,7 +1732,8 @@ class CIEnvironment(unittest.TestCase):
             env = {key: value for key, value in os.environ.items()
                    if key not in {"GITEA_EVENT_PATH", "GITHUB_EVENT_PATH"}}
             env.update(GTI_EVENT_PATH=str(payload), GTI_BASE_SHA=base, GITHUB_OUTPUT=str(output),
-                       GITHUB_EVENT_NAME="pull_request", GITHUB_REF="refs/pull/1/merge")
+                       GITHUB_EVENT_NAME="pull_request", GITHUB_REF="refs/pull/1/merge",
+                       GITHUB_REPOSITORY="lang-gti-official/gti", RUNNER_TEMP=str(root))
 
             def execute(success):
                 output.write_text("")
@@ -1554,7 +1747,10 @@ class CIEnvironment(unittest.TestCase):
                 with self.subTest(event=event):
                     payload.write_text(json.dumps(event))
                     env["GTI_BASE_SHA"] = before
-                    self.assertEqual(execute(True), f"mode={expected}\n")
+                    lines = execute(True).splitlines()
+                    self.assertEqual(lines[0], f"mode={expected}")
+                    document = json.loads(lines[1].removeprefix("reuse="))
+                    self.assertEqual(document, {"mode": expected, "base": base, "head": git(root, "rev-parse", "HEAD")})
             for path in ("", str(root), str(root / "missing.json")):
                 with self.subTest(invalid_event_path=path):
                     env["GTI_EVENT_PATH"] = path

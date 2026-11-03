@@ -31,20 +31,26 @@ def profiles(document: dict) -> dict[str, dict[str, int]]:
     if not isinstance(document, dict) or document.get("target") != TARGETS[0]:
         raise ValueError("MIR census must name its canonical arm64-apple-macos target")
     common = _counts(document.get("examples"), "MIR census")
-    if not common or type(document.get("total")) is not int or document["total"] != sum(common.values()):
+    if not common:
+        raise ValueError("MIR census baseline has no examples")
+    # Totals are derived from the per-example counts, never stored: a stored
+    # total changed in every pull request and made any two of them conflict.
+    # A legacy document may still carry one, which must then be consistent.
+    if "total" in document and (type(document["total"]) is not int or document["total"] != sum(common.values())):
         raise ValueError("MIR census baseline total is internally inconsistent")
     variants = document.get("variants")
     if not isinstance(variants, dict) or set(variants) != set(TARGETS[1:]):
         raise ValueError("MIR census target variants differ from reviewed profiles")
     result = {TARGETS[0]: dict(common)}
     for target, variant in variants.items():
-        if not isinstance(variant, dict) or set(variant) != {"examples", "total"}:
+        if not isinstance(variant, dict) or not {"examples"} <= set(variant) <= {"examples", "total"}:
             raise ValueError(f"{target}: invalid MIR census variant")
         overrides = _counts(variant["examples"], target)
         if set(overrides) - set(common):
             raise ValueError(f"{target}: variant contains an unknown example")
         result[target] = {**common, **overrides}
-        if type(variant["total"]) is not int or variant["total"] != sum(result[target].values()):
+        if "total" in variant and (type(variant["total"]) is not int
+                                   or variant["total"] != sum(result[target].values())):
             raise ValueError(f"{target}: MIR census variant total is internally inconsistent")
     return result
 
@@ -64,13 +70,12 @@ def updated(document: dict, target: str, counts: dict[str, int]) -> dict:
     all_profiles = profiles(document)
     all_profiles[target] = dict(counts)
     result = deepcopy(document)
+    result.pop("total", None)
     result["examples"] = all_profiles[TARGETS[0]]
-    result["total"] = sum(result["examples"].values())
     for other in TARGETS[1:]:
         result["variants"][other] = {
             "examples": {name: count for name, count in all_profiles[other].items()
                          if count != result["examples"][name]},
-            "total": sum(all_profiles[other].values()),
         }
     profiles(result)
     return result

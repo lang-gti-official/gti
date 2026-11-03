@@ -91,6 +91,16 @@ def main():
             diagnostics_for(session, uri, 2)
             completion = query("textDocument/completion", incomplete, len(incomplete))
             labels = {item["label"] for item in completion["items"]}
+            assert {"dep.net.next", "dep.net.http"} <= labels, labels
+            # Removing an explicit selection leaves a saved interface discoverable.
+            # Exclusion is the deliberate way to remove it from the package map.
+            write(manifest, manifest.read_text() +
+                  '\n[module-discovery]\nexclude = ["api.gti"]\n')
+            session.send({"jsonrpc": "2.0", "method": "workspace/didChangeWatchedFiles",
+                          "params": {"changes": [{"uri": manifest.resolve().as_uri(), "type": 2}]}})
+            diagnostics_for(session, uri, 2)
+            completion = query("textDocument/completion", incomplete, len(incomplete))
+            labels = {item["label"] for item in completion["items"]}
             assert "dep.net.next" in labels and "dep.net.http" not in labels, labels
             valid = "import dep.net.next;\nint main() { return next(); }\n"
             assert change(3, valid) == []
@@ -154,7 +164,10 @@ def symlink_refresh():
             outside = root / "outside" / "interface.gti" if directory_link else root / "outside.gti"
             write(outside, "export module api;\nOUTSIDE_OWNER_SENTINEL forbidden;\n")
             manifest = ('manifest-version = 1\n[package]\nname = "symlink"\n'
-                        'version = "0.1.0"\nsource-root = "."\n')
+                        'version = "0.1.0"\nsource-root = "."\n'
+                        '[module-discovery]\nroots = []\n')
+            # These authored-path tests deliberately keep both alternative
+            # interfaces and aliases on disk; discovery has separate coverage.
             if named:
                 manifest += f'[modules]\napi = "{link.relative_to(app).as_posix()}"\n'
                 retarget(first)

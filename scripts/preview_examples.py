@@ -16,13 +16,13 @@ TESTS = {"owner_chain_runtime", "compiled_type_forwarding", "compiled_namespaces
          "project_cli_workflow", "scoped_configuration_defines", "native_enum_bindgen",
          "native_typedef_bindgen", "native_union_bindgen", "native_variable_bindgen",
          "process_resource_policy", "llvm_embedding_project",
-         "annotated_test_suites", "out_of_class_runtime", "module_system_runtime", "typed_differential_smoke",
+         "annotated_test_suites", "out_of_class_runtime", "module_system_runtime", "module_discovery_runtime", "typed_differential_smoke",
          "llvm_scalar_execution", "llvm_place_execution", "llvm_class_execution",
          "llvm_payload_execution", "llvm_placement_execution", "llvm_dispatch_execution",
          "llvm_native_c_indirect_execution", "llvm_native_c_aggregate_execution",
          "llvm_native_c_storage_execution"}
 NESTED = {"ownership", "compiled-type-forwarding", "compiled-namespaces", "compiled-dependencies", "compiled-value-types", "compiled-borrowing", "compiled-primitive-library", "compiled-libraries", "compiled-scalar-library", "allocator-support", "annotated-tests", "infallible-embedding",
-          "libc-region-provider", "llvm", "module-only", "module-system", "native-callback-slots",
+          "libc-region-provider", "llvm", "module-only", "module-system", "module-discovery", "native-callback-slots",
           "native-enum-bindings", "native-union-bindings", "native-variable-bindings",
           "objective-cpp-bridge", "scoped-configuration",
           "toy-3d-engine", "transit-planner", "window-factory"}
@@ -57,17 +57,54 @@ def validate_results(path, required):
         raise ValueError("A required example gate failed or was skipped")
 
 
-def manifest_tests(path):
+def load_manifest(path):
     manifest = json.loads(path.read_text())
     if manifest.get("schema") != 1 or not isinstance(manifest.get("features"), list):
         raise ValueError("Invalid preview manifest")
+    return manifest
+
+
+def feature_tests(feature):
+    names = feature.get("tests")
+    if not isinstance(names, list) or not names or any(
+            not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+", name) for name in names):
+        raise ValueError("Invalid focused preview checks")
+    return list(names)
+
+
+def manifest_tests(path):
+    """Every committed feature's focused checks (maintainer replay)."""
     focused = []
+    for feature in load_manifest(path)["features"]:
+        focused.extend(feature_tests(feature))
+    return focused
+
+
+def pending_features(manifest, root):
+    """The features this candidate admits: those whose merge is not already in the published preview.
+
+    Preview promises that each admitted feature compiled and passed its own
+    focused checks once; it does not re-prove every earlier feature on every
+    admission. With no published preview (`previous` is null) every feature
+    is pending.
+    """
+    previous = manifest.get("previous")
+    pending = []
     for feature in manifest["features"]:
-        names = feature.get("tests")
-        if not isinstance(names, list) or not names or any(
-                not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+", name) for name in names):
-            raise ValueError("Invalid focused preview checks")
-        focused.extend(names)
+        merge = feature.get("merge")
+        if not isinstance(merge, str) or not re.fullmatch(r"[0-9a-f]{40}", merge):
+            raise ValueError("Invalid preview feature merge identity")
+        if previous is None or subprocess.run(
+                ["git", "-C", str(root), "merge-base", "--is-ancestor", merge, previous],
+                capture_output=True).returncode != 0:
+            pending.append(feature)
+    return pending
+
+
+def pending_tests(path, root):
+    focused = []
+    for feature in pending_features(load_manifest(path), root):
+        focused.extend(feature_tests(feature))
     return focused
 
 
@@ -76,6 +113,8 @@ def main():
     parser.add_argument("build")
     parser.add_argument("--focused", action="append", default=[])
     parser.add_argument("--manifest", action="store_true", help="include every committed preview feature's focused checks")
+    parser.add_argument("--pending", action="store_true",
+                        help="include the focused checks of the features this candidate admits (not yet in the published preview)")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     build = Path(args.build).resolve()
@@ -87,6 +126,8 @@ def main():
     focused = list(args.focused)
     if args.manifest:
         focused.extend(manifest_tests(root / ".gti-preview.json"))
+    if args.pending:
+        focused.extend(pending_tests(root / ".gti-preview.json", root))
     if "preview_admission" in focused:
         raise ValueError("Preview admission cannot recursively select itself")
     required = required_tests(sys.platform) | set(focused)

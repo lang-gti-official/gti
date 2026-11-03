@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def execute(command: list[str], *, timeout: int = 300) -> subprocess.CompletedProcess[str]:
@@ -57,17 +58,14 @@ def build(
     source: pathlib.Path,
     output: pathlib.Path,
     *,
-    standard: str,
-    optimization: str,
+    flags: list[str],
 ) -> None:
     execute(
         [
             str(compiler),
             "--execution-profile",
             "concurrent",
-            "--std",
-            standard,
-            optimization,
+            *flags,
             str(source),
             "-o",
             str(output),
@@ -98,55 +96,49 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="gti-atomic-") as scratch:
         root = pathlib.Path(scratch)
-        for standard in ("c++20", "c++23"):
-            for optimization in ("-O0", "-O3"):
-                suffix = f"{standard.replace('+', 'p')}_{optimization[1:].lower()}"
-                scalar_binary = executable_path(root, f"atomic_scalar_{suffix}")
-                concurrent_binary = executable_path(root, f"atomic_concurrent_{suffix}")
-                orders_binary = executable_path(root, f"atomic_orders_{suffix}")
-                fetch_binary = executable_path(root, f"atomic_fetch_{suffix}")
-                overflow_binary = executable_path(root, f"atomic_overflow_{suffix}")
-                build(
-                    compiler,
-                    scalar,
-                    scalar_binary,
-                    standard=standard,
-                    optimization=optimization,
-                )
-                build(
-                    compiler,
-                    concurrent,
-                    concurrent_binary,
-                    standard=standard,
-                    optimization=optimization,
-                )
-                build(
-                    compiler,
-                    orders,
-                    orders_binary,
-                    standard=standard,
-                    optimization=optimization,
-                )
-                build(
-                    compiler,
-                    fetch,
-                    fetch_binary,
-                    standard=standard,
-                    optimization=optimization,
-                )
-                build(
-                    compiler,
-                    fetch_overflow,
-                    overflow_binary,
-                    standard=standard,
-                    optimization=optimization,
-                )
-                execute([str(scalar_binary)])
-                execute([str(fetch_binary)])
-                expect_overflow([str(overflow_binary)])
-                for _ in range(10):
-                    execute([str(concurrent_binary)])
-                    execute([str(orders_binary)])
+        for mode, flags, _native in native_modes():
+            suffix = mode.replace("+", "p").replace("-", "_")
+            scalar_binary = executable_path(root, f"atomic_scalar_{suffix}")
+            concurrent_binary = executable_path(root, f"atomic_concurrent_{suffix}")
+            orders_binary = executable_path(root, f"atomic_orders_{suffix}")
+            fetch_binary = executable_path(root, f"atomic_fetch_{suffix}")
+            overflow_binary = executable_path(root, f"atomic_overflow_{suffix}")
+            build(
+                compiler,
+                scalar,
+                scalar_binary,
+                flags=flags,
+            )
+            build(
+                compiler,
+                concurrent,
+                concurrent_binary,
+                flags=flags,
+            )
+            build(
+                compiler,
+                orders,
+                orders_binary,
+                flags=flags,
+            )
+            build(
+                compiler,
+                fetch,
+                fetch_binary,
+                flags=flags,
+            )
+            build(
+                compiler,
+                fetch_overflow,
+                overflow_binary,
+                flags=flags,
+            )
+            execute([str(scalar_binary)])
+            execute([str(fetch_binary)])
+            expect_overflow([str(overflow_binary)])
+            for _ in range(10):
+                execute([str(concurrent_binary)])
+                execute([str(orders_binary)])
 
     print("atomic native matrix checks passed")
     return 0

@@ -230,6 +230,10 @@ struct BuildProvenance {
   RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off;
   // Additive policy field. Older reports imply false.
   bool rawPointerAuditLibraryFindings = false;
+  // Additive policy field: the resolved per-request compile limits. A report
+  // without it recorded the defaults of its own compiler, so it is read as
+  // absent and verification compares it only when both reports carry it.
+  std::optional<CompileLimits> compileLimits;
   BuildFileProvenance producerExecutable;
   CompilerBuildIdentity compilerBuild;
   std::optional<BuildProjectProvenance> project;
