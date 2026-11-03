@@ -86,7 +86,7 @@ class PreviewTests(unittest.TestCase):
             (source / 'CMakeLists.txt').write_text(r'''cmake_minimum_required(VERSION 3.20)
 project(preview C)
 enable_testing()
-foreach(name IN ITEMS gti gti_lsp gti_tree_sitter owner_tests unrelated_tests)
+foreach(name IN ITEMS gti gti_lsp gti_tree_sitter owner_tests census_helper unrelated_tests)
   add_executable(${name} main.c)
 endforeach()
 add_library(sdk STATIC lib.c)
@@ -98,12 +98,13 @@ install(TARGETS gti gti_lsp gti_tree_sitter sdk
         ARCHIVE DESTINATION lib COMPONENT gti_toolchain)
 install(FILES "$<TARGET_FILE:file_archive>" DESTINATION lib COMPONENT gti_toolchain)
 add_test(NAME focused COMMAND "$<TARGET_FILE:owner_tests>"
-         "suite=$<TARGET_FILE:sdk>" "XDG_CACHE_HOME=${CMAKE_BINARY_DIR}/cache")
+         "suite=$<TARGET_FILE:sdk>" "--inventory=$<TARGET_FILE:census_helper>"
+         "XDG_CACHE_HOME=${CMAKE_BINARY_DIR}/cache")
 ''')
             subprocess.run(['cmake', '-S', str(source), '-B', str(build), '-G', 'Ninja',
                             '-DCMAKE_BUILD_TYPE=Release'], check=True, capture_output=True)
             targets = build_preview.build_targets(source, build, {'focused'})
-            self.assertEqual(set(targets), {'gti', 'gti_lsp', 'gti_tree_sitter', 'sdk', 'file_archive', 'owner_tests'})
+            self.assertEqual(set(targets), {'gti', 'gti_lsp', 'gti_tree_sitter', 'sdk', 'file_archive', 'owner_tests', 'census_helper'})
             subprocess.run(['cmake', '--build', str(build), '--parallel', '2', '--target', *targets],
                            check=True, capture_output=True)
             subprocess.run(['ctest', '--test-dir', str(build), '-R', '^focused$', '--no-tests=error'],
@@ -308,6 +309,128 @@ add_test(NAME focused COMMAND "$<TARGET_FILE:owner_tests>"
         # Nightly remains isolated; preview success cannot qualify its evidence.
         nightly = (ROOT / '.github/workflows/nightly.yml').read_text()
         self.assertNotIn('preview_release', nightly)
+
+
+class RemotePreviewTests(unittest.TestCase):
+    make_packages = PreviewTests.make_packages
+    api = PreviewTests.api
+    def evidence(self, root, directory):
+        import preview_remote as remote
+        results = {}
+        for i, platform in enumerate(a.PLATFORMS):
+            path = root/platform; (path/'logs').mkdir(parents=True)
+            run = 'run-'+str(i+1)*32
+            source = {'head': SHA, 'status': '', 'snapshot_sha256': str(i+3)*64}
+            steps = remote.plan(SHA, platform, '/exports/'+platform, 2, 2)
+            request = {'id': run, 'source': source, 'build_type': 'Release',
+                       'required_platform': 'Darwin' if platform=='darwin-arm64' else 'Linux', 'steps': steps}
+            executed = [{'name': s['name'], 'exit_code': 0, 'argv': [v.replace('{source}', '/runs/'+run+'/source').replace('{build}', '/runs/'+run+'/build') for v in s['argv']]} for s in steps]
+            report = {'id': run, 'source': source, 'final_source': {'head': SHA, 'status': ''},
+                      'state': 'passed', 'exit_code': 0, 'steps': executed}
+            for name, value in [('request.json',request),('report.json',report),('truncation.json',{'tail_only':[]})]:
+                (path/name).write_text(json.dumps(value))
+            names = [f'gti-preview-{platform}.tar.gz', f'gti-preview-{platform}.tar.gz.sha256']
+            package = {'sha': SHA, 'platform': platform, 'profile': a.PROFILE,
+                       'files': {n:a.digest(directory/n) for n in names}}
+            (path/'logs/package.log').write_text(remote.MARKER+json.dumps(package)+'\n')
+            results[platform] = path
+        return results
+
+    def test_remote_receipts_are_preview_only_and_bound_to_real_packages(self):
+        import preview_remote as remote
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); directory=root/'dist'; directory.mkdir(); self.make_packages(directory)
+            results=self.evidence(root,directory)
+            remote.verify(directory,SHA,results,record=True)
+            self.assertEqual(p.check_packages(directory,SHA,None,None,remote_results=results),MANIFEST)
+            for platform in a.PLATFORMS:
+                document=json.loads((directory/f'provenance-{platform}.json').read_text())
+                self.assertEqual(document['executor'],'remote-runner')
+                self.assertTrue(document['run_id'].startswith('run-'))
+                self.assertNotIn('attempt',document)
+            with self.assertRaisesRegex(ValueError,'provenance'):
+                p.check_packages(directory,SHA,123,2)
+            with self.assertRaisesRegex(ValueError,'provenance'):
+                a.verify(directory,SHA,123,2,p.REPOSITORY)
+            with self.assertRaisesRegex(ValueError,'must not claim'):
+                p.check_packages(directory,SHA,123,2,remote_results=results)
+            with self.assertRaisesRegex(ValueError,'both reviewed'):
+                remote.verify(directory,SHA,{'linux-x64':results['linux-x64']})
+            (directory/'gti-preview-linux-x64.tar.gz').write_bytes(b'changed')
+            with self.assertRaisesRegex(ValueError,'checksum'):
+                remote.verify(directory,SHA,results)
+
+    def test_remote_receipts_reject_skipped_changed_and_misattributed_work(self):
+        import preview_remote as remote
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); directory=root/'dist'; directory.mkdir(); self.make_packages(directory)
+            results=self.evidence(root,directory); location=results['linux-x64']
+            report=json.loads((location/'report.json').read_text());request=json.loads((location/'request.json').read_text())
+            bad=[]
+            for key,value in [('state','failed'),('exit_code',1),('steps',report['steps'][:-1])]:
+                d=copy.deepcopy(report);d[key]=value;bad.append(d)
+            d=copy.deepcopy(report);d['source']['head']='f'*40;bad.append(d)
+            d=copy.deepcopy(report);d['final_source']['status']=' M source';bad.append(d)
+            d=copy.deepcopy(report);d['steps'][2]['exit_code']=8;bad.append(d)
+            d=copy.deepcopy(report);d['steps'][2]['argv'][-1]='99';bad.append(d)
+            for document in bad:
+                (location/'report.json').write_text(json.dumps(document))
+                with self.assertRaises(ValueError):remote.receipt(location,SHA,'linux-x64')
+            (location/'report.json').write_text(json.dumps(report))
+            for mutate in [lambda d:d.update(required_platform='Darwin'),lambda d:d.update(build_type='Debug'),
+                           lambda d:d['steps'][2].update(argv=['true'])]:
+                document=copy.deepcopy(request);mutate(document)
+                (location/'request.json').write_text(json.dumps(document))
+                with self.assertRaises(ValueError):remote.receipt(location,SHA,'linux-x64')
+            (location/'request.json').write_text(json.dumps(request))
+            (location/'truncation.json').write_text(json.dumps({'tail_only':['logs/admission.log']}))
+            with self.assertRaisesRegex(ValueError,'truncated'):remote.receipt(location,SHA,'linux-x64')
+
+    def test_remote_publication_keeps_order_and_exact_tag_lease(self):
+        import preview_remote as remote
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); directory=root/'dist'; directory.mkdir();self.make_packages(directory)
+            results=self.evidence(root,directory);remote.verify(directory,SHA,results,record=True)
+            with patch.object(p,'command',side_effect=lambda *args:'d'*40+'\trefs/tags/preview' if args[1]=='ls-remote' else '') as command:
+                self.assertFalse(p.publish(directory,SHA,self.api(current='d'*40),None,None,remote_results=results))
+                self.assertFalse(any(c.args[:2]==('git','push') for c in command.call_args_list))
+            calls=[]
+            def command(*args):
+                calls.append(args)
+                if args[1]=='ls-remote':return 'a'*40+'\trefs/tags/preview'
+                return ''
+            with patch.object(p,'command',side_effect=command),patch.object(p.subprocess,'run') as run:
+                run.return_value.returncode=0
+                self.assertTrue(p.publish(directory,SHA,self.api(),None,None,remote_results=results))
+            push=next(c for c in calls if c[:2]==('git','push'))
+            self.assertIn('--force-with-lease=refs/tags/preview:'+'a'*40,push)
+            self.assertTrue(str(calls[-1][-1]).endswith('/BUILD_ID'))
+            self.assertIn('No GitHub Actions build attestation',(root/'preview-notes.txt').read_text())
+
+    def test_remote_admission_requires_current_candidate_and_exact_inclusion(self):
+        import preview_remote as remote
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); directory=root/'dist'; directory.mkdir();self.make_packages(directory)
+            results=self.evidence(root,directory);remote.verify(directory,SHA,results,record=True)
+            with patch('agent_workflow.Workflow') as workflow, patch('preview_workflow.Preview') as preview:
+                state={'head':SHA,'manifest':MANIFEST}
+                preview.return_value.load.return_value=state
+                remote.admit(directory,SHA,results,root,'candidate')
+                preview.return_value.current.assert_called_once_with(state)
+                self.assertEqual(state['verified']['head'],SHA)
+                self.assertEqual(set(state['verified']['execution']['platforms']),set(a.PLATFORMS))
+                preview.return_value.publish.assert_called_once_with('candidate')
+                preview.return_value.reset_mock()
+                for change in ({'head':'e'*40},{'manifest':{'schema':1,'features':[]}}):
+                    preview.return_value.load.return_value={'head':SHA,'manifest':MANIFEST,**change}
+                    with self.assertRaisesRegex(ValueError,'prepared candidate'):
+                        remote.admit(directory,SHA,results,root,'candidate')
+                preview.return_value.save.assert_not_called()
+                preview.return_value.publish.assert_not_called()
+                preview.return_value.current.side_effect=RuntimeError('preview advanced')
+                with self.assertRaisesRegex(RuntimeError,'preview advanced'):
+                    remote.admit(directory,SHA,results,root,'candidate')
+                preview.return_value.publish.assert_not_called()
 
 
 if __name__ == '__main__':
