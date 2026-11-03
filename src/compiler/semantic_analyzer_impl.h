@@ -1936,6 +1936,7 @@ private:
     // One pattern per concept parameter: a closed concrete type, or one class
     // or enum template applied to block parameters (an open pattern).
     std::vector<SemanticType> patterns;
+    std::vector<AppliedConceptRequirement> requirements;
     std::vector<SemanticType> associatedTypes;
     std::vector<std::vector<GenericParameterInfo>> associatedTypeParameters;
     std::vector<Symbol> operations;
@@ -4412,7 +4413,8 @@ private:
 
   std::vector<AppliedConceptRequirement>
   resolveRequirements(const RequiresClause *clause,
-                      const std::vector<std::string> &scope);
+                      const std::vector<std::string> &scope,
+                      bool validateSyntax = true);
 
   void analyzeConcreteClassStaticAssertions(const StmtList &members);
 
@@ -4836,6 +4838,8 @@ private:
       const std::vector<SemanticType> &familyArguments = {}) const;
   [[nodiscard]] std::optional<ConstraintFailure> protocolConformanceFailure(
       const AppliedConceptRequirement &requirement) const;
+  mutable std::vector<std::pair<ConceptId, std::vector<SemanticType>>>
+      activeConformanceRequirements;
   [[nodiscard]] std::optional<std::size_t>
   protocolBorrowContractFailure(const RegisteredConformance &conformance,
                                 const std::vector<SemanticType> &binding) const;

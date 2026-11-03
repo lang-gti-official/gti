@@ -157,6 +157,49 @@ int main() {
                            " times; expected once");
   };
 
+  const std::string recursiveRequirements = R"gti(
+concept score<T> { int read(T& value); };
+struct Unit { int value; Unit(int v) : value(v) {} };
+struct Box<T> { T value; Box(T v) : value(std::move(v)) {} };
+for concept score<Unit> { int read(Unit& value) { return value.value; } };
+for <T> concept score<Box<T>> requires score<T> {
+  int read(Box<T>& value) { return score<T>::read(value.value); }
+};
+int read_score<T>(T& value) requires score<T> { return score<T>::read(value); }
+)gti";
+  accepted(recursiveRequirements + R"gti(
+int main() {
+  Box<Box<Unit>> box{Box<Unit>(Unit(42))};
+  return read_score(box) - 42;
+}
+)gti", "recursive conformance requirements grant operation-body facts");
+  rejected(recursiveRequirements + R"gti(
+struct Opaque { Opaque() = default; };
+int main() { Box<Opaque> box{Opaque()}; return read_score(box); }
+)gti", "GTI-S2029", "none matches 'Opaque'");
+  rejected(recursiveRequirements + R"gti(
+struct Opaque { Opaque() = default; };
+int main() { Box<Opaque> box{Opaque()}; return score<Box<Opaque>>::read(box); }
+)gti", "GTI-S2029", "none matches 'Opaque'");
+  rejected(recursiveRequirements + R"gti(
+for <T> concept score<Box<T>> requires std::integral<T> {
+  int read(Box<T>& value) { return 0; }
+};
+int main() { return 0; }
+)gti", "GTI-S2123", "overlap");
+  {
+    const auto result = analyze(recursiveRequirements + "int main() { return 0; }\n");
+    const auto unit = result.sourceGraph.entryUnit();
+    const auto at = recursiveRequirements.find("requires score<T>") + 9;
+    const auto definition = lang::LanguageQueries().definition(result, unit, at);
+    expect(definition && definition->target.start == recursiveRequirements.find("score<T>"),
+           "block requirement concept names navigate to their declarations");
+    const auto formatted = lang::Formatter().format(recursiveRequirements);
+    expect(formatted.find("requires score<T>") != std::string::npos &&
+               lang::Formatter().format(formatted) == formatted,
+           "conformance requirements format idempotently");
+  }
+
   const std::string conditionalContract = R"gti(
 concept selecting<T> {
   typename element;

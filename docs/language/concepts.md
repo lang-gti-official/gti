@@ -1141,6 +1141,24 @@ operation with one function. Each function has exactly the concept's
 signature after substituting the patterns for the parameters and the block's
 types for the associated types. A block defines nothing else.
 
+A block may have a trailing requirement, using the same conjunction and
+disjunction syntax as a function:
+
+```gti
+for <T> concept measurable<Box<T>> requires measurable<T> {
+  using unit_type = measurable<T>::unit_type;
+  unit_type measure(Box<T>& item) {
+    return measurable<T>::measure(item.value);
+  }
+};
+```
+
+The requirement is checked after the one matching pattern binds its parameters.
+Its guaranteed conjuncts are available while checking the block's types and
+operation bodies. A disjunction grants neither alternative by itself. The
+existing restriction on inline protocol constraints such as `<measurable T>`
+remains; write protocol applications in the trailing clause.
+
 A block function is an ordinary function definition. The block's parameters
 apply to it, and it cannot declare its own generic parameters or a requires
 clause. Like the operation it defines, it declares no default arguments, so
@@ -1148,7 +1166,7 @@ a call accepts the same arguments whether it names a concrete type or goes
 through a requirement. Inside the block:
 - the block's associated types are transparent, whether written as
   `unit_type` or as `measurable<Crate<T>>::unit_type`;
-- each operation requires the block's own application;
+- each operation requires the block's own application and its trailing requirements;
 - the block's functions can call each other by name.
 
 ### Selection and coherence
@@ -1157,9 +1175,16 @@ Selection is exact:
 - concrete arguments match at most one block of a concept, and two blocks
   that some arguments could both match are rejected as overlapping;
 - there is no specialization or ranking between blocks;
-- the block's type-parameter constraints must hold for the bound types,
+- the block's type-parameter constraints and trailing requirements must hold for the bound types,
   for `requires C<X>` and equally for a concrete `C<X>::name` or
   `C<X>::operation(...)`.
+
+Recursive requirements may compose nested generic types. A failed requirement
+makes the selected application unsatisfied; it never falls back to another
+block. Requirements do not make overlapping patterns disjoint. Cyclic
+requirements and chains deeper than 64 active protocol applications fail with
+an attributable constraint diagnostic. Associated-type projections retain their
+independent cycle and depth checks.
 
 The declaring package must own the concept or the top-level nominal type of
 at least one pattern, as for
