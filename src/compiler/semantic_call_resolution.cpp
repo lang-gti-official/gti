@@ -2911,7 +2911,12 @@ auto SemanticVisitor::Impl::tryInstantiateFunction(
   if (candidate.parameterPack && candidate.ownerClass != 0 &&
       packGenericParameter(candidate) == nullptr &&
       !candidate.parameterTypes.empty()) {
-    const SemanticType &declaredPack = candidate.parameterTypes.back();
+    const SemanticType &packPattern = candidate.parameterTypes.back();
+    const SemanticType &declaredPack =
+        packPattern.kind == SemanticType::Reference &&
+                packPattern.arguments.size() == 1
+            ? packPattern.arguments.front()
+            : packPattern;
     if (declaredPack.kind != SemanticType::TypePack) {
       return false;
     }
@@ -3093,6 +3098,9 @@ auto SemanticVisitor::Impl::tryInstantiateFunction(
 
   std::vector<SemanticType> packTypes;
   std::vector<SemanticType> resolvedPackParameters;
+  const bool referencePack =
+      candidate.parameterPack && !candidate.parameterTypes.empty() &&
+      candidate.parameterTypes.back().kind == SemanticType::Reference;
   if (pack != nullptr && !candidate.parameterPack) {
     const auto inferred = substitution.types.find(pack->id);
     if (inferred == substitution.types.end()) {
@@ -3123,6 +3131,12 @@ auto SemanticVisitor::Impl::tryInstantiateFunction(
       if (packTypes.size() != argumentTypes.size() - fixedValues) {
         return false;
       }
+      if (referencePack && std::any_of(packTypes.begin(), packTypes.end(),
+                                       [](const SemanticType &type) {
+                                         return type.kind ==
+                                                SemanticType::Reference;
+                                       }))
+        return false;
       resolvedPackParameters = packTypes;
     } else {
       packTypes.assign(argumentTypes.begin() +
@@ -3130,6 +3144,11 @@ auto SemanticVisitor::Impl::tryInstantiateFunction(
                        argumentTypes.end());
       resolvedPackParameters = packTypes;
     }
+    if (referencePack)
+      for (auto &element : packTypes)
+        if (element.kind == SemanticType::Reference &&
+            element.arguments.size() == 1)
+          element = element.arguments.front();
     const auto inferred = substitution.types.find(pack->id);
     if (inferred != substitution.types.end()) {
       std::vector<SemanticType> prescribed;
@@ -3145,6 +3164,38 @@ auto SemanticVisitor::Impl::tryInstantiateFunction(
                         ? packTypes.front()
                         : SemanticType::concreteTypePack(pack->id, packTypes));
     }
+  }
+  if (referencePack) {
+    const AccessMode access = candidate.parameterTypes.back().referenceAccess;
+    // Deduction binds Args to object types. Reference access belongs to each
+    // parameter, not to the type arguments and never uses reference collapsing.
+    for (auto &element : packTypes)
+      if (element.kind == SemanticType::Reference &&
+          element.arguments.size() == 1)
+        element = element.arguments.front();
+    for (auto &parameter : resolvedPackParameters) {
+      if (parameter.kind == SemanticType::TypePack) {
+        if (parameter.concretePack)
+          for (auto &element : parameter.arguments) {
+            if (element.kind == SemanticType::Reference &&
+                element.arguments.size() == 1)
+              element = element.arguments.front();
+            element = SemanticType::referenceTo(std::move(element), access);
+          }
+      } else {
+        if (parameter.kind == SemanticType::Reference &&
+            parameter.arguments.size() == 1)
+          parameter = parameter.arguments.front();
+        parameter = SemanticType::referenceTo(std::move(parameter), access);
+      }
+    }
+    if (pack != nullptr)
+      substitution.types.insert_or_assign(
+          pack->id, packTypes.size() == 1 &&
+                            packTypes.front().kind == SemanticType::TypePack &&
+                            !packTypes.front().concretePack
+                        ? packTypes.front()
+                        : SemanticType::concreteTypePack(pack->id, packTypes));
   }
   resolvedTypeArguments.insert(resolvedTypeArguments.end(), packTypes.begin(),
                                packTypes.end());

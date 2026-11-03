@@ -14925,12 +14925,36 @@ auto SemanticVisitor::Impl::typeOf(const TypeRef &type,
 auto SemanticVisitor::Impl::typeOf(
     const Parameter &parameter, const std::vector<std::string> &fromScope) const
     -> SemanticType {
-  return typeOf(parameter.type, parameter.mutability, fromScope);
+  SemanticType type = typeOf(parameter.type, parameter.mutability, fromScope);
+  if (parameter.pack && type.kind == SemanticType::Reference &&
+      type.arguments.size() == 1 &&
+      type.arguments.front().kind == SemanticType::TypePack &&
+      type.arguments.front().concretePack) {
+    SemanticType pack = type.arguments.front();
+    for (auto &element : pack.arguments)
+      element =
+          SemanticType::referenceTo(std::move(element), type.referenceAccess);
+    return pack;
+  }
+  return type;
 }
 
 auto SemanticVisitor::Impl::typeOf(const Parameter &parameter) const
     -> SemanticType {
   return typeOf(parameter, currentNamespace);
+}
+
+auto SemanticVisitor::Impl::parameterBindingType(
+    const Parameter &parameter) const -> SemanticType {
+  SemanticType type = typeOf(parameter);
+  // A symbolic binding names a group, never a reference to the group itself.
+  // Concrete reanalysis materializes its separately checked reference elements.
+  if (parameter.pack && type.kind == SemanticType::Reference &&
+      type.arguments.size() == 1 &&
+      (type.arguments.front().kind == SemanticType::TypePack ||
+       type.arguments.front().kind == SemanticType::TypeParameter))
+    return SemanticType::typePack(type.arguments.front().genericParameterId);
+  return type;
 }
 
 auto SemanticVisitor::Impl::literalType(const Literal &literal)

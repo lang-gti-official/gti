@@ -2143,7 +2143,7 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
     allowPackTypeReference = true;
     validateType(parameter.type);
     allowPackTypeReference = previousAllowPack;
-    const SemanticType declaredType = typeOf(parameter);
+    const SemanticType declaredType = parameterBindingType(parameter);
     const SemanticType parameterType =
         parameter.pack && declaredType.kind == SemanticType::TypeParameter
             ? SemanticType::typePack(declaredType.genericParameterId)
@@ -2248,7 +2248,7 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
 
   for (const Parameter &parameter : stmt.parameters()) {
     if (!parameter.name.lexeme.empty()) {
-      const SemanticType declaredType = typeOf(parameter);
+      const SemanticType declaredType = parameterBindingType(parameter);
       const SemanticType parameterType =
           parameter.pack && declaredType.kind == SemanticType::TypeParameter
               ? SemanticType::typePack(declaredType.genericParameterId)
@@ -3551,7 +3551,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
     if (!intrinsicDeclaration) {
       validateReferencePlacement(parameter.type, true, "function parameter");
     }
-    const SemanticType declaredType = typeOf(parameter);
+    const SemanticType declaredType = parameterBindingType(parameter);
     const SemanticType parameterType =
         parameter.pack && declaredType.kind == SemanticType::TypeParameter
             ? SemanticType::typePack(declaredType.genericParameterId)
@@ -3808,7 +3808,7 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
 
   for (const Parameter &parameter : stmt.parameters()) {
     if (!parameter.name.lexeme.empty()) {
-      const SemanticType declaredType = typeOf(parameter);
+      const SemanticType declaredType = parameterBindingType(parameter);
       recordProgramCleanupEffects(declaredType, tokenSpan(parameter.name));
       declare(parameter.name,
               parameter.pack && declaredType.kind == SemanticType::TypeParameter
@@ -10036,7 +10036,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
     validateType(parameter.type);
     allowPackTypeReference = previousAllowPack;
     validateReferencePlacement(parameter.type, true, "lambda parameter");
-    const SemanticType declaredType = typeOf(parameter);
+    const SemanticType declaredType = parameterBindingType(parameter);
     const SemanticType parameterType =
         parameter.pack && declaredType.kind == SemanticType::TypeParameter
             ? SemanticType::typePack(declaredType.genericParameterId)
@@ -11475,7 +11475,6 @@ auto SemanticVisitor::Impl::visitPackFoldExpr(const PackFold &expr) -> void {
   const bool exactElementShape =
       elementParameter != nullptr &&
       elementParameter->kind == SemanticType::Reference &&
-      elementParameter->referenceAccess == AccessMode::ReadOnly &&
       elementParameter->arguments.size() == 1 &&
       elementParameter->arguments.front().kind == SemanticType::TypeParameter &&
       elementParameter->arguments.front().genericParameterId ==
@@ -11484,7 +11483,7 @@ auto SemanticVisitor::Impl::visitPackFoldExpr(const PackFold &expr) -> void {
     report(call->paren(),
            "A pack-fold target must be one non-overloaded free generic "
            "function returning void, with one inferred type parameter and "
-           "a final read-only reference to that element type.",
+           "a final reference to that element type.",
            "GTI-S2023");
     valid = false;
   }
@@ -11538,9 +11537,14 @@ auto SemanticVisitor::Impl::visitPackFoldExpr(const PackFold &expr) -> void {
       }
       bool argumentsMatch = true;
       for (std::size_t index = 0; index < concreteArguments.size(); ++index) {
-        if (!callArgumentMatches(resolved.parameterTypes[index],
-                                 concreteArguments[index],
-                                 call->arguments()[index])) {
+        const bool matches =
+            index == packIndex && element.kind == SemanticType::Reference
+                ? forwardedPackArgumentMatches(resolved.parameterTypes[index],
+                                               element)
+                : callArgumentMatches(resolved.parameterTypes[index],
+                                      concreteArguments[index],
+                                      call->arguments()[index]);
+        if (!matches) {
           reportCallArgumentMismatch(index, resolved.parameterTypes[index],
                                      concreteArguments[index],
                                      call->arguments()[index], "Pack fold");

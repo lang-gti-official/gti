@@ -6649,6 +6649,8 @@ private:
          const std::vector<std::string> &fromScope) const;
 
   [[nodiscard]] SemanticType typeOf(const Parameter &parameter) const;
+  [[nodiscard]] SemanticType
+  parameterBindingType(const Parameter &parameter) const;
 
   [[nodiscard]] static SemanticType literalType(const Literal &literal);
 

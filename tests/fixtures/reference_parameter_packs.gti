@@ -1,0 +1,73 @@
+import std.string;
+import std.utility;
+
+mut int visits = 0;
+mut int drops = 0;
+
+class Ticket {
+  int id;
+public:
+  Ticket(int value) : id(value) {}
+  Ticket(Ticket& other) = delete;
+  Ticket(Ticket&& other) = default;
+  ~Ticket() { drops++; }
+  int read() { return this.id; }
+};
+
+struct CopyCounter {
+  int value = 4;
+  CopyCounter() = default;
+};
+
+void inspect<T>(T& value) { visits++; }
+void observe<Args...>(Args&... args) { (inspect(args), ...); }
+void relay<Args...>(Args&... args) {
+  observe(args...);
+  observe(args...);
+}
+void by_value<Args...>(Args... args) { (inspect(args), ...); }
+void increment<std::integral T>(mut T& value) { value++; }
+void increment_all<std::integral Args...>(mut Args&... args) {
+  (increment(args), ...);
+}
+void mutate_then_observe<std::integral Args...>(mut Args&... args) {
+  increment_all(args...);
+  observe(args...);
+}
+
+class Reader {
+public:
+  Reader() = default;
+  void read<Args...>(Args&... args) { observe(args...); }
+};
+class Built {
+public:
+  Built<Args...>(Args&... args) { observe(args...); }
+};
+class TypedReader<Args...> {
+public:
+  TypedReader() = default;
+  void read(Args&... args) { observe(args...); }
+};
+
+int main() {
+  Ticket first{7};
+  Ticket second{8};
+  std::string text = "retained";
+  CopyCounter counter{};
+  observe(first, second, first, text, counter);
+  relay(first, text);
+  Reader reader{};
+  reader.read(first, second);
+  Built built{first, second};
+  TypedReader<Ticket, std::string> typed{};
+  typed.read(first, text);
+  observe();
+  by_value(counter);
+  mut int left = 4;
+  mut int right = 9;
+  increment_all(left, right);
+  mutate_then_observe(left, right);
+  return first.read() == 7 && second.read() == 8 && text.size() == std::size_t(8)
+      && visits == 18 && counter.value == 4 && drops == 0 && left == 6 && right == 11 ? 0 : 1;
+}

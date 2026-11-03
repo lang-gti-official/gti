@@ -1028,6 +1028,16 @@ auto SemanticVisitor::Impl::callArgumentMatches(const SemanticType &parameter,
   if (parameter == SemanticType::Unknown || argument == SemanticType::Unknown) {
     return true;
   }
+  if (parameter.kind == SemanticType::TypePack &&
+      argument.kind == SemanticType::TypePack && parameter.concretePack &&
+      argument.concretePack &&
+      parameter.arguments.size() == argument.arguments.size()) {
+    for (std::size_t index = 0; index < parameter.arguments.size(); ++index)
+      if (!forwardedPackArgumentMatches(parameter.arguments[index],
+                                        argument.arguments[index]))
+        return false;
+    return true;
+  }
   if (parameter.kind != SemanticType::Reference) {
     if (parameter == SemanticType::CString) {
       return argument == SemanticType::CString ||
@@ -1652,7 +1662,10 @@ auto SemanticVisitor::Impl::forwardedPackArgumentMatches(
     return true;
   }
   if (argument.kind == SemanticType::Reference) {
-    return parameter == argument;
+    return parameter == argument ||
+           (parameter.kind == SemanticType::Reference &&
+            parameter.referenceAccess == AccessMode::ReadOnly &&
+            parameter.arguments == argument.arguments);
   }
   if (parameter.kind != SemanticType::Reference) {
     if (parameter.kind == SemanticType::RawPointer) {
@@ -1949,7 +1962,12 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
     }
     if (constructor.parameterPack) {
       for (std::size_t index = fixedCount; index < arguments.size(); ++index) {
-        parameterTypes.push_back(arguments[index].type);
+        const auto &pattern = constructor.parameterTypes.back();
+        parameterTypes.push_back(
+            pattern.kind == SemanticType::Reference
+                ? SemanticType::referenceTo(arguments[index].type,
+                                            pattern.referenceAccess)
+                : arguments[index].type);
       }
     }
     bool exact = true;
@@ -6838,6 +6856,15 @@ auto SemanticVisitor::Impl::substituteType(
   for (SemanticType &argument : result.arguments) {
     argument = substituteType(argument, substitution);
   }
+  if (result.kind == SemanticType::Reference && result.arguments.size() == 1 &&
+      result.arguments.front().kind == SemanticType::TypePack &&
+      result.arguments.front().concretePack) {
+    SemanticType pack = result.arguments.front();
+    for (auto &element : pack.arguments)
+      element =
+          SemanticType::referenceTo(std::move(element), result.referenceAccess);
+    return pack;
+  }
   if (result.kind == SemanticType::Class || result.kind == SemanticType::Enum ||
       result.kind == SemanticType::FunctionSignature) {
     std::vector<SemanticType> expanded;
@@ -7801,7 +7828,7 @@ auto SemanticVisitor::Impl::validateParameterPacks(
   bool metadataPack = false;
   for (std::size_t index = 0; index < parameters.size(); ++index) {
     const Parameter &parameter = parameters[index];
-    const SemanticType parameterType = typeOf(parameter);
+    const SemanticType parameterType = parameterBindingType(parameter);
     if (!parameter.pack) {
       metadataPack = metadataPack || expandsPack(expandsPack, parameter.type);
       if (isBarePack(parameter.type)) {
@@ -7826,17 +7853,34 @@ auto SemanticVisitor::Impl::validateParameterPacks(
     if (parameter.name.lexeme.empty()) {
       report(*parameter.pack, "A parameter pack requires a name.", "GTI-S2023");
     }
-    if (parameter.mutability == Mutability::Mutable) {
+    if (parameter.mutability == Mutability::Mutable &&
+        !parameter.type.reference) {
       report(*parameter.pack,
              "Parameter packs are immutable; move individual values only "
              "after a future pack iteration feature exists.",
              "GTI-S2023");
     }
-    if (parameter.type.reference || !parameter.type.arrayExtents.empty()) {
+    if (!parameter.type.arrayExtents.empty() ||
+        (parameter.type.reference &&
+         parameter.type.reference->kind == TokenKind::AND)) {
       report(*parameter.pack,
-             "The first variadic layer supports only by-value parameter "
-             "packs.",
+             "Parameter packs support value, read-only reference, or mutable "
+             "reference elements; arrays and forwarding references are not "
+             "supported.",
              "GTI-S2023");
+    }
+    if (parameter.type.reference) {
+      const SemanticType result = returnType ? typeOf(*returnType)
+                                  : currentClass
+                                      ? SemanticType::classType(*currentClass)
+                                      : SemanticType::Void;
+      if (result.kind == SemanticType::Reference ||
+          (!containsOpenTypeParameter(result) &&
+           typeTraits(result).containsBorrowedState))
+        report(*parameter.pack,
+               "A reference parameter pack requires a result with no borrowed "
+               "state; pack elements cannot escape the call.",
+               "GTI-S2023");
     }
     if (parameterType.kind == SemanticType::TypePack &&
         parameterType.concretePack) {

@@ -5968,6 +5968,19 @@ private:
     if (terminated()) {
       return {};
     }
+    if (const HirValue *source = findValue(id);
+        source && source->kind == HirValueKind::PackElement &&
+        source->info.type.kind == SemanticType::Reference) {
+      const MirPlaceId place = placeForValue(id);
+      if (const auto loan = packEntryLoans.find(place);
+          loan != packEntryLoans.end())
+        return {.kind = MirOperandKind::Loan,
+                .loan = loan->second,
+                .type = parameter};
+      return {.kind = MirOperandKind::BorrowRead,
+              .place = place,
+              .type = parameter};
+    }
     if (const MirLoanId existing = loanForValue(id); existing != 0) {
       // A borrow-carrying value (for example a read-only stored-reference
       // iterator) already has an owner loan, but a reference parameter needs
@@ -8022,27 +8035,34 @@ private:
             arguments.size() - index - 1 == value.defaultArguments.size() &&
             std::equal(arguments.begin() + index + 1, arguments.end(),
                        value.defaultArguments.begin());
+        const auto matchesPackInput = [](const SemanticType &element,
+                                         const SemanticType &parameter) {
+          return mir_detail::validCallInputType(element, parameter,
+                                                HirCallInputKind::Value) ||
+                 (parameter.kind == SemanticType::Reference &&
+                  parameter.referenceAccess == AccessMode::ReadOnly &&
+                  parameter.arguments.size() == 1 &&
+                  (parameter.arguments.front() == element ||
+                   (element.kind == SemanticType::Reference &&
+                    parameter.arguments == element.arguments)));
+        };
         const bool retainedPackParameter =
             parameterIndex + 1 == value.parameterTypes.size() &&
             value.defaultArguments.empty() &&
             value.parameterTypes[parameterIndex].kind ==
                 SemanticType::TypePack &&
             value.parameterTypes[parameterIndex].concretePack &&
-            value.parameterTypes[parameterIndex].arguments == elements;
+            value.parameterTypes[parameterIndex].arguments.size() ==
+                elements.size() &&
+            std::equal(elements.begin(), elements.end(),
+                       value.parameterTypes[parameterIndex].arguments.begin(),
+                       matchesPackInput);
         const bool flattenedPackParameters =
             value.parameterTypes.size() == parameterIndex + elements.size() +
                                                value.defaultArguments.size() &&
-            std::equal(
-                elements.begin(), elements.end(),
-                value.parameterTypes.begin() + parameterIndex,
-                [](const SemanticType &element, const SemanticType &parameter) {
-                  return mir_detail::validCallInputType(
-                             element, parameter, HirCallInputKind::Value) ||
-                         (parameter.kind == SemanticType::Reference &&
-                          parameter.referenceAccess == AccessMode::ReadOnly &&
-                          parameter.arguments.size() == 1 &&
-                          parameter.arguments.front() == element);
-                });
+            std::equal(elements.begin(), elements.end(),
+                       value.parameterTypes.begin() + parameterIndex,
+                       matchesPackInput);
         if (!followedByDefaults ||
             input->info.type.kind != SemanticType::TypePack ||
             !input->info.type.concretePack || resolvedPackPlace == nullptr ||
@@ -8064,7 +8084,7 @@ private:
           const SemanticType &element = elements[elementIndex];
           const SemanticType &parameter =
               retainedPackParameter
-                  ? element
+                  ? value.parameterTypes[parameterIndex].arguments[elementIndex]
                   : value.parameterTypes[parameterIndex + elementIndex];
           // The selected signature, not the source pack's ownership mode,
           // decides whether this invocation borrows an element. Its owning
@@ -8081,7 +8101,10 @@ private:
                  element.kind == SemanticType::Reference &&
                  (expansion.kind == HirCallInputKind::MutableBorrow) ==
                      (element.referenceAccess == AccessMode::Mutable) &&
-                 parameter == element))) {
+                 (parameter == element ||
+                  (parameter.kind == SemanticType::Reference &&
+                   parameter.referenceAccess == AccessMode::ReadOnly &&
+                   parameter.arguments == element.arguments))))) {
             valid = false;
             continue;
           }
@@ -8103,7 +8126,8 @@ private:
               appendPackElementPlace(std::move(projected));
 
           MirOperand sourceArgument;
-          if (borrowed && parameter.referenceAccess == AccessMode::Mutable) {
+          if (borrowed && element.kind == SemanticType::Reference &&
+              element.referenceAccess == AccessMode::Mutable) {
             const auto loan = packEntryLoans.find(elementPlace);
             if (loan == packEntryLoans.end()) {
               valid = false;
