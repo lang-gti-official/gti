@@ -2450,7 +2450,7 @@
     },
     "156-borrowing-callbacks.gti": {
       "declarations": 1395,
-      "bodies": 99,
+      "bodies": 102,
       "generated_items": 50,
       "generated_kinds": {
         "program_initialization": 0,
@@ -2947,7 +2947,7 @@
   },
   "totals": {
     "declarations": 224982,
-    "bodies": 28368,
+    "bodies": 28371,
     "generated_items": 16674
   },
   "target": "arm64-apple-macos",
@@ -2989,7 +2989,7 @@
       },
       "totals": {
         "declarations": 224982,
-        "bodies": 28366,
+        "bodies": 28369,
         "generated_items": 16672
       }
     }

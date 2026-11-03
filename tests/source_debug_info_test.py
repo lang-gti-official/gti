@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from backend_modes import cpp_modes, cpp_text_modes, is_cpp_mode, keep_cpp
 
 
 def run(argv, cwd, *, ok=True):
@@ -98,32 +99,34 @@ def main():
             "  return 1;\n"
             "}\n", encoding="utf-8")
         executable = root / "debug-program"
-        run([gti, source.name, "-g", "-O0", "--keep-cpp", "-o", executable], root)
         generated = Path(str(executable) + ".gti.cpp")
-        text = generated.read_text(encoding="utf-8")
-        escaped = str(source).replace("\\", "\\\\").replace('"', '\\"')
-        assert f'#line 2 "{escaped}"' in text, text
-        assert f'#line 8 "{escaped}"' in text, text
-        assert '#line 1 "<gti-generated>"' in text
-        # Every physical line of a mapped expansion must retain its statement
-        # line, not accidentally advertise an unrelated later source line.
-        active = None
-        for line in text.splitlines():
-            if line.startswith("#line "):
-                active = line if line.endswith(f'"{escaped}"') else None
-            elif active and line:
-                if active == "consumed":
-                    raise AssertionError("mapped C++ expansion invented a source line")
-                active = "consumed"
-        run([executable], root)
-        if sys.platform == "darwin":
-            bundle = Path(str(executable) + ".dSYM")
-            assert (bundle / "Contents/Resources/DWARF" / executable.name).is_file()
-            assert (bundle / ".gti-debug-symbols").is_file()
-            # Rebuilding replaces only an owned bundle and leaves no staging
-            # directory or orphaned native-symbol output on the success path.
-            run([gti, source, "-g", "-o", executable], root)
-            assert not list(root.glob(".*.gti-stage-*"))
+        if cpp_modes():  # the C++ text's #line mapping and its debug bundle
+            cpp_flags = cpp_text_modes()[0][1]
+            run([gti, source.name, "-g", "-O0", *cpp_flags, *keep_cpp(cpp_flags), "-o", executable], root)
+            text = generated.read_text(encoding="utf-8")
+            escaped = str(source).replace("\\", "\\\\").replace('"', '\\"')
+            assert f'#line 2 "{escaped}"' in text, text
+            assert f'#line 8 "{escaped}"' in text, text
+            assert '#line 1 "<gti-generated>"' in text
+            # Every physical line of a mapped expansion must retain its statement
+            # line, not accidentally advertise an unrelated later source line.
+            active = None
+            for line in text.splitlines():
+                if line.startswith("#line "):
+                    active = line if line.endswith(f'"{escaped}"') else None
+                elif active and line:
+                    if active == "consumed":
+                        raise AssertionError("mapped C++ expansion invented a source line")
+                    active = "consumed"
+            run([executable], root)
+            if sys.platform == "darwin":
+                bundle = Path(str(executable) + ".dSYM")
+                assert (bundle / "Contents/Resources/DWARF" / executable.name).is_file()
+                assert (bundle / ".gti-debug-symbols").is_file()
+        # Rebuilding replaces only an owned bundle and leaves no staging
+        # directory or orphaned native-symbol output on the success path.
+        run([gti, source, "-g", "-o", executable], root)
+        assert not list(root.glob(".*.gti-stage-*"))
         if args.lldb:
             # Select the real return statement, not a generated helper or a
             # line invented by the multi-line checked-add expansion.
@@ -146,11 +149,13 @@ def main():
             print("LLDB paused at the actual GTI return statement and continued successfully")
             return 0
 
-        for standard in ("c++20", "c++23"):
+        for label, flags, _native in cpp_text_modes():
             emitted = root / "mapped.cpp"
-            run([gti, source, "--emit-cpp", "--debug-info", "--std", standard,
-                 "-o", emitted], root)
-            assert '#line ' in emitted.read_text(encoding="utf-8")
+            if is_cpp_mode(flags):
+                run([gti, source, "--emit-cpp", "--debug-info", *flags,
+                     "-o", emitted], root)
+            if is_cpp_mode(flags):
+                assert '#line ' in emitted.read_text(encoding="utf-8")
         run([gti, source, "--emit-cpp", "-g", "--no-debug-info", "-o", generated], root)
         assert '#line ' not in generated.read_text(encoding="utf-8")
         support = root / "support.gti"
@@ -181,12 +186,14 @@ def main():
             ), encoding="utf-8")
         composed = root / "composed.gti"
         composed.write_text('import "support.gti";\nint main() { return helper() - 41; }\n', encoding="utf-8")
-        run([gti, composed, "-g", "-O1", "--std", "c++20", "--keep-cpp", "-o", executable], root)
-        run([executable], root)
-        text = generated.read_text(encoding="utf-8")
-        assert f'#line 3 "{support}"' in text  # Retained generic body.
-        assert f'#line 13 "{support}"' in text  # Ordinary method.
-        assert f'#line 19 "{support}"' in text  # Nested lambda.
+        if cpp_modes():
+            cpp_flags = cpp_text_modes()[0][1]
+            run([gti, composed, "-g", "-O1", *cpp_flags, *keep_cpp(cpp_flags), "-o", executable], root)
+            run([executable], root)
+            text = generated.read_text(encoding="utf-8")
+            assert f'#line 3 "{support}"' in text  # Retained generic body.
+            assert f'#line 13 "{support}"' in text  # Ordinary method.
+            assert f'#line 19 "{support}"' in text  # Nested lambda.
         rejected = run([gti, source, "--emit-mir", "-g"], root, ok=False)
         assert rejected.returncode and "debug info" in rejected.stderr
 

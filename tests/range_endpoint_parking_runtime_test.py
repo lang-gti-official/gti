@@ -9,6 +9,7 @@ import tempfile
 
 from case_jobs import configured_jobs, positive_jobs, run_cases
 from contiguous_iterator_completion_test import MODES
+from backend_modes import is_cpp_mode, keep_cpp
 
 
 def events(*identities):
@@ -44,12 +45,13 @@ def main():
             executable = output / label
             result = subprocess.run(
                 [str(options.compiler.resolve()), str(fixture), *flags,
-                 "--progress=never", "--keep-cpp", "-o", str(executable), "--",
+                 "--progress=never", *keep_cpp(flags), "-o", str(executable), "--",
                  *native, str(native_support)], env=environment,
                 capture_output=True, text=True, timeout=180)
             assert result.returncode == 0, (label, result.stdout, result.stderr)
-            generated = executable.with_suffix(".gti.cpp").read_text()
-            assert "// GTI MIR park range cursor loan " in generated and "// GTI MIR restore range cursor loan " in generated, label
+            if is_cpp_mode(flags):
+                generated = executable.with_suffix(".gti.cpp").read_text()
+                assert "// GTI MIR park range cursor loan " in generated and "// GTI MIR restore range cursor loan " in generated, label
             return label, executable
 
         def observe(case):

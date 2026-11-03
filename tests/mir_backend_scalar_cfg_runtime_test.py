@@ -4,6 +4,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from backend_modes import cpp_text_modes, is_cpp_mode, native_modes
 
 
 MARKER = "// GTI verified-MIR body: scalar-cfg-v1"
@@ -57,7 +58,7 @@ def function_definition(generated: str, source_name: str) -> str:
     return ""
 
 
-def validate_family(generated: str, optimization: str, standard: str) -> bool:
+def validate_family(generated: str, level: str, label: str) -> bool:
     # Only reachable function bodies and the module are lowered. The fixture
     # does not use the prelude text-view classes or its output functions.
     if (
@@ -69,7 +70,7 @@ def validate_family(generated: str, optimization: str, standard: str) -> bool:
         or generated.count(f"{MARKER} module-instance") != 1
     ):
         sys.stderr.write(
-            f"{optimization}/{standard} did not select exactly the verified "
+            f"{level}/{label} did not select exactly the verified "
             "scalar CFG MIR bodies plus the initializer and module markers\n"
         )
         return False
@@ -81,14 +82,14 @@ def validate_family(generated: str, optimization: str, standard: str) -> bool:
         or "__gti_mir_bb_1: {" not in generated
     ):
         sys.stderr.write(
-            f"{optimization}/{standard} did not use the complete direct-label "
+            f"{level}/{label} did not use the complete direct-label "
             "MIR CFG representation\n"
         )
         return False
     for name in SELECTED:
         if MARKER not in function_definition(generated, name):
             sys.stderr.write(
-                f"{optimization}/{standard} did not select {name} from MIR\n"
+                f"{level}/{label} did not select {name} from MIR\n"
             )
             return False
     for name in FAILURE_SELECTED:
@@ -96,7 +97,7 @@ def validate_family(generated: str, optimization: str, standard: str) -> bool:
             generated, f"{name}__gti_mir_failure"
         ):
             sys.stderr.write(
-                f"{optimization}/{standard} did not select {name} through "
+                f"{level}/{label} did not select {name} through "
                 "the closed failure-form MIR component\n"
             )
             return False
@@ -108,7 +109,7 @@ def validate_family(generated: str, optimization: str, standard: str) -> bool:
         )
     ):
         sys.stderr.write(
-            f"{optimization}/{standard} emitted unused output bodies or "
+            f"{level}/{label} emitted unused output bodies or "
             "lost the hosted-entry body\n"
         )
         return False
@@ -126,65 +127,66 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="gti-mir-scalar-cfg-") as temporary:
         root = pathlib.Path(temporary)
         emitted_by_mode: dict[tuple[str, str], str] = {}
-        for optimization in ("O0", "O1", "O3"):
-            for standard in ("c++20", "c++23"):
-                executable = root / f"scalar-cfg-{optimization}-{standard}"
-                built = run(
-                    [
-                        str(compiler),
-                        str(source),
-                        f"-{optimization}",
-                        "--std",
-                        standard,
-                        "-o",
-                        str(executable),
-                    ]
-                )
-                if built.returncode != 0:
-                    return fail(built)
-                executed = run([str(executable)])
-                if executed.returncode != 0:
-                    return fail(executed)
+        for mode, flags, _native in native_modes():
+            executable = root / f"scalar-cfg-{mode}"
+            built = run(
+                [
+                    str(compiler),
+                    str(source),
+                    *flags,
+                    "-o",
+                    str(executable),
+                ]
+            )
+            if built.returncode != 0:
+                return fail(built)
+            executed = run([str(executable)])
+            if executed.returncode != 0:
+                return fail(executed)
 
-                emitted = root / f"scalar-cfg-{optimization}-{standard}.cpp"
-                emission = run(
-                    [
-                        str(compiler),
-                        str(source),
-                        f"-{optimization}",
-                        "--std",
-                        standard,
-                        "--emit-cpp",
-                        "-o",
-                        str(emitted),
-                    ]
-                )
-                if emission.returncode != 0:
-                    return fail(emission)
-                generated = emitted.read_text(encoding="utf8")
-                if not validate_family(generated, optimization, standard):
-                    return 1
-                emitted_by_mode[(optimization, standard)] = generated
+        # The C++ text probes: every level of the C++ profile, for the
+        # per-level representation checks and the cross-level comparison.
+        for label, flags, _native in cpp_text_modes():
+            for level in ("O0", "O1", "O3"):
+                emitted = root / f"scalar-cfg-{label}-{level}.cpp"
+                if is_cpp_mode(flags):
+                    emission = run(
+                        [
+                            str(compiler),
+                            str(source),
+                            *flags,
+                                f"-{level}",
+                            "--emit-cpp",
+                            "-o",
+                            str(emitted),
+                        ]
+                    )
+                    if emission.returncode != 0:
+                        return fail(emission)
+                    generated = emitted.read_text(encoding="utf8")
+                    if not validate_family(generated, level, label):
+                        return 1
+                    emitted_by_mode[(level, label)] = generated
 
-        for standard in ("c++20", "c++23"):
+        for label, _flags, _native in cpp_text_modes():
             o0_fold = function_definition(
-                emitted_by_mode[("O0", standard)], "cfg_fold"
+                emitted_by_mode[("O0", label)], "cfg_fold"
             )
             o1_fold = function_definition(
-                emitted_by_mode[("O1", standard)], "cfg_fold"
+                emitted_by_mode[("O1", label)], "cfg_fold"
             )
             o3_fold = function_definition(
-                emitted_by_mode[("O3", standard)], "cfg_fold"
+                emitted_by_mode[("O3", label)], "cfg_fold"
             )
             if not o0_fold or o0_fold == o1_fold:
                 sys.stderr.write(
-                    f"marked O1/{standard} CFG did not reflect its verified "
+                    f"marked O1/{label} CFG did not reflect its verified "
                     "identity-fold rewrite\n"
                 )
                 return 1
             if not o1_fold or o1_fold != o3_fold:
                 sys.stderr.write(
-                    f"marked O1/O3 {standard} CFG bodies did not preserve the "
+                    f"marked O1/O3 {label} CFG bodies did not preserve the "
                     "same verified identity fold\n"
                 )
                 return 1

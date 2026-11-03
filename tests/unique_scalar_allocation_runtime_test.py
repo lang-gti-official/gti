@@ -8,6 +8,12 @@ import sys
 import tempfile
 
 from allocation_abort_runtime_test import ABORT_STATUS
+from backend_modes import cpp_only_case, is_cpp_mode, keep_cpp, native_modes
+
+# The fault provider (tests/fixtures/unique_scalar_allocation_fault.cpp) replaces
+# the C++ text's nothrow operator new; LLVM-backed programs allocate through the
+# runtime, so only the C++ profile observes the injected failure.
+FAULT_INJECTION = "allocation fault injection replaces the C++ text's nothrow operator new; the LLVM backend allocates through the runtime"
 
 def expected_result(suffix, site):
     failure = (f"<std/detail/memory_core>:{site}: runtime error[GTI-R0011]: "
@@ -31,16 +37,18 @@ def main():
     memory = fixtures.parent.parent / "stdlib/std/detail/memory_core.gti"
     site = next(i for i, line in enumerate(memory.read_text().splitlines(), 1)
                 if "return unique_ptr<T>(gti_internal::allocate_unique_owner" in line)
-    modes = [(f"{standard}-{level}", [f"-{level}", "--std", standard])
-             for standard in ("c++20", "c++23") for level in ("O0", "O1", "O3")]
-    modes.append(("sanitized", ["-O1", "--std", "c++23"]))
+    modes = native_modes()
     with tempfile.TemporaryDirectory(prefix="gti-scalar-allocation-") as temporary:
-        for mode, flags in modes:
-            for suffix in ("", "_failure", "_cleanup_failure"):
+        for mode, flags, native_flags in modes:
+            suffixes = ("", "_failure", "_cleanup_failure")
+            if not is_cpp_mode(flags):
+                cpp_only_case(FAULT_INJECTION, "unique_scalar_allocation_failure, unique_scalar_allocation_cleanup_failure", mode)
+                suffixes = ("",)
+            for suffix in suffixes:
                 name = "unique_scalar_allocation" + suffix
                 binary = pathlib.Path(temporary) / f"{name}-{mode}"
                 command = [str(compiler), str(fixtures / f"{name}.gti"), *flags,
-                           "--keep-cpp", "-o", str(binary)]
+                           *keep_cpp(flags), "-o", str(binary)]
                 native = [str(fixtures / "unique_scalar_allocation_fault.cpp")]
                 if mode == "sanitized":
                     native += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
@@ -48,21 +56,23 @@ def main():
                     command += ["--", *native]
                 built = run(command)
                 assert built.returncode == 0, (command, built.stdout, built.stderr)
-                generated = binary.with_suffix(".gti.cpp").read_text()
-                assert "// GTI verified-MIR body:" in generated
-                assert "::gti_internal::backend::mir_allocate_unique_scalar_v1<" in generated
-                assert "GTI_FAILURE_DETAIL_UNIQUE_OWNER_V1" in generated
+                if is_cpp_mode(flags):
+                    generated = binary.with_suffix(".gti.cpp").read_text()
+                    assert "// GTI verified-MIR body:" in generated
+                    assert "::gti_internal::backend::mir_allocate_unique_scalar_v1<" in generated
+                    assert "GTI_FAILURE_DETAIL_UNIQUE_OWNER_V1" in generated
                 result = run([str(binary)])
                 expected = expected_result(suffix, site)
-                if suffix == "":
-                    # Both source types must coexist as distinct native generic
-                    # arguments; separate translation units hide this collision.
-                    assert "unique_ptr<char8_t>" in generated
-                    assert "unique_ptr<std::uint8_t>" in generated
-                    # A source raw pointer remains a semantic scalar while its
-                    # native representation is an inert address carrier class.
-                    assert "raw_address<std::int32_t>" in generated
-                    assert "std::is_scalar_v<T> || is_raw_address_v<T>" in generated
+                if is_cpp_mode(flags):
+                    if suffix == "":
+                        # Both source types must coexist as distinct native generic
+                        # arguments; separate translation units hide this collision.
+                        assert "unique_ptr<char8_t>" in generated
+                        assert "unique_ptr<std::uint8_t>" in generated
+                        # A source raw pointer remains a semantic scalar while its
+                        # native representation is an inert address carrier class.
+                        assert "raw_address<std::int32_t>" in generated
+                        assert "std::is_scalar_v<T> || is_raw_address_v<T>" in generated
                 assert (result.returncode, result.stdout, result.stderr) == expected, (
                     name, mode, result, expected)
                 print(f"{name}: {mode} passed", flush=True)

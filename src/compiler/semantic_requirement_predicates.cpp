@@ -92,7 +92,7 @@ auto SemanticVisitor::Impl::constraintPredicateCapability(
                     const std::vector<SemanticType> *providedArguments)
       -> std::optional<PredicateCapability> {
     if (!expression.arguments().empty() ||
-        active.size() >= constexprCallDepthLimit)
+        active.size() >= predicateCapabilityDepthLimit)
       return std::nullopt;
     const Expr *callee = expression.callee().get();
     while (const auto *group = exprAs<Grouping>(callee))

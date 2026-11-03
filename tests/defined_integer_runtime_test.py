@@ -4,6 +4,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -77,21 +78,10 @@ def build_and_run(
     compiler: pathlib.Path,
     source: pathlib.Path,
     executable: pathlib.Path,
-    optimization: str,
-    standard: str,
+    flags: list[str],
     expected_stdout: str,
 ) -> bool:
-    built = run(
-        [
-            str(compiler),
-            str(source),
-            f"-{optimization}",
-            "--std",
-            standard,
-            "-o",
-            str(executable),
-        ]
-    )
+    built = run([str(compiler), str(source), *flags, "-o", str(executable)])
     if built.returncode != 0:
         sys.stderr.write(built.stdout)
         sys.stderr.write(built.stderr)
@@ -134,28 +124,22 @@ def main() -> int:
         root = pathlib.Path(temporary)
         boundaries = root / "boundaries.gti"
         boundaries.write_text(boundary_source(), encoding="utf8")
-        configurations = [
-            (optimization, standard)
-            for optimization in ("O0", "O3")
-            for standard in ("c++20", "c++23")
-        ]
-        for index, (optimization, standard) in enumerate(configurations):
+        configurations = native_modes()
+        for index, (mode, flags, _native) in enumerate(configurations):
             if index % shard_count == shard - 1:
                 if not build_and_run(
                     compiler,
                     source,
-                    root / f"defined-{optimization}-{standard}",
-                    optimization,
-                    standard,
+                    root / f"defined-{mode}",
+                    flags,
                     "defined integer arithmetic passed\n",
                 ):
                     return 1
                 if not build_and_run(
                     compiler,
                     boundaries,
-                    root / f"boundaries-{optimization}-{standard}",
-                    optimization,
-                    standard,
+                    root / f"boundaries-{mode}",
+                    flags,
                     "",
                 ):
                     return 1
