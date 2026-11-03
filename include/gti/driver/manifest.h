@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gti/backend.h"
+#include "gti/compile_limits.h"
 #include "gti/configuration_flags.h"
 #include "gti/cpp_standard.h"
 #include "gti/diagnostic.h"
@@ -264,6 +265,15 @@ struct ProjectBuildSettings {
   SourceSpan declaration;
 };
 
+// The `[limits]` table: per-request compile-time resource limits for a
+// compilation whose root (selected) package this is. Like a C++
+// per-compilation flag, a dependency package's table is validated with its
+// manifest but never applied to a consumer's compilation.
+struct ProjectLimitSettings {
+  CompileLimitOverrides values;
+  SourceSpan declaration;
+};
+
 class ProjectManifest final {
 public:
   ProjectManifest(
@@ -273,7 +283,8 @@ public:
       std::optional<ProjectWorkspaceManifest> workspace = std::nullopt,
       ProjectBuildSettings build = {},
       std::vector<ProjectBindgenImport> bindgenImports = {},
-      std::vector<ProjectToolchain> toolchains = {});
+      std::vector<ProjectToolchain> toolchains = {},
+      ProjectLimitSettings limits = {});
 
   [[nodiscard]] const std::filesystem::path &path() const;
   [[nodiscard]] const std::filesystem::path &packageRoot() const;
@@ -286,6 +297,7 @@ public:
   [[nodiscard]] const ProjectBuildSettings &build() const;
   [[nodiscard]] const std::vector<ProjectBindgenImport> &bindgen() const;
   [[nodiscard]] const std::vector<ProjectToolchain> &toolchains() const;
+  [[nodiscard]] const ProjectLimitSettings &limits() const;
   // Finds the declared toolchain whose normalized key selects `target`.
   // Only the OS, vendor, and architecture participate.
   [[nodiscard]] const ProjectToolchain *
@@ -304,6 +316,7 @@ private:
   ProjectBuildSettings projectBuildSettings;
   std::vector<ProjectBindgenImport> projectBindgenImports;
   std::vector<ProjectToolchain> projectToolchains;
+  ProjectLimitSettings projectLimits;
 };
 
 enum class ManifestDiscoveryStatus {
