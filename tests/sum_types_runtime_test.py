@@ -4,6 +4,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -18,19 +19,9 @@ def main() -> int:
     source = pathlib.Path(sys.argv[2]).resolve()
     with tempfile.TemporaryDirectory(prefix="gti-sum-types-") as temporary:
         root = pathlib.Path(temporary)
-        for standard in ("c++20", "c++23"):
-            executable = root / f"sum-types-{standard}"
-            built = run(
-                [
-                    str(compiler),
-                    str(source),
-                    "-O1",
-                    "--std",
-                    standard,
-                    "-o",
-                    str(executable),
-                ]
-            )
+        for mode, flags, _native in native_modes():
+            executable = root / f"sum-types-{mode}"
+            built = run([str(compiler), str(source), *flags, "-o", str(executable)])
             if built.returncode != 0:
                 sys.stderr.write(built.stdout)
                 sys.stderr.write(built.stderr)

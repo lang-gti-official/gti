@@ -5,6 +5,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 POSITIVE_FIXTURES = (
@@ -87,23 +88,14 @@ def main() -> int:
             "issue_117_generic_indirect.gti",
         ):
             source = fixtures / fixture_name
-            executable = root / f"{source.stem}-cpp20-o3"
-            built = run(
-                [
-                    str(compiler),
-                    str(source),
-                    "--std",
-                    "c++20",
-                    "-O3",
-                    "-o",
-                    str(executable),
-                ]
-            )
-            if built.returncode != 0:
-                return fail(f"build C++20/O3 {fixture_name}", built)
-            executed = run([str(executable)])
-            if executed.returncode != 0 or executed.stdout or executed.stderr:
-                return fail(f"run C++20/O3 {fixture_name}", executed)
+            for mode, flags, _native in native_modes():
+                executable = root / f"{source.stem}-{mode}"
+                built = run([str(compiler), str(source), *flags, "-o", str(executable)])
+                if built.returncode != 0:
+                    return fail(f"build {mode} {fixture_name}", built)
+                executed = run([str(executable)])
+                if executed.returncode != 0 or executed.stdout or executed.stderr:
+                    return fail(f"run {mode} {fixture_name}", executed)
 
         array_source = fixtures / "issue_117_array_cleanup.gti"
         mir_path = root / "issue_117_array_cleanup.mir"

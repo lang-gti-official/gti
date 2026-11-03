@@ -1,0 +1,46 @@
+import std.string;
+import std.vector;
+import std.numeric;
+
+class OffsetCleanup {
+  int identity;
+public:
+  OffsetCleanup(int identity) : identity(identity) {}
+  ~OffsetCleanup() { std::println(this.identity); }
+};
+
+uint64_t select_word(uint64_t low, uint64_t high, int mode) {
+  OffsetCleanup cleanup{22};
+  std::println(7);
+  uint64_t distance = high - low;
+  mut uint64_t offset = distance / uint64_t(2);
+  if (mode == 1) offset = (distance / uint64_t(8)) * uint64_t(2);
+  if (mode == 2) offset = distance / uint64_t(2) + distance / uint64_t(8);
+  if (mode == 3) offset = distance + distance / uint64_t(2);
+  std::println(8);
+  return low + offset;
+}
+
+uint64_t select_wide(uint64_t low, uint64_t high) {
+  OffsetCleanup cleanup{22};
+  std::println(7);
+  uint64_t distance = high - low;
+  uint64_t middle = low + distance / uint64_t(2);
+  std::println(8);
+  return middle + distance / uint64_t(8);
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc != 4) return 10;
+  int mode = int(argv[std::size_t(1)].size());
+  uint64_t low = argv[std::size_t(2)].size();
+  uint64_t high = argv[std::size_t(3)].size();
+  OffsetCleanup outer{11};
+  if (mode == 4) {
+    std::println(select_wide(std::MAX_UINT64 - low, std::MAX_UINT64 - high));
+  } else {
+    uint64_t unit = std::MAX_UINT64 / uint64_t(255);
+    std::println(select_word(low * unit, high * unit, mode));
+  }
+  return 0;
+}

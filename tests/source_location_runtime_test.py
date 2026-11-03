@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def run(
@@ -49,57 +50,51 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="gti-source-location-") as temporary:
         root = pathlib.Path(temporary)
-        for standard in ("c++20", "c++23"):
-            for optimization in ("O0", "O3"):
-                label = f"{standard}-{optimization}"
-                executable = root / label
-                built = run(
-                    [
-                        str(compiler),
-                        str(source),
-                        "--std",
-                        standard,
-                        f"-{optimization}",
-                        "-o",
-                        str(executable),
-                    ],
-                    environment,
+        for label, flags, _native in native_modes():
+            executable = root / label
+            built = run(
+                [
+                    str(compiler),
+                    str(source),
+                    *flags,
+                    "-o",
+                    str(executable),
+                ],
+                environment,
+            )
+            require_success(built, f"{label} build")
+            executed = run([str(executable)], environment)
+            require_success(executed, f"{label} execution")
+            if executed.stdout or executed.stderr:
+                raise AssertionError(
+                    f"{label} produced output: "
+                    f"stdout={executed.stdout!r}, stderr={executed.stderr!r}"
                 )
-                require_success(built, f"{label} build")
-                executed = run([str(executable)], environment)
-                require_success(executed, f"{label} execution")
-                if executed.stdout or executed.stderr:
-                    raise AssertionError(
-                        f"{label} produced output: "
-                        f"stdout={executed.stdout!r}, stderr={executed.stderr!r}"
-                    )
 
-                constructor_executable = root / f"constructors-{label}"
-                constructor_built = run(
-                    [
-                        str(compiler),
-                        str(constructor_source),
-                        "--std",
-                        standard,
-                        f"-{optimization}",
-                        "-o",
-                        str(constructor_executable),
-                    ],
-                    environment,
+            constructor_executable = root / f"constructors-{label}"
+            constructor_built = run(
+                [
+                    str(compiler),
+                    str(constructor_source),
+                    *flags,
+                    "-o",
+                    str(constructor_executable),
+                ],
+                environment,
+            )
+            require_success(constructor_built, f"{label} constructor build")
+            constructor_executed = run(
+                [str(constructor_executable)], environment
+            )
+            require_success(
+                constructor_executed, f"{label} constructor execution"
+            )
+            if constructor_executed.stdout or constructor_executed.stderr:
+                raise AssertionError(
+                    f"{label} constructor fixture produced output: "
+                    f"stdout={constructor_executed.stdout!r}, "
+                    f"stderr={constructor_executed.stderr!r}"
                 )
-                require_success(constructor_built, f"{label} constructor build")
-                constructor_executed = run(
-                    [str(constructor_executable)], environment
-                )
-                require_success(
-                    constructor_executed, f"{label} constructor execution"
-                )
-                if constructor_executed.stdout or constructor_executed.stderr:
-                    raise AssertionError(
-                        f"{label} constructor fixture produced output: "
-                        f"stdout={constructor_executed.stdout!r}, "
-                        f"stderr={constructor_executed.stderr!r}"
-                    )
 
         emitted_mir = root / "source-location.mir"
         emitted = run(

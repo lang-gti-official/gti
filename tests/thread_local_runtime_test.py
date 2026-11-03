@@ -9,6 +9,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from backend_modes import is_cpp_mode, keep_cpp, native_modes
 
 
 STATE = """\
@@ -451,12 +452,10 @@ def main() -> None:
     ]
     if options.cases is not None and set(options.cases) - {item[0] for item in cases}:
         parser.error("--case must name an existing TLS runtime case")
-    modes = [(standard, opt, []) for standard in ("c++20", "c++23")
-             for opt in ("-O0", "-O1", "-O3")]
-    modes.append(("c++23", "-O1", ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]))
+    modes = native_modes()
     with tempfile.TemporaryDirectory(prefix="gti-thread-local-") as directory:
         root = pathlib.Path(directory)
-        for index, (standard, opt, native) in enumerate(modes):
+        for index, (label, flags, native) in enumerate(modes):
             if options.modes is not None and index not in options.modes:
                 continue
             for name, source, profile, status, output, failure in cases:
@@ -466,8 +465,7 @@ def main() -> None:
                 binary = root / f"{name}-{index}"
                 path.write_text(source)
                 command = [str(compiler), str(path), "--progress=never",
-                           "--execution-profile", profile, "--std", standard,
-                           opt, "--keep-cpp", "-o", str(binary)]
+                           "--execution-profile", profile, *flags, *keep_cpp(flags), "-o", str(binary)]
                 extra = list(native)
                 if name == "unattached":
                     extra.append(str(pathlib.Path(__file__).resolve().parent /
@@ -480,13 +478,14 @@ def main() -> None:
                         failure is not None and failure not in result.stderr):
                     raise AssertionError(f"{name}-{index}: output mismatch\n"
                                          f"stdout={result.stdout!r}\nstderr={result.stderr!r}")
-                generated = binary.with_suffix(".gti.cpp").read_text()
-                if "thread-local-initializer-v1" not in generated:
-                    raise AssertionError("TLS initialization lost its verified MIR body marker")
-                if "constinit thread_local " not in generated:
-                    raise AssertionError("native TLS infrastructure must not use C++ dynamic initialization")
-                print(f"thread-local runtime: {name} {standard} {opt} passed", flush=True)
-            print(f"thread-local runtime: {standard} {opt} {native or 'native'} passed", flush=True)
+                if is_cpp_mode(flags):
+                    generated = binary.with_suffix(".gti.cpp").read_text()
+                    if "thread-local-initializer-v1" not in generated:
+                        raise AssertionError("TLS initialization lost its verified MIR body marker")
+                    if "constinit thread_local " not in generated:
+                        raise AssertionError("native TLS infrastructure must not use C++ dynamic initialization")
+                print(f"thread-local runtime: {name} {label} passed", flush=True)
+            print(f"thread-local runtime: {label} {native or 'native'} passed", flush=True)
 
 
 if __name__ == "__main__":

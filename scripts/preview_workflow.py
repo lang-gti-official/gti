@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import platform
 import re
@@ -17,6 +18,13 @@ from agent_workflow import WorkflowError, clean, git, load_remote_runner
 
 BRANCH = "preview"
 MANIFEST = ".gti-preview.json"
+
+
+def load_preview_examples():
+    spec = importlib.util.spec_from_file_location("preview_examples", Path(__file__).with_name("preview_examples.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def tests(value):
@@ -212,7 +220,11 @@ class Preview:
                 "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_TESTING=ON", "-DGTI_BUILD_LSP=ON"]},
             {"kind": "build", "argv": ["cmake", "--build", build, "--parallel", str(jobs)]},
         ]
-        focused = sorted({name for feature in state["manifest"]["features"] for name in tests(feature["tests"])})
+        # Preview admits a feature once: its own focused checks plus the fixed
+        # example gate. Earlier features are already in the published preview
+        # and are not re-proven on every admission (preview_examples.pending_features).
+        focused = sorted({name for feature in load_preview_examples().pending_features(state["manifest"], root)
+                          for name in tests(feature["tests"])})
         if not focused:
             # The fixed example harnesses need the CLI/runtime, not C++ unit
             # binaries. Arbitrary focused CTest names still require all targets.

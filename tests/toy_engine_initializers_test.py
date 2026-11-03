@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def run(command):
@@ -22,21 +23,20 @@ def main():
     generated = fixtures / "toy_engine_generated_field_initializer.gti"
     with tempfile.TemporaryDirectory(prefix="gti-toy-engine-initializers-") as directory:
         root = Path(directory)
-        for standard in ("c++20", "c++23"):
-            for optimization in ("-O0", "-O1", "-O3"):
-                executable = root / f"initializers-{standard}-{optimization}"
-                run([compiler, positive, "--std", standard, optimization, "-o", executable])
-                result = run([executable])
-                assert not result.stdout and not result.stderr, result
-                owning = root / f"fallible-{standard}-{optimization}"
-                run([compiler, fallible, "--std", standard, optimization, "-o", owning])
-                result = run([owning])
-                assert not result.stdout and not result.stderr, result
-                implicit = root / f"generated-{standard}-{optimization}"
-                run([compiler, generated, "--std", standard, optimization,
-                     "-o", implicit])
-                result = run([implicit])
-                assert not result.stdout and not result.stderr, result
+        for mode, flags, native in native_modes():
+            executable = root / f"initializers-{mode}"
+            run([compiler, positive, *flags, "-o", executable])
+            result = run([executable])
+            assert not result.stdout and not result.stderr, result
+            owning = root / f"fallible-{mode}"
+            run([compiler, fallible, *flags, "-o", owning])
+            result = run([owning])
+            assert not result.stdout and not result.stderr, result
+            implicit = root / f"generated-{mode}"
+            run([compiler, generated, *flags,
+                 "-o", implicit])
+            result = run([implicit])
+            assert not result.stdout and not result.stderr, result
     print("Toy-engine initializers: eighteen runtime cases passed, including "
           "exact generated field construction and reverse cleanup")
 
