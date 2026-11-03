@@ -376,6 +376,26 @@ class RemotePreviewTests(unittest.TestCase):
         self.assertEqual(remote.plan(SHA,'linux-x64','/exports',image='sha256:'+'a'*64)[0]['argv'][-2:],
                          ['--container-image','sha256:'+'a'*64])
 
+    def test_macos_deployment_target_is_scoped_to_compiler_build(self):
+        import preview_remote as remote
+        with tempfile.TemporaryDirectory() as tmp:
+            build = Path(tmp)/'build';build.mkdir()
+            (build/'preview-editor.path').write_text('/pinned-editor/bin\n')
+            def editor_stage(directory, path):path.write_text('/pinned-editor/bin\n')
+            with patch.dict(os.environ, {'MACOSX_DEPLOYMENT_TARGET':'26.0'}), \
+                    patch.object(remote.host,'system',return_value='Darwin'), \
+                    patch.object(remote.host,'machine',return_value='arm64'), \
+                    patch.object(remote.host,'mac_ver',return_value=('27.0.1',(),'')), \
+                    patch.object(p,'command',side_effect=lambda *args:SHA if 'rev-parse' in args else ''), \
+                    patch.object(remote,'execute') as execute, \
+                    patch('configure_ci_editor.stage',side_effect=editor_stage):
+                remote.step('admission',SHA,'darwin-arm64',build,Path(tmp)/'dist',4,3)
+                remote.step('configure',SHA,'darwin-arm64',build,Path(tmp)/'dist',4,3)
+            self.assertEqual(len(execute.call_args_list),3)
+            for call in execute.call_args_list:
+                self.assertNotIn('MACOSX_DEPLOYMENT_TARGET',call.kwargs['env'])
+            self.assertIn('-DCMAKE_OSX_DEPLOYMENT_TARGET=26.0',execute.call_args.args[0])
+
     def test_remote_receipts_bind_production_os_and_container_identity(self):
         import preview_remote as remote
         with tempfile.TemporaryDirectory() as tmp:

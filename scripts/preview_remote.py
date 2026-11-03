@@ -51,6 +51,18 @@ def production_environment(platform, image=None):
     return {'os': 'macos', 'deployment_target': '26.0', 'image': None}
 
 
+def process_environment(platform, test_jobs):
+    cc, cxx = (('/usr/bin/clang', '/usr/bin/clang++') if platform == 'darwin-arm64'
+               else ('/usr/bin/gcc-14', '/usr/bin/g++-14'))
+    env = dict(os.environ, CC=cc, CXX=cxx, CTEST_PARALLEL_LEVEL=str(test_jobs),
+               GTI_TEST_JOBS=str(test_jobs))
+    # CMake's explicit deployment target governs the distributed compiler.
+    # Passing it to GTI programs instead requests an unsupported explicit
+    # native target policy. Exercise their supported implicit host policy.
+    env.pop('MACOSX_DEPLOYMENT_TARGET', None)
+    return env
+
+
 def step(name, sha, platform, build, output, jobs, test_jobs, image=None):
     root = Path(__file__).resolve().parents[1]
     expected = {'darwin-arm64': ('Darwin', 'arm64'), 'linux-x64': ('Linux', 'x86_64')}[platform]
@@ -74,12 +86,8 @@ def step(name, sha, platform, build, output, jobs, test_jobs, image=None):
                  '--output', output, '--jobs', jobs, '--test-jobs', test_jobs])
         return
     environment = production_environment(platform, os.environ.get('GTI_PREVIEW_IMAGE'))
-    cc, cxx = (('/usr/bin/clang', '/usr/bin/clang++') if platform == 'darwin-arm64'
-               else ('/usr/bin/gcc-14', '/usr/bin/g++-14'))
-    env = dict(os.environ, CC=cc, CXX=cxx, CTEST_PARALLEL_LEVEL=str(test_jobs),
-               GTI_TEST_JOBS=str(test_jobs))
-    if platform == 'darwin-arm64':
-        env['MACOSX_DEPLOYMENT_TARGET'] = '26.0'
+    env = process_environment(platform, test_jobs)
+    cc, cxx = env['CC'], env['CXX']
     stage = build / 'preview-stage'
     editor_path = build / 'preview-editor.path'
     if name == 'configure':
