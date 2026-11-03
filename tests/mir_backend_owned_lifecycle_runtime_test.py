@@ -4,6 +4,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from backend_modes import is_cpp_mode, native_modes, optimization_level
 
 
 MARKER = "// GTI verified-MIR body: scalar-cfg"
@@ -31,12 +32,12 @@ def body_containing(generated: str, spelling: str) -> str:
     return ""
 
 
-def validate_family(generated: str, optimization: str, standard: str) -> bool:
+def validate_family(generated: str, optimization: str, mode: str) -> bool:
     selected = ("_consume", "_run_scopes", "ScopeFlag::ScopeFlag")
     for spelling in selected:
         if MARKER not in body_containing(generated, spelling):
             sys.stderr.write(
-                f"{optimization}/{standard} did not emit {spelling} from "
+                f"{optimization}/{mode} did not emit {spelling} from "
                 "general MIR\n"
             )
             return False
@@ -44,7 +45,7 @@ def validate_family(generated: str, optimization: str, standard: str) -> bool:
         generated, "void ScopeFlag::__gti_lifecycle_cleanup_"
     ):
         sys.stderr.write(
-            f"{optimization}/{standard} did not emit ScopeFlag cleanup from "
+            f"{optimization}/{mode} did not emit ScopeFlag cleanup from "
             "general MIR\n"
         )
         return False
@@ -52,24 +53,24 @@ def validate_family(generated: str, optimization: str, standard: str) -> bool:
     for spelling in remaining:
         if MARKER not in body_containing(generated, spelling):
             sys.stderr.write(
-                f"{optimization}/{standard} left {spelling} outside general "
+                f"{optimization}/{mode} left {spelling} outside general "
                 "MIR emission\n"
             )
             return False
     if "std::move" not in body_containing(generated, "_run_scopes("):
         sys.stderr.write(
-            f"{optimization}/{standard} lost the verified owning move stage\n"
+            f"{optimization}/{mode} lost the verified owning move stage\n"
         )
         return False
     return True
 
 
-def validate_comma(generated: str, optimization: str, standard: str) -> bool:
+def validate_comma(generated: str, optimization: str, mode: str) -> bool:
     selected = ("_use_plain", "_use_comma", "CommaFlag::CommaFlag")
     for spelling in selected:
         if MARKER not in body_containing(generated, spelling):
             sys.stderr.write(
-                f"{optimization}/{standard} did not emit comma fixture "
+                f"{optimization}/{mode} did not emit comma fixture "
                 f"body {spelling} from general MIR\n"
             )
             return False
@@ -77,13 +78,13 @@ def validate_comma(generated: str, optimization: str, standard: str) -> bool:
         generated, "void CommaFlag::__gti_lifecycle_cleanup_"
     ):
         sys.stderr.write(
-            f"{optimization}/{standard} did not emit CommaFlag cleanup from "
+            f"{optimization}/{mode} did not emit CommaFlag cleanup from "
             "general MIR\n"
         )
         return False
     if "owned-lifecycle-call-v1" in generated:
         sys.stderr.write(
-            f"{optimization}/{standard} revived the retired lifecycle route\n"
+            f"{optimization}/{mode} revived the retired lifecycle route\n"
         )
         return False
     return True
@@ -102,34 +103,30 @@ def main() -> int:
     )
     with tempfile.TemporaryDirectory(prefix="gti-mir-owned-lifecycle-") as temporary:
         root = pathlib.Path(temporary)
-        for optimization in ("O0", "O1", "O3"):
-            for standard in ("c++20", "c++23"):
-                executable = root / f"owned-{optimization}-{standard}"
-                built = run(
-                    [
-                        str(compiler),
-                        str(source),
-                        f"-{optimization}",
-                        "--std",
-                        standard,
-                        "-o",
-                        str(executable),
-                    ]
-                )
-                if built.returncode != 0:
-                    return fail(built)
-                executed = run([str(executable)])
-                if executed.returncode != 0:
-                    return fail(executed)
+        for mode, flags, _native in native_modes():
+            executable = root / f"owned-{mode}"
+            built = run(
+                [
+                    str(compiler),
+                    str(source),
+                    *flags,
+                    "-o",
+                    str(executable),
+                ]
+            )
+            if built.returncode != 0:
+                return fail(built)
+            executed = run([str(executable)])
+            if executed.returncode != 0:
+                return fail(executed)
 
-                emitted = root / f"owned-{optimization}-{standard}.cpp"
+            if is_cpp_mode(flags):
+                emitted = root / f"owned-{mode}.cpp"
                 emission = run(
                     [
                         str(compiler),
                         str(source),
-                        f"-{optimization}",
-                        "--std",
-                        standard,
+                        *flags,
                         "--emit-cpp",
                         "-o",
                         str(emitted),
@@ -138,36 +135,33 @@ def main() -> int:
                 if emission.returncode != 0:
                     return fail(emission)
                 if not validate_family(
-                    emitted.read_text(encoding="utf8"), optimization, standard
+                    emitted.read_text(encoding="utf8"), optimization_level(flags), mode
                 ):
                     return 1
 
-                comma_executable = root / f"comma-{optimization}-{standard}"
-                comma_built = run(
-                    [
-                        str(compiler),
-                        str(comma_source),
-                        f"-{optimization}",
-                        "--std",
-                        standard,
-                        "-o",
-                        str(comma_executable),
-                    ]
-                )
-                if comma_built.returncode != 0:
-                    return fail(comma_built)
-                comma_executed = run([str(comma_executable)])
-                if comma_executed.returncode != 0:
-                    return fail(comma_executed)
+            comma_executable = root / f"comma-{mode}"
+            comma_built = run(
+                [
+                    str(compiler),
+                    str(comma_source),
+                    *flags,
+                    "-o",
+                    str(comma_executable),
+                ]
+            )
+            if comma_built.returncode != 0:
+                return fail(comma_built)
+            comma_executed = run([str(comma_executable)])
+            if comma_executed.returncode != 0:
+                return fail(comma_executed)
 
-                comma_emitted = root / f"comma-{optimization}-{standard}.cpp"
+            if is_cpp_mode(flags):
+                comma_emitted = root / f"comma-{mode}.cpp"
                 comma_emission = run(
                     [
                         str(compiler),
                         str(comma_source),
-                        f"-{optimization}",
-                        "--std",
-                        standard,
+                        *flags,
                         "--emit-cpp",
                         "-o",
                         str(comma_emitted),
@@ -177,8 +171,7 @@ def main() -> int:
                     return fail(comma_emission)
                 if not validate_comma(
                     comma_emitted.read_text(encoding="utf8"),
-                    optimization,
-                    standard,
+                    optimization_level(flags), mode
                 ):
                     return 1
 

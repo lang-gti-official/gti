@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from backend_modes import keep_cpp, native_modes
 
 
 def main():
@@ -27,16 +28,12 @@ def main():
         ("-128\n92\n91\n", "signed-down", "numeric_conversion_out_of_range"),
         ("65535\n92\n91\n", "arithmetic-overflow", "integer_overflow"),
     ]
-    modes = [(standard, level, []) for standard in ("c++20", "c++23")
-             for level in ("-O0", "-O1", "-O2", "-O3")]
-    modes += [("c++23", "-O1", ["-fno-elide-constructors"]),
-              ("c++23", "-O1", ["-fsanitize=address,undefined"])]
+    modes = native_modes()
     with tempfile.TemporaryDirectory(prefix="gti-issues-30-33-") as directory:
-        for index, (standard, level, flags) in enumerate(modes):
+        for index, (label, flags, native) in enumerate(modes):
             binary = Path(directory) / str(index)
-            built = subprocess.run([str(compiler), str(source), "--std", standard,
-                                    level, "--keep-cpp", "-o", str(binary), "--",
-                                    str(source.with_suffix(".cpp")), *flags],
+            built = subprocess.run([str(compiler), str(source), *flags, *keep_cpp(flags), "-o", str(binary), "--",
+                                    str(source.with_suffix(".cpp")), *native],
                                    capture_output=True, text=True, timeout=120)
             assert built.returncode == 0, built
             for mode, (output, marker, reason) in enumerate(cases):
@@ -53,7 +50,7 @@ def main():
                     assert ran.returncode == 70, (mode, ran)
                     assert re.fullmatch(rf".*issues_30_33\.gti:{line}: runtime error"
                                         rf"\[GTI-R\d+\]: {reason}.*\n", ran.stderr), (mode, ran)
-            print(f"{standard} {level} {flags}: {len(cases)} issue regression outcomes passed", flush=True)
+            print(f"{label} {native}: {len(cases)} issue regression outcomes passed", flush=True)
 
 
 if __name__ == "__main__":

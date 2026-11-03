@@ -108,7 +108,13 @@ The S-ALLOC-07 migration covers `std::allocator::try_storage`, sparse
 `std::storage`, arenas/pools backed by that storage, and `std::process_resource`
 used by resource-backed storage/containers. Both object and live-state regions
 use the selected source provider. Zero capacity allocates neither; failure to
-obtain metadata releases the object region before returning an error.
+obtain metadata releases the object region before returning an error. Each typed
+allocation operation observes the native size limit once and reuses that value
+for request arithmetic and every returned descriptor, including the two sparse
+regions. The limit is a target property; injected providers select any reduced
+test limit before the operation. This is not a process-wide cache: later
+operations observe the limit again. Descriptor size/alignment, nonnull address,
+actual address alignment and matching-provider rollback checks remain intact.
 
 | Allocation family | Current owner and rationale |
 | --- | --- |

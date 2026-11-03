@@ -1510,6 +1510,54 @@ toolchainExecutable(const toml::table &table, std::string_view field,
   return value;
 }
 
+// `[limits] <key> = <n>`: every key names one CompileLimits entry and every
+// value is an integer from 1 to that limit's maximum. The table is validated
+// in every manifest so a package stays valid as a root, but only the root
+// package's settings configure a compilation.
+ProjectLimitSettings parseLimits(const toml::table &document,
+                                 std::string_view sourceName,
+                                 std::string_view source,
+                                 std::vector<Diagnostic> &diagnostics) {
+  ProjectLimitSettings settings;
+  const toml::node *node = document.get("limits");
+  if (node == nullptr)
+    return settings;
+  settings.declaration = sourceSpan(sourceName, source, *node);
+  const toml::table *table = node->as_table();
+  if (table == nullptr) {
+    diagnostics.push_back(buildDiagnostic("GTI-B1004", settings.declaration,
+                                          "Manifest field 'limits' must be a "
+                                          "table."));
+    return settings;
+  }
+  std::vector<std::string_view> names;
+  for (const CompileLimitInfo &limit : compileLimitTable())
+    names.push_back(limit.key);
+  validateFields(*table, names, "limits", sourceName, source, diagnostics);
+  for (const CompileLimitInfo &limit : compileLimitTable()) {
+    const toml::node *value = table->get(limit.key);
+    if (value == nullptr)
+      continue;
+    const SourceSpan span = sourceSpan(sourceName, source, *value);
+    const std::optional<std::int64_t> integer = value->value<std::int64_t>();
+    if (!value->is_integer() || !integer) {
+      diagnostics.push_back(buildDiagnostic("GTI-B1004", span,
+                                            "Limit '" + std::string(limit.key) +
+                                                "' must be an integer."));
+      continue;
+    }
+    std::string error;
+    if (const auto accepted = validateCompileLimitValue(
+            limit, static_cast<long long>(*integer), error)) {
+      settings.values.set(limit, *accepted);
+    } else {
+      diagnostics.push_back(
+          buildDiagnostic("GTI-B1005", span, "Invalid limit: " + error));
+    }
+  }
+  return settings;
+}
+
 // `[toolchains.<triple>]` declares the native toolchain a cross build uses.
 // The table key is normalized through the compiler's own triple vocabulary,
 // so the manifest cannot introduce a second spelling table, and two keys
@@ -1779,7 +1827,7 @@ ProjectManifest::ProjectManifest(
     std::optional<ProjectWorkspaceManifest> workspace,
     ProjectBuildSettings build,
     std::vector<ProjectBindgenImport> bindgenImports,
-    std::vector<ProjectToolchain> toolchains)
+    std::vector<ProjectToolchain> toolchains, ProjectLimitSettings limits)
     : manifestPath(std::move(path)), rootPath(manifestPath.parent_path()),
       packageIdentity(std::move(package)), projectTargets(std::move(targets)),
       buildProfiles(std::move(profiles)),
@@ -1787,7 +1835,8 @@ ProjectManifest::ProjectManifest(
       workspaceManifest(std::move(workspace)),
       projectBuildSettings(std::move(build)),
       projectBindgenImports(std::move(bindgenImports)),
-      projectToolchains(std::move(toolchains)) {}
+      projectToolchains(std::move(toolchains)),
+      projectLimits(std::move(limits)) {}
 
 std::string_view projectTargetKindName(ProjectTargetKind kind) {
   switch (kind) {
@@ -1848,6 +1897,10 @@ const ProjectBuildSettings &ProjectManifest::build() const {
 
 const std::vector<ProjectToolchain> &ProjectManifest::toolchains() const {
   return projectToolchains;
+}
+
+const ProjectLimitSettings &ProjectManifest::limits() const {
+  return projectLimits;
 }
 
 const ProjectToolchain *
@@ -2018,7 +2071,8 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
   validateFields(document,
                  {"manifest-version", "package", "targets", "profiles",
                   "dependencies", "workspace", "build", "bindgen", "toolchains",
-                  "modules", "module-implementations", "module-discovery"},
+                  "limits", "modules", "module-implementations",
+                  "module-discovery"},
                  "top-level manifest", sourceName, source, result.diagnostics);
 
   if (const toml::node *version =
@@ -2536,6 +2590,9 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
     }
   }
 
+  ProjectLimitSettings limits =
+      parseLimits(document, sourceName, source, result.diagnostics);
+
   std::vector<ProjectTarget> targets;
   if (const toml::node *targetsNode = document.get("targets")) {
     const toml::table *targetsTable = targetsNode->as_table();
@@ -3029,10 +3086,10 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
               return left.name < right.name;
             });
   result.status = ManifestLoadStatus::Success;
-  result.manifest.emplace(manifestPath, std::move(package), std::move(targets),
-                          std::move(profiles), std::move(dependencies),
-                          std::move(workspace), std::move(build),
-                          std::move(bindgenImports), std::move(toolchains));
+  result.manifest.emplace(
+      manifestPath, std::move(package), std::move(targets), std::move(profiles),
+      std::move(dependencies), std::move(workspace), std::move(build),
+      std::move(bindgenImports), std::move(toolchains), std::move(limits));
   return result;
 }
 

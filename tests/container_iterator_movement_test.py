@@ -11,6 +11,7 @@ from case_jobs import configured_jobs, positive_jobs, run_cases
 from contiguous_iterator_completion_test import MODES
 from iterator_sanitizer_support import partition_main
 from internal_module_fixture import iterator_library
+from backend_modes import is_cpp_mode, keep_cpp
 
 
 def sanitizer_partitions(source):
@@ -54,13 +55,14 @@ def main():
             name = f"{fixture}-{region}" if region else fixture
             binary = output / f"{name}-{label}"
             command = [str(compiler), str(source),
-                       *flags, "--progress=never", "--keep-cpp", "-o", str(binary)]
+                       *flags, "--progress=never", *keep_cpp(flags), "-o", str(binary)]
             if native:
                 command += ["--", *native]
             result = subprocess.run(command, env=environment, capture_output=True,
                                     text=True, timeout=180)
             assert result.returncode == 0, (fixture, label, result.stdout, result.stderr)
-            assert "// GTI verified-MIR body:" in binary.with_suffix(".gti.cpp").read_text()
+            if is_cpp_mode(flags):
+                assert "// GTI verified-MIR body:" in binary.with_suffix(".gti.cpp").read_text()
             return binary
 
         def observe(binary):
