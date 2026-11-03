@@ -1886,7 +1886,11 @@ exactly typed literal and add no conversion. Single-signature callees
 (lambdas, function items, native function pointers) adopt every fitting
 literal directly. Ambiguity reports append a hint naming the literal
 positions; a literal outside the parameter range keeps the exact-type
-diagnostic with a value-specific hint.
+diagnostic with a value-specific hint. The later bounded raw-pointer/text
+compatibility ranking ignores argument positions admitted only by literal or
+temporary-borrow fallback. It cannot prefer a candidate merely because fewer
+literal positions require adaptation; this also holds for constructors and
+base initializers.
 
 An explicit ordinary function or method generic suffix is classified before
 candidate selection using its syntax, the target parameter kinds, and the

@@ -62,9 +62,9 @@ intermediate or weakening named-value availability and borrow checks.
 
 ## Revision: Contextual integer literal arguments (2026-11-03)
 
-A written integer literal has no type of its own until a context gives it
-one: value-assignment contexts and the one-literal operand rule already type a
-literal by its destination. The same rule now reaches call, constructor, base
+A written integer literal initially receives its default integer type.
+Value-assignment contexts and the one-literal operand rule can already give
+it a destination type after proving representability. The same rule now reaches call, constructor, base
 initializer and operator arguments, through the proof structure this record
 already accepts for call-only temporary borrows, not through conversion
 ranking.
@@ -85,5 +85,14 @@ literal, and any non-literal argument are unchanged.
 
 Consequence: adding an exactly matching overload later can change which
 candidate a literal call selects, exactly as the temporary-borrow fallback
-already allows. The owner accepted that evolution hazard in exchange for
+already allows. On 2026-11-03, the owner explicitly accepted that evolution hazard in exchange for
 `f(4)`, `values[0]`, `values.push_back(1)` and `Counter{3}` needing no cast.
+
+The implementation belongs to semantic selection and literal typing. HIR and
+verified MIR preserve the selected integer type and callable identity; LLVM
+executes the resulting existing typed literal/call operations without a new
+runtime conversion or allocation. `literal_call_arguments_runtime` exercises
+the fixture and example 186 on LLVM at O0 and O3, including integer limits,
+multiple literal arguments, exact-tier selection and temporary-borrow cleanup.
+The deprecated C++ backend receives no feature work; its existing supported
+comparator remains available through the shared backend test policy.

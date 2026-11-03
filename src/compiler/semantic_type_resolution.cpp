@@ -1220,8 +1220,8 @@ auto SemanticVisitor::Impl::contextualIntegerLiteralArgumentFits(
     const SemanticType &parameter, const SemanticType &argument,
     const ExprPtr &expression) const -> bool {
   // Only a written literal, optionally parenthesized and optionally carrying
-  // one sign, has no type of its own. Its default type is already an integer
-  // type; a named constant or any other expression keeps its declared type.
+  // one sign, may adopt a fitting parameter type after exact matching fails.
+  // A named constant or any other expression keeps its declared type.
   if (!expression || parameter == argument || !isInteger(parameter) ||
       !isInteger(argument) || !isContextualIntegerLiteral(expression.get())) {
     return false;

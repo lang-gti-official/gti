@@ -32,6 +32,35 @@ std::size_t take(int values[2], std::size_t count) {
   return std::size_t(values[0]) + std::size_t(values[1]) + count;
 }
 
+// Each literal is passed through a concrete ABI parameter at its exact limit.
+int8_t signed8(int8_t value) { return value; }
+int16_t signed16(int16_t value) { return value; }
+int32_t signed32(int32_t value) { return value; }
+int64_t signed64(int64_t value) { return value; }
+uint16_t unsigned16(uint16_t value) { return value; }
+uint32_t unsigned32(uint32_t value) { return value; }
+uint64_t unsigned64(uint64_t value) { return value; }
+
+int pair(uint8_t first, uint16_t second) { return 1; }
+int pair(uint16_t first, uint8_t second) { return 2; }
+int reverse(uint16_t first, uint8_t second) { return 2; }
+int reverse(uint8_t first, uint16_t second) { return 1; }
+
+mut int drops = 0;
+class Borrowed {
+public:
+  Borrowed() = default;
+  ~Borrowed() { drops += 1; }
+  int value() { return 7; }
+};
+int borrowed(Borrowed& owner, uint8_t count) {
+  if (drops != 0) { return -1; }
+  return owner.value() + int(count);
+}
+class Passive { public: Passive() = default; };
+int exact(Passive owner, int count) { return 1; }
+int exact(Passive& owner, uint8_t count) { return 2; }
+
 int main() {
   if (twice(4) != 8 || twice((4)) != 8 || pick(5) != 5) { return 1; }
   mut std::vector<std::size_t> values{};
@@ -53,5 +82,17 @@ int main() {
   }
   if (fixed[1] != 5 || total != 15) { return 7; }
   if (relay(2) != 4 || take({1, 2}, 3) != 6) { return 8; }
+  if (signed8(-128) != -128 || signed8(127) != 127 || narrow(255) != 255) { return 9; }
+  if (signed16(-32768) != -32768 || signed16(32767) != 32767 ||
+      unsigned16(65535) != 65535) { return 10; }
+  if (signed32(-2147483648) != -2147483648 || signed32(2147483647) != 2147483647 ||
+      unsigned32(4294967295) != 4294967295) { return 11; }
+  if (signed64(-9223372036854775808) != -9223372036854775808 ||
+      signed64(9223372036854775807) != 9223372036854775807 ||
+      unsigned64(18446744073709551615) != 18446744073709551615) { return 12; }
+  if (pair(255, 256) != 1 || reverse(255, 256) != 1 || pair(256, 255) != 2) { return 13; }
+  int borrowedResult = borrowed(Borrowed(), 5);
+  if (borrowedResult != 12 || drops != 1 || exact(Passive(), 5) != 1) { return 14; }
+  if (narrow(+(255)) != 255 || signed8((-(128))) != -128) { return 15; }
   return 0;
 }

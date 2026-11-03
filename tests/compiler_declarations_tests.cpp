@@ -13349,6 +13349,156 @@ int main() {
          "a literal outside the parameter range, a named value, and a named "
          "constant keep the exact-type rejection with a value-specific hint "
          "for the literal");
+
+  // Range filtering is per argument and must not mutate literals while merely
+  // inspecting a candidate. Reversing declaration order keeps the same result.
+  const auto boundaries = lang::Frontend().analyze(
+      "literal-boundaries-and-borrows.gti", R"(
+int8_t s8(int8_t value) { return value; }
+int16_t s16(int16_t value) { return value; }
+int32_t s32(int32_t value) { return value; }
+int64_t s64(int64_t value) { return value; }
+uint8_t u8(uint8_t value) { return value; }
+uint16_t u16(uint16_t value) { return value; }
+uint32_t u32(uint32_t value) { return value; }
+uint64_t u64(uint64_t value) { return value; }
+int pair(uint8_t a, uint16_t b) { return 1; }
+int pair(uint16_t a, uint8_t b) { return 2; }
+int reverse(uint16_t a, uint8_t b) { return 2; }
+int reverse(uint8_t a, uint16_t b) { return 1; }
+class Owner { public: Owner() = default; };
+int borrow(Owner& owner, uint8_t count) { return int(count); }
+int exact(Owner owner, int count) { return 1; }
+int exact(Owner& owner, uint8_t count) { return 2; }
+int main() {
+  int8_t a = s8(-128);
+  int16_t b = s16(-32768);
+  int32_t c = s32(-2147483648);
+  int64_t d = s64(-9223372036854775808);
+  uint8_t e = u8(255);
+  uint16_t f = u16(65535);
+  uint32_t g = u32(4294967295);
+  uint64_t h = u64(18446744073709551615);
+  uint8_t grouped = u8(+(255));
+  int8_t negative = s8((-(128)));
+  return pair(255, 256) + reverse(255, 256) + pair(256, 255) +
+         borrow(Owner(), 5) + exact(Owner(), 5) - 10;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(boundaries.canGenerateCode() && boundaries.diagnostics.empty() &&
+             lang::verifyMirProgram(boundaries.mir).valid(),
+         "signed minima, unsigned maxima, grouped signs, range-filtered "
+         "multiple arguments and literal/temporary-borrow composition preserve "
+         "valid typed MIR");
+
+  for (const std::string_view source : {
+           R"(int choose(uint8_t a, int b) { return 1; }
+int choose(uint8_t a, uint8_t b) { return 2; }
+int main() { return choose(1, 2); })",
+           R"(int choose(uint8_t a, uint16_t b) { return 1; }
+int choose(uint16_t a, uint8_t b) { return 2; }
+int main() { return choose(1, 2); })",
+           R"(class Owner { public: Owner() = default; };
+int choose(Owner& owner, int count) { return 1; }
+int choose(Owner owner, uint8_t count) { return 2; }
+int main() { return choose(Owner(), 5); })",
+           R"(class Owner { public: Owner() = default; };
+int choose(Owner& owner, uint8_t count) { return 1; }
+int choose(Owner& owner, uint64_t count) { return 2; }
+int main() { return choose(Owner(), 5); })"}) {
+    const auto result = lang::Frontend().analyze(
+        "unranked-literal-fallback.gti", std::string(source),
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    expect(!result.canGenerateCode() &&
+               hasDiagnosticCode(result.diagnostics, "GTI-S2013"),
+           "the shared fallback tier ranks neither literal width, the number "
+           "of adapted arguments, nor literal adaptation against a temporary "
+           "read borrow");
+  }
+
+  for (const std::string_view source : {
+           R"(class Choice { public:
+Choice(uint8_t a, int b) {} Choice(uint8_t a, uint8_t b) {} };
+int main() { Choice choice{1, 2}; return 0; })",
+           R"(class Base { public:
+Base(uint8_t a, int b) {} Base(uint8_t a, uint8_t b) {} };
+class Derived : public Base { public: Derived() : Base(1, 2) {} };
+int main() { Derived value{}; return 0; })"}) {
+    const auto result = lang::Frontend().analyze(
+        "unranked-constructor-literal-fallback.gti", std::string(source),
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    expect(!result.canGenerateCode() &&
+               hasDiagnosticCode(result.diagnostics, "GTI-S2013"),
+           "constructors and base initializers do not rank fallback counts");
+  }
+
+  const auto belowInt64 = lang::Frontend().analyze(
+      "literal-below-int64.gti", R"(
+int64_t take(int64_t value) { return value; }
+int main() { int64_t value = take(-9223372036854775809); return 0; }
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(
+      !belowInt64.canGenerateCode() &&
+          hasDiagnosticCode(belowInt64.diagnostics, "GTI-S2000") &&
+          hasDiagnostic(belowInt64.diagnostics,
+                        "Unary '-' cannot be applied to an unsigned integer"),
+      "below int64 minimum has no signed default domain and must be "
+      "rejected during argument analysis, before overload selection");
+
+  const auto groupedMinimum = lang::Frontend().analyze(
+      "grouped-literal-minimum.gti", R"(
+int8_t take(int8_t value) { return value; }
+int main() { if (take((-(128))) != -128) { return 1; } return 0; }
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(groupedMinimum.canGenerateCode(),
+         "a grouped signed minimum must be admitted before optimization");
+  if (groupedMinimum.canGenerateCode()) {
+    const auto optimized = lang::OptimizationPipeline().run(
+        lang::OptimizationRequest{.hir = groupedMinimum.hir,
+                                  .mir = groupedMinimum.mir,
+                                  .level = lang::OptimizationLevel::O3});
+    expect(optimized.valid(),
+           "a grouped signed minimum retains valid optimized MIR");
+    if (!optimized.valid()) {
+      for (const auto &pass : optimized.report.passes)
+        std::cerr << "pass: " << pass.name << '\n';
+      for (const auto &error : optimized.report.outputVerification.errors)
+        std::cerr << "verification: " << error.message << '\n';
+      std::cerr << lang::MirPrinter().print(optimized.mir);
+    }
+  }
+
+  for (const auto &[type, value] :
+       std::vector<std::pair<std::string, std::string>>{
+           {"int8_t", "-129"},
+           {"int8_t", "128"},
+           {"int16_t", "-32769"},
+           {"int16_t", "32768"},
+           {"int32_t", "-2147483649"},
+           {"int32_t", "2147483648"},
+           {"int64_t", "9223372036854775808"},
+           {"uint8_t", "-1"},
+           {"uint8_t", "256"},
+           {"uint16_t", "65536"},
+           {"uint32_t", "4294967296"},
+           {"uint64_t", "-1"}}) {
+    const auto result = lang::Frontend().analyze(
+        "literal-outside-parameter-range.gti",
+        type + " take(" + type + " value) { return value; }\n" +
+            "int main() { " + type + " value = take(" + value +
+            "); return 0; }",
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    expect(
+        !result.canGenerateCode() &&
+            hasDiagnosticCode(result.diagnostics, "GTI-S2003") &&
+            hasDiagnosticHint(result.diagnostics,
+                              "does not fit the parameter type '" + type + "'"),
+        "a literal one beyond a parameter boundary must be rejected before "
+        "backend entry, with its value-specific range hint");
+  }
 }
 
 constexpr NamedTest kTests[] = {

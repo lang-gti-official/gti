@@ -2880,6 +2880,22 @@
         "thread_local_storage": 0
       }
     },
+    "182-bounded-array-borrows.gti": {
+      "declarations": 1828,
+      "bodies": 156,
+      "generated_items": 80,
+      "generated_kinds": {
+        "program_initialization": 1,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 31,
+        "callable_adapter": 19,
+        "lifecycle_cleanup": 5,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 23,
+        "thread_local_storage": 0
+      }
+    },
     "183-immediate-functions.gti": {
       "declarations": 415,
       "bodies": 11,
@@ -2928,27 +2944,27 @@
         "thread_local_storage": 0
       }
     },
-    "182-bounded-array-borrows.gti": {
-      "declarations": 1828,
-      "bodies": 156,
-      "generated_items": 80,
+    "186-literal-call-arguments.gti": {
+      "declarations": 417,
+      "bodies": 12,
+      "generated_items": 1,
       "generated_kinds": {
-        "program_initialization": 1,
+        "program_initialization": 0,
         "hosted_entry": 1,
-        "structural_operator_adapter": 31,
-        "callable_adapter": 19,
-        "lifecycle_cleanup": 5,
+        "structural_operator_adapter": 0,
+        "callable_adapter": 0,
+        "lifecycle_cleanup": 0,
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
-        "concrete_instance_adapter": 23,
+        "concrete_instance_adapter": 0,
         "thread_local_storage": 0
       }
     }
   },
   "totals": {
-    "declarations": 224982,
-    "bodies": 28368,
-    "generated_items": 16674
+    "declarations": 225399,
+    "bodies": 28380,
+    "generated_items": 16675
   },
   "target": "arm64-apple-macos",
   "variants": {
@@ -2988,9 +3004,9 @@
         }
       },
       "totals": {
-        "declarations": 224982,
-        "bodies": 28366,
-        "generated_items": 16672
+        "declarations": 225399,
+        "bodies": 28378,
+        "generated_items": 16673
       }
     }
   }

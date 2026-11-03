@@ -568,6 +568,10 @@ ranks candidates. `twice(4)`, `values[0]`, `values.push_back(1)` and
 `Counter{3}` therefore resolve against `uint64_t` parameters, while
 `narrow(300)` against `uint8_t` and `twice(-1)` against `uint64_t` remain
 errors that name the literal's value.
+See [example 186](../../examples/186-literal-call-arguments.gti) for a
+source-defined window API and exact-overload preference. Adding an exact
+overload later can redirect a literal call; callers needing a fixed signature
+can pass an explicitly typed argument.
 
 Integer-to-floating assignment conversion is a rounding conversion, not a
 value-preserving widening guarantee. It uses the destination's IEEE binary32

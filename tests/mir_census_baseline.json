@@ -180,12 +180,13 @@
     "180-compact-source-owners.gti": 193,
     "181-general-object-layout.gti": 170,
     "182-associated-type-families.gti": 281,
+    "182-bounded-array-borrows.gti": 156,
     "183-immediate-functions.gti": 11,
     "184-payload-borrow-chains.gti": 11,
     "185-reflected-method-dispatch.gti": 47,
-    "182-bounded-array-borrows.gti": 156
+    "186-literal-call-arguments.gti": 12
   },
-  "total": 28246,
+  "total": 28258,
   "target": "arm64-apple-macos",
   "variants": {
     "x86_64-unknown-linux": {
@@ -193,7 +194,7 @@
         "087-associative-containers.gti": 451,
         "089-library-workflow.gti": 917
       },
-      "total": 28244
+      "total": 28256
     }
   }
 }

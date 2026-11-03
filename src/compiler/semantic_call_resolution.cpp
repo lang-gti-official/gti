@@ -7855,6 +7855,13 @@ auto SemanticVisitor::Impl::callConversionIsBetter(
         callConversionRank(leftParameters[index], arguments[index]);
     const int right =
         callConversionRank(rightParameters[index], arguments[index]);
+    // This ranking belongs only to the bounded raw-pointer/text
+    // compatibilities above. Literal adaptation and ephemeral read borrows
+    // have already selected their unranked fallback tier; an exact argument
+    // at one position must not outrank another candidate's fallback there.
+    if (left == 1000 || right == 1000) {
+      continue;
+    }
     if (left > right) {
       return false;
     }
