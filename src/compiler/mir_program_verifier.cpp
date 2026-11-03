@@ -1544,10 +1544,9 @@ exactInPlaceConstructionRoles(const std::vector<SemanticType> &arguments,
 
 // Temporary argument borrows and borrowed-carrier receivers cannot export
 // reference-like results, including untracked raw/native address values.
-[[nodiscard]] bool
-supportsEphemeralBorrowResult(const MirFunctionInstance *target,
-                              const ExpressionInfo &result,
-                              std::optional<std::size_t> parameter = std::nullopt) {
+[[nodiscard]] bool supportsEphemeralBorrowResult(
+    const MirFunctionInstance *target, const ExpressionInfo &result,
+    std::optional<std::size_t> parameter = std::nullopt) {
   if (!target || target->returnType.kind == SemanticType::RawPointer ||
       target->returnType.kind == SemanticType::NativeFunction ||
       target->returnType.kind == SemanticType::CString)
@@ -1563,15 +1562,15 @@ supportsEphemeralBorrowResult(const MirFunctionInstance *target,
   if (target->returnBorrowOrigin == BorrowOriginKind::Argument &&
       (target->returnBorrowParameter == *parameter ||
        std::find(target->returnBorrowParameters.begin(),
-                 target->returnBorrowParameters.end(), *parameter) !=
-           target->returnBorrowParameters.end()))
+                 target->returnBorrowParameters.end(),
+                 *parameter) != target->returnBorrowParameters.end()))
     return false;
   return std::none_of(target->returnBorrowFields.begin(),
                       target->returnBorrowFields.end(), [&](const auto &field) {
-    return field.origin == BorrowOriginKind::None ||
-           (field.origin == BorrowOriginKind::Argument &&
-            field.parameter == *parameter);
-  });
+                        return field.origin == BorrowOriginKind::None ||
+                               (field.origin == BorrowOriginKind::Argument &&
+                                field.parameter == *parameter);
+                      });
 }
 
 [[nodiscard]] std::optional<MirPlaceId>
@@ -1925,9 +1924,32 @@ uniqueMirClassInstanceForType(const MirProgram &program,
               block.id, instruction.id);
         }
       }
-      if (instruction.kind != MirInstructionKind::Call) {
+      const bool temporaryConstruction =
+          instruction.kind == MirInstructionKind::Construct &&
+          std::any_of(instruction.operands.begin(), instruction.operands.end(),
+                      [&](const MirOperand &operand) {
+                        const auto *input =
+                            operand.kind == MirOperandKind::Value
+                                ? definitionFor(body, operand.value)
+                                : nullptr;
+                        return input &&
+                               input->kind == MirInstructionKind::CallInput &&
+                               input->callInputKind ==
+                                   HirCallInputKind::ReadTemporaryBorrow;
+                      });
+      if (instruction.kind != MirInstructionKind::Call &&
+          !temporaryConstruction) {
         continue;
       }
+
+      const auto *constructorTarget =
+          temporaryConstruction && instruction.constructorTarget
+              ? program.findConstructorInstance(*instruction.constructorTarget)
+              : nullptr;
+      const auto *constructorOwner =
+          constructorTarget
+              ? program.findClassInstance(constructorTarget->owner)
+              : nullptr;
 
       const MirFunctionInstance *functionTarget =
           instruction.functionTarget
@@ -2206,7 +2228,7 @@ uniqueMirClassInstanceForType(const MirProgram &program,
             instruction.operands[index].kind == MirOperandKind::Value
                 ? definitionFor(body, instruction.operands[index].value)
                 : nullptr;
-        if (argumentInput &&
+        if (!temporaryConstruction && argumentInput &&
             argumentInput->kind == MirInstructionKind::CallInput &&
             argumentInput->callInputKind == HirCallInputKind::MoveValue &&
             argumentInput->info.type.kind == SemanticType::Lambda &&
@@ -2418,7 +2440,32 @@ uniqueMirClassInstanceForType(const MirProgram &program,
                                       CallableBoundary::Confined;
                          }));
         const bool supportedResult =
-            supportsEphemeralBorrowResult(functionTarget, instruction.info, index);
+            temporaryConstruction
+                ? constructorTarget && constructorOwner &&
+                      constructorTarget->borrowOrigin ==
+                          BorrowOriginKind::None &&
+                      constructorOwner->type == instruction.info.type &&
+                      !constructorOwner->traits.containsBorrowedState &&
+                      !instruction.info.traits.containsBorrowedState
+                : supportsEphemeralBorrowResult(functionTarget,
+                                                instruction.info, index);
+        const bool exactTarget =
+            temporaryConstruction
+                ? constructorTarget &&
+                      constructorTarget->definitionKind ==
+                          MirDefinitionKind::Source &&
+                      instruction.constructorKind ==
+                          ConstructorKind::Ordinary &&
+                      index < constructorTarget->parameterTypes.size() &&
+                      constructorTarget->parameterTypes[index] ==
+                          argumentInput->info.type
+                : functionTarget &&
+                      functionTarget->definitionKind ==
+                          MirDefinitionKind::Source &&
+                      functionTarget->linkage == LanguageLinkage::Gti &&
+                      index < functionTarget->parameterTypes.size() &&
+                      functionTarget->parameterTypes[index] ==
+                          argumentInput->info.type;
         const std::size_t argumentObligations =
             argumentPlace == nullptr
                 ? 0
@@ -2432,12 +2479,7 @@ uniqueMirClassInstanceForType(const MirProgram &program,
                                obligation.hirFullExpression != 0 &&
                                obligation.fullExpression != 0;
                       }));
-        if (functionTarget == nullptr ||
-            functionTarget->definitionKind != MirDefinitionKind::Source ||
-            functionTarget->linkage != LanguageLinkage::Gti ||
-            argumentInput->callInputIndex != index ||
-            index >= functionTarget->parameterTypes.size() ||
-            functionTarget->parameterTypes[index] != argumentInput->info.type ||
+        if (!exactTarget || argumentInput->callInputIndex != index ||
             argumentInput->info.type.kind != SemanticType::Reference ||
             argumentInput->info.type.referenceAccess != AccessMode::ReadOnly ||
             argumentInput->info.type.arguments.size() != 1 ||
@@ -2454,6 +2496,8 @@ uniqueMirClassInstanceForType(const MirProgram &program,
               block.id, instruction.id);
         }
       }
+      if (temporaryConstruction)
+        continue;
       const bool exactFunctionCallable =
           functionTarget != nullptr && !instruction.lambdaTarget &&
           (isCallOperatorTarget(functionTarget) ||

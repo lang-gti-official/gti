@@ -1346,6 +1346,7 @@ struct ResolvedConstructionInfo {
   std::vector<CompileTimeValue> valueArguments;
   std::vector<AppliedConceptRequirement> requirements;
   std::vector<SemanticType> parameterTypes;
+  std::vector<std::size_t> ephemeralBorrowArguments;
   std::vector<const Expr *> defaultArguments;
   // Designated struct construction supplies every field in declaration order,
   // including declaration defaults. These are caller-side MIR inputs.

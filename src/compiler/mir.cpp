@@ -2210,9 +2210,10 @@ verifyMirScalarInitializationFlow(const MirBody &body, std::size_t owner,
       continue;
     }
     // Full-expression value temporaries use the lifecycle verifier's exact
-    // Initialize/Drop flow, including conditional creation and failed producers.
-    // Do not impose the unrelated local-scalar Initialize instruction protocol
-    // on a producer that initializes its destination through lifecycle events.
+    // Initialize/Drop flow, including conditional creation and failed
+    // producers. Do not impose the unrelated local-scalar Initialize
+    // instruction protocol on a producer that initializes its destination
+    // through lifecycle events.
     if (place.root == MirPlaceRootKind::Temporary &&
         std::any_of(body.dropObligations.begin(), body.dropObligations.end(),
                     [&](const auto &drop) {
@@ -11836,7 +11837,8 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
               bool(captureDependency) ||
           !sameCallInputTraits(producer->info.traits, source->info.traits) ||
           (!ordinaryConstruction && !generatedDefault && !ordinaryCall &&
-           !scalarComputation && !payloadConstruction && !callableConstruction && !joinedTemporary &&
+           !scalarComputation && !payloadConstruction &&
+           !callableConstruction && !joinedTemporary &&
            producer->kind != MirInstructionKind::Move)) {
         return false;
       }
@@ -15718,7 +15720,8 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
             invocation.intrinsic == IntrinsicKind::OptionalStorageConstruct;
         const bool temporaryReadArgument =
             argument != nullptr &&
-            invocation.kind == MirInstructionKind::Call &&
+            (invocation.kind == MirInstructionKind::Call ||
+             invocation.kind == MirInstructionKind::Construct) &&
             parameter.kind == SemanticType::Reference &&
             parameter.referenceAccess == AccessMode::ReadOnly &&
             argument->callInputKind == HirCallInputKind::ReadTemporaryBorrow;
@@ -15893,7 +15896,8 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
         // It cannot retain a temporary input (program result-origin proof).
         if (failedInvocation && endingBlock && invocation.loan &&
             begin < endingBlock->instructions.size() &&
-            endingBlock->instructions[begin].kind == MirInstructionKind::EndBorrow &&
+            endingBlock->instructions[begin].kind ==
+                MirInstructionKind::EndBorrow &&
             endingBlock->instructions[begin].loan == invocation.loan)
           ++begin;
         if (endingBlock == nullptr || begin + temporaryArgumentLoans.size() >
@@ -15920,7 +15924,8 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
             block.terminator.invokeInstruction == invocation.id;
         if (invoke) {
           if (!exactEndPrefix(body.findBlock(block.terminator.target), 0) ||
-              !exactEndPrefix(body.findBlock(block.terminator.elseTarget), 0, true)) {
+              !exactEndPrefix(body.findBlock(block.terminator.elseTarget), 0,
+                              true)) {
             return failure(
                 body, owner,
                 "temporary argument loans must end in reverse order at the "

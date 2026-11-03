@@ -4084,13 +4084,11 @@ private:
     EphemeralReadBorrow,
   };
 
-  [[nodiscard]] bool
-  ephemeralBorrowResultSupported(
+  [[nodiscard]] bool ephemeralBorrowResultSupported(
       const CallableCandidate &function,
       std::optional<std::size_t> temporaryParameter = std::nullopt) const;
 
-  [[nodiscard]] bool
-  ephemeralBorrowTargetSupported(
+  [[nodiscard]] bool ephemeralBorrowTargetSupported(
       const CallableCandidate &function,
       std::optional<std::size_t> temporaryParameter = std::nullopt) const;
 
@@ -4098,6 +4096,11 @@ private:
       const CallableCandidate &function, const SemanticType &parameter,
       const SemanticType &argument, const ExprPtr &expression,
       std::size_t parameterIndex);
+
+  [[nodiscard]] bool
+  temporaryReadBorrowArgumentMatches(const SemanticType &parameter,
+                                     const SemanticType &argument,
+                                     const ExprPtr &expression);
 
   [[nodiscard]] CallArgumentMatchKind
   functionCallArgumentMatch(const CallableCandidate &function,

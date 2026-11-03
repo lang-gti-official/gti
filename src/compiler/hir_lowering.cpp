@@ -4640,11 +4640,11 @@ private:
   }
 
   [[nodiscard]] std::optional<std::vector<HirCallArgument>>
-  orderedConstructorArguments(const HirValue &constructor,
-                              const std::vector<HirValueId> &arguments,
-                              const std::vector<SemanticType> &parameterTypes,
-                              const HirBody &body,
-                              std::size_t explicitArgumentCount) const {
+  orderedConstructorArguments(
+      const HirValue &constructor, const std::vector<HirValueId> &arguments,
+      const std::vector<SemanticType> &parameterTypes, const HirBody &body,
+      std::size_t explicitArgumentCount,
+      std::span<const std::size_t> ephemeralBorrowArguments = {}) const {
     if (!constructor.constructorTarget ||
         constructor.constructorKind != ConstructorKind::Ordinary ||
         (constructor.intrinsic != IntrinsicKind::None &&
@@ -4652,7 +4652,7 @@ private:
       return std::nullopt;
     }
     return orderedArguments(arguments, parameterTypes, body,
-                            explicitArgumentCount);
+                            explicitArgumentCount, ephemeralBorrowArguments);
   }
 
   [[nodiscard]] std::optional<HirCallReceiver>
@@ -7566,9 +7566,10 @@ private:
               ? exprAs<DirectInitializer>(raw)->arguments().size()
               : value.parameterTypes.size();
       if (std::optional<std::vector<HirCallArgument>> plannedArguments =
-              orderedConstructorArguments(value, arguments,
-                                          value.parameterTypes, body,
-                                          explicitArgumentCount)) {
+              orderedConstructorArguments(
+                  value, arguments, value.parameterTypes, body,
+                  explicitArgumentCount,
+                  model.findConstruction(*raw)->ephemeralBorrowArguments)) {
         value.callPlan = HirCallPlan{.receiver = std::nullopt,
                                      .arguments = std::move(*plannedArguments)};
       }
