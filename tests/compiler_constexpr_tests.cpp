@@ -6703,6 +6703,41 @@ void testConstantEvaluationReuse() {
          "calls with new arguments execute again without lowering the call "
          "closure again");
 
+  // A lazily staged closure, whose runtime-only callee keeps a signature-only
+  // body, is reused the same way, and an executed runtime-only call reports
+  // identically whether its closure was reused or lowered again.
+  std::string lazy = "int runtime_only(int v) { return v; }\n"
+                     "consteval int pick(int v) {\n"
+                     "  if (v > 100) { return runtime_only(v); }\n"
+                     "  return v;\n}\nint sum() {\n  return 0";
+  for (int index = 1; index <= 20; ++index)
+    lazy += " + pick(" + std::to_string(index) + ")";
+  const auto lazyClosures = both(lazy + ";\n}", defaultSteps);
+  expect(lazyClosures.first.result.canGenerateCode() &&
+             lazyClosures.first.metrics.constexprClosureReuses >= 19,
+         "a lazily staged call closure is lowered once and reused");
+  const auto lazyExecuted = both(lazy + " + pick(200);\n}", defaultSteps);
+  expect(!lazyExecuted.first.result.canGenerateCode() &&
+             lazyExecuted.first.metrics.constexprClosureReuses >= 20 &&
+             std::any_of(lazyExecuted.first.result.diagnostics.begin(),
+                         lazyExecuted.first.result.diagnostics.end(),
+                         [](const lang::Diagnostic &diagnostic) {
+                           const std::string named =
+                               "'runtime_only' is not constexpr.";
+                           return diagnostic.code == "GTI-S2057" &&
+                                  (diagnostic.message.find(named) !=
+                                       std::string::npos ||
+                                   std::any_of(
+                                       diagnostic.hints.begin(),
+                                       diagnostic.hints.end(),
+                                       [&](const std::string &hint) {
+                                         return hint.find(named) !=
+                                                std::string::npos;
+                                       }));
+                         }),
+         "an executed runtime-only call in a reused lazy closure names its "
+         "callee");
+
   // A request that exceeds its budget only through repeated calls fails the
   // same way whether the repeats replay or execute. Find the one-call cost
   // first, then allow two calls but not three.

@@ -9950,10 +9950,12 @@ follow-ups:
   interpreter. The trusted runtime-terminal panic operation fails the request
   with its message. `[[track_caller]]` frames move the reported location to the
   user's call, and `std::panic(std::string_view)` is an ordinary constexpr
-  wrapper. Remaining: formatted messages (`L-UP-14` substep A); macro-body
-  failure locations inside trusted library macros; and the shared step/depth
-  budgets and immediate-call caching from the in-flight limits work, whose
-  cache must store results consistent with lazy staging.
+  wrapper. Lazy closures use the request's configurable step and depth
+  limits and the staged-closure cache unchanged: the cache key already
+  includes the completed constexpr inventory that decides which callees are
+  lowered, and only successes are memoized. Remaining: formatted messages
+  (`L-UP-14` substep A) and macro-body failure locations inside trusted
+  library macros.
 - **Implemented scope:** The existing evaluator admits concrete type/pack
   and `uint64_t` value-generic calls, exact scoped enums, concrete fixed arrays,
   fully initialized structural class/struct values, ordinary constexpr
