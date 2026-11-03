@@ -2035,6 +2035,18 @@ private:
   // rule, so neither cache can change which requests succeed. Both live for
   // one analysis request (see resetRequestState) and therefore for one
   // compilation or editor snapshot.
+  //
+  // Extension contract (for example lazy closure staging): any producer of a
+  // staged closure stores it here through recordClosure under the result key
+  // with arguments and receiver cleared, and consumers look it up with
+  // findClosure before lowering; there is no second closure cache. A closure
+  // records every step its lowering charged to the request (Closure::steps)
+  // and the staging depth it was lowered at, and a lookup is honored only
+  // where those still fit; work added to a closure after it is recorded must
+  // either be charged on every reuse or be recorded as a new closure.
+  // Resource exhaustion is attributed through ConstexprWorkBudget (see
+  // recordLimitExhaustion and describeLimitExhaustion), never by matching
+  // failure text.
   struct StagedConstantResults {
     struct Key {
       FunctionId function = 0;
