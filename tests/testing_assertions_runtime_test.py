@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def main():
@@ -36,19 +37,19 @@ def main():
     }
     with tempfile.TemporaryDirectory(prefix="gti-testing-assertions-") as temporary:
         temporary = Path(temporary)
-        for standard, level in (("c++20", "-O0"), ("c++23", "-O3")):
-            binary = temporary / f"assertions-{level}"
-            built = subprocess.run([str(compiler), str(fixture), "--std", standard, level,
+        for label, flags, _native in native_modes():
+            binary = temporary / f"assertions-{label}"
+            built = subprocess.run([str(compiler), str(fixture), *flags,
                                     "-o", str(binary)], env=environment,
                                    capture_output=True, text=True, timeout=180)
-            assert built.returncode == 0, (standard, level, built.stdout, built.stderr)
+            assert built.returncode == 0, (label, built.stdout, built.stderr)
             passed = subprocess.run([str(binary)], capture_output=True, text=True, timeout=20)
             assert (passed.returncode, passed.stdout, passed.stderr) == (
                 0, "assertions-passed\nguard-cleaned\n", ""), passed
             for mode, (marker, *fragments) in failures.items():
                 failed = subprocess.run([str(binary), mode], capture_output=True,
                                         text=True, timeout=20)
-                assert failed.returncode == 70, (standard, level, mode, failed)
+                assert failed.returncode == 70, (label, mode, failed)
                 expected_stdout = ("comparisons: 1\nformats: 2\n" if mode == "owned" else "") + "guard-cleaned\n"
                 assert failed.stdout == expected_stdout, (mode, failed.stdout)
                 assert "GTI-R0017" in failed.stderr, (mode, failed.stderr)

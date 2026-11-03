@@ -278,6 +278,7 @@ owners = [
   "generic_initialization",
   "tryable_propagation",
   "borrow_origin",
+  "lambda_reference",
   "local_reference_inference",
   "bounded_array_borrows",
   "bounded_array_borrows_runtime",
@@ -296,7 +297,7 @@ consumers = [
   "lsp_protocol",
   "diagnostic_recovery_lsp",
   "generic_algorithm_errors",
-  "^generic_algorithm_breadth_(cpp20|cpp23|no_elide|sanitized)$",
+  "generic_algorithm_breadth",
 ]
 
 [[area]]
@@ -333,6 +334,8 @@ consumers = [
 [[area]]
 area = "constexpr"
 paths = [
+  "src/compiler/compile_limits.cpp",
+  "include/gti/compile_limits.h",
   "src/compiler/constant_evaluator.cpp",
   "src/compiler/mir_constant_evaluator.cpp",
   "src/compiler/semantic_constexpr.cpp",
@@ -341,6 +344,7 @@ paths = [
 ]
 owners = [
   "^constexpr_",
+  "compile_limits",
   "macro_values_semantic_ir",
   "macro_values_runtime",
   "macro_fresh_callables",
@@ -1065,7 +1069,7 @@ owners = [
   "vector_construction_only_runtime",
   "vector_prepared_constructor_runtime",
   "vector_scalar_constructor_runtime",
-  "^generic_algorithm_breadth_(cpp20|cpp23|no_elide|sanitized)$",
+  "generic_algorithm_breadth",
   "generic_algorithm_cluster",
   "generic_algorithm_errors",
 ]
@@ -1299,6 +1303,7 @@ owners = [
 consumers = [
   "lsp_project_facts",
   "lsp_configuration",
+  "compile_limits",
   "llvm_cache_project_workflows",
   "native_packages",
   "module_discovery_lsp",
@@ -1398,6 +1403,7 @@ owners = [
   "package_registry_auth_cli",
   "missing_definition_cli_lsp",
   "executable_entry_cli_lsp",
+  "compile_limits",
 ]
 consumers = [
   "compiler_failure_reducer",
@@ -1456,6 +1462,7 @@ owners = [
 consumers = [
   "neovim_lsp_configuration",
   "package_registry_cli",
+  "compile_limits",
 ]
 
 [[area]]
@@ -1544,6 +1551,9 @@ paths = [
   ".github/",
   ".gitea/",
   "scripts/validation_checks.py",
+  "scripts/source_stdlib_ci.py",
+  "tests/source_stdlib_ci_test.py",
+  "cmake/ReuseToolchain.cmake",
   "scripts/configure_ci_*",
   "scripts/check_ci_sanitizers.py",
   "scripts/named_test_shards.py",
@@ -1556,6 +1566,7 @@ owners = [
   "ci_cache",
   "ci_release",
   "ci_sanitizer_capability",
+  "source_stdlib_ci",
   "named_test_shards",
 ]
 consumers = [
@@ -1572,6 +1583,7 @@ paths = [
   "scripts/resolve_release_source.py",
   "scripts/release_artifacts.py",
   "scripts/release_train.py",
+  "scripts/full_validation_report.py",
   "scripts/bundle_macos_runtime.py",
   "cmake/PackageRelease.cmake",
 ]
@@ -1622,6 +1634,22 @@ owners = [
   "optimized_test_compiler_policy",
 ]
 consumers = []
+
+[[area]]
+area = "backend-modes"
+paths = [
+  "tests/backend_modes.py",
+  "tests/execution_coverage_test.py",
+]
+owners = [
+  "execution_coverage",
+  "test_throughput_registration",
+]
+consumers = [
+  "lambda_pack_invocation_runtime",
+  "native_fixture_build",
+  "test_case_jobs",
+]
 
 [[area]]
 area = "ci-shard-durations"
@@ -1871,7 +1899,7 @@ reason = "interactive Neovim highlight comparison tool run by hand"
 
 [[area]]
 area = "preview-release"
-paths = ["scripts/preview_release.py", ".github/workflows/preview.yml"]
+paths = ["scripts/preview_release.py", "scripts/preview_build.py", ".github/workflows/preview.yml"]
 owners = ["preview_release", "ci_release"]
 consumers = ["preview_workflow", "neovim_gtiup"]
 risk = "system"

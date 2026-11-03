@@ -9,6 +9,7 @@ import tempfile
 
 from case_jobs import configured_jobs, positive_jobs, run_cases
 from native_fixture_build import build_fixture
+from backend_modes import cpp_only_case, is_cpp_mode, native_modes, optimization_level
 
 
 def run(command):
@@ -327,12 +328,7 @@ int main() {{
   return 0;
 }}
 """, 70, output)
-    modes = [(standard, optimization, [])
-             for standard in ("c++20", "c++23")
-             for optimization in ("O0", "O1", "O3")]
-    modes += [("c++23", "O0", ["-fno-elide-constructors"]),
-              ("c++23", "O1", ["-fsanitize=address,undefined",
-                                 "-fno-omit-frame-pointer"])]
+    modes = native_modes()
     if args.quick:
         modes = [("c++23", "O0", [])]
     with tempfile.TemporaryDirectory(prefix="gti-generic-sum-") as temporary:
@@ -401,31 +397,35 @@ int main() {
         for name, (text, expected_exit, expected_output) in cases.items():
             path = root / (name + ".gti")
             path.write_text(text)
-            for index, (standard, optimization, flags) in enumerate(modes):
-                plan.append((f"{name}/{index}-{standard}-{optimization}",
-                             (name, index, standard, optimization, flags,
+            for index, (label, flags, native) in enumerate(modes):
+                if name == "borrowed-class-payload" and not is_cpp_mode(flags):
+                    # The TU-private transport probe is C++ text appended to
+                    # the generated source; it has no LLVM counterpart.
+                    cpp_only_case("TU-private copy transport appended to the C++ text", name, label)
+                    continue
+                plan.append((f"{name}/{index}-{label}",
+                             (name, index, label, flags, native,
                               expected_exit, expected_output, exact_stderr.get(name))))
 
         def compile_case(case):
-            name, index, standard, optimization, flags, *_ = case
+            name, index, label, flags, native, *_ = case
             binary = root / f"{name}-{index}"
-            command = [str(compiler), str(root / (name + ".gti")), "--std", standard,
-                       "-" + optimization]
+            command = [str(compiler), str(root / (name + ".gti")), *flags]
             suffix = ((pathlib.Path(__file__).parent / "fixtures" /
                        "passive_payload_copy_transport.cpp").read_text()
                       if name == "borrowed-class-payload" else "")
             compiled = build_fixture(command, binary, native_suffix=suffix,
-                                     native_arguments=flags, standard=standard,
-                                     optimization=optimization, text=True,
+                                     native_arguments=native,
+                                     optimization=optimization_level(flags), text=True,
                                      capture_output=True, check=False)
             if compiled.returncode:
-                raise AssertionError(f"{name} {standard} {optimization}: compile failed\n" +
+                raise AssertionError(f"{name} {label}: compile failed\n" +
                                      compiled.stdout + compiled.stderr)
             return case, binary
 
         def execute_case(compiled):
             case, binary = compiled
-            name, _, standard, optimization, _, expected_exit, expected_output, stderr = case
+            name, _, label, _, _, expected_exit, expected_output, stderr = case
             executed = run([str(binary)])
             if (executed.returncode != expected_exit or
                     executed.stdout != expected_output or
@@ -434,7 +434,7 @@ int main() {
                      "division_by_zero" not in executed.stderr) or
                     "AddressSanitizer" in executed.stderr or
                     "runtime error:" in executed.stderr):
-                raise AssertionError(f"{name} {standard} {optimization}: "
+                raise AssertionError(f"{name} {label}: "
                                      f"exit={executed.returncode} stdout={executed.stdout!r} "
                                      f"stderr={executed.stderr!r}\n")
 

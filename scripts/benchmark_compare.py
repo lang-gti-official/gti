@@ -905,7 +905,8 @@ def load_build_provenance(
             {"raw_pointer_audit_library_findings"}
             if "raw_pointer_audit_library_findings" in report
             else set()
-        ),
+        )
+        | ({"compile_limits"} if "compile_limits" in report else set()),
         "GTI build report",
     )
     if report["schema"] != 2 or isinstance(report["schema"], bool):
@@ -926,6 +927,19 @@ def load_build_provenance(
             "GTI build report raw_pointer_audit_library_findings must be a boolean"
         )
     report["raw_pointer_audit_library_findings"] = library_findings
+    # Additive per-request compile limits; older schema-2 reports omit them
+    # and were built with their compiler's defaults.
+    compile_limits = report.get("compile_limits", {})
+    if not isinstance(compile_limits, dict) or any(
+        not isinstance(key, str)
+        or not isinstance(value, int)
+        or isinstance(value, bool)
+        or value < 1
+        for key, value in compile_limits.items()
+    ):
+        raise BenchmarkError(
+            "GTI build report compile_limits must map limit names to positive integers"
+        )
     # Schema-2 reports predating source debugging omit this additive field.
     # This harness never requests GTI source mappings, so accepting a true
     # policy would silently measure a different generated-source workflow.

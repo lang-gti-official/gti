@@ -10,6 +10,7 @@ import tempfile
 from case_jobs import configured_jobs, positive_jobs, run_cases
 from contiguous_iterator_completion_test import MODES
 from native_fixture_build import build_fixture
+from backend_modes import is_cpp_mode, keep_cpp
 
 
 def negative_sources():
@@ -61,14 +62,15 @@ def main():
             if fixture != "paired_span_iterator_bounds":
                 native_sources = [fixtures / "stdlib_adoption_allocation_counts.cpp"]
             else:
-                command.append("--keep-cpp")
+                command += keep_cpp(flags)
             result = build_fixture(
                 command, executable, native_sources=native_sources,
                 native_arguments=native, standard=flags[1],
                 optimization=flags[2].removeprefix("-"), env=environment,
                 capture_output=True, text=True, timeout=180)
             assert result.returncode == 0, (fixture, label, result.stdout, result.stderr)
-            assert "// GTI verified-MIR body:" in executable.with_suffix(".gti.cpp").read_text()
+            if is_cpp_mode(flags):
+                assert "// GTI verified-MIR body:" in executable.with_suffix(".gti.cpp").read_text()
             return fixture, label, executable
 
         def observe(case):

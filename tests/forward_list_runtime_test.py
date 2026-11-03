@@ -6,6 +6,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from backend_modes import is_cpp_mode, keep_cpp, native_modes
 
 
 def run(command):
@@ -17,14 +18,9 @@ def main():
         raise SystemExit("usage: forward_list_runtime_test.py <gti>")
     compiler = pathlib.Path(sys.argv[1]).resolve()
     fixtures = pathlib.Path(__file__).parent / "fixtures"
-    modes = [
-        (f"{standard}-{level}", [f"-{level}", "--std", standard])
-        for standard in ("c++20", "c++23")
-        for level in ("O0", "O1", "O3")
-    ]
-    modes.append(("sanitized", ["-O1", "--std", "c++23"]))
+    modes = native_modes()
     with tempfile.TemporaryDirectory(prefix="gti-forward-list-") as temporary:
-        for name, flags in modes:
+        for name, flags, native in modes:
             for fixture in (
                 "forward_list_algorithms", "forward_list_cleanup", "owned_field_restore",
                 "forward_list_emplacement", "forward_list_emplacement_cleanup",
@@ -32,7 +28,7 @@ def main():
                 binary = pathlib.Path(temporary) / f"{fixture}-{name}"
                 command = [
                     str(compiler), str(fixtures / f"{fixture}.gti"),
-                    *flags, "--keep-cpp", "-o", str(binary),
+                    *flags, *keep_cpp(flags), "-o", str(binary),
                 ]
                 if name == "sanitized":
                     command += [
@@ -44,12 +40,14 @@ def main():
                     raise AssertionError(
                         f"{fixture}, {name} build failed:\n{built.stdout}{built.stderr}"
                     )
-                generated = binary.with_suffix(".gti.cpp").read_text()
-                if "// GTI verified-MIR body:" not in generated:
-                    raise AssertionError("missing verified-MIR emission witness")
-                if fixture == "forward_list_emplacement_cleanup":
-                    if "in-place constructor field reparent" not in generated:
+                if is_cpp_mode(flags):
+                    generated = binary.with_suffix(".gti.cpp").read_text()
+                    if "// GTI verified-MIR body:" not in generated:
+                        raise AssertionError("missing verified-MIR emission witness")
+                    if (fixture == "forward_list_emplacement_cleanup"
+                            and "in-place constructor field reparent" not in generated):
                         raise AssertionError("missing in-place element publication")
+                if fixture == "forward_list_emplacement_cleanup":
                     executions = 2
                 elif fixture.endswith("cleanup"):
                     executions = 3

@@ -4,6 +4,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -18,32 +19,29 @@ def main() -> int:
     source = pathlib.Path(sys.argv[2]).resolve()
     with tempfile.TemporaryDirectory(prefix="gti-binary64-") as temporary:
         root = pathlib.Path(temporary)
-        for optimization in ("O0", "O3"):
-            for standard in ("c++20", "c++23"):
-                executable = root / f"binary64-{optimization}-{standard}"
-                built = run(
-                    [
-                        str(compiler),
-                        str(source),
-                        f"-{optimization}",
-                        "--std",
-                        standard,
-                        "-o",
-                        str(executable),
-                    ]
-                )
-                if built.returncode != 0:
-                    sys.stderr.write(built.stdout)
-                    sys.stderr.write(built.stderr)
-                    return 1
-                executed = run([str(executable)])
-                if (
-                    executed.returncode != 0
-                    or executed.stdout != "binary64 test passed\n"
-                ):
-                    sys.stderr.write(executed.stdout)
-                    sys.stderr.write(executed.stderr)
-                    return 1
+        for mode, flags, native in native_modes():
+            executable = root / f"binary64-{mode}"
+            built = run(
+                [
+                    str(compiler),
+                    str(source),
+                    *flags,
+                    "-o",
+                    str(executable),
+                ]
+            )
+            if built.returncode != 0:
+                sys.stderr.write(built.stdout)
+                sys.stderr.write(built.stderr)
+                return 1
+            executed = run([str(executable)])
+            if (
+                executed.returncode != 0
+                or executed.stdout != "binary64 test passed\n"
+            ):
+                sys.stderr.write(executed.stdout)
+                sys.stderr.write(executed.stderr)
+                return 1
 
         emitted = root / "binary64.cpp"
         emission = run(
