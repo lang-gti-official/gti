@@ -17,7 +17,10 @@ if __name__ == "__main__":
     names = ("scalar_temporary_borrow", "186-scalar-temporary-borrows",
              "187-operator-temporary-borrows", "temporary_borrow_library_clients")
     main(names=names, llvm_modes=True,
-         cpp_unsupported="scalar and operator temporary reference arguments",
+         cpp_unsupported={name: ("conditionally available member operators"
+                                if name == "temporary_borrow_library_clients" else
+                                "scalar and operator temporary reference arguments")
+                          for name in names},
          fixture_paths={name: root / "examples" / f"{name}.gti" for name in names[1:3]},
          cases={names[0]: [((), (0, output, "")),
                            (("later",), (70, output, failure(later))),

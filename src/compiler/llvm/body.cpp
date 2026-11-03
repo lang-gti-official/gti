@@ -1600,6 +1600,16 @@ private:
     if (!recipe || (!obligation && !instruction.destination))
       throw BackendUnsupportedError(
           "LLVM cleanup requires its exact sealed obligation/recipe");
+    if (!recipe->requiresActiveCleanup &&
+        !addressValue(session.program().mir(), recipe->type)) {
+      // A passive SSA value has a checked lifetime but no runtime cleanup.
+      // In particular, failure before its producer cannot materialize that
+      // value merely to call an empty cleanup helper: the SSA definition
+      // does not dominate such a failure edge. Retire only its live flag.
+      if (obligation)
+        ir.CreateStore(ir.getFalse(), live.at(obligation->id));
+      return;
+    }
     auto *done =
         llvm::BasicBlock::Create(session.context(), "drop.done", &function);
     if (obligation) {

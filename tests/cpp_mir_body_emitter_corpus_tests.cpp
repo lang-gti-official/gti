@@ -269,6 +269,13 @@ void testGeneralTextStepMatchesProductionEmission() {
         lang::OptimizationPipeline().run(frontend.hir,
                                          lang::OptimizationLevel::O0);
     progress.checkpoint("optimization");
+    const bool conditionalOperator =
+        source.filename() == "189-protocol-format-hash.gti" ||
+        source.filename() == "190-conditional-member-operators.gti";
+    const bool temporaryReference =
+        source.filename() == "186-scalar-temporary-borrows.gti" ||
+        source.filename() == "187-operator-temporary-borrows.gti" ||
+        source.filename() == "191-reference-parameter-packs.gti";
     // These source examples intentionally use LLVM-only operations. Keep a
     // positive unsupported-operation assertion rather than silently dropping
     // them; the native corpus oracle executes both LLVM endpoints.
@@ -281,14 +288,17 @@ void testGeneralTextStepMatchesProductionEmission() {
         source.filename() == "178-wrapping-atomic-counters.gti" ||
         source.filename() == "179-weak-ownership.gti" ||
         source.filename() == "180-compact-source-owners.gti" || generalLayout ||
-        aggregateConstant) {
+        aggregateConstant || conditionalOperator || temporaryReference) {
       bool unsupported = false;
       try {
         static_cast<void>(gti_test::emitCpp(frontend, frontend.mir,
                                             frontend.mir, optimizations));
       } catch (const lang::BackendUnsupportedError &error) {
         const std::string limitation =
-            generalLayout       ? "general sizeof/alignof"
+            conditionalOperator ? "conditionally available member operators"
+            : temporaryReference
+                ? "scalar and operator temporary reference arguments"
+            : generalLayout     ? "general sizeof/alignof"
             : aggregateConstant ? "aggregate constant publication"
                                 : "wrapping atomic read-modify-write";
         unsupported =

@@ -44,6 +44,8 @@ class Built {
 public:
   Built<Args...>(Args&... args) { observe(args...); }
 };
+void construct_forward<Args...>(Args&... args) { auto reader = Built(args...); }
+void construct_mutable_forward<Args...>(mut Args&... args) { auto reader = Built(args...); }
 class TypedReader<Args...> {
 public:
   TypedReader() = default;
@@ -62,12 +64,15 @@ int main() {
   Built built{first, second};
   TypedReader<Ticket, std::string> typed{};
   typed.read(first, text);
+  construct_forward(first, second);
+  construct_forward();
   observe();
   by_value(counter);
   mut int left = 4;
   mut int right = 9;
+  construct_mutable_forward(left);
   increment_all(left, right);
   mutate_then_observe(left, right);
   return first.read() == 7 && second.read() == 8 && text.size() == std::size_t(8)
-      && visits == 18 && counter.value == 4 && drops == 0 && left == 6 && right == 11 ? 0 : 1;
+      && visits == 21 && counter.value == 4 && drops == 0 && left == 6 && right == 11 ? 0 : 1;
 }

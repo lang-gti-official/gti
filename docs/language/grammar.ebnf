@@ -1567,8 +1567,10 @@ pack-expansion         = IDENTIFIER "..." ;
    parameters cover only its parameters, requirements, initializer list,
    defaults, and body; they are never explicit call arguments and do not
    escape to later class members. One final constructor-local type pack with
-   its named by-value parameter pack is implemented through ordered owned
-   argument staging, including exact final-field construction. This is not a
+   its named by-value or reference parameter pack is implemented through ordered
+   argument staging. Owned arguments support exact final-field construction;
+   reference arguments retain call-confined access and require a non-borrowed
+   constructor result. This is not a
    pack of uint64_t generic values. Constructor-local `uint64_t` remains
    restricted to an inferred fixed-array extent.
 

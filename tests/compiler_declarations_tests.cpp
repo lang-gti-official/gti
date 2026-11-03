@@ -6866,8 +6866,8 @@ int main() {
          "a single non-generic member overload must check requirements after "
          "substituting its generic class arguments");
 
-  const lang::FrontendResult constrainedOperator =
-      lang::Frontend().analyze("constrained-operator.gti", R"(
+  const lang::FrontendResult constrainedOperator = lang::Frontend().analyze(
+      "constrained-operator.gti", R"(
 class ConstrainedOperator<T> {
 public:
   bool operator()(T value)
@@ -6889,12 +6889,12 @@ int main() {
   return value(4) && !(value != other) ? 0 : 1;
 }
 )",
-                               {standardLibraryPrelude()}, {},
-                               {standardLibraryRoot()});
-  expect(constrainedOperator.canGenerateCode() &&
-             lang::verifyMirProgram(constrainedOperator.mir).valid(),
-         "non-polymorphic operators retain ordinary requirements through "
-         "concrete selection and verified MIR without constraining unused owners");
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(
+      constrainedOperator.canGenerateCode() &&
+          lang::verifyMirProgram(constrainedOperator.mir).valid(),
+      "non-polymorphic operators retain ordinary requirements through "
+      "concrete selection and verified MIR without constraining unused owners");
   const lang::FrontendResult rejectedPolymorphicRequirements =
       lang::Frontend().analyze("rejected-polymorphic-requires.gti", R"(
 class AbstractValues<T> {

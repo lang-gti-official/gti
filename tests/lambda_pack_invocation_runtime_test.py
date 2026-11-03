@@ -71,16 +71,18 @@ def main(names=None, cases=None, execution_profile=None, stdin_by_name=None,
             if native_arguments:
                 command += ["--", *native_arguments]
             timeout = SANITIZED_BUILD_TIMEOUT if label == "sanitized" else scaled_timeout(120)
-            expected_cpp_limitation = cpp_unsupported and "--std" in flags
+            limitation = (cpp_unsupported.get(name) if isinstance(cpp_unsupported, dict)
+                          else cpp_unsupported)
+            expected_cpp_limitation = limitation and "--std" in flags
             if expected_cpp_limitation:
                 binary.write_bytes(b"preserved unsupported output")
             built = subprocess.run(command, capture_output=True, text=True,
                                    timeout=timeout, env=environment)
             if expected_cpp_limitation:
                 assert (built.returncode == 65 and "GTI-B0003" in built.stderr
-                        and cpp_unsupported in built.stderr
+                        and limitation in built.stderr
                         and binary.read_bytes() == b"preserved unsupported output"), (name, label, built)
-                print(f"RECORDED C++ LIMITATION {name}/{label}: {cpp_unsupported}", flush=True)
+                print(f"RECORDED C++ LIMITATION {name}/{label}: {limitation}", flush=True)
                 return name, label, None
             if built.returncode != 0:
                 # Keep the compiler's saved reason in detached-run evidence,

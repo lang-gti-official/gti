@@ -1356,6 +1356,22 @@ state: lifecycle traits still derive from actual fields and bases. Concrete
 storage and reference-referent validation remain frontend responsibilities.
 There is no public-library-name recognition or backend-selected expansion rule.
 
+A named `Args&...` or `mut Args&...` parameter stores an abstract
+`Reference<TypePack>` signature. Concrete substitution distributes the access
+mode over each object element, producing `TypePack<Reference<T>...>`; ordinary
+by-value packs remain distinct. Function, method and constructor inference bind
+the object elements, while explicit reference element arguments are rejected
+instead of applying reference collapsing. A body binds the grouped concrete
+pack, not a reference to the group. Forwarding and folds retain each element's
+origin and access: mutable elements may be reborrowed read-only, but read-only
+elements cannot acquire exclusive access. Named move-only values are observed
+without copying; multiple read-only aliases are permitted and exclusive alias
+conflicts use ordinary call checking. The first slice confines reference packs
+to invocations with non-borrowed results. Exact fresh read-only arguments use
+the same full-expression materialization and failure cleanup as fixed reference
+parameters, including ordinary source constructors whose result carries no
+borrow. Mutable arguments always require a mutable source place.
+
 Named method packs can bind the enclosing class's final generic pack by its
 resolved identity. Declaration signatures retain symbolic `TypePack` metadata;
 class substitution preserves that identity through symbolic base forwarding.
@@ -1374,8 +1390,8 @@ instance signatures flatten concrete packs independently of discovery path,
 while body bindings retain source pack identity for cleanup and forwarding.
 Each mutable-reference pack element has its own semantic entry loan, identified
 by the formal pack binding and constant element index. Whole-pack forwarding
-preserves the exact reference type/access rather than borrowing the grouped
-binding. These elements cannot be named independently or escape through a pack
+preserves the element origin and requested reference access rather than borrowing
+the grouped binding. These elements cannot be named independently or escape through a pack
 expression; the entry capabilities last for the invocation. HIR and MIR retain
 the projected identities and end the loans on normal and failure exits.
 Concrete by-value pack elements that carry reference fields likewise retain

@@ -66,7 +66,7 @@ public:
   void observe(Args&... args) {}
 };
 int main() { Reader<int&> reader{}; int value = 3; reader.observe(value); return 0; }
-""", "GTI-S2023"),
+""", "GTI-S2003"),
         "constructor_escape": ("""
 struct Holder<T> {
   T& value;
@@ -74,6 +74,23 @@ struct Holder<T> {
 };
 int main() { Ticket value{}; Holder<Ticket> holder{value, value}; return 0; }
 """, "GTI-S2023"),
+        "constructor_text_escape": ("""
+import std.string;
+struct Holder {
+  std::string_view value;
+  Holder<Args...>(std::string_view text, Args&... args) : value(text) {}
+};
+int main() { std::string text = "owner"; int n = 1; Holder holder{text.view(), n}; return 0; }
+""", "GTI-S2023"),
+        "function_text_escape": ("""
+import std.string;
+struct Holder {
+  std::string_view value;
+  Holder(std::string_view text) : value(text) {}
+};
+Holder observe<Args...>(std::string_view text, Args&... args) { return Holder(text); }
+int main() { std::string text = "owner"; int n = 1; auto holder = observe(text.view(), n); return 0; }
+""", "GTI-S2045"),
         "forwarding_reference": ("""
 void observe<Args...>(Args&&... args) {}
 int main() { return 0; }
@@ -91,7 +108,7 @@ void schedule<T>(T& value) {
 }
 void escape<Args...>(Args&... args) { (schedule(args), ...); }
 int main() { Ticket value{}; escape(value); return 0; }
-""", "GTI-S20"),
+""", "GTI-S2084"),
     }
     with tempfile.TemporaryDirectory(prefix="gti-reference-packs-") as temporary:
         scratch = Path(temporary)

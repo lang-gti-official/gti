@@ -826,11 +826,13 @@ occurrences must infer one canonical type, and every local type parameter must
 occur in an inferable parameter position. A local parameter is visible only in
 that constructor's parameters, requirements, defaults, initializer list, and
 body and cannot shadow an owner parameter. A final constructor-local type pack
-and final by-value parameter-pack expansion are implemented within the ordinary
-owned pack/selected-constructor contract, including final-field construction.
+and final by-value, read-only-reference or mutable-reference parameter-pack
+expansion are implemented within the ordinary selected-constructor contract,
+including final-field construction for owned arguments.
 Concrete pack elements retain exact copy/move/borrow roles, source order and
 cleanup; this does not add explicit constructor-local arguments, local generic
-defaults, CTAD, parameter reference packs or native variadic forwarding.
+defaults, CTAD or native variadic forwarding. Reference packs require a result
+without borrowed state and retain the same call-confined access as function packs.
 
 The selected constructor declaration, concrete owner, and ordered local
 type/value arguments form one concrete constructor identity. Distinct local

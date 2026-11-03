@@ -592,7 +592,8 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
     // are validated. Resolve only identities here; the lexical validation pass
     // checks the source clause after class members and other blocks are known.
     auto requirements = resolveRequirements(
-        declaration->requiresClause() ? &*declaration->requiresClause() : nullptr,
+        declaration->requiresClause() ? &*declaration->requiresClause()
+                                      : nullptr,
         enclosing, false);
     endTypeParameterScope();
     registeringConformanceParameters = nullptr;
@@ -1331,15 +1332,15 @@ auto SemanticVisitor::Impl::protocolConformanceFailure(
         return false;
     return true;
   };
-  const bool withinBudget = std::all_of(
-      requirement.arguments.begin(), requirement.arguments.end(),
-      [&](const auto &type) { return charge(charge, type); });
+  const bool withinBudget =
+      std::all_of(requirement.arguments.begin(), requirement.arguments.end(),
+                  [&](const auto &type) { return charge(charge, type); });
   const auto key = std::pair{requirement.conceptId, requirement.arguments};
   if (!withinBudget ||
       activeConformanceRequirements.size() >= maximumProjectionDepth ||
       std::find(activeConformanceRequirements.begin(),
-                activeConformanceRequirements.end(), key) !=
-          activeConformanceRequirements.end()) {
+                activeConformanceRequirements.end(),
+                key) != activeConformanceRequirements.end()) {
     failure.missingConformance = false;
     failure.expressionFailure =
         "Conformance requirements are cyclic or exceed the nesting limit or "
@@ -1621,12 +1622,6 @@ auto SemanticVisitor::Impl::analyzeProtocolOperationCall(
                    [&](const SemanticType &argument) {
                      return containsOpenTypeParameter(argument);
                    })) {
-    if (const auto failure =
-            protocolConformanceFailure({.conceptId = id, .arguments = arguments});
-        failure && !failure->missingConformance) {
-      reportConstraintFailure(site, *failure);
-      return fail();
-    }
     if (const auto match = matchConformance(id, arguments)) {
       const auto &conformance = conformances[match->conformance - 1];
       if (const auto failed =
@@ -1640,6 +1635,15 @@ auto SemanticVisitor::Impl::analyzeProtocolOperationCall(
             &operation.declaration->name(), "Operation declared here.");
         return fail();
       }
+    }
+    // Preserve the direct operation's precise signature diagnostic above.
+    // An invalid contract reached through a nested requirement instead makes
+    // that requirement unsatisfied and keeps its constraint provenance here.
+    if (const auto failure = protocolConformanceFailure(
+            {.conceptId = id, .arguments = arguments});
+        failure && !failure->missingConformance) {
+      reportConstraintFailure(site, *failure);
+      return fail();
     }
     if (!protocolOperationTarget(callee)) {
       reportConformanceError(site, "No conformance block 'for concept " +

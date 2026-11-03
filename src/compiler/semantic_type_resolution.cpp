@@ -1911,6 +1911,15 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
          (!constructor.parameterPack || arguments.size() <= fixedCount))) {
       continue;
     }
+    const bool referencePack =
+        constructor.parameterPack && !constructor.parameterTypes.empty() &&
+        constructor.parameterTypes.back().kind == SemanticType::Reference;
+    const auto packObjectType = [&](const SemanticType &type) {
+      return referencePack && type.kind == SemanticType::Reference &&
+                     type.arguments.size() == 1
+                 ? type.arguments.front()
+                 : type;
+    };
     GenericSubstitution constructorSubstitution = substitution;
     bool inferred = true;
     GenericParameterId conflictingParameter = 0;
@@ -1943,7 +1952,8 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
       if (parameter.pack) {
         for (std::size_t index = fixedCount; index < arguments.size();
              ++index) {
-          constructorTypeArguments.push_back(arguments[index].type);
+          constructorTypeArguments.push_back(
+              packObjectType(arguments[index].type));
         }
       } else if (parameter.value) {
         const auto found = constructorSubstitution.values.find(parameter.id);
@@ -2019,9 +2029,11 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
       for (std::size_t index = fixedCount; index < arguments.size(); ++index) {
         const auto &pattern = constructor.parameterTypes.back();
         parameterTypes.push_back(
-            pattern.kind == SemanticType::Reference
-                ? SemanticType::referenceTo(arguments[index].type,
-                                            pattern.referenceAccess)
+            pattern.kind == SemanticType::Reference &&
+                    arguments[index].type.kind != SemanticType::TypePack
+                ? SemanticType::referenceTo(
+                      packObjectType(arguments[index].type),
+                      pattern.referenceAccess)
                 : arguments[index].type);
       }
     }
@@ -2378,10 +2390,12 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
   }
 
   const ViableConstructor &selected = viable.front();
-  if (selected.constructor && selected.constructor->parameterPack &&
+  const bool selectedReferencePack =
+      selected.constructor && selected.constructor->parameterPack &&
       selected.constructor->declaration &&
       !selected.constructor->declaration->parameters().empty() &&
-      selected.constructor->declaration->parameters().back().type.reference &&
+      selected.constructor->declaration->parameters().back().type.reference;
+  if (selectedReferencePack &&
       typeTraits(constructedType).containsBorrowedState) {
     report(paren,
            "A reference parameter pack cannot construct a result with "
@@ -2808,6 +2822,17 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
     resolved.borrowAccess = AccessMode::ReadOnly;
     resolved.borrowFields = std::move(textOrigins);
     resolved.dependentTextPublication = true;
+  }
+  if ((selectedReferencePack || !resolved.ephemeralBorrowArguments.empty()) &&
+      (resolved.borrowOrigin != BorrowOriginKind::None ||
+       !resolved.borrowFields.empty() || resolved.dependentTextPublication)) {
+    report(
+        paren,
+        "A temporary reference argument or reference parameter pack requires "
+        "a constructor result with no retained dependency.",
+        "GTI-S2023");
+    currentType = constructedType;
+    return;
   }
   if (emptyReturn != nullptr) {
     std::optional<ConstantValue> immediateValue;
