@@ -243,10 +243,24 @@
         "85a96e81e07dc5e8c7663c6122be6d29d7661c1f"
       ],
       "merge": "85a96e81e07dc5e8c7663c6122be6d29d7661c1f"
+    },
+    {
+      "task": "carrier-temporary-member-call",
+      "pr": 168,
+      "head": "6d1a103c26a21c8540585986404b5c83ea76a42d",
+      "tests": [
+        "carrier_shell_references",
+        "borrow_carrier_receivers_runtime",
+        "borrow_carrier_receivers"
+      ],
+      "contributions": [
+        "39c3bdf30b0d56bd15324bb3f69d5cec7e17289a"
+      ],
+      "merge": "39c3bdf30b0d56bd15324bb3f69d5cec7e17289a"
     }
   ],
   "removed": [],
   "main": "e3532e6715dd6344b0085e367982a8f2d496bda1",
-  "previous": "1e739f24b8b9e2f8e6da10de9afc1f1fd995263d",
-  "candidate": "af706270c1a84c4cbb849c0128dc61ea"
+  "previous": "6ed26ced974fd54d982116907badf799926d7bf7",
+  "candidate": "e94559608559431c8e7e2f00dad6685d"
 }
