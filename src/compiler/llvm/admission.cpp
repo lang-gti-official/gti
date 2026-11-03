@@ -1014,8 +1014,10 @@ public:
     if (related(operand.type))
       return true;
     if (const auto *place = body.findPlace(operand.place))
-      if (related(place->type))
-        return true;
+      // A selected place already names the presented referent, as emission's
+      // Places::selected does. A plain base alias need not re-prove the
+      // hierarchy of the complete object its provenance loan protects.
+      return related(place->type);
     if (const auto *loan = body.findLoan(operand.loan)) {
       // A call that selected a non-hierarchy referent returns its checked
       // address; the hierarchy storage it was borrowed from is not used here.
@@ -2859,6 +2861,9 @@ private:
         // value storage, a retained receiver staged in place, or a fresh
         // full-expression temporary whose value obligation stays with the
         // caller. A call operator is an ordinary member of its receiver.
+        // Retention describes the caller's ownership and cleanup, not the
+        // target's receiver mode: it may invoke a readonly or mutable member
+        // while retaining the same owned object through the full expression.
         const auto *input = receiverInput(body, *stage.receiver);
         const bool moved = input && consumedReceiver(body, *input);
         const bool retained =
@@ -2878,8 +2883,7 @@ private:
         const bool consuming = target && target->receiverMutability ==
                                              ReceiverMutability::Consuming;
         if (!target || target->linkage != LanguageLinkage::Gti ||
-            (consuming ? !(moved || retained || temporary)
-                       : moved || retained) ||
+            (consuming ? !(moved || retained || temporary) : moved) ||
             std::any_of(
                 target->parameterTypes.begin(), target->parameterTypes.end(),
                 [](const auto &type) { return type == SemanticType::Void; }))
