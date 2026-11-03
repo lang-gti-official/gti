@@ -396,6 +396,31 @@ class RemotePreviewTests(unittest.TestCase):
                 self.assertNotIn('MACOSX_DEPLOYMENT_TARGET',call.kwargs['env'])
             self.assertIn('-DCMAKE_OSX_DEPLOYMENT_TARGET=26.0',execute.call_args.args[0])
 
+    def test_installed_smokes_use_staged_absolute_executables(self):
+        import preview_remote as remote
+        with tempfile.TemporaryDirectory() as tmp:
+            build = Path(tmp)/'build'; build.mkdir()
+            # A build-tree binary and the installed binary coexist. Bare `gti`
+            # makes the CLI harness resolve the first but PATH execute the second.
+            (build/'gti').write_text('build-tree binary')
+            (build/'preview-editor.path').write_text('/pinned-editor/bin\n')
+            stage = build/'preview-stage'
+            (stage/'bin').mkdir(parents=True)
+            for name in ('gti', 'gti_lsp'):
+                (stage/'bin'/name).write_text('staged binary')
+            with patch.object(remote.host,'system',return_value='Darwin'), \
+                    patch.object(remote.host,'machine',return_value='arm64'), \
+                    patch.object(remote.host,'mac_ver',return_value=('27.0.1',(),'')), \
+                    patch.object(p,'command',side_effect=lambda *args:SHA if 'rev-parse' in args else ''), \
+                    patch.object(remote,'execute') as execute:
+                remote.step('installed',SHA,'darwin-arm64',build,Path(tmp)/'dist',4,3)
+            smokes = [call for call in execute.call_args_list if call.args[0][0] == 'python3']
+            self.assertEqual(len(smokes), 6)
+            for call in smokes:
+                name = 'gti_lsp' if Path(call.args[0][1]).name == 'lsp_smoke_test.py' else 'gti'
+                self.assertEqual(Path(call.args[0][2]), (stage/'bin'/name).resolve())
+                self.assertTrue(Path(call.args[0][2]).is_absolute())
+
     def test_remote_receipts_bind_production_os_and_container_identity(self):
         import preview_remote as remote
         with tempfile.TemporaryDirectory() as tmp:
