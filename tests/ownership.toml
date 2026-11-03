@@ -1690,9 +1690,13 @@ consumers = [
 area = "remote-runner"
 paths = [
   "scripts/remote_runner.py",
+  "scripts/gcp_spot_runner.py",
+  "scripts/gcp_spot_policy.example.json",
+  "tests/gcp_spot_runner_test.py",
 ]
 owners = [
   "remote_runner",
+  "gcp_spot_runner",
 ]
 consumers = [
   "agent_workflow",
