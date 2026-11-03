@@ -21,9 +21,10 @@ overlays/close, definition navigation, new/renamed/removed headers saved without
 a watcher, and a trace assertion that body-only saves do not repeat analysis.
 
 The affected source-module, driver, cache and LSP consumers, `compiler_pipeline`
-and native O0/O3 smoke remain focused acceptance obligations. Linux portability
-checks complement macOS evidence. Post-integration full validation proves complete integration
-on macOS arm64 and Linux x64 before the change can reach nightly.
+and native O0/O3 smoke remain focused acceptance obligations. Post-integration
+full validation proves the complete inventory on Linux x64 and the `darwin`
+set on macOS arm64 (what differs on the platform) before the change can
+reach nightly; the deprecated C++ backend is proven weekly at `c++23 -O3`.
 
 ## Owned inline consumption (unreleased)
 

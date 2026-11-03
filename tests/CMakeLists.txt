@@ -3751,37 +3751,16 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}"
   )
   set_tests_properties(stdlib_modules PROPERTIES TIMEOUT 600)
-  # Preserve the complete four-fixture/eight-mode matrix without an outer
-  # deadline shorter than one of its permitted sanitized compilations.
-  foreach(standard IN ITEMS 20 23)
-    add_test(
-      NAME generic_algorithm_breadth_cpp${standard}
-      COMMAND "${Python3_EXECUTABLE}"
-              "${PROJECT_SOURCE_DIR}/tests/generic_algorithm_breadth_test.py"
-              "$<TARGET_FILE:gti>"
-              --mode "c++${standard}-O0"
-              --mode "c++${standard}-O1"
-              --mode "c++${standard}-O3"
-    )
-    set_tests_properties(generic_algorithm_breadth_cpp${standard}
-                         PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE)
-  endforeach()
+  # One entry: the harness runs the backends GTI_TEST_BACKENDS selects
+  # (tests/backend_modes.py). The former c++20, no-elide and sanitized
+  # variants were C++-backend-only configurations nothing ships.
   add_test(
-    NAME generic_algorithm_breadth_no_elide
+    NAME generic_algorithm_breadth
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/generic_algorithm_breadth_test.py"
-            "$<TARGET_FILE:gti>" --mode no-elide
+            "$<TARGET_FILE:gti>"
   )
-  set_tests_properties(generic_algorithm_breadth_no_elide
-                       PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE)
-  add_test(
-    NAME generic_algorithm_breadth_sanitized
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/generic_algorithm_breadth_test.py"
-            "$<TARGET_FILE:gti>" --mode sanitized
-  )
-  set_tests_properties(generic_algorithm_breadth_sanitized
-                       PROPERTIES TIMEOUT 1500 RUN_SERIAL TRUE)
+  set_tests_properties(generic_algorithm_breadth PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE)
   add_test(
     NAME ordered_search_runtime
     COMMAND "${Python3_EXECUTABLE}"

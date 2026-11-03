@@ -192,6 +192,8 @@ jobs:
         # Keep going after a failure so one run reports every compile error.
         run: cmake --build build --parallel "${GTI_JOBS}" -- -k 0
       - name: Run fast feedback and compiler pipeline
+        env:
+          GTI_TEST_BACKENDS: llvm
         run: >-
           ctest --test-dir build --output-on-failure --no-tests=error
           --parallel "${GTI_TEST_JOBS}" -L feedback-fast
