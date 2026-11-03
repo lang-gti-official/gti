@@ -4109,7 +4109,7 @@ int main() { if (invalid(uint8_t(0))) { return 1; } return 0; }
       "bool mixed<std::numeric T>(T value, int other) { return value == other; "
       "}",
       "bool unconstrained<T>(T value) { return value == 0; }",
-      "void exact(uint8_t value) {} int main() { exact(1); return 0; }",
+      "void exact(uint8_t value) {} int main() { exact(256); return 0; }",
       "T narrow<std::numeric T>(T value) { return value / 2; } "
       "int main() { uint8_t result = narrow(uint8_t(4)); return 0; }",
       "T invalid<std::numeric T>(T value) { return T(value % 2); }",
@@ -9914,7 +9914,7 @@ int main() {
   int invalid_receiver = read_only.inspect();
   function_value;
   width;
-  float mismatch = width(1);
+  float mismatch = width(true);
   int ambiguous = choose(1);
   float inexact = only_float(1);
   uint8_t too_small = uint8_t(300);
@@ -9938,7 +9938,7 @@ int main() {
       hasDiagnostic(invalidSemantic, "main entry point cannot be overloaded"),
       "the native entry point should remain a unique function");
   expect(hasDiagnostic(invalidSemantic, "No overload of 'width'") &&
-             hasDiagnostic(invalidSemantic, "argument types (int32_t)"),
+             hasDiagnostic(invalidSemantic, "argument types (bool)"),
          "overload lookup should reject calls without an exact candidate");
   expect(hasDiagnostic(invalidSemantic, "ambiguous") &&
              hasDiagnostic(invalidSemantic, "exactly match"),
