@@ -8613,6 +8613,14 @@ private:
         // the physical field address stored by the adapter.
         output.loans[loan - 1].storedDependency =
             storedDependencyForPlace(origin);
+        // The result borrows the carrier's shell, not the referent behind its
+        // stored reference. A mutable receiver authority selected above as
+        // the parent is that external dependency, so it is recorded once, as
+        // a bound result's retained contract records it.
+        if (output.loans[loan - 1].parent != 0 &&
+            output.loans[loan - 1].parent ==
+                output.loans[loan - 1].storedDependency)
+          output.loans[loan - 1].parent = 0;
       } else if (shellReference) {
         output.loans[loan - 1].storedDependency =
             storedDependencyForPlace(origin);

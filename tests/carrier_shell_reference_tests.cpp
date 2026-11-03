@@ -957,6 +957,67 @@ int main() {
   expect(hasChild, "MIR retains shared aliases under their exclusive parent");
 }
 
+// A view of an exclusive carrier's own storage borrows the carrier shell and
+// retains the carrier's mutable Stored authority once, as its dependency.
+// Consuming that view as a temporary receiver must not also parent it on the
+// same authority, which the MIR verifier rejects as a non-independent shell.
+void checkExclusiveCarrierTemporaryViews() {
+  const auto fixture = standardLibraryRoot().parent_path() /
+                       "tests/fixtures/exclusive_carrier_temporary_views.gti";
+  const auto frontend = lang::Frontend().analyze(
+      fixture, std::nullopt, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  expect(frontend.canGenerateCode(),
+         "temporary views of an exclusive carrier verify");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.message << '\n';
+    return;
+  }
+  bool checkedShell = false;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &loan : function.body.loans) {
+      const auto *dependency = function.body.findLoan(loan.storedDependency);
+      if (loan.kind != lang::MirLoanKind::Stored || dependency == nullptr ||
+          dependency->kind != lang::MirLoanKind::Stored ||
+          dependency->access != lang::AccessMode::Mutable ||
+          loan.access != lang::AccessMode::ReadOnly)
+        continue;
+      checkedShell = true;
+      expect(loan.parent == 0,
+             "an exclusive carrier's view records its authority once");
+      auto doubled = function.body;
+      doubled.loans[loan.id - 1].parent = loan.storedDependency;
+      expect(!lang::verifyMirBody(doubled, function.id).valid(),
+             "MIR rejects a view parented on its own stored dependency");
+    }
+  }
+  expect(checkedShell, "temporary views retain the carrier's authority");
+  std::ifstream input(fixture);
+  const std::string program{std::istreambuf_iterator<char>(input), {}};
+  for (const std::string conflict :
+       {"source.reads = 9;", "Reader other{source};",
+        "Reader moved = std::move(reader);"}) {
+    std::string invalid = program;
+    invalid.insert(invalid.find("    reader.drain();"),
+                   "    bool live = reader.pending().empty(); " + conflict +
+                       " if (live) { return 3; }\n");
+    invalid.insert(invalid.find("    reader.drain();"),
+                   "    if (reader.pending().size() == std::size_t(0)) { " +
+                       conflict + " }\n");
+    const auto rejected = lang::Frontend().analyze(
+        "exclusive-carrier-temporary-conflict.gti", invalid,
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    expect(!rejected.semanticValid &&
+               std::none_of(rejected.diagnostics.begin(),
+                            rejected.diagnostics.end(),
+                            [](const auto &diagnostic) {
+                              return diagnostic.code == "GTI-B0001";
+                            }),
+           "the carrier's exclusive authority still blocks: " + conflict);
+  }
+}
+
 void checkMappedChildThroughCarrierReference() {
   const std::string program = R"gti(
 class ReadView {
@@ -2316,6 +2377,7 @@ int main() {
   checkTextReferenceReads();
   checkLocalReferences();
   checkSharedChildOfExclusiveCarrier();
+  checkExclusiveCarrierTemporaryViews();
   checkMappedChildThroughCarrierReference();
   checkNestedCarrierAccess();
   checkReadOnlyConstructorDependencies();
