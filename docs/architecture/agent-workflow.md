@@ -475,6 +475,10 @@ image, removes temporary credentials and deletes the builder/disks. Those setup
 costs are outside worker-attempt accounting and belong in the reviewed
 infrastructure reserve. Guest host-key publication must be proven during live
 commissioning; the worker never falls back to unverified SSH.
+Private workers have no general Internet egress. The image must contain the
+compatible LLVM installation and native headers/tools needed by the selected
+workload; network-dependent fixtures need explicitly prepared inputs. The pilot
+does not add NAT or silently change networking when a build wants a download.
 
 Build the janitor container from the repository root using
 `scripts/spot_infra/Dockerfile` and an owner-reviewed Google CLI base image
@@ -507,7 +511,12 @@ schedule and a successful heartbeat no older than twenty minutes before any VM.
 **Durability and authority:** a create-only lease object records project, zone,
 pool, source HEAD/snapshot, image and immutable expiry **before** VM creation.
 The cloud registry pins the local journal identity, catching even a complete
-local journal reset. Workers still have no VM service account. Short-lived
+local journal reset. A durable local flag is set before the first VM insert:
+preparation failures before that point release only the unused VM slot, never
+the spent attempt or monetary reservation. Older records without that flag and
+uncertain inserts remain quarantined. Cloud lease records are immutable intent,
+so the independent janitor never treats their initial flags as proof of absence.
+Workers still have no VM service account. Short-lived
 signed PUT URLs authorize only exact create-once checkpoint objects, signed
 content lengths and expiry, not reads, listing, deletion or lease writes.
 Capabilities stay in private bootstrap input, never the request/result receipt.
@@ -516,7 +525,8 @@ objects); a separate final slot contains the normal results archive (40 MiB).
 At most 31 partial slots plus one final slot are issued per run, without retries.
 Final upload precedes terminal-state publication; its failure makes the run fail.
 Checkpoint objects expire after one day, with no versioning or soft-delete
-retention. Leases, registry and receipts are deliberately not auto-expired.
+retention. Lifecycle processing is asynchronous, not an exact deletion deadline.
+Leases, registry and receipts are deliberately not auto-expired.
 
 Explicit recovery requires the original source snapshot hash and a fresh output
 directory, and verifies the cloud lease, archive containment and result identity:
@@ -548,7 +558,8 @@ when retiring the pilot; leaving storage behind still costs money.
 
 **Cost observations:** after reserving an attempt, before creating a VM, the
 controller runs one read-only BigQuery query over the dedicated project's
-positive gross charges since registration, with explicit project parameters,+a 10--100 MiB query scan ceiling and no query retry. Credits and negative
+positive gross charges since registration, with explicit project parameters,
+a 10--100 MiB query scan ceiling and no query retry. Credits and negative
 adjustments do not release allowances. Persisted total/daily high-water marks
 and an owner-reviewed infrastructure reserve augment, never replace or refund,
 the original full-lifetime reservations. A query failure, wrong currency,

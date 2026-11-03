@@ -88,6 +88,8 @@ class SpotRunner(unittest.TestCase):
         self.config = configuration()
         self.ledger = spot.Ledger(self.root / "controller")
         self.provider = FakeGoogle()
+        self.recovery = mock.Mock()
+        self.recovery.prepare.return_value = None
 
     def tearDown(self):
         self.temporary.cleanup()
@@ -110,7 +112,7 @@ class SpotRunner(unittest.TestCase):
         with mock.patch.object(runner, "execute_run", side_effect=executor), \
              mock.patch.object(runner, "local_directory", return_value=self.root), \
              mock.patch.object(runner, "connection", return_value={"platform": "Linux", "machine": "x86_64"}):
-            return spot.run(args or self.arguments(), runner, self.config, self.ledger, self.provider)
+            return spot.run(args or self.arguments(), runner, self.config, self.ledger, self.provider, self.recovery)
 
     def test_policy_disabled_expired_and_shape(self):
         path = self.root / "policy.json"
@@ -132,7 +134,7 @@ class SpotRunner(unittest.TestCase):
         self.assertEqual(first["cost_micros"], 3_250_000)
         with self.assertRaisesRegex(spot.SpotError, "occupied"):
             self.reserve(2)
-        self.ledger.update(first, creation_confirmed=True)
+        self.ledger.update(first, creation_confirmed=True, create_started=True)
         spot.cleanup(self.provider, self.ledger, first)
         with self.assertRaisesRegex(spot.SpotError, "daily"):
             self.reserve(2)
@@ -230,16 +232,30 @@ class SpotRunner(unittest.TestCase):
                     with self.assertRaisesRegex(spot.SpotError, "occupied"):
                         self.reserve(2)
 
+    def test_recovery_failure_before_create_keeps_spend_without_quarantining_slot(self):
+        self.recovery.prepare.side_effect = spot.SpotError("billing observation unavailable")
+        with self.assertRaisesRegex(spot.SpotError, "billing observation"):
+            self.execute()
+        self.assertNotIn("create", self.provider.calls)
+        self.assertNotIn("delete", self.provider.calls)
+        self.recovery.preflight.assert_called_once()
+        self.recovery.prepare.assert_called_once()
+        lease = self.ledger.status()["leases"][0]
+        self.assertEqual(lease["state"], "deleted")
+        self.assertTrue(lease["aborted_before_create"])
+        self.assertGreater(lease["cost_micros"], 0)
+        self.assertIs(lease["create_started"], False)
+
     def test_sigterm_cleans_and_restores_the_original_handler(self):
         old_handler = signal.getsignal(signal.SIGTERM)
         def executor(*args):
-            args[-1]()
+            args[-1]({"head": "a" * 40, "snapshot_sha256": "b" * 64})
             signal.raise_signal(signal.SIGTERM)
         with mock.patch.object(runner, "execute_run", side_effect=executor), \
              mock.patch.object(runner, "local_directory", return_value=self.root), \
              mock.patch.object(runner, "connection", return_value={"platform": "Linux", "machine": "x86_64"}):
             with self.assertRaises(KeyboardInterrupt):
-                spot.run(self.arguments(), runner, self.config, self.ledger, self.provider)
+                spot.run(self.arguments(), runner, self.config, self.ledger, self.provider, self.recovery)
         self.assertEqual(signal.getsignal(signal.SIGTERM), old_handler)
         self.assertFalse(self.provider.present)
         self.assertEqual(self.ledger.status()["leases"][0]["state"], "deleted")
@@ -251,7 +267,7 @@ class SpotRunner(unittest.TestCase):
         self.assertFalse(self.provider.calls)
         with mock.patch.object(runner, "execute_run", side_effect=runner.RunnerError("invalid source snapshot")):
             with self.assertRaises(runner.RunnerError):
-                spot.run(self.arguments(), runner, self.config, self.ledger, self.provider)
+                spot.run(self.arguments(), runner, self.config, self.ledger, self.provider, self.recovery)
         self.assertNotIn("create", self.provider.calls)
         self.assertFalse(self.ledger.root.exists())
 

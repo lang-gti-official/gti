@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 
@@ -50,16 +51,21 @@ def main(argv=None):
     parser.add_argument("--expires", required=True)
     parser.add_argument("--scheduler", required=True)
     args = parser.parse_args(argv)
-    cloud = Cloud.workload()
-    registry = cloud.object(args.bucket, "gti-spot/v2/registry.json")
-    if (not isinstance(registry, dict) or registry.get("schema") != 1 or registry.get("project") != args.project or
-            registry.get("pool") != args.pool or registry.get("pilot_expires_at") != args.expires or
-            args.scheduler != f"projects/{args.project}/locations/{registry['zone'].rsplit('-', 1)[0]}/jobs/gti-spot-reaper"):
-        raise SpotError("janitor deployment differs from its immutable pool registration")
+    prefix(args.pool)
+    if (not re.fullmatch(r"[a-z][a-z0-9-]{4,61}[a-z0-9]", args.project) or
+            not re.fullmatch(r"[a-z0-9][a-z0-9-]{2,62}", args.bucket) or
+            not re.fullmatch("projects/" + re.escape(args.project) + r"/locations/[a-z0-9-]+/jobs/gti-spot-reaper", args.scheduler)):
+        raise SpotError("invalid janitor deployment identity")
     now = time.time()
     expired = now >= timestamp(args.expires) + 120
-    provider = Google({"project": args.project, "account": f"gti-spot-reaper@{args.project}.iam.gserviceaccount.com"})
+    cloud = Cloud.workload()
     try:
+        registry = cloud.object(args.bucket, "gti-spot/v2/registry.json")
+        if (not isinstance(registry, dict) or registry.get("schema") != 1 or registry.get("project") != args.project or
+                registry.get("pool") != args.pool or registry.get("pilot_expires_at") != args.expires or
+                args.scheduler != f"projects/{args.project}/locations/{registry['zone'].rsplit('-', 1)[0]}/jobs/gti-spot-reaper"):
+            raise SpotError("janitor deployment differs from its immutable pool registration")
+        provider = Google({"project": args.project, "account": f"gti-spot-reaper@{args.project}.iam.gserviceaccount.com"})
         health = reap(cloud, provider, args.bucket, registry, now)
         print(json.dumps(health))
         return 0 if health["healthy"] else 1

@@ -38,6 +38,7 @@ class FakeCloud:
         self.calls = []
         self.docs = {}
         self.inventory = []
+        self.responses = {}
         self.billing = {"jobComplete": True, "schema": {"fields": [{"name": name} for name in ("currency", "total", "daily")]},
                         "rows": [{"f": [{"v": "AUD"}, {"v": "0"}, {"v": "0"}]}]}
 
@@ -62,7 +63,7 @@ class FakeCloud:
         self.calls.append((method, service, path, copy.deepcopy(value)))
         if service == "bigquery":
             return copy.deepcopy(self.billing)
-        return {}
+        return copy.deepcopy(self.responses.get((service, path), {}))
 
 
 class RecoveryTests(unittest.TestCase):
@@ -96,6 +97,12 @@ class RecoveryTests(unittest.TestCase):
             setup.render(self.config, dict(self.settings, pilot_expires_at=spot.utc(self.now + 8 * 86400)),
                          self.lease["pool"], self.settings["janitor_image"], self.now)
 
+    def test_cost_dates_are_instants_not_host_local_dates(self):
+        for value in ("2026-11-03Z", "2026-11-03T10:00:00", "2026-11-03T10:00:00+08:00", "2026-13-99T00:00:00Z"):
+            with self.assertRaises(spot.SpotError):
+                spot.timestamp(value)
+        self.assertEqual(spot.timestamp("2026-11-03T10:00:00Z"), spot.timestamp("2026-11-03T10:00:00.000Z"))
+
     def test_recovery_policy_rejects_unknown_or_unbounded_fields(self):
         path = self.root / "recovery.json"
         for key, value in (("schema", True), ("enabled", 1), ("billing_maximum_bytes_billed", 10**12),
@@ -104,6 +111,58 @@ class RecoveryTests(unittest.TestCase):
             path.write_text(json.dumps(dict(self.settings, **{key: value})))
             with self.assertRaises(spot.SpotError, msg=key):
                 recovery.configuration(path, self.config)
+
+    def control_plane(self):
+        bucket = self.settings["bucket"]
+        project = self.config["project"]
+        self.cloud.responses["storage", "/storage/v1/b/" + bucket] = {
+            "projectNumber": "123", "location": "US-CENTRAL1", "storageClass": "STANDARD",
+            "iamConfiguration": {"publicAccessPrevention": "enforced", "uniformBucketLevelAccess": {"enabled": True}},
+            "softDeletePolicy": {"retentionDurationSeconds": "0"},
+            "lifecycle": {"rule": [{"action": {"type": "Delete"}, "condition": {"age": 1, "matchesPrefix": [self.client.base + "checkpoints/"]}}]}}
+        self.cloud.responses["cloudresourcemanager", "/v1/projects/" + project] = {"projectNumber": "123"}
+        self.cloud.responses["run", "/v2/" + self.settings["reaper_job"]] = {
+            "template": {"taskCount": 1, "parallelism": 1, "template": {
+                "serviceAccount": f"gti-spot-reaper@{project}.iam.gserviceaccount.com", "maxRetries": 0, "timeout": "60s",
+                "containers": [{"image": self.settings["janitor_image"], "args": [
+                    "--project", project, "--bucket", bucket, "--pool", self.lease["pool"],
+                    "--expires", self.settings["pilot_expires_at"], "--scheduler", self.settings["scheduler_job"]],
+                    "resources": {"limits": {"cpu": "1", "memory": "512Mi"}}}]}}}
+        self.cloud.responses["cloudscheduler", "/v1/" + self.settings["scheduler_job"]] = {
+            "state": "ENABLED", "schedule": "*/10 * * * *", "httpTarget": {
+                "uri": "https://run.googleapis.com/v2/" + self.settings["reaper_job"] + ":run",
+                "oauthToken": {"serviceAccountEmail": f"gti-spot-scheduler@{project}.iam.gserviceaccount.com"}}}
+        self.cloud.docs["gti-spot/v2/registry.json"] = self.registry
+        self.cloud.docs[self.client.base + "health.json"] = {"registry": self.registry, "at": spot.utc(self.now), "healthy": True}
+
+    def test_preflight_requires_a_private_bounded_healthy_control_plane(self):
+        self.control_plane()
+        with mock.patch.object(recovery.time, "time", return_value=self.now):
+            self.client.preflight(self.ledger)
+            for changes in ({"healthy": False}, {"at": spot.utc(self.now - 1201)}):
+                name = self.client.base + "health.json"
+                previous = copy.deepcopy(self.cloud.docs[name])
+                self.cloud.docs[name].update(changes)
+                with self.assertRaises(spot.SpotError):
+                    self.client.preflight(self.ledger)
+                self.cloud.docs[name] = previous
+            bucket = self.cloud.responses["storage", "/storage/v1/b/" + self.settings["bucket"]]
+            for key, value in (("projectNumber", "foreign"), ("storageClass", "NEARLINE"),
+                               ("softDeletePolicy", {"retentionDurationSeconds": "604800"}),
+                               ("lifecycle", {"rule": []})):
+                previous = copy.deepcopy(bucket[key])
+                bucket[key] = value
+                with self.assertRaises(spot.SpotError):
+                    self.client.preflight(self.ledger)
+                bucket[key] = previous
+            task = self.cloud.responses["run", "/v2/" + self.settings["reaper_job"]]["template"]["template"]
+            task["maxRetries"] = 3
+            with self.assertRaises(spot.SpotError):
+                self.client.preflight(self.ledger)
+            task["maxRetries"] = 0
+            self.cloud.docs["gti-spot/v2/registry.json"] = dict(self.registry, pool="f" * 32)
+            with self.assertRaises(spot.SpotError):
+                self.client.preflight(self.ledger)
 
     def test_lease_rejects_foreign_identity_lifetime_and_source(self):
         recovery.validate_lease(self.lease, self.registry)
@@ -259,6 +318,16 @@ class RecoveryTests(unittest.TestCase):
                 else:
                     with self.assertRaises(spot.SpotError):
                         cloud.object("test-bucket", "test", missing=True)
+
+    def test_storage_listing_rejects_unknown_or_partial_inventory(self):
+        cloud = transport.Cloud(lambda: "private-token")
+        for result in ({}, {"kind": "storage#objects", "nextPageToken": "more"},
+                       {"kind": "storage#objects", "items": [{}] * 9}):
+            with mock.patch.object(cloud, "request", return_value=result):
+                with self.assertRaises(spot.SpotError):
+                    cloud.objects("test-bucket", "prefix")
+        with mock.patch.object(cloud, "request", return_value={"kind": "storage#objects"}):
+            self.assertEqual(cloud.objects("test-bucket", "prefix"), [])
 
 
 if __name__ == "__main__":

@@ -36,7 +36,7 @@ class SpotError(ValueError):
 
 
 def timestamp(value):
-    if not isinstance(value, str) or not value.endswith("Z"):
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?Z", value):
         raise SpotError("timestamps must be explicit UTC strings ending in Z")
     try:
         return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
@@ -166,6 +166,8 @@ class Ledger:
                             not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", observation["day"])):
                         raise SpotError("invalid persistent billing observation")
                     timestamp(observation["queried_at"])
+                    if observation["queried_at"][:10] != observation["day"]:
+                        raise SpotError("billing observation day differs from its UTC query time")
                 if state["leases"] and (not isinstance(state.get("identity"), dict) or
                                         set(state["identity"]) != {"project", "billing_account", "currency", "account"}):
                     raise SpotError("Spot journal lost its billing identity")
@@ -175,6 +177,8 @@ class Ledger:
                     if lease.get("instance") != "gti-spot-" + lease["id"][4:] or type(lease.get("cost_micros")) is not int or lease["cost_micros"] <= 0:
                         raise SpotError("invalid Spot lease accounting")
                     if (type(lease.get("creation_confirmed")) is not bool or
+                            ("create_started" in lease and type(lease["create_started"]) is not bool) or
+                            (lease.get("create_started") is False and lease["creation_confirmed"]) or
                             lease.get("state") not in {"reserved", "creating", "booting", "running", "deleting", "deleted", "cleanup-required"} or
                             lease.get("pool") != state["pool"]):
                         raise SpotError("invalid Spot lease lifecycle")
@@ -218,7 +222,7 @@ class Ledger:
             lease = {"id": run_id, "instance": "gti-spot-" + run_id[4:], "pool": state["pool"],
                      "project": config["project"], "zone": config["zone"], "account": config["account"],
                      "image": config["image"], "created": utc(now), "expires": utc(now + config["vm_lifetime_seconds"]),
-                     "cost_micros": amount, "state": "reserved", "creation_confirmed": False}
+                     "cost_micros": amount, "state": "reserved", "creation_confirmed": False, "create_started": False}
             state["identity"] = identity
             state["leases"].append(lease)
             return dict(lease)
@@ -385,6 +389,11 @@ class Google:
 
 
 def cleanup(provider, ledger, lease):
+    if lease.get("create_started") is False:
+        # This durable flag is set before the first insert call. Older journals
+        # without it remain conservative; spent reservations are never refunded.
+        ledger.update(lease, state="deleted", deleted=utc(time.time()), aborted_before_create=True)
+        return
     ledger.update(lease, state="deleting")
     try:
         provider.delete(lease)
@@ -398,7 +407,7 @@ def cleanup(provider, ledger, lease):
         raise
 
 
-def run(args, runner, config, ledger, provider, recovery=None):
+def run(args, runner, config, ledger, provider, recovery):
     if args.detach or args.full_suite or (not args.target and not args.steps_file):
         raise SpotError("phase one requires a foreground run with explicit targets/steps; no full suite or detached mode")
     if args.platform not in (None, "Linux") or any(getattr(args, key) for key in ("host", "root", "python", "transport", "cc", "cxx")):
@@ -409,8 +418,7 @@ def run(args, runner, config, ledger, provider, recovery=None):
         raise SpotError("requested timeout or parallelism exceeds the Spot policy")
     admission(config, time.time())
     provider.preflight()
-    if recovery is not None:
-        recovery.preflight(ledger)
+    recovery.preflight(ledger)
     run_id = "run-" + uuid.uuid4().hex
     host_file = ledger.root / (run_id + "-known-hosts")
     connection = {"host": "gti-spot-" + run_id[4:], "root": "/tmp/gti-remote-runner", "python": "/usr/bin/python3",
@@ -425,7 +433,8 @@ def run(args, runner, config, ledger, provider, recovery=None):
         print(f"Spot lease {run_id}: reserved {lease['cost_micros']} micro-{config['currency']}; expires {lease['expires']}", flush=True)
         ledger.update(lease, state="creating")
         ledger.update(lease, source={key: identity[key] for key in ("head", "snapshot_sha256")})
-        uploads = recovery.prepare(ledger, lease) if recovery is not None else None
+        uploads = recovery.prepare(ledger, lease)
+        ledger.update(lease, create_started=True)
         provider.create(lease)
         ledger.update(lease, creation_confirmed=True, state="booting")
         instance = provider.verify(lease)

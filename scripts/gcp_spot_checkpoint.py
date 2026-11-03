@@ -26,10 +26,13 @@ def validate_plan(plan, run_id):
     if (not isinstance(plan, dict) or set(plan) != {"schema", "run", "prefix", "urls"} or
             type(plan["schema"]) is not int or plan["schema"] != 1 or plan["run"] != run_id or
             not re.fullmatch(r"run-[0-9a-f]{32}", run_id) or
+            not isinstance(plan["prefix"], str) or
             not re.fullmatch(r"/[a-z0-9][a-z0-9-]{2,62}/gti-spot/v2/[0-9a-f]{32}/checkpoints/" + run_id + r"/", plan["prefix"]) or
             not isinstance(plan["urls"], list) or not 2 <= len(plan["urls"]) <= 32):
         raise ValueError("invalid checkpoint upload plan")
     for index, url in enumerate(plan["urls"]):
+        if not isinstance(url, str):
+            raise ValueError("invalid checkpoint URL")
         parsed = urlsplit(url)
         query = parse_qs(parsed.query)
         size = FINAL_BYTES if index == len(plan["urls"]) - 1 else CHECKPOINT_BYTES

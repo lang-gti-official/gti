@@ -22,7 +22,7 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends python3 git cmake ninja-build gcc-14 g++-14 \
   ca-certificates curl openssh-server google-compute-engine-oslogin google-guest-agent \
-  libssl-dev libffi-dev libxml2-dev libzstd-dev zlib1g-dev libncurses-dev xz-utils
+  libssl-dev libcurl4-openssl-dev libffi-dev libxml2-dev libzstd-dev zlib1g-dev libncurses-dev xz-utils
 temporary=$(mktemp -d)
 trap 'rm -rf -- "$temporary"' EXIT
 curl --fail --location --proto '=https' --tlsv1.2 --max-time 600 "$2" -o "$temporary/llvm.tar.xz"

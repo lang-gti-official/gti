@@ -52,7 +52,10 @@ class Cloud:
                 data = response.read(MAX_JSON + 1)
             if len(data) > MAX_JSON:
                 raise SpotError("recovery API result exceeds its limit")
-            return json.loads(data) if data else {}
+            decoded = json.loads(data) if data else {}
+            if not isinstance(decoded, dict):
+                raise SpotError("recovery API did not return a structured object")
+            return decoded
         except HTTPError as error:
             if missing and error.code == 404:
                 return None

@@ -241,7 +241,10 @@ class Recovery:
                 raise SpotError("signed URL response has an unexpected shape")
             plan["urls"].append(value[0]["signed_url"])
         validate_plan(plan, lease["id"])
-        return {"checkpoint_upload.json": json.dumps(plan).encode()}
+        encoded = json.dumps(plan).encode()
+        if len(encoded) > 64 * 1024:
+            raise SpotError("upload capability plan exceeds its bootstrap allowance")
+        return {"checkpoint_upload.json": encoded}
 
 
 def main(argv=None):

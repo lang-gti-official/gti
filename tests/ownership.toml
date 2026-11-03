@@ -1690,6 +1690,7 @@ consumers = [
 area = "remote-runner"
 paths = [
   "scripts/remote_runner.py",
+  "tests/remote_runner_test.py",
   "scripts/gcp_spot_runner.py",
   "scripts/gcp_spot_policy.example.json",
   "scripts/gcp_spot_cloud.py",

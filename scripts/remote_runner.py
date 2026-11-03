@@ -47,6 +47,7 @@ HOST_NAME = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}\Z")
 RETENTION = 24 * 60 * 60
 MAX_INPUT = 1024 * 1024 * 1024
 MAX_RESULTS = 32 * 1024 * 1024
+MAX_CHECKPOINT_PLAN = 64 * 1024
 RUN_ID = re.compile(r"run-[0-9a-f]{32}\Z")
 TERMINAL = {"passed", "failed", "cancelled", "timed-out", "interrupted"}
 
@@ -922,13 +923,18 @@ def execute_run(args, local, name, config, run_id=None, before_submit=None):
             add_bytes(archive, "remote_runner.py", source_code().encode())
             add_bytes(archive, "build_window.py", (Path(__file__).parent / "build_window.py").read_bytes())
         if before_submit is not None:
+            bootstrap = (Path(__file__).parent / "gcp_spot_checkpoint.py").read_bytes()
+            if len(bootstrap) > 32 * 1024 or packet.stat().st_size > MAX_INPUT - 128 * 1024:
+                raise RunnerError("snapshot/bootstrap exceeds the ephemeral-host input allowance")
             additions = before_submit(identity)
             if additions is not None:
-                if not isinstance(additions, dict) or set(additions) != {"checkpoint_upload.json"} or not isinstance(additions["checkpoint_upload.json"], bytes):
+                if (not isinstance(additions, dict) or set(additions) != {"checkpoint_upload.json"} or
+                        not isinstance(additions["checkpoint_upload.json"], bytes) or
+                        len(additions["checkpoint_upload.json"]) > MAX_CHECKPOINT_PLAN):
                     raise RunnerError("invalid ephemeral-host checkpoint bootstrap")
                 with tarfile.open(packet, "a") as archive:
                     add_bytes(archive, "checkpoint_upload.json", additions["checkpoint_upload.json"], mode=0o600)
-                    add_bytes(archive, "gcp_spot_checkpoint.py", (Path(__file__).parent / "gcp_spot_checkpoint.py").read_bytes())
+                    add_bytes(archive, "gcp_spot_checkpoint.py", bootstrap)
         record_connection(local, run_id, name, config)
         print(f"Submitting {run_id} to {name} ({config['host']}): {identity['head']} / snapshot {identity['snapshot_sha256']}", flush=True)
         connection(config, "submit", run_id, input_path=packet)

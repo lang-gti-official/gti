@@ -169,7 +169,7 @@ resource "google_project_iam_custom_role" "controller" {
   role_id = "gtiSpotController"
   title   = "GTI single-project Spot controller"
   permissions = ["compute.instances.create", "compute.instances.get", "compute.instances.list", "compute.instances.delete",
-    "compute.instances.setMetadata", "compute.instances.getGuestAttributes", "compute.instances.osAdminLogin",
+    "compute.instances.setMetadata", "compute.instances.setLabels", "compute.instances.getGuestAttributes",
     "compute.disks.create", "compute.disks.get", "compute.disks.list", "compute.disks.delete", "compute.disks.use",
     "compute.images.get", "compute.images.useReadOnly", "compute.subnetworks.get", "compute.subnetworks.use",
     "compute.networks.get", "compute.zoneOperations.get", "compute.projects.get",
@@ -180,7 +180,7 @@ resource "google_project_iam_member" "controller" {
   member = "user:${var.controller_account}"
 }
 resource "google_project_iam_member" "controller_view" {
-  for_each = toset(["roles/iap.tunnelResourceAccessor", "roles/run.viewer", "roles/cloudscheduler.viewer"])
+  for_each = toset(["roles/iap.tunnelResourceAccessor", "roles/compute.osAdminLogin", "roles/run.viewer", "roles/cloudscheduler.viewer"])
   role     = each.key
   member   = "user:${var.controller_account}"
 }
