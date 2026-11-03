@@ -342,6 +342,96 @@ configure command above updates an existing LAN-address configuration too.
 Detached runs retain their recorded endpoint; configuring a new default does
 not rewrite their connection records.
 
+### Opt-in Google Spot pilot
+
+`--runner gcp-spot` is a development-runner pilot, not a compiler backend,
+CI gate or default. `scripts/gcp_spot_runner.py` wraps the same snapshot,
+executor and result path. Local hosts and their selection are unchanged.
+The checked-in example is disabled and expired. Offline planning never invokes
+Google or creates resources:
+
+```sh
+python3 scripts/gcp_spot_runner.py --policy scripts/gcp_spot_policy.example.json plan
+```
+
+**Owner setup:** use a dedicated Google project. Verify in the billing console
+that the account is still an **unupgraded Free Trial**, and check credit expiry
+and currency. Remaining credits alone are not proof. The BillingAccount API
+does not supply a reliable trial-status field; a short-lived owner
+acknowledgement is deliberate, not an automatic proof. The helper never upgrades
+billing, changes quotas, creates IAM/networking or falls back to on-demand VMs.
+Trial quotas may prevent the chosen profile; do not automatically upgrade.
+
+Prepare a versioned Ubuntu x64 image with Python, Git, CMake, Ninja, GCC/G++ 14,
+the required LLVM/native dependencies, OpenSSH and Google guest/OS Login agents.
+Put no provisioning credentials in it. Configure a private subnet with Private
+Google Access and SSH ingress restricted to IAP. Grant the controller reviewed,
+project-scoped VM/disk lifecycle, subnet/image read, guest-attribute read, OS
+Login and IAP tunnel permissions, plus read access to the linked billing
+account/project. Workers have **no service account and no public IP**. No NAT,
+always-on controller VM or shared cache disk is provisioned. Image, storage and
+network setup can have costs of their own.
+
+Copy `scripts/gcp_spot_policy.example.json` outside the repository to
+`~/.config/gti/spot-runner.json` (or select `--spot-policy PATH`). Set the actual
+project, billing account, account email, controller hostname, zone, versioned
+image and subnet. Review conservative all-in pricing in the billing currency,
+including compute, boot/image storage, networking and request/setup overhead.
+`hourly_ceiling_micros` and `per_run_extra_micros` are **owner-entered ceilings,
+not fetched price quotes**. Example numbers are not advertised Google prices.
+One currency unit is 1,000,000 micros. Pricing and trial acknowledgements must
+cover the lease and expire within seven days. Only the named controller host
+may provision; copied checkouts/policies do not create another allowed pool.
+
+Phase one admits one concurrent VM, E2 standard 4/8 vCPUs, at most 100 GiB boot
+storage, a 90-minute VM lifetime and a 60-minute job timeout. The job leaves at
+least 15 minutes of lifecycle headroom. Daily allowance is at most 5 currency
+units and lifetime trial allowance at most 20; lower values are valid. Every
+attempt reserves the entire VM lifetime rounded up, plus overhead. Successful
+deletion does not refund the allowance. UTC days reset the daily subtotal,
+never the accumulated trial allowance. After owner setup and enablement:
+
+```sh
+python3 scripts/remote_runner.py --runner gcp-spot run --target gti --target gti_tests --target gti_lsp --ctest-regex '^compiler_pipeline$'
+python3 scripts/remote_runner.py --runner gcp-spot status
+python3 scripts/remote_runner.py --runner gcp-spot clean
+```
+
+Only foreground runs with explicit targets/steps are admitted; there is no full
+suite, detached mode, cloud-first selection or retry loop. The journal under
+`~/.local/state/gti-spot-runner/` is shared across clones/worktrees, locked across
+processes and written before creation. It is pinned to one project/account and
+currency. Do not delete it to reclaim space or reset limits. Missing/corrupt
+history, unresolved creation or failed cleanup blocks admission. This is a
+cooperating-tool allowance, not a security boundary against an operator with
+Google credentials or permission to edit the journal.
+
+Creation requests an absolute provider expiry, Spot termination action DELETE,
+no automatic restart and an auto-deleted boot disk. Returned resource facts are
+verified. IAP SSH uses provider-fetched guest host keys, never disabled host-key
+checking. Normal completion, errors, cancellation and SIGTERM attempt VM/disk
+cleanup and verify absence before releasing the slot. A lost insert response
+is quarantined even when a list currently shows no VM: absence cannot prove an
+in-flight creation will not finish. An operator must reconcile that ambiguity;
+never erase the record. `clean` reaps expired confirmed leases, or a selected
+run ID explicitly. Cleanup verifies resource ownership, not merely a prefix.
+
+**Commissioning remains required:** tests create no paid resources. The owner
+must exercise success, cancellation, preemption and lost-controller scenarios,
+verify actual deletion/billing and retain receipts. Provider expiry survives
+client failure, but `clean` is not an independently scheduled cloud janitor.
+Normal results are fetched before deletion; preemption, SIGKILL or controller
+loss can lose results. Durable off-worker results, an independent orphan
+reaper, live pricing/cost reconciliation and a multi-host provisioning broker
+are prerequisites before three workers, retries, detached runs or cloud-first
+selection. Ordinary budget alerts are delayed, not a Compute Engine hard cap.
+
+Google references: [trial rules](https://docs.cloud.google.com/free/docs/free-cloud-features),
+[Spot lifecycle](https://docs.cloud.google.com/compute/docs/instances/spot),
+[VM expiry](https://docs.cloud.google.com/compute/docs/instances/limit-vm-runtime),
+[budget limits](https://docs.cloud.google.com/billing/docs/how-to/budgets),
+[IAP/host-key security](https://docs.cloud.google.com/solutions/connecting-securely).
+
 All runs use one window **per host**, not their isolated Git directories. The
 Mini's is `/private/tmp/gti-remote-runner/window`; Ubuntu uses
 `/tmp/gti-remote-runner/window`. The authoritative `build_window.Window` uses
