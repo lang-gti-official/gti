@@ -243,10 +243,26 @@
         "85a96e81e07dc5e8c7663c6122be6d29d7661c1f"
       ],
       "merge": "85a96e81e07dc5e8c7663c6122be6d29d7661c1f"
+    },
+    {
+      "task": "import-discovery-cache",
+      "pr": 183,
+      "head": "73a700ecbaae6a66c95ed3f365a3af2ea113f372",
+      "tests": [
+        "include_suggestions",
+        "module_map_lsp",
+        "lsp_repair_contract",
+        "lsp_include_suggestions",
+        "frontend_cache_invalidation"
+      ],
+      "contributions": [
+        "37659d0bbfdc3c35be9866aedf159f04406550dc"
+      ],
+      "merge": "37659d0bbfdc3c35be9866aedf159f04406550dc"
     }
   ],
   "removed": [],
   "main": "e3532e6715dd6344b0085e367982a8f2d496bda1",
-  "previous": "1e739f24b8b9e2f8e6da10de9afc1f1fd995263d",
-  "candidate": "af706270c1a84c4cbb849c0128dc61ea"
+  "previous": "6ed26ced974fd54d982116907badf799926d7bf7",
+  "candidate": "8fb6ffdc11a74725898e85251514bb8d"
 }
