@@ -64,6 +64,13 @@ def equivalent(cases: tuple[CaseContext, ...], root: Path) -> None:
                     "GTI-B0003: generic fixed-array reference signatures" if source.name == "182-bounded-array-borrows.gti"
                     else "GTI-B0003: general sizeof/alignof" if source.name == "181-general-object-layout.gti"
                     else "GTI-B0003: aggregate constant publication" if source.name == "183-immediate-functions.gti"
+                    else "GTI-B0003: fresh class-valued subscript arguments" if source.name == "190-conditional-member-operators.gti"
+                    else "GTI-B0003: scalar, plain-enum, and text temporary reference arguments" if source.name in {
+                        "058-formatted-output.gti", "134-standard-library-modules.gti",
+                        "135-inline-polymorphic-values.gti", "161-consuming-matches.gti",
+                        "175-thread-local-storage.gti", "186-scalar-temporary-borrows.gti",
+                        "187-operator-temporary-borrows.gti", "191-reference-parameter-packs.gti",
+                    }
                     else "GTI-B0003: wrapping atomic read-modify-write")
             assert declared["compile_observation"] == expected_observation
             assert declared["case"]["execution_profile"] == (
@@ -145,6 +152,13 @@ def main() -> None:
                          else "GTI-B0003: general sizeof/alignof"
                          if source.name == "181-general-object-layout.gti"
                          else "GTI-B0003: aggregate constant publication" if source.name == "183-immediate-functions.gti"
+                         else "GTI-B0003: fresh class-valued subscript arguments" if source.name == "190-conditional-member-operators.gti"
+                         else "GTI-B0003: scalar, plain-enum, and text temporary reference arguments" if source.name in {
+                             "058-formatted-output.gti", "134-standard-library-modules.gti",
+                             "135-inline-polymorphic-values.gti", "161-consuming-matches.gti",
+                             "175-thread-local-storage.gti", "186-scalar-temporary-borrows.gti",
+                             "187-operator-temporary-borrows.gti", "191-reference-parameter-packs.gti",
+                         }
                          else "GTI-B0003: wrapping atomic read-modify-write")
             return subprocess.CompletedProcess(command, 65, "", rejection)
         output = Path(command[-1])
