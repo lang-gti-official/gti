@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "enabled": false,
+  "project": "your-dedicated-runner-project",
+  "account": "your-google-account@example.com",
+  "billing_account": "000000-000000-000000",
+  "currency": "AUD",
+  "controller_hostname": "replace-with-controller-hostname",
+  "zone": "us-central1-a",
+  "machine_type": "e2-standard-8",
+  "image": "projects/your-dedicated-runner-project/global/images/your-prepared-image-v1",
+  "subnetwork": "projects/your-dedicated-runner-project/regions/us-central1/subnetworks/runner-private",
+  "boot_disk_gib": 80,
+  "max_instances": 1,
+  "vm_lifetime_seconds": 5400,
+  "job_timeout_seconds": 3600,
+  "daily_limit_micros": 5000000,
+  "total_limit_micros": 20000000,
+  "hourly_ceiling_micros": 2000000,
+  "per_run_extra_micros": 250000,
+  "pricing_valid_until": "2000-01-01T00:00:00Z",
+  "trial_acknowledged_until": "2000-01-01T00:00:00Z"
+}

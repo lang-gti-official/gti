@@ -1426,6 +1426,119 @@ int main() {
          "the formatter should space every compound operator idempotently");
 }
 
+void testStagedIntrinsicContracts() {
+  const std::string source = R"(
+constexpr int staged_expected() {
+  expected<int, int> value = 42;
+  return value.value();
+}
+int main() { return staged_expected() - 42; }
+)";
+  const auto frontend = lang::Frontend().analyze(
+      "staged-intrinsic-contract.gti", source, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  const auto foreign = lang::Frontend().analyze(
+      "foreign-staged-intrinsic-contract.gti", source,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(frontend.canGenerateCode() && foreign.canGenerateCode(),
+         "staged intrinsic fixture has valid ordinary runtime MIR");
+  if (!frontend.canGenerateCode() || !foreign.canGenerateCode())
+    return;
+  lang::SemanticVisitor provider(lang::TargetInfo::host(),
+                                 &frontend.sourceGraph, false, nullptr,
+                                 &frontend.sources);
+  expect(provider.check(frontend.program),
+         "staged intrinsic provider checks completed source declarations");
+  std::vector<lang::FunctionId> completed;
+  std::vector<lang::ConstructorId> constructors;
+  lang::FunctionId root = 0;
+  for (const auto &function : frontend.hir.functionInstances()) {
+    const auto *declaration =
+        function.source ? provider.model().findFunction(*function.source)
+                        : nullptr;
+    if (!declaration || !function.source->isConstexpr())
+      continue;
+    completed.push_back(declaration->id);
+    if (function.source->name().lexeme == "staged_expected")
+      root = declaration->id;
+  }
+  for (const auto &constructor : frontend.hir.constructorInstances()) {
+    const auto *declaration =
+        constructor.source
+            ? provider.model().findConstructor(*constructor.source)
+            : nullptr;
+    if (declaration && constructor.source->isConstexpr())
+      constructors.push_back(declaration->id);
+  }
+  auto staged = lang::HirLowerer().lowerConstantFunction(
+      provider.model(), provider, root, completed, {}, constructors);
+  expect(staged.valid() &&
+             staged.program.analysisSeal().activeStatements.empty() &&
+             staged.program.analysisSeal().programSnapshot ==
+                 provider.model().analysisSeal().programSnapshot,
+         "staged declaration proofs retain identity without whole-program "
+         "sealing");
+  const auto *entry =
+      frontend.sourceGraph.findUnit(frontend.sourceGraph.entryUnit());
+  const auto metadata = lang::FailureMetadataBuilder().build(
+      frontend.sourceGraph, frontend.sources, staged.program, entry->path);
+  const auto mir = lang::MirLowerer().lower(staged.program, metadata.metadata);
+  expect(metadata.valid() && mir.valid(),
+         "tracked intrinsics in a completed constexpr closure verify");
+  if (!metadata.valid() || !mir.valid())
+    return;
+  unsigned mutations = 0;
+  for (const auto &function : mir.program.functionInstances()) {
+    if (function.declaration == root) {
+      const auto value =
+          lang::evaluateMirConstantFunction(mir.program, function.id, {});
+      expect(
+          value &&
+              std::get<lang::ConstantInteger>(*value.value).magnitude == 42,
+          "staged checked result access executes under its declaration proof");
+    }
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (!instruction.intrinsicCallContract)
+          continue;
+        const auto foreignContract = foreign.semantics.functionControlContract(
+            instruction.intrinsicCallContract->declaration());
+        expect(foreignContract &&
+                   foreignContract->intrinsic() == instruction.intrinsic &&
+                   foreignContract->snapshot() !=
+                       instruction.intrinsicCallContract->snapshot(),
+               "foreign analysis supplies an independent declaration witness");
+        if (!foreignContract ||
+            foreignContract->intrinsic() != instruction.intrinsic)
+          continue;
+        auto malformed = mir.program;
+        auto *changed = const_cast<lang::MirFunctionInstance *>(
+            malformed.findFunctionInstance(function.id));
+        for (auto &candidateBlock : changed->body.blocks)
+          for (auto &candidate : candidateBlock.instructions)
+            if (candidate.id == instruction.id)
+              candidate.intrinsicCallContract = foreignContract;
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "staged intrinsic contracts reject a foreign semantic snapshot");
+        ++mutations;
+      }
+  }
+  expect(mutations != 0,
+         "staged fixture exercises intrinsic snapshot mutations");
+  auto missingIdentity = staged.program;
+  const_cast<lang::SemanticAnalysisSeal &>(missingIdentity.analysisSeal())
+      .programSnapshot = 0;
+  expect(!lang::MirLowerer().lower(missingIdentity, metadata.metadata).valid(),
+         "staged lowering cannot erase declaration proof identity");
+  expect(
+      !lang::verifyHirProgramPlans(provider.model(), staged.program).valid() &&
+          !lang::LoweredProgramBuilder()
+               .build(frontend.program, provider.model(), staged.program,
+                      mir.program, mir.program, {}, lang::TargetInfo::host())
+               .valid(),
+      "preserving staged identity never permits whole-program publication");
+}
+
 void testMirConstantEvaluation() {
   lang::FrontendWorkMetrics metrics;
   const auto frontend =
@@ -1828,6 +1941,9 @@ int later() { return selected(); }
   auto staged = stagedLowerer.lowerConstantFunction(provider.model(), provider,
                                                     sumDeclaration, completed);
   expect(staged.valid() && staged.program.functionInstances().size() == 1 &&
+             staged.program.analysisSeal().programSnapshot ==
+                 provider.model().analysisSeal().programSnapshot &&
+             staged.program.analysisSeal().activeStatements.empty() &&
              !lang::verifyHirProgramPlans(provider.model(), staged.program)
                   .valid(),
          "staged closure excludes unrelated bodies and cannot pass "
@@ -2437,7 +2553,7 @@ void testConstexprOperators() {
       {"struct Item { int x; constexpr Item(int x) : x(x) {} int operator+(int "
        "n) { return this.x + n; } }; "
        "constexpr Item item = Item(1); constexpr int bad = item + 2;",
-       "does not name a constexpr function", "+ 2", 1},
+       "non-constexpr function", "+ 2", 1},
       {"struct Item { int x; constexpr Item(int x) : x(x) {} constexpr int "
        "operator+(int n) { return this.x + "
        "n; } }; "
@@ -4756,8 +4872,7 @@ constexpr RuntimePoint runtime_point = RuntimePoint(1);
              countDiagnosticCode(invalid.diagnostics, "GTI-S2057") >= 5 &&
              hasDiagnostic(invalid.diagnostics, "cannot be declared mut") &&
              hasDiagnostic(invalid.diagnostics, "requires an initializer") &&
-             hasDiagnostic(invalid.diagnostics,
-                           "does not name a constexpr function") &&
+             hasDiagnostic(invalid.diagnostics, "non-constexpr function") &&
              hasDiagnostic(invalid.diagnostics, "must be static") &&
              hasDiagnostic(invalid.diagnostics,
                            "not an available constexpr constructor"),
@@ -4775,8 +4890,7 @@ int main() {
 }
 )");
   expect(!invalidBranch.semanticValid &&
-             hasDiagnostic(invalidBranch.diagnostics,
-                           "does not name a constexpr function"),
+             hasDiagnostic(invalidBranch.diagnostics, "non-constexpr function"),
          "if constexpr should require a frontend-evaluated constant bool");
 
   const lang::FrontendResult exhausted =
@@ -7138,6 +7252,7 @@ constexpr NamedTest kTests[] = {
     {"testConstexprBindings", testConstexprBindings},
     {"testConstexprStringViewInspection", testConstexprStringViewInspection},
     {"testMirConstantEvaluation", testMirConstantEvaluation},
+    {"testStagedIntrinsicContracts", testStagedIntrinsicContracts},
     {"testMirConstantRecords", testMirConstantRecords},
     {"testConstexprConditionalTemporaries",
      testConstexprConditionalTemporaries},

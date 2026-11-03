@@ -1,0 +1,56 @@
+import std.set;
+import std.unordered_set;
+
+class order {
+  bool reverse;
+public:
+  order(bool reverse) : reverse(reverse) {}
+  bool operator()(int& left, int& right) {
+    return this.reverse ? left > right : left < right;
+  }
+};
+
+class salted_hash {
+  int salt;
+public:
+  salted_hash(int salt) : salt(salt) {}
+  std::size_t operator()(int& value) { return std::size_t(value + this.salt); }
+};
+
+class same_key {
+public:
+  same_key() = default;
+  bool operator()(int& left, int& right) { return left == right; }
+};
+
+int main() {
+  mut std::set<int, order> ascending{order(false)};
+  mut std::set<int, order> descending{order(true)};
+  ascending.insert(1);
+  ascending.insert(3);
+  descending.insert(2);
+  descending.insert(4);
+  ascending.swap(descending);
+  if (*ascending.begin() != 4 || *descending.begin() != 1) { return 1; }
+  ascending.insert(5);
+  descending.insert(0);
+  if (*ascending.begin() != 5 || *descending.begin() != 0) { return 2; }
+
+  mut std::unordered_set<int, salted_hash, same_key> left{salted_hash(7), same_key()};
+  mut std::unordered_set<int, salted_hash, same_key> right{salted_hash(19), same_key()};
+  left.insert(11);
+  left.insert(12);
+  right.insert(21);
+  left.swap(right);
+  int eleven = 11;
+  int twelve = 12;
+  int thirteen = 13;
+  int twenty_one = 21;
+  int twenty_two = 22;
+  if (left.size() != 1 || right.size() != 2 || !left.contains(twenty_one) ||
+      !right.contains(eleven) || !right.contains(twelve)) { return 3; }
+  left.insert(22);
+  right.insert(13);
+  if (!left.contains(twenty_two) || !right.contains(thirteen)) { return 4; }
+  return 0;
+}

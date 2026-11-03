@@ -1014,8 +1014,10 @@ public:
     if (related(operand.type))
       return true;
     if (const auto *place = body.findPlace(operand.place))
-      if (related(place->type))
-        return true;
+      // A selected place already names the presented referent, as emission's
+      // Places::selected does. A plain base alias need not re-prove the
+      // hierarchy of the complete object its provenance loan protects.
+      return related(place->type);
     if (const auto *loan = body.findLoan(operand.loan)) {
       // A call that selected a non-hierarchy referent returns its checked
       // address; the hierarchy storage it was borrowed from is not used here.
@@ -2859,6 +2861,9 @@ private:
         // value storage, a retained receiver staged in place, or a fresh
         // full-expression temporary whose value obligation stays with the
         // caller. A call operator is an ordinary member of its receiver.
+        // Retention describes the caller's ownership and cleanup, not the
+        // target's receiver mode: it may invoke a readonly or mutable member
+        // while retaining the same owned object through the full expression.
         const auto *input = receiverInput(body, *stage.receiver);
         const bool moved = input && consumedReceiver(body, *input);
         const bool retained =
@@ -2878,8 +2883,7 @@ private:
         const bool consuming = target && target->receiverMutability ==
                                              ReceiverMutability::Consuming;
         if (!target || target->linkage != LanguageLinkage::Gti ||
-            (consuming ? !(moved || retained || temporary)
-                       : moved || retained) ||
+            (consuming ? !(moved || retained || temporary) : moved) ||
             std::any_of(
                 target->parameterTypes.begin(), target->parameterTypes.end(),
                 [](const auto &type) { return type == SemanticType::Void; }))
@@ -3444,10 +3448,14 @@ public:
       const auto &type = stage.parameterTypes[0].arguments[0];
       if (nativeValue(type))
         return true;
-      // A selected constructor initializes mutex identity at its final address.
-      // Generated move/copy must not fall through to aggregate bit copying.
-      if (stage.constructorTarget && mutexShape(type).has_value())
-        return true;
+      // Both selected construction and generated move establish a fresh mutex
+      // identity at the final address. BodyEmitter::store routes the latter
+      // through transferMutexes; this never authorizes aggregate byte copying.
+      if (mutexShape(type).has_value())
+        return stage.constructorTarget ||
+               (stage.constructorKind == ConstructorKind::Move &&
+                stage.operands.size() == 2 &&
+                stage.operands[1].kind == MirOperandKind::Value);
       // Hierarchy storage is constructed by its selected constructor, by
       // relocating a moved owned argument, or by the generated field copy.
       if (!dispatchProofs.contains(type) ||
@@ -3644,7 +3652,8 @@ public:
     const auto &pointer = stage.operands[reversed ? 1 : 0].type;
     if (pointer.kind != SemanticType::RawPointer ||
         pointer.arguments.size() != 1 ||
-        !nativeClassPointee(pointer.arguments[0]))
+        (!nativeClassPointee(pointer.arguments[0]) &&
+         !mutexShape(pointer.arguments[0])))
       return false;
     if (stage.operation == MirOperation::PointerDifference)
       return stage.operands[1].type == pointer &&
@@ -4176,7 +4185,7 @@ public:
 
   bool representedTextAddress(const MirBody &body,
                               const MirInstruction &stage) const {
-    if (!mir_detail::textAddressResultLoan(body, stage))
+    if (!mir_detail::textAddressResultLoan(body, stage, &program))
       return false;
     const std::size_t witness =
         stage.intrinsic == IntrinsicKind::TextViewFromAddress ? 2 : 1;
@@ -4542,8 +4551,9 @@ public:
         !stage.localFailureSites.empty())
       return nullptr;
     const auto &input = stage.operands.front();
-    if (input.kind != MirOperandKind::Loan || input.place || input.value ||
-        input.literal || input.type != stage.info.type)
+    if (input.kind != MirOperandKind::Loan || input.place ||
+        (text ? !input.value : input.value != 0) || input.literal ||
+        input.type != stage.info.type)
       return nullptr;
     const auto *from = body.findLoan(input.loan);
     const auto *to = body.findLoan(*stage.loan);
@@ -4573,14 +4583,14 @@ public:
                  : nullptr;
     // Fundamental text is a borrowed value, not an owning object or a reference
     // address. Preserve its complete dependency and exact returned SSA value.
-    if (from->parent || from->lifecycleBound || from->twoPhase ||
-        !from->carriers.empty() || to->lifecycleBound || to->twoPhase ||
-        !to->carriers.empty() || from->access != AccessMode::ReadOnly ||
-        stage.ownership || stage.preparedParameterDrop ||
-        stage.successResultDrop || stage.successResultDestination)
+    if (from->lifecycleBound || from->twoPhase || !from->carriers.empty() ||
+        to->lifecycleBound || to->twoPhase || !to->carriers.empty() ||
+        from->access != AccessMode::ReadOnly || stage.ownership ||
+        stage.preparedParameterDrop || stage.successResultDrop ||
+        stage.successResultDestination)
       return nullptr;
     if (term.value->kind != MirOperandKind::Value || !term.value->value ||
-        term.value->loan)
+        term.value->value != input.value || term.value->loan)
       return nullptr;
     const auto *producer = earlierLiveCallResult(
         body, block, stage, *from, referent, category, term.value->value);
