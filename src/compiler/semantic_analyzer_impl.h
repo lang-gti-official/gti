@@ -3821,6 +3821,9 @@ private:
   symbolicRangeMemberReturnType(const SemanticType &rangeType,
                                 std::string_view member) const;
 
+  [[nodiscard]] std::vector<SemanticType>
+  symbolicCallableResultTypes(const SemanticType &receiver,
+                              std::span<const SemanticType> arguments) const;
   [[nodiscard]] std::vector<CallableCandidate> symbolicOperatorRequirements(
       OverloadedOperator kind, const SemanticType &receiverType,
       std::span<const SemanticType> argumentTypes) const;
@@ -5110,6 +5113,12 @@ private:
   };
   [[nodiscard]] static std::optional<FunctionReturnBorrowSummary>
   textRelaySummary(const TextRelaySources &sources);
+
+  // Lexical, immutable aliases while predeclaring one text relay. These are
+  // prospective contracts; resolved body analysis still proves exact owners.
+  const FunctionDecl *textBorrowAliasFunction = nullptr;
+  std::unordered_map<std::string, PredeclaredTextBorrowSource>
+      textBorrowAliases;
 
   // The text summaries of the outermost dynamicTextReturnBorrowSummary query,
   // per declaration. A summary whose evaluation read one lower on the stack

@@ -534,8 +534,12 @@ verifyFailureMetadata(const FailureMetadata &metadata) {
       break;
     }
     auto &outcomes = admissions[assignment.site - 1];
-    outcomes.insert(outcomes.end(), callerTrackedOutcomes.begin(),
-                    callerTrackedOutcomes.end());
+    if (!outcomesValidAndSorted(metadata.callerOutcomes())) {
+      report("caller outcome inventory is invalid or unsorted");
+      break;
+    }
+    outcomes.insert(outcomes.end(), metadata.callerOutcomes().begin(),
+                    metadata.callerOutcomes().end());
   }
   for (std::size_t index = 0; index < admissions.size(); ++index) {
     auto &outcomes = admissions[index];
@@ -572,6 +576,9 @@ FailureMetadataBuildResult FailureMetadataBuilder::build(
 
   std::map<OriginKey, PendingOrigin> origins;
   std::map<OriginKey, CallerLocationOrigin> callers;
+  auto &callerOutcomes = result.metadata.callerOutcomes_;
+  callerOutcomes.assign(callerTrackedOutcomes.begin(),
+                        callerTrackedOutcomes.end());
   const auto validAnchor = [&](const auto &origin, std::string_view purpose) {
     const SourceUnit *unit = sourceGraph.findUnit(origin.sourceUnit);
     const std::string *source =
@@ -618,6 +625,10 @@ FailureMetadataBuildResult FailureMetadataBuilder::build(
       for (const DefinedFailureOrigin &origin :
            value.definedFailure.localOrigins) {
         collectOrigin(origin);
+        if (value.tracksCaller && value.intrinsicCallContractProof) {
+          callerOutcomes.insert(callerOutcomes.end(), origin.outcomes.begin(),
+                                origin.outcomes.end());
+        }
       }
       if (value.callerLocation &&
           validAnchor(*value.callerLocation, "caller location")) {
@@ -670,13 +681,13 @@ FailureMetadataBuildResult FailureMetadataBuilder::build(
   // The runtime table is shared reporting provenance, but the two assignment
   // maps remain separate so admission never manufactures a local detector.
   auto reportingSites = origins;
+  sortAndUniqueOutcomes(callerOutcomes);
   for (const auto &[key, origin] : callers) {
     auto &pending = reportingSites[key];
     pending.key = key;
     pending.line = origin.line;
-    pending.outcomes.insert(pending.outcomes.end(),
-                            callerTrackedOutcomes.begin(),
-                            callerTrackedOutcomes.end());
+    pending.outcomes.insert(pending.outcomes.end(), callerOutcomes.begin(),
+                            callerOutcomes.end());
     sortAndUniqueOutcomes(pending.outcomes);
   }
 

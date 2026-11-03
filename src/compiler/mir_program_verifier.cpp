@@ -3089,8 +3089,18 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
       if (!result.empty())
         return result;
     }
-    return source ? std::vector<MirLoanDependency>{{.source = *source}}
-                  : std::vector<MirLoanDependency>{};
+    // An owned receiver has no stored loan to supply its permission. Preserve
+    // the actual input borrow, not merely the mutability of its place: a
+    // read-only receiver cannot publish a writable field reference.
+    return source
+               ? std::vector<
+                     MirLoanDependency>{{.source = *source,
+                                         .access =
+                                             operand.kind ==
+                                                     MirOperandKind::BorrowWrite
+                                                 ? AccessMode::Mutable
+                                                 : AccessMode::ReadOnly}}
+               : std::vector<MirLoanDependency>{};
   };
   for (const MirBlock &block : body.blocks) {
     for (const MirInstruction &instruction : block.instructions) {
@@ -3698,6 +3708,14 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
             body, owner,
             "call's caller location differs from canonical source metadata",
             block.id, instruction.id);
+      }
+      if (instruction.intrinsicCallContract &&
+          instruction.intrinsicCallContract->snapshot() !=
+              program.semanticSnapshot()) {
+        return verificationFailure(body, owner,
+                                   "intrinsic call declaration contract "
+                                   "belongs to another semantic snapshot",
+                                   block.id, instruction.id);
       }
       if (instruction.unsafeOperation ==
               UnsafeOperationKind::DeclaredUnsafeCall &&
@@ -5977,9 +5995,30 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
         isPotentiallyBorrowedCarrier(program, sourceType)) {
       for (const auto &block : body.blocks) {
         for (const auto &instruction : block.instructions) {
+          const bool textPublication =
+              instruction.kind == MirInstructionKind::Call &&
+              instruction.result && instruction.hirValue == loan.producedBy &&
+              instruction.info.category == ValueCategory::Value &&
+              (instruction.info.type.kind == SemanticType::StringView ||
+               instruction.info.type.kind == SemanticType::CString) &&
+              instruction.borrowAccess == AccessMode::ReadOnly &&
+              instruction.borrowFields.empty() &&
+              instruction.borrowArguments.empty() &&
+              loan.access == AccessMode::ReadOnly &&
+              loan.designatedFields.empty() &&
+              loan.additionalDependencies.empty() &&
+              ((instruction.borrowOrigin == BorrowOriginKind::Receiver &&
+                instruction.receiver.has_value()) ||
+               (instruction.borrowOrigin == BorrowOriginKind::Argument &&
+                instruction.borrowArgument <
+                    instruction.parameterTypes.size()));
           if (instruction.loan != loan.id ||
-              !isCarrierReferenceResult(program, instruction))
+              (!isCarrierReferenceResult(program, instruction) &&
+               !textPublication))
             continue;
+          // Scalar text publishes its own evaluated value while retaining the
+          // same physical carrier shell and independently verified dependency.
+          // Its owner has fields; the text result must not inherit them.
           const auto &input =
               instruction.borrowOrigin == BorrowOriginKind::Receiver
                   ? instruction.receiver->type
@@ -5988,7 +6027,11 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
                                          input.arguments.size() == 1
                                      ? input.arguments.front()
                                      : input;
-          constructedShell = referent == sourceType;
+          // Relaying text by value keeps its existing external owner. Only
+          // a distinct owner type publishes a new physical text-owner shell.
+          constructedShell =
+              referent == sourceType &&
+              (!textPublication || referent != instruction.info.type);
         }
       }
     }
@@ -18234,7 +18277,7 @@ verifyMirProgramContracts(const MirProgram &program) {
                           "type, access, origin or restoration permission"});
         if ((instruction.intrinsic == IntrinsicKind::TextViewFromAddress ||
              instruction.intrinsic == IntrinsicKind::CStringFromAddress) &&
-            !mir_detail::textAddressResultLoan(body, instruction)) {
+            !mir_detail::textAddressResultLoan(body, instruction, &program)) {
           result.errors.push_back(
               {.bodyKind = body.kind,
                .owner = owner,

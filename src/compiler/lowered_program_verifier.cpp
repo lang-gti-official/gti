@@ -1038,6 +1038,17 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
     } else if (const auto *payload = std::get_if<LoweredFunctionDeclaration>(
                    &declaration.payload)) {
       recordIdentity(functionDeclarations, payload->id, "function");
+      const auto &contract = payload->controlContract;
+      if (!contract || contract->declaration() != payload->id ||
+          contract->intrinsic() != payload->intrinsic ||
+          contract->neverReturns() != payload->neverReturns ||
+          contract->tracksCaller() != payload->tracksCaller ||
+          contract->snapshot() != program.mir_.semanticSnapshot()) {
+        addIssue(issues, LoweredProgramIssueKind::InvalidDeclarationInventory,
+                 "lowered function control flags differ from their semantic "
+                 "declaration contract",
+                 std::nullopt, declaration.id);
+      }
     } else if (const auto *payload = std::get_if<LoweredConstructorDeclaration>(
                    &declaration.payload)) {
       recordIdentity(constructorDeclarations, payload->id, "constructor");
@@ -1337,6 +1348,21 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
       if (place.symbol != 0 && !symbolIdentities.contains(place.symbol)) {
         addIssue(issues, LoweredProgramIssueKind::InvalidSymbolInventory,
                  "MIR place refers to an absent lowered symbol", address);
+      }
+    }
+    for (const auto &block : body->blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (!instruction.intrinsicCallContract)
+          continue;
+        const auto *declaration = program.findFunctionDeclaration(
+            instruction.intrinsicCallContract->declaration());
+        if (!declaration ||
+            declaration->controlContract != instruction.intrinsicCallContract) {
+          addIssue(issues, LoweredProgramIssueKind::InvalidDeclarationInventory,
+                   "MIR intrinsic call differs from its selected lowered "
+                   "declaration contract",
+                   address);
+        }
       }
     }
   }
