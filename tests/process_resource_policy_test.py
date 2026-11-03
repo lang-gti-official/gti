@@ -8,7 +8,15 @@ import platform
 import shutil
 import subprocess
 import tempfile
-from backend_modes import native_modes
+from backend_modes import native_modes, record_symptom, unsupported
+
+# The LLVM lowering of the process storage policy does not reach the native
+# provider the way the C++ text does (lang-gti-official/gti#200); the C++
+# profile keeps the fixture's execution evidence.
+LLVM_UNSUPPORTED = {
+    "process_storage_policy": "LLVM bug lang-gti-official/gti#200: exits 9, the native provider "
+                              "observes no release/event where the C++ profile observes one",
+}
 
 
 def run(command, environment, expected_status=0):
@@ -103,6 +111,13 @@ def main():
                 run([compiler, str(root / "tests/fixtures" / f"{fixture}.gti"),
                      *flags, "-o", str(binary), "--", *native_inputs,
                      *native_flags], environment)
+                limitation = unsupported(fixture, flags, llvm_unsupported=LLVM_UNSUPPORTED)
+                if limitation:
+                    # A filed LLVM bug: the declared symptom must keep reproducing.
+                    observed = subprocess.run([str(binary)], env=environment, capture_output=True, text=True)
+                    record_symptom(limitation, fixture, label, flags,
+                                   observed.returncode != 0 or bool(observed.stdout) or bool(observed.stderr))
+                    continue
                 result = run([str(binary)], environment)
                 assert not result.stdout and not result.stderr, result
             binary = temporary / f"process-resource-limit-{label}"

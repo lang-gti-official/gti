@@ -98,6 +98,12 @@ def optimization_level(flags) -> str:
     return next(flag[1:] for flag in flags if flag.startswith("-O"))
 
 
+def cpp_standard(flags) -> str:
+    """The C++ standard a C++ mode selects, for a host compiler run on its text."""
+    flags = list(flags)
+    return flags[flags.index("--std") + 1]
+
+
 def keep_cpp(flags):
     """``--keep-cpp`` under the C++ profile; nothing under LLVM, which rejects it."""
     return ["--keep-cpp"] if is_cpp_mode(flags) else []

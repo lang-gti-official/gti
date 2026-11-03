@@ -41,7 +41,7 @@ def main():
                 result = execute([output], environment)
                 assert (result.returncode, result.stdout, result.stderr) == (0, expected_output, ""), \
                     (source.name, mode, result.returncode, result.stdout, result.stderr)
-                print(f"{source.name}: {standard}-{optimization} passed", flush=True)
+                print(f"{source.name}: {mode} passed", flush=True)
 
         # Instantiate the JSON branches whose redundant discards were removed.
         # Native conversion algorithms are unchanged; this guards the selected

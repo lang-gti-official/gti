@@ -11,7 +11,7 @@ import tempfile
 
 from unique_class_allocation_runtime_test import run
 from allocation_abort_runtime_test import ABORT_STATUS
-from backend_modes import native_modes
+from backend_modes import cpp_only_case, is_cpp_mode, native_modes
 
 
 def main():
@@ -56,7 +56,15 @@ def main():
             built = run([str(compiler), str(source), *flags, "-o", str(binary),
                          "--", str(fixtures / "unique_scalar_allocation_fault.cpp"), *native])
             assert built.returncode == 0, (name, built.stdout, built.stderr)
-            for phase, expected in enumerate(cases):
+            phases = list(enumerate(cases))
+            if not is_cpp_mode(flags):
+                # The fault provider (tests/fixtures/unique_scalar_allocation_fault.cpp)
+                # replaces the C++ text's nothrow operator new; LLVM-backed
+                # programs allocate through the runtime.
+                cpp_only_case("allocation fault injection through the C++ text's nothrow operator new",
+                              "allocation failure phases", name)
+                phases = [(phase, expected) for phase, expected in phases if expected[0] != ABORT_STATUS]
+            for phase, expected in phases:
                 result = run([str(binary), *(["phase"] * phase)])
                 assert (result.returncode, result.stdout, result.stderr) == expected, (
                     name, phase, result.returncode, result.stdout, result.stderr, expected)

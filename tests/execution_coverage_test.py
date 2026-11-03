@@ -142,10 +142,11 @@ def main():
     build = pathlib.Path(sys.argv[2]).resolve()
     tests = inventory(build)
     names = {test["name"] for test in tests}
-    registered = {pathlib.Path(arg).name for test in tests for arg in test.get("command", [])}
-    stale = sorted(set(ALLOWED_SPELLINGS) - registered)
+    stale = sorted(name for name in ALLOWED_SPELLINGS
+                   if not (repository / "tests" / name).is_file()
+                   or not spells_a_backend((repository / "tests" / name).read_text(errors="replace")))
     if stale:
-        raise AssertionError(f"ALLOWED_SPELLINGS names unregistered harnesses: {stale}")
+        raise AssertionError(f"ALLOWED_SPELLINGS names harnesses that no longer spell a backend: {stale}")
     violations = []
     declared = []
     counts = {"shared": 0, "policy": 0, "default-backend": 0, "cpp-only": 0, "allowed": 0}
@@ -176,6 +177,9 @@ def main():
                 elif not executes:
                     violations.append(f"{test['name']}/{name}: no LLVM execution mode and no llvm_unsupported declaration")
             continue
+        if harness.name != "lambda_pack_invocation_runtime_test.py" and (
+                "LLVM_UNSUPPORTED" in text or "llvm_unsupported=" in text):
+            declared.append(f"{test['name']}: standalone llvm_unsupported declaration in {harness.name}")
         if spells_a_backend(text):
             if harness.name in ALLOWED_SPELLINGS:
                 counts["allowed"] += 1

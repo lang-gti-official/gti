@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
-from backend_modes import cpp_text_modes, is_cpp_mode
+from backend_modes import cpp_standard, cpp_text_modes, is_cpp_mode
 
 
 def run(command):
@@ -54,13 +54,13 @@ int main() {{ return native_identity(identity(local_value)); }}
                             raise RuntimeError("missing exact no-argument hosted adapter")
                         generated.write_text(text.replace("int main() {", f"int {name}_entry() {{"))
                     obj = root / f"{name}.o"
-                    run([cxx, f"-std={label}", f"-{level}",
+                    run([cxx, f"-std={cpp_standard(flags)}", f"-{level}",
                          "-D__gti_strict_ieee754=1",
                          "-I", repository / "runtime/include",
                          "-c", generated, "-o", obj])
                     objects.append(obj)
                 executable = root / f"linkage-{label}-{level}"
-                run([cxx, f"-std={label}", f"-{level}", harness,
+                run([cxx, f"-std={cpp_standard(flags)}", f"-{level}", harness,
                      *objects, runtime, "-pthread", "-o", executable])
                 result = run([executable])
                 if result.stdout or result.stderr:

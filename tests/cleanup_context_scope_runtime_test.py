@@ -8,7 +8,7 @@ import signal
 import subprocess
 import sys
 import tempfile
-from backend_modes import cpp_text_modes, is_cpp_mode
+from backend_modes import cpp_standard, cpp_text_modes, is_cpp_mode
 
 
 PROBE = r"""
@@ -139,7 +139,7 @@ def main():
                 generated.write_text(text + PROBE)
             for level in ("-O0", "-O3"):
                 binary = work / f"{label}-{level}"
-                run([cxx, f"-std={label}", level,
+                run([cxx, f"-std={cpp_standard(flags)}", level,
                      "-fno-fast-math", "-ffp-contract=off",
                      "-D__gti_strict_ieee754=1", generated,
                      "-I", root / "runtime/include",

@@ -4,7 +4,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
-from backend_modes import cpp_text_modes, is_cpp_mode
+from backend_modes import cpp_standard, cpp_text_modes, is_cpp_mode
 
 
 ASSERTIONS = r"""
@@ -175,7 +175,7 @@ def main() -> int:
             compiled = run(
                 [
                     str(cxx),
-                    f"-std={label}",
+                    f"-std={cpp_standard(flags)}",
                     "-D__gti_strict_ieee754=1",
                     "-I",
                     str(runtime_include),
