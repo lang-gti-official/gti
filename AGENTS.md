@@ -345,9 +345,12 @@ on Gitea and is unaffected. See "Published Toolchain Channels" in
 `docs/architecture/build-and-driver.md`.
 
 - **Preview** distributes the separately admitted combined `preview` source through
-  `preview.yml`, with focused combined admission, installed checks, source and
-  inclusion identity on both packaged platforms. It is not full-main CI or
-  nightly evidence and never promotes into main. `gtiup` manages preview,
+  `preview.yml`, which builds the admitted source, proves the compiler runs,
+  smoke-tests the installed toolchain and packages it with source and
+  inclusion identity on both platforms; focused admission of each submitted
+  feature happens once, on the submitting host, before the source reaches
+  the branch. Preview is an early snapshot that builds and runs, not full-main
+  CI or nightly evidence, and never promotes into main. `gtiup` manages preview,
   nightly, beta and stable toolchains; Neovim managed mode uses the selected
   matching compiler/LSP/parser without downloading its own tools. Installation
   remains opt-in. Never move the rolling preview tag by hand.

@@ -115,7 +115,7 @@ def main():
 
     preview = text(root, PREVIEW)
     expect("branches: [preview]" in preview and "preview_release.py check" in preview
-           and "preview_admission" in preview and "needs: [select, package]" in preview
+           and "validation_checks.py smoke --root . --build build" in preview and "needs: [select, package]" in preview
            and preview.count("contents: write") == 1,
            "preview must retain combined admission, exact package checks and isolated publication")
     ci, nightly, release = text(root, CI), text(root, NIGHTLY), text(root, RELEASE)
