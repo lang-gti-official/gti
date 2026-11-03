@@ -65,7 +65,7 @@
     "stdlib/std/unordered_map.gti": "2316bc94b2b21cacdf4653994ce3d2813983043cdcabe22708367bf45732516e",
     "stdlib/std/unordered_set.gti": "49f4e2d95926cfcfc75be282370862d66569dac6d4e5337d3601f6cb12e24065",
     "stdlib/std/utility.gti": "983e0584b5bf5c1850f0f648ebc579a53586e1e0f5f5d28c23d4fc88155343b5",
-    "stdlib/std/vector.gti": "8864cf7231c29435ec19a7817de6ac8b03e99d407cef8127288ef327965bdf15",
+    "stdlib/std/vector.gti": "07c4ce8814ff4b19364fada450cdd92a7b45674f2343f34ab323614f8527deb8",
     "stdlib/std/detail/key_removal.gti": "92657213e44731a8c4824aafd21550cb1e6f95c95323ab598e55a8bac0c41b7e",
     "stdlib/std/detail/sequence_removal.gti": "944f2d78c975da503ed192e70c18d1bf07f0f76f5242bceb4135c2f126fcb3c2"
   },
@@ -3020,6 +3020,20 @@
       "expected": {
         "exit_code": 0,
         "stdout": "present\n9\n4\npermitted\n9\n9\n0\n0\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "vector-contains",
+      "mode": "run",
+      "source": "tests/fixtures/vector_contains.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
         "stderr": ""
       }
     }
@@ -7656,6 +7670,28 @@
         "tests/fixtures/removal_algorithms.gti",
         "tests/removal_algorithms_test.py",
         "examples/090-generic-algorithms.gti"
+      ]
+    },
+    {
+      "id": "vector.contains",
+      "source": "stdlib/std/vector.gti",
+      "status": "executable",
+      "operations": [
+        "std::vector::contains"
+      ],
+      "case_ids": [
+        "vector-contains"
+      ],
+      "required_instantiations": [
+        "read-only and mutable vector<int>",
+        "empty, missing, duplicate and first/middle/last matches",
+        "owning strings and move-only comparable Key",
+        "early-exit comparison and needle aliasing an element",
+        "non-comparable element with unrelated vector operations"
+      ],
+      "evidence": [
+        "tests/fixtures/vector_contains.gti",
+        "tests/complete_containers_test.py"
       ]
     }
   ]

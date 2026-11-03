@@ -1,0 +1,67 @@
+import std.vector;
+import std.string;
+
+class Key {
+  int value;
+public:
+  Key(int value) : value(value) {}
+  Key(Key& other) = delete;
+  Key(Key&& other) = default;
+  bool operator==(Key& other) {
+    // A comparison after the first match would fail in the short-circuit case.
+    if (this.value < 0) { return this.value / (this.value + 1) == other.value; }
+    return this.value == other.value;
+  }
+  bool operator!=(Key& other) { return !(this == other); }
+};
+
+class Opaque {
+public:
+  Opaque() {}
+  Opaque(Opaque& other) = delete;
+  Opaque(Opaque&& other) = default;
+};
+
+bool read_only(std::vector<int>& values, int& wanted) {
+  return values.contains(wanted);
+}
+
+int main() {
+  int two_value = 2;
+  int three = 3;
+  int four = 4;
+  int seven = 7;
+  int eight = 8;
+  std::vector<int> empty{};
+  if (empty.contains(seven)) { return 1; }
+  std::vector<int> numbers = {2, 4, 4, 8};
+  if (!numbers.contains(two_value) || !numbers.contains(four) || !numbers.contains(eight) ||
+      numbers.contains(three) || !read_only(numbers, eight)) { return 2; }
+  int& same_storage = numbers.front();
+  if (!numbers.contains(same_storage)) { return 3; }
+
+  mut std::vector<int> writable = {7};
+  bool found = writable.contains(seven);
+  writable.clear();
+  if (!found || writable.contains(seven)) { return 4; }
+
+  std::vector<std::string> words = {std::string("red"), std::string("blue")};
+  std::string blue{"blue"};
+  std::string absent{"green"};
+  if (!words.contains(blue) || words.contains(absent) || blue.size() != std::size_t(4)) {
+    return 5;
+  }
+  std::vector<Key> keys = {Key(2), Key(5)};
+  Key five{5};
+  Key six{6};
+  if (!keys.contains(five) || keys.contains(six)) { return 6; }
+  std::vector<Key> early = {Key(2), Key(-1)};
+  Key two{2};
+  if (!early.contains(two)) { return 7; }
+
+  // Instantiating and using a vector does not require equality.
+  mut std::vector<Opaque> opaque{};
+  opaque.push_back(Opaque());
+  if (opaque.size() != std::size_t(1)) { return 8; }
+  return 0;
+}

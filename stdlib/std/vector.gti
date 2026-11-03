@@ -272,6 +272,19 @@ public:
     return this.data.length() == 0;
   }
 
+  /// Returns whether an element equals value, scanning from front to back.
+  /// Stops at the first match; at most size() comparisons, without copying
+  /// elements or allocating storage. Equality is required only for this method.
+  bool contains(T& value) requires std::equality_comparable<T> {
+    mut auto first = this.begin();
+    auto last = this.end();
+    while (first != last) {
+      if (*first == value) { return true; }
+      ++first;
+    }
+    return false;
+  }
+
   T& front() {
     size_t live = this.data.length();
     size_t index = size_t(0);

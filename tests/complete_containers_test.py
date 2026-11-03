@@ -12,6 +12,21 @@ from lambda_pack_invocation_runtime_test import main as run_runtime_matrix
 
 def reject_invalid(compiler):
     cases = {}
+    cases["vector-contains-no-equality"] = ("vector", """
+class Opaque { public: Opaque() {} };
+int main() {
+  std::vector<Opaque> values{};
+  Opaque key{};
+  return values.contains(key) ? 0 : 1;
+}
+""", "GTI-S2029")
+    cases["vector-contains-wrong-element"] = ("vector", """
+int main() {
+  std::vector<int> values = {1};
+  double key = 1.0;
+  return values.contains(key) ? 0 : 1;
+}
+""", "GTI-S2003")
     for kind in ("list", "deque", "queue", "set", "unordered_set"):
         cases[f"copy-{kind}"] = (kind, f"""int main() {{
   std::{kind}<int> values{{}};
@@ -115,3 +130,4 @@ if __name__ == "__main__":
     reject_invalid(compiler)
     cleanup_matrix(compiler)
     run_runtime_matrix(names=("complete_list", "complete_list_differential", "complete_deque", "complete_sets", "complete_containers_ownership", "owned_constructor_policy_forwarding"))
+    run_runtime_matrix(names=("vector_contains",), llvm_modes=True)

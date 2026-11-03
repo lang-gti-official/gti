@@ -497,7 +497,7 @@
       }
     },
     "033-source-concepts.gti": {
-      "declarations": 1360,
+      "declarations": -1,
       "bodies": 205,
       "generated_items": 131,
       "generated_kinds": {
@@ -577,9 +577,9 @@
       }
     },
     "038-vector-emplace.gti": {
-      "declarations": 1355,
-      "bodies": 236,
-      "generated_items": 150,
+      "declarations": -1,
+      "bodies": 247,
+      "generated_items": 159,
       "generated_kinds": {
         "program_initialization": 0,
         "hosted_entry": 1,
@@ -588,7 +588,7 @@
         "lifecycle_cleanup": 5,
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
-        "concrete_instance_adapter": 121,
+        "concrete_instance_adapter": 130,
         "thread_local_storage": 0
       }
     },
@@ -657,7 +657,7 @@
       }
     },
     "043-program-arguments.gti": {
-      "declarations": 1794,
+      "declarations": -1,
       "bodies": 206,
       "generated_items": 144,
       "generated_kinds": {
@@ -673,7 +673,7 @@
       }
     },
     "044-bounded-requires.gti": {
-      "declarations": 1666,
+      "declarations": -1,
       "bodies": 153,
       "generated_items": 110,
       "generated_kinds": {
@@ -801,7 +801,7 @@
       }
     },
     "052-stateful-callables.gti": {
-      "declarations": 1744,
+      "declarations": -1,
       "bodies": 161,
       "generated_items": 113,
       "generated_kinds": {
@@ -881,7 +881,7 @@
       }
     },
     "057-contextual-array-arguments.gti": {
-      "declarations": 1345,
+      "declarations": -1,
       "bodies": 135,
       "generated_items": 74,
       "generated_kinds": {
@@ -1009,7 +1009,7 @@
       }
     },
     "065-mutable-ranges.gti": {
-      "declarations": 1344,
+      "declarations": -1,
       "bodies": 158,
       "generated_items": 93,
       "generated_kinds": {
@@ -1041,7 +1041,7 @@
       }
     },
     "067-forward-iterators.gti": {
-      "declarations": 1712,
+      "declarations": -1,
       "bodies": 144,
       "generated_items": 102,
       "generated_kinds": {
@@ -1121,7 +1121,7 @@
       }
     },
     "072-filesystem-paths.gti": {
-      "declarations": 1839,
+      "declarations": -1,
       "bodies": 195,
       "generated_items": 115,
       "generated_kinds": {
@@ -1153,7 +1153,7 @@
       }
     },
     "074-read-only-range-loans.gti": {
-      "declarations": 1341,
+      "declarations": -1,
       "bodies": 141,
       "generated_items": 79,
       "generated_kinds": {
@@ -1201,7 +1201,7 @@
       }
     },
     "077-callable-concepts.gti": {
-      "declarations": 1721,
+      "declarations": -1,
       "bodies": 160,
       "generated_items": 112,
       "generated_kinds": {
@@ -1249,7 +1249,7 @@
       }
     },
     "080-function-items.gti": {
-      "declarations": 1718,
+      "declarations": -1,
       "bodies": 147,
       "generated_items": 102,
       "generated_kinds": {
@@ -1265,7 +1265,7 @@
       }
     },
     "083-complete-ranges.gti": {
-      "declarations": 1726,
+      "declarations": -1,
       "bodies": 172,
       "generated_items": 118,
       "generated_kinds": {
@@ -1329,7 +1329,7 @@
       }
     },
     "087-associative-containers.gti": {
-      "declarations": 2065,
+      "declarations": -1,
       "bodies": 453,
       "generated_items": 319,
       "generated_kinds": {
@@ -1361,7 +1361,7 @@
       }
     },
     "089-library-workflow.gti": {
-      "declarations": 2546,
+      "declarations": -1,
       "bodies": 919,
       "generated_items": 629,
       "generated_kinds": {
@@ -1377,7 +1377,7 @@
       }
     },
     "090-generic-algorithms.gti": {
-      "declarations": 2084,
+      "declarations": 2085,
       "bodies": 439,
       "generated_items": 328,
       "generated_kinds": {
@@ -1393,7 +1393,7 @@
       }
     },
     "091-json-documents.gti": {
-      "declarations": 2293,
+      "declarations": -1,
       "bodies": 696,
       "generated_items": 411,
       "generated_kinds": {
@@ -1409,7 +1409,7 @@
       }
     },
     "092-json-codecs.gti": {
-      "declarations": 2298,
+      "declarations": -1,
       "bodies": 667,
       "generated_items": 388,
       "generated_kinds": {
@@ -1425,7 +1425,7 @@
       }
     },
     "093-http-json-client.gti": {
-      "declarations": 2437,
+      "declarations": -1,
       "bodies": 765,
       "generated_items": 394,
       "generated_kinds": {
@@ -1457,7 +1457,7 @@
       }
     },
     "095-explicit-cloning.gti": {
-      "declarations": 1814,
+      "declarations": -1,
       "bodies": 247,
       "generated_items": 167,
       "generated_kinds": {
@@ -1537,7 +1537,7 @@
       }
     },
     "100-owned-error-pipelines.gti": {
-      "declarations": 2282,
+      "declarations": -1,
       "bodies": 522,
       "generated_items": 283,
       "generated_kinds": {
@@ -1553,7 +1553,7 @@
       }
     },
     "101-owned-algorithm-results.gti": {
-      "declarations": 1877,
+      "declarations": -1,
       "bodies": 327,
       "generated_items": 236,
       "generated_kinds": {
@@ -1601,7 +1601,7 @@
       }
     },
     "104-move-only-ordering.gti": {
-      "declarations": 1964,
+      "declarations": -1,
       "bodies": 259,
       "generated_items": 178,
       "generated_kinds": {
@@ -1649,7 +1649,7 @@
       }
     },
     "107-composable-io.gti": {
-      "declarations": 1869,
+      "declarations": -1,
       "bodies": 320,
       "generated_items": 209,
       "generated_kinds": {
@@ -1665,7 +1665,7 @@
       }
     },
     "108-mutable-slices.gti": {
-      "declarations": 1345,
+      "declarations": -1,
       "bodies": 179,
       "generated_items": 109,
       "generated_kinds": {
@@ -1777,7 +1777,7 @@
       }
     },
     "115-discardable-results.gti": {
-      "declarations": 1834,
+      "declarations": -1,
       "bodies": 262,
       "generated_items": 184,
       "generated_kinds": {
@@ -1969,7 +1969,7 @@
       }
     },
     "127-operator-and-value-transport.gti": {
-      "declarations": 1809,
+      "declarations": -1,
       "bodies": 231,
       "generated_items": 153,
       "generated_kinds": {
@@ -2001,7 +2001,7 @@
       }
     },
     "129-generic-payload-enums.gti": {
-      "declarations": 1802,
+      "declarations": -1,
       "bodies": 224,
       "generated_items": 157,
       "generated_kinds": {
@@ -2033,7 +2033,7 @@
       }
     },
     "131-inferred-references.gti": {
-      "declarations": 2273,
+      "declarations": -1,
       "bodies": 562,
       "generated_items": 320,
       "generated_kinds": {
@@ -2049,7 +2049,7 @@
       }
     },
     "132-qualified-type-members.gti": {
-      "declarations": 1363,
+      "declarations": -1,
       "bodies": 175,
       "generated_items": 97,
       "generated_kinds": {
@@ -2081,7 +2081,7 @@
       }
     },
     "134-standard-library-modules.gti": {
-      "declarations": 1894,
+      "declarations": -1,
       "bodies": 311,
       "generated_items": 188,
       "generated_kinds": {
@@ -2097,7 +2097,7 @@
       }
     },
     "135-inline-polymorphic-values.gti": {
-      "declarations": 1912,
+      "declarations": -1,
       "bodies": 373,
       "generated_items": 220,
       "generated_kinds": {
@@ -2129,7 +2129,7 @@
       }
     },
     "137-declared-attributes.gti": {
-      "declarations": 1811,
+      "declarations": -1,
       "bodies": 249,
       "generated_items": 165,
       "generated_kinds": {
@@ -2145,7 +2145,7 @@
       }
     },
     "138-structural-construction.gti": {
-      "declarations": 1812,
+      "declarations": -1,
       "bodies": 302,
       "generated_items": 200,
       "generated_kinds": {
@@ -2161,7 +2161,7 @@
       }
     },
     "139-ordered-search.gti": {
-      "declarations": 1724,
+      "declarations": -1,
       "bodies": 196,
       "generated_items": 138,
       "generated_kinds": {
@@ -2193,7 +2193,7 @@
       }
     },
     "141-reflected-json.gti": {
-      "declarations": 2302,
+      "declarations": -1,
       "bodies": 759,
       "generated_items": 450,
       "generated_kinds": {
@@ -2225,7 +2225,7 @@
       }
     },
     "143-checked-container-iteration.gti": {
-      "declarations": 2039,
+      "declarations": -1,
       "bodies": 526,
       "generated_items": 392,
       "generated_kinds": {
@@ -2241,7 +2241,7 @@
       }
     },
     "144-checked-view-iteration.gti": {
-      "declarations": 2055,
+      "declarations": -1,
       "bodies": 452,
       "generated_items": 321,
       "generated_kinds": {
@@ -2289,7 +2289,7 @@
       }
     },
     "147-standard-library-import.gti": {
-      "declarations": 3511,
+      "declarations": -1,
       "bodies": 520,
       "generated_items": 284,
       "generated_kinds": {
@@ -2305,7 +2305,7 @@
       }
     },
     "148-nested-configuration.gti": {
-      "declarations": 2300,
+      "declarations": -1,
       "bodies": 682,
       "generated_items": 394,
       "generated_kinds": {
@@ -2465,7 +2465,7 @@
       }
     },
     "157-protocol-concepts.gti": {
-      "declarations": 1827,
+      "declarations": -1,
       "bodies": 193,
       "generated_items": 120,
       "generated_kinds": {
@@ -2513,7 +2513,7 @@
       }
     },
     "160-borrowed-callback-results.gti": {
-      "declarations": 1846,
+      "declarations": -1,
       "bodies": 179,
       "generated_items": 87,
       "generated_kinds": {
@@ -2529,7 +2529,7 @@
       }
     },
     "161-consuming-matches.gti": {
-      "declarations": 1902,
+      "declarations": -1,
       "bodies": 324,
       "generated_items": 198,
       "generated_kinds": {
@@ -2593,7 +2593,7 @@
       }
     },
     "165-borrowed-payload-results.gti": {
-      "declarations": 1917,
+      "declarations": -1,
       "bodies": 278,
       "generated_items": 152,
       "generated_kinds": {
@@ -2721,7 +2721,7 @@
       }
     },
     "173-general-requires.gti": {
-      "declarations": 1841,
+      "declarations": -1,
       "bodies": 194,
       "generated_items": 97,
       "generated_kinds": {
@@ -2849,7 +2849,7 @@
       }
     },
     "181-general-object-layout.gti": {
-      "declarations": 1798,
+      "declarations": -1,
       "bodies": 170,
       "generated_items": 109,
       "generated_kinds": {
@@ -2865,7 +2865,7 @@
       }
     },
     "182-associated-type-families.gti": {
-      "declarations": 1823,
+      "declarations": -1,
       "bodies": 282,
       "generated_items": 191,
       "generated_kinds": {
@@ -2881,7 +2881,7 @@
       }
     },
     "182-bounded-array-borrows.gti": {
-      "declarations": 1828,
+      "declarations": 1829,
       "bodies": 156,
       "generated_items": 80,
       "generated_kinds": {
@@ -2971,7 +2971,7 @@
     "x86_64-unknown-linux": {
       "examples": {
         "087-associative-containers.gti": {
-          "declarations": 2065,
+          "declarations": -1,
           "bodies": 452,
           "generated_items": 318,
           "generated_kinds": {
@@ -2987,7 +2987,7 @@
           }
         },
         "089-library-workflow.gti": {
-          "declarations": 2546,
+          "declarations": -1,
           "bodies": 918,
           "generated_items": 628,
           "generated_kinds": {

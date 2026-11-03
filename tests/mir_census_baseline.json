@@ -36,7 +36,7 @@
     "035-conditional-expressions.gti": 70,
     "036-c-abi-sockets.gti": 10,
     "037-tcp-socket-owner.gti": 43,
-    "038-vector-emplace.gti": 235,
+    "038-vector-emplace.gti": 246,
     "039-raw-pointers.gti": 9,
     "040-loan-flow-edges.gti": 173,
     "041-owner-dependencies.gti": 186,
