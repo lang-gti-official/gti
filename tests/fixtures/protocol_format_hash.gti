@@ -1,6 +1,9 @@
 // One conditional conformance covers a whole generic family. Nested pairs
 // recursively format and hash their components, with no trait specialization.
 import std.format;
+import std.functional;
+import std.string;
+import std.utility;
 import std.unordered_map;
 
 struct Box<T> {

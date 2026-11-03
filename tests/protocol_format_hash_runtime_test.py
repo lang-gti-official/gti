@@ -29,18 +29,18 @@ with tempfile.TemporaryDirectory(prefix="gti-protocol-format-hash-") as temporar
             if actual != output:
                 raise AssertionError(f"unexpected output: {actual!r}")
     failures = {
-        "format": ("import std.format; struct Opaque { Opaque() = default; }; "
+        "format": ("import std.format; import std.utility; struct Opaque { Opaque() = default; }; "
                    "int main() { auto p = std::make_pair(Opaque(), 1); "
                    "std::println(\"{}\", p); return 0; }", "std::formattable"),
-        "hash": ("import std.functional; struct Opaque { Opaque() = default; }; "
+        "hash": ("import std.functional; import std.utility; struct Opaque { Opaque() = default; }; "
                  "int main() { auto p = std::make_pair(Opaque(), 1); "
                  "std::default_hash<std::pair<Opaque, int>> h{}; h(p); return 0; }", "std::hashable"),
-        "map_key": ("import std.unordered_map; struct Opaque { Opaque() = default; "
+        "map_key": ("import std.unordered_map; import std.utility; struct Opaque { Opaque() = default; "
                     "bool operator==(Opaque& other) { return true; } "
                     "bool operator!=(Opaque& other) { return false; } }; "
                     "int main() { std::unordered_map<std::pair<Opaque, int>, int> values{}; "
                     "return 0; }", "std::read_callable"),
-        "specialization": ("import std.format; class std::formatter<std::pair<T, U>> {}; "
+        "specialization": ("import std.format; import std.utility; class std::formatter<std::pair<T, U>> {}; "
                            "int main() { return 0; }", "GTI-S2078"),
     }
     for name, (source, diagnostic) in failures.items():
