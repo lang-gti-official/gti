@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def run(command, *, expected=0):
@@ -28,15 +29,12 @@ def main():
     ]
     with tempfile.TemporaryDirectory(prefix="gti-class-fields-") as directory:
         scratch = Path(directory)
-        for standard in ("c++20", "c++23"):
-            for optimization in ("O0", "O1", "O3"):
-                for source in sources:
-                    executable = scratch / f"{source.stem}-{standard}-{optimization}"
-                    run([str(compiler), str(source), "--std", standard,
-                         f"-{optimization}", "--progress", "never", "-o", str(executable),
-                         "--", "-fno-elide-constructors"])
-                    executed = run([str(executable)])
-                    assert executed.stdout == "" and executed.stderr == "", executed
+        for mode, flags, _native in native_modes():
+            for source in sources:
+                executable = scratch / f"{source.stem}-{mode}"
+                run([str(compiler), str(source), *flags, "--progress", "never", "-o", str(executable)])
+                executed = run([str(executable)])
+                assert executed.stdout == "" and executed.stderr == "", executed
         for source in sources[:2]:
             sanitized = scratch / f"{source.stem}-sanitized"
             run([str(compiler), str(source), "-O1", "--progress", "never", "-o", str(sanitized),

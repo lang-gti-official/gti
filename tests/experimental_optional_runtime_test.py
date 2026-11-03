@@ -16,6 +16,7 @@ import tempfile
 
 from unique_class_allocation_runtime_test import run
 from native_fixture_build import build_fixture
+from backend_modes import native_modes, optimization_level
 
 # (phase, exit code, stdout integers)
 CASES = [
@@ -36,10 +37,7 @@ def main():
     label = "source optional" if args.stable else "experimental optional"
     example = pathlib.Path(__file__).parent.parent / "examples" / (
         "166-source-optional.gti" if args.stable else "162-experimental-optional.gti")
-    modes = [(f"{standard}-{opt}", ["--std", standard, f"-{opt}"], [])
-             for standard in ("c++20", "c++23") for opt in ("O0", "O1", "O2", "O3")]
-    modes.append(("sanitized", ["--std", "c++23", "-O1"],
-                  ["--", "-fsanitize=address,undefined", "-fno-omit-frame-pointer"]))
+    modes = native_modes()
     with tempfile.TemporaryDirectory(prefix="gti-experimental-optional-") as directory:
         if args.stable:
             # One fixture defines identical ownership and destructor traces for
@@ -76,14 +74,12 @@ def main():
             assert (shown.returncode, shown.stdout, shown.stderr) == (0, expected_output, ""), \
                 (name, shown.returncode, shown.stdout, shown.stderr)
             allocation_binary = pathlib.Path(directory) / f"allocations-{name}"
-            standard = flags[1]
-            optimization = flags[2][1:]
             built = build_fixture(
                 [str(compiler), str(fixtures / "payload_optional_allocations.gti"),
                  *flags], allocation_binary,
                 native_sources=[fixtures / "stdlib_adoption_allocation_counts.cpp"],
                 native_arguments=native[1:] if native else (),
-                standard=standard, optimization=optimization,
+                optimization=optimization_level(flags),
                 text=True, capture_output=True, check=False, timeout=120)
             assert built.returncode == 0, (name, built.stdout, built.stderr)
             counted = run([str(allocation_binary)])

@@ -49,11 +49,14 @@ Code:
   enforces it.
 - The Git stash stack is shared by every worktree and session. Never use a bare
   `git stash` or `git stash pop`.
-- Do not run the complete suite to finish a task: the merge queue runs it.
+- Do not run the complete suite to finish a task: post-integration full
+  validation runs it on each main head.
   Focused `ctest -R '^name$'` runs and single-file `gti` compiles need no slot.
   Builds and any broad run still go through the shared build window, because
   several sessions share this machine:
   `python3 scripts/build_window.py --kind build -- cmake --build build-release -j 8`.
+  A broad run also excludes the C++-only entries, which the weekly C++ job
+  owns: `python3 scripts/build_window.py --kind suite -- ctest --test-dir build-release -j 12 --test-load 12 -LE cpp-backend`.
   Check `python3 scripts/build_window.py --status` before starting heavy work.
 
 ## Skills

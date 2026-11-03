@@ -10,6 +10,7 @@ import os
 import pathlib
 import subprocess
 import tempfile
+from backend_modes import native_modes
 
 
 def run(command):
@@ -58,20 +59,14 @@ def main():
                     ("upcast-native", native_upcasts.read_text(),
                      (0, "6\n6\n6\n5\n15\n", ""))]
     cases += native_cases
-    modes = [(f"{standard}-{level}", ["--std", standard, f"-{level}"], [], cases)
-             for standard in ("c++20", "c++23") for level in ("O0", "O1", "O3")]
-    modes += [("no-elide", ["--std", "c++23", "-O0"], ["-fno-elide-constructors"], cases),
-              ("asan-ubsan", ["--std", "c++23", "-O1"],
-               ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"], cases)]
-    modes += [(f"llvm-{level}", ["--backend", "llvm", f"-{level}"], [], native_cases)
-              for level in ("O0", "O1", "O2", "O3")]
+    modes = native_modes()
     if args.quick:
         modes = modes[:1]
     with tempfile.TemporaryDirectory(prefix="gti-carrier-reference-") as temporary:
         root = pathlib.Path(temporary)
         source = root / fixture.name
-        for mode, flags, native, selected in modes:
-            for name, text, expected in selected:
+        for mode, flags, native in modes:
+            for name, text, expected in cases:
                 source.write_text(text)
                 binary = root / f"{mode}-{name}"
                 command = [str(compiler), str(source), *flags, "-o", str(binary)]
@@ -84,7 +79,7 @@ def main():
                 actual = (executed.returncode, executed.stdout, executed.stderr)
                 if actual != expected:
                     raise AssertionError(f"{mode}/{name}: {actual!r} != {expected!r}")
-            print(f"carrier references: {mode} passed ({len(selected)} outcomes)", flush=True)
+            print(f"carrier references: {mode} passed ({len(cases)} outcomes)", flush=True)
 
 
 if __name__ == "__main__":

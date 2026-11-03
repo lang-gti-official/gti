@@ -229,7 +229,7 @@ class PreviewTests(unittest.TestCase):
                                                  check=True, capture_output=True, text=True).stdout)
             self.assertEqual([test["name"] for test in inventory["tests"]], ["preview_admission"] if candidate else [])
             if candidate:
-                self.assertIn("--manifest", inventory["tests"][0]["command"])
+                self.assertIn("--pending", inventory["tests"][0]["command"])
 
     def test_manifest_replays_every_features_exact_focused_tests(self):
         manifest = self.root / "manifest.json"
@@ -257,7 +257,34 @@ class PreviewTests(unittest.TestCase):
             result = Preview(self.flow).verify(candidate["id"], [])
         return result, executed
 
-    def test_combines_features_retests_each_and_preserves_main(self):
+    def test_pending_features_are_those_not_in_the_published_preview(self):
+        repo = self.root / "pending-repo"
+        subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+        def commit(message):
+            (repo / message).write_text(message)
+            subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+            subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.com",
+                            "commit", "-q", "-m", message], check=True)
+            return subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], check=True,
+                                  capture_output=True, text=True).stdout.strip()
+        first = commit("first")
+        published = commit("published")
+        second = commit("second")
+        manifest = {"schema": 1, "previous": published, "features": [
+            {"task": "a", "tests": ["a_check"], "merge": first},
+            {"task": "b", "tests": ["b_check"], "merge": second}]}
+        self.assertEqual([f["task"] for f in preview_examples.pending_features(manifest, repo)], ["b"])
+        manifest["previous"] = None
+        self.assertEqual([f["task"] for f in preview_examples.pending_features(manifest, repo)], ["a", "b"])
+        path = self.root / "pending.json"
+        manifest["previous"] = published
+        path.write_text(json.dumps(manifest))
+        self.assertEqual(preview_examples.pending_tests(path, repo), ["b_check"])
+        manifest["features"][0]["merge"] = "not-a-commit"
+        with self.assertRaises(ValueError):
+            preview_examples.pending_features(manifest, repo)
+
+    def test_combines_features_retests_the_admitted_one_and_preserves_main(self):
         original_main = git(self.remote, "rev-parse", "main")
         self.feature()
         first = self.prepare()
@@ -268,8 +295,10 @@ class PreviewTests(unittest.TestCase):
         self.feature("second")
         second = self.prepare("second", "candidate2")
         _, executed = self.verify(second)
+        # The first feature is already in the published preview; only the
+        # admitted one is re-proven, with the fixed example gate.
         self.assertEqual(executed[-1], ["python3", "scripts/preview_examples.py", "out/preview-build",
-                                      "--focused=second_focused", "--focused=task_focused"])
+                                      "--focused=second_focused"])
         Preview(self.flow).publish(second["id"])
         self.assertEqual(git(self.remote, "rev-parse", "main"), original_main)
         self.assertEqual(git(self.remote, "rev-parse", "preview"), second["head"])
@@ -475,7 +504,15 @@ class PreviewTests(unittest.TestCase):
         self.assertTrue(self.flow.ancestor(head, refreshed["head"]))
         with self.assertRaisesRegex(WorkflowError, "Validate the combined"):
             preview.publish(refreshed["id"])
-        self.verify(refreshed)
+        # The accepted head entered preview through this candidate's main
+        # merge, so the feature is pending again and its replacement checks
+        # are proven once, alongside the fixed example gate.
+        self.assertNotEqual(row["merge"], first["manifest"]["features"][0]["merge"])
+        self.assertEqual([f["task"] for f in preview_examples.pending_features(
+            refreshed["manifest"], Path(refreshed["worktree"]))], ["task"])
+        _, executed = self.verify(refreshed)
+        self.assertEqual(executed[-1], ["python3", "scripts/preview_examples.py", "out/preview-build",
+                                      "--focused=new_focused"])
         preview.publish(refreshed["id"])
         self.assertEqual(self.flow.file("task").read_bytes(), original_record)
         self.assertEqual(git(self.remote, "rev-parse", "main"), head)
@@ -483,6 +520,7 @@ class PreviewTests(unittest.TestCase):
         # again needs a new accepted source identity.
         repeated = preview.prepare("task", self.root / "repeat", ["new_focused"], refresh="Retry")
         self.assertEqual(repeated["manifest"]["features"][0], row)
+        self.assertEqual(preview_examples.pending_features(repeated["manifest"], Path(repeated["worktree"])), [])
         with self.assertRaisesRegex(WorkflowError, "without a new accepted"):
             preview.prepare("task", self.root / "weaker", ["different"], refresh="No source change")
 

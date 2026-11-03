@@ -699,6 +699,15 @@ binaryFact(CheckedIntegerOperation operation, const IntegerFact &left,
     return remainderFact(left, right);
   case CheckedIntegerOperation::BitwiseAnd:
     return bitwiseAndFact(left, right);
+  case CheckedIntegerOperation::Divide:
+    // Division by one exact nonzero value is monotone (possibly reversed),
+    // including GTI's truncation toward zero. Evaluate both endpoints with
+    // the canonical fixed-width rules; signed-minimum / -1 fails closed.
+    if (right.lower != right.upper || right.lower.magnitude == 0)
+      return std::nullopt;
+    safe =
+        evaluate(left.lower, right.lower) && evaluate(left.upper, right.lower);
+    break;
   case CheckedIntegerOperation::Add:
     safe =
         evaluate(left.lower, right.lower) && evaluate(left.upper, right.upper);
@@ -755,13 +764,17 @@ binaryFact(CheckedIntegerOperation operation, const IntegerFact &left,
   bool stable = true;
   switch (operation) {
   case CheckedIntegerOperation::Add:
-    stable = (left.lower == left.upper || right.lower == right.upper) &&
-             evaluateEnvelope(leftBounds->first, rightBounds->first) &&
+    stable = evaluateEnvelope(leftBounds->first, rightBounds->first) &&
              evaluateEnvelope(leftBounds->second, rightBounds->second);
     break;
   case CheckedIntegerOperation::Subtract:
-    stable = (left.lower == left.upper || right.lower == right.upper) &&
-             evaluateEnvelope(leftBounds->first, rightBounds->second) &&
+    stable = evaluateEnvelope(leftBounds->first, rightBounds->second) &&
+             evaluateEnvelope(leftBounds->second, rightBounds->first);
+    break;
+  case CheckedIntegerOperation::Divide:
+    stable = rightBounds->first == rightBounds->second &&
+             rightBounds->first.magnitude != 0 &&
+             evaluateEnvelope(leftBounds->first, rightBounds->first) &&
              evaluateEnvelope(leftBounds->second, rightBounds->first);
     break;
   case CheckedIntegerOperation::Multiply:
@@ -1765,16 +1778,35 @@ strictlyOrdered(const MirBody &body, const AbstractState &state,
                               std::move(evidence));
     }
   }
-  for (const auto &[key, fact] : state.orders) {
-    if (!fact.strict || fact.domain != *domain) {
-      continue;
-    }
-    for (const auto &[candidate, candidateEvidence] : candidates) {
-      Evidence evidence = merged(fact.evidence, candidateEvidence);
-      if (sameCurrentScalar(state, key.first, lesser, evidence) &&
-          sameCurrentScalar(state, key.second, candidate, evidence)) {
-        return evidence;
+  // Search the retained order graph, distinguishing a non-strict path from
+  // one containing a strict edge. In particular, a <= b <= c is not a < c.
+  // At most two states per retained endpoint are visited; no transitive
+  // closure is materialized or added to the dataflow lattice.
+  struct Path {
+    MirValueId value;
+    bool strict;
+    Evidence evidence;
+  };
+  std::vector<Path> paths{{lesser, false, staging}};
+  std::set<std::pair<MirValueId, bool>> visited{{lesser, false}};
+  for (std::size_t next = 0; next < paths.size(); ++next) {
+    const Path path = paths[next];
+    for (const auto &[key, fact] : state.orders) {
+      if (fact.domain != *domain)
+        continue;
+      Evidence evidence = merged(path.evidence, fact.evidence);
+      if (!sameCurrentScalar(state, path.value, key.first, evidence))
+        continue;
+      const bool strict = path.strict || fact.strict;
+      if (strict) {
+        for (const auto &[candidate, candidateEvidence] : candidates) {
+          Evidence proof = merged(evidence, candidateEvidence);
+          if (sameCurrentScalar(state, key.second, candidate, proof))
+            return proof;
+        }
       }
+      if (visited.emplace(key.second, strict).second)
+        paths.push_back({key.second, strict, std::move(evidence)});
     }
   }
   return std::nullopt;
@@ -2048,6 +2080,7 @@ computeIntegerFact(const MirBody &body, const AbstractState &state,
   case MirOperation::Add:
   case MirOperation::Subtract:
   case MirOperation::Multiply:
+  case MirOperation::Divide:
   case MirOperation::Remainder:
   case MirOperation::BitwiseAnd: {
     if (instruction.operands.size() != 2) {
@@ -2068,6 +2101,9 @@ computeIntegerFact(const MirBody &body, const AbstractState &state,
       break;
     case MirOperation::Multiply:
       operation = CheckedIntegerOperation::Multiply;
+      break;
+    case MirOperation::Divide:
+      operation = CheckedIntegerOperation::Divide;
       break;
     case MirOperation::Remainder:
       operation = CheckedIntegerOperation::Remainder;
@@ -2872,6 +2908,8 @@ compoundCheckedOperation(MirOperation operation) {
     return CheckedIntegerOperation::Subtract;
   case MirOperation::MultiplyAssign:
     return CheckedIntegerOperation::Multiply;
+  case MirOperation::DivideAssign:
+    return CheckedIntegerOperation::Divide;
   case MirOperation::RemainderAssign:
     return CheckedIntegerOperation::Remainder;
   case MirOperation::BitwiseAndAssign:
@@ -6727,7 +6765,8 @@ void bindEdgeArguments(const MirBody &body, MirBlockId target,
                        const std::vector<MirOperand> &arguments,
                        AbstractState &state) {
   const MirBlock *block = body.findBlock(target);
-  if (block == nullptr || block->parameters.size() != arguments.size()) {
+  if (block == nullptr || block->parameters.size() != arguments.size() ||
+      arguments.empty()) {
     return;
   }
   // Block arguments are simultaneous assignments. In particular, a backedge
@@ -6760,11 +6799,71 @@ void bindEdgeArguments(const MirBody &body, MirBlockId target,
       facts.fieldOrigin = fieldOrigin->second;
     inputs.push_back(std::move(facts));
   }
+  // Relational facts need the same simultaneous substitution. Keeping an old
+  // order on a redefined parameter is unsound; dropping every such order
+  // loses a branch's proof at a join or a forwarding block. Snapshot the
+  // bounded graph before changing any origins or parameter facts, retaining
+  // only endpoints that still denote the old value on this edge.
+  const auto isParameter = [&](MirValueId value) {
+    return std::any_of(
+        block->parameters.begin(), block->parameters.end(),
+        [&](const auto &parameter) { return parameter.value == value; });
+  };
+  ValueOrders rebound;
+  for (const auto &[key, fact] : state.orders) {
+    if (!isParameter(key.first) && !isParameter(key.second))
+      rebound.emplace(key, fact);
+  }
+  const auto endpoints = [&](MirValueId value, CheckedIntegerDomain domain) {
+    std::vector<std::pair<MirValueId, Evidence>> result;
+    if (!isParameter(value))
+      result.emplace_back(value, Evidence{});
+    for (std::size_t index = 0;
+         index < arguments.size() && result.size() < maxValueOrders; ++index) {
+      const MirOperand &argument = arguments[index];
+      const auto &parameter = block->parameters[index];
+      if (argument.kind != MirOperandKind::Value || argument.value == 0 ||
+          argument.literal || argument.type != parameter.type ||
+          constantIntegerDomain(argument.type) != domain)
+        continue;
+      Evidence evidence;
+      const MirValueId source = orderSource(body, argument.value, &evidence);
+      if (!sameCurrentScalar(state, value, source, evidence))
+        continue;
+      add(evidence, target);
+      addValue(evidence, argument.value);
+      addValue(evidence, parameter.value);
+      result.emplace_back(parameter.value, std::move(evidence));
+    }
+    return result;
+  };
+  for (const auto &[key, fact] : state.orders) {
+    if (rebound.size() >= maxValueOrders)
+      break;
+    const auto lesser = endpoints(key.first, fact.domain);
+    const auto greater = endpoints(key.second, fact.domain);
+    for (const auto &[left, leftEvidence] : lesser) {
+      for (const auto &[right, rightEvidence] : greater) {
+        if (left == right || rebound.size() >= maxValueOrders)
+          continue;
+        OrderFact mapped = fact;
+        mapped.evidence =
+            merged(merged(mapped.evidence, leftEvidence), rightEvidence);
+        const auto [entry, inserted] =
+            rebound.emplace(std::pair{left, right}, mapped);
+        if (!inserted && entry->second.domain == mapped.domain) {
+          entry->second.strict = entry->second.strict || mapped.strict;
+          entry->second.evidence =
+              merged(std::move(entry->second.evidence), mapped.evidence);
+        }
+      }
+    }
+  }
+  state.orders = std::move(rebound);
   for (std::size_t index = 0; index < inputs.size(); ++index) {
     const MirValueId parameter = block->parameters[index].value;
     ArgumentFacts &facts = inputs[index];
     // The parameter takes a new value on this edge.
-    eraseOrders(state, parameter);
     if (facts.integer) {
       addValue(facts.integer->evidence, parameter);
       state.integers[parameter] = std::move(*facts.integer);

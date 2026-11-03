@@ -9,6 +9,7 @@ import statistics
 import time
 
 from sanitizer_support import scaled_timeout
+from backend_modes import is_cpp_mode, keep_cpp, native_modes
 
 
 def main():
@@ -29,11 +30,7 @@ def main():
         return subprocess.run([str(item) for item in command], env=environment,
                               text=True, capture_output=True, timeout=timeout)
 
-    modes = [(f"{std}-{level}", [f"-{level}", "--std", std], [])
-             for std in ("c++20", "c++23") for level in ("O0", "O1", "O3")]
-    modes += [("no-elide", ["-O0", "--std", "c++23"], ["-fno-elide-constructors"]),
-              ("sanitized", ["-O1", "--std", "c++23"],
-               ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])]
+    modes = native_modes()
     if options.mode:
         assert set(options.mode) <= {name for name, _, _ in modes}
         modes = [mode for mode in modes if mode[0] in options.mode]
@@ -49,13 +46,14 @@ def main():
                      (root / "examples/146-counted-text-view-iteration.gti", [])]
             for source, support in cases:
                 executable = output / f"{source.stem}-{name}"
-                command = [compiler, source, *flags, "--progress=never", "--keep-cpp", "-o", executable]
+                command = [compiler, source, *flags, "--progress=never", *keep_cpp(flags), "-o", executable]
                 if support or native:
                     command += ["--", *support, *native]
                 result = run(command)
                 assert result.returncode == 0, (name, source.name, result.stdout, result.stderr)
-                cpp = executable.with_suffix(".gti.cpp").read_text()
-                assert "// GTI verified-MIR body:" in cpp
+                if is_cpp_mode(flags):
+                    cpp = executable.with_suffix(".gti.cpp").read_text()
+                    assert "// GTI verified-MIR body:" in cpp
                 if source.stem == "text_view_iterator_failure":
                     for count in range(12):
                         failed = run([executable, *(["failure"] * count)], timeout=30)
@@ -123,8 +121,10 @@ def main():
         if options.cost:
             executable = output / "text-view-cost"
             started = time.monotonic()
+            # The production level of the first selected backend measures the cost.
+            _label, cost_flags, _native = native_modes(levels=("O3",))[0]
             result = run([compiler, root / "tests/fixtures/text_view_iterator_cost.gti",
-                          "-O3", "--std", "c++23", "--progress=never", "--keep-cpp", "-o", executable,
+                          *cost_flags, "--progress=never", *keep_cpp(cost_flags), "-o", executable,
                           "--", root / "tests/fixtures/stdlib_adoption_allocation_counts.cpp",
                           root / "tests/fixtures/forward_list_iterator_cost.cpp"])
             assert result.returncode == 0, (result.stdout, result.stderr)
@@ -143,7 +143,8 @@ def main():
             assert ratio < 3.5, (ratio, rows)
             print(f"text-view cost: 128={elapsed[128]}ns 256={elapsed[256]}ns ratio={ratio:.3f} "
                   f"allocations=0 binary={executable.stat().st_size}B "
-                  f"cpp={executable.with_suffix('.gti.cpp').stat().st_size}B "
+                  + (f"cpp={executable.with_suffix('.gti.cpp').stat().st_size}B "
+                     if is_cpp_mode(cost_flags) else "") +
                   f"native-build={built_seconds:.3f}s", flush=True)
 
 

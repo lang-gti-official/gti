@@ -5,6 +5,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -159,54 +160,49 @@ def main() -> int:
         failure_source.write_text(FAILURE_SOURCE, encoding="utf8")
         unsupported_source.write_text(UNSUPPORTED_SOURCE, encoding="utf8")
 
-        for standard in ("c++20", "c++23"):
-            for optimization in ("O0", "O3"):
-                success = root / f"success-{standard}-{optimization}"
-                built = run(
-                    [
-                        str(compiler),
-                        str(success_source),
-                        "--std",
-                        standard,
-                        f"-{optimization}",
-                        "-o",
-                        str(success),
-                    ]
+        for mode, flags, native in native_modes():
+            success = root / f"success-{mode}"
+            built = run(
+                [
+                    str(compiler),
+                    str(success_source),
+                    *flags,
+                    "-o",
+                    str(success),
+                ]
+            )
+            if built.returncode != 0:
+                return fail(built)
+            executed = run([str(success)])
+            if executed.returncode != 0 or executed.stdout:
+                sys.stderr.write(
+                    "payload-enum field transport/replacement failed for "
+                    f"{mode}: exit={executed.returncode} "
+                    f"stdout={executed.stdout!r} stderr={executed.stderr!r}\n"
                 )
-                if built.returncode != 0:
-                    return fail(built)
-                executed = run([str(success)])
-                if executed.returncode != 0 or executed.stdout:
-                    sys.stderr.write(
-                        "payload-enum field transport/replacement failed for "
-                        f"{standard} {optimization}: exit={executed.returncode} "
-                        f"stdout={executed.stdout!r} stderr={executed.stderr!r}\n"
-                    )
-                    return 1
+                return 1
 
-                failure = root / f"failure-{standard}-{optimization}"
-                built = run(
-                    [
-                        str(compiler),
-                        str(failure_source),
-                        "--std",
-                        standard,
-                        f"-{optimization}",
-                        "-o",
-                        str(failure),
-                    ]
+            failure = root / f"failure-{mode}"
+            built = run(
+                [
+                    str(compiler),
+                    str(failure_source),
+                    *flags,
+                    "-o",
+                    str(failure),
+                ]
+            )
+            if built.returncode != 0:
+                return fail(built)
+            executed = run([str(failure)])
+            if executed.returncode != 70 or executed.stdout != "30\n":
+                sys.stderr.write(
+                    "partial construction must drop the published payload "
+                    f"exactly once for {mode}: "
+                    f"exit={executed.returncode} stdout={executed.stdout!r} "
+                    f"stderr={executed.stderr!r}\n"
                 )
-                if built.returncode != 0:
-                    return fail(built)
-                executed = run([str(failure)])
-                if executed.returncode != 70 or executed.stdout != "30\n":
-                    sys.stderr.write(
-                        "partial construction must drop the published payload "
-                        f"exactly once for {standard} {optimization}: "
-                        f"exit={executed.returncode} stdout={executed.stdout!r} "
-                        f"stderr={executed.stderr!r}\n"
-                    )
-                    return 1
+                return 1
 
         emitted_success = root / "success.cpp"
         emission = run(

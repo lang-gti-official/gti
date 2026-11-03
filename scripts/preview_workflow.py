@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import importlib.util
 import json
 import platform
 import re
@@ -18,6 +19,13 @@ from agent_workflow import WorkflowError, clean, git, load_remote_runner
 
 BRANCH = "preview"
 MANIFEST = ".gti-preview.json"
+
+
+def load_preview_examples():
+    spec = importlib.util.spec_from_file_location("preview_examples", Path(__file__).with_name("preview_examples.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def tests(value):
@@ -71,6 +79,7 @@ class Preview:
                     for commit in reversed(removed["reverts"]):
                         operations.append({"kind": "restore", "sha": commit})
                     removed.update(restored=True, accepted_in_main=main)
+            refreshed = None
             if refresh is not None:
                 if not isinstance(refresh, str) or not refresh.strip():
                     raise WorkflowError("Refreshing accepted checks requires an explicit reason")
@@ -98,6 +107,10 @@ class Preview:
                     row.setdefault("history", []).append(historical)
                     row.update(head=head, tests=checks, accepted_in_main=main,
                                refresh_reason=refresh.strip())
+                    # The accepted head enters preview through this candidate's
+                    # main merge, so the feature is admitted again: its merge
+                    # identity moves and its replacement checks are proven once.
+                    refreshed = task
             elif remove:
                 rows = [row for row in manifest["features"] if row["task"] == task]
                 if not rows:
@@ -142,7 +155,7 @@ class Preview:
                             operations.append({"kind": "restore", "sha": commit, "feature": feature})
                         removed["restored"] = True
                 operations.append({"kind": "merge", "sha": head, "feature": feature})
-            operations.append({"kind": "merge", "sha": main})
+            operations.append({"kind": "merge", "sha": main, **({"refresh": refreshed} if refreshed else {})})
             state = {"id": uuid.uuid4().hex, "main": main, "previous": previous,
                      "worktree": str(root), "phase": "preparing", "manifest": manifest,
                      "operations": operations}
@@ -198,6 +211,9 @@ class Preview:
                     row["contributions"].append(after)
                 if operation["kind"] == "merge":
                     row["merge"] = after
+            if operation.get("refresh"):
+                row = next(row for row in manifest["features"] if row["task"] == operation["refresh"])
+                row["merge"] = after
             if "removal" in operation:
                 manifest["removed"][operation["removal"]]["reverts"].append(after)
             state["operations"].pop(0)
@@ -240,7 +256,11 @@ class Preview:
                 "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_TESTING=ON", "-DGTI_BUILD_LSP=ON"]},
             {"kind": "build", "argv": ["cmake", "--build", build, "--parallel", str(jobs)]},
         ]
-        focused = sorted({name for feature in state["manifest"]["features"] for name in tests(feature["tests"])})
+        # Preview admits a feature once: its own focused checks plus the fixed
+        # example gate. Earlier features are already in the published preview
+        # and are not re-proven on every admission (preview_examples.pending_features).
+        focused = sorted({name for feature in load_preview_examples().pending_features(state["manifest"], root)
+                          for name in tests(feature["tests"])})
         if not focused:
             # The fixed example harnesses need the CLI/runtime, not C++ unit
             # binaries. Arbitrary focused CTest names still require all targets.

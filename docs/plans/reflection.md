@@ -117,7 +117,7 @@ runtime reflection exists.
 | Concrete generic identity (primary plus arguments) | class specialization catalog, `ConcreteClassId`, concrete reanalysis | none |
 | Type and value generic parameters | `GenericParameterInfo` (`value`, `pack`), `CompileTimeValue` (`uint64_t` domain only) | metaobject value domain |
 | Declaration attributes | declared attribute types, typed constant arguments, resolved declaration/field attribute facts, compiler/native contracts | declaration/field queries and phase-3 callable metadata implemented |
-| Constant evaluation, budgets, located failures | `mir_constant_evaluator`, staged executor, 4096-step and 64-depth limits | reflected constant-query kernels implemented; broader executor profiles remain separate work |
+| Constant evaluation, budgets, located failures | `mir_constant_evaluator`, staged executor, configurable per-request step and depth limits | reflected constant-query kernels implemented; broader executor profiles remain separate work |
 | Compile-time selection with discarded branches | `if constexpr`, `ConditionalStmt::activeBranch`, `constexpr for` expansion | finite type-pack iteration implemented; nested-budget hardening remains a phase-3 gate |
 | Projected field places, borrow lifetime, mutability, access checks | body analysis, loan flow, place authority (`place-and-ownership-state.md`) | reflected read/mutable projections implemented; owner identity and receiver-effects defects remain tracked below |
 | Scoped enums and payload enums | enum registration, alternative inventory, enum/payload metaobjects | phase-2 enumeration and payload-field metadata implemented |
