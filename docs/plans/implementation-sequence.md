@@ -9946,6 +9946,10 @@ follow-ups:
   successful evaluations replay with their recorded step cost (2026-11-03,
   stdlib audit CB-07/CB-08; see
   [implementation limits](../language/static-semantics.md#3112-implementation-limits)).
+  Nested staging stays at a fixed 64 levels because each staging level copies
+  the semantic model (a cyclic definition held 3.3-11.7 GB at 512 levels).
+  **Follow-up:** share the staged worker's analysis snapshot across nesting
+  levels, then raise or remove the separate staging bound.
 - **Text-inspection slice (implemented):** Literal-backed string-view `size()`,
   `empty()`, and checked unsigned-byte indexing now use backend-neutral constant
   kernels selected by resolved intrinsic/type identity. Focused frontend and

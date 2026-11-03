@@ -8,6 +8,7 @@ reaches project builds, their build reports and gti_lsp.
 """
 
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -202,6 +203,37 @@ def test_build_report(gti, root):
         "rebuilt:  constexpr-steps=300001;" in result.stderr, result.stderr
 
 
+def peak_rss_bytes(command, cwd):
+    """Run `command`, returning (exit status, stderr, peak RSS in bytes)."""
+    process = subprocess.Popen(command, cwd=cwd, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.PIPE, text=True)
+    stderr = process.stderr.read()
+    _, status, usage = os.wait4(process.pid, 0)
+    process.returncode = os.waitstatus_to_exitcode(status)
+    # ru_maxrss is bytes on macOS and KiB on Linux.
+    scale = 1 if sys.platform == "darwin" else 1024
+    return process.returncode, stderr, usage.ru_maxrss * scale
+
+
+def test_staging_bound(gti, root):
+    # Nested constexpr staging copies the semantic model per level, so it is
+    # bounded at 64 levels whatever the 512-call default depth. A cyclic
+    # definition at depth 512 used to hold over 3 GB (12 GB with the
+    # standard library imported) before reporting.
+    source = root / "cycle.gti"
+    write(source,
+          "constexpr bool cycle<uint64_t N>() {\n"
+          "  if constexpr (cycle<N>()) { return true; }\n"
+          "  else { return false; }\n}\n"
+          "static_assert(cycle<0>());\nint main() { return 0; }\n")
+    status, stderr, peak = peak_rss_bytes(
+        [gti, str(source), "--emit-mir", "-o", str(root / "cycle.mir")], root)
+    assert status == 65, (status, stderr)
+    assert ("Nested constexpr staging depth (64) exceeded: 'cycle' is staged "
+            "again while its own staging is in progress") in stderr, stderr
+    assert peak < 1536 * 1024 * 1024, peak
+
+
 def test_lsp(lsp, root):
     app = root / "editor"
     path = app / "src/main.gti"
@@ -235,6 +267,7 @@ def main():
         test_project(str(gti), root)
         test_dependency(str(gti), root)
         test_build_report(str(gti), root)
+        test_staging_bound(str(gti), root)
         test_lsp(str(lsp), root)
     print("compile limits tests passed")
 

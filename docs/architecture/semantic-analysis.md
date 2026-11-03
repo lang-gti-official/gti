@@ -3829,8 +3829,12 @@ only describes their implementation ownership.
 ## Staged Constant Limits And Reuse
 
 Every constant request owns one `ConstexprWorkBudget`: the step count, the
-staging depth and, after a failure, the exhausted limit with the function that
-was executing. Concrete reanalysis workers, nested staged evaluations and the
+staging depth, the chain of staged evaluations being lowered and, after a
+failure, the exhausted limit with the function that was executing. The chain is
+bounded by the fixed `stagedNestingLimit` (64), separately from the configured
+call depth, because every staging level copies the semantic model into its
+worker; a target already on the chain is reported as a recursive or cyclic
+staged definition. Concrete reanalysis workers, nested staged evaluations and the
 compatibility interpreter charge the same budget against the compilation's
 `CompileLimits` (`FrontendOptions::limits`), which every worker analyzer
 receives at construction. The MIR evaluator receives the remaining budget as

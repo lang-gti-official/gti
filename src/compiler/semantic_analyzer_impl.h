@@ -2008,6 +2008,9 @@ private:
   struct ConstexprWorkBudget {
     std::size_t steps = 0;
     std::size_t stagingDepth = 0;
+    // The staged evaluations currently being lowered, outermost first, by
+    // target declaration (see stagedNestingLimit); also names a cycle.
+    std::vector<const void *> stagingChain;
     // The per-request limit this request last exhausted, and the function
     // executing when it did. Failure-only evidence for the diagnostic.
     struct Exhaustion {
@@ -2151,6 +2154,14 @@ private:
   // Concrete class instances one layout query may validate. A compiler work
   // bound on instance discovery, not a constant-evaluation step limit.
   static constexpr std::size_t layoutAssertionInstanceLimit = 4096;
+  // Nested staging: staged evaluations begun while another staged evaluation
+  // of the same request is still being lowered. A fixed implementation limit
+  // (guaranteed minimum 64), separate from the configurable call depth: each
+  // level currently copies the semantic model into its staged worker (about
+  // 6 MB, far more with the standard library), so a cyclic definition at the
+  // 512-call default would hold 3-12 GB. Raise it once staging shares that
+  // snapshot.
+  static constexpr std::size_t stagedNestingLimit = 64;
 
   [[nodiscard]] std::optional<ConstexprEvaluation> executeStagedConstexpr(
       const std::variant<const FunctionDecl *, ResolvedConstructionInfo>

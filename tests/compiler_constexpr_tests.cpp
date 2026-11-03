@@ -2034,6 +2034,16 @@ int main() { return 0; }
          "alternating source queries and constexpr staging reject cycles "
          "through the existing resource diagnostic rather than exhausting "
          "the compiler stack");
+  // Staging nests at most 64 levels whatever the (default 512) call-depth
+  // limit, and a definition staged inside its own staging is named cyclic.
+  expect(
+      hasDiagnostic(cyclicSourceQuery.diagnostics,
+                    "Nested constexpr staging depth (64) exceeded: 'cycle' "
+                    "is staged again while its own staging is in "
+                    "progress") &&
+          !hasDiagnostic(cyclicSourceQuery.diagnostics, "call depth exceeded"),
+      "nested staging is bounded separately from the call depth and a "
+      "cyclic staged definition is reported as such");
   const auto fixture = std::filesystem::path(__FILE__).parent_path() /
                        "fixtures/constexpr_dependent_branches.gti";
   std::ifstream input(fixture);

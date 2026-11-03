@@ -989,6 +989,34 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
     return std::nullopt;
   }
   const std::size_t enclosingDepth = context.work->stagingDepth;
+  const void *const stagedTarget =
+      function ? static_cast<const void *>(*function)
+               : static_cast<const void *>(construction->declaration);
+  if (context.work->stagingChain.size() >= stagedNestingLimit) {
+    // A fixed implementation limit, not a CompileLimits entry: no limit to
+    // attribute and no configuration hint (see stagedNestingLimit).
+    recordLimitExhaustion(context, nullptr);
+    const std::string name =
+        function ? info->qualifiedName
+                 : (construction->declaration != nullptr
+                        ? construction->declaration->name().lexeme
+                        : typeSpelling(construction->constructedType));
+    const bool cyclic =
+        std::find(context.work->stagingChain.begin(),
+                  context.work->stagingChain.end(),
+                  stagedTarget) != context.work->stagingChain.end();
+    return constexprFailure(
+        callSite, ConstantEvaluationFailure::ResourceLimit,
+        "Nested constexpr staging depth (" +
+            std::to_string(stagedNestingLimit) + ") exceeded" +
+            (cyclic ? ": '" + name +
+                          "' is staged again while its own staging is in "
+                          "progress, so its constant definition is recursive "
+                          "or cyclic through compile-time staging."
+                    : " while staging '" + name +
+                          "'; this fixed implementation limit is separate "
+                          "from the call-depth limit."));
+  }
   if (enclosingDepth + context.callDepth >= compileLimits.constexprDepth) {
     recordLimitExhaustion(context, &CompileLimits::constexprDepth);
     return constexprFailure(
@@ -998,9 +1026,13 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
   struct StagingDepthGuard {
     ConstexprWorkBudget &work;
     std::size_t saved;
-    ~StagingDepthGuard() { work.stagingDepth = saved; }
+    ~StagingDepthGuard() {
+      work.stagingDepth = saved;
+      work.stagingChain.pop_back();
+    }
   } depthGuard{*context.work, enclosingDepth};
   context.work->stagingDepth += context.callDepth + 1;
+  context.work->stagingChain.push_back(stagedTarget);
   std::vector<FunctionId> completed;
   std::vector<ConstructorId> constructors;
   for (const auto *declaration : constexprConstructorsAnalyzed) {

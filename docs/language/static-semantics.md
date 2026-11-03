@@ -2318,6 +2318,20 @@ version and identical on every host, but it is not a cross-implementation cost
 model. The per-request transient allocation bounds above (1024 identities and
 65536 storage units) are fixed.
 
+Nested staging is bounded separately, at a fixed 64 levels (guaranteed minimum
+64). A staged evaluation nests when it begins while another staged evaluation
+of the same request is still being lowered, for example a constexpr function
+whose `if constexpr` condition calls a constexpr function that must itself be
+staged. Each level currently copies the semantic analysis state, so the
+512-call default would let a cyclic definition hold several gigabytes before
+it is rejected (measured: 3.3 GB, or 11.7 GB with the standard library
+imported, against 0.46 GB and 2.7 GB at 64 levels). Exceeding it reports
+`GTI-S2057` naming the nested staging depth; when the function being staged is
+already being staged further out, the diagnostic names the recursive or cyclic
+definition. Calls executed within one staged evaluation remain bounded only by
+`constexpr-depth`. This bound is not configurable and will rise when staging
+shares its analysis snapshot.
+
 A compilation's limits come from the command line (`--<limit> <n>` or
 `--<limit>=<n>`), then the root package's `gti.toml` `[limits]` table entry of
 the same name, then the defaults. The root (selected) package's table applies
