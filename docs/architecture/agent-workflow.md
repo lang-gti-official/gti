@@ -364,7 +364,10 @@ Trial quotas may prevent the chosen profile; do not automatically upgrade.
 
 Prepare a versioned Ubuntu x64 image with Python, Git, CMake, Ninja, GCC/G++ 14,
 the required LLVM/native dependencies, OpenSSH and Google guest/OS Login agents.
-Put no provisioning credentials in it. Configure a private subnet with Private
+It must publish its public SSH host keys in the `hostkeys/` guest attributes.
+The controller needs the Google Cloud CLI already authenticated; the helper
+does not run login or download service-account keys.
+Put no provisioning credentials in the image. Configure a private subnet with Private
 Google Access and SSH ingress restricted to IAP. Grant the controller reviewed,
 project-scoped VM/disk lifecycle, subnet/image read, guest-attribute read, OS
 Login and IAP tunnel permissions, plus read access to the linked billing
