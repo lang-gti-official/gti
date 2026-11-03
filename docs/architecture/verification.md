@@ -1,5 +1,16 @@
 # Compiler Verification
 
+## Google Spot runner pilot
+
+`gcp_spot_runner` is entirely offline: strict policy parsing, disabled/expired
+admission, currency/account pinning, integer reservations, daily/total limits,
+missing/corrupt history, four competing controller processes, provider creation
+flags and returned-resource checks, verified IAP transport, cancellation and
+disconnection, unknown insert responses and failed deletion. `remote_runner`
+retains actual disposable Git/process/snapshot/cleanup regressions for fixed
+hosts. These are not live-cloud or billing receipts. Owner commissioning and
+expansion gates live in the [Spot contract](agent-workflow.md#opt-in-google-spot-pilot).
+
 ## Default module discovery
 
 `project_model` owns declaration-driven registration, explicit interface and

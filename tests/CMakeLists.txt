@@ -3055,6 +3055,9 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/remote_runner_test.py"
   )
   set_tests_properties(remote_runner PROPERTIES TIMEOUT 120)
+  add_test(NAME gcp_spot_runner
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/gcp_spot_runner_test.py")
+  set_tests_properties(gcp_spot_runner PROPERTIES TIMEOUT 60)
   add_test(
     NAME cmake_test_ownership
     COMMAND "${Python3_EXECUTABLE}"
