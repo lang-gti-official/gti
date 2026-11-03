@@ -1434,3 +1434,10 @@ namespace std {
     return std::stod(input.view(), position);
   }
 }
+
+for concept std::hashing<std::string> {
+  std::size_t hash(std::string& value) {
+    std::hash<std::string> hasher{};
+    return hasher(value);
+  }
+};
