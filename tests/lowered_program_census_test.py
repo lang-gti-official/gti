@@ -49,10 +49,12 @@ def collect(tool: Path, root: Path, names: list[str], target: str) -> dict:
         }
     if sorted(actual) != names:
         raise ValueError("compiled census rows differ from the complete shipped corpus")
-    return {"examples": actual, "totals": {
-        key: sum(int(row[key]) for row in actual.values())
-        for key in ("declarations", "bodies", "generated_items")
-    }}
+    return {"examples": actual, "totals": totals(actual)}
+
+
+def totals(rows: dict) -> dict:
+    return {key: sum(int(row[key]) for row in rows.values())
+            for key in ("declarations", "bodies", "generated_items")}
 
 
 def main() -> int:
@@ -77,13 +79,18 @@ def main() -> int:
         actual = collect(tool, root, names, target)
         observed[target] = actual
         if baseline is not None:
-            expected = baseline
+            expected = {"examples": baseline["examples"]}
             if target != TARGETS[0]:
                 variant = baseline["variants"][target]
                 if not set(variant["examples"]).issubset(names):
                     raise ValueError(f"{target}: variant contains an unknown example")
-                expected = {"examples": {**baseline["examples"], **variant["examples"]},
-                            "totals": variant["totals"]}
+                expected = {"examples": {**baseline["examples"], **variant["examples"]}}
+            # Totals are derived from the rows, never stored: a stored total
+            # changed in every pull request and made any two of them conflict.
+            expected["totals"] = totals(expected["examples"])
+            stored = (baseline["variants"][target] if target != TARGETS[0] else baseline).get("totals")
+            if stored is not None and stored != expected["totals"]:
+                raise ValueError(f"{target}: baseline totals are internally inconsistent")
             changed = [name for name in names
                        if actual["examples"][name] != expected["examples"][name]]
             if changed or actual["totals"] != expected["totals"]:
@@ -98,13 +105,12 @@ def main() -> int:
               flush=True)
     if arguments.update:
         base = observed[TARGETS[0]]
-        result = {**base, "target": TARGETS[0], "variants": {}}
+        result = {"examples": base["examples"], "target": TARGETS[0], "variants": {}}
         for target in TARGETS[1:]:
             actual = observed[target]
             result["variants"][target] = {
                 "examples": {name: row for name, row in actual["examples"].items()
                              if row != base["examples"][name]},
-                "totals": actual["totals"],
             }
         baseline_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     return 0

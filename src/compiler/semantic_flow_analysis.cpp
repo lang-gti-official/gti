@@ -634,7 +634,7 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
             worker = std::make_unique<Impl>(
                 target, sourceGraph, false, workMetrics, sources,
                 rawPointerAudit, requireFunctionDefinitions, trustedBodies,
-                sourceDebugProfile);
+                sourceDebugProfile, compileLimits);
             worker->catalog = catalog.snapshotForInstanceAnalysis();
             worker->semanticModel = semanticModel;
             worker->macroLookup = macroLookup;
@@ -11421,10 +11421,10 @@ auto SemanticVisitor::Impl::runRawResultQuery(
   // As in constexpr staging, concrete analysis must never reset an active
   // caller's scope/loan state. Reuse the ordinary analyzer in an isolated
   // snapshot; only the normalized result facts leave this worker.
-  auto worker =
-      std::make_unique<Impl>(target, sourceGraph, false, workMetrics, sources,
-                             RawPointerAuditMode::Warn, false,
-                             TrustedBodyAnalysis::Complete, sourceDebugProfile);
+  auto worker = std::make_unique<Impl>(target, sourceGraph, false, workMetrics,
+                                       sources, RawPointerAuditMode::Warn,
+                                       false, TrustedBodyAnalysis::Complete,
+                                       sourceDebugProfile, compileLimits);
   // Every snapshot of the sealed catalog is identical, and the instance
   // analysis below asserts the worker's catalog unchanged on exit, so a
   // snapshot released by an earlier query is the same as a fresh one.

@@ -98,7 +98,8 @@ std::optional<std::string> importSpelling(const SourceGraph &graph,
 
 std::vector<Candidate>
 candidates(std::vector<IncludeSearchRoot> roots,
-           const std::unordered_map<std::string, std::string> &overrides) {
+           const std::unordered_map<std::string, std::string> &overrides,
+           const std::atomic<bool> *cancellation) {
   std::map<std::pair<std::string, std::string>, Candidate> found;
   for (auto &root : roots) {
     root.directory = canonicalSourcePath(root.directory);
@@ -133,6 +134,8 @@ candidates(std::vector<IncludeSearchRoot> roots,
         std::filesystem::directory_options::skip_permission_denied, error);
     const std::filesystem::recursive_directory_iterator end;
     while (!error && it != end) {
+      if (cancellation && cancellation->load(std::memory_order_relaxed))
+        return {};
       const auto path = it->path();
       if (excluded(canonicalSourcePath(path), root)) {
         it.disable_recursion_pending();
@@ -244,13 +247,30 @@ bool introducesError(const FrontendResult &trial, const FrontendResult &base,
 
 } // namespace
 
-void addIncludeSuggestions(
-    FrontendResult &result, const FrontendOptions &options,
+bool canSuggestIncludes(const FrontendResult &result) {
+  return !result.cancelled && result.sourceValid && result.syntaxValid &&
+         std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                     [](const auto &diagnostic) {
+                       return !diagnostic.missingIncludeName.empty();
+                     });
+}
+
+IncludeSuggestionResult discoverIncludeSuggestions(
+    const FrontendResult &result, const FrontendOptions &options,
     const std::filesystem::path &entryPath,
     const std::vector<std::filesystem::path> &preludePaths,
     const std::unordered_map<std::string, std::string> &sourceOverrides,
     const std::vector<std::filesystem::path> &standardLibraryRoots,
     const std::vector<PackageSourceRoot> &packageSourceRoots) {
+  IncludeSuggestionResult advice{.diagnostics = result.diagnostics};
+  const auto stopped = [&] {
+    advice.cancelled = result.cancelled ||
+                       (options.cancellation &&
+                        options.cancellation->load(std::memory_order_relaxed));
+    return advice.cancelled;
+  };
+  if (stopped() || !canSuggestIncludes(result))
+    return advice;
   std::set<std::string> requested;
   for (const auto &diagnostic : result.diagnostics) {
     if (!diagnostic.missingIncludeName.empty()) {
@@ -261,8 +281,7 @@ void addIncludeSuggestions(
   // speculative edit below already requires valid syntax, so recovered parser
   // errors cannot produce a fix and must not trigger a workspace-wide search.
   if (requested.empty() || !result.sourceValid || !result.syntaxValid)
-    return;
-  result.includeSuggestionsRequested = true;
+    return advice;
 
   auto roots = options.includeSearchRoots;
   // Cross-owner discovery is defined by public maps, not a directory scan.
@@ -289,7 +308,8 @@ void addIncludeSuggestions(
   // Reuse the bounded parsed-unit cache, never semantic identities.
   if (!trialOptions.cache)
     trialOptions.cache = std::make_shared<FrontendCache>();
-  auto searchCandidates = candidates(std::move(roots), overrides);
+  auto searchCandidates =
+      candidates(std::move(roots), overrides, options.cancellation);
   if (const auto registry = result.sourceGraph.sourceOwners()) {
     for (const auto &owner : registry->owners()) {
       for (const auto &[name, path] : owner.modules) {
@@ -327,6 +347,8 @@ void addIncludeSuggestions(
                                     .findUnit(result.sourceGraph.entryUnit());
   std::vector<std::pair<std::size_t, Candidate>> prepared;
   for (const auto &candidate : searchCandidates) {
+    if (stopped())
+      return advice;
     if (entryUnit != nullptr && candidate.path == entryUnit->path)
       continue;
     const bool accessible = std::any_of(
@@ -342,7 +364,7 @@ void addIncludeSuggestions(
         });
     if (!accessible)
       continue;
-    result.includeSuggestionInputs.push_back(candidate.path);
+    advice.inputs.push_back(candidate.path);
     std::string text;
     if (const auto found = overrides.find(candidate.path.string());
         found != overrides.end()) {
@@ -380,8 +402,10 @@ void addIncludeSuggestions(
                      std::tie(right.first, right.second.path);
             });
   for (const auto &[reexports, candidate] : prepared) {
+    if (stopped())
+      return advice;
     if (reexports &&
-        std::none_of(result.diagnostics.begin(), result.diagnostics.end(),
+        std::none_of(advice.diagnostics.begin(), advice.diagnostics.end(),
                      [](const auto &diagnostic) {
                        return !diagnostic.missingIncludeName.empty() &&
                               diagnostic.fixes.empty();
@@ -394,7 +418,7 @@ void addIncludeSuggestions(
                       .analyze(candidate.path, text, preludePaths, overrides,
                                standardLibraryRoots, packageSourceRoots);
     for (const auto &unit : parsed.sourceGraph.sourceUnits()) {
-      result.includeSuggestionInputs.push_back(unit.path);
+      advice.inputs.push_back(unit.path);
     }
     const auto *candidateUnit = std::as_const(parsed.sourceGraph)
                                     .findUnit(parsed.sourceGraph.entryUnit());
@@ -425,7 +449,7 @@ void addIncludeSuggestions(
     std::set<std::string> names;
     declarationNames(declarations, options.target, names);
     std::map<std::string, FrontendResult> trials;
-    for (auto &diagnostic : result.diagnostics) {
+    for (auto &diagnostic : advice.diagnostics) {
       if (diagnostic.missingIncludeName.empty() ||
           (reexports && !diagnostic.fixes.empty()) ||
           !names.contains(diagnostic.missingIncludeName))
@@ -462,6 +486,8 @@ void addIncludeSuggestions(
                          standardLibraryRoots, packageSourceRoots);
         found = trials.emplace(sourceName, std::move(trial)).first;
       }
+      if (stopped())
+        return advice;
       const auto &trial = found->second;
       if (!trial.sourceValid || !trial.syntaxValid ||
           introducesError(trial, result, sourceName, insertion,
@@ -493,7 +519,9 @@ void addIncludeSuggestions(
            .message = "Add " + directive});
     }
   }
-  for (auto &diagnostic : result.diagnostics) {
+  if (stopped())
+    return advice;
+  for (auto &diagnostic : advice.diagnostics) {
     if (diagnostic.missingIncludeName.empty() || diagnostic.fixes.empty())
       continue;
     if (diagnostic.code != "GTI-S2024")
@@ -511,12 +539,31 @@ void addIncludeSuggestions(
       }
     }
   }
-  std::sort(result.includeSuggestionInputs.begin(),
-            result.includeSuggestionInputs.end());
-  result.includeSuggestionInputs.erase(
-      std::unique(result.includeSuggestionInputs.begin(),
-                  result.includeSuggestionInputs.end()),
-      result.includeSuggestionInputs.end());
+  std::sort(advice.inputs.begin(), advice.inputs.end());
+  advice.inputs.erase(std::unique(advice.inputs.begin(), advice.inputs.end()),
+                      advice.inputs.end());
+  return advice;
+}
+
+void addIncludeSuggestions(
+    FrontendResult &result, const FrontendOptions &options,
+    const std::filesystem::path &entryPath,
+    const std::vector<std::filesystem::path> &preludePaths,
+    const std::unordered_map<std::string, std::string> &sourceOverrides,
+    const std::vector<std::filesystem::path> &standardLibraryRoots,
+    const std::vector<PackageSourceRoot> &packageSourceRoots) {
+  if (!canSuggestIncludes(result))
+    return;
+  result.includeSuggestionsRequested = true;
+  auto advice = discoverIncludeSuggestions(
+      result, options, entryPath, preludePaths, sourceOverrides,
+      standardLibraryRoots, packageSourceRoots);
+  if (advice.cancelled) {
+    result.cancelled = true;
+    return;
+  }
+  result.diagnostics = std::move(advice.diagnostics);
+  result.includeSuggestionInputs = std::move(advice.inputs);
 }
 
 } // namespace lang

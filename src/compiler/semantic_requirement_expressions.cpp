@@ -151,9 +151,9 @@ auto SemanticVisitor::Impl::collectRequirementTypeArguments(
 
 auto SemanticVisitor::Impl::unevaluatedExpressionWorker() const
     -> std::unique_ptr<Impl> {
-  auto worker = std::make_unique<Impl>(target, sourceGraph, false, nullptr,
-                                       sources, RawPointerAuditMode::Off, false,
-                                       trustedBodies, sourceDebugProfile);
+  auto worker = std::make_unique<Impl>(
+      target, sourceGraph, false, nullptr, sources, RawPointerAuditMode::Off,
+      false, trustedBodies, sourceDebugProfile, compileLimits);
   // The query is logically const, but its fork temporarily suspends and
   // restores request-local expression scratch before any probe work begins.
   const_cast<Impl *>(this)->copyRequestSessionForSpeculativeModel(*worker);
@@ -161,6 +161,8 @@ auto SemanticVisitor::Impl::unevaluatedExpressionWorker() const
   worker->nextExpansion = nextExpansion;
   worker->macroExpansionDepth = macroExpansionDepth;
   worker->macroExpandedBodies = macroExpandedBodies;
+  worker->macroOutermostInvocation = macroOutermostInvocation;
+  worker->macroLimitReported = macroLimitReported;
   worker->macroActiveBodies = macroActiveBodies;
   worker->semanticModel.beginSpeculativeDelta(semanticModel);
   worker->semanticModel.setFunctionDemandSink(nullptr);
@@ -780,8 +782,10 @@ auto SemanticVisitor::Impl::constraintPredicateSatisfied(
                 activeRequirementQueries.end(),
                 identity) != activeRequirementQueries.end())
     return reject("Constraint predicates contain a recursive query cycle.");
-  if (expressionRequirementDepth >= constexprCallDepthLimit)
-    return reject("Constraint predicates exceed the 64-query recursion limit.");
+  if (expressionRequirementDepth >= constraintQueryDepthLimit)
+    return reject("Constraint predicates exceed the " +
+                  std::to_string(constraintQueryDepthLimit) +
+                  "-query recursion limit.");
   ++expressionRequirementDepth;
   activeRequirementQueries.push_back(std::move(identity));
   struct PopDepth {

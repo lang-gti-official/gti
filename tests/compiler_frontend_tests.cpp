@@ -4,6 +4,10 @@
 #include <regex>
 #include <set>
 
+#if defined(__unix__) || defined(__APPLE__)
+#include <pthread.h>
+#endif
+
 namespace {
 
 void testDefiniteReturnAnalysis() {
@@ -3237,6 +3241,53 @@ void testSupportFacilities() {
          "ending a time trace that was never started must fail cleanly");
   expect(lang::timeTraceAvailable() == lang::targetTripleParsingAvailable(),
          "LLVM-backed facilities should agree on availability");
+
+  // Recursion far deeper than any thread stack continues on fresh,
+  // guard-paged segments of the same thread.
+  struct Deep {
+    static std::size_t descend(std::size_t remaining) {
+      volatile char frame[512] = {};
+      frame[0] = static_cast<char>(remaining & 1);
+      if (remaining == 0)
+        return 0;
+      return lang::withSufficientStack(
+                 [remaining] { return descend(remaining - 1); }) +
+             static_cast<std::size_t>(static_cast<std::size_t>(frame[0]) ==
+                                      (remaining & 1));
+    }
+  };
+  expect(Deep::descend(100000) == 100000,
+         "boundary-guarded recursion completes far beyond one thread stack");
+#if defined(__unix__) || defined(__APPLE__)
+  // The calling thread's stack depends on the launcher (CTest raises the
+  // soft stack limit to the hard one, 64 MiB on macOS, which this recursion
+  // fits), so prove the switch on a thread whose stack is explicitly small.
+  struct Probe {
+    std::size_t result = 0;
+    std::size_t segments = 0;
+  };
+  Probe probe;
+  pthread_attr_t attributes;
+  pthread_t thread;
+  const bool threaded =
+      pthread_attr_init(&attributes) == 0 &&
+      pthread_attr_setstacksize(&attributes, std::size_t{2} << 20) == 0 &&
+      pthread_create(
+          &thread, &attributes,
+          [](void *raw) -> void * {
+            auto &observed = *static_cast<Probe *>(raw);
+            const std::size_t before = lang::nativeStackSegmentsEntered();
+            observed.result = Deep::descend(100000);
+            observed.segments = lang::nativeStackSegmentsEntered() - before;
+            return nullptr;
+          },
+          &probe) == 0 &&
+      pthread_join(thread, nullptr) == 0;
+  pthread_attr_destroy(&attributes);
+  expect(threaded && probe.result == 100000 && probe.segments > 0,
+         "recursion beyond a 2 MiB thread stack really ran on additional "
+         "stack segments");
+#endif
 }
 
 void testConcreteCallableSemanticFailure() {

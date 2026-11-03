@@ -5,6 +5,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -34,37 +35,18 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="gti-issue-127-") as temporary:
         root = pathlib.Path(temporary)
-        modes = [(level, []) for level in ("O0", "O1", "O2", "O3")]
-        modes.append(("O1", ["-fsanitize=address,undefined"]))
-        for optimization, native_flags in modes:
-            for standard in ("c++20", "c++23"):
-                mode = f"{optimization}-{standard}"
-                if native_flags:
-                    mode += "-sanitized"
-                executable = root / mode
-                built = run(
-                    [
-                        str(compiler),
-                        str(fixture),
-                        f"-{optimization}",
-                        "--std",
-                        standard,
-                        "-o",
-                        str(executable),
-                        "--",
-                        "-fno-elide-constructors",
-                        *native_flags,
-                    ]
-                )
-                if built.returncode != 0:
-                    return fail(f"build {mode}", built)
-                executed = run([str(executable)])
-                if (
-                    executed.returncode != 0
-                    or executed.stdout != ""
-                    or executed.stderr != ""
-                ):
-                    return fail(f"run {mode}", executed)
+        for mode, flags, _native in native_modes():
+            executable = root / mode
+            built = run([str(compiler), str(fixture), *flags, "-o", str(executable)])
+            if built.returncode != 0:
+                return fail(f"build {mode}", built)
+            executed = run([str(executable)])
+            if (
+                executed.returncode != 0
+                or executed.stdout != ""
+                or executed.stderr != ""
+            ):
+                return fail(f"run {mode}", executed)
 
         generated_path = root / "issue-127.cpp"
         emitted = run(

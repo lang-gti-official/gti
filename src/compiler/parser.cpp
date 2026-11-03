@@ -4189,7 +4189,11 @@ private:
     std::vector<Parameter> parameters = parameterList();
     Token arrow = consume(TokenKind::ARROW,
                           "Expect '->' and an explicit lambda return type.");
+    std::optional<Token> resultAccess;
+    if (match({TokenKind::MUT}))
+      resultAccess = previous();
     TypeRef returnType = parseType();
+    returnType.referenceMutability = std::move(resultAccess);
     consume(TokenKind::LEFT_BRACE, "Expect '{' before lambda body.");
     return std::make_unique<Lambda>(std::move(bracket), std::move(captures),
                                     std::move(parameters), std::move(arrow),

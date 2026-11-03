@@ -21,6 +21,7 @@ import lambda_pack_invocation_runtime_test as matrix
 from sanitizer_support import SANITIZED_BUILD_TIMEOUT, scaled_timeout
 import shared_accessor_range_runtime_test as accessor
 import storage_lane_iterator_runtime_test as storage
+from backend_modes import native_modes
 
 
 class NativeFixtureBuildTests(unittest.TestCase):
@@ -33,6 +34,19 @@ class NativeFixtureBuildTests(unittest.TestCase):
         run.assert_called_once_with(
             ["gti", "main.gti", "--keep-cpp", "-O3", "-o", "program",
              "--", "-fno-elide-constructors"], text=True)
+
+    def test_llvm_backend_links_providers_through_the_driver(self):
+        result = subprocess.CompletedProcess([], 0, "built", "")
+        with patch("native_fixture_build.subprocess.run", return_value=result) as run:
+            self.assertIs(build_fixture(
+                ["gti", "main.gti", "--backend", "llvm", "-O3"], "program",
+                native_sources=["provider.cpp"], native_arguments=["-lm"], text=True), result)
+        run.assert_called_once_with(
+            ["gti", "main.gti", "--backend", "llvm", "-O3", "-o", "program",
+             "--", "provider.cpp", "-lm"], text=True)
+        with self.assertRaises(ValueError):
+            build_fixture(["gti", "main.gti", "--backend", "llvm", "-O3"], "program",
+                          native_suffix="int provider();")
 
     def test_provider_precedes_archive_and_preserves_driver_and_flags(self):
         environment = {"GTI_CXX": "/native/clang++",
@@ -72,46 +86,6 @@ class NativeFixtureBuildTests(unittest.TestCase):
         self.assertEqual(run.call_args_list[0].args[0],
                          ["gti", "fixture.gti", "-O3", "--emit-cpp", "-o", "program.gti.cpp"])
         self.assertEqual(run.call_count, 2)
-
-    def test_llvm_providers_keep_driver_linking_and_object_order(self):
-        compiled = subprocess.CompletedProcess([], 0, "", "")
-        linked = subprocess.CompletedProcess([], 0, "llvm built", "")
-        environment = {"GTI_CXX": "/ambient/compiler"}
-        with patch("native_fixture_build.subprocess.run",
-                   side_effect=[compiled, compiled, linked]) as run:
-            result = build_fixture(
-                ["gti", "fixture.gti", "--backend", "llvm", "-O3"],
-                Path("output/program"), native_sources=["first.cpp", "second.cpp"],
-                native_arguments=["-fsanitize=address"], cxx=Path("/selected/clang++"),
-                optimization="O3", env=environment, text=True)
-        self.assertIs(result, linked)
-        self.assertEqual(run.call_args_list[0].args[0],
-                         ["/selected/clang++", "-std=c++23", "-O3", "-fsanitize=address",
-                          "-c", "first.cpp", "-o", "output/program-provider-0.o"])
-        self.assertEqual(run.call_args_list[1].args[0][-4:],
-                         ["-c", "second.cpp", "-o", "output/program-provider-1.o"])
-        self.assertEqual(run.call_args_list[2].args[0],
-                         ["gti", "fixture.gti", "--backend", "llvm", "-O3", "-o",
-                          "output/program", "--", "output/program-provider-0.o",
-                          "output/program-provider-1.o", "-fsanitize=address"])
-        for call in run.call_args_list:
-            self.assertEqual(call.kwargs, {"env": environment, "text": True})
-            self.assertNotIn("--emit-cpp", call.args[0])
-
-    def test_llvm_provider_failure_prevents_driver_link(self):
-        failed = subprocess.CompletedProcess([], 9, "", "provider error")
-        with patch("native_fixture_build.subprocess.run", return_value=failed) as run:
-            result = build_fixture(["gti", "fixture.gti", "--backend", "llvm"],
-                                   "program", native_sources=["provider.cpp"])
-        self.assertIs(result, failed)
-        self.assertEqual(run.call_count, 1)
-
-    def test_llvm_same_translation_unit_suffix_never_falls_back_to_cpp(self):
-        with patch("native_fixture_build.subprocess.run") as run:
-            with self.assertRaisesRegex(ValueError, r"native_suffix requires the C\+\+"):
-                build_fixture(["gti", "fixture.gti", "--backend", "llvm"],
-                              "program", native_suffix="// C++-only probe")
-        run.assert_not_called()
 
     def test_frontend_failure_never_invokes_native_compiler(self):
         failed = subprocess.CompletedProcess([], 65, "", "source error")
@@ -239,7 +213,8 @@ class IteratorSanitizerToolingTests(unittest.TestCase):
                 patch.object(movement.subprocess, "run", process):
             movement.main()
         self.assertEqual(len(plans), 2)
-        self.assertEqual(len(plans[0]), 27)  # original 24 cases; one positive becomes four
+        # Three positive fixtures in every mode the policy selects.
+        self.assertEqual(len(plans[0]), 3 * len(movement.MODES))
         self.assertTrue(plans[1], "failure/cleanup cases must still be scheduled")
         for _, (fixture, label, flags, native), contents, region in plans[0]:
             if not region:
@@ -265,7 +240,8 @@ class IteratorSanitizerToolingTests(unittest.TestCase):
                 patch.object(storage, "run", return_value=subprocess.CompletedProcess([], 0, "", "")), \
                 contextlib.redirect_stdout(io.StringIO()):
             storage.prove_allocation_free_families(Path("fake-gti"), self.fixtures, Path(directory))
-        self.assertEqual(len(records), 14)  # original twelve; sparse sanitizer becomes three
+        # Four allocation families at the production level of every selected backend.
+        self.assertEqual(len(records), 4 * len(native_modes(levels=("O3",))))
         for command, contents, options in records:
             name = Path(command[1]).stem
             self.assertEqual(options["timeout"], 180)
@@ -326,8 +302,8 @@ class IteratorSanitizerToolingTests(unittest.TestCase):
             matrix.main(names=("with_provider", "other"),
                         native_inputs_by_name={"with_provider": ("provider.cpp",)},
                         native_arguments_by_case=extra)
-        self.assertEqual(len(commands), 16)
-        self.assertEqual(len(callbacks), 16)
+        self.assertEqual(len(commands), 2 * len(native_modes()))
+        self.assertEqual(len(callbacks), 2 * len(native_modes()))
         for command, options in commands:
             provided = Path(command[1]).stem == "with_provider"
             sanitized = "-fsanitize=address,undefined" in command

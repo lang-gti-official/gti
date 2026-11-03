@@ -1464,6 +1464,23 @@ private:
       return false;
     }
 
+    // A lambda result has no declaration name after its reference marker.
+    // Its arrow establishes the type context even for an imported type.
+    if (next->kind == Kind::LeftBrace) {
+      const Lexeme *part = previous;
+      bool hasTypeWord = false;
+      while (part != nullptr) {
+        const auto position = static_cast<std::size_t>(part - lexemes.data());
+        if (part->kind == Kind::Dot && part->text == "->")
+          return hasTypeWord && isLambdaReturnArrow(lexemes, position);
+        if (!isDeclarationTypeLexeme(*part))
+          break;
+        hasTypeWord = hasTypeWord || (part->kind == Kind::Word &&
+                                      !isDeclarationModifier(*part));
+        part = previousSyntaxLexeme(lexemes, position);
+      }
+    }
+
     const std::size_t previousIndex =
         static_cast<std::size_t>(previous - lexemes.data());
     const bool typeBefore = typeEndsAt(lexemes, previousIndex, declaredTypes);

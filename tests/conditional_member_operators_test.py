@@ -7,6 +7,8 @@ import subprocess
 import sys
 import tempfile
 
+from backend_modes import cpp_modes
+
 
 def run(command, timeout=120):
     return subprocess.run(command, text=True, capture_output=True, timeout=timeout)
@@ -62,11 +64,14 @@ int main() {
   return values.at(one) == 4 ? 0 : 1;
 }
 """)
-        binary = scratch / "existing-cpp"
-        built = run([str(compiler), str(existing), "--backend", "cpp", "-O2", "--progress", "never", "-o", str(binary)])
-        assert built.returncode == 0, (built.stdout, built.stderr)
-        assert run([str(binary)]).returncode == 0
-        print("unused conditional operator: existing C++ behavior passed", flush=True)
+        # The C++ representation is unchanged; its profile runs only when the
+        # backend policy selects the C++ backend (tests/backend_modes.py).
+        for label, flags, _native in cpp_modes():
+            binary = scratch / f"existing-{label}"
+            built = run([str(compiler), str(existing), *flags, "--progress", "never", "-o", str(binary)])
+            assert built.returncode == 0, (label, built.stdout, built.stderr)
+            assert run([str(binary)]).returncode == 0
+            print(f"unused conditional operator: existing C++ behavior ({label}) passed", flush=True)
         supported = repository / "tests/fixtures/conditional_member_operators_cpp_supported.gti"
         for backend in ("cpp", "llvm"):
             for level in ("O0", "O3"):

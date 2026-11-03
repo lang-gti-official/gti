@@ -125,9 +125,9 @@ the exact source range and clearing after an initializer is supplied.
 
 `GTI-S2107` rejects a `constexpr for` whose sequence is not a value of a class
 with one type-pack argument list; the colon is primary and the message names
-the actual type. `GTI-S2108` reports an expansion over the compile-time budget
-(1024 elements per statement, 4096 expanded copies per declaration) at the
-`for` keyword. `GTI-S2109` rejects a function, class, enum, concept, alias or
+the actual type. `GTI-S2108` reports an expansion over the
+`constexpr-for-elements` (per statement) or `constexpr-for-copies` (per
+declaration) compile limit at the `for` keyword, with the configuration hint. `GTI-S2109` rejects a function, class, enum, concept, alias or
 namespace declaration inside a `constexpr for` body. `GTI-S2111` rejects a
 `std::meta::field<T, I>` whose index is out of range for `T`, naming the count.
 `GTI-S2112` rejects `get_mut` on a field that is not writable through the
