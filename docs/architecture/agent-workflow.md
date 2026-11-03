@@ -1077,7 +1077,10 @@ and cancelled CI runs also wake reconciliation; they do not qualify a PR for
 integration. Admission requires the latest CI run for that exact head to finish
 successfully and its own matching check suite's gate to pass; an older green
 draft gate cannot substitute for pending ready-for-review validation. The
-scheduled trigger remains a recovery fallback.
+scheduled trigger remains a recovery fallback only: GitHub delivers a
+half-hourly schedule sporadically (on 2026-11-03 it fired twice in a day), so
+CI completion is the bot's working cadence and a dispatch is the way to force a
+tick.
 
 Automation-only and source-only GTI stdlib local owning checks may use
 `verify --focused`, which checks the actual diff and does not reserve a
