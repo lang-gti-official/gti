@@ -24,10 +24,12 @@ permissions:
   contents: read
 
 concurrency:
-  # A newer toolchain definition supersedes an older warm; the key is
-  # content-derived so a superseded run saved nothing a later run needs.
+  # Warms queue rather than cancel. The key is content-derived, so a
+  # superseded run still produces exactly the cache the next run would; a
+  # cancelled run must never save (see the save step), because a partial
+  # object store under the content key makes every later run skip the build.
   group: gti-llvm-prebuilt
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   warm:
@@ -74,13 +76,25 @@ jobs:
           -DGTI_RELEASE_BUILD=ON
           -DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF
       - name: Build the bundled LLVM/Clang and the compiler
+        id: build
         if: steps.cache.outputs.cache-hit != 'true'
         run: cmake --build build --config Release --parallel "${GTI_JOBS}"
       - name: Report compiler cache statistics
         if: always()
         run: ccache --show-stats || true
+      - name: Require a complete object store before saving
+        if: steps.build.outcome == 'success'
+        # A finished bundled-LLVM build leaves hundreds of megabytes of
+        # objects; anything smaller means the build did not run to the end.
+        run: |
+          size="$(du -sm "${CCACHE_DIR}" | cut -f1)"
+          echo "release object store: ${size} MB"
+          [[ "${size}" -ge 200 ]] || { echo "object store too small to be a finished prebuild" >&2; exit 1; }
+      # Only a build that ran to completion saves. `always()` here once saved
+      # the 87 KB left by a cancelled configure step, after which every run
+      # hit the key and skipped the build.
       - name: Save the release cache under main
-        if: always() && steps.cache.outputs.cache-hit != 'true'
+        if: steps.build.outcome == 'success'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:

@@ -82,12 +82,16 @@ jobs:
           -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g"
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
       - name: Build
+        id: build
         run: cmake --build "${{ matrix.build }}" --parallel "${GTI_JOBS}" -- -k 0
       - name: Report compiler cache statistics
         if: always()
         run: ccache --show-stats || true
+      # Only a build that ran to completion saves. Saving on `always()` once
+      # stored the few objects a cancelled run had compiled under the content
+      # key, after which every later run hit the key and skipped the build.
       - name: Save the cache under main
-        if: always() && steps.cache.outputs.cache-hit != 'true'
+        if: steps.build.outcome == 'success' && steps.cache.outputs.cache-hit != 'true'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
