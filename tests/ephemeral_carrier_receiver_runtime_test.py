@@ -5,6 +5,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from backend_modes import is_cpp_mode, keep_cpp, native_modes
 
 
 def run(command):
@@ -47,21 +48,18 @@ def check_execution(binary, source):
 def main():
     compiler = pathlib.Path(sys.argv[1]).resolve()
     source = pathlib.Path(__file__).parent / "fixtures/ephemeral_carrier_receiver.gti"
-    modes = [(f"{standard}-{level}", ["--std", standard, f"-{level}"], [])
-             for standard in ("c++20", "c++23") for level in ("O0", "O1", "O3")]
-    modes += [("no-elide", ["--std", "c++23", "-O0"], ["-fno-elide-constructors"]),
-              ("sanitized", ["--std", "c++23", "-O1"],
-               ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])]
+    modes = native_modes()
     with tempfile.TemporaryDirectory(prefix="gti-ephemeral-carrier-") as temporary:
-        for name, options, native in modes:
+        for name, flags, native in modes:
             binary = pathlib.Path(temporary) / name
-            command = [str(compiler), str(source), *options, "--keep-cpp", "-o", str(binary)]
+            command = [str(compiler), str(source), *flags, *keep_cpp(flags), "-o", str(binary)]
             if native:
                 command += ["--", *native]
             result = run(command)
             assert result.returncode == 0, (command, result.stdout, result.stderr)
-            generated = binary.with_suffix(".gti.cpp").read_text()
-            assert "// GTI verified-MIR body:" in generated
+            if is_cpp_mode(flags):
+                generated = binary.with_suffix(".gti.cpp").read_text()
+                assert "// GTI verified-MIR body:" in generated
             check_execution(binary, source)
 
 

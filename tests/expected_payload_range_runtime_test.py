@@ -4,6 +4,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 SUCCESS_SOURCE = r"""
@@ -190,75 +191,67 @@ def main() -> int:
         failure_parameter_source.write_text(FAILURE_PARAMETER_SOURCE, encoding="utf8")
         cstdio_source.write_text(CSTDIO_SOURCE, encoding="utf8")
 
-        for standard in ("c++20", "c++23"):
-            for optimization in ("O0", "O3"):
-                suffix = f"{standard}-{optimization}"
-                success = root / f"success-{suffix}"
+        for suffix, flags, native in native_modes():
+            success = root / f"success-{suffix}"
+            built = run(
+                [
+                    str(compiler),
+                    str(success_source),
+                    *flags,
+                    "-o",
+                    str(success),
+                ]
+            )
+            if built.returncode != 0:
+                return fail(f"build success {suffix}", built)
+            executed = run([str(success)])
+            if executed.returncode != 0:
+                return fail(f"run success {suffix}", executed)
+
+            for source in (failure_source, failure_parameter_source):
+                failure = root / f"{source.stem}-{suffix}"
                 built = run(
                     [
                         str(compiler),
-                        str(success_source),
-                        "--std",
-                        standard,
-                        f"-{optimization}",
+                        str(source),
+                        *flags,
                         "-o",
-                        str(success),
+                        str(failure),
                     ]
                 )
                 if built.returncode != 0:
-                    return fail(f"build success {suffix}", built)
-                executed = run([str(success)])
-                if executed.returncode != 0:
-                    return fail(f"run success {suffix}", executed)
+                    return fail(f"build {source.stem} {suffix}", built)
+                executed = run([str(failure)])
+                if (
+                    executed.returncode != 70
+                    or executed.stdout != ""
+                    or "GTI-R0009" not in executed.stderr
+                    or "value_on_error" not in executed.stderr
+                ):
+                    return fail(f"run {source.stem} {suffix}", executed)
 
-                for source in (failure_source, failure_parameter_source):
-                    failure = root / f"{source.stem}-{suffix}"
-                    built = run(
-                        [
-                            str(compiler),
-                            str(source),
-                            "--std",
-                            standard,
-                            f"-{optimization}",
-                            "-o",
-                            str(failure),
-                        ]
-                    )
-                    if built.returncode != 0:
-                        return fail(f"build {source.stem} {suffix}", built)
-                    executed = run([str(failure)])
-                    if (
-                        executed.returncode != 70
-                        or executed.stdout != ""
-                        or "GTI-R0009" not in executed.stderr
-                        or "value_on_error" not in executed.stderr
-                    ):
-                        return fail(f"run {source.stem} {suffix}", executed)
-
-                cstdio = root / f"cstdio-{suffix}"
-                built = run(
-                    [
-                        str(compiler),
-                        str(cstdio_source),
-                        "--std",
-                        standard,
-                        f"-{optimization}",
-                        "-o",
-                        str(cstdio),
-                    ]
-                )
-                if built.returncode != 0:
-                    return fail(f"build cstdio {suffix}", built)
-                executed = subprocess.run(
-                    [str(cstdio)],
-                    cwd=root,
-                    text=True,
-                    input="Qsecret\ntoken|tail",
-                    capture_output=True,
-                    check=False,
-                )
-                if executed.returncode != 0 or executed.stdout != "password: ":
-                    return fail(f"run cstdio {suffix}", executed)
+            cstdio = root / f"cstdio-{suffix}"
+            built = run(
+                [
+                    str(compiler),
+                    str(cstdio_source),
+                    *flags,
+                    "-o",
+                    str(cstdio),
+                ]
+            )
+            if built.returncode != 0:
+                return fail(f"build cstdio {suffix}", built)
+            executed = subprocess.run(
+                [str(cstdio)],
+                cwd=root,
+                text=True,
+                input="Qsecret\ntoken|tail",
+                capture_output=True,
+                check=False,
+            )
+            if executed.returncode != 0 or executed.stdout != "password: ":
+                return fail(f"run cstdio {suffix}", executed)
 
     return 0
 

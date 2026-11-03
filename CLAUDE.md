@@ -55,6 +55,8 @@ Code:
   Builds and any broad run still go through the shared build window, because
   several sessions share this machine:
   `python3 scripts/build_window.py --kind build -- cmake --build build-release -j 8`.
+  A broad run also excludes the C++-only entries, which the weekly C++ job
+  owns: `python3 scripts/build_window.py --kind suite -- ctest --test-dir build-release -j 12 --test-load 12 -LE cpp-backend`.
   Check `python3 scripts/build_window.py --status` before starting heavy work.
 
 ## Skills

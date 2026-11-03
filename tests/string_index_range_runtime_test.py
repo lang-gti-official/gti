@@ -6,6 +6,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from backend_modes import is_cpp_mode, keep_cpp, native_modes
 
 
 def run(command):
@@ -41,17 +42,12 @@ def main():
     source = pathlib.Path(__file__).parent / "fixtures/string_index_range.gti"
     with tempfile.TemporaryDirectory(prefix="gti-string-index-range-") as temporary:
         root = pathlib.Path(temporary)
-        modes = [
-            (f"{standard}-{optimization}", [f"-{optimization}", "--std", standard])
-            for standard in ("c++20", "c++23")
-            for optimization in ("O0", "O1", "O3")
-        ]
-        modes.append(("sanitized", ["-O1", "--std", "c++23"]))
-        for name, flags in modes:
+        modes = native_modes()
+        for name, flags, native in modes:
             binary = root / name
             command = [
                 str(compiler), str(source), *flags,
-                "--keep-cpp", "-o", str(binary),
+                *keep_cpp(flags), "-o", str(binary),
             ]
             if name == "sanitized":
                 command.extend([
@@ -60,9 +56,10 @@ def main():
             built = run(command)
             if built.returncode != 0:
                 raise AssertionError(f"{name} build failed:\n{built.stdout}{built.stderr}")
-            generated = binary.with_suffix(".gti.cpp").read_text()
-            if "// GTI verified-MIR body:" not in generated:
-                raise AssertionError("missing verified-MIR emission witness")
+            if is_cpp_mode(flags):
+                generated = binary.with_suffix(".gti.cpp").read_text()
+                if "// GTI verified-MIR body:" not in generated:
+                    raise AssertionError("missing verified-MIR emission witness")
             check_execution(binary)
             print(f"string index range: {name} passed", flush=True)
         for optimization in ("O0", "O3"):

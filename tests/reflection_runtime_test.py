@@ -5,6 +5,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 # Field names a program never uses at run time must not survive into its
@@ -41,21 +42,19 @@ def main() -> int:
         for source in sources:
             if source.stem in RESIDUE and not check_residue(compiler, source, root):
                 return 1
-            for optimization in ("O0", "O1", "O3"):
-                for standard in ("c++20", "c++23"):
-                    executable = root / f"{source.stem}-{optimization}-{standard}"
-                    for command in (
-                        [str(compiler), str(source), f"-{optimization}", "--std",
-                         standard, "-o", str(executable)],
-                        [str(executable)],
+            for mode, flags, native in native_modes():
+                executable = root / f"{source.stem}-{mode}"
+                for command in (
+                    [str(compiler), str(source), *flags, "-o", str(executable)],
+                    [str(executable)],
+                ):
+                    result = subprocess.run(command, capture_output=True, text=True)
+                    if result.returncode != 0 or (
+                        len(command) == 1 and (result.stdout or result.stderr)
                     ):
-                        result = subprocess.run(command, capture_output=True, text=True)
-                        if result.returncode != 0 or (
-                            len(command) == 1 and (result.stdout or result.stderr)
-                        ):
-                            print(f"failed: {command}\n{result.stdout}{result.stderr}",
-                                  file=sys.stderr)
-                            return 1
+                        print(f"failed: {command}\n{result.stdout}{result.stderr}",
+                              file=sys.stderr)
+                        return 1
     return 0
 
 

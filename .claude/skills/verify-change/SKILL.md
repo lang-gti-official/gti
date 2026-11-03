@@ -10,7 +10,10 @@ completely before selecting or running checks. It owns optimized compilers,
 risk-based focused and platform coverage, preservation, exact-source evidence,
 bounded output and waiting. Run focused checks only: the merge queue runs the
 bounded gate on the exact candidate and full validation runs the complete suite
-after integration, so never run it locally to finish a task.
+after integration, so never run it locally to finish a task. Local runs
+follow the CI test policy: harnesses take the configured tree's
+`GTI_TEST_BACKENDS` (`llvm` unless a C++-backend fix configures `cpp` or
+`both`), and broad CTest runs pass `-LE cpp-backend`.
 
 Use the canonical planner to avoid a stale client-specific selection policy:
 

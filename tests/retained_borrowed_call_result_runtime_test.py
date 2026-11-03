@@ -15,6 +15,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 PRELUDE = """\
@@ -177,41 +178,37 @@ def main() -> int:
         for label, body in CASES:
             source = root / f"{label}.gti"
             source.write_text(PRELUDE + "\n" + body, encoding="utf8")
-            for standard in ("c++20", "c++23"):
-                for optimization in ("O0", "O3"):
-                    executable = root / f"{label}-{standard}-{optimization}"
-                    built = run(
-                        [
-                            str(compiler),
-                            str(source),
-                            "--std",
-                            standard,
-                            f"-{optimization}",
-                            "-o",
-                            str(executable),
-                        ]
+            for mode, flags, native in native_modes():
+                executable = root / f"{label}-{mode}"
+                built = run(
+                    [
+                        str(compiler),
+                        str(source),
+                        *flags,
+                        "-o",
+                        str(executable),
+                    ]
+                )
+                if built.returncode != 0:
+                    sys.stderr.write(
+                        f"{label} failed to build for {mode}\n"
                     )
-                    if built.returncode != 0:
-                        sys.stderr.write(
-                            f"{label} failed to build for {standard} "
-                            f"{optimization}\n"
-                        )
-                        return fail(built)
+                    return fail(built)
 
-                    executed = run([str(executable)])
-                    if (
-                        executed.returncode != 0
-                        or executed.stdout != ""
-                        or executed.stderr != ""
-                    ):
-                        sys.stderr.write(
-                            f"{label} did not write through its retained "
-                            f"borrow for {standard} {optimization}: "
-                            f"exit={executed.returncode} "
-                            f"stdout={executed.stdout!r} "
-                            f"stderr={executed.stderr!r}\n"
-                        )
-                        return 1
+                executed = run([str(executable)])
+                if (
+                    executed.returncode != 0
+                    or executed.stdout != ""
+                    or executed.stderr != ""
+                ):
+                    sys.stderr.write(
+                        f"{label} did not write through its retained "
+                        f"borrow for {mode}: "
+                        f"exit={executed.returncode} "
+                        f"stdout={executed.stdout!r} "
+                        f"stderr={executed.stderr!r}\n"
+                    )
+                    return 1
 
     return 0
 

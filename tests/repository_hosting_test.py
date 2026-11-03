@@ -27,6 +27,7 @@ ACTION_USE = re.compile(r"^\s*(?:-\s+)?uses:\s*(\S+)@([^\s#]+)", re.MULTILINE)
 CI = ".github/workflows/ci.yml"
 FULL_VALIDATION = ".github/workflows/full-validation.yml"
 LLVM_PREBUILT = ".github/workflows/llvm-prebuilt.yml"
+CPP_BACKEND = ".github/workflows/cpp-backend.yml"
 NIGHTLY = ".github/workflows/nightly.yml"
 PREVIEW = ".github/workflows/preview.yml"
 ROLLUP = ".github/workflows/rollup.yml"
@@ -66,7 +67,7 @@ def main():
     workflows = sorted(p for p in tracked if p.startswith((".github/workflows/", ".gitea/workflows/")))
     # CI, nightly toolchain releases and the rollup bot run on GitHub. The frozen
     # Gitea release workflow stays as the record of the contract it replaces.
-    expect(set(workflows) == {CI, FULL_VALIDATION, LLVM_PREBUILT, NIGHTLY, PREVIEW, RELEASE, ROLLUP, CACHE, *RELEASE_TRAIN},
+    expect(set(workflows) == {CI, FULL_VALIDATION, LLVM_PREBUILT, CPP_BACKEND, NIGHTLY, PREVIEW, RELEASE, ROLLUP, CACHE, *RELEASE_TRAIN},
            f"unexpected live workflows: {workflows}")
     for relative in (CI, NIGHTLY, PREVIEW, RELEASE, ROLLUP, CACHE, *RELEASE_TRAIN, ".github/README.md", ".gitea/README.md",
                      ".gitea/ISSUE_TEMPLATE/bug_report.md",
@@ -139,7 +140,7 @@ def main():
         "PR declarations must only run on pull_request; manual CI has no PR body")
     # Every native job takes the one reviewed toolchain; none installs its own.
     expect(ci.count("bash scripts/configure_ci_toolchain.sh") == 2
-           and full.count("bash scripts/configure_ci_toolchain.sh") == 3
+           and full.count("bash scripts/configure_ci_toolchain.sh") == 5
            and "llvm-18" not in ci + full and "brew install" not in ci + full
            and "macos-26" in ci and "macos-26" in full and "macos-15" not in ci + full,
            "native CI jobs must use the reviewed compiler from configure_ci_toolchain.sh")

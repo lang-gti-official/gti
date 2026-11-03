@@ -440,11 +440,11 @@ if(TARGET gti_lsp)
       "$<TARGET_FILE:gti_lsp>")
   set_tests_properties(conditional_capability_lsp PROPERTIES TIMEOUT 90)
 endif()
-add_test(NAME source_sparse_storage_runtime
+add_test(NAME cpp_mir_source_sparse_storage
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_sparse_storage_runtime_test.py"
     "$<TARGET_FILE:gti_source_sparse_storage_tests>" "${CMAKE_CXX_COMPILER}"
     "$<TARGET_FILE:gti_runtime>")
-set_tests_properties(source_sparse_storage_runtime PROPERTIES TIMEOUT 300)
+set_tests_properties(cpp_mir_source_sparse_storage PROPERTIES TIMEOUT 300)
 add_executable(gti_resource_protocol_tests resource_protocol_tests.cpp)
 target_link_libraries(gti_resource_protocol_tests PRIVATE gti_compiler gti_cpp_backend)
 add_test(NAME resource_protocol_contract COMMAND gti_resource_protocol_tests)
@@ -1466,6 +1466,9 @@ if(TARGET gti_lsp)
   add_test(NAME raw_pointer_audit_policy
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/raw_pointer_audit_policy_test.py" $<TARGET_FILE:gti> $<TARGET_FILE:gti_lsp>)
   set_tests_properties(raw_pointer_audit_policy PROPERTIES TIMEOUT 240)
+  add_test(NAME compile_limits
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/compile_limits_test.py" $<TARGET_FILE:gti> $<TARGET_FILE:gti_lsp>)
+  set_tests_properties(compile_limits PROPERTIES TIMEOUT 240)
   add_test(NAME raw_pointer_conversion_lsp
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/raw_pointer_conversion_lsp_test.py" $<TARGET_FILE:gti_lsp>)
   add_test(NAME raw_pointer_provenance_lsp
@@ -3037,6 +3040,15 @@ if(Python3_Interpreter_FOUND)
             --build "${PROJECT_BINARY_DIR}"
   )
   set_tests_properties(test_ownership_map PROPERTIES TIMEOUT 120)
+  # No fixture loses its last execution mode: every registered runtime harness
+  # plans LLVM execution under the default backend policy or declares why not.
+  add_test(
+    NAME execution_coverage
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/execution_coverage_test.py"
+            "${PROJECT_SOURCE_DIR}" "${PROJECT_BINARY_DIR}"
+  )
+  set_tests_properties(execution_coverage PROPERTIES TIMEOUT 300)
   add_test(
     NAME plan_checks
     COMMAND "${Python3_EXECUTABLE}"
@@ -3484,11 +3496,11 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(source_optional_protocol_runtime PROPERTIES TIMEOUT 900)
   add_test(
-    NAME payload_enum_carrier_runtime
+    NAME cpp_mir_payload_enum_carrier
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/payload_enum_carrier_runtime_test.py"
             "$<TARGET_FILE:gti>")
-  set_tests_properties(payload_enum_carrier_runtime PROPERTIES TIMEOUT 900)
+  set_tests_properties(cpp_mir_payload_enum_carrier PROPERTIES TIMEOUT 900)
 
   add_test(
     NAME composed_payload_runtime
@@ -3751,37 +3763,16 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}"
   )
   set_tests_properties(stdlib_modules PROPERTIES TIMEOUT 600)
-  # Preserve the complete four-fixture/eight-mode matrix without an outer
-  # deadline shorter than one of its permitted sanitized compilations.
-  foreach(standard IN ITEMS 20 23)
-    add_test(
-      NAME generic_algorithm_breadth_cpp${standard}
-      COMMAND "${Python3_EXECUTABLE}"
-              "${PROJECT_SOURCE_DIR}/tests/generic_algorithm_breadth_test.py"
-              "$<TARGET_FILE:gti>"
-              --mode "c++${standard}-O0"
-              --mode "c++${standard}-O1"
-              --mode "c++${standard}-O3"
-    )
-    set_tests_properties(generic_algorithm_breadth_cpp${standard}
-                         PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE)
-  endforeach()
+  # One entry: the harness runs the backends GTI_TEST_BACKENDS selects
+  # (tests/backend_modes.py). The former c++20, no-elide and sanitized
+  # variants were C++-backend-only configurations nothing ships.
   add_test(
-    NAME generic_algorithm_breadth_no_elide
+    NAME generic_algorithm_breadth
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/generic_algorithm_breadth_test.py"
-            "$<TARGET_FILE:gti>" --mode no-elide
+            "$<TARGET_FILE:gti>"
   )
-  set_tests_properties(generic_algorithm_breadth_no_elide
-                       PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE)
-  add_test(
-    NAME generic_algorithm_breadth_sanitized
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/generic_algorithm_breadth_test.py"
-            "$<TARGET_FILE:gti>" --mode sanitized
-  )
-  set_tests_properties(generic_algorithm_breadth_sanitized
-                       PROPERTIES TIMEOUT 1500 RUN_SERIAL TRUE)
+  set_tests_properties(generic_algorithm_breadth PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE)
   add_test(
     NAME ordered_search_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -4257,7 +4248,7 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}"
   )
   add_test(
-    NAME cpp_program_linkage
+    NAME cpp_mir_program_linkage
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/cpp_program_linkage_test.py"
             "$<TARGET_FILE:gti>"
@@ -4265,7 +4256,7 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}"
             "$<TARGET_FILE:gti_runtime>"
   )
-  set_tests_properties(cpp_program_linkage PROPERTIES TIMEOUT 120)
+  set_tests_properties(cpp_mir_program_linkage PROPERTIES TIMEOUT 120)
   add_test(
     NAME mir_backend_scalar_cfg_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -5913,7 +5904,8 @@ if(Python3_Interpreter_FOUND)
               "${PROJECT_SOURCE_DIR}/tests/managed_thread_tsan_test.py"
               "$<TARGET_FILE:gti>"
               "${PROJECT_SOURCE_DIR}/tests/fixtures/managed_thread_class_result.gti"
-              "${CMAKE_CXX_COMPILER}"
+              "$<TARGET_FILE:gti_llvm_instrumented_source>"
+              "${LLVM_TOOLS_BINARY_DIR}/clang++"
     )
     set_tests_properties(managed_thread_tsan PROPERTIES TIMEOUT 300)
     foreach(fixture shared_mutex_threads transfer_function_threads
@@ -5926,7 +5918,6 @@ if(Python3_Interpreter_FOUND)
                 "${PROJECT_SOURCE_DIR}/tests/managed_thread_tsan_test.py"
                 "$<TARGET_FILE:gti>"
                 "${PROJECT_SOURCE_DIR}/tests/fixtures/${fixture}.gti"
-                "${CMAKE_CXX_COMPILER}"
                 "$<TARGET_FILE:gti_llvm_instrumented_source>"
                 "${LLVM_TOOLS_BINARY_DIR}/clang++"
       )
@@ -5957,11 +5948,11 @@ if(Python3_Interpreter_FOUND)
       NAME atomic_tsan
       COMMAND "${Python3_EXECUTABLE}"
               "${PROJECT_SOURCE_DIR}/tests/atomic_tsan_test.py"
-              "$<TARGET_FILE:gti>"
+              "$<TARGET_FILE:gti_llvm_instrumented_source>"
+              "${LLVM_TOOLS_BINARY_DIR}/clang++"
               "${PROJECT_SOURCE_DIR}/tests/fixtures/atomic_concurrent.gti"
               "${PROJECT_SOURCE_DIR}/tests/fixtures/atomic_orders.gti"
               "${PROJECT_SOURCE_DIR}/tests/fixtures/atomic_fetch.gti"
-              "${CMAKE_CXX_COMPILER}"
               "${PROJECT_SOURCE_DIR}/tests/fixtures/atomic_wait.gti"
     )
     set_tests_properties(atomic_tsan PROPERTIES TIMEOUT 600)
@@ -5979,9 +5970,9 @@ if(Python3_Interpreter_FOUND)
       NAME mutex_tsan
       COMMAND "${Python3_EXECUTABLE}"
               "${PROJECT_SOURCE_DIR}/tests/mutex_tsan_test.py"
-              "$<TARGET_FILE:gti>"
+              "$<TARGET_FILE:gti_llvm_instrumented_source>"
+              "${LLVM_TOOLS_BINARY_DIR}/clang++"
               "${PROJECT_SOURCE_DIR}/tests/fixtures/mutex_concurrent.gti"
-              "${CMAKE_CXX_COMPILER}"
     )
     set_tests_properties(mutex_tsan PROPERTIES TIMEOUT 300)
     add_test(

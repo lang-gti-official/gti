@@ -209,7 +209,8 @@ def nightly_contract(root):
     assert "group: full-validation-${{ github.ref }}\n  cancel-in-progress: false" in full_header, \
         "full validation runs queue; a superseded head's verdict is still channel evidence"
     integration = jobs(full)
-    assert list(integration) == ["plan", "package", "integration", "sanitizers", "verdict", "report"], list(integration)
+    assert list(integration) == ["plan", "package", "integration", "sanitizers", "llvm-sanitizers", "tsan",
+                                 "verdict", "report"], list(integration)
     assert "merge_group" not in jobs(ci).get("gate", "") or "package" not in jobs(ci)["gate"]
     assert "package" not in jobs(ci) and "integration" not in jobs(ci) and "sanitizers" not in jobs(ci), \
         "the merge gate proves build and fast checks only"
@@ -250,9 +251,21 @@ def nightly_contract(root):
     assert "fast, source-stdlib]" in gate and "package" not in gate
     assert "validation_checks.py ci-gate" in gate and "--shard-reports" not in gate
     verdict = integration["verdict"]
-    assert "needs: [plan, package, integration, sanitizers]" in verdict
+    assert "needs: [plan, package, integration, sanitizers, llvm-sanitizers, tsan]" in verdict
+    assert "GTI_ENABLE_THREAD_SANITIZER_TESTS=ON" in integration["tsan"], "TSan is real in full validation"
+    assert "Require every thread-sanitizer test to run" in integration["tsan"] and 'suite.get("skipped"' in integration["tsan"], \
+        "a skipped _tsan test is a missing runtime, never evidence"
+    assert "libclang-rt-20-dev" in (root / "scripts/configure_ci_toolchain.sh").read_text(), "clang's TSan runtime is installed on Linux"
+    assert "GTI_TEST_BACKENDS: llvm" in integration["llvm-sanitizers"]
+    assert "cpp_mir" not in integration["sanitizers"], "the C++ emitter is sanitized only in cpp-backend.yml"
+    cpp = (root / ".github/workflows/cpp-backend.yml").read_text()
+    assert "GTI_TEST_BACKENDS: cpp" in cpp and "--test-set cpp" in cpp and "cpp_mir_body_emitter" in cpp
+    assert "merge_group" not in cpp and "pull_request" not in cpp, "the C++ backend never gates"
+    assert "schedule:" in cpp.split("\njobs:\n", 1)[0]
     assert "validation_checks.py ci-gate" in verdict and "--event full_validation" in verdict
-    assert "named_test_shards.py verify" in verdict and "--shard-reports" in verdict
+    assert "--shard-reports" in verdict
+    cpp_jobs = jobs((root / ".github/workflows/cpp-backend.yml").read_text())
+    assert "named_test_shards.py verify" in cpp_jobs["verdict"], "the C++ emitter lifecycle proof lives in the C++ job"
     report = integration["report"]
     assert "issues: write" in report and "full_validation_report.py" in report
     assert "needs.verdict.result != 'cancelled'" in report
@@ -443,8 +456,8 @@ def workflow_contract(root):
     # CI, nightly packaging and the rollup bot run on GitHub; the frozen Gitea
     # release workflow stays as written.
     assert sorted(p.name for p in (root / ".github/workflows").glob("*.yml")) == [
-        "backport.yml", "beta.yml", "cache.yml", "ci.yml", "full-validation.yml", "llvm-prebuilt.yml",
-        "nightly.yml", "preview.yml", "rollback.yml", "rollup.yml", "train.yml"]
+        "backport.yml", "beta.yml", "cache.yml", "ci.yml", "cpp-backend.yml", "full-validation.yml",
+        "llvm-prebuilt.yml", "nightly.yml", "preview.yml", "rollback.yml", "rollup.yml", "train.yml"]
     assert not (root / ".gitea/workflows/ci.yml").exists()
     assert "branches:\n      - main" in release and "paths:" not in release
     assert release.count("-DGTI_RELEASE_BUILD=ON") == 1, "channels must share one configure"

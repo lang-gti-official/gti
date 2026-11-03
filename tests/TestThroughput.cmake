@@ -15,8 +15,7 @@ if(NOT GTI_TEST_HEAVY_CASE_JOBS MATCHES "^[1-9][0-9]*$")
 endif()
 set(gti_heavy_case_suites
   stdlib_surface returned_field_address_runtime
-  generic_algorithm_breadth_cpp20 generic_algorithm_breadth_cpp23
-  generic_algorithm_breadth_no_elide generic_algorithm_breadth_sanitized
+  generic_algorithm_breadth
   complete_containers)
 
 # Every gate has a bound, so a hung test fails at a known point instead of at
@@ -71,6 +70,19 @@ foreach(suite IN LISTS gti_bounded_tests)
   # (tests/sanitizer_support.py scaled_timeout).
   set_property(TEST "${suite}" APPEND PROPERTY ENVIRONMENT
     "GTI_TEST_TIMEOUT_SCALE=${GTI_TEST_TIMEOUT_SCALE}")
+endforeach()
+# Which backends the runtime harnesses exercise (tests/backend_modes.py).
+# The shipped backend is the default; the deprecated C++ backend runs only
+# in the scheduled C++ job. A developer may override GTI_TEST_BACKENDS in
+# the environment of a direct harness run.
+set(GTI_TEST_BACKENDS "llvm" CACHE STRING
+  "Backends the runtime harnesses exercise: llvm, cpp or both")
+if(NOT GTI_TEST_BACKENDS MATCHES "^(llvm|cpp|both)$")
+  message(FATAL_ERROR "GTI_TEST_BACKENDS must be llvm, cpp or both")
+endif()
+foreach(suite IN LISTS gti_bounded_tests)
+  set_property(TEST "${suite}" APPEND PROPERTY ENVIRONMENT
+    "GTI_TEST_BACKENDS=${GTI_TEST_BACKENDS}")
 endforeach()
 
 if(Python3_Interpreter_FOUND)
@@ -161,8 +173,7 @@ if(Python3_Interpreter_FOUND)
     failure_free_passive_constructors_runtime
     failure_free_passive_moves_runtime
     generated_base_constructor_runtime generated_constructor_order_runtime
-    generic_algorithm_breadth_cpp20 generic_algorithm_breadth_cpp23
-    generic_algorithm_breadth_no_elide generic_algorithm_breadth_sanitized
+    generic_algorithm_breadth
     generic_callable_adapter_runtime generic_callable_transport_runtime generic_contract_runtime
     coverage_composition_runtime
     generic_enum_instances_runtime generic_payload_enum_runtime hosted_constructor_identity_runtime
@@ -352,5 +363,12 @@ foreach(suite IN LISTS gti_throughput_tests)
   endif()
   if(suite MATCHES "(runtime|end_to_end|corpus|oracle|workflow|^stdlib_surface$)")
     set_property(TEST "${suite}" APPEND PROPERTY LABELS "end-to-end")
+  endif()
+  # The frozen C++ backend's own tests (scripts/validation_checks.py
+  # CPP_ONLY_PREFIXES, which test_throughput_registration keeps in step): the
+  # scheduled C++ job runs them; broad local runs exclude them with
+  # `-LE cpp-backend`.
+  if(suite MATCHES "^(cpp_mir_|cpp_debug_artifacts|lowered_program_corpus_census)")
+    set_property(TEST "${suite}" APPEND PROPERTY LABELS "cpp-backend")
   endif()
 endforeach()

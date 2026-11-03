@@ -7,32 +7,32 @@ import subprocess
 import sys
 import tempfile
 import time
+from backend_modes import is_cpp_mode, keep_cpp, native_modes
 
 
 def main():
     compiler = Path(sys.argv[1]).resolve()
     repository = Path(__file__).resolve().parent.parent
     fixture = repository / "tests/fixtures/unsafe_expression.gti"
-    modes = [(standard, level, []) for standard in ("c++20", "c++23")
-             for level in ("O0", "O1", "O3")]
-    modes.append(("c++23", "O1", ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]))
+    modes = native_modes()
     env = os.environ.copy()
     for name in ("ASAN_OPTIONS", "UBSAN_OPTIONS"):
         env[name] = env.get(name, "") + ":halt_on_error=1"
     with tempfile.TemporaryDirectory(prefix="gti-unsafe-expression-") as directory:
         root = Path(directory)
-        for standard, level, extra in modes:
-            label = f"{standard}-{level}" + ("-sanitized" if extra else "")
+        for mode, flags, native in modes:
+            label = f"{mode}" + ("-sanitized" if native else "")
             binary = root / label
             started = time.perf_counter()
             built = subprocess.run(
-                [compiler, fixture, "--std", standard, f"-{level}",
-                 "--progress", "never", "-Wno-unused-unsafe", "--keep-cpp",
-                 "-o", binary, "--", *extra],
+                [compiler, fixture, *flags,
+                 "--progress", "never", "-Wno-unused-unsafe", *keep_cpp(flags),
+                 "-o", binary, "--", *native],
                 capture_output=True, text=True, timeout=180, env=env)
             assert built.returncode == 0, (label, built.stdout, built.stderr)
             elapsed = time.perf_counter() - started
-            assert "// GTI verified-MIR body:" in binary.with_suffix(".gti.cpp").read_text()
+            if is_cpp_mode(flags):
+                assert "// GTI verified-MIR body:" in binary.with_suffix(".gti.cpp").read_text()
             for arguments in ([], ["fail"]):
                 ran = subprocess.run([binary, *arguments], capture_output=True,
                                      text=True, timeout=30, env=env)

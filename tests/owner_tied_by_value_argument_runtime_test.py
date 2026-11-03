@@ -15,6 +15,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 EXPECTED_OUTPUT = (
     "distance-read ok\ndistance-mut ok\nrelay ok\nprvalue ok\nrelay-after ok\n"
@@ -46,17 +47,7 @@ def main() -> int:
         prefix="gti-owner-tied-by-value-"
     ) as temporary:
         root = pathlib.Path(temporary)
-        modes = [
-            (f"{standard}-{optimization}",
-             ["--std", standard, f"-{optimization}"], [])
-            for standard in ("c++20", "c++23")
-            for optimization in ("O0", "O1", "O3")
-        ] + [
-            ("no-elide", ["--std", "c++23", "-O0"],
-             ["-fno-elide-constructors"]),
-            ("sanitized", ["--std", "c++23", "-O1"],
-             ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]),
-        ]
+        modes = native_modes()
         for mode, flags, native in modes:
             executable = root / mode
             built = run(

@@ -490,6 +490,7 @@ add_library(
   "src/compiler/ast_printer.cpp"
   "src/compiler/binary_float.cpp"
   "src/compiler/checked_integer.cpp"
+  "src/compiler/compile_limits.cpp"
   "src/compiler/configuration_directive_processor.cpp"
   "src/compiler/constant_evaluator.cpp"
   "src/compiler/mir_constant_evaluator.cpp"

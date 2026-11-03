@@ -140,6 +140,11 @@ public:
   // this is that identity's base rather than its equal.
   [[nodiscard]] const std::string &modelIdentity() const;
 
+  // The per-request compile limits of a compilation rooted here: the
+  // selected package's [limits] table over the defaults, exactly as builds
+  // resolve it before command-line overrides. Dependency tables never apply.
+  [[nodiscard]] const CompileLimits &compileLimits() const;
+
 private:
   // Only a successful workspace resolution can establish the selected-package
   // and graph invariants required by selectedPackage() and modelIdentity().
@@ -158,6 +163,7 @@ private:
   ConfigurationFlags resolvedConfigurationFlags;
   ConfigurationFlags resolvedDeclaredConfigurationFlags;
   std::string resolvedModelIdentity;
+  CompileLimits resolvedCompileLimits;
 };
 
 enum class ProjectFactsStatus {

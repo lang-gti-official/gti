@@ -12,6 +12,7 @@ import time
 
 from native_fixture_build import build_fixture
 from iterator_sanitizer_support import partition_main
+from backend_modes import is_cpp_mode, keep_cpp, native_modes, optimization_level
 
 
 def sanitizer_partitions(source):
@@ -83,12 +84,13 @@ def reject_invalid(compiler, root):
 def measure_traversal(compiler, fixtures, root):
     binary = root / "storage-lane-cost"
     started = time.monotonic()
+    # The production level of the first selected backend measures the cost.
+    _label, flags, _native = native_modes(levels=("O3",))[0]
     built = build_fixture(
-        [str(compiler), str(fixtures / "storage_lane_iterator_cost.gti"),
-         "--std", "c++23", "-O3"], binary,
+        [str(compiler), str(fixtures / "storage_lane_iterator_cost.gti"), *flags], binary,
         native_sources=[fixtures / "stdlib_adoption_allocation_counts.cpp",
                         fixtures / "storage_lane_iterator_cost.cpp"],
-        standard="c++23", optimization="O3", capture_output=True, text=True,
+        optimization="O3", capture_output=True, text=True,
         timeout=180)
     assert built.returncode == 0, (built.stdout, built.stderr)
     build_seconds = time.monotonic() - started
@@ -114,8 +116,9 @@ def measure_traversal(compiler, fixtures, root):
         large = statistics.median(observations[(family, lengths[1])])
         print(f"{label}: {lengths[0]}={small}ns, {lengths[1]}={large}ns, "
               f"ratio={large / small:.3f}; 0 traversal allocations", flush=True)
-    print(f"storage/lane cost: binary={binary.stat().st_size} bytes, "
-          f"C++={binary.with_suffix('.gti.cpp').stat().st_size} bytes, "
+    text_size = (f"C++={binary.with_suffix('.gti.cpp').stat().st_size} bytes, "
+                 if is_cpp_mode(flags) else "")
+    print(f"storage/lane cost: binary={binary.stat().st_size} bytes, {text_size}"
           f"build={build_seconds:.3f}s; bounded observations, no speedup claim", flush=True)
 
 
@@ -129,11 +132,7 @@ def prove_allocation_free_families(compiler, fixtures, root):
         "key_iterator_allocations": "set/unordered_set",
         "sparse_mask_iterator_allocations": "pool/resource_storage/SIMD masks",
     }
-    modes = (("c++20-O3", "c++20", "O3", ()),
-             ("c++23-O3", "c++23", "O3", ()),
-             ("sanitized", "c++23", "O1",
-              ("-fsanitize=address,undefined", "-fno-omit-frame-pointer")))
-    for mode, standard, optimization, native in modes:
+    for mode, flags, native in native_modes(levels=("O3",)):
         for fixture, label in families.items():
             sources = {None: fixtures / f"{fixture}.gti"}
             if fixture == "sparse_mask_iterator_allocations" and mode == "sanitized":
@@ -147,14 +146,14 @@ def prove_allocation_free_families(compiler, fixtures, root):
                 name = f"{fixture}-{region}" if region else fixture
                 binary = root / f"{name}-{mode}"
                 built = build_fixture(
-                    [str(compiler), str(source),
-                     "--std", standard, f"-{optimization}"], binary,
+                    [str(compiler), str(source), *flags], binary,
                     native_sources=[fixtures / "stdlib_adoption_allocation_counts.cpp"],
-                    native_arguments=native, standard=standard,
-                    optimization=optimization, capture_output=True, text=True,
+                    native_arguments=native,
+                    optimization=optimization_level(flags), capture_output=True, text=True,
                     timeout=180)
                 assert built.returncode == 0, (name, mode, built.stdout, built.stderr)
-                assert "// GTI verified-MIR body:" in binary.with_suffix(".gti.cpp").read_text(), (name, mode)
+                if is_cpp_mode(flags):
+                    assert "// GTI verified-MIR body:" in binary.with_suffix(".gti.cpp").read_text(), (name, mode)
                 completed = run([str(binary)], timeout=30)
                 assert (completed.returncode, completed.stdout, completed.stderr) == (0, "", ""), (name, mode, completed)
                 print(f"{label}{('/' + region) if region else ''}: {mode}, "
@@ -168,23 +167,21 @@ def main():
     os.environ["GTI_STDLIB_PATH"] = str(repository / "stdlib")
     compiler = pathlib.Path(sys.argv[1]).resolve()
     fixtures = repository / "tests" / "fixtures"
-    modes = [(f"{standard}-{level}", ["--std", standard, f"-{level}"])
-             for standard in ("c++20", "c++23") for level in ("O0", "O1", "O3")]
-    modes.append(("sanitized", ["--std", "c++23", "-O1", "--",
-                                "-fsanitize=address,undefined", "-fno-omit-frame-pointer"]))
+    modes = native_modes()
     if len(sys.argv) == 3:
         modes = []
     with tempfile.TemporaryDirectory(prefix="gti-storage-lane-iteration-") as directory:
         root = pathlib.Path(directory)
         if len(sys.argv) == 2:
             reject_invalid(compiler, root)
-        for name, flags in modes:
+        for name, flags, _native in modes:
             for fixture in ("storage_lane_iterator_completion", "storage_lane_iterator_failure"):
                 binary = root / f"{fixture}-{name}"
-                built = run([str(compiler), str(fixtures / f"{fixture}.gti"), "--keep-cpp", "-o", str(binary), *flags])
+                built = run([str(compiler), str(fixtures / f"{fixture}.gti"), *keep_cpp(flags), "-o", str(binary), *flags])
                 assert built.returncode == 0, (fixture, name, built.stdout, built.stderr)
-                generated = binary.with_suffix(".gti.cpp").read_text()
-                assert "// GTI verified-MIR body:" in generated, (fixture, name)
+                if is_cpp_mode(flags):
+                    generated = binary.with_suffix(".gti.cpp").read_text()
+                    assert "// GTI verified-MIR body:" in generated, (fixture, name)
                 if fixture.endswith("completion"):
                     completed = run([str(binary)])
                     assert (completed.returncode, completed.stdout, completed.stderr) == (0, "", ""), (name, completed)

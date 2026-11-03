@@ -86,17 +86,19 @@ class NamedShards(unittest.TestCase):
                 shards.selection(['a', 'b', 'c', 'd', 'e'], index, count)
 
     def test_ci_keeps_native_aggregate_and_requires_both_sanitizer_reports(self):
-        workflow = (ROOT / '.github/workflows/full-validation.yml').read_text()
-        self.assertIn("-E '^(compiler_pipeline|cpp_mir_body_emitter_lifecycle)$'", workflow)
-        self.assertIn('--executable build-sanitized/gti_cpp_mir_body_emitter_lifecycle_tests', workflow)
-        self.assertIn('--count 2 --timeout 5400', workflow)
-        build = workflow.split('- name: Build the targets the sanitizer subset runs', 1)[1].split('- name: Test compiler and driver libraries', 1)[0]
+        full = (ROOT / '.github/workflows/full-validation.yml').read_text()
+        build = full.split('- name: Build the targets the sanitizer subset runs', 1)[1].split('- name: Test compiler and driver libraries', 1)[0]
         self.assertIn('pattern="${GTI_SANITIZER_TESTS}"', build)
         self.assertIn('if [[ "${{ matrix.kind }}" == "compiler" ]]; then', build)
         self.assertIn("pattern='^compiler_pipeline$'", build)
         self.assertIn('--regex "${pattern}"', build)
-        self.assertIn('named_test_shards.py verify', workflow)
-        self.assertIn('pattern: sanitizers-libraries-*', workflow)
+        self.assertNotIn('cpp_mir_body_emitter_lifecycle', full, 'the C++ emitter sanitizers run on the weekly C++ schedule, not on every main push')
+        cpp = (ROOT / '.github/workflows/cpp-backend.yml').read_text()
+        self.assertIn("-E '^cpp_mir_body_emitter_lifecycle$'", cpp)
+        self.assertIn('--executable build-sanitized/gti_cpp_mir_body_emitter_lifecycle_tests', cpp)
+        self.assertIn('--count 2 --timeout 5400', cpp)
+        self.assertIn('named_test_shards.py verify', cpp)
+        self.assertIn('pattern: cpp-sanitizers-*', cpp)
         self.assertIn('NAME cpp_mir_body_emitter_lifecycle\n', (ROOT / 'tests/CMakeLists.txt').read_text())
 
 

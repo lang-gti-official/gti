@@ -634,6 +634,14 @@
       "suite": "ownership"
     },
     {
+      "name": "testCompileLimits",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testConstantEvaluationReuse",
+      "suite": "constexpr"
+    },
+    {
       "name": "testConsteval",
       "suite": "constexpr"
     },
@@ -751,6 +759,14 @@
     },
     {
       "name": "testCompileTimeConditionals",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testConfigurableCompileTimeDepth",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testNativeStackSegmentsAreInvisible",
       "suite": "constexpr"
     },
     {

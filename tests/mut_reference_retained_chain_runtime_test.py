@@ -21,6 +21,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -296,82 +297,75 @@ def main() -> int:
             failure_source.write_text(text, encoding="utf8")
             failure_sources.append((label, failure_source))
 
-        for standard in ("c++20", "c++23"):
-            for optimization in ("O0", "O3"):
-                executable = (
-                    root / f"mut-reference-retained-chain-{standard}-{optimization}"
+        for mode, flags, native in native_modes():
+            executable = (
+                root / f"mut-reference-retained-chain-{mode}"
+            )
+            built = run(
+                [
+                    str(compiler),
+                    str(success_source),
+                    *flags,
+                    "-o",
+                    str(executable),
+                ]
+            )
+            if built.returncode != 0:
+                sys.stderr.write(
+                    "a retained call-result chain reached through a "
+                    f"reference carrier failed to build for {mode}\n"
                 )
+                return fail(built)
+
+            executed = run([str(executable)])
+            if (
+                executed.returncode != 0
+                or executed.stdout != ""
+                or executed.stderr != ""
+            ):
+                sys.stderr.write(
+                    "a retained call-result chain reached through a "
+                    "reference carrier did not write through to the "
+                    f"caller's object for {mode}: "
+                    f"exit={executed.returncode} "
+                    f"stdout={executed.stdout!r} "
+                    f"stderr={executed.stderr!r}\n"
+                )
+                return 1
+
+            for label, failure_source in failure_sources:
+                failure_executable = root / f"{label}-{mode}"
                 built = run(
                     [
                         str(compiler),
-                        str(success_source),
-                        "--std",
-                        standard,
-                        f"-{optimization}",
+                        str(failure_source),
+                        *flags,
                         "-o",
-                        str(executable),
+                        str(failure_executable),
                     ]
                 )
                 if built.returncode != 0:
                     sys.stderr.write(
-                        "a retained call-result chain reached through a "
-                        f"reference carrier failed to build for {standard} "
-                        f"{optimization}\n"
+                        f"{label} failed to build for {mode}\n"
                     )
                     return fail(built)
 
-                executed = run([str(executable)])
+                executed = run([str(failure_executable)])
                 if (
-                    executed.returncode != 0
-                    or executed.stdout != ""
-                    or executed.stderr != ""
+                    executed.returncode != 70
+                    or "GTI-R0001" not in executed.stderr
+                    or "integer_overflow" not in executed.stderr
+                    or "GTI-R0014" in executed.stderr
                 ):
                     sys.stderr.write(
-                        "a retained call-result chain reached through a "
-                        "reference carrier did not write through to the "
-                        f"caller's object for {standard} {optimization}: "
+                        f"{label} did not report the defined failure raised "
+                        "while a retained chain through a reference carrier "
+                        f"was live for {mode}: "
                         f"exit={executed.returncode} "
                         f"stdout={executed.stdout!r} "
                         f"stderr={executed.stderr!r}\n"
                     )
                     return 1
-
-                for label, failure_source in failure_sources:
-                    failure_executable = root / f"{label}-{standard}-{optimization}"
-                    built = run(
-                        [
-                            str(compiler),
-                            str(failure_source),
-                            "--std",
-                            standard,
-                            f"-{optimization}",
-                            "-o",
-                            str(failure_executable),
-                        ]
-                    )
-                    if built.returncode != 0:
-                        sys.stderr.write(
-                            f"{label} failed to build for {standard} "
-                            f"{optimization}\n"
-                        )
-                        return fail(built)
-
-                    executed = run([str(failure_executable)])
-                    if (
-                        executed.returncode != 70
-                        or "GTI-R0001" not in executed.stderr
-                        or "integer_overflow" not in executed.stderr
-                        or "GTI-R0014" in executed.stderr
-                    ):
-                        sys.stderr.write(
-                            f"{label} did not report the defined failure raised "
-                            "while a retained chain through a reference carrier "
-                            f"was live for {standard} {optimization}: "
-                            f"exit={executed.returncode} "
-                            f"stdout={executed.stdout!r} "
-                            f"stderr={executed.stderr!r}\n"
-                        )
-                        return 1
 
     return 0
 

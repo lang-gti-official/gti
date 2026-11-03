@@ -7,6 +7,7 @@ import sys
 import tempfile
 
 from native_symbol_spelling import native_spelling
+from backend_modes import is_cpp_mode, keep_cpp, native_modes
 
 
 def run(command):
@@ -24,14 +25,13 @@ def main():
     source = root / "tests/fixtures/stdlib_surface_cmath.gti"
     with tempfile.TemporaryDirectory(prefix="gti-cmath-") as directory:
         output = pathlib.Path(directory)
-        for standard in ("c++20", "c++23"):
-            for optimization in ("O0", "O1", "O3"):
-                binary = output / f"math-{standard}-{optimization}"
-                run([str(compiler), str(source), f"-{optimization}",
-                     "--std", standard, "--keep-cpp", "-o", str(binary)])
-                result = run([str(binary)])
-                if result.stdout or result.stderr:
-                    raise AssertionError(f"unexpected output: {result!r}")
+        for mode, flags, _native in native_modes():
+            binary = output / f"math-{mode}"
+            run([str(compiler), str(source), *flags, *keep_cpp(flags), "-o", str(binary)])
+            result = run([str(binary)])
+            if result.stdout or result.stderr:
+                raise AssertionError(f"unexpected output: {result!r}")
+            if is_cpp_mode(flags):
                 generated = binary.with_suffix(".gti.cpp").read_text()
                 for name in ("floor", "ceil", "round", "trunc", "sqrt", "cbrt",
                              "pow", "fmod", "exp", "log", "log10", "sin", "cos",
@@ -41,15 +41,6 @@ def main():
                         raise AssertionError(f"missing scalar ABI call for {name}")
                 if "// GTI verified-MIR body:" not in generated:
                     raise AssertionError("missing verified-MIR emission witness")
-        # The same GTI fixture also exercises the generated/native boundary
-        # with address and undefined-behavior instrumentation.
-        binary = output / "math-sanitized"
-        run([str(compiler), str(source), "-O1", "--std", "c++23",
-             "-o", str(binary), "--", "-fsanitize=address,undefined",
-             "-fno-omit-frame-pointer"])
-        result = run([str(binary)])
-        if result.stdout or result.stderr:
-            raise AssertionError(f"unexpected sanitizer output: {result!r}")
 
 
 if __name__ == "__main__":

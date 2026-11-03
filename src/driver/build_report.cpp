@@ -806,6 +806,17 @@ std::string serializeBuildProvenanceJson(const BuildProvenance &provenance) {
   writeJsonString(stream, rawPointerAuditModeName(provenance.rawPointerAudit));
   stream << ",\n  \"raw_pointer_audit_library_findings\": "
          << (provenance.rawPointerAuditLibraryFindings ? "true" : "false");
+  if (provenance.compileLimits) {
+    stream << ",\n  \"compile_limits\": {";
+    bool first = true;
+    for (const CompileLimitInfo &limit : compileLimitTable()) {
+      stream << (first ? "" : ",");
+      first = false;
+      writeJsonString(stream, limit.key);
+      stream << ':' << (*provenance.compileLimits).*limit.field;
+    }
+    stream << '}';
+  }
   stream << ",\n  \"producer\": {\n    \"executable\": ";
   writeBuildFileJson(stream, provenance.producerExecutable);
   stream << ",\n    \"compiler_build\": {\"state\":";
@@ -977,6 +988,27 @@ parseBuildProvenanceJson(std::string_view text, std::string &errorMessage) {
       !requireBoolean(*document, "debug_info", "report", provenance.debugInfo,
                       errorMessage)) {
     return std::nullopt;
+  }
+  if (document->member("compile_limits") != nullptr) {
+    const JsonValue *limits = nullptr;
+    if (!requireMember(*document, "compile_limits", JsonValue::Kind::Object,
+                       "report", limits, errorMessage))
+      return std::nullopt;
+    CompileLimits recorded;
+    for (const CompileLimitInfo &limit : compileLimitTable()) {
+      std::uint64_t value = 0;
+      if (!requireUnsigned(*limits, limit.key, "report.compile_limits", value,
+                           errorMessage))
+        return std::nullopt;
+      std::string invalid;
+      if (!validateCompileLimitValue(limit, static_cast<long long>(value),
+                                     invalid)) {
+        errorMessage = "report.compile_limits: " + invalid;
+        return std::nullopt;
+      }
+      recorded.*limit.field = static_cast<std::size_t>(value);
+    }
+    provenance.compileLimits = recorded;
   }
 
   const JsonValue *producer = nullptr;
@@ -1245,6 +1277,10 @@ compareBuildProvenance(const BuildProvenance &recorded,
                "raw pointer audit library findings",
                recorded.rawPointerAuditLibraryFindings ? "true" : "false",
                observed.rawPointerAuditLibraryFindings ? "true" : "false");
+  if (recorded.compileLimits && observed.compileLimits)
+    compareValue(differences, "build policy", "compile limits",
+                 compileLimitsIdentity(*recorded.compileLimits),
+                 compileLimitsIdentity(*observed.compileLimits));
   compareFile(differences, "producer executable", recorded.producerExecutable,
               observed.producerExecutable);
   compareValue(
