@@ -3945,16 +3945,21 @@ private:
       consume(TokenKind::SEMICOLON, "Expect ';' after required result type.");
       const bool inferredResult =
           requiredResult.name.last().kind == TokenKind::AUTO;
+      // `auto&` infers a checked reference's referent and `auto` infers a
+      // borrow-carrying value's type. Both need the named origin; an
+      // unannotated inferred result would promise nothing a simple
+      // requirement does not.
       if (inferredResult &&
-          (!requiredResult.reference || !borrowedFrom ||
-           requiredResult.reference->kind != TokenKind::AMPERSAND ||
+          (!borrowedFrom ||
+           (requiredResult.reference &&
+            requiredResult.reference->kind != TokenKind::AMPERSAND) ||
            !requiredResult.pointers.empty() ||
            !requiredResult.arrayExtents.empty() ||
            !requiredResult.arguments.empty()))
         throw error(requiredResult.name.last(),
-                    "An inferred result uses 'auto&' with borrowed_from; "
-                    "omit '-> type' to check an expression without a result "
-                    "type contract.");
+                    "An inferred result uses 'auto&' or 'auto' with "
+                    "borrowed_from; omit '-> type' to check an expression "
+                    "without a result type contract.");
 
       // Preserve the earlier exact-member contract as a subset. Every other
       // expression is checked by the ordinary semantic expression analyzer.
