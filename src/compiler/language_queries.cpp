@@ -1937,9 +1937,12 @@ private:
     if (selected != nullptr) {
       const SignaturePrinter signatures(semantics);
       for (const auto &[index, construction] : selected->checkedArguments) {
-        if (const auto *owner = semantics.findClassType(construction.constructedType.classId))
-          result.notes.push_back("Argument " + std::to_string(index + 1) +
-              " is checked at compile time through " + signatures.constructor(*owner, construction) + ".");
+        if (const auto *owner =
+                semantics.findClassType(construction.constructedType.classId))
+          result.notes.push_back(
+              "Argument " + std::to_string(index + 1) +
+              " is checked at compile time through implicit " +
+              signatures.constructor(*owner, construction) + ".");
       }
     }
     const TypeSubstitution substitution =

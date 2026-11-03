@@ -617,7 +617,7 @@ workflow determine task scope and integration.
 | Reflection clients | phases 1–3 and reflection-driven JSON delivered | `<std/json>` is the promoted reflected library since 0.409.0. Select remaining metadata/invocation/constant-execution clients from the [reflection plan](reflection.md), preserving construction, rollback and expansion budgets; do not repeat the experimental JSON gate. |
 | `L-UP-10` -> `L-UP-11` | acceptance closure, then adoption; may be co-validated | The retained borrowed-pack reproducer passes current O0/O3 probes. Complete the relevant constructor/cleanup composition matrix while adopting final-node emplacement; do not presume another compiler fix. |
 | `L-UP-12` -> `L-UP-18` | inline protocol is a new capability | Reuse delivered allocated final-address construction. Establish inline publication/rollback and structural wrapper lifecycle eligibility before claiming immovable optional support. |
-| `L-UP-14` | ready for a bounded new capability | Current staged MIR text/passive-record profile -> one constant-eligible pattern validator -> general required call-site literal validation. Dynamic formatting stays recoverable. |
+| `L-UP-14` | delivered | Shared constant-eligible parser and checked immediate argument conversion; explicit runtime APIs retain recoverable dynamic formatting. |
 | `L-UP-15` | ready for a bounded new capability | Ordinary method requirements and operator selection exist; extend validity-only requirements to member operators and co-deliver conditional map indexing with unrelated-type proof. |
 | `L-OWN-02` owner-tracked view fields | phases 1/2 and phase 3a nested text values implemented | Phase 3b nested reference-carrier payload/results and phase 4 contract unification remain, along with the named nested-copy/field-contract restrictions. Preserve caller-owned origins, physical carrier lifetime, cleanup and conservative whole-carrier protection. See [`L-OWN-02`](#l-own-02-owner-tracked-view-fields). |
 | `L-UP-16` | ready for a bounded new capability | Existing multi-owner carrier facts -> explicit result-projection summary -> independently useful precise read-only projection. Proxy iteration needs a separate yield contract. |
@@ -901,7 +901,7 @@ Rows with unmet prerequisites cannot be marked complete by a source-only workaro
 | 11 / `L-UP-11` | planned | `L-UP-10` | Node-container emplacement constructs immovable mapped values at their final address. |
 | 12 / `L-UP-12` | sparse portion delivered; inline portion planned | existing general object-lifetime/final-slot construction; inline publication/rollback contract | Optional emplacement constructs eligible payloads directly in its empty inline slot; source sparse emplacement is not pending. |
 | 13 / `L-UP-13` | implemented and locally validated for 0.371.0 | exact argument-bearing read/mut signatures, dependent compound concept facts, constrained pack calls | Public source-defined formatter protocol and compile-time unsupported-type diagnostics; examples 105/106 and compiler/runtime/editor/corpus/installed gates pass. |
-| 14 / `L-UP-14` | ready / new capability, staged | current literal-text/passive-record MIR constant profile; shared validator before call-site admission | Bad literal format strings fail before execution; dynamic strings stay recoverable. |
+| 14 / `L-UP-14` | delivered | shared parser, checked immediate argument conversion, request-local reuse | Bad literal format strings fail before execution; explicit runtime APIs stay recoverable. |
 | 15 / `L-UP-15` | ready / new capability | current validity-only requirements and operator selection | Conditionally available map indexing without imposing default construction on every mapped type. |
 | 16 / `L-UP-16` | ready / new capability | current multi-origin shared-carrier facts | Precisely projected read-only views retain only their actual owner dependencies. |
 | 17 / `L-UP-17` | ready / new capability | typed allocation status, lifecycle rollback and exact owner publication | Recoverable unique-owner allocation rather than terminal allocation failure only. |
@@ -1374,32 +1374,25 @@ and select an independent row.
 
 ### L-UP-14: Validate Literal Patterns Through One Parser
 
-- **Current disposition (2026-10-28):** passive Expected/tryable constant
-  composition is implemented, superseding the 2026-10-04 result-shape
-  prerequisite. `validate_format_pattern` and its parser helpers remain
-  runtime functions, and no general required call-site literal-validation
-  contract is implemented. Make the shared parser constant-eligible, then
-  implement call-site enforcement; adding constexpr to one wrapper alone
-  would not diagnose every invalid literal call. This remains a capability row.
-- **Prerequisite/client:** the current literal-text/passive-record MIR profile.
-  Substep A is a shared constant-eligible validator; substep B's call-site
-  validation requires A's passing evidence. Adopt the general explicit
-  call-site constant-validation rule with that client, not as unowned future work.
-  `L-UP-13` is needed only if the accepted contract also validates user argument
-  adapters; pure pattern validation need not wait for formatter customization.
-- **Steps:** isolate pure pattern validation from output allocation while
-  retaining the same grammar and error categories. Establish a constant-eligible
-  passive result rather than assuming Expected/packs already execute in CTFE.
-  Prove compile-time/runtime parity, then adopt the bounded call-site/literal
-  carrier contract and make invalid literal patterns source diagnostics.
-- **Boundary:** current `constexpr` alone does not require literal arguments to
-  be evaluated at a call. The rule must apply to an unrelated validated-literal
-  API, run at the correct semantic query stage using canonical verified MIR,
-  and preserve deterministic resource limits. No second format grammar inside
-  the compiler, optimizer-only check, or native C++ compile-time authority.
-- **Exit:** invalid brace/index/specifier/argument-count cases at source spans,
-  valid literal examples and identical dynamic `try_format` errors; custom
-  adapter cases when in scope. Dynamic strings remain supported and recoverable.
+- **Delivered (2026-11-03, #169):** the source parser is constant-eligible and
+  `format_pattern<Args...>` applies the general checked immediate argument tier.
+  Grammar, indexing, count and built-in presentation failures are caller-span
+  diagnostics; custom formatter validators may opt in. Already checked carriers
+  forward through ordinary generic functions without revalidation.
+- **Runtime contract:** separately named `runtime_*` / `try_runtime_*` APIs
+  retain dynamic views, error categories, cleanup and output behavior. Existing
+  runtime oracle fixtures use those entry points. Raw text output and assertion
+  evaluation semantics are unchanged.
+- **Companion decisions:** a declaration warning exposes same-shaped exact
+  overloads that bypass validation; literal-message panic failures retain library
+  text; fresh immediate requests have a deterministic 262144-step/64-depth
+  budget and reuse exact request-local staged results with original-work charges;
+  hover names the selected checked constructor. See [ADR 033](../decisions/033-checked-immediate-arguments.md).
+- **Boundary:** one parser and canonical verified MIR; no public type-name
+  recognition, AST retry, operator conversion, conversion ranking or inference
+  through the checked parameter. C++ declines aggregate constant publication
+  with `GTI-B0003`; LLVM executes the new checked path. Formatted compile-time
+  panic messages and broader constant-context parity remain #174/#175.
 
 ### L-UP-15: Conditionally Available Member Operators
 

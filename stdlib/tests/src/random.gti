@@ -13,11 +13,11 @@ export expected<void, std::string> random_test() {
   auto value3 = engine();
 
   if (value1 == value2 || value1 == value3) {
-    auto result = std::format("failed value1 {} was equal to 2 or 3 {}{}", value1, value2, value3);
+    auto result = std::runtime_format("failed value1 {} was equal to 2 or 3 {}{}", value1, value2, value3);
     return unexpected(std::move(result));
   }
   if (value2 == value3) {
-    auto result = std::format("failed value2 was equal to value3 {}{}", value2, value3);
+    auto result = std::runtime_format("failed value2 was equal to value3 {}{}", value2, value3);
     return unexpected(std::move(result));
   }
 

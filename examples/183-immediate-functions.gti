@@ -50,3 +50,7 @@ int main() {
 // also fail during compilation.
 // Constant arguments can use an implicit consteval constructor directly.
 // transmit(runtime_payload, 7) is rejected; construct a validated Port first.
+
+// The same rule supports source-defined format_pattern<Args...> wrappers:
+// std::format("port={}", runtime_payload) checks the pattern at compile time.
+// Dynamic formatting uses std::runtime_format(pattern, runtime_payload).

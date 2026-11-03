@@ -11,7 +11,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="gti-format-lsp-") as temporary:
         source = ('import std.format;\nimport std.string;\n'
                   'struct AssetId { AssetId() = default; uint64_t value = uint64_t(42); };\n'
-                  'int main() { AssetId id{}; std::println("{}", /* 😀 */ id); return 0; }\n')
+                  'int main() { AssetId id{}; std::runtime_println("{}", /* 😀 */ id); return 0; }\n')
         path = pathlib.Path(temporary) / "formatter.gti"
         path.write_text(source)
         uri = path.as_uri()

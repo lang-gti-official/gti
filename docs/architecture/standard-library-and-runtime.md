@@ -416,8 +416,16 @@ operation as a representation cast. No public formatter, concept, enum, or
 format-pattern spelling grants compiler behavior. Explicit source
 specializations retain their existing canonical selection and contract checks.
 
+Checked patterns use the same parser through `format_pattern<Args...>`'s implicit
+consteval constructor. Built-in presentation predicates are shared with runtime
+formatting, and custom formatters can opt into a constexpr `validate` hook.
+Separately named `runtime_*` / `try_runtime_*` APIs accept dynamic string views
+without storing an escaping aggregate or allocating a pattern copy. Checked
+wrappers forward an already validated carrier to the common implementation.
+Raw text output and deferred assertions retain their existing contracts.
+
 Formatting allocates once per result in the common case:
-- `try_format` reserves the pattern length plus 16 bytes per argument.
+- The shared formatting implementation reserves the pattern length plus 16 bytes per argument.
 - Every later append goes through `detail::reserve_additional`, which grows
   capacity at least geometrically. `string::append` itself reserves the exact
   new size.

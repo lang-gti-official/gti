@@ -6307,7 +6307,6 @@ auto SemanticVisitor::Impl::appendFunctionOverload(Symbol &existing,
   }
 
   for (const CallableCandidate &previous : existing.overloads) {
-    warnCheckedOverloadOverlap(previous, candidate);
     if (previous.record().macroExpansion != candidate.record().macroExpansion) {
       Diagnostic diagnostic = makeDiagnostic(
           DiagnosticId::InvalidFunctionContract, name,

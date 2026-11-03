@@ -1303,7 +1303,8 @@ private:
     }
     if (instruction.kind == MirInstructionKind::Call &&
         intrinsicTerminalFailureOutcome(instruction.intrinsic)) {
-      if (instruction.intrinsic == IntrinsicKind::Panic && instruction.operands.size() == 1) {
+      if (instruction.intrinsic == IntrinsicKind::Panic &&
+          instruction.operands.size() == 1) {
         const auto message = operand(frame, instruction.operands.front());
         if (!message)
           return fail(frame, message.failure);
@@ -1311,7 +1312,8 @@ private:
           return fail(frame, ConstantEvaluationFailure::LibraryFailure, *text);
       }
       return fail(frame, ConstantEvaluationFailure::InvalidOperands,
-                  "A terminal defined-failure operation executed during constant evaluation.");
+                  "A terminal defined-failure operation executed during "
+                  "constant evaluation.");
     }
     if (instruction.kind == MirInstructionKind::AllocateObject) {
       if (!instruction.destination || !instruction.objectAllocation)

@@ -197,10 +197,13 @@ auto SemanticVisitor::Impl::immediateConstructionDependent(
 auto SemanticVisitor::Impl::reportImmediateEvaluationFailure(
     const Token &site, const Token &declaration,
     const ConstexprEvaluation &result) -> void {
-  report(site, result.failure == ConstantEvaluationFailure::LibraryFailure ? result.detail : "Consteval invocation must be evaluated during compilation.",
+  report(site,
+         result.failure == ConstantEvaluationFailure::LibraryFailure
+             ? result.detail
+             : "Consteval invocation must be evaluated during compilation.",
          "GTI-S2057");
   auto &diagnostic = diagnostics.back();
-  if (!result.detail.empty())
+  if (!result.detail.empty() && result.failure != ConstantEvaluationFailure::LibraryFailure)
     diagnostic.hints.push_back(result.detail);
   switch (result.failure) {
   case ConstantEvaluationFailure::ResourceLimit:

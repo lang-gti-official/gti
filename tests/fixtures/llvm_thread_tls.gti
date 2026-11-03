@@ -13,7 +13,7 @@ public:
     this.count += 1;
     return this.base + this.count;
   }
-  ~visits() { std::println("visits retired {}", this.count); }
+  ~visits() { std::runtime_println("visits retired {}", this.count); }
 };
 
 thread_local mut visits local{100};

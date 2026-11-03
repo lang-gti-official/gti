@@ -23,5 +23,5 @@ int main() {
   sample::Reader<int> exact{};
   sample::Reader<Unrelated> primary{};
   int selected = exact.read() + primary.read() + invoke([]() -> int { return 3; });
-  std::panic("selected {}", selected); // exact-carrier-site
+  std::runtime_panic("selected {}", selected); // exact-carrier-site
 }
