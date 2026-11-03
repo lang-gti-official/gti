@@ -10,13 +10,10 @@ import subprocess
 import tempfile
 from backend_modes import native_modes, record_symptom, unsupported
 
-# The LLVM lowering of the process storage policy does not reach the native
-# provider the way the C++ text does (lang-gti-official/gti#200); the C++
-# profile keeps the fixture's execution evidence.
-LLVM_UNSUPPORTED = {
-    "process_storage_policy": "LLVM bug lang-gti-official/gti#200: exits 9, the native provider "
-                              "observes no release/event where the C++ profile observes one",
-}
+# Every fixture executes on both backends. Generated owner storage uses its
+# own runtime family on LLVM as in the C++ profile, so the injected provider
+# observes only source-policy allocations (lang-gti-official/gti#200).
+LLVM_UNSUPPORTED = {}
 
 
 def run(command, environment, expected_status=0):

@@ -6194,6 +6194,16 @@ The program contains no GTI heap-allocation operation; process-startup
 allocations were not measured. This bounded probe shows no material regression,
 not a general class-backend speedup claim.
 
+Generated owner storage (unique-owner pointees, shared-owner control blocks,
+task boxes and `ObjectAllocation` raw storage) calls the runtime's
+`gti_rt_owner_allocate_v1`/`gti_rt_owner_release_v1` pair, never the
+source-owned process provider. Only a sealed source-policy call reaches
+`gti_rt_posix_memalign_v1`/`gti_rt_aligned_malloc_v1`, as in the generated C++
+support code, so an injected native provider observes the same allocations on
+both backends. The pair lives in its own runtime object so a program that
+supplies the provider adapters links without the default adapter object
+(lang-gti-official/gti#200).
+
 ### LLVM Unions And Payloads
 
 The native payload plan belongs to `Layouts`, keyed by exact concrete sealed

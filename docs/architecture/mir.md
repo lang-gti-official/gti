@@ -3744,7 +3744,10 @@ class field completed from one owning constructed temporary is an explicit
 `ConstructionRollback` obligation on the exact This-rooted field place; every
 defined-failure edge of the constructor body drains the armed set in reverse
 stage order behind one failure cleanup boundary, and normal completion
-retires it by transfer to the caller. A constructor that
+retires it by transfer to the caller. Normal completion follows the body's
+scope-exit drops: a failing body-local destructor is a defined-failure edge
+of the constructor, so its drain still rolls back every completed field
+(lang-gti-official/gti#198). A constructor that
 silently transfers any subobject into `this` without arming rollback (the
 owned-parameter and other unstaged initializer forms) routes no
 defined-failure edges at all — the lowering decides body-wide before any

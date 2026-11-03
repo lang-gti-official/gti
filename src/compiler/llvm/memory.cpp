@@ -2,6 +2,7 @@
 
 #include "../mir_verification_queries.h"
 #include "gti/mir_effects.h"
+#include "runtime_abi.h"
 
 #include <algorithm>
 #include <array>
@@ -181,20 +182,14 @@ llvm::Value *Memory::allocateBytes(std::uint64_t size,
       (alignment & (alignment - 1)))
     throw BackendUnsupportedError(
         "LLVM allocation extent/alignment is not representable");
-  if (session.program().mir().target().os == "windows") {
-    const std::array<llvm::Value *, 2> inputs{ir.getInt64(size),
-                                              ir.getInt64(alignment)};
-    return providerCall(ProcessMemoryRuntimeOperation::AlignedAllocate, inputs);
-  }
-  llvm::IRBuilder<> entry(
-      &ir.GetInsertBlock()->getParent()->getEntryBlock(),
-      ir.GetInsertBlock()->getParent()->getEntryBlock().begin());
-  auto *status = entry.CreateAlloca(ir.getInt32Ty());
-  const auto pointerSize = session.dataLayout().getPointerSize();
-  const std::array<llvm::Value *, 3> inputs{
-      ir.getInt64(size),
-      ir.getInt64(std::max<std::uint64_t>(alignment, pointerSize)), status};
-  return providerCall(ProcessMemoryRuntimeOperation::PosixAllocate, inputs);
+  // Generated owner representations keep their own runtime allocation family,
+  // as the generated C++ support code does; only sealed source-policy calls
+  // (processCall) reach the injectable process provider.
+  auto *call = ir.CreateCall(
+      declareRuntimeService(session, RuntimeService::OwnerAllocate),
+      {ir.getInt64(size), ir.getInt64(alignment)});
+  call->addRetAttr(llvm::Attribute::NoAlias);
+  return call;
 }
 
 llvm::Value *Memory::allocateObject(const MirInstruction &instruction) {
@@ -211,11 +206,8 @@ llvm::Value *Memory::allocateObject(const MirInstruction &instruction) {
 }
 
 void Memory::releaseBytes(llvm::Value *address) {
-  const std::array<llvm::Value *, 1> inputs{address};
-  (void)providerCall(session.program().mir().target().os == "windows"
-                         ? ProcessMemoryRuntimeOperation::AlignedRelease
-                         : ProcessMemoryRuntimeOperation::PosixRelease,
-                     inputs);
+  ir.CreateCall(declareRuntimeService(session, RuntimeService::OwnerRelease),
+                {address});
 }
 
 Memory::SharedRelease Memory::releaseShared(llvm::Value *handle) {
