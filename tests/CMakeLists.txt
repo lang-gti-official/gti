@@ -6257,6 +6257,25 @@ add_test(NAME compiled_dependency_project
   "$<TARGET_FILE:gti>" --output-dir "${CMAKE_BINARY_DIR}/compiled-dependency-project")
 set_tests_properties(compiled_dependency_project PROPERTIES TIMEOUT 600)
 
+
+add_executable(gti_scalar_temporary_borrow_tests scalar_temporary_borrow_tests.cpp)
+target_link_libraries(gti_scalar_temporary_borrow_tests PRIVATE gti_compiler)
+add_test(NAME scalar_temporary_borrow COMMAND gti_scalar_temporary_borrow_tests)
+
+if(Python3_Interpreter_FOUND)
+  add_test(NAME scalar_temporary_borrow_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/scalar_temporary_borrow_runtime_test.py"
+            "$<TARGET_FILE:gti>" --mode llvm-O0 --mode llvm-O3 --mode c++23-O0)
+  set_tests_properties(scalar_temporary_borrow_runtime PROPERTIES TIMEOUT 600)
+endif()
+
+if(Python3_Interpreter_FOUND AND TARGET gti_lsp)
+  add_test(NAME scalar_temporary_borrow_lsp
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/scalar_temporary_borrow_lsp_test.py"
+            "$<TARGET_FILE:gti_lsp>")
+  set_tests_properties(scalar_temporary_borrow_lsp PROPERTIES TIMEOUT 90)
+endif()
+
 include("${PROJECT_SOURCE_DIR}/tests/TestThroughput.cmake")
 
 # Every build-tree test runs the compiler's self-checks, such as the
@@ -6279,17 +6298,6 @@ if(GTI_RELEASE_BUILD)
     "GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>"
   )
 endif()
-
-add_executable(gti_scalar_temporary_borrow_tests scalar_temporary_borrow_tests.cpp)
-target_link_libraries(gti_scalar_temporary_borrow_tests PRIVATE gti_compiler)
-add_test(NAME scalar_temporary_borrow COMMAND gti_scalar_temporary_borrow_tests)
 add_executable(gti_reference_parameter_pack_mir_tests reference_parameter_pack_mir_tests.cpp)
 target_link_libraries(gti_reference_parameter_pack_mir_tests PRIVATE gti_compiler)
 add_test(NAME reference_parameter_pack_mir COMMAND gti_reference_parameter_pack_mir_tests)
-
-if(Python3_Interpreter_FOUND)
-  add_test(NAME scalar_temporary_borrow_runtime
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/scalar_temporary_borrow_runtime_test.py"
-            "$<TARGET_FILE:gti>" --mode llvm-O0 --mode llvm-O3)
-  set_tests_properties(scalar_temporary_borrow_runtime PROPERTIES TIMEOUT 600)
-endif()

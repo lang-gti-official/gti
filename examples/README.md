@@ -390,6 +390,8 @@ is a teaching helper, not a production server.
 | `185-reflected-method-dispatch.gti` | a generic compile-time metadata binder calling overload-selected methods on two unrelated runtime values; LLVM execution |
 | [189-protocol-format-hash.gti](189-protocol-format-hash.gti) | Conditional conformance formats and hashes a generic user family and uses a pair as a hash-table key. |
 | [190-conditional-member-operators.gti](190-conditional-member-operators.gti) | Validity-only operators on a generic user type, inserting map indexing with owned exact keys, exclusive result loans and conditional pair equality. |
+| `186-scalar-temporary-borrows.gti` | scalar and plain-enum temporary arguments, explicit move and lazy evaluation |
+| `187-operator-temporary-borrows.gti` | readonly operator arguments and stable external cursor dependencies |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |

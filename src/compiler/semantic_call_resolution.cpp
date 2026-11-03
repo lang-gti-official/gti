@@ -6420,10 +6420,9 @@ auto SemanticVisitor::Impl::resolveOperator(
                                               *argument.expression)))
         continue;
       if (!argument.forwardedPackElement &&
-          ephemeralTemporaryArgumentMatches(candidate,
-                                             candidate.parameterTypes[index],
-                                             argument.type,
-                                             *argument.expression, index)) {
+          ephemeralTemporaryArgumentMatches(
+              candidate, candidate.parameterTypes[index], argument.type,
+              *argument.expression, index)) {
         ephemeralBorrowArguments.push_back(index);
         continue;
       }
@@ -6466,9 +6465,10 @@ auto SemanticVisitor::Impl::resolveOperator(
       rejectedCompilerPrivate = true;
       continue;
     }
-    viable.push_back({.function = candidate, .receiverMode = receiverMode,
-                      .ephemeralBorrowArguments =
-                          std::move(ephemeralBorrowArguments)});
+    viable.push_back(
+        {.function = candidate,
+         .receiverMode = receiverMode,
+         .ephemeralBorrowArguments = std::move(ephemeralBorrowArguments)});
   }
 
   // Preserve the ordinary-call tiers: every exact match outranks any
@@ -6591,10 +6591,13 @@ auto SemanticVisitor::Impl::resolveOperator(
             std::string reason;
             if (info->category == ValueCategory::Value) {
               reason = parameter.referenceAccess == AccessMode::Mutable
-                           ? "is a temporary; a mutable reference requires an existing mutable place."
-                           : !ephemeralBorrowTargetSupported(candidate, index)
-                                 ? "is a temporary; this target lacks a source-body or non-escaping result proof for this argument."
-                                 : "is not a supported fresh value with proven stable dependencies.";
+                           ? "is a temporary; a mutable reference requires an "
+                             "existing mutable place."
+                       : !ephemeralBorrowTargetSupported(candidate, index)
+                           ? "is a temporary; this target lacks a source-body "
+                             "or non-escaping result proof for this argument."
+                           : "is not a supported fresh value with proven "
+                             "stable dependencies.";
             } else if (parameter.referenceAccess == AccessMode::Mutable &&
                        info->access != AccessMode::Mutable) {
               reason = "is read-only; this candidate requires exclusive "
@@ -6619,13 +6622,14 @@ auto SemanticVisitor::Impl::resolveOperator(
                 "parameter types and ownership requirements.");
       diagnostics.emplace_back(std::move(diagnostic));
     } else {
-      Diagnostic diagnostic = makeDiagnostic(
-          "GTI-S2022", DiagnosticPhase::Semantics, token,
-          "Use of " + object + " is ambiguous.");
+      Diagnostic diagnostic =
+          makeDiagnostic("GTI-S2022", DiagnosticPhase::Semantics, token,
+                         "Use of " + object + " is ambiguous.");
       for (const auto &candidate : viable)
         diagnostic.related.push_back(
             {tokenSpan(candidate.function.declaration->name()),
-             "Viable candidate: " + functionSignatureSpelling(candidate.function)});
+             "Viable candidate: " +
+                 functionSignatureSpelling(candidate.function)});
       diagnostic.hints.emplace_back(
           "GTI requires one exact candidate in the selected tier. A readonly "
           "reference parameter accepts both existing places and supported "

@@ -9,14 +9,17 @@ if __name__ == "__main__":
     lines = fixture.read_text().splitlines()
     later = next(i + 1 for i, line in enumerate(lines) if line.startswith("int later("))
     inspect = next(i + 1 for i, line in enumerate(lines) if line.startswith("int inspect("))
+    producer = next(i + 1 for i, line in enumerate(lines) if line.startswith("int failing("))
     output = "construct\nconstruct\ncompare\ndestroy\ndestroy\nconstruct\ndestroy\n"
     def failure(line):
         return (f"{fixture.name}:{line}: runtime error[GTI-R0002]: "
                 "division_by_zero in integer_division\n")
     names = ("scalar_temporary_borrow", "186-scalar-temporary-borrows",
-             "187-operator-temporary-borrows")
+             "187-operator-temporary-borrows", "temporary_borrow_library_clients")
     main(names=names, llvm_modes=True,
-         fixture_paths={name: root / "examples" / f"{name}.gti" for name in names[1:]},
+         cpp_unsupported="scalar and operator temporary reference arguments",
+         fixture_paths={name: root / "examples" / f"{name}.gti" for name in names[1:3]},
          cases={names[0]: [((), (0, output, "")),
                            (("later",), (70, output, failure(later))),
-                           (("body", "fails"), (70, output, failure(inspect)))]})
+                           (("body", "fails"), (70, output, failure(inspect))),
+                           (("producer", "arg", "fails"), (70, output, failure(producer)))]})

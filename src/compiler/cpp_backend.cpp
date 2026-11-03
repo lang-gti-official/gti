@@ -168,6 +168,38 @@ BackendArtifact CppBackend::generate(LoweredProgram program) {
         throw BackendUnsupportedError(
             "aggregate constant publication requires the LLVM backend",
             row.identity.source);
+    // These newly admitted temporary-reference shapes have no retained C++
+    // representation contract. Preserve existing aggregate calls as the
+    // comparison oracle, but report unsupported new programs before emission.
+    std::unordered_set<HirValueId> unsupportedTemporaryCalls;
+    for (const auto &block : body->blocks)
+      for (const auto &instruction : block.instructions)
+        if (!instruction.tombstone && instruction.functionTarget) {
+          const auto *target = verified->program().mir().findFunctionInstance(
+              *instruction.functionTarget);
+          if (target && (target->overloadedOperator ||
+                         target->returnBorrowOrigin != BorrowOriginKind::None))
+            unsupportedTemporaryCalls.insert(instruction.callSite);
+        }
+    for (const auto &block : body->blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.tombstone ||
+            instruction.callInputRole != MirCallInputRole::Argument ||
+            instruction.callInputKind !=
+                HirCallInputKind::ReadTemporaryBorrow ||
+            instruction.info.type.arguments.size() != 1)
+          continue;
+        const auto &type = instruction.info.type.arguments.front();
+        if (isPassiveScalarValueType(type) ||
+            type.kind == SemanticType::StringView ||
+            (type.kind == SemanticType::Enum &&
+             !verified->program().mir().findPayloadEnum(type)) ||
+            unsupportedTemporaryCalls.contains(instruction.callSite))
+          throw BackendUnsupportedError(
+              "scalar and operator temporary reference arguments require the "
+              "LLVM backend",
+              row.identity.source);
+      }
     for (const auto &block : body->blocks)
       for (const auto &instruction : block.instructions)
         if (!instruction.tombstone &&

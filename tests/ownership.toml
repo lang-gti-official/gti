@@ -259,6 +259,9 @@ paths = [
   "include/gti/concurrency.h",
 ]
 owners = [
+  "scalar_temporary_borrow",
+  "scalar_temporary_borrow_runtime",
+  "scalar_temporary_borrow_lsp",
   "^.*_semantic_ir$",
   "semantic_header_boundary",
   "semantic_header_self_containment",

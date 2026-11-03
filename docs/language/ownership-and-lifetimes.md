@@ -504,8 +504,11 @@ borrow. Each assignment result captures its value before the next argument
 runs. A payload enum's alternative,
 with or without fields, such as `state::engaged(1)` or `state::empty`, and a
 by-value GTI call returning a payload enum produce such a value too, so
-`observe(make_state())` borrows the fresh enum for that call. Scalar-backed enum factories and built-in scalar value expressions use the same
-call-scoped temporary storage. The compiler materializes the
+`observe(make_state())` borrows the fresh enum for that call. Scalar-backed enum
+factories and built-in scalar value expressions use the same call-scoped
+temporary storage. Ownerless string literals and counted-text views whose
+source producer proves a stable external owner use this storage too. Unknown
+or transient text owners remain rejected. The compiler materializes the
 owned value at its written argument position, begins one read loan, evaluates
 later arguments, invokes the selected callable, ends the loan immediately
 afterward, and retains the value's drop obligation until the enclosing

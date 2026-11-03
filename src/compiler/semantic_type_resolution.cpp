@@ -1159,6 +1159,18 @@ auto SemanticVisitor::Impl::ephemeralTemporaryArgumentMatches(
     const CallableCandidate &function, const SemanticType &parameter,
     const SemanticType &argument, const ExprPtr &expression,
     std::size_t parameterIndex) -> bool {
+  // Borrowed generic results may transport a moved by-value parameter.
+  // Resolve its body before asking the shared return-contract query, just
+  // as selected-call publication does, so import and call order cannot
+  // decide whether the temporary observer parameter is accepted.
+  if (function.returnBorrowOrigin == BorrowOriginKind::None &&
+      typeTraits(function.returnType).containsBorrowedState) {
+    const FunctionInfo *target = semanticModel.findFunction(function.id);
+    if (!target && instanceBaseModel)
+      target = instanceBaseModel->findFunction(function.id);
+    if (target)
+      ensureBodyAnalyzed(*target);
+  }
   return ephemeralBorrowTargetSupported(function, parameterIndex) &&
          temporaryReadBorrowArgumentMatches(parameter, argument, expression);
 }

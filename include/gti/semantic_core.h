@@ -824,9 +824,11 @@ isImplicitScalarInitializationConversion(const SemanticType &target,
 
 // Eligible representation families only: semantics separately proves the
 // producer, dependency origins and escape boundary for each temporary borrow.
-[[nodiscard]] inline bool isTemporaryBorrowReferentType(const SemanticType &type) {
+[[nodiscard]] inline bool
+isTemporaryBorrowReferentType(const SemanticType &type) {
   return isPassiveScalarValueType(type) || type.kind == SemanticType::Enum ||
-         type.kind == SemanticType::Class || type.kind == SemanticType::Lambda ||
+         type.kind == SemanticType::Class ||
+         type.kind == SemanticType::Lambda ||
          type.kind == SemanticType::FunctionItem ||
          type.kind == SemanticType::StringView;
 }

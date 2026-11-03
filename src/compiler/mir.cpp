@@ -762,7 +762,8 @@ findMirTemporaryCarrierDependency(const MirBody &body, const MirPlace &place) {
   if ((place.root != MirPlaceRootKind::Value &&
        place.root != MirPlaceRootKind::Temporary) ||
       (place.type.kind != SemanticType::Class &&
-       place.type.kind != SemanticType::Lambda) ||
+       place.type.kind != SemanticType::Lambda &&
+       place.type.kind != SemanticType::StringView) ||
       !place.traits.containsBorrowedState ||
       place.access != AccessMode::Mutable) {
     return {};
@@ -8447,7 +8448,11 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction) {
   if (instruction.kind == MirInstructionKind::Compute ||
       instruction.kind == MirInstructionKind::Load) {
     return instruction.info.traits.drop == DropKind::Trivial &&
-           instruction.lifecycle.empty() && !instruction.successResultDrop;
+           instruction.lifecycle.empty() &&
+           (!instruction.successResultDrop ||
+            (instruction.kind == MirInstructionKind::Compute &&
+             instruction.result &&
+             isPassiveScalarValueType(instruction.info.type)));
   }
   // A construction is an ordered invocation with the same failure shape as an
   // ordinary call: it may raise before producing anything, and its
@@ -11158,6 +11163,8 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
          instruction.kind != MirInstructionKind::Construct &&
          instruction.kind != MirInstructionKind::AllocateObject &&
          instruction.kind != MirInstructionKind::InitializeBase &&
+         !(instruction.kind == MirInstructionKind::Compute &&
+           isPassiveScalarValueType(instruction.info.type)) &&
          instruction.successResultDrop) ||
         (instruction.kind != MirInstructionKind::Call &&
          instruction.kind != MirInstructionKind::Construct &&
@@ -11762,7 +11769,8 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
       const MirLoan *loan = body.findLoan(*input.loan);
       const auto captureDependency =
           place && (referent.kind == SemanticType::Lambda ||
-                    referent.kind == SemanticType::Class)
+                    referent.kind == SemanticType::Class ||
+                    referent.kind == SemanticType::StringView)
               ? findMirTemporaryCarrierDependency(body, *place)
               : MirTemporaryCarrierDependency{};
       const bool callableConstruction =
@@ -12717,7 +12725,8 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           !source->projections.empty() ||
           !isTemporaryBorrowReferentType(source->type) ||
           (receiver && source->type.kind != SemanticType::Class &&
-           source->type.kind != SemanticType::Lambda) ||
+           source->type.kind != SemanticType::Lambda &&
+           source->type.kind != SemanticType::StringView) ||
           source->access != AccessMode::Mutable ||
           source->traits.containsBorrowedState != receiver ||
           (!receiver && loan.storedDependency != 0)) {
@@ -13225,7 +13234,9 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           return true;
         }
         return (instruction.kind == MirInstructionKind::Call ||
-                instruction.kind == MirInstructionKind::Construct) &&
+                instruction.kind == MirInstructionKind::Construct ||
+                (instruction.kind == MirInstructionKind::Compute &&
+                 isPassiveScalarValueType(instruction.info.type))) &&
                !instruction.destination &&
                instruction.successResultDrop == obligation.id;
       };
