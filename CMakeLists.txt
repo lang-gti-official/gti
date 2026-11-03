@@ -55,6 +55,12 @@ include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
+
+set(GTI_REUSE_TOOLCHAIN "" CACHE PATH "Admitted production toolchain for source-only library CI")
+if(GTI_REUSE_TOOLCHAIN)
+  include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/ReuseToolchain.cmake")
+  return()
+endif()
 if(Python3_Interpreter_FOUND)
   add_custom_target(
     format
@@ -484,6 +490,7 @@ add_library(
   "src/compiler/ast_printer.cpp"
   "src/compiler/binary_float.cpp"
   "src/compiler/checked_integer.cpp"
+  "src/compiler/compile_limits.cpp"
   "src/compiler/configuration_directive_processor.cpp"
   "src/compiler/constant_evaluator.cpp"
   "src/compiler/mir_constant_evaluator.cpp"
@@ -613,6 +620,8 @@ add_library(
   "src/compiler/llvm/session.cpp"
   "src/compiler/llvm/checked_reductions.cpp"
   "src/compiler/llvm/checked_ranges.cpp"
+  "src/compiler/llvm/checked_offsets.cpp"
+  "src/compiler/llvm/private_atomics.cpp"
   "src/compiler/llvm/debug_info.cpp"
   "src/compiler/llvm/instrumentation.cpp"
   "src/compiler/llvm/layout.cpp"

@@ -24,17 +24,24 @@ def checked_sha(value):
 
 
 def manifest(document):
-    if document.get('schema') != 1 or not isinstance(document.get('features'), list):
+    if (document.get('schema') != 1 or not isinstance(document.get('features'), list)
+            or not isinstance(document.get('removed', []), list)
+            or any(not isinstance(row, dict) or not isinstance(row.get('task'), str)
+                   or not row['task'] for row in document['features'] + document.get('removed', []))):
         raise ValueError('preview inclusion manifest missing or invalid')
     return document
+
+
+def source_manifest(request, sha):
+    content = request(BASE + '/contents/.gti-preview.json?ref=' + checked_sha(sha))
+    return manifest(json.loads(base64.b64decode(content['content'], validate=False)))
 
 
 def select(request, event, ref):
     if (event, ref) not in (('push', 'refs/heads/preview'), ('workflow_dispatch', 'refs/heads/main')):
         raise ValueError('preview publication requires preview push or main dispatch')
     sha = checked_sha(request(BASE + '/git/ref/heads/preview')['object']['sha'])
-    content = request(BASE + '/contents/.gti-preview.json?ref=' + sha)
-    manifest(json.loads(base64.b64decode(content['content'], validate=False)))
+    source_manifest(request, sha)
     return sha
 
 
@@ -73,20 +80,50 @@ def check_packages(directory, sha, run_id, attempt):
     return inclusion
 
 
-def admit(request, sha):
-    if checked_sha(request(BASE + '/git/ref/heads/preview')['object']['sha']) != checked_sha(sha):
-        raise ValueError('preview advanced; refusing stale publication')
+def relation(request, base, head):
+    if base == head:
+        return 'identical'
+    status = request(BASE + '/compare/' + checked_sha(base) + '...' + checked_sha(head))['status']
+    if status not in ('ahead', 'behind', 'identical', 'diverged'):
+        raise ValueError('unknown preview ancestry relationship')
+    return status
+
+
+def admit(request, sha, published, inclusion):
+    """Admit an existing preview snapshot, without requiring a quiet branch."""
+    sha = checked_sha(sha)
+    current = checked_sha(request(BASE + '/git/ref/heads/preview')['object']['sha'])
+    if relation(request, sha, current) not in ('ahead', 'identical'):
+        raise ValueError('candidate is not in current admitted preview history')
+    if source_manifest(request, sha) != inclusion:
+        raise ValueError('packaged inclusion differs from admitted preview source')
+    latest = source_manifest(request, current) if current != sha else inclusion
+    withdrawn = {row['task'] for row in latest.get('removed', []) if not row.get('restored')}
+    if withdrawn.intersection(row['task'] for row in inclusion['features']):
+        raise ValueError('candidate contains a withdrawn preview feature')
+    if published:
+        order = relation(request, published, sha)
+        if order == 'behind':
+            return False
+        if order == 'diverged':
+            raise ValueError('candidate diverges from the published preview')
+    return True
 
 
 def publish(directory, sha, request, run_id, attempt):
     # Recheck everything immediately before moving the dedicated rolling tag.
     inclusion = check_packages(directory, sha, run_id, attempt)
-    admit(request, sha)
     refs = command('git', 'ls-remote', REMOTE, 'refs/tags/preview').split()
     lease = checked_sha(refs[0]) if refs else ''
+    if not admit(request, sha, lease, inclusion):
+        print('A newer preview is already published; leaving its release unchanged.')
+        return False
     command('git', 'fetch', '--no-tags', REMOTE, sha)
-    # A new preview push cannot silently overwrite a concurrent publication.
-    admit(request, sha)
+    # Source may advance during packaging. Only withdrawal/divergence invalidates
+    # that snapshot; a newer rolling tag is protected by ancestry and the lease.
+    if not admit(request, sha, lease, inclusion):
+        print('A newer preview is already published; leaving its release unchanged.')
+        return False
     command('git', 'push', '--porcelain', '--force-with-lease=refs/tags/preview:' + lease,
             'origin', sha + ':refs/tags/preview')
     notes = directory.parent / 'preview-notes.txt'
@@ -108,6 +145,7 @@ def publish(directory, sha, request, run_id, attempt):
     command('gh', 'release', 'upload', 'preview', '--repo', REPOSITORY, '--clobber', *map(str, files))
     # Commit marker last. Installers racing uploads fail identity/checksum checks.
     command('gh', 'release', 'upload', 'preview', '--repo', REPOSITORY, '--clobber', str(directory / 'BUILD_ID'))
+    return True
 
 
 def main():

@@ -31,6 +31,29 @@ int sample_fresh<F>(F& callback, int value) {
 }
 
 int main() {
+  // A result can relay one parameter's exclusive borrow through local aliases.
+  // The caller owns the referent; the lambda neither copies nor consumes it.
+  auto increment_reference = [](mut int& value) -> mut int& {
+    value += 1;
+    return value;
+  };
+  auto relay_reference = [](mut int& value) -> mut int& {
+    mut int& alias = value;
+    return alias;
+  };
+  auto increment_and_read = [](mut int& value) -> int& {
+    value += 1;
+    return value;
+  };
+  mut int referenced = 10;
+  mut int& changed = increment_reference(relay_reference(referenced));
+  changed += 5;
+  int& observed = increment_and_read(referenced);
+  if (observed != 17) return 6;
+  // The result's last use ends its borrow, allowing the owner to change again.
+  referenced += 1;
+  if (referenced != 18) return 7;
+
   int offset = 3;
   if (sample_fresh([&offset](int value) -> int { return value + offset; }, 4) != 7)
     return 4;

@@ -15,6 +15,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from backend_modes import is_cpp_mode, native_modes
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -40,40 +41,35 @@ def main() -> int:
     source = pathlib.Path(sys.argv[2]).resolve()
     with tempfile.TemporaryDirectory(prefix="gti-owner-tied-ref-") as temporary:
         root = pathlib.Path(temporary)
-        for standard in ("c++20", "c++23"):
-            for optimization in ("O0", "O3"):
-                mode = f"{standard}-{optimization}"
-                executable = root / mode
-                built = run(
-                    [
-                        str(compiler),
-                        str(source),
-                        "--std",
-                        standard,
-                        f"-{optimization}",
-                        "-o",
-                        str(executable),
-                    ]
-                )
-                if built.returncode != 0:
-                    return fail(f"build {mode}", built)
+        for mode, flags, _native in native_modes():
+            executable = root / mode
+            built = run(
+                [
+                    str(compiler),
+                    str(source),
+                    *flags,
+                    "-o",
+                    str(executable),
+                ]
+            )
+            if built.returncode != 0:
+                return fail(f"build {mode}", built)
 
-                executed = run([str(executable)])
-                if (
-                    executed.returncode != 0
-                    or executed.stdout != "ok\n"
-                    or executed.stderr != ""
-                ):
-                    return fail(f"run {mode}", executed)
+            executed = run([str(executable)])
+            if (
+                executed.returncode != 0
+                or executed.stdout != "ok\n"
+                or executed.stderr != ""
+            ):
+                return fail(f"run {mode}", executed)
 
-                generated = root / f"{mode}.cpp"
+            generated = root / f"{mode}.cpp"
+            if is_cpp_mode(flags):
                 emitted = run(
                     [
                         str(compiler),
                         str(source),
-                        "--std",
-                        standard,
-                        f"-{optimization}",
+                        *flags,
                         "--emit-cpp",
                         "-o",
                         str(generated),
@@ -81,6 +77,7 @@ def main() -> int:
                 )
                 if emitted.returncode != 0:
                     return fail(f"emit {mode}", emitted)
+            if is_cpp_mode(flags):
                 generated_text = generated.read_text(encoding="utf8")
                 # The call site must stage the iterator's own place for the
                 # by-reference argument, never a dereferenced loan symbol.

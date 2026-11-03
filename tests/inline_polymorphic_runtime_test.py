@@ -15,6 +15,7 @@ import tempfile
 
 from allocation_abort_runtime_test import ABORT_STATUS
 from unique_class_allocation_runtime_test import run
+from backend_modes import cpp_only_case, is_cpp_mode, native_modes
 
 
 SUCCESS = """empty empty
@@ -88,21 +89,30 @@ def main():
          located("return value / zero;",
                  "GTI-R0002]: division_by_zero in integer_division")),
     ]
-    modes = [(f"{std}-{opt}", ["--std", std, f"-{opt}"], [])
-             for std in ("c++20", "c++23") for opt in ("O0", "O1", "O3")]
-    modes += [("no-elide", ["--std", "c++23", "-O0"], ["-fno-elide-constructors"]),
-              ("sanitized", ["--std", "c++23", "-O1"],
-               ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])]
+    modes = native_modes()
     with tempfile.TemporaryDirectory(prefix="gti-inline-polymorphic-") as temporary:
         for name, flags, native_flags in modes:
             binary = Path(temporary) / name
             built = run([str(compiler), str(source), *flags, "-o", str(binary),
                          "--", str(native), *native_flags])
             assert built.returncode == 0, (name, built.stdout, built.stderr)
+            if not is_cpp_mode(flags):
+                # The counting provider observes the C++ text's operator new;
+                # LLVM-backed programs allocate through the runtime, so only
+                # the lifecycle observations are compared there.
+                cpp_only_case("allocation counts observed through the C++ text's operator new", "allocation counts", name)
             for phase, expected in enumerate(cases):
+                if not is_cpp_mode(flags) and "allocation_failure" in expected[2]:
+                    # The fault provider replaces the C++ text's nothrow operator new.
+                    cpp_only_case("allocation fault injection through the C++ text's nothrow operator new", f"phase {phase}", name)
+                    continue
                 result = run([str(binary), *(["phase"] * phase)])
-                assert (result.returncode, result.stdout, result.stderr) == expected, (
-                    name, phase, result.returncode, result.stdout, result.stderr)
+                observed = (result.returncode, result.stdout, result.stderr)
+                if not is_cpp_mode(flags):
+                    strip = lambda text: "\n".join(line for line in text.split("\n") if " allocations " not in line)
+                    observed = (observed[0], strip(observed[1]), observed[2])
+                    expected = (expected[0], strip(expected[1]), expected[2])
+                assert observed == expected, (name, phase, observed, expected)
             print(f"inline polymorphic lifecycle: {name} passed", flush=True)
 
 

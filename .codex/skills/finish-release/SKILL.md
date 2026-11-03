@@ -63,15 +63,21 @@ policy below without bypassing that lifecycle.
 Toolchain releases publish to GitHub Releases; only the `gti add`
 package registry stays on Gitea. `.github/workflows/nightly.yml` republishes
 the rolling `nightly` prerelease daily using the selected main commit's
-validated production archives from full CI. Nightly verifies exact source,
+validated production archives from full CI or admitted source-only stdlib
+integration. The latter retains the original full-build compiler identity and
+validates the updated library on both platforms. Nightly verifies exact source,
 run/attempt, platform, configuration and checksums; it never rebuilds or repeats
 the complete suite. An automation-only pass or an approved merge exception
 does not supply those artifacts: commissioning/recovery uses a full CI dispatch
 on main, not a release-gate bypass. Missing or expired artifacts stop publication.
-The separate `preview.yml` packages current combined preview source after its
+The separate `preview.yml` packages selected combined preview source after its
 focused admission and installed checks on both platforms. It never qualifies
 nightly or changes main. `gtiup` consumes these channels, and Neovim managed
 mode resolves the selected complete toolchain; installation remains opt-in.
+Successful preview snapshots may publish after the branch advances. Publication
+must move forward relative to the rolling preview tag, preserve exact artifact
+identity, and reject withdrawn features or divergent history. Do not retry an
+older source to replace a newer release; a superseded candidate is a no-op.
 Do not move the rolling preview tag by hand.
 The release train publishes versioned releases on its own: every 48
 hours `train.yml` cuts the published nightly into a `Release-Cut:` PR,

@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def run(
@@ -62,8 +63,6 @@ def emit_artifact(
             str(compiler),
             str(source),
             option,
-            "--std",
-            "c++23",
             "-O0",
             "-o",
             str(output),
@@ -263,35 +262,32 @@ def main() -> int:
             ("for-each", for_each),
             ("complete-range", complete_range),
         ):
-            for standard in ("c++20", "c++23"):
-                for optimization in ("O0", "O3"):
-                    executable = root / f"{label}-{standard}-{optimization}"
-                    built = run(
-                        [
-                            str(compiler),
-                            str(source),
-                            "--std",
-                            standard,
-                            f"-{optimization}",
-                            "-o",
-                            str(executable),
-                        ],
-                        environment,
+            for mode, flags, _native in native_modes():
+                executable = root / f"{label}-{mode}"
+                built = run(
+                    [
+                        str(compiler),
+                        str(source),
+                        *flags,
+                        "-o",
+                        str(executable),
+                    ],
+                    environment,
+                )
+                if built.returncode != 0:
+                    return fail(
+                        f"build {label} {mode}", built
                     )
-                    if built.returncode != 0:
-                        return fail(
-                            f"build {label} {standard} {optimization}", built
-                        )
 
-                    executed = run([str(executable)], environment)
-                    if (
-                        executed.returncode != 0
-                        or executed.stdout != ""
-                        or executed.stderr != ""
-                    ):
-                        return fail(
-                            f"run {label} {standard} {optimization}", executed
-                        )
+                executed = run([str(executable)], environment)
+                if (
+                    executed.returncode != 0
+                    or executed.stdout != ""
+                    or executed.stderr != ""
+                ):
+                    return fail(
+                        f"run {label} {mode}", executed
+                    )
 
         negative_cases = (
             (

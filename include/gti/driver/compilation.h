@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gti/backend.h"
+#include "gti/compile_limits.h"
 #include "gti/configuration_flags.h"
 #include "gti/cpp_standard.h"
 #include "gti/diagnostic.h"
@@ -130,6 +131,16 @@ public:
   [[nodiscard]] bool requiresFunctionDefinitions() const;
   [[nodiscard]] CompilationRequest withDefinitionClosure() const;
   [[nodiscard]] CompilationRequest withBackend(BackendKind backend) const;
+  // Per-request compile-time limits for this whole compilation.
+  [[nodiscard]] const CompileLimits &compileLimits() const {
+    return resolvedCompileLimits;
+  }
+  [[nodiscard]] CompilationRequest
+  withCompileLimits(CompileLimits limits) const {
+    auto result = *this;
+    result.resolvedCompileLimits = limits;
+    return result;
+  }
   // Requires explicit LLVM selection for any non-None diagnostic mode.
   [[nodiscard]] CompilationRequest
   withLlvmInstrumentation(LlvmInstrumentationMode mode) const;
@@ -155,6 +166,7 @@ private:
   bool sourceDebugInfo = false;
   RawPointerAuditMode rawPointerAuditMode = RawPointerAuditMode::Off;
   bool reportLibraryAuditFindings = false;
+  CompileLimits resolvedCompileLimits;
 };
 
 // One driver mapping is shared by object emission and cache identity queries.

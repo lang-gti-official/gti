@@ -9,6 +9,7 @@ from pathlib import Path
 import platform
 import subprocess
 import time
+from backend_modes import native_modes
 
 
 def main():
@@ -54,13 +55,7 @@ def main():
                     output / "private-name.mir"], "private-name", expected=65)
     assert "GTI-S2024" in rejected.stderr and "family_policy::Cell" in rejected.stderr, rejected.stderr
 
-    for backend, standard, level in (("llvm", None, 0), ("llvm", None, 2),
-                                     ("llvm", None, 3), ("cpp", "c++20", 2),
-                                     ("cpp", "c++23", 2)):
-        mode = f"{backend}-{standard or 'native'}-O{level}"
-        flags = ["--backend", backend, f"-O{level}"]
-        if standard:
-            flags += ["--std", standard]
+    for mode, flags, _native in native_modes():
         for source, name, expected, stdout in ((example, "policy", 0, "5\n4\n"),
                                                 (cleanup, "cleanup", 0, "1\n2\n"),
                                                 (aliases, "aliases", 0, ""),

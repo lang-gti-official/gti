@@ -8,6 +8,8 @@ import sys
 import tempfile
 import time
 
+from backend_modes import backend_name, is_cpp_mode, native_modes, optimization_level
+
 
 def main():
     compiler = pathlib.Path(sys.argv[1]).resolve()
@@ -22,22 +24,25 @@ def main():
                                     capture_output=True, timeout=240)
             return result
 
-        for backend, optimization in (("llvm", "O0"), ("llvm", "O3"), ("cpp", "O3")):
-            binary = root / f"removal-{backend}-{optimization}"
+        # The backends GTI_TEST_BACKENDS selects (tests/backend_modes.py);
+        # the harness spells no backend profile itself.
+        for label, flags, native in native_modes():
+            binary = root / f"removal-{label}"
             start = time.monotonic()
             # C++ cannot represent the full mixed generic ownership fixture:
             # its uninitialized_storage trait arguments disagree. Preserve
             # the supported scalar/string comparison; LLVM owns full lifecycle evidence.
-            fixture = "removal_algorithms" if backend == "llvm" else "removal_algorithms_oracle"
+            fixture = "removal_algorithms_oracle" if is_cpp_mode(flags) else "removal_algorithms"
             built = run([str(compiler), str(repo / f"tests/fixtures/{fixture}.gti"),
-                         "--backend", backend, f"-{optimization}", "-o", str(binary)])
+                         *flags, "-o", str(binary), *native])
             assert built.returncode == 0, built.stdout + built.stderr
             compile_seconds = time.monotonic() - start
             start = time.monotonic()
             result = run([str(binary)])
-            assert result.returncode == 0, f"{backend}-{optimization}: exit {result.returncode}\n{result.stdout}{result.stderr}"
+            assert result.returncode == 0, f"{label}: exit {result.returncode}\n{result.stdout}{result.stderr}"
             assert not result.stdout and not result.stderr, result.stdout + result.stderr
-            evidence.append(dict(backend=backend, optimization=optimization,
+            evidence.append(dict(mode=label, backend=backend_name(flags),
+                                 optimization=optimization_level(flags),
                                  compile_seconds=compile_seconds,
                                  run_seconds=time.monotonic() - start,
                                  binary_bytes=binary.stat().st_size))

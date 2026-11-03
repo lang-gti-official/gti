@@ -1413,6 +1413,9 @@ def test_direct_dependency_visibility(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == root_uri
             and message["params"].get("version") == 1
+            # Ordinary visibility errors precede compiler-validated import advice.
+            and any('import "visibility-leaf.gti";' in item["message"]
+                    for item in message["params"]["diagnostics"])
         )["params"]
         diagnostic = next(
             item

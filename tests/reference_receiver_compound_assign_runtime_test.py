@@ -14,6 +14,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -41,33 +42,29 @@ def main() -> int:
         prefix="gti-reference-compound-assign-"
     ) as temporary:
         root = pathlib.Path(temporary)
-        for standard in ("c++20", "c++23"):
-            for optimization in ("O0", "O3"):
-                mode = f"{standard}-{optimization}"
-                executable = root / mode
-                built = run(
-                    [
-                        str(compiler),
-                        str(source),
-                        "--std",
-                        standard,
-                        f"-{optimization}",
-                        "-o",
-                        str(executable),
-                    ]
-                )
-                if built.returncode != 0:
-                    return fail(f"build {mode}", built)
-                if "GTI-B0001" in built.stderr:
-                    return fail(f"build {mode} raised GTI-B0001", built)
+        for mode, flags, native in native_modes():
+            executable = root / mode
+            built = run(
+                [
+                    str(compiler),
+                    str(source),
+                    *flags,
+                    "-o",
+                    str(executable),
+                ]
+            )
+            if built.returncode != 0:
+                return fail(f"build {mode}", built)
+            if "GTI-B0001" in built.stderr:
+                return fail(f"build {mode} raised GTI-B0001", built)
 
-                executed = run([str(executable)])
-                if (
-                    executed.returncode != 0
-                    or executed.stdout != ""
-                    or executed.stderr != ""
-                ):
-                    return fail(f"run {mode}", executed)
+            executed = run([str(executable)])
+            if (
+                executed.returncode != 0
+                or executed.stdout != ""
+                or executed.stderr != ""
+            ):
+                return fail(f"run {mode}", executed)
 
     return 0
 
