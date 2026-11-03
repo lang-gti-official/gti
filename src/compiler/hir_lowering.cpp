@@ -29,7 +29,12 @@ public:
     initializeConstant(semantics, provider, completedFunctions,
                        completedConstructors);
     const FunctionInfo *function = semantics.findFunction(root);
-    if (function == nullptr) {
+    // Only callees stage lazily: the requested root must itself be a
+    // completed constexpr definition.
+    if (function == nullptr || function->declaration == nullptr ||
+        !function->declaration->isConstexpr() ||
+        std::find(constantFunctions.begin(), constantFunctions.end(), root) ==
+            constantFunctions.end()) {
       output.program.valid_ = false;
       return std::move(output);
     }

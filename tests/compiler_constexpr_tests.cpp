@@ -1640,7 +1640,8 @@ static_assert(table<3>(7) == 7);
   const auto runtime = evaluate("lazy", false);
   expect(lazy && lazy.value == integer(42) && !runtime &&
              runtime.failure ==
-                 lang::ConstantEvaluationFailure::UnsupportedExpression,
+                 lang::ConstantEvaluationFailure::RuntimeOnlyCall &&
+             runtime.runtimeCallee != 0,
          "constant eligibility follows executed paths but never invokes "
          "runtime code");
   const auto zero = evaluate("divide", integer(0));
@@ -1839,10 +1840,23 @@ int later() { return selected(); }
       provider.model(), provider, sumDeclaration, {});
   expect(!unavailable.valid(),
          "a registered but incomplete root cannot be staged");
+  // Staging is lazy (#175): a callee absent from the completed inventory
+  // keeps only a signature-only declaration body and is never executed.
   auto incompleteCallee = stagedLowerer.lowerConstantFunction(
       provider.model(), provider, callerDeclaration, {callerDeclaration});
-  expect(!incompleteCallee.valid(), "a completed root cannot stage a callee "
-                                    "absent from the completed inventory");
+  const auto signatureOnly =
+      std::count_if(incompleteCallee.program.functionInstances().begin(),
+                    incompleteCallee.program.functionInstances().end(),
+                    [&](const lang::HirFunctionInstance &function) {
+                      return function.declaration == sumDeclaration &&
+                             function.source == nullptr &&
+                             function.body.roots.empty();
+                    });
+  expect(incompleteCallee.valid() &&
+             incompleteCallee.program.functionInstances().size() == 2 &&
+             signatureOnly == 1,
+         "a callee absent from the completed inventory stages as a "
+         "signature-only declaration, never its body");
   auto completeClosure = stagedLowerer.lowerConstantFunction(
       provider.model(), provider, callerDeclaration,
       {callerDeclaration, sumDeclaration});
@@ -2751,7 +2765,7 @@ int main() { Table table = build(4); return table.total() + array_work(4) - 68; 
       lang::evaluateMirConstantFunction(runtimeOnly, scalarId, argument);
   expect(lang::verifyMirProgram(runtimeOnly).valid() && !unavailable &&
              unavailable.failure ==
-                 lang::ConstantEvaluationFailure::UnsupportedExpression,
+                 lang::ConstantEvaluationFailure::RuntimeOnlyCall,
          "runtime validity is not proof of constant eligibility for a mutable "
          "selected call");
 
