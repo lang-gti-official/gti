@@ -125,6 +125,7 @@ if(Python3_Interpreter_FOUND)
     consuming_generic_owner_receiver_runtime
     consuming_retained_field_runtime consuming_retained_lambda_runtime
     contextual_numeric_literals_runtime discarded_nominal_result_runtime
+    literal_call_arguments_runtime
     dormant_capability_runtime
     expected_class_argument_runtime expected_class_assignment_runtime
     expected_boundary_replacement_runtime
