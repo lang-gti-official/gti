@@ -1,0 +1,102 @@
+import std.memory;
+import std.numeric;
+import std.vector;
+
+extern "C" {
+  void provider_test_mode(int32_t mode);
+  void provider_test_fail_on_call(int32_t attempt);
+  int32_t provider_test_calls();
+  int32_t provider_test_releases();
+  int32_t provider_test_size_queries();
+  void provider_test_event(int32_t value);
+  int32_t provider_test_events();
+  int32_t provider_test_event_at(int32_t index);
+}
+
+// No nested allocation: both backends observe only the tested storage regions.
+// Deleted movement also checks that moving the owner preserves element identity.
+class QueryPayload {
+  int identity;
+public:
+  QueryPayload(int identity) : identity(identity) {}
+  QueryPayload(QueryPayload& other) = delete;
+  QueryPayload(QueryPayload&& other) = delete;
+  int value() { return this.identity; }
+  ~QueryPayload() { provider_test_event(this.identity); }
+};
+
+int main() {
+  std::allocator allocator{};
+  provider_test_mode(0);
+  {
+    auto empty = allocator.try_storage<QueryPayload>(std::size_t(0)).expect("empty");
+    auto invalid = allocator.try_storage<QueryPayload>(std::size_t(1), std::alignment(std::size_t(3)));
+    auto overflow = allocator.try_storage<QueryPayload>(std::MAX_UINT64);
+    if (empty.capacity() != std::size_t(0) || invalid || overflow) { return 1; }
+    if (invalid.error() != std::alloc_errc::invalid_alignment ||
+        overflow.error() != std::alloc_errc::size_overflow) { return 2; }
+    // Invalid alignment is rejected before querying; empty and overflow each
+    // observe the native limit once without making a provider allocation.
+    if (provider_test_size_queries() != 2) { return 3; }
+  }
+  if (provider_test_calls() != 0 || provider_test_releases() != 0) { return 4; }
+
+  for (mut int attempt = 1; attempt <= 2; attempt++) {
+    provider_test_mode(0);
+    provider_test_fail_on_call(attempt);
+    auto failed = allocator.try_storage<QueryPayload>(std::size_t(3));
+    if (failed || failed.error() != std::alloc_errc::resource_exhausted) { return 5; }
+    if (provider_test_size_queries() != 1 || provider_test_calls() != attempt ||
+        provider_test_releases() != attempt - 1) { return 6; }
+    if (provider_test_events() != attempt - 1) { return 7; }
+    if (attempt == 2 && provider_test_event_at(0) != -1) { return 8; }
+  }
+
+  provider_test_mode(0);
+  {
+    mut auto storage = allocator.try_storage<QueryPayload>(std::size_t(3)).expect("storage");
+    if (provider_test_size_queries() != 1 || provider_test_calls() != 2 ||
+        provider_test_releases() != 0) { return 9; }
+    storage.emplace(std::size_t(0), 10);
+    storage.emplace(std::size_t(2), 20);
+    const QueryPayload* address = &storage.get(std::size_t(0));
+    mut auto moved = std::move(storage);
+    if (&moved.get(std::size_t(0)) != address || moved.get(std::size_t(2)).value() != 20) { return 10; }
+    moved.release();
+    if (provider_test_size_queries() != 1 || provider_test_calls() != 2 ||
+        provider_test_releases() != 2 || provider_test_events() != 4) { return 11; }
+    if (provider_test_event_at(0) != 20 || provider_test_event_at(1) != 10 ||
+        provider_test_event_at(2) != -2 || provider_test_event_at(3) != -1) { return 12; }
+  }
+
+  provider_test_mode(0); // The native oracle rejects resets with live regions.
+  {
+    mut std::vector<int> values{};
+    values.reserve(std::size_t(8));
+    values.push_back(42);
+    values.reserve(std::size_t(8));
+    if (provider_test_size_queries() != 1 || provider_test_calls() != 1 ||
+        provider_test_releases() != 0 || values[std::size_t(0)] != 42) { return 13; }
+    values.reserve(std::size_t(16));
+    if (provider_test_size_queries() != 2 || provider_test_calls() != 2 ||
+        provider_test_releases() != 1 || values[std::size_t(0)] != 42) { return 14; }
+  }
+  if (provider_test_releases() != 2 || provider_test_events() != 2 ||
+      provider_test_event_at(0) != -1 || provider_test_event_at(1) != -2) { return 15; }
+
+  provider_test_mode(1);
+  {
+    auto limited = allocator.try_storage<int>(std::size_t(4096));
+    if (limited || limited.error() != std::alloc_errc::size_overflow ||
+        provider_test_calls() != 0 || provider_test_size_queries() != 1) { return 16; }
+  }
+  provider_test_mode(0);
+  {
+    auto restored = allocator.try_storage<int>(std::size_t(4096)).expect("restored limit");
+    if (restored.capacity() != std::size_t(4096) || provider_test_calls() != 2 ||
+        provider_test_size_queries() != 1) { return 17; }
+  }
+  if (provider_test_releases() != 2) { return 18; }
+  provider_test_mode(0);
+  return 0;
+}
