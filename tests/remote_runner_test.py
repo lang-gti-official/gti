@@ -389,6 +389,26 @@ class RemoteRunner(unittest.TestCase):
         self.assertEqual(submitted[0]["cxx"], "/usr/bin/g++-14")
 
 
+    def test_provision_hook_follows_snapshot_and_precedes_submission(self):
+        args = runner.parser().parse_args(["--repo", str(self.repo), "run", "--detach", "--timeout", "10", "--target", "gti"])
+        hook = mock.Mock(return_value=None)
+        config = dict(runner.HOSTS["mini"])
+        def submit(*unused, **kwargs):
+            hook.assert_called_once()
+            self.assertRegex(hook.call_args.args[0]["snapshot_sha256"], r"^[0-9a-f]{64}$")
+            self.assertTrue(Path(kwargs["input_path"]).is_file())
+            return {}
+        with mock.patch.object(runner, "connection", side_effect=submit), mock.patch("sys.stdout", new_callable=io.StringIO):
+            self.assertEqual(runner.execute_run(args, self.directory / "local", "fixture", config, before_submit=hook), 0)
+        hook.reset_mock()
+        with mock.patch.object(runner, "snapshot", side_effect=runner.RunnerError("invalid snapshot")), \
+             mock.patch.object(runner, "connection") as connection:
+            with self.assertRaises(runner.RunnerError):
+                runner.execute_run(args, self.directory / "other", "fixture", config, before_submit=hook)
+            hook.assert_not_called()
+            connection.assert_not_called()
+
+
 class RunnerConnections(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="gti-runner-connections-")

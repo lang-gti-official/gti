@@ -342,6 +342,239 @@ configure command above updates an existing LAN-address configuration too.
 Detached runs retain their recorded endpoint; configuring a new default does
 not rewrite their connection records.
 
+### Opt-in Google Spot pilot
+
+`--runner gcp-spot` is a development-runner pilot, not a compiler backend,
+CI gate or default. `scripts/gcp_spot_runner.py` wraps the same snapshot,
+executor and result path. Local hosts and their selection are unchanged.
+The checked-in example is disabled and expired. Offline planning never invokes
+Google or creates resources:
+
+```sh
+python3 scripts/gcp_spot_runner.py --policy scripts/gcp_spot_policy.example.json plan
+```
+
+**Owner setup:** use a dedicated Google project. Verify in the billing console
+that the account is still an **unupgraded Free Trial**, and check credit expiry
+and currency. Remaining credits alone are not proof. The BillingAccount API
+does not supply a reliable trial-status field; a short-lived owner
+acknowledgement is deliberate, not an automatic proof. The helper never upgrades
+billing, changes quotas, creates IAM/networking or falls back to on-demand VMs.
+Trial quotas may prevent the chosen profile; do not automatically upgrade.
+
+Prepare a versioned Ubuntu x64 image with Python, Git, CMake, Ninja, GCC/G++ 14,
+the required LLVM/native dependencies, OpenSSH and Google guest/OS Login agents.
+It must publish its public SSH host keys in the `hostkeys/` guest attributes.
+The controller needs the Google Cloud CLI already authenticated; the helper
+does not run login or download service-account keys.
+Put no provisioning credentials in the image. Configure a private subnet with Private
+Google Access and SSH ingress restricted to IAP. Grant the controller reviewed,
+project-scoped VM/disk lifecycle, subnet/image read, guest-attribute read, OS
+Login and IAP tunnel permissions, plus read access to the linked billing
+account/project. Workers have **no service account and no public IP**. No NAT,
+always-on controller VM or shared cache disk is provisioned. Image, storage and
+network setup can have costs of their own.
+
+Copy `scripts/gcp_spot_policy.example.json` outside the repository to
+`~/.config/gti/spot-runner.json` (or select `--spot-policy PATH`). Set the actual
+project, billing account, account email, controller hostname, zone, versioned
+image and subnet. Review conservative all-in pricing in the billing currency,
+including compute, boot/image storage, networking and request/setup overhead.
+`hourly_ceiling_micros` and `per_run_extra_micros` are **owner-entered ceilings,
+not fetched price quotes**. Example numbers are not advertised Google prices.
+One currency unit is 1,000,000 micros. Pricing and trial acknowledgements must
+cover the lease and expire within seven days. Only the named controller host
+may provision; copied checkouts/policies do not create another allowed pool.
+
+Phase one admits one concurrent VM, E2 standard 4/8 vCPUs, at most 100 GiB boot
+storage, a 90-minute VM lifetime and a 60-minute job timeout. The job leaves at
+least 15 minutes of lifecycle headroom. Daily allowance is at most 5 currency
+units and lifetime trial allowance at most 20; lower values are valid. Every
+attempt reserves the entire VM lifetime rounded up, plus overhead. Successful
+deletion does not refund the allowance. UTC days reset the daily subtotal,
+never the accumulated trial allowance.
+An independent pilot cap permits at most two attempts per UTC day and eight
+attempts in total (at most 12 VM-hours), even if price estimates are wrong.
+These counters also never refund or reset automatically. After enablement:
+
+```sh
+python3 scripts/remote_runner.py --runner gcp-spot run --target gti --target gti_tests --target gti_lsp --ctest-regex '^compiler_pipeline$'
+python3 scripts/remote_runner.py --runner gcp-spot status
+python3 scripts/remote_runner.py --runner gcp-spot clean
+```
+
+Only foreground runs with explicit targets/steps are admitted; there is no full
+suite, detached mode, cloud-first selection or retry loop. The journal under
+`~/.local/state/gti-spot-runner/` is shared across clones/worktrees, locked across
+processes and written before creation. It is pinned to one project/account and
+currency. Do not delete it to reclaim space or reset limits. Missing/corrupt
+history, unresolved creation or failed cleanup blocks admission. This is a
+cooperating-tool allowance, not a security boundary against an operator with
+Google credentials or permission to edit the journal. Entire-state deletion or
+restoration from an old backup can reset its history; it is persistent state,
+not a disposable cache. Missing history is detected while its pool marker remains.
+
+Creation requests a provider-enforced maximum runtime, Spot termination action DELETE,
+no automatic restart and an auto-deleted boot disk. Returned resource facts are
+verified. The runtime cap is independent of the controller's wall clock; the
+journal's UTC expiry is a conservative reaping deadline, not a reason to restart
+or renew a VM. IAP SSH uses provider-fetched guest host keys, never disabled host-key
+checking, and explicitly disables agent/port forwarding. Normal completion, errors, cancellation and SIGTERM attempt VM/disk
+cleanup and verify absence before releasing the slot. A lost insert response
+is quarantined even when a list currently shows no VM: absence cannot prove an
+in-flight creation will not finish. An operator must reconcile that ambiguity;
+never erase the record. `clean` reaps expired confirmed leases, or a selected
+run ID explicitly. Cleanup verifies resource ownership, not merely a prefix.
+
+**Commissioning remains required:** tests create no paid resources. The owner
+must exercise success, cancellation, preemption and lost-controller scenarios,
+verify actual deletion/billing and retain receipts. Provider expiry survives
+client failure, but `clean` is not an independently scheduled cloud janitor.
+Phase two adds the recovery control plane below. Uploaded checkpoints survive
+the VM, but work before the first successful upload or since the last checkpoint
+can still be lost. Live commissioning, reviewed prices, cost reconciliation and
+a multi-host provisioning broker remain prerequisites before three workers,
+retries, detached runs or cloud-first selection. Ordinary budget alerts are
+delayed, not a Compute Engine hard cap.
+
+Google references: [trial rules](https://docs.cloud.google.com/free/docs/free-cloud-features),
+[Spot lifecycle](https://docs.cloud.google.com/compute/docs/instances/spot),
+[VM expiry](https://docs.cloud.google.com/compute/docs/instances/limit-vm-runtime),
+[budget limits](https://docs.cloud.google.com/billing/docs/how-to/budgets),
+[IAP/host-key security](https://docs.cloud.google.com/solutions/connecting-securely).
+
+#### Phase Two: Setup And Recovery
+
+The compiler, project driver, ordinary SSH hosts and default runner are unchanged.
+New cloud runs require both the original policy and
+[`gcp_spot_recovery.example.json`](../../scripts/gcp_spot_recovery.example.json),
+normally copied outside the repository to `~/.config/gti/spot-recovery.json`.
+Both enable switches remain false in shipped examples. Existing `status` and
+`clean` do not require recovery configuration, so a control-plane failure cannot
+prevent local cleanup. These are implemented code paths with offline regression
+cases, not a claim of live-cloud commissioning or executed campaign validation.
+
+**Owner-reviewed infrastructure:** `scripts/spot_infra/main.tf` uses the Google
+Terraform provider, not a bespoke create/update/delete engine. It describes a
+private subnet, IAP-only SSH ingress, a same-region STANDARD bucket, scoped
+controller/upload/janitor identities, a digest-pinned Cloud Run job and a paused
+Cloud Scheduler job. It does not create/link/upgrade a billing account, increase
+quotas, launch a worker, create NAT, build an image or install credential keys.
+Terraform apply is an explicit owner operation and incurs infrastructure costs.
+The controller's Cloud Billing account read access and read-only access to an
+existing Cloud Billing BigQuery export need separate owner grants. The module
+does not move or replace an existing billing export.
+
+Prepare a versioned Ubuntu image on an existing disposable builder with
+`bash scripts/spot_infra/prepare_image.sh --approve-image-changes HTTPS_LLVM_ARCHIVE SHA256`.
+Use an exact Google Ubuntu 24.04 x64 base and reviewed compatible LLVM archive;
+the script records the LLVM checksum/version and resolved package inventory.
+It is not a bit-reproducible distro build or a cloud image builder. It performs
+no VM creation, image capture or deletion; the owner captures the versioned
+image, removes temporary credentials and deletes the builder/disks. Those setup
+costs are outside worker-attempt accounting and belong in the reviewed
+infrastructure reserve. Guest host-key publication must be proven during live
+commissioning; the worker never falls back to unverified SSH.
+Private workers have no general Internet egress. The image must contain the
+compatible LLVM installation and native headers/tools needed by the selected
+workload; network-dependent fixtures need explicitly prepared inputs. The pilot
+does not add NAT or silently change networking when a build wants a download.
+
+Build the janitor container from the repository root using
+`scripts/spot_infra/Dockerfile` and an owner-reviewed Google CLI base image
+pinned by digest (`--build-arg GOOGLE_CLI_IMAGE=...@sha256:...`). Publish a Linux
+amd64 image to an owner-managed registry, then put its immutable digest in the
+recovery policy. Image/registry storage, export storage, setup traffic, Scheduler,
+Cloud Run and log retention all need pricing review, including shared services
+billed outside the runner project. No infrastructure is assumed free.
+
+On the designated controller, obtain its existing pool ID using
+`remote_runner.py --runner gcp-spot status`; never invent or reset a pool. Render
+reviewable inputs without Google calls:
+
+```sh
+python3 scripts/gcp_spot_setup.py --policy ~/.config/gti/spot-runner.json \
+  --recovery ~/.config/gti/spot-recovery.json --pool POOL_ID \
+  --janitor-image REGISTRY_IMAGE_AT_DIGEST
+```
+
+Save those inputs in an owner-controlled infrastructure directory with a copy
+of `main.tf`. Run `terraform init`, retain its provider lock file, review
+`terraform plan`, and apply only the reviewed plan. Do not regenerate `started`
+or pool identity on each apply. The cloud registry's content is ignored on later
+updates and protected against destruction; changing inputs cannot reset history.
+After reviewing the deployment, explicitly enable its schedule, execute the
+janitor once and inspect its heartbeat. Only then enable the two runner policies.
+The runtime checks the exact pool, bucket security/lifecycle, bounded deployment,
+schedule and a successful heartbeat no older than twenty minutes before any VM.
+
+**Durability and authority:** a create-only lease object records project, zone,
+pool, source HEAD/snapshot, image and immutable expiry **before** VM creation.
+The cloud registry pins the local journal identity, catching even a complete
+local journal reset. A durable local flag is set before the first VM insert:
+preparation failures before that point release only the unused VM slot, never
+the spent attempt or monetary reservation. Older records without that flag and
+uncertain inserts remain quarantined. Cloud lease records are immutable intent,
+so the independent janitor never treats their initial flags as proof of absence.
+Workers still have no VM service account. Short-lived
+signed PUT URLs authorize only exact create-once checkpoint objects, signed
+content lengths and expiry, not reads, listing, deletion or lease writes.
+Capabilities stay in private bootstrap input, never the request/result receipt.
+Every two minutes a bounded observer uploads diagnostic tails (2 MiB fixed
+objects); a separate final slot contains the normal results archive (40 MiB).
+At most 31 partial slots plus one final slot are issued per run, without retries.
+Final upload precedes terminal-state publication; its failure makes the run fail.
+Checkpoint objects expire after one day, with no versioning or soft-delete
+retention. Lifecycle processing is asynchronous, not an exact deletion deadline.
+Leases, registry and receipts are deliberately not auto-expired.
+
+Explicit recovery requires the original source snapshot hash and a fresh output
+directory, and verifies the cloud lease, archive containment and result identity:
+
+```sh
+python3 scripts/gcp_spot_recovery.py --policy ~/.config/gti/spot-runner.json \
+  --recovery ~/.config/gti/spot-recovery.json recover --run-id RUN_ID \
+  --snapshot SNAPSHOT_SHA256 --output /absolute/new/results
+```
+
+`--partial` retrieves the newest diagnostic checkpoint, **not** passing test
+evidence. Recovery can run with provisioning disabled and expired trial/pricing
+acknowledgements. It never re-creates a VM or reopens a spent allowance.
+
+**Independent cleanup:** the janitor uses its attached Cloud Run identity, never
+the controller's credentials or a JSON key. It runs every ten minutes with one
+task, one CPU, 512 MiB, a sixty-second execution cap and no task retries. It can
+read inventory and delete only runner-prefix VMs/disks in the approved zone; the
+existing exact lease labels, image, timestamps and disk-use checks still apply.
+After immutable expiry plus two minutes it checks at most eight leases, including
+previously absent ones: a receipt does not prove a delayed insert cannot appear.
+It never releases a controller slot, refunds reservations or provisions anything.
+At the end of the at-most-seven-day pilot it attempts one last sweep and pauses
+its own schedule even if cleanup fails. A failed pause or sweep requires operator
+attention; platform outages and forced termination are not made reliable by mocks.
+VM provider expiry is an independent fallback. The owner must reconcile delayed
+operations and delete remaining images, registry/container objects and resources
+when retiring the pilot; leaving storage behind still costs money.
+
+**Cost observations:** after reserving an attempt, before creating a VM, the
+controller runs one read-only BigQuery query over the dedicated project's
+positive gross charges since registration, with explicit project parameters,
+a 10--100 MiB query scan ceiling and no query retry. Credits and negative
+adjustments do not release allowances. Persisted total/daily high-water marks
+and an owner-reviewed infrastructure reserve augment, never replace or refund,
+the original full-lifetime reservations. A query failure, wrong currency,
+unexpected response or exhausted allowance blocks VM creation. Billing exports
+are delayed; the query time is **not** proof that all usage has arrived. Shared
+infrastructure outside that project and future storage charges remain reviewed
+overhead, not automatically measured spend. This is reconciliation, not live
+price discovery, a real-time spending cap or a promise against card charges.
+
+Provider references: [signed PUT capabilities](https://docs.cloud.google.com/storage/docs/access-control/signing-urls-with-helpers),
+[scheduled jobs](https://docs.cloud.google.com/run/docs/execute/jobs-on-schedule),
+[billing export delay](https://docs.cloud.google.com/billing/docs/how-to/export-data-bigquery).
+
+### Host Windows
+
 All runs use one window **per host**, not their isolated Git directories. The
 Mini's is `/private/tmp/gti-remote-runner/window`; Ubuntu uses
 `/tmp/gti-remote-runner/window`. The authoritative `build_window.Window` uses

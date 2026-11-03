@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "enabled": false,
+  "bucket": "your-dedicated-runner-project-spot-results",
+  "signer_service_account": "gti-spot-upload@your-dedicated-runner-project.iam.gserviceaccount.com",
+  "reaper_job": "projects/your-dedicated-runner-project/locations/us-central1/jobs/gti-spot-reaper",
+  "scheduler_job": "projects/your-dedicated-runner-project/locations/us-central1/jobs/gti-spot-reaper",
+  "janitor_image": "us-central1-docker.pkg.dev/your-dedicated-runner-project/runner/janitor@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "pilot_expires_at": "2000-01-01T00:00:00Z",
+  "billing_table": "your-billing-project.billing_export.gcp_billing_export_v1_000000_000000_000000",
+  "billing_maximum_bytes_billed": 10485760,
+  "infrastructure_reserve_micros": 1000000
+}
