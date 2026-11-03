@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Source protocol clients, legacy adapters, nested pairs, and constraint failures."""
+import json
 import pathlib
 import subprocess
 import sys
@@ -28,6 +29,20 @@ with tempfile.TemporaryDirectory(prefix="gti-protocol-format-hash-") as temporar
             actual = invoke([str(executable)])
             if actual != output:
                 raise AssertionError(f"unexpected output: {actual!r}")
+    assertion_fixture = ROOT / "tests/fixtures/protocol_testing_assertions.gti"
+    assertion_line = next(index for index, line in
+                          enumerate(assertion_fixture.read_text().splitlines(), 1)
+                          if '"protocol-only assertion"' in line)
+    for optimization in ("-O0", "-O3"):
+        executable = directory / ("protocol-testing" + optimization)
+        invoke([str(COMPILER), str(assertion_fixture), "--backend", "llvm", optimization,
+                "-o", str(executable)])
+        failed = subprocess.run([str(executable)], text=True, capture_output=True, timeout=30)
+        assert failed.returncode == 70 and not failed.stdout, failed
+        assert (f"{assertion_fixture.name}:{assertion_line}:" in failed.stderr
+                and "GTI-R0017" in failed.stderr), failed.stderr
+        message = json.loads(failed.stderr.split("panic: ", 1)[1].strip())
+        assert message == "protocol-only assertion\n  actual: 3\nexpected: 4", message
     failures = {
         "format": ("import std.format; import std.utility; struct Opaque { Opaque() = default; }; "
                    "int main() { auto p = std::make_pair(Opaque(), 1); "
@@ -48,4 +63,4 @@ with tempfile.TemporaryDirectory(prefix="gti-protocol-format-hash-") as temporar
         path.write_text(source)
         invoke([str(COMPILER), str(path), "--emit-mir", "-o", str(directory / (name + ".mir"))],
                success=False, expected=diagnostic)
-print("protocol formatting/hashing: fixtures and example LLVM O0/O3, 4 rejections passed")
+print("protocol formatting/hashing: fixtures, example and protocol assertion failure LLVM O0/O3, 4 rejections passed")

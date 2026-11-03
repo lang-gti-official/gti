@@ -235,9 +235,10 @@ For example, `mut T& operator[](int key) mut requires
 std::default_initializable<T>` is available only when that application holds.
 [`190-conditional-member-operators.gti`](../../examples/190-conditional-member-operators.gti)
 demonstrates the general rule before its map and pair clients.
-Runtime uses of conditional operators require LLVM. The frozen C++ backend
-reports `GTI-B0003` for a selected conditional operator; an unused declaration
-does not prevent otherwise supported C++ compilation.
+Conditional operators reuse resolved call identities in both backends. Fresh
+class-valued subscript arguments require LLVM; the frozen C++ backend
+reports `GTI-B0003` for that argument shape. Named keys and explicit moves
+retain existing C++ support.
 Recursive requirement expressions fail closed: exact cycles, more than 64
 active checks, or a root query exceeding 16,384 visited type nodes are rejected.
 

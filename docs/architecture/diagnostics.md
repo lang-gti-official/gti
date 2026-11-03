@@ -77,6 +77,11 @@ Editors may inspect a retained expansion through the read-only
 [`gti/inspectMacroExpansion` workflow](lsp.md#read-only-macro-expansion-inspection);
 that explanatory view has no authority to repair or execute an invalid body.
 
+Inline concept failures retain their concrete outer application and the
+uniquely attributable argument span even when every alternative in a
+disjunction fails. Related information preserves the separate failing branches;
+a failure inside a nested requirement does not become a different root contract.
+
 `GTI-S2029` retains the ordinary unsatisfied-requirement call span and related
 requirement detail when a general query re-enters an identical in-flight
 syntax/type/value substitution. The inner query fails as a recursive cycle;

@@ -67,6 +67,16 @@ int main() {
         assert built.returncode == 0, (built.stdout, built.stderr)
         assert run([str(binary)]).returncode == 0
         print("unused conditional operator: existing C++ behavior passed", flush=True)
+        supported = repository / "tests/fixtures/conditional_member_operators_cpp_supported.gti"
+        for backend in ("cpp", "llvm"):
+            for level in ("O0", "O3"):
+                binary = scratch / f"supported-{backend}-{level}"
+                built = run([str(compiler), str(supported), "--backend", backend,
+                             f"-{level}", "--progress", "never", "-o", str(binary)])
+                assert built.returncode == 0, (backend, level, built.stdout, built.stderr)
+                result = run([str(binary)])
+                assert result.returncode == 0 and not result.stderr, result
+                print(f"existing conditional operator representation: {backend}/{level} passed", flush=True)
         sources = [repository / "tests/fixtures/conditional_member_operators.gti",
                    repository / "examples/190-conditional-member-operators.gti"]
         for source in sources:
@@ -74,7 +84,7 @@ int main() {
                 binary = scratch / f"{source.stem}-{backend}-{level}"
                 built = run([str(compiler), str(source), "--backend", backend, f"-{level}", "--progress", "never", "-o", str(binary)])
                 if backend == "cpp":
-                    assert built.returncode == 65 and "GTI-B0003" in built.stderr and "conditionally available member operators" in built.stderr and "GTI-B0001" not in built.stderr, (source, built.stdout, built.stderr)
+                    assert built.returncode == 65 and "GTI-B0003" in built.stderr and "fresh class-valued subscript arguments" in built.stderr and "GTI-B0001" not in built.stderr, (source, built.stdout, built.stderr)
                     print(f"{source.stem}: cpp declined with GTI-B0003", flush=True)
                     continue
                 assert built.returncode == 0, (source, backend, level, built.stdout, built.stderr)

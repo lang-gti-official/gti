@@ -8900,9 +8900,9 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
   const bool scalar = info != nullptr &&
                       (isPassiveScalarValueType(info->type) ||
                        (info->type.kind == SemanticType::Enum && !payloadEnum));
-  const bool literalText =
-      info != nullptr && info->type.kind == SemanticType::StringView &&
-      exprAs<LiteralExpr>(transparentTemporaryProducer(expression)) != nullptr;
+  const bool ownerlessText = info != nullptr &&
+                             info->type.kind == SemanticType::StringView &&
+                             !isOwnerDependentTextExpression(expression);
   const bool text =
       info != nullptr && info->type.kind == SemanticType::StringView;
   if (info == nullptr || info->category != ValueCategory::Value ||
@@ -8924,7 +8924,7 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
     }
   }
   if ((info->traits.containsBorrowedState && !callable) ||
-      (text && !literalText)) {
+      (text && !ownerlessText)) {
     result.failure = FreshTemporaryValueFailure::BorrowedState;
     return result;
   }
@@ -8934,13 +8934,12 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
     result.failure = FreshTemporaryValueFailure::UnsupportedProducer;
     return result;
   }
-  // Built-in scalar operations produce self-contained values. Calls and
-  // overloaded operators still need the source-body proof below.
-  if (literalText ||
-      (scalar && semanticModel.findOperator(*producer) == nullptr &&
-       (exprAs<LiteralExpr>(producer) || exprAs<Conversion>(producer) ||
-        exprAs<Unary>(producer) || exprAs<Binary>(producer) ||
-        exprAs<Logical>(producer) || exprAs<QualifiedName>(producer)))) {
+  // Resolved passive scalar values cannot retain borrowed storage. This also
+  // covers an exact scalar result guaranteed by a concept member in an open
+  // body; concrete instance analysis resolves the producer before HIR. Text
+  // uses the semantic ownerless proof, including joined literal-derived values,
+  // rather than requiring one particular producer syntax.
+  if (scalar || ownerlessText) {
     result.eligible = true;
     result.failure = FreshTemporaryValueFailure::None;
     return result;

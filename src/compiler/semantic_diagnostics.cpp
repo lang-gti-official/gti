@@ -321,7 +321,8 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
     }
   };
   const auto publish = [&](Diagnostic diagnostic) {
-    if (failure.expressionFailure && !failure.context.empty()) {
+    if ((failure.expressionFailure || !failure.alternatives.empty()) &&
+        !failure.context.empty()) {
       diagnostic.message =
           (failure.applicationArgumentIndex
                ? "Type '" + typeSpelling(failure.argument) +

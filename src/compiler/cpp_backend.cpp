@@ -26,17 +26,6 @@ BackendArtifact CppBackend::generate(LoweredProgram program) {
     throw std::logic_error("C++ backend requires a verified lowered program: " +
                            issues.front().detail);
   }
-  // Conditional operators are new source behavior. The frozen C++ protocol
-  // adapter vocabulary cannot represent their availability; decline concrete
-  // uses before snapshot construction, while retaining unused declarations.
-  for (const auto &instance : verified->program().functionInstances()) {
-    const auto *function =
-        verified->program().findFunctionDeclaration(instance.declaration);
-    if (function && function->overloadedOperator && function->hasRequiresClause)
-      throw BackendUnsupportedError(
-          "conditionally available member operators require the LLVM backend",
-          instance.instantiationSource.value_or(instance.source));
-  }
   // The retained C++ representation names types, aliases and namespace storage
   // by qualified spelling. Module-distinct homonyms require the LLVM backend;
   // reject them before native compilation rather than emitting duplicate C++
@@ -168,19 +157,41 @@ BackendArtifact CppBackend::generate(LoweredProgram program) {
         throw BackendUnsupportedError(
             "aggregate constant publication requires the LLVM backend",
             row.identity.source);
-    // These newly admitted temporary-reference shapes have no retained C++
-    // representation contract. Preserve existing aggregate calls as the
-    // comparison oracle, but report unsupported new programs before emission.
-    std::unordered_set<HirValueId> unsupportedTemporaryCalls;
+    // A fresh class argument consumed directly by the legacy subscript Call
+    // has no ordered CallInput publication stage in the C++ vocabulary.
+    // Named class moves, scalar indices and conditional declarations already
+    // use supported representations and must remain available.
+    std::unordered_set<MirValueId> freshClassValues;
     for (const auto &block : body->blocks)
       for (const auto &instruction : block.instructions)
-        if (!instruction.tombstone && instruction.functionTarget) {
+        if (!instruction.tombstone &&
+            instruction.kind == MirInstructionKind::Construct &&
+            instruction.info.type.kind == SemanticType::Class &&
+            instruction.result && !instruction.destination)
+          freshClassValues.insert(*instruction.result);
+    for (const auto &block : body->blocks)
+      for (const auto &instruction : block.instructions)
+        if (!instruction.tombstone &&
+            instruction.kind == MirInstructionKind::Call &&
+            instruction.callSite == 0 && instruction.functionTarget &&
+            instruction.operands.size() == 1 &&
+            instruction.parameterTypes.size() == 1 &&
+            instruction.parameterTypes.front().kind == SemanticType::Class &&
+            instruction.operands.front().kind == MirOperandKind::Value &&
+            freshClassValues.contains(instruction.operands.front().value)) {
           const auto *target = verified->program().mir().findFunctionInstance(
               *instruction.functionTarget);
-          if (target && (target->overloadedOperator ||
-                         target->returnBorrowOrigin != BorrowOriginKind::None))
-            unsupportedTemporaryCalls.insert(instruction.callSite);
+          if (target &&
+              target->overloadedOperator == OverloadedOperator::Subscript)
+            throw BackendUnsupportedError(
+                "fresh class-valued subscript arguments require the LLVM "
+                "backend",
+                row.identity.source);
         }
+    // Existing class and payload-enum temporary-reference representations
+    // also serve operators. Passive scalars, plain enums and text lack SSA
+    // slot publication; reject these shapes before emitting uninitialized
+    // storage, independently of the source operator spelling.
     for (const auto &block : body->blocks)
       for (const auto &instruction : block.instructions) {
         if (instruction.tombstone ||
@@ -190,13 +201,16 @@ BackendArtifact CppBackend::generate(LoweredProgram program) {
             instruction.info.type.arguments.size() != 1)
           continue;
         const auto &type = instruction.info.type.arguments.front();
+        const auto *enumeration =
+            type.kind == SemanticType::Enum
+                ? verified->program().findEnumDeclaration(type)
+                : nullptr;
         if (isPassiveScalarValueType(type) ||
-            type.kind == SemanticType::StringView ||
-            (type.kind == SemanticType::Enum &&
-             !verified->program().mir().findPayloadEnum(type)) ||
-            unsupportedTemporaryCalls.contains(instruction.callSite))
+            (enumeration && !enumeration->payload) ||
+            type.kind == SemanticType::StringView)
           throw BackendUnsupportedError(
-              "scalar and operator temporary reference arguments require the "
+              "scalar, plain-enum, and text temporary reference arguments "
+              "require the "
               "LLVM backend",
               row.identity.source);
       }

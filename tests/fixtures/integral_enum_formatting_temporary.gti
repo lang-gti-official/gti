@@ -1,0 +1,20 @@
+import std.format;
+import std.string;
+import std.panic;
+
+enum class Status { first = 9, second = 12 };
+mut int sequence = 0;
+Status next(int expected_sequence) {
+  if (sequence != expected_sequence) { std::panic("argument order"); }
+  sequence++;
+  if (expected_sequence == 0) { return Status::first; }
+  return Status::second;
+}
+
+int main() {
+  // Each nonzero result needs distinct temporary reference storage, evaluated
+  // in source order and live through the borrowed formatting argument pack.
+  auto ordered = std::format("{} {}", next(0), next(1));
+  if (sequence != 2 || ordered != "9 12") { return 1; }
+  return 0;
+}

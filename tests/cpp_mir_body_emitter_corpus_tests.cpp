@@ -269,8 +269,7 @@ void testGeneralTextStepMatchesProductionEmission() {
         lang::OptimizationPipeline().run(frontend.hir,
                                          lang::OptimizationLevel::O0);
     progress.checkpoint("optimization");
-    const bool conditionalOperator =
-        source.filename() == "189-protocol-format-hash.gti" ||
+    const bool freshClassSubscript =
         source.filename() == "190-conditional-member-operators.gti";
     const bool temporaryReference =
         source.filename() == "186-scalar-temporary-borrows.gti" ||
@@ -288,16 +287,16 @@ void testGeneralTextStepMatchesProductionEmission() {
         source.filename() == "178-wrapping-atomic-counters.gti" ||
         source.filename() == "179-weak-ownership.gti" ||
         source.filename() == "180-compact-source-owners.gti" || generalLayout ||
-        aggregateConstant || conditionalOperator || temporaryReference) {
+        aggregateConstant || temporaryReference || freshClassSubscript) {
       bool unsupported = false;
       try {
         static_cast<void>(gti_test::emitCpp(frontend, frontend.mir,
                                             frontend.mir, optimizations));
       } catch (const lang::BackendUnsupportedError &error) {
         const std::string limitation =
-            conditionalOperator ? "conditionally available member operators"
+            freshClassSubscript ? "fresh class-valued subscript arguments"
             : temporaryReference
-                ? "scalar and operator temporary reference arguments"
+                ? "scalar, plain-enum, and text temporary reference arguments"
             : generalLayout     ? "general sizeof/alignof"
             : aggregateConstant ? "aggregate constant publication"
                                 : "wrapping atomic read-modify-write";

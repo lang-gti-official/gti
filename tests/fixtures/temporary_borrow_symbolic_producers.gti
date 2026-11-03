@@ -1,0 +1,29 @@
+import std.format;
+
+class Counter {
+  int amount;
+public:
+  Counter(int initial) : amount(initial) {}
+  int read() { return this.amount; }
+};
+
+concept readable<T> = requires(T& value) { { value.read() } -> int; };
+int observe(int& value) { return value; }
+int inspect<readable T>(T& value) { return observe(value.read()); }
+void print_value<readable T>(T& value) {
+  std::println("value {}", value.read());
+}
+std::size_t text_size(std::string_view& text) { return text.size(); }
+std::string_view static_text() { return "static"; }
+
+int main() {
+  Counter value{7};
+  if (inspect(value) != 7) { return 1; }
+  print_value(value);
+  bool selected = inspect(value) == 7;
+  if (text_size(selected ? "yes" : "no") != std::size_t(3)) { return 2; }
+  if (text_size(static_text()) != std::size_t(6)) { return 3; }
+  std::string text = std::format("{} {}", "choice", selected ? "yes" : "no");
+  std::println(text);
+  return 0;
+}

@@ -969,8 +969,9 @@ fresh value may initialize an exact read-only `T&` parameter for that invocation
 only. This includes integer, floating, Boolean and character literals and
 built-in value expressions, scalar-backed enum results, direct record or
 payload-enum construction, and GTI function or value-operator results. A string
-literal may similarly supply an ownerless text-view temporary. Unknown or
-transient text dependencies are not admitted by this literal rule. Built-in
+literal or another semantically ownerless text-view value, including a checked
+conditional or factory result, may similarly supply a temporary. Unknown or
+transient text dependencies are not admitted by this ownerless-value rule. Built-in
 assignment values and conditional values retain their ordinary full-expression
 semantics. Transparent parentheses do not change eligibility.
 

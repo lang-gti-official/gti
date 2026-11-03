@@ -20,18 +20,16 @@ LLVM_ONLY_EXAMPLES = frozenset({
     "183-immediate-functions.gti",
     "186-scalar-temporary-borrows.gti",
     "187-operator-temporary-borrows.gti",
-    "189-protocol-format-hash.gti",
     "190-conditional-member-operators.gti",
     "191-reference-parameter-packs.gti",
 })
 
 
 def cpp_limitation(name):
-    return {"189-protocol-format-hash.gti": "conditionally available member operators",
-            "190-conditional-member-operators.gti": "conditionally available member operators",
-            "191-reference-parameter-packs.gti": "scalar and operator temporary reference arguments",
-            "186-scalar-temporary-borrows.gti": "scalar and operator temporary reference arguments",
-            "187-operator-temporary-borrows.gti": "scalar and operator temporary reference arguments",
+    return {"190-conditional-member-operators.gti": "fresh class-valued subscript arguments",
+            "191-reference-parameter-packs.gti": "scalar, plain-enum, and text temporary reference arguments",
+            "186-scalar-temporary-borrows.gti": "scalar, plain-enum, and text temporary reference arguments",
+            "187-operator-temporary-borrows.gti": "scalar, plain-enum, and text temporary reference arguments",
             "182-bounded-array-borrows.gti": "generic fixed-array reference signatures",
             "181-general-object-layout.gti": "general sizeof/alignof",
             "183-immediate-functions.gti": "aggregate constant publication"}.get(

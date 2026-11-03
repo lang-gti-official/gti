@@ -1,0 +1,35 @@
+// These shapes already use the existing C++ temporary materialization path.
+// Keep them available alongside the new LLVM scalar and text shapes.
+enum Color { Red, Green };
+bool is_green(Color& color) { return color == Color::Green; }
+
+class Tag {
+public:
+  int value;
+  Tag(int value) : value(value) {}
+  bool operator==(Tag& other) { return this.value == other.value; }
+};
+
+class Cursor {
+  int& value;
+public:
+  Cursor(int& value) : value(value) {}
+  bool operator==(Cursor& other) { return this.value == other.value; }
+};
+Cursor cursor(int& value) { return Cursor(value); }
+
+[[borrowed_from(source)]]
+int& select(int& source, Tag& ignored) { return source; }
+
+int main() {
+  Color green = Color::Green;
+  if (!is_green(green)) { return 1; }
+  Tag tag{7};
+  if (!(tag == Tag(7))) { return 2; }
+  int owner = 7;
+  Cursor position{owner};
+  if (!(position == cursor(owner))) { return 3; }
+  int& selected = select(owner, Tag(0));
+  if (selected != owner) { return 4; }
+  return 0;
+}

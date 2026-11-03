@@ -3268,7 +3268,8 @@ private:
 
   MirInstructionId appendInstruction(MirInstruction instruction,
                                      bool inheritSourceMetadata = true,
-                                     bool routeFailureControlFlow = true) {
+                                     bool routeFailureControlFlow = true,
+                                     bool finalizeNeverReturns = true) {
     if (PlannedFailureCleanup *plan = planningCleanup()) {
       // While a failure edge's cleanup is recorded only loan ends arrive
       // here; drops and boundary markers have their own recorders.
@@ -3469,7 +3470,7 @@ private:
       appendFailureControlFlow(id, successResultDrop);
       registerTemporary(successResultDrop);
     }
-    if (neverReturns && !terminated()) {
+    if (neverReturns && finalizeNeverReturns && !terminated()) {
       terminate({.kind = MirTerminatorKind::Unreachable});
     }
     return id;
@@ -9100,7 +9101,12 @@ private:
       call.callSite = 0;
     }
     const MirLoanId publishedLoan = call.loan.value_or(0);
-    (void)appendInstruction(std::move(call));
+    const bool deferredUnreachable =
+        call.neverReturns && !temporaryArgumentLoans.empty();
+    // The unreachable success continuation still carries the invocation's
+    // exact temporary-input loan epilogue. Finish that epilogue before
+    // sealing the block; failure cleanup is routed by appendInstruction.
+    (void)appendInstruction(std::move(call), true, true, !deferredUnreachable);
     // A by-value move transfers the shell and every dependency to the callee.
     // A returned carrier publishes its own checked dependency set; it is not
     // a child reborrow of the now-consumed caller shell.
@@ -9204,6 +9210,8 @@ private:
     if (sourceReceiverValue) {
       endConsumedCallResultLoans({*sourceReceiverValue}, value);
     }
+    if (deferredUnreachable && !terminated())
+      terminate({.kind = MirTerminatorKind::Unreachable});
   }
 
   void emitPackFold(const HirValue &value) {

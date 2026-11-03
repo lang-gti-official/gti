@@ -6265,7 +6265,7 @@ add_test(NAME scalar_temporary_borrow COMMAND gti_scalar_temporary_borrow_tests)
 if(Python3_Interpreter_FOUND)
   add_test(NAME scalar_temporary_borrow_runtime
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/scalar_temporary_borrow_runtime_test.py"
-            "$<TARGET_FILE:gti>" --mode llvm-O0 --mode llvm-O3 --mode c++23-O0)
+            "$<TARGET_FILE:gti>" --mode llvm-O0 --mode llvm-O3 --mode c++23-O0 --mode c++23-O3)
   set_tests_properties(scalar_temporary_borrow_runtime PROPERTIES TIMEOUT 600)
 endif()
 

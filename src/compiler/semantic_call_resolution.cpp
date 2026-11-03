@@ -1124,6 +1124,10 @@ auto SemanticVisitor::Impl::firstConstraintFailure(
           failure->application = nullptr;
           failure->parameterId =
               failure->applicationArgumentIndex ? parameter.id : 0;
+          if (!failure->alternatives.empty()) {
+            failure->parameterId = parameter.id;
+            failure->argument = arguments[argumentIndex];
+          }
           if (parameter.constraintName && !failure->context.empty()) {
             failure->context.front().location =
                 parameter.constraintName->last();

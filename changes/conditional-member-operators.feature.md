@@ -4,5 +4,6 @@ default-initializable mapped types, and `std::pair` provides equality when
 both element types support it. Requirements affect availability, never
 overload ranking; map indexing acquires an exact owned key and returns an
 exclusive reference.
-These new conditional-operator calls require the LLVM backend; the frozen
-C++ backend reports `GTI-B0003` for their concrete instances.
+The existing C++ emitter handles conditional operators using their resolved
+identities. Fresh class-valued subscript arguments require LLVM and receive
+`GTI-B0003` on C++; named keys and explicit moves retain existing support.
