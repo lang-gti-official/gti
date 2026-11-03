@@ -454,6 +454,12 @@ GTI's current named value packs are by value and reference-pack declarators
 are not yet implemented. Consequently a named move-only `std::string` is not
 copied implicitly: pass `text.view()` to borrow it, or `std::move(text)` to
 transfer it deliberately. A fresh `std::string(...)` can be passed directly.
+Every formatting argument must satisfy `std::formattable`, including every
+element after the first. Formatting, printing, and formatted panic overloads
+check that contract at the public call, rather than reporting a private helper's
+argument position. The recoverable overloads use the same static contract;
+their error result represents formatting or output failures, not a missing
+formatter for a static argument type.
 
 `{}` consumes the next argument. `{0}` selects an explicit zero-based argument
 and may reuse or reorder it; automatic and explicit indexing cannot be mixed.
