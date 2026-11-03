@@ -397,7 +397,11 @@ jobs:
     timeout-minutes: 360
     env:
       GTI_TEST_BACKENDS: llvm
-      GTI_LLVM_SANITIZER_TESTS: '^llvm_'
+      # The LLVM backend's test binaries and its cheap control harnesses. The
+      # execution harnesses compile and run dozens of programs each and cost
+      # 20-30 hours of test time under ASan (measured 2026-11-03), so they stay
+      # native integration gates; see docs/architecture/agent-workflow.md.
+      GTI_LLVM_SANITIZER_TESTS: '^llvm_(admission|atomic_contracts|atomic_wait_service|backend_dependency_controls|backend_foundation|backend_library_boundary|cache_component_mapping|case_context_controls|checked_offsets|checked_ranges|checked_reductions|clang_coexistence|cleanup_composition_execution|coverage_exhaustiveness|debug_info|dispatch_layout|dispatch_plans|embedding_execution|hosted_cleanup_source_contract|instrumentation|link_surface|link_surface_policy|memory_contracts|memory_mechanisms|mutex_contracts|mutex_hierarchy_contracts|native_c_abi|native_c_confined_execution|native_c_counted_input|native_c_outbound_boundary|native_runtime_identity|optimization_pipeline|payload_unique_owner|polymorphic_storage_layout|polymorphic_storage_mechanisms|private_atomics|scalar_context_controls|simd_execution|simd_lowering|target_layout_abi|thread_lifecycle_contracts|tls_contracts)$'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Configure runner resources

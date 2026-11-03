@@ -2216,6 +2216,8 @@ set_tests_properties(llvm_polymorphic_storage_mechanisms PROPERTIES TIMEOUT 120)
 # does not enter the LLVM evidence manifest or public admission/coverage gates.
 add_library(gti_llvm_cleanup_release_oracle STATIC
   llvm_cleanup_release_oracle.cpp)
+# Generated programs link this archive: see gti_program_component.
+gti_program_component(gti_llvm_cleanup_release_oracle)
 add_executable(gti_llvm_cleanup_composition_execution_tests
   llvm_cleanup_composition_execution_tests.cpp)
 add_dependencies(gti_llvm_cleanup_composition_execution_tests
