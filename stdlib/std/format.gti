@@ -1237,42 +1237,42 @@ void runtime_println_impl<Args...>(string_view pattern, Args... args) {
 
 // Checked literals and explicitly requested dynamic patterns share execution.
 export [[track_caller]]
-expected<string, format_errc> try_format<Args...>(format_pattern<Args...> pattern, Args... args) {
+expected<string, format_errc> try_format<formattable Args...>(format_pattern<Args...> pattern, Args... args) {
   return try_runtime_format_impl(pattern.text, args...);
 }
 
 export [[track_caller]]
-string format<Args...>(format_pattern<Args...> pattern, Args... args) {
+string format<formattable Args...>(format_pattern<Args...> pattern, Args... args) {
   return runtime_format_impl(pattern.text, args...);
 }
 
 export [[track_caller]]
-expected<void, format_errc> try_format_to<Args...>(mut string& output, format_pattern<Args...> pattern, Args... args) {
+expected<void, format_errc> try_format_to<formattable Args...>(mut string& output, format_pattern<Args...> pattern, Args... args) {
   return try_runtime_format_to_impl(output, pattern.text, args...);
 }
 
 export [[track_caller]]
-void format_to<Args...>(mut string& output, format_pattern<Args...> pattern, Args... args) {
+void format_to<formattable Args...>(mut string& output, format_pattern<Args...> pattern, Args... args) {
   runtime_format_to_impl(output, pattern.text, args...);
 }
 
 export [[track_caller]]
-expected<void, print_errc> try_print<Args...>(format_pattern<Args...> pattern, Args... args) {
+expected<void, print_errc> try_print<formattable Args...>(format_pattern<Args...> pattern, Args... args) {
   return try_runtime_print_impl(pattern.text, args...);
 }
 
 export [[track_caller]]
-expected<void, print_errc> try_println<Args...>(format_pattern<Args...> pattern, Args... args) {
+expected<void, print_errc> try_println<formattable Args...>(format_pattern<Args...> pattern, Args... args) {
   return try_runtime_println_impl(pattern.text, args...);
 }
 
 export [[track_caller]]
-void print<Args...>(format_pattern<Args...> pattern, Args... args) {
+void print<formattable Args...>(format_pattern<Args...> pattern, Args... args) {
   runtime_print_impl(pattern.text, args...);
 }
 
 export [[track_caller]]
-void println<Args...>(format_pattern<Args...> pattern, Args... args) {
+void println<formattable Args...>(format_pattern<Args...> pattern, Args... args) {
   runtime_println_impl(pattern.text, args...);
 }
 
@@ -1283,8 +1283,7 @@ expected<string, format_errc> try_runtime_format(string_view pattern) {
   return try_runtime_format_impl(pattern);
 }
 export [[track_caller]]
-expected<string, format_errc> try_runtime_format<First, Args...>(string_view pattern, First first, Args... args)
-    requires formattable<First> {
+expected<string, format_errc> try_runtime_format<formattable First, formattable Args...>(string_view pattern, First first, Args... args) {
   return try_runtime_format_impl(pattern, std::move(first), args...);
 }
 
@@ -1294,8 +1293,7 @@ expected<void, format_errc> try_runtime_format_to(mut string& output, string_vie
   return try_runtime_format_to_impl(output, pattern);
 }
 export [[track_caller]]
-expected<void, format_errc> try_runtime_format_to<First, Args...>(mut string& output, string_view pattern, First first, Args... args)
-    requires formattable<First> {
+expected<void, format_errc> try_runtime_format_to<formattable First, formattable Args...>(mut string& output, string_view pattern, First first, Args... args) {
   return try_runtime_format_to_impl(output, pattern, std::move(first), args...);
 }
 
@@ -1305,8 +1303,7 @@ string runtime_format(string_view pattern) {
   return runtime_format_impl(pattern);
 }
 export [[track_caller]]
-string runtime_format<First, Args...>(string_view pattern, First first, Args... args)
-    requires formattable<First> {
+string runtime_format<formattable First, formattable Args...>(string_view pattern, First first, Args... args) {
   return runtime_format_impl(pattern, std::move(first), args...);
 }
 
@@ -1316,8 +1313,7 @@ void runtime_format_to(mut string& output, string_view pattern) {
   runtime_format_to_impl(output, pattern);
 }
 export [[track_caller]]
-void runtime_format_to<First, Args...>(mut string& output, string_view pattern, First first, Args... args)
-    requires formattable<First> {
+void runtime_format_to<formattable First, formattable Args...>(mut string& output, string_view pattern, First first, Args... args) {
   runtime_format_to_impl(output, pattern, std::move(first), args...);
 }
 
@@ -1327,8 +1323,7 @@ expected<void, print_errc> try_runtime_print(string_view pattern) {
   return try_runtime_print_impl(pattern);
 }
 export [[track_caller]]
-expected<void, print_errc> try_runtime_print<First, Args...>(string_view pattern, First first, Args... args)
-    requires formattable<First> {
+expected<void, print_errc> try_runtime_print<formattable First, formattable Args...>(string_view pattern, First first, Args... args) {
   return try_runtime_print_impl(pattern, std::move(first), args...);
 }
 
@@ -1338,8 +1333,7 @@ expected<void, print_errc> try_runtime_println(string_view pattern) {
   return try_runtime_println_impl(pattern);
 }
 export [[track_caller]]
-expected<void, print_errc> try_runtime_println<First, Args...>(string_view pattern, First first, Args... args)
-    requires formattable<First> {
+expected<void, print_errc> try_runtime_println<formattable First, formattable Args...>(string_view pattern, First first, Args... args) {
   return try_runtime_println_impl(pattern, std::move(first), args...);
 }
 
@@ -1349,8 +1343,7 @@ void runtime_print(string_view pattern) {
   runtime_print_impl(pattern);
 }
 export [[track_caller]]
-void runtime_print<First, Args...>(string_view pattern, First first, Args... args)
-    requires formattable<First> {
+void runtime_print<formattable First, formattable Args...>(string_view pattern, First first, Args... args) {
   runtime_print_impl(pattern, std::move(first), args...);
 }
 
@@ -1360,8 +1353,7 @@ void runtime_println(string_view pattern) {
   runtime_println_impl(pattern);
 }
 export [[track_caller]]
-void runtime_println<First, Args...>(string_view pattern, First first, Args... args)
-    requires formattable<First> {
+void runtime_println<formattable First, formattable Args...>(string_view pattern, First first, Args... args) {
   runtime_println_impl(pattern, std::move(first), args...);
 }
 }

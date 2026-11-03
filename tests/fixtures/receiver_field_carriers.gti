@@ -1,0 +1,53 @@
+import std.vector;
+
+mut int drops = 0;
+struct Entry {
+  int& first;
+  mut int& second;
+  Entry(int& first, mut int& second) : first(first), second(second) {}
+};
+struct MutableEntry {
+  mut int& first;
+  mut int& second;
+  MutableEntry(mut int& first, mut int& second) : first(first), second(second) {}
+};
+class Owner {
+public:
+  mut int key = 1;
+  mut int value = 2;
+  Owner() {}
+  ~Owner() { drops++; }
+  Entry entry() mut { return Entry(this.key, this.value); }
+  MutableEntry mutable_entry() mut { return MutableEntry(this.key, this.value); }
+};
+class IndexedOwner {
+  mut std::vector<int> keys = {3};
+  mut std::vector<int> values = {4};
+public:
+  IndexedOwner() {}
+  ~IndexedOwner() { drops++; }
+  Entry entry(std::size_t index) mut {
+    return Entry(this.keys[index], this.values[index]);
+  }
+};
+int main() {
+  {
+    mut Owner owner{};
+    { mut auto entry = owner.entry(); entry.second = entry.first + 6; }
+    if (owner.value != 7 || drops != 0) { return 1; }
+    {
+      mut auto entry = owner.mutable_entry();
+      entry.first = 11;
+      entry.second = 13;
+    }
+    if (owner.key != 11 || owner.value != 13 || drops != 0) { return 2; }
+  }
+  if (drops != 1) { return 3; }
+  {
+    mut IndexedOwner owner{};
+    { mut auto entry = owner.entry(std::size_t(0)); entry.second = entry.first + 7; }
+    { auto entry = owner.entry(std::size_t(0)); if (entry.second != 10) { return 4; } }
+    if (drops != 1) { return 5; }
+  }
+  return drops == 2 ? 0 : 6;
+}

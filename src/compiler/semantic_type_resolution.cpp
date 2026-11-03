@@ -5737,23 +5737,51 @@ auto SemanticVisitor::Impl::isParameterDerivedBorrow(
     if (symbol != nullptr && symbol->parameterDeclaration == &parameter) {
       return true;
     }
+    // A local scalar carrier can have a complete retained dependency just as
+    // a call result can. Do not peel it into an initializer: that would discard
+    // reassignment or alternative-origin facts already resolved by loan flow.
+    if (const auto complete = completeBorrowDependencySet(expression);
+        complete && complete->possibleAlternatives.empty() &&
+        !complete->dependencies.empty() &&
+        std::all_of(complete->dependencies.begin(),
+                    complete->dependencies.end(), [](const auto &dependency) {
+                      return dependency.designatedFields.empty() &&
+                             dependency.conditions.empty();
+                    })) {
+      const auto *binding = semanticModel.findBinding(parameter);
+      return binding != nullptr && binding->symbol != 0 &&
+             complete->possibleAlternatives.empty() &&
+             !complete->dependencies.empty() &&
+             std::all_of(complete->dependencies.begin(),
+                         complete->dependencies.end(),
+                         [&](const auto &dependency) {
+                           return dependency.designatedFields.empty() &&
+                                  dependency.conditions.empty() &&
+                                  !dependency.place.receiver &&
+                                  dependency.place.root == binding->symbol;
+                         });
+    }
     if (const ExprPtr *source = storedBorrowSource(expression)) {
       return isParameterDerivedBorrow(*source, parameter, visiting);
     }
-    // A reference binding with no initializer, such as an `auto&` payload
-    // pattern, names its referent only through its retained loan. A loan
-    // whose one origin place is rooted at the parameter's referent borrows
-    // storage inside it, just as a receiver-rooted loan derives from `this`.
-    // A selected stored reference names an external owner instead; its
-    // complete dependency set is proved before this structural walk.
+    // Some locals name their owner only through the retained loan: a
+    // reference pattern has no initializer, and dynamic scalar text has
+    // expression-dependent borrowed state rather than a borrowed nominal
+    // type. Both retain one exact unconditional origin here. A selected
+    // stored field or composite dependency needs its separate full proof.
     const auto *binding = semanticModel.findBinding(parameter);
+    const auto *value = semanticModel.findExpression(*expression);
     const SemanticLoanInfo *loan =
-        symbol == nullptr || symbol->type.kind != SemanticType::Reference ||
-                symbol->retainedLoan == 0
+        symbol == nullptr || symbol->retainedLoan == 0
             ? nullptr
             : semanticModel.findLoan(symbol->retainedLoan);
-    return binding != nullptr && binding->symbol != 0 && loan != nullptr &&
-           loan->kind == SemanticLoanKind::Reference &&
+    const bool scalarLoan =
+        loan != nullptr && symbol != nullptr &&
+        ((symbol->type.kind == SemanticType::Reference &&
+          loan->kind == SemanticLoanKind::Reference) ||
+         (value != nullptr && value->traits.containsBorrowedState &&
+          loan->kind == SemanticLoanKind::StoredValue));
+    return binding != nullptr && binding->symbol != 0 && scalarLoan &&
            !loan->referenceSelection && loan->designatedFields.empty() &&
            loan->conditions.empty() && loan->additionalDependencies.empty() &&
            !loan->place.receiver && loan->place.root == binding->symbol;
@@ -5830,6 +5858,24 @@ auto SemanticVisitor::Impl::isReceiverDerivedBorrow(
       // an explicit this.field projection. Keep that resolved provenance
       // while leaving a same-spelled local or parameter independent.
       return true;
+    }
+    if (const auto complete = completeBorrowDependencySet(expression);
+        complete && complete->possibleAlternatives.empty() &&
+        !complete->dependencies.empty() &&
+        std::all_of(complete->dependencies.begin(),
+                    complete->dependencies.end(), [](const auto &dependency) {
+                      return dependency.designatedFields.empty() &&
+                             dependency.conditions.empty();
+                    })) {
+      return complete->possibleAlternatives.empty() &&
+             !complete->dependencies.empty() &&
+             std::all_of(complete->dependencies.begin(),
+                         complete->dependencies.end(),
+                         [](const auto &dependency) {
+                           return dependency.designatedFields.empty() &&
+                                  dependency.conditions.empty() &&
+                                  dependency.place.receiver;
+                         });
     }
     if (const ExprPtr *source = storedBorrowSource(expression)) {
       return isReceiverDerivedBorrow(*source, visiting);
@@ -6725,7 +6771,9 @@ auto SemanticVisitor::Impl::beginTypeParameterScope(
         !invalidConstraintSet(parameter.constraints)) {
       requirements.push_back(
           {.conceptId = parameter.conceptId,
-           .arguments = {SemanticType::typeParameter(parameter.id)}});
+           .arguments = {parameter.pack
+                             ? SemanticType::typePack(parameter.id)
+                             : SemanticType::typeParameter(parameter.id)}});
     }
     if (parameter.pack) {
       packs.emplace(parameter.name.lexeme, parameter.id);

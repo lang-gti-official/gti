@@ -247,8 +247,11 @@ not establish it. The constant executor currently admits read-only methods and
 explicit constructor field initialization. Staging still excludes destructor
 execution, active cleanup, bases, polymorphism, compiler-capability owners, and
 generic packs.
-It produces no program-initialization or hosted-entry plan and
-deliberately omits the whole-program analysis seal. Its output can feed the
+It produces no program-initialization or hosted-entry plan and deliberately
+omits the whole-program seal's active-statement inventory. It retains the
+semantic program snapshot so declaration witnesses, including tracked intrinsic
+contracts, remain bound to the exact analysis during staged MIR verification.
+Its output can feed the
 ordinary failure-metadata builder and MIR lowerer, but cannot pass normal
 whole-program plan verification or be published to the backend. Normal
 `lower` retains its original seal and program-plan checks.

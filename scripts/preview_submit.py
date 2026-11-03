@@ -56,13 +56,20 @@ class Submissions:
             state.update(phase="interrupted", note="Inspect the retained worker log/remote run before resubmitting")
         return state
 
-    def submit(self, task, checks):
+    def submit(self, task, checks, refresh=None):
         with self.flow.lock():
             record = self.flow.load(task)
             if not record.get("pr"):
                 raise WorkflowError("Checkpoint the completed task and open its PR before optional preview submission")
             pr = self.flow.pull(record)
-            if pr["state"] != "open":
+            if refresh is not None:
+                if not isinstance(refresh, str) or not refresh.strip():
+                    raise WorkflowError("Refreshing accepted checks requires an explicit reason")
+                if not pr.get("merged") or not self.flow.ancestor(pr["head"]["sha"], self.flow.fetch()):
+                    raise WorkflowError("Refresh requires the task's merged head in current main")
+                if record.get("verified", {}).get("head") != pr["head"]["sha"]:
+                    raise WorkflowError("Refresh requires focused verification of the merged head")
+            elif pr["state"] != "open":
                 raise WorkflowError("Only an open task PR can be submitted to preview")
             history = sorted((row for row in (json.loads(path.read_text())
                               for path in self.directory.glob("*/state.json")) if row["task"] == task),
@@ -73,7 +80,13 @@ class Submissions:
             for prior in history:
                 observed = self.status(prior["id"])
                 if observed["phase"] in ACTIVE:
-                    if prior["head"] == pr["head"]["sha"] and prior["tests"] == checks:
+                    # A pre-merge admission cannot run now: its detached worker
+                    # will mark it superseded when it reaches the queue. Retain
+                    # that record/process while allowing the explicit refresh.
+                    if refresh is not None and prior.get("refresh") is None:
+                        continue
+                    if (prior["head"] == pr["head"]["sha"] and prior["tests"] == checks
+                            and prior.get("refresh") == refresh):
                         return observed
                     raise WorkflowError("This task already has a preview submission running; its normal PR can continue")
             identity = uuid.uuid4().hex
@@ -89,6 +102,8 @@ class Submissions:
                      "head": pr["head"]["sha"], "tests": checks, "created": self.flow.now(),
                      "phase": "queued", "attempts": [], "log": str(root / "worker.log"),
                      "note": "Optional preview only; continue the normal PR workflow without waiting"}
+            if refresh is not None:
+                state["refresh"] = refresh
             self.save(state)
             try:
                 with (root / "worker.log").open("a") as output:
@@ -134,7 +149,8 @@ class Submissions:
                 self.save(state)
                 for attempt in range(2):
                     pr = self.flow.pull(state["task_record"])
-                    if pr["state"] != "open" or pr["head"]["sha"] != state["head"]:
+                    accepted_refresh = state.get("refresh") is not None and pr.get("merged")
+                    if (not accepted_refresh and pr["state"] != "open") or pr["head"]["sha"] != state["head"]:
                         state.update(phase="superseded", note="Original PR closed or advanced; no different head was admitted")
                         break
                     # Sibling of the primary checkout, never inside its source
@@ -142,7 +158,10 @@ class Submissions:
                     root = self.flow.primary.parent / ("gti-preview-" + identity + "-" + str(attempt))
                     state["attempts"].append(str(root))
                     self.save(state)
-                    candidate = self.preview.prepare(state["task"], root, state["tests"], selection=state)
+                    options = {"selection": state}
+                    if state.get("refresh") is not None:
+                        options["refresh"] = state["refresh"]
+                    candidate = self.preview.prepare(state["task"], root, state["tests"], **options)
                     state["candidate"] = candidate["id"]
                     self.save(state)
                     try:

@@ -13,7 +13,10 @@ Status: Current infrastructure and conventions.
 primary span; related information names the selected immediate declaration and
 the failing operation, with the staged call trace when available. Runtime-value
 inputs, checked arithmetic/conversion failure and evaluator resource limits
-retain distinct explanations. No automatic edit changes an ordinary API into
+retain distinct explanations. When evaluating an immediate argument fails,
+its explanation identifies the argument and immediate function, and a nested
+non-constexpr call names that inner function. This does not describe the
+selected immediate function itself as non-constexpr. No automatic edit changes an ordinary API into
 an immediate one or replaces a runtime argument. These records are shared by
 CLI and LSP publication, including unsaved-buffer recovery.
 The same diagnostic covers a failed standalone immediate `void` completion or
@@ -347,7 +350,11 @@ diagnostic storage.
 Failed overload lookup distinguishes argument-count failures from exact-type
 and reference/ownership requirements. A count mismatch does not suggest a cast;
 defaults and parameter packs use the resolver's own argument-shape predicate.
-Named call failures highlight the callee. Missing overload declarations use
+Named call failures highlight the callee. If a unique otherwise matching
+overload is excluded by a deleted copy, `GTI-S2018` instead identifies the
+actual argument and explains explicit ownership transfer, including elements
+of a by-value pack. Other type, constraint and ambiguous-candidate failures
+retain their own resolver diagnostics. Missing overload declarations use
 the existing include discovery and frontend reanalysis, offering an include
 only when it resolves to that file without introducing errors. No standard
 library name determines this advice. Operator reference mismatches relate the

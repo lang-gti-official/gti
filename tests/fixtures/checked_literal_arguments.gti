@@ -20,7 +20,7 @@ struct Milliseconds {
 };
 int wait_time(Milliseconds delay, int payload) { return delay.value + payload; }
 int forward(Milliseconds delay, int payload) { return wait_time(delay, payload); }
-std::string log_text<Args...>(std::format_pattern<Args...> pattern, Args... args) {
+std::string log_text<std::formattable Args...>(std::format_pattern<Args...> pattern, Args... args) {
   return std::format(pattern, args...);
 }
 struct Token { int value; };

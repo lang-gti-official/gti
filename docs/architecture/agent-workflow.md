@@ -922,6 +922,17 @@ In full integration, production packaging builds the pinned bundled LLVM/Clang
 release configuration on both platforms and validates the staged toolchain
 before archiving it. The integration shards reuse its object cache, with the
 same bundled release configuration; the cache never substitutes for validation.
+Compiler object caches use a 2 GB local ccache limit per job, separate from
+GitHub's repository-wide cache quota and the runner's filesystem capacity.
+The main-branch warmup builds only `gti` (plus `gti_lsp` for native profiles),
+using CI's identical compile configuration; it does not link every sanitizer
+test executable. It trims restored caches before compiling and removes its
+scratch build tree before cache archival, leaving room for the upload archive,
+and saves only when that build ran to completion. Validation runs (`ci.yml`,
+`full-validation.yml`) only restore the shared main caches; `cache.yml` and
+`llvm-prebuilt.yml` are the only writers. Cache misses merely recompile
+objects: they never relax validation or artifact admission.
+
 `validation_checks.py shard` builds the optimized tree, takes the
 complete CTest inventory, and runs its share of a deterministic partition:
 longest first onto the lightest shard, weighted by `tests/ci_test_durations.json`
@@ -1024,7 +1035,10 @@ and comment to every open, non-draft PR on `main` that no longer merges
 cleanly, whichever path it was on: the merge queue drops a conflicting entry
 without a run, a status or a comment, and merge-when-ready never fires, so a
 PR that waited while `main` moved otherwise vanishes from every pipeline (on
-2026-11-03, 13 of 31 open PRs). The census baselines
+2026-11-03, 13 of 31 open PRs). An open rollup that no longer merges with
+`main` is closed the same way, with a comment, so its members return to the
+pool and the next `compose` rebuilds from current heads instead of leaving
+them "busy" behind a rollup the queue would drop without a verdict. The census baselines
 (`tests/mir_census_baseline.json`, `tests/lowered_program_census_baseline.json`)
 store per-example counts only, never totals, and the LLVM readiness provider
 inventories hash example and stdlib sources rather than those manifest files,
@@ -1125,6 +1139,23 @@ deduplicated. A different live submission for the same task is refused, not
 silently replaced. `preview status [SUBMISSION]` reports progress, or lists
 submissions without contacting the remote build host. Submission success means
 queued, not preview-validated or published.
+
+When an already included feature has a newer, focused-verified head accepted
+into main and its owning test names changed, use `preview refresh my-task
+--tests replacement_check --reason 'Explain the accepted migration'`. This is
+an explicit detached refresh of that same task PR, not admission of a closed,
+unmerged PR. It requires the merged head in current main, retains the previous
+head/tests/contributions in the feature's append-only `history`, and records
+the replacement checks, accepted main identity and reason. The old source must
+be an ancestor of the accepted head. Checks cannot be changed again without a
+new accepted head. The accepted head enters preview through the candidate's
+main merge, so the feature counts as admitted again: the combined source
+still rebuilds and passes the replacement checks (`preview_examples.py
+--pending` selects them until that preview is published) and example admission
+before publication; neither test failures nor missing registration are
+ignored. A pre-merge submission waiting in the
+queue retains its record and becomes superseded; it does not prevent this
+explicit accepted-head refresh. Other features' records are unchanged.
 
 The worker copies its small tooling closure outside the task worktree so normal
 task cleanup is safe. A separate single-slot preview semaphore serializes

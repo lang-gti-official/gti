@@ -1507,7 +1507,11 @@ value algorithms require the corresponding element capabilities.
 AVL and hash dictionaries. They support lookup, insert/emplace, erase, clear,
 size/empty, swap and read traversal. Ordered sets expose bounds; unordered sets
 expose reserve, rehash and load-factor policy. Custom comparators/hash/equality
-objects are ordinary source values and swap with the container. Insertion
+objects are ordinary source values and swap with the container. `set::swap`
+requires a relocatable comparator; `unordered_set::swap` requires relocatable
+hash and equality policies. A policy containing stored references can still
+construct and operate a container, but fails the swap contract at the caller.
+Insertion
 returns a `pair<iterator, bool>` whose checked exclusive owner loan lasts for
 the result's lifetime; its iterator still cannot mutate keys. Ordinary
 traversal holds a shared owner loan. As with existing containers, any live loan

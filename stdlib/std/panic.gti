@@ -21,7 +21,7 @@ export namespace std {
   /// Formats a terminal message. A format error uses a bounded literal fallback
   /// rather than recursively attempting to format another panic message.
   [[noreturn, track_caller]]
-  void panic<Args...>(format_pattern<Args...> pattern, Args... args) {
+  void panic<formattable Args...>(format_pattern<Args...> pattern, Args... args) {
     mut expected<std::string, std::format_errc> message =
         std::try_format(pattern, args...);
     if (message) {
@@ -38,8 +38,7 @@ export namespace std {
     panic("Panic message formatting failed: unknown format error");
   }
   [[noreturn, track_caller]]
-  void runtime_panic<First, Args...>(string_view pattern, First first, Args... args)
-      requires formattable<First> {
+  void runtime_panic<formattable First, formattable Args...>(string_view pattern, First first, Args... args) {
     mut expected<std::string, std::format_errc> message =
         std::try_runtime_format(pattern, std::move(first), args...);
     if (message) {

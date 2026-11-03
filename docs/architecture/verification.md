@@ -8154,6 +8154,9 @@ whole-program HIR exists, covering array extents, static assertions, and
 discarded-branch exclusion. Completed-body closure tests reject missing roots
 and callees; ordinary failure-metadata/MIR verification still succeeds, while
 whole-program backend publication rejects the intentionally unsealed closure.
+Tracked-intrinsic staging also retains the exact semantic snapshot, rejects
+foreign declaration witnesses and erased snapshot identity, and proves that
+this identity alone never permits whole-program backend publication.
 Required-expression arithmetic failures retain their semantic diagnostic code
 and original source operator. Existing enum and returned-view evaluation stays
 covered while those families await MIR-profile migration.
@@ -9499,6 +9502,8 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `typed_differential_smoke` | one fixed real-compiler differential batch comparing original/transformed GTI, the independent evaluator, and independent C++ at O0/O3, plus injected evaluator/reference/GTI drift and retained evidence |
 | `feature_interaction_model` | constrained pairwise/selected-triple and full three-way coverage, seeded typed source generation, independent value/effect/cleanup expectations, metamorphic renaming, failure classifiers, retained evidence, and predicate-preserving bounded reduction |
 | `feature_interaction_smoke` | three fixed interaction programs through the real optimized compiler at C++20/C++23 and O0/O3, original/renamed variants, repeated execution, exact destructor/call/output checks, and negative ownership admission controls |
+| `stdlib_package_runtime` | copy the real `stdlib/tests` package into isolated directories and run its module graph plus declared native C++ source with LLVM/C++ in dev/release profiles; require the complete numeric/foundation success output |
+| `stdlib_api_contracts` | execute stateful set-policy swaps on LLVM/C++ at O0/O3, reject borrowed comparator/hash/equality policies at the public swap call, and reject unformattable first/middle/last arguments across all formatting/printing/panic overloads at the caller |
 | `stdlib_surface_manifest` | complete stdlib-source fingerprints and executable/scaffold/unsupported classification; injected missing-source, stale-source, missing-case, and wrong-case-kind rejection |
 | `stdlib_surface` | every currently classified executable stdlib entry through the production compiler/native-driver path at O0/O3 with exact exit/stdout/stderr, including counted I/O create/write/seek/chunk-read/append/close, standard streams, and strict Base64/hexadecimal encoding and decoding over all byte values, plus bounded expected diagnostics for unsupported surfaces. Each native build has a 300-second limit unless its case records a longer one, at most 900 seconds, with a `build_timeout_reason`; no case currently does |
 | `stdlib_include_sweep` | every shipped `std` module independently reaches C++ emission from an import-only source unit, including unused generic declarations |
