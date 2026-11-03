@@ -28,6 +28,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import tempfile
 
 from test_throughput_registration_test import inventory
 
@@ -111,10 +112,23 @@ def cpp_only(repository, name):
     return validation_checks.cpp_only(name)
 
 
+SELF = pathlib.Path(__file__).resolve()
+
+
 def harness_of(test):
+    """The harness file a registration runs, whether it receives the compiler, and its argv.
+
+    Only a file named `gti` counts as the compiler: on CI the checkout itself
+    is a directory named `gti`, which this test receives as its repository
+    argument, and treating it as the compiler made the test list its own
+    modes recursively until it timed out (CI #447).
+    """
     command = test.get("command", [])
     harness = next((pathlib.Path(arg) for arg in command if arg.endswith("_test.py")), None)
-    compiler = any(pathlib.Path(arg).name in ("gti", "gti.exe") for arg in command)
+    if harness is not None and harness.resolve() == SELF:
+        return None, False, command
+    compiler = any(pathlib.Path(arg).name in ("gti", "gti.exe") and not pathlib.Path(arg).is_dir()
+                   for arg in command)
     return harness, compiler, command
 
 
@@ -135,7 +149,21 @@ def list_modes(harness, command):
     return rows
 
 
+def check_harness_of():
+    with tempfile.TemporaryDirectory() as directory:
+        checkout = pathlib.Path(directory) / "gti"
+        checkout.mkdir()
+        own = {"command": [sys.executable, str(SELF), str(checkout), str(checkout / "build")]}
+        assert harness_of(own) == (None, False, own["command"]), "the coverage test must never list itself"
+        other = {"command": [sys.executable, str(checkout / "x_test.py"), str(checkout), str(checkout / "build/gti")]}
+        harness, compiler, _ = harness_of(other)
+        assert harness == checkout / "x_test.py" and compiler, "a compiler file beside a directory named gti"
+        directory_only = {"command": [sys.executable, str(checkout / "x_test.py"), str(checkout)]}
+        assert harness_of(directory_only)[1] is False, "a directory named gti is not the compiler"
+
+
 def main():
+    check_harness_of()
     repository = pathlib.Path(sys.argv[1]).resolve()
     build = pathlib.Path(sys.argv[2]).resolve()
     tests = inventory(build)
@@ -157,7 +185,7 @@ def main():
             counts["cpp-only"] += 1
             continue
         text = harness.read_text(errors="replace")
-        if "from lambda_pack_invocation_runtime_test import" in text:
+        if re.search(r"^from lambda_pack_invocation_runtime_test import", text, re.M):
             if harness in seen:
                 continue
             seen.add(harness)
