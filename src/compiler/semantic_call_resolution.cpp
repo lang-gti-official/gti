@@ -1124,10 +1124,6 @@ auto SemanticVisitor::Impl::firstConstraintFailure(
           failure->application = nullptr;
           failure->parameterId =
               failure->applicationArgumentIndex ? parameter.id : 0;
-          if (!failure->alternatives.empty()) {
-            failure->parameterId = parameter.id;
-            failure->argument = arguments[argumentIndex];
-          }
           if (parameter.constraintName && !failure->context.empty()) {
             failure->context.front().location =
                 parameter.constraintName->last();
@@ -2181,34 +2177,51 @@ auto SemanticVisitor::Impl::evaluateConceptApplication(
             firstRequirementFailure(expanded)) {
       // Follow the declared parameter map, not coincidentally equal concrete
       // types. A relationship may reorder parameters or mention a closed type.
-      std::optional<std::size_t> outerArgument;
-      if (failure->applicationArgumentIndex) {
+      const auto sourceArgument =
+          [&](const auto &self,
+              const ConstraintFailure &cause) -> std::optional<std::size_t> {
+        // A disjunction can blame one source argument only when every failed
+        // alternative maps to that same declared input. Closed requirements
+        // and relationships between different inputs keep call-site blame.
+        if (!cause.applicationArgumentIndex && !cause.alternatives.empty()) {
+          std::optional<std::size_t> common;
+          for (const ConstraintFailure &alternative : cause.alternatives) {
+            const auto origin = self(self, alternative);
+            if (!origin || (common && common != origin))
+              return std::nullopt;
+            common = origin;
+          }
+          return common;
+        }
+        if (!cause.applicationArgumentIndex)
+          return std::nullopt;
         const auto pattern = std::find_if(
             conceptInfo.definitionRequirements.begin(),
-            conceptInfo.definitionRequirements.end(), [&](const auto &item) {
-              return item.syntax == failure->application;
-            });
-        if (pattern != conceptInfo.definitionRequirements.end() &&
-            *failure->applicationArgumentIndex < pattern->arguments.size()) {
-          outerArgument =
-              pattern->arguments[*failure->applicationArgumentIndex].parameter;
-          if (!outerArgument) {
-            const auto &compound =
-                pattern->arguments[*failure->applicationArgumentIndex].concrete;
-            for (std::size_t index = 0; index < conceptInfo.parameterIds.size();
-                 ++index) {
-              if (!containsGenericParameter(
-                      compound, conceptInfo.parameterIds[index], false))
-                continue;
-              if (outerArgument) {
-                outerArgument.reset();
-                break;
-              }
-              outerArgument = index;
-            }
-          }
+            conceptInfo.definitionRequirements.end(),
+            [&](const auto &item) { return item.syntax == cause.application; });
+        if (pattern == conceptInfo.definitionRequirements.end() ||
+            *cause.applicationArgumentIndex >= pattern->arguments.size())
+          return std::nullopt;
+        const auto &argument =
+            pattern->arguments[*cause.applicationArgumentIndex];
+        if (argument.parameter)
+          return argument.parameter;
+        std::optional<std::size_t> origin;
+        for (std::size_t index = 0; index < conceptInfo.parameterIds.size();
+             ++index) {
+          if (!containsGenericParameter(argument.concrete,
+                                        conceptInfo.parameterIds[index], false))
+            continue;
+          if (origin)
+            return std::nullopt;
+          origin = index;
         }
-      }
+        return origin;
+      };
+      const auto outerArgument = sourceArgument(sourceArgument, *failure);
+      if (!failure->alternatives.empty() && outerArgument &&
+          *outerArgument < requirement.arguments.size())
+        failure->argument = requirement.arguments[*outerArgument];
       failure->applicationArgumentIndex = outerArgument;
       if (!conceptInfo.compilerPrivate) {
         failure->context.insert(

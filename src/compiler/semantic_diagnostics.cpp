@@ -321,7 +321,7 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
     }
   };
   const auto publish = [&](Diagnostic diagnostic) {
-    if ((failure.expressionFailure || !failure.alternatives.empty()) &&
+    if (failure.expressionFailure && failure.alternatives.empty() &&
         !failure.context.empty()) {
       diagnostic.message =
           (failure.applicationArgumentIndex
@@ -335,26 +335,37 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
       std::string prefix =
           "Argument " + std::to_string(*failure.callArgumentIndex + 1) +
           " has type '" + typeSpelling(failure.callArgumentType) + "'";
-      prefix +=
-          failure.callArgumentType == failure.argument
-              ? ", which "
-              : "; its inferred type '" + typeSpelling(failure.argument) + "' ";
-      if (!failure.context.empty()) {
-        diagnostic.message = prefix + "does not satisfy concept '" +
-                             applicationSpelling(failure.context.front()) +
-                             "'.";
-      } else if (failure.structural == StructuralConstraintKind::ReadMember) {
-        diagnostic.message = prefix + "does not satisfy required member '" +
-                             failure.memberName + "()'.";
+      if (!failure.alternatives.empty()) {
+        diagnostic.message += " " + prefix;
+        if (failure.callArgumentType != failure.argument)
+          diagnostic.message +=
+              "; its inferred type is '" + typeSpelling(failure.argument) + "'";
+        diagnostic.message += ".";
       } else {
-        diagnostic.message =
-            prefix + "does not satisfy generic constraint '" +
-            (failure.constraintName
-                 ? semantic_spelling::pathSpelling(*failure.constraintName)
-                 : "the declared constraint") +
-            "'.";
+        prefix += failure.callArgumentType == failure.argument
+                      ? ", which "
+                      : "; its inferred type '" +
+                            typeSpelling(failure.argument) + "' ";
+        if (!failure.context.empty()) {
+          diagnostic.message = prefix + "does not satisfy concept '" +
+                               applicationSpelling(failure.context.front()) +
+                               "'.";
+        } else if (failure.structural == StructuralConstraintKind::ReadMember) {
+          diagnostic.message = prefix + "does not satisfy required member '" +
+                               failure.memberName + "()'.";
+        } else {
+          diagnostic.message =
+              prefix + "does not satisfy generic constraint '" +
+              (failure.constraintName
+                   ? semantic_spelling::pathSpelling(*failure.constraintName)
+                   : "the declared constraint") +
+              "'.";
+        }
       }
     }
+    if (!failure.alternatives.empty() && !failure.context.empty())
+      diagnostic.message += " Required application '" +
+                            applicationSpelling(failure.context.front()) + "'.";
     for (const auto &context : failure.context) {
       diagnostic.related.push_back(
           {tokenSpan(context.location),
