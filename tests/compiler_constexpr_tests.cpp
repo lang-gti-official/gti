@@ -6267,7 +6267,7 @@ int main() { return run(2) - 21; }
   const auto temporaryTier =
       lang::Frontend().analyze("checked-temporary-tier.gti", R"(
 struct Value { int n; constexpr Value(int n):n(n){} };
-struct Checked { int n; implicit consteval Checked(Value value):n(1 / 0){} };
+struct Checked { int n; implicit consteval Checked(Value value):n(1 / (value.n == 3 ? 0 : 1)){} };
 int choose(Value& value) { return value.n; }
 int choose(Checked value) { return value.n; }
 int main() { return choose(Value(3)) - 3; }

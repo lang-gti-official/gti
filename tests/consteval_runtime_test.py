@@ -80,6 +80,13 @@ def main() -> int:
             if name == "runtime":
                 assert "std::runtime_format" in rejected.stderr, rejected
 
+        for level in ("O0", "O3"):
+            source = root / "tests/fixtures/checked_format_panic.gti"
+            binary = compile_case((source, "llvm", level))
+            result = subprocess.run([str(binary), "panic"], capture_output=True, text=True, timeout=30)
+            assert result.returncode == 70 and result.stdout == "cleanup\n", result
+            assert 'checked_format_panic.gti:11: runtime error[GTI-R0017]: panic: "value=42"' in result.stderr, result
+
         rejected_payloads = {
             "runtime": """
 enum Choice { empty, value(int payload) };

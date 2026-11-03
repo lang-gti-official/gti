@@ -34,6 +34,20 @@ public:
     return numeric.format(token.value, output, spec);
   }
 };
+mut int dropped = 0;
+struct OwnedToken {
+  std::string text;
+  OwnedToken(std::string value) : text(std::move(value)) {}
+  ~OwnedToken() { dropped++; }
+};
+class std::formatter<OwnedToken> {
+public:
+  formatter() = default;
+  expected<void, std::format_errc> format(OwnedToken& token, mut std::string& output, std::format_spec& spec) {
+    output.append(token.text.view());
+    return;
+  }
+};
 mut int evaluations = 0;
 int next() { evaluations++; return 12; }
 std::string format_int(std::format_pattern<int> pattern, int value) { return std::format(pattern, value); }
@@ -56,6 +70,14 @@ int main() {
   if (empty != "{literal}") { return 8; }
   auto callback = format_int;
   if (callback("{}", 42) != "42") { return 9; }
+  mut std::string appended = std::string("prefix");
+  std::format_to(appended, "={}", 1);
+  auto added = std::try_format_to(appended, "/{}", 2);
+  auto formatted = std::try_format("{}", 3);
+  auto printed = std::try_print("{}", "");
+  if (!added || !formatted || !printed || appended != "prefix=1/2" || formatted.value() != "3") { return 10; }
+  auto owned = log_text("{} {}", std::string("text"), OwnedToken(std::string("owned")));
+  if (owned != "text owned" || dropped != 1) { return 11; }
   std::println("{}", 42);
   return 0;
 }

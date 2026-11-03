@@ -1285,7 +1285,7 @@ expected<string, format_errc> try_runtime_format(string_view pattern) {
 export [[track_caller]]
 expected<string, format_errc> try_runtime_format<First, Args...>(string_view pattern, First first, Args... args)
     requires formattable<First> {
-  return try_runtime_format_impl(pattern, first, args...);
+  return try_runtime_format_impl(pattern, std::move(first), args...);
 }
 
 /// Runtime validation; dynamic pattern errors keep their recoverable category.
@@ -1296,7 +1296,7 @@ expected<void, format_errc> try_runtime_format_to(mut string& output, string_vie
 export [[track_caller]]
 expected<void, format_errc> try_runtime_format_to<First, Args...>(mut string& output, string_view pattern, First first, Args... args)
     requires formattable<First> {
-  return try_runtime_format_to_impl(output, pattern, first, args...);
+  return try_runtime_format_to_impl(output, pattern, std::move(first), args...);
 }
 
 /// Runtime validation; dynamic pattern errors keep their recoverable category.
@@ -1307,7 +1307,7 @@ string runtime_format(string_view pattern) {
 export [[track_caller]]
 string runtime_format<First, Args...>(string_view pattern, First first, Args... args)
     requires formattable<First> {
-  return runtime_format_impl(pattern, first, args...);
+  return runtime_format_impl(pattern, std::move(first), args...);
 }
 
 /// Runtime validation; dynamic pattern errors keep their recoverable category.
@@ -1318,7 +1318,7 @@ void runtime_format_to(mut string& output, string_view pattern) {
 export [[track_caller]]
 void runtime_format_to<First, Args...>(mut string& output, string_view pattern, First first, Args... args)
     requires formattable<First> {
-  runtime_format_to_impl(output, pattern, first, args...);
+  runtime_format_to_impl(output, pattern, std::move(first), args...);
 }
 
 /// Runtime validation; dynamic pattern errors keep their recoverable category.
@@ -1329,7 +1329,7 @@ expected<void, print_errc> try_runtime_print(string_view pattern) {
 export [[track_caller]]
 expected<void, print_errc> try_runtime_print<First, Args...>(string_view pattern, First first, Args... args)
     requires formattable<First> {
-  return try_runtime_print_impl(pattern, first, args...);
+  return try_runtime_print_impl(pattern, std::move(first), args...);
 }
 
 /// Runtime validation; dynamic pattern errors keep their recoverable category.
@@ -1340,7 +1340,7 @@ expected<void, print_errc> try_runtime_println(string_view pattern) {
 export [[track_caller]]
 expected<void, print_errc> try_runtime_println<First, Args...>(string_view pattern, First first, Args... args)
     requires formattable<First> {
-  return try_runtime_println_impl(pattern, first, args...);
+  return try_runtime_println_impl(pattern, std::move(first), args...);
 }
 
 /// Runtime validation; dynamic pattern errors keep their recoverable category.
@@ -1351,7 +1351,7 @@ void runtime_print(string_view pattern) {
 export [[track_caller]]
 void runtime_print<First, Args...>(string_view pattern, First first, Args... args)
     requires formattable<First> {
-  runtime_print_impl(pattern, first, args...);
+  runtime_print_impl(pattern, std::move(first), args...);
 }
 
 /// Runtime validation; dynamic pattern errors keep their recoverable category.
@@ -1362,6 +1362,6 @@ void runtime_println(string_view pattern) {
 export [[track_caller]]
 void runtime_println<First, Args...>(string_view pattern, First first, Args... args)
     requires formattable<First> {
-  runtime_println_impl(pattern, first, args...);
+  runtime_println_impl(pattern, std::move(first), args...);
 }
 }

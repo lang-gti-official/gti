@@ -203,7 +203,8 @@ auto SemanticVisitor::Impl::reportImmediateEvaluationFailure(
              : "Consteval invocation must be evaluated during compilation.",
          "GTI-S2057");
   auto &diagnostic = diagnostics.back();
-  if (!result.detail.empty() && result.failure != ConstantEvaluationFailure::LibraryFailure)
+  if (!result.detail.empty() &&
+      result.failure != ConstantEvaluationFailure::LibraryFailure)
     diagnostic.hints.push_back(result.detail);
   switch (result.failure) {
   case ConstantEvaluationFailure::ResourceLimit:
