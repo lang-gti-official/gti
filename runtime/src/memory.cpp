@@ -32,9 +32,6 @@ extern "C" void gti_rt_aligned_free_v1(void *address) {
   _aligned_free(address);
 }
 #else
-extern "C" void *gti_rt_malloc_v1(std::uint64_t bytes) {
-  return std::malloc(static_cast<std::size_t>(bytes));
-}
 extern "C" std::uint64_t gti_rt_posix_pointer_size_v1() {
   return sizeof(void *);
 }

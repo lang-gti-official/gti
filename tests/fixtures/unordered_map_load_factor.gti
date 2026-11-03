@@ -21,25 +21,5 @@ int main() {
   values.max_load_factor(0.125);
   [[discard]] values.insert(100, 100);
   if (values.bucket_count() < 808 || values.load_factor() > 0.125) { return 7; }
-  // The unit-ratio path and the general fractional path must retain the
-  // same ceil-based growth boundary, including after the policy changes.
-  mut std::unordered_map<int, int> unit{};
-  unit.reserve(std::size_t(32));
-  if (unit.bucket_count() != 32) { return 8; }
-  for (mut int key = 0; key < 32; key++) {
-    [[discard]] unit.insert(key, key);
-    if (unit.bucket_count() != 32) { return 9; }
-  }
-  [[discard]] unit.insert(32, 32);
-  if (unit.bucket_count() != 64) { return 10; }
-  unit.max_load_factor(0.75);
-  unit.reserve(std::size_t(49));
-  if (unit.bucket_count() != 66) { return 11; }
-  unit.max_load_factor(1.0);
-  unit.rehash(std::size_t(0));
-  if (unit.bucket_count() != 33) { return 12; }
-  for (mut int key = 0; key < 33; key++) {
-    if (unit.at(key) != key) { return 13; }
-  }
   return 0;
 }

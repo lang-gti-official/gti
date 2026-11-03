@@ -39,7 +39,7 @@ int main(int argc, std::vector<std::string> argv) {
   }
   for (mut std::size_t index = 0; index <= source.size(); index++) {
     std::string empty = std::string(index, index, source);
-    if (!empty.empty() || empty.capacity() != std::size_t(0)) { return 2; }
+    if (!empty.empty()) { return 2; }
   }
   source[std::size_t(1)] = 'x';
   if (middle != "bcd" || whole != "abcde") { return 3; }

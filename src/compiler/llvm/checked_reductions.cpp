@@ -168,43 +168,7 @@ struct IncrementBounds {
         if (left && right && left->maximum <= maximum - right->maximum)
           result = Offset{left->minimum + right->minimum,
                           left->maximum + right->maximum};
-      } else if (binary->getOpcode() == llvm::Instruction::Mul) {
-        auto left = get(binary->getOperand(0)),
-             right = get(binary->getOperand(1));
-        const auto maximum =
-            llvm::APInt::getMaxValue(value->getType()->getIntegerBitWidth())
-                .getZExtValue();
-        if (left && right &&
-            (!right->maximum || left->maximum <= maximum / right->maximum))
-          result = Offset{left->minimum * right->minimum,
-                          left->maximum * right->maximum};
-      } else if (binary->getOpcode() == llvm::Instruction::Shl && constant) {
-        const auto amount = constant->getZExtValue();
-        auto source = get(binary->getOperand(0));
-        const auto width = value->getType()->getIntegerBitWidth();
-        const auto maximum = llvm::APInt::getMaxValue(width).getZExtValue();
-        if (source && amount < width && source->maximum <= (maximum >> amount))
-          result = Offset{source->minimum << amount, source->maximum << amount};
       }
-    } else if (auto *intrinsic = llvm::dyn_cast<llvm::IntrinsicInst>(value);
-               intrinsic &&
-               (intrinsic->getIntrinsicID() == llvm::Intrinsic::umin ||
-                intrinsic->getIntrinsicID() == llvm::Intrinsic::umax)) {
-      // A clamp bounds even an otherwise unknown operand. Unknown inputs
-      // contribute the full unsigned bit domain, never a guessed sign or a
-      // nowrap-derived range. The existing frozen-target/base envelope guards
-      // still constrain any value substituted into the optimized loop.
-      const Offset full{
-          0, llvm::APInt::getMaxValue(value->getType()->getIntegerBitWidth())
-                 .getZExtValue()};
-      const auto left = get(intrinsic->getArgOperand(0)).value_or(full);
-      const auto right = get(intrinsic->getArgOperand(1)).value_or(full);
-      if (intrinsic->getIntrinsicID() == llvm::Intrinsic::umin)
-        result = Offset{std::min(left.minimum, right.minimum),
-                        std::min(left.maximum, right.maximum)};
-      else
-        result = Offset{std::max(left.minimum, right.minimum),
-                        std::max(left.maximum, right.maximum)};
     } else if (auto *cast = llvm::dyn_cast<llvm::ZExtInst>(value)) {
       result = Offset{
           0, llvm::APInt::getMaxValue(cast->getSrcTy()->getIntegerBitWidth())
@@ -337,92 +301,7 @@ struct Plan {
   uint64_t maximumIncrement = 0;
   std::optional<Offset> boundEnvelope;
   llvm::SmallVector<InvariantAdd, 4> invariantAdds;
-  llvm::StringRef marker = versionedMarker;
 };
-
-std::optional<Offset> seedTraversalBounds(llvm::Loop &loop,
-                                          const Traversal &induction,
-                                          IncrementBounds &amountBounds) {
-  IncrementBounds traversalBounds;
-  auto targetEnvelope = traversalBounds.get(induction.bound);
-  const auto indexStart = induction.initial.getZExtValue();
-  const auto indexLimit =
-      llvm::APInt::getMaxValue(induction.initial.getBitWidth()).getZExtValue();
-  if (!targetEnvelope || (induction.comparesNext && indexStart == indexLimit))
-    return targetEnvelope;
-  // A clamped target may include empty or backwards segments. Prove only its
-  // nonwrapping subset, then require that exact interval in the existing fast
-  // guard. The original checked loop handles every excluded target, including
-  // a complete modular traversal when a next-index bound equals its start.
-  const auto minimumTarget = indexStart + unsigned(induction.comparesNext);
-  if (targetEnvelope->maximum >= minimumTarget) {
-    targetEnvelope->minimum = std::max(targetEnvelope->minimum, minimumTarget);
-    const auto indexMaximum =
-        targetEnvelope->maximum - unsigned(induction.comparesNext);
-    amountBounds.bounds[induction.index] = Offset{indexStart, indexMaximum};
-    amountBounds.traversalValues.insert(induction.index);
-
-    if (indexMaximum < indexLimit) {
-      auto *next =
-          induction.index->getIncomingValueForBlock(loop.getLoopLatch());
-      amountBounds.bounds[next] = Offset{indexStart + 1, indexMaximum + 1};
-      amountBounds.traversalValues.insert(next);
-    }
-  }
-  return targetEnvelope;
-}
-
-// The guard uses only a dominating invariant and an independently bounded
-// amount. This proof does not require an accumulator or any reduction.
-void collectInvariantAdds(Plan &plan, llvm::DominatorTree &dt,
-                          IncrementBounds &amountBounds) {
-  auto &loop = *plan.loop;
-  for (auto *block : loop.blocks())
-    for (auto &instruction : *block) {
-      auto *add = llvm::dyn_cast<llvm::IntrinsicInst>(&instruction);
-      if (!add ||
-          add->getIntrinsicID() != llvm::Intrinsic::uadd_with_overflow ||
-          !add->getArgOperand(0)->getType()->isIntegerTy() ||
-          add->getArgOperand(0)->getType()->getIntegerBitWidth() > 64)
-        continue;
-      llvm::SmallVector<llvm::ExtractValueInst *, 2> lanes;
-      for (auto *user : add->users())
-        if (auto *lane = llvm::dyn_cast<llvm::ExtractValueInst>(user);
-            lane && loop.contains(lane) && lane->getNumIndices() == 1 &&
-            *lane->idx_begin() == 1 &&
-            !llvm::is_contained(plan.overflowLanes, lane))
-          lanes.push_back(lane);
-      if (lanes.empty())
-        continue;
-      for (unsigned order = 0; order < 2; ++order) {
-        auto *base = add->getArgOperand(order);
-        if (!loop.isLoopInvariant(base) ||
-            (llvm::isa<llvm::Instruction>(base) &&
-             !dt.dominates(llvm::cast<llvm::Instruction>(base),
-                           loop.getLoopPreheader()->getTerminator())))
-          continue;
-        auto amount = amountBounds.get(add->getArgOperand(1 - order));
-        if (!amount)
-          continue;
-        auto found = llvm::find_if(plan.invariantAdds, [&](const auto &item) {
-          return item.base == base;
-        });
-        if (found == plan.invariantAdds.end()) {
-          if (plan.invariantAdds.size() == 4)
-            continue;
-          IncrementBounds baseBounds;
-          plan.invariantAdds.push_back(
-              {base, amount->maximum, baseBounds.get(base)});
-        } else {
-          found->maximumAmount =
-              std::max(found->maximumAmount, amount->maximum);
-        }
-        plan.overflowLanes.append(lanes);
-        plan.unconditional = false;
-        break;
-      }
-    }
-}
 
 std::optional<Plan> planFor(llvm::Loop &loop, llvm::DominatorTree &dt,
                             unsigned remainingGrowth) {
@@ -452,8 +331,27 @@ std::optional<Plan> planFor(llvm::Loop &loop, llvm::DominatorTree &dt,
     // A target wholly above the initial index defines a nonwrapping segment.
     // Its envelope comes from bit-level operations, independently of removed
     // checks. This also bounds weighted sums whose increment IS the index.
-    auto targetEnvelope =
-        seedTraversalBounds(loop, *induction, recurrence.increments);
+    IncrementBounds traversalBounds;
+    auto targetEnvelope = traversalBounds.get(induction->bound);
+    const auto indexStart = induction->initial.getZExtValue();
+    if (targetEnvelope &&
+        (induction->comparesNext ? targetEnvelope->minimum > indexStart
+                                 : targetEnvelope->minimum >= indexStart)) {
+      const auto indexMaximum =
+          targetEnvelope->maximum - unsigned(induction->comparesNext);
+      recurrence.increments.bounds[induction->index] =
+          Offset{indexStart, indexMaximum};
+      recurrence.increments.traversalValues.insert(induction->index);
+      const auto indexLimit =
+          llvm::APInt::getMaxValue(induction->initial.getBitWidth())
+              .getZExtValue();
+      if (indexMaximum < indexLimit) {
+        auto *next = induction->index->getIncomingValueForBlock(latch);
+        recurrence.increments.bounds[next] =
+            Offset{indexStart + 1, indexMaximum + 1};
+        recurrence.increments.traversalValues.insert(next);
+      }
+    }
     auto delta = recurrence.trace(phi.getIncomingValueForBlock(latch));
     if (!delta || delta->maximum == 0 || delta->maximum > limit - start)
       continue;
@@ -558,7 +456,53 @@ std::optional<Plan> planFor(llvm::Loop &loop, llvm::DominatorTree &dt,
       // with bounded unsigned additions to a dominating invariant base. The
       // amount uses the same independent bit-level/traversal proof; neither
       // the detector's success edge nor flagged arithmetic is evidence.
-      collectInvariantAdds(plan, dt, recurrence.increments);
+      for (auto *block : loop.blocks())
+        for (auto &instruction : *block) {
+          auto *add = llvm::dyn_cast<llvm::IntrinsicInst>(&instruction);
+          if (!add ||
+              add->getIntrinsicID() != llvm::Intrinsic::uadd_with_overflow ||
+              !add->getArgOperand(0)->getType()->isIntegerTy() ||
+              add->getArgOperand(0)->getType()->getIntegerBitWidth() > 64)
+            continue;
+          llvm::SmallVector<llvm::ExtractValueInst *, 2> lanes;
+          for (auto *user : add->users())
+            if (auto *lane = llvm::dyn_cast<llvm::ExtractValueInst>(user);
+                lane && loop.contains(lane) && lane->getNumIndices() == 1 &&
+                *lane->idx_begin() == 1 &&
+                !llvm::is_contained(plan.overflowLanes, lane))
+              lanes.push_back(lane);
+          if (lanes.empty())
+            continue;
+          for (unsigned order = 0; order < 2; ++order) {
+            auto *base = add->getArgOperand(order);
+            if (!loop.isLoopInvariant(base) ||
+                (llvm::isa<llvm::Instruction>(base) &&
+                 !dt.dominates(llvm::cast<llvm::Instruction>(base),
+                               loop.getLoopPreheader()->getTerminator())))
+              continue;
+            auto amount =
+                recurrence.increments.get(add->getArgOperand(1 - order));
+            if (!amount)
+              continue;
+            auto found =
+                llvm::find_if(plan.invariantAdds, [&](const auto &item) {
+                  return item.base == base;
+                });
+            if (found == plan.invariantAdds.end()) {
+              if (plan.invariantAdds.size() == 4)
+                continue;
+              IncrementBounds baseBounds;
+              plan.invariantAdds.push_back(
+                  {base, amount->maximum, baseBounds.get(base)});
+            } else {
+              found->maximumAmount =
+                  std::max(found->maximumAmount, amount->maximum);
+            }
+            plan.overflowLanes.append(lanes);
+            plan.unconditional = false;
+            break;
+          }
+        }
       if (recurrence.increments.usedTraversalBounds &&
           !llvm::isa<llvm::ConstantInt>(induction->bound)) {
         // Freezing a poison expression may choose outside its structural
@@ -570,29 +514,6 @@ std::optional<Plan> planFor(llvm::Loop &loop, llvm::DominatorTree &dt,
     }
   }
   return std::nullopt;
-}
-
-std::optional<Plan> invariantAddPlanFor(llvm::Loop &loop,
-                                        llvm::DominatorTree &dt,
-                                        unsigned remainingGrowth) {
-  if (!loop.getSubLoops().empty() || !loop.isLoopSimplifyForm() ||
-      !loop.isLCSSAForm(dt) || hasCheckedLoopMarker(loop))
-    return std::nullopt;
-  auto cost = checkedLoopCloneCost(loop);
-  auto induction = traversal(loop, dt);
-  if (!cost || !induction || *cost > remainingGrowth)
-    return std::nullopt;
-  IncrementBounds amountBounds;
-  auto targetEnvelope = seedTraversalBounds(loop, *induction, amountBounds);
-  Plan plan{&loop, *induction, UINT64_MAX, false, *cost, {}, {}};
-  plan.marker = "gti.invariant_add.versioned";
-  collectInvariantAdds(plan, dt, amountBounds);
-  if (plan.invariantAdds.empty())
-    return std::nullopt;
-  if (amountBounds.usedTraversalBounds &&
-      !llvm::isa<llvm::ConstantInt>(induction->bound))
-    plan.boundEnvelope = targetEnvelope;
-  return plan;
 }
 
 void apply(Plan &plan, llvm::LoopInfo &loops, llvm::DominatorTree &dt) {
@@ -688,7 +609,7 @@ void apply(Plan &plan, llvm::LoopInfo &loops, llvm::DominatorTree &dt) {
     }
     builder.CreateCondBr(safe, fast, slow);
     guard->getTerminator()->eraseFromParent();
-    markCheckedLoop(*slowLoop, plan.marker);
+    markCheckedLoop(*slowLoop, versionedMarker);
     dt.recalculate(*guard->getParent());
     // The checked clone still uses the original inputs. All fast uses,
     // including PHI operands and separate successful arithmetic, must see
@@ -704,7 +625,7 @@ void apply(Plan &plan, llvm::LoopInfo &loops, llvm::DominatorTree &dt) {
   }
   plan.traversal.comparison->setOperand(plan.traversal.boundOperand,
                                         frozenBound);
-  markCheckedLoop(loop, plan.marker);
+  markCheckedLoop(loop, versionedMarker);
   for (auto [comparison, value] : plan.comparisons)
     comparison->replaceAllUsesWith(
         llvm::ConstantInt::getBool(comparison->getContext(), value));
@@ -712,15 +633,11 @@ void apply(Plan &plan, llvm::LoopInfo &loops, llvm::DominatorTree &dt) {
     lane->replaceAllUsesWith(llvm::ConstantInt::getFalse(lane->getContext()));
 }
 
-template <bool InvariantAdds = false>
-class CheckedArithmeticPass
-    : public llvm::PassInfoMixin<CheckedArithmeticPass<InvariantAdds>> {
+class CheckedReductionPass : public llvm::PassInfoMixin<CheckedReductionPass> {
 public:
   llvm::PreservedAnalyses run(llvm::Function &function,
                               llvm::FunctionAnalysisManager &analyses) {
-    auto result = InvariantAdds
-                      ? optimizeCheckedInvariantAdds(function, analyses)
-                      : optimizeCheckedReductions(function, analyses);
+    auto result = optimizeCheckedReductions(function, analyses);
     if (result.areAllPreserved())
       return result;
     llvm::FunctionPassManager cleanup;
@@ -733,10 +650,11 @@ public:
   }
 };
 
+} // namespace
+
 llvm::PreservedAnalyses
-optimizeCheckedArithmetic(llvm::Function &function,
-                          llvm::FunctionAnalysisManager &analyses,
-                          bool invariantAdds) {
+optimizeCheckedReductions(llvm::Function &function,
+                          llvm::FunctionAnalysisManager &analyses) {
   if (function.isDeclaration() || function.hasOptSize() ||
       function.hasFnAttribute(llvm::Attribute::OptimizeNone))
     return llvm::PreservedAnalyses::all();
@@ -747,8 +665,7 @@ optimizeCheckedArithmetic(llvm::Function &function,
     auto &dt = analyses.getResult<llvm::DominatorTreeAnalysis>(function);
     std::optional<Plan> plan;
     for (auto *loop : loops.getLoopsInPreorder())
-      if ((plan = invariantAdds ? invariantAddPlanFor(*loop, dt, remaining)
-                                : planFor(*loop, dt, remaining)))
+      if ((plan = planFor(*loop, dt, remaining)))
         break;
     if (!plan)
       break;
@@ -764,20 +681,6 @@ optimizeCheckedArithmetic(llvm::Function &function,
                  : llvm::PreservedAnalyses::all();
 }
 
-} // namespace
-
-llvm::PreservedAnalyses
-optimizeCheckedReductions(llvm::Function &function,
-                          llvm::FunctionAnalysisManager &analyses) {
-  return optimizeCheckedArithmetic(function, analyses, false);
-}
-
-llvm::PreservedAnalyses
-optimizeCheckedInvariantAdds(llvm::Function &function,
-                             llvm::FunctionAnalysisManager &analyses) {
-  return optimizeCheckedArithmetic(function, analyses, true);
-}
-
 void registerCheckedReductionPass(llvm::PassBuilder &builder) {
   builder.registerVectorizerStartEPCallback(
       [](llvm::FunctionPassManager &pipeline, llvm::OptimizationLevel level) {
@@ -786,19 +689,7 @@ void registerCheckedReductionPass(llvm::PassBuilder &builder) {
           return;
         pipeline.addPass(llvm::LoopSimplifyPass());
         pipeline.addPass(llvm::LCSSAPass());
-        pipeline.addPass(CheckedArithmeticPass<>());
-      });
-}
-
-void registerCheckedInvariantAddPass(llvm::PassBuilder &builder) {
-  builder.registerVectorizerStartEPCallback(
-      [](llvm::FunctionPassManager &pipeline, llvm::OptimizationLevel level) {
-        if (level != llvm::OptimizationLevel::O2 &&
-            level != llvm::OptimizationLevel::O3)
-          return;
-        pipeline.addPass(llvm::LoopSimplifyPass());
-        pipeline.addPass(llvm::LCSSAPass());
-        pipeline.addPass(CheckedArithmeticPass<true>());
+        pipeline.addPass(CheckedReductionPass());
       });
 }
 

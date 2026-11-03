@@ -19,8 +19,6 @@ _Static_assert(_Generic(&gti_rt_aligned_malloc_v1,
                    default: 0),
                "CRT byte forwarding ABI");
 #else
-_Static_assert(_Generic(&gti_rt_malloc_v1, void *(*)(uint64_t): 1, default: 0),
-               "ordinary process byte forwarding ABI");
 _Static_assert(_Generic(&gti_rt_posix_memalign_v1,
                    void *(*)(uint64_t, uint64_t, int32_t *): 1,
                    default: 0),

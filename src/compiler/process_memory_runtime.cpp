@@ -38,10 +38,6 @@ namespace {
          "gti_rt_posix_memalign_v1",
          address,
          {SemanticType::UInt64, SemanticType::UInt64, status}},
-        {ProcessMemoryRuntimeOperation::PosixMalloc,
-         "gti_rt_malloc_v1",
-         address,
-         {SemanticType::UInt64}},
         {ProcessMemoryRuntimeOperation::PosixRelease,
          "gti_rt_posix_free_v1",
          SemanticType::Void,
@@ -102,7 +98,6 @@ bool processMemoryRuntimeSelectedForTarget(
   case ProcessMemoryRuntimeOperation::PosixOutOfMemoryStatus:
   case ProcessMemoryRuntimeOperation::PosixInvalidArgumentStatus:
   case ProcessMemoryRuntimeOperation::PosixAllocate:
-  case ProcessMemoryRuntimeOperation::PosixMalloc:
   case ProcessMemoryRuntimeOperation::PosixRelease:
     return !windows;
   case ProcessMemoryRuntimeOperation::AlignedAllocate:

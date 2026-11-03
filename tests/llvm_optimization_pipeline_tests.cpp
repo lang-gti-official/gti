@@ -1,8 +1,5 @@
 #include "../src/compiler/llvm/abi.h"
 #include "../src/compiler/llvm/body.h"
-#include "../src/compiler/llvm/loop_invariants.h"
-#include "../src/compiler/llvm/placement.h"
-#include "../src/compiler/llvm/scalar.h"
 #include "gti/frontend.h"
 #include "gti/lowered_program_builder.h"
 #include "gti/optimizer.h"
@@ -517,418 +514,6 @@ void verifyRecoveryExecutionFrequency() {
     throw std::runtime_error("frequency recovery broke LLVM IR");
 }
 
-llvm::Function *addIndependentLaneFixture(llvm::Module &module) {
-  auto &context = module.getContext();
-  llvm::IRBuilder<> builder(context);
-  auto *function = llvm::Function::Create(
-      llvm::FunctionType::get(builder.getInt1Ty(),
-                              {builder.getPtrTy(), builder.getInt8Ty()}, false),
-      llvm::GlobalValue::ExternalLinkage, "independent_byte_lanes", module);
-  builder.SetInsertPoint(llvm::BasicBlock::Create(context, "entry", function));
-  llvm::Value *found = builder.getFalse();
-  // No loop: only the SLP pass can combine these independent adjacent loads.
-  // The fixture has no alignment, aliasing, no-wrap or fast-math assumptions.
-  for (unsigned lane = 0; lane < 16; ++lane) {
-    auto *address = builder.CreateGEP(builder.getInt8Ty(), function->getArg(0),
-                                      builder.getInt64(lane));
-    auto *value =
-        builder.CreateAlignedLoad(builder.getInt8Ty(), address, llvm::Align(1));
-    found = builder.CreateOr(found,
-                             builder.CreateICmpEQ(value, function->getArg(1)));
-  }
-  builder.CreateRet(found);
-  return function;
-}
-
-llvm::Function *addColdRegionFixture(llvm::Module &module) {
-  auto &context = module.getContext();
-  auto *integer = llvm::Type::getInt32Ty(context);
-  auto *sink = llvm::Function::Create(
-      llvm::FunctionType::get(llvm::Type::getVoidTy(context), {integer}, false),
-      llvm::GlobalValue::ExternalLinkage, "cold_region_observe", module);
-  sink->addFnAttr(llvm::Attribute::Cold);
-  auto *function = llvm::Function::Create(
-      llvm::FunctionType::get(integer, {integer}, false),
-      llvm::GlobalValue::ExternalLinkage, "cold_region_client", module);
-  auto *entry = llvm::BasicBlock::Create(context, "entry", function);
-  auto *cold = llvm::BasicBlock::Create(context, "rare", function);
-  auto *hot = llvm::BasicBlock::Create(context, "ordinary", function);
-  llvm::IRBuilder<> builder(entry);
-  builder.CreateCondBr(
-      builder.CreateICmpSLT(function->getArg(0),
-                            llvm::ConstantInt::get(integer, 0)),
-      cold, hot);
-  builder.SetInsertPoint(hot);
-  builder.CreateRet(function->getArg(0));
-  builder.SetInsertPoint(cold);
-  for (unsigned index = 0; index < 20; ++index)
-    builder.CreateCall(
-        sink, {builder.CreateAdd(function->getArg(0),
-                                 llvm::ConstantInt::get(integer, index))});
-  builder.CreateRet(llvm::ConstantInt::getSigned(integer, -1));
-  return function;
-}
-
-void verifyCheckedSquareBounds() {
-  llvm::LLVMContext context;
-  llvm::Module module("checked-square-bounds", context);
-  for (unsigned width : {8U, 16U, 32U, 64U}) {
-    auto *integer = llvm::IntegerType::get(context, width);
-    auto *function = llvm::Function::Create(
-        llvm::FunctionType::get(integer, {integer}, false),
-        llvm::GlobalValue::ExternalLinkage, "square", module);
-    llvm::IRBuilder<> builder(
-        llvm::BasicBlock::Create(context, "entry", function));
-    auto *input = function->getArg(0);
-    for (bool sign : {false, true}) {
-      for (std::uint64_t factor : {1U, 3U, 5U}) {
-        auto *weighted =
-            builder.CreateMul(input, llvm::ConstantInt::get(integer, factor),
-                              "weighted", !sign, sign);
-        const auto bound = checkedSquareResultBound(weighted, input, sign);
-        if (!bound)
-          throw std::runtime_error(
-              "checked square lost an exact weighted identity");
-        if (width <= 16) {
-          std::uint64_t largest = 0;
-          const std::int64_t limit = std::int64_t{1}
-                                     << (width - (sign ? 1 : 0));
-          for (std::int64_t value = sign ? -limit : 0; value < limit; ++value) {
-            const auto square = std::uint64_t(value * value) * factor;
-            if (square < std::uint64_t(limit)) {
-              largest = std::max(largest, square);
-              if (square > *bound)
-                throw std::runtime_error(
-                    "checked square bound excludes a successful product");
-            }
-          }
-          if (largest != *bound)
-            throw std::runtime_error(
-                "checked square bound is not the exact integer maximum");
-        }
-      }
-    }
-    if (width == 64 && (checkedSquareResultBound(input, input, true) !=
-                            9223372030926249001ULL ||
-                        checkedSquareResultBound(input, input, false) !=
-                            18446744065119617025ULL))
-      throw std::runtime_error(
-          "64-bit square bound rounded through floating point");
-    builder.CreateRet(input);
-  }
-  auto *integer = llvm::Type::getInt32Ty(context);
-  auto *pointer = llvm::PointerType::getUnqual(context);
-  auto *function = llvm::Function::Create(
-      llvm::FunctionType::get(llvm::Type::getVoidTy(context),
-                              {pointer, pointer}, false),
-      llvm::GlobalValue::ExternalLinkage, "load_boundaries", module);
-  llvm::IRBuilder<> builder(
-      llvm::BasicBlock::Create(context, "entry", function));
-  auto *first = builder.CreateLoad(integer, function->getArg(0));
-  auto *same = builder.CreateLoad(integer, function->getArg(0));
-  auto *different = builder.CreateLoad(integer, function->getArg(1));
-  if (!checkedSquareResultBound(first, same, true) ||
-      checkedSquareResultBound(first, different, true))
-    throw std::runtime_error(
-        "checked square confused same and different storage");
-  auto *wrapped = builder.CreateMul(first, builder.getInt32(3));
-  if (checkedSquareResultBound(wrapped, same, true))
-    throw std::runtime_error(
-        "wrapped weighted product acquired a square bound");
-  auto *weighted =
-      builder.CreateMul(first, builder.getInt32(3), "weighted", false, true);
-  builder.CreateStore(builder.getInt32(1), function->getArg(0));
-  auto *changed = builder.CreateLoad(integer, function->getArg(0));
-  if (checkedSquareResultBound(weighted, changed, true))
-    throw std::runtime_error("checked square crossed an intervening store");
-  auto *opaque = llvm::Function::Create(
-      llvm::FunctionType::get(builder.getVoidTy(), {pointer}, false),
-      llvm::GlobalValue::ExternalLinkage, "opaque", module);
-  builder.CreateCall(opaque, {function->getArg(0)});
-  auto *afterCall = builder.CreateLoad(integer, function->getArg(0));
-  if (checkedSquareResultBound(changed, afterCall, true))
-    throw std::runtime_error("checked square crossed an opaque call");
-  auto *volatileLoad = builder.CreateLoad(integer, function->getArg(0));
-  volatileLoad->setVolatile(true);
-  if (checkedSquareResultBound(afterCall, volatileLoad, true))
-    throw std::runtime_error(
-        "volatile reads acquired a repeated-value identity");
-  builder.CreateFence(llvm::AtomicOrdering::SequentiallyConsistent);
-  auto *afterFence = builder.CreateLoad(integer, function->getArg(0));
-  if (checkedSquareResultBound(afterCall, afterFence, true))
-    throw std::runtime_error("checked square crossed synchronization");
-  auto *continuation = llvm::BasicBlock::Create(context, "success", function);
-  builder.CreateBr(continuation);
-  builder.SetInsertPoint(continuation);
-  auto *afterEdge = builder.CreateLoad(integer, function->getArg(0));
-  if (!checkedSquareResultBound(afterFence, afterEdge, true))
-    throw std::runtime_error(
-        "unchanged single-predecessor path lost its identity");
-  builder.CreateRetVoid();
-  if (llvm::verifyModule(module))
-    throw std::runtime_error("invalid checked-square structural fixture");
-}
-
-void verifySquareOffsetOptimization() {
-  const auto frontend = Frontend().analyze("square-offset.gti", R"(
-extern "C" { int square_input(); }
-int square(int value) { return value * value + 7; }
-int weighted(int value) { return (value * 3) * value + 7; }
-int different(int left, int right) { return left * right + 7; }
-int main() {
-  int value = square_input();
-  return square(value) + weighted(value) + different(value, value + 1);
-}
-)");
-  if (!frontend.canGenerateCode())
-    throw std::runtime_error("invalid square offset source");
-  auto lowered = LoweredProgramBuilder().build(
-      frontend.program, frontend.semantics, frontend.hir, frontend.mir,
-      frontend.mir, {}, TargetInfo::host());
-  if (!lowered.valid())
-    throw std::runtime_error("invalid square offset lowering");
-  std::vector<LoweredProgramIssue> issues;
-  const auto input = verifiedLoweredProgram(*lowered.program, issues);
-  if (!input)
-    throw std::runtime_error("unverified square offset lowering");
-  for (const auto level :
-       {LlvmCodegenOptimization::None, LlvmCodegenOptimization::Default,
-        LlvmCodegenOptimization::Aggressive}) {
-    const LlvmBackendOptions options{.optimization = level};
-    const auto admission = planLlvmAdmission(*input, options);
-    if (!admission.admitted())
-      throw std::runtime_error(admission.limitation());
-    Session session(*input, options);
-    lowerScalarProgram(session, admission);
-    std::map<std::string, llvm::Function *> observed;
-    llvm::SmallVector<llvm::GlobalValue *> roots;
-    for (const auto &instance : input->program().mir().functionInstances()) {
-      const auto *declaration =
-          input->program().findFunctionDeclaration(instance.declaration);
-      if (declaration && (declaration->qualifiedName == "square" ||
-                          declaration->qualifiedName == "weighted" ||
-                          declaration->qualifiedName == "different")) {
-        auto *function = session.abi().declareFunction(instance.id);
-        observed.emplace(declaration->qualifiedName, function);
-        roots.push_back(function);
-      }
-    }
-    if (observed.size() != 3)
-      throw std::runtime_error("missing square offset observation roots");
-    llvm::appendToUsed(session.module(), roots);
-    static_cast<void>(session.emitObject());
-    for (const auto &[name, function] : observed) {
-      unsigned additions = 0, conditionalBranches = 0;
-      for (const auto &block : *function)
-        for (const auto &instruction : block) {
-          if (const auto *intrinsic =
-                  llvm::dyn_cast<llvm::IntrinsicInst>(&instruction))
-            additions += intrinsic->getIntrinsicID() ==
-                         llvm::Intrinsic::sadd_with_overflow;
-#if LLVM_VERSION_MAJOR >= 23
-          conditionalBranches += llvm::isa<llvm::CondBrInst>(instruction);
-#else
-          if (const auto *branch =
-                  llvm::dyn_cast<llvm::BranchInst>(&instruction))
-            conditionalBranches += branch->isConditional();
-#endif
-        }
-      // LLVM can rewrite add-with-overflow into a comparison with MAX-7.
-      // Count the remaining failure decisions as well as the intrinsic so
-      // that such a rewrite is not mistaken for eliminating the check.
-      const bool unoptimized = level == LlvmCodegenOptimization::None;
-      const bool valid =
-          unoptimized ? additions > 0
-          : name == "different"
-              ? conditionalBranches >= 2
-              : additions == 0 &&
-                    conditionalBranches <= (name == "weighted" ? 2U : 1U);
-      if (!valid) {
-        function->print(llvm::errs());
-        throw std::runtime_error(
-            "square offset check disagrees with operand identity: " + name +
-            " at optimization " + std::to_string(static_cast<int>(level)));
-      }
-    }
-  }
-}
-
-void verifyBoundedRecursion() {
-  llvm::LLVMContext context;
-  llvm::Module module("bounded-recursion", context);
-  auto *integer = llvm::Type::getInt64Ty(context);
-  const auto make = [&](llvm::StringRef name, unsigned shape) {
-    auto *function = llvm::Function::Create(
-        llvm::FunctionType::get(integer, {integer}, false),
-        llvm::GlobalValue::InternalLinkage, name, module);
-    llvm::IRBuilder<> builder(
-        llvm::BasicBlock::Create(context, "entry", function));
-    auto *input = function->getArg(0);
-    builder.CreateBinaryIntrinsic(llvm::Intrinsic::uadd_with_overflow, input,
-                                  builder.getInt64(1));
-    llvm::Value *argument = builder.CreateURem(input, builder.getInt64(251));
-    if (shape == 1)
-      argument = builder.CreateAnd(input, builder.getInt64(255));
-    if (shape == 2)
-      argument = builder.CreateZExt(
-          builder.CreateTrunc(input, builder.getInt8Ty()), integer);
-    if (shape == 3)
-      argument = builder.CreateFreeze(argument);
-    if (shape == 4)
-      argument = input;
-    if (shape == 5)
-      argument = builder.CreateURem(input, builder.getInt64(0));
-    if (shape == 6)
-      argument = builder.CreateAnd(input, builder.getInt64(UINT64_MAX - 1));
-    auto *first = builder.CreateCall(function, {argument});
-    if (shape == 7)
-      builder.CreateCall(function, {input});
-    if (shape == 8)
-      function->addFnAttr(llvm::Attribute::Convergent);
-    if (shape == 9)
-      new llvm::GlobalVariable(module, function->getType(), true,
-                               llvm::GlobalValue::ExternalLinkage, function,
-                               "escaped-recursive-address");
-    builder.CreateRet(first);
-    return function;
-  };
-  for (unsigned shape = 0; shape != 10; ++shape)
-    make("recursive" + std::to_string(shape), shape);
-  if (!specializeBoundedRecursion(module) || specializeBoundedRecursion(module))
-    throw std::runtime_error(
-        "recursive range specialization is not idempotent");
-  for (unsigned shape = 0; shape != 10; ++shape) {
-    auto *original = module.getFunction("recursive" + std::to_string(shape));
-    auto *bounded =
-        module.getFunction((original->getName() + ".bounded").str());
-    if ((bounded != nullptr) != (shape < 3))
-      throw std::runtime_error("recursive specialization crossed its boundary");
-    if (!bounded)
-      continue;
-    const auto range = bounded->getArg(0)->getRange();
-    const unsigned maximum = shape == 0 ? 250 : 255;
-    if (!range || range->getUnsignedMax() != maximum ||
-        original->getArg(0)->hasAttribute(llvm::Attribute::Range))
-      throw std::runtime_error(
-          "recursive specialization narrowed an open entry");
-    for (auto *body : {original, bounded})
-      for (auto &block : *body)
-        for (auto &instruction : block)
-          if (const auto *call = llvm::dyn_cast<llvm::CallInst>(&instruction)) {
-            if (!call->getCalledFunction()->isIntrinsic() &&
-                call->getCalledFunction() != bounded)
-              throw std::runtime_error("recursive edge missed bounded body");
-            if (call->getIntrinsicID() == llvm::Intrinsic::assume)
-              throw std::runtime_error(
-                  "recursive range consumed a new poison value");
-          }
-  }
-  if (llvm::verifyModule(module))
-    throw std::runtime_error("recursive specialization produced invalid IR");
-}
-
-void verifyPrivateScalarResultPromotion() {
-  llvm::LLVMContext context;
-  llvm::Module module("private-scalar-results", context);
-  auto *integer = llvm::Type::getInt64Ty(context);
-  auto *boolean = llvm::Type::getInt1Ty(context);
-  auto *pointer = llvm::PointerType::getUnqual(context);
-  auto *signature =
-      llvm::FunctionType::get(boolean, {pointer, integer, boolean}, false);
-  auto fixture = [&](llvm::StringRef name, unsigned boundary) {
-    auto *function = llvm::Function::Create(
-        signature,
-        boundary == 1 ? llvm::GlobalValue::ExternalLinkage
-                      : llvm::GlobalValue::InternalLinkage,
-        name, module);
-    if (boundary != 2)
-      function->addParamAttr(
-          0, llvm::Attribute::get(context, "gti.scalar-result"));
-    auto *entry = llvm::BasicBlock::Create(context, "entry", function);
-    auto *success = llvm::BasicBlock::Create(context, "success", function);
-    auto *failure = llvm::BasicBlock::Create(context, "failure", function);
-    llvm::IRBuilder<> builder(entry);
-    if (boundary == 3)
-      builder.CreateLoad(integer, function->getArg(0));
-    builder.CreateCondBr(function->getArg(2), success, failure);
-    builder.SetInsertPoint(success);
-    if (boundary != 4) {
-      auto *store =
-          builder.CreateStore(function->getArg(1), function->getArg(0));
-      if (boundary == 5)
-        store->setVolatile(true);
-      if (boundary == 6)
-        builder.CreateStore(builder.getInt64(3), function->getArg(0));
-    }
-    builder.CreateRet(builder.getTrue());
-    builder.SetInsertPoint(failure);
-    builder.CreateRet(builder.getFalse());
-    auto *caller =
-        llvm::Function::Create(signature, llvm::GlobalValue::ExternalLinkage,
-                               name + ".caller", module);
-    builder.SetInsertPoint(llvm::BasicBlock::Create(context, "entry", caller));
-    auto *call = builder.CreateCall(
-        function, {caller->getArg(0), caller->getArg(1), caller->getArg(2)});
-    builder.CreateRet(call);
-    if (boundary == 7)
-      llvm::appendToUsed(module, {function});
-  };
-  fixture("eligible", 0);
-  fixture("open", 1);
-  fixture("unmarked", 2);
-  fixture("reads_output", 3);
-  fixture("missing_publication", 4);
-  fixture("volatile_publication", 5);
-  fixture("early_publication", 6);
-  fixture("address_taken", 7);
-  promotePrivateScalarResults(module);
-  if (llvm::verifyModule(module))
-    throw std::runtime_error(
-        "private result promotion produced invalid LLVM IR");
-  auto *promoted = module.getFunction("eligible");
-  auto *type = llvm::dyn_cast<llvm::StructType>(promoted->getReturnType());
-  if (!type || type->getNumElements() != 2 ||
-      type->getElementType(0) != integer ||
-      type->getElementType(1) != boolean || promoted->arg_size() != 2)
-    throw std::runtime_error(
-        "private scalar result did not move into registers");
-  for (auto name :
-       {"open", "unmarked", "reads_output", "missing_publication",
-        "volatile_publication", "early_publication", "address_taken"})
-    if (module.getFunction(name)->getFunctionType() != signature)
-      throw std::runtime_error(
-          "private result promotion crossed a rejection boundary");
-  auto *caller = module.getFunction("eligible.caller");
-  unsigned publications = 0;
-  for (auto &block : *caller)
-    for (auto &instruction : block)
-      if (auto *store = llvm::dyn_cast<llvm::StoreInst>(&instruction)) {
-        ++publications;
-        auto *edge = block.getSinglePredecessor();
-#if LLVM_VERSION_MAJOR >= 23
-        auto *branch =
-            edge ? llvm::dyn_cast<llvm::CondBrInst>(edge->getTerminator())
-                 : nullptr;
-#else
-        auto *branch =
-            edge ? llvm::dyn_cast<llvm::BranchInst>(edge->getTerminator())
-                 : nullptr;
-#endif
-        auto *status =
-            branch
-                ? llvm::dyn_cast<llvm::ExtractValueInst>(branch->getCondition())
-                : nullptr;
-        if (!branch || branch->getSuccessor(0) != &block || !status ||
-            status->getIndices() != llvm::ArrayRef<unsigned>{1} ||
-            store->getPointerOperand() != caller->getArg(0))
-          throw std::runtime_error(
-              "scalar result published outside the successful call edge");
-      }
-  if (publications != 1)
-    throw std::runtime_error(
-        "scalar result publication was lost or duplicated");
-}
-
 void verifyDischargedCheckFacts() {
   const auto frontend = Frontend().analyze("discharged-check-facts.gti", R"(
 extern "C" { int opaque_input(); }
@@ -936,7 +521,6 @@ int bounded(int value) {
   int reduced = value % 1000;
   return reduced * 17 + 3;
 }
-
 int unbounded(int value) { return value + 7; }
 uint64_t bits(uint64_t value) { return value & uint64_t(255); }
 int main() {
@@ -1005,80 +589,11 @@ int main() {
 }
 } // namespace
 
-void verifyLateInductiveDispatch() {
-  const auto frontend = Frontend().analyze("inductive-dispatch.gti", R"(
-extern "C" { uint64_t input(); void observe(uint64_t result); }
-interface operation { int32_t evaluate(); };
-class Square : public operation {
-  int32_t operand;
-public:
-  Square(int32_t operand) : operand(operand) {}
-  int32_t evaluate() override { return this.operand * this.operand; }
-};
-class Weighted : public operation {
-  int32_t operand;
-public:
-  Weighted(int32_t operand) : operand(operand) {}
-  int32_t evaluate() override { return 3 * this.operand * this.operand; }
-};
-uint64_t accumulate(operation& selected, int32_t count) {
-  mut uint64_t result = 0;
-  for (mut int32_t index = 0; index < count; index++) {
-    result += uint64_t(selected.evaluate() + index % 7);
-  }
-  return result;
-}
 int main() {
-  uint64_t count = input();
-  mut uint64_t result = 0;
-  for (mut uint64_t index = 0; index < count; index++) {
-    Square first{int32_t(index % uint64_t(16)) + 1};
-    Weighted second{int32_t(index % uint64_t(7)) + 1};
-    result += accumulate(first, 1000);
-    result += accumulate(second, 1000);
-  }
-  observe(result);
-  return 0;
-}
-)");
-  if (!frontend.canGenerateCode())
-    throw std::runtime_error("invalid inductive dispatch source");
-  const auto optimized = OptimizationPipeline().run(
-      {frontend.hir, frontend.mir, OptimizationLevel::O3});
-  auto lowered = LoweredProgramBuilder().build(
-      frontend.program, frontend.semantics, frontend.hir, optimized.sourceMir,
-      optimized.mir, optimized.report.transformations, TargetInfo::host());
-  if (!optimized.valid() || !lowered.valid())
-    throw std::runtime_error("invalid inductive dispatch MIR");
-  std::vector<LoweredProgramIssue> issues;
-  const auto input = verifiedLoweredProgram(*lowered.program, issues);
-  if (!input)
-    throw std::runtime_error("unverified inductive dispatch source");
-  HierarchyStorageScope hierarchy(input->program().mir());
-  const LlvmBackendOptions options{.optimization =
-                                       LlvmCodegenOptimization::Aggressive};
-  const auto admission = planLlvmAdmission(*input, options);
-  if (!admission.admitted())
-    throw std::runtime_error(admission.limitation());
-  Session session(*input, options);
-  lowerScalarProgram(session, admission);
-  static_cast<void>(session.emitObject());
-  // Cold-region outlining exposes new inlining and loop PHIs. The final
-  // production pipeline must already have handled those late opportunities.
-  if (foldInductivePointerLoops(session.module()))
-    throw std::runtime_error("inductive loop proof ran before late inlining");
-}
-
-int main() {
-  verifyLateInductiveDispatch();
   verifyCheckedArithmeticReuse();
   verifyRecoveredRangeChecks();
   verifyMergedCheckedArithmetic();
   verifyRecoveryExecutionFrequency();
-  verifyPrivateScalarResultPromotion();
-  verifyBoundedRecursion();
-  verifyCheckedSquareBounds();
-  verifySquareOffsetOptimization();
   verifyDischargedCheckFacts();
   FrontendOptions frontendOptions;
   frontendOptions.requireEntryPoint = true;
@@ -1144,8 +659,6 @@ int main() {
       throw std::runtime_error(admission.limitation());
     Session session(*input, options);
     lowerScalarProgram(session, admission);
-    const auto *coldClient = addColdRegionFixture(session.module());
-    const auto *independentLanes = addIndependentLaneFixture(session.module());
     llvm::Function *promote = nullptr, *checked = nullptr, *strict = nullptr,
                    *step = nullptr, *drive = nullptr, *guarded = nullptr,
                    *passive = nullptr;
@@ -1320,33 +833,6 @@ int main() {
     floating();
     session.verify();
     const auto artifact = session.emitObject();
-    bool vectorComparison = false;
-    for (const auto &block : *independentLanes)
-      for (const auto &instruction : block)
-        if (llvm::isa<llvm::ICmpInst>(instruction) &&
-            instruction.getType()->isVectorTy())
-          vectorComparison = true;
-    if ((level == LlvmCodegenOptimization::Default ||
-         level == LlvmCodegenOptimization::Aggressive) &&
-        !vectorComparison)
-      throw std::runtime_error("independent adjacent byte operations were not "
-                               "SLP-vectorized at O2/O3");
-    unsigned directColdCalls = 0, allColdCalls = 0;
-    for (const auto &function : session.module())
-      for (const auto &block : function)
-        for (const auto &instruction : block)
-          if (const auto *call = llvm::dyn_cast<llvm::CallBase>(&instruction))
-            if (const auto *callee = call->getCalledFunction();
-                callee && callee->getName() == "cold_region_observe") {
-              ++allColdCalls;
-              directColdCalls += &function == coldClient;
-            }
-    const bool outlines = level == LlvmCodegenOptimization::Default ||
-                          level == LlvmCodegenOptimization::Aggressive;
-    if (allColdCalls != 20 || directColdCalls != (outlines ? 0U : 20U))
-      throw std::runtime_error(
-          "cold outlining must move the cold region only at O2/O3 and retain "
-          "every observable call");
     // Every emitted body is tuned for the target's selected processor while
     // its instruction features stay at the machine baseline. LLVM records
     // tuning knobs (fusion pairs, interleave factor, zero-cycle moves) in the
@@ -1390,26 +876,12 @@ int main() {
       const auto added =
           effective->getFeatureBits() & ~baseline.getFeatureBits();
       const auto attribute = function.getFnAttribute("tune-cpu");
-      // LLVM's late machine outliner copies already-selected machine
-      // instructions into a helper represented here by a synthetic ret-void
-      // shell. That shell has no IR to tune and LLVM does not copy tune-cpu.
-      // Keep the instruction-feature checks for it; every real IR body still
-      // requires the requested tuning, including IR-level cold outlines.
-      const bool machineShell =
-          function.getName().starts_with("OUTLINED_FUNCTION_") &&
-          !function.getMetadata("gti.source") && function.arg_empty() &&
-          function.getReturnType()->isVoidTy() && function.hasLocalLinkage() &&
-          function.hasFnAttribute(llvm::Attribute::MinSize) &&
-          function.hasFnAttribute(llvm::Attribute::OptimizeForSize) &&
-          function.size() == 1 && function.front().size() == 1 &&
-          llvm::isa<llvm::ReturnInst>(function.front().front());
-      if ((!machineShell &&
-           (requestedTune.empty()
-                ? attribute.isValid() ||
-                      effective->getTuneCPU() != baseline.getCPU()
-                : !attribute.isStringAttribute() ||
-                      attribute.getValueAsString() != requestedTune ||
-                      effective->getTuneCPU() == baseline.getCPU())) ||
+      if ((requestedTune.empty()
+               ? attribute.isValid() ||
+                     effective->getTuneCPU() != baseline.getCPU()
+               : !attribute.isStringAttribute() ||
+                     attribute.getValueAsString() != requestedTune ||
+                     effective->getTuneCPU() == baseline.getCPU()) ||
           effective->getCPU() != baseline.getCPU() ||
           (added & ~tuningOf(effective->getTuneCPU())).any() ||
           (atomics && effective->getFeatureBits()[*atomics] !=
@@ -1417,7 +889,7 @@ int main() {
         throw std::runtime_error("emitted body " + function.getName().str() +
                                  " lost its tuning or gained an instruction "
                                  "feature");
-      tuned += !machineShell;
+      ++tuned;
     }
     if (tuned == 0 || (host.os == "macos" && host.arch == "arm64" &&
                        (requestedTune != "apple-m1" || !atomics ||
@@ -1472,25 +944,18 @@ int main() {
             throw std::runtime_error("a body stores a whole failure record "
                                      "outside the cold originator");
     unsigned originations = 0, stepCalls = 0;
-    for (const auto &function : session.module()) {
-      // Outlining may move the propagation-only tail into a private cold
-      // helper. It still belongs to this checked source call chain.
-      if (&function != drive &&
-          !function.getName().starts_with(drive->getName().str() + ".cold."))
-        continue;
-      for (const auto &block : function)
-        for (const auto &row : block)
-          if (const auto *call = llvm::dyn_cast<llvm::CallBase>(&row)) {
-            const auto *callee = call->getCalledFunction();
-            originations += callee == originator;
-            stepCalls += callee == step;
-            if (callee &&
-                (callee->getName() == "gti_rt_failure_cleanup_enter_v1" ||
-                 callee->getName() == "gti_rt_failure_cleanup_leave_v1"))
-              throw std::runtime_error("a propagate-only failure chain entered "
-                                       "the incoming-cleanup context");
-          }
-    }
+    for (const auto &block : *drive)
+      for (const auto &row : block)
+        if (const auto *call = llvm::dyn_cast<llvm::CallBase>(&row)) {
+          const auto *callee = call->getCalledFunction();
+          originations += callee == originator;
+          stepCalls += callee == step;
+          if (callee &&
+              (callee->getName() == "gti_rt_failure_cleanup_enter_v1" ||
+               callee->getName() == "gti_rt_failure_cleanup_leave_v1"))
+            throw std::runtime_error("a propagate-only failure chain entered "
+                                     "the incoming-cleanup context");
+        }
     const bool inlines = level == LlvmCodegenOptimization::Default ||
                          level == LlvmCodegenOptimization::Aggressive;
     if (inlines && (stepCalls != 0 || originations == 0))

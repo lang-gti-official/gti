@@ -473,12 +473,12 @@ int main() {
     const auto local =
         functionDischarges(frontend, optimized, "synchronized_loop",
                            lang::MirSafetyCheckFamily::ArithmeticOverflow);
-    // Neither local's identity reaches another thread. Capture analysis now
-    // supplies the same independence for the finite recurrence proof.
-    expect(local == 2,
-           "an uncaptured loop counter and sum keep their bounds across "
-           "synchronization: " +
-               std::to_string(local) + " actual, 2 expected");
+    // The loop counter is a local no other thread can reach, so its bound
+    // survives. The accumulator still needs recurrence invariance, which
+    // the call's opaque effects block.
+    expect(local == 1, "an uncaptured loop counter keeps its bound across "
+                       "synchronization: " +
+                           std::to_string(local) + " actual, 1 expected");
   }
 }
 
@@ -574,7 +574,7 @@ int main() {
                       .outcome = outcome});
         }
   expect(!accumulatorChecks.empty(),
-         "the opaque-loop fixture must identify the accumulator's actual "
+         "the opaque-loop negative must identify the accumulator's actual "
          "MIR instruction and original integer-overflow outcome by source");
   for (const auto level :
        {lang::OptimizationLevel::O2, lang::OptimizationLevel::O3}) {
@@ -592,9 +592,9 @@ int main() {
                  retained->definedFailure.localOrigins.size() > check.origin &&
                  retained->definedFailure.localOrigins[check.origin].line ==
                      accumulatorLine &&
-                 lang::hasMirSafetyDischarge(*retained, check),
-             "opaque runtime synchronization cannot change an unexposed local; "
-             "the exact finite accumulator overflow check should be proved");
+                 !lang::hasMirSafetyDischarge(*retained, check),
+             "opaque runtime synchronization must retain the exact accumulator "
+             "overflow check even when the independent counter is provable");
     }
     expect(functionOperationDischarges(
                frontend, optimized, "transport_result",
@@ -668,7 +668,6 @@ int32_t masked_add(int32_t value) {
 
 extern "C" {
   void analysis_barrier();
-  void alter_recurrence(int64_t* total);
 }
 
 int64_t bounded_recurrence() {
@@ -703,34 +702,6 @@ int64_t recurrence_call_barrier() {
     analysis_barrier();
   }
   return total;
-}
-
-int64_t recurrence_captured_call() {
-  mut int64_t total = 0;
-  for (mut uint64_t index = 0; index < 100; index++) {
-    unsafe { alter_recurrence(&total); }
-    total += int64_t(index & uint64_t(255));
-  }
-  return total;
-}
-
-interface RecurrenceSource { int32_t next(); };
-class FixedRecurrenceSource : public RecurrenceSource {
-public:
-  FixedRecurrenceSource() = default;
-  int32_t next() override { return 7; }
-};
-
-uint64_t recurrence_dynamic_call(RecurrenceSource& source) {
-  mut uint64_t total = 0;
-  for (mut int32_t index = 0; index < 100; index++) {
-    total += uint64_t(source.next());
-  }
-  return total;
-}
-
-uint64_t successful_signed_to_unsigned(int32_t value) {
-  return uint64_t(value) + uint64_t(1);
 }
 
 uint64_t exact_loop_bound(uint64_t count) { return count; }
@@ -816,10 +787,6 @@ int32_t main() {
   if (exact_observer_recurrence() != 4950) { return 8; }
   if (mutating_closed_call_recurrence() != 198) { return 9; }
   if (bounded_interval_recurrence(uint64_t(100)) != 4950) { return 10; }
-  if (recurrence_call_barrier() != 4950) { return 11; }
-  FixedRecurrenceSource source{};
-  if (recurrence_dynamic_call(source) != 700) { return 12; }
-  [[discard]] recurrence_captured_call();
   return 0;
 }
 )";
@@ -920,25 +887,7 @@ int32_t main() {
   expectCount("bounded_recurrence", boundedRecurrence, 2);
   expectCount("dynamic_recurrence", dynamicRecurrence, 0);
   expectCount("repeated_recurrence_write", repeatedRecurrence, 1);
-  expectCount("recurrence_call_barrier", callRecurrence, 2);
-  expectCount("recurrence_captured_call accumulator",
-              functionOperationDischarges(
-                  frontend, o2, "recurrence_captured_call",
-                  lang::MirSafetyCheckFamily::ArithmeticOverflow,
-                  lang::MirOperation::AddAssign),
-              0);
-  expectCount("recurrence_dynamic_call accumulator",
-              functionOperationDischarges(
-                  frontend, o2, "recurrence_dynamic_call",
-                  lang::MirSafetyCheckFamily::ArithmeticOverflow,
-                  lang::MirOperation::Add, lang::SemanticType::UInt64),
-              1);
-  expectCount("successful_signed_to_unsigned addition",
-              functionOperationDischarges(
-                  frontend, o2, "successful_signed_to_unsigned",
-                  lang::MirSafetyCheckFamily::ArithmeticOverflow,
-                  lang::MirOperation::Add),
-              1);
+  expectCount("recurrence_call_barrier", callRecurrence, 0);
   expectCount("contextual_bound_recurrence", contextualRecurrence, 2);
   expectCount("bounded_interval_recurrence", boundedIntervalRecurrence, 2);
   expectCount("exact_observer_recurrence", observerRecurrence, 2);
@@ -1411,209 +1360,6 @@ int32_t descending(uint64_t seed, mut uint64_t rounds) {
             lang::MirSafetyCheckFamily::ArithmeticOverflow,
             lang::MirOperation::Subtract, lang::SemanticType::Int32) == 0,
         "an expanding lower envelope must retain signed subtraction failure");
-  }
-}
-
-void testInterpolationEnvelopes() {
-  const auto frontend = analyzeTrusted("interpolation.gti", R"(
-int32_t bounded(int32_t first, int32_t last, int32_t divisor) {
-  mut int32_t values[8] = {};
-  if (first < 0) return 0;
-  if (first > 8) return 0;
-  if (last < 0) return 0;
-  if (last > 8) return 0;
-  if (first >= last) return 0;
-  if (divisor < 2) return 0;
-  int32_t index = first + (last - first) / divisor;
-  return values[index];
-}
-int32_t reversed(int32_t first, int32_t last) {
-  mut int32_t values[17] = {};
-  if (first < -8) return 0;
-  if (first > 8) return 0;
-  if (last < -8) return 0;
-  if (last > 8) return 0;
-  int32_t index = (last - first) / 3 + first;
-  return values[index + 8];
-}
-int32_t extremes(int32_t first, int32_t last) {
-  return first + (last - first) / 2;
-}
-uint64_t unsigned_extremes(uint64_t first, uint64_t last) {
-  return first + (last - first) / uint64_t(2);
-}
-int32_t unrelated(int32_t first, int32_t last, int32_t other) {
-  mut int32_t values[8] = {};
-  if (first < 0) return 0;
-  if (first > 8) return 0;
-  if (last < 0) return 0;
-  if (last > 8) return 0;
-  if (other < 0) return 0;
-  if (other > 8) return 0;
-  return values[first + (last - other) / 2];
-}
-int32_t negative_divisor(int32_t first, int32_t last) {
-  mut int32_t values[8] = {};
-  if (first < 0) return 0;
-  if (first > 8) return 0;
-  if (last < 0) return 0;
-  if (last > 8) return 0;
-  return values[first + (last - first) / -2];
-}
-int32_t replaced(int32_t input, int32_t last) {
-  mut int32_t first = input;
-  int32_t delta = last - first;
-  first = last;
-  return first + delta / 2;
-}
-int32_t wrapped_delta(int32_t first, int32_t last) {
-  int32_t delta = gti_internal::integer_wrapping_sub(last, first);
-  return first + delta / 2;
-}
-int32_t main() { return 0; }
-)");
-  expect(frontend.canGenerateCode(), "interpolation fixture should lower");
-  if (!frontend.canGenerateCode()) {
-    for (const auto &diagnostic : frontend.diagnostics)
-      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
-    return;
-  }
-  for (const auto level :
-       {lang::OptimizationLevel::O2, lang::OptimizationLevel::O3}) {
-    const auto optimized = lang::OptimizationPipeline().run(
-        {.hir = frontend.hir, .mir = frontend.mir, .level = level});
-    expect(optimized.valid(),
-           "interpolation envelopes must independently replay");
-    const auto bounds = [&](std::string_view name) {
-      return functionDischarges(frontend, optimized, name,
-                                lang::MirSafetyCheckFamily::Bounds);
-    };
-    expect(bounds("bounded") == 1 && bounds("reversed") == 1,
-           "interpolation stays between endpoints, strictly below an ordered "
-           "upper endpoint for divisor >= 2");
-    expect(
-        bounds("unrelated") == 0 && bounds("negative_divisor") == 0,
-        "unrelated bases and negative divisors do not establish interpolation");
-    const auto arithmetic = [&](std::string_view name, lang::MirOperation op) {
-      return functionOperationDischarges(
-          frontend, optimized, name,
-          lang::MirSafetyCheckFamily::ArithmeticOverflow, op,
-          lang::SemanticType::Int32);
-    };
-    expect(arithmetic("extremes", lang::MirOperation::Add) == 1 &&
-               arithmetic("extremes", lang::MirOperation::Subtract) == 0,
-           "interpolation proves its addition, never an overflowing earlier "
-           "delta");
-    expect(arithmetic("replaced", lang::MirOperation::Add) == 0,
-           "writing the base retires its earlier scalar equivalence");
-    expect(arithmetic("wrapped_delta", lang::MirOperation::Add) == 0,
-           "a modular difference does not obey checked interpolation bounds");
-    expect(functionOperationDischarges(
-               frontend, optimized, "unsigned_extremes",
-               lang::MirSafetyCheckFamily::ArithmeticOverflow,
-               lang::MirOperation::Add, lang::SemanticType::UInt64) == 1 &&
-               functionOperationDischarges(
-                   frontend, optimized, "unsigned_extremes",
-                   lang::MirSafetyCheckFamily::ArithmeticOverflow,
-                   lang::MirOperation::Subtract,
-                   lang::SemanticType::UInt64) == 0,
-           "unsigned interpolation keeps an earlier subtract-underflow check");
-  }
-}
-
-void testSuccessfulBoundsPostconditions() {
-  const auto frontend = analyzeTrusted("successful-bounds.gti", R"(
-extern "C" { void mutate_index(int32_t* value); }
-int32_t after_write(int32_t index) {
-  mut int32_t values[8] = {};
-  values[index] = 3;
-  return index + int32_t(1);
-}
-int32_t after_read(int32_t index) {
-  mut int32_t values[8] = {};
-  int32_t seen = values[index];
-  return index + int32_t(1);
-}
-int32_t after_address(int32_t index) {
-  mut int32_t values[8] = {};
-  const int32_t* address = &values[index];
-  return index + int32_t(1);
-}
-int32_t skipped(int32_t index, bool checked) {
-  mut int32_t values[8] = {};
-  if (checked) values[index] = 3;
-  return index + int32_t(1);
-}
-int32_t changed(int32_t initial) {
-  mut int32_t index = initial;
-  mut int32_t values[8] = {};
-  values[index] = 3;
-  unsafe { mutate_index(&index); }
-  return index + int32_t(1);
-}
-int32_t aliases_index(int32_t index) {
-  mut int32_t values[8] = {};
-  values[0] = index;
-  values[values[0]] = 2147483647;
-  return values[0] + int32_t(1);
-}
-int32_t checked_loop(int32_t initial) {
-  mut int32_t index = initial;
-  mut int32_t values[8] = {};
-  for (mut int32_t round = 0; round < 3; round++) {
-    values[index] = 3;
-    index = index + int32_t(1);
-  }
-  return index;
-}
-uint64_t repeated(uint64_t index, uint64_t size) {
-  gti_internal::index_bounds_check(index, size);
-  gti_internal::index_bounds_check(index, size);
-  return index;
-}
-uint64_t different(uint64_t index, uint64_t size, uint64_t other) {
-  gti_internal::index_bounds_check(index, size);
-  gti_internal::index_bounds_check(index, other);
-  return index;
-}
-int32_t main() { return 0; }
-)");
-  expect(frontend.canGenerateCode(), "successful-bounds fixture should lower");
-  if (!frontend.canGenerateCode()) {
-    for (const auto &d : frontend.diagnostics)
-      std::cerr << d.code << ": " << d.message << '\n';
-    return;
-  }
-  for (const auto level :
-       {lang::OptimizationLevel::O2, lang::OptimizationLevel::O3}) {
-    const auto optimized = lang::OptimizationPipeline().run(
-        {.hir = frontend.hir, .mir = frontend.mir, .level = level});
-    expect(optimized.valid(), "successful bounds proofs must replay");
-    const auto adds = [&](std::string_view name) {
-      return functionOperationDischarges(
-          frontend, optimized, name,
-          lang::MirSafetyCheckFamily::ArithmeticOverflow,
-          lang::MirOperation::Add, lang::SemanticType::Int32);
-    };
-    for (const auto name : {"after_write", "after_read", "after_address"})
-      expect(adds(name) > 0,
-             std::string(name) +
-                 " learns a bounded index only after successful access (" +
-                 std::to_string(adds(name)) + ")");
-    for (const auto name : {"skipped", "changed", "aliases_index"})
-      expect(adds(name) == 0,
-             std::string(name) +
-                 " must retain its potentially overflowing addition");
-    const auto bounds = [&](std::string_view name) {
-      return functionDischarges(frontend, optimized, name,
-                                lang::MirSafetyCheckFamily::Bounds);
-    };
-    expect(bounds("repeated") == 1,
-           "only the repeated logical-size check is discharged (" +
-               std::to_string(bounds("repeated")) + ")");
-    expect(bounds("different") == 0 && bounds("checked_loop") == 0,
-           "different bounds and the loop's potentially failing first/later "
-           "access remain checked");
   }
 }
 
@@ -2997,9 +2743,9 @@ int32_t main() {
 
 // A multidimensional access checks each prefix before evaluating the next
 // index, then retains the complete place on its terminal bounds operation.
-// Every dimension must be proven before the terminal check. A successful
-// prefix preflight supplies its dimension's bound; it remains conservatively
-// checked and retains its own first-failure source identity.
+// Proving only the last index must not discharge that terminal check: every
+// dimension must be proven. The early AddressOf preflight currently remains
+// conservatively checked and retains its own first-failure source identity.
 void testChainedFixedArrayDimensionBounds() {
   const std::string source = R"(
 int32_t proven_chain() {
@@ -3131,12 +2877,10 @@ int32_t main() { return proven_chain(); }
   expect(o3.valid() && bounds("proven_chain") == 1,
          "a chained element access whose every dimension is proven should "
          "discharge its terminal bounds site without erasing the preflight");
-  expect(o3.valid() && bounds("dynamic_parent_chain") == 1,
-         "a successful prefix preflight proves the dynamic parent dimension "
-         "for the later terminal access");
-  expect(
-      o3.valid() && bounds("dynamic_terminal_chain") == 0,
-      "an unproven terminal dimension must leave the terminal access checked");
+  expect(o3.valid() && bounds("dynamic_parent_chain") == 0 &&
+             bounds("dynamic_terminal_chain") == 0,
+         "an unproven dimension anywhere in the chain must leave the access "
+         "checked, whichever dimension it is");
   expect(functionOperationDischarges(frontend, o3, "proven_chain",
                                      lang::MirSafetyCheckFamily::Bounds,
                                      lang::MirOperation::AddressOf) == 0,
@@ -3153,8 +2897,6 @@ int main() {
   testOpaqueRuntimeCallInvalidation();
   testSourcePrefixBoundsRelation();
   testRelationalBoundsDischarge();
-  testSuccessfulBoundsPostconditions();
-  testInterpolationEnvelopes();
   testRelationalEdgeArguments();
   testDivisionAndComposedEnvelopes();
   testClosedIndexedElementEnvelope();

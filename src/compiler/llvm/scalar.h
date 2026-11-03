@@ -3,16 +3,8 @@
 #include "abi.h"
 #include <functional>
 #include <llvm/IR/IRBuilder.h>
-#include <optional>
 
 namespace lang::native_llvm {
-
-// Upper bound of an initialized integer k*x*x after checked multiplication
-// succeeds. Repeated memory reads require an unchanged path; wrapping inner
-// products are excluded. The caller must preserve the original failure edge.
-[[nodiscard]] std::optional<std::uint64_t>
-checkedSquareResultBound(llvm::Value *left, llvm::Value *right,
-                         bool signedValue);
 
 // Guards branch to the MIR-selected failure continuation before an operation
 // that could produce LLVM poison/UB. The body emitter owns that continuation.

@@ -3,7 +3,6 @@ export module detail.unordered_map_iterators;
 import std.vector;
 import std.memory;
 import "map_entry.gti";
-import "memory_storage.gti";
 
 export namespace std::detail {
 struct unordered_map_node<K, V> {
@@ -16,72 +15,6 @@ struct unordered_map_node<K, V> {
         hash(hash), next(next) {}
 };
 
-// Stable nodes share typed storage pages. The storage owner constructs directly
-// at each final address, tracks vacancies and drops every live node exactly
-// once. Growing the page index never relocates a node.
-class unordered_map_nodes<K, V> {
-  mut vector<storage<unordered_map_node<K, V>>> pages{};
-  mut size_t used = 0;
-
-  size_t page_extent() {
-    // Bound unused payload storage for large element types. Every extent is a
-    // power of two, so an index needs only shifts/masks after specialization.
-    if (layout_of<unordered_map_node<K, V>>().bytes <= uint64_t(64)) { return 64; }
-    if (layout_of<unordered_map_node<K, V>>().bytes <= uint64_t(256)) { return 16; }
-    return 1;
-  }
-
-public:
-  unordered_map_nodes() {}
-  unordered_map_nodes(unordered_map_nodes<K, V>& other) = delete;
-  unordered_map_nodes(unordered_map_nodes<K, V>&& other) = default;
-  size_t size() { return this.used; }
-  bool live(size_t index) {
-    size_t extent = this.page_extent();
-    return this.pages[index / extent].initialized(index % extent);
-  }
-  unordered_map_node<K, V>& at(size_t index) {
-    size_t extent = this.page_extent();
-    return this.pages[index / extent].get(index % extent);
-  }
-  mut unordered_map_node<K, V>& at(size_t index) mut {
-    size_t extent = this.page_extent();
-    return this.pages[index / extent].get_mut(index % extent);
-  }
-  void append(K key, V value, size_t hash, size_t next) mut {
-    size_t index = this.used;
-    size_t extent = this.page_extent();
-    if (index / extent == this.pages.size()) {
-      allocator source{};
-      mut auto allocated = source.try_storage<unordered_map_node<K, V>>(extent);
-      if (!allocated) { gti_internal::require_allocation(false); }
-      this.pages.push_back(std::move(allocated).value());
-    }
-    [[discard]] this.pages[index / extent].emplace(index % extent,
-        std::move(key), std::move(value), hash, next);
-    this.used++;
-  }
-  void replace(size_t index, K key, V value, size_t hash, size_t next) mut {
-    size_t extent = this.page_extent();
-    [[discard]] this.pages[index / extent].emplace(index % extent,
-        std::move(key), std::move(value), hash, next);
-  }
-  void erase(size_t index) mut {
-    size_t extent = this.page_extent();
-    this.pages[index / extent].destroy(index % extent);
-  }
-  void reserve(size_t requested) mut {
-    size_t extent = this.page_extent();
-    mut size_t count = requested / extent;
-    if (requested % extent != size_t(0)) { count++; }
-    this.pages.reserve(count);
-  }
-  void clear() mut {
-    this.used = 0;
-    this.pages.clear();
-  }
-};
-
 class unordered_map_sentinel {
   size_t limit;
 public:
@@ -90,21 +23,21 @@ public:
 };
 
 class unordered_map_iterator<K, V> {
-  unordered_map_nodes<K, V>& nodes;
+  vector<unique_ptr<unordered_map_node<K, V>>>& nodes;
   mut size_t current;
 public:
-  unordered_map_iterator(unordered_map_nodes<K, V>& nodes,
+  unordered_map_iterator(vector<unique_ptr<unordered_map_node<K, V>>>& nodes,
                          size_t position) : nodes(nodes), current(position) {}
   map_entry<K, V>& operator*() {
     gti_internal::require_container_argument(this.current < this.nodes.size());
-    return this.nodes.at(this.current).entry;
+    return this.nodes[this.current]->entry;
   }
   map_entry<K, V>& operator->() { return *this; }
   void operator++() mut {
     gti_internal::require_container_argument(this.current < this.nodes.size());
     this.current++;
     while (this.current < this.nodes.size() &&
-           !this.nodes.live(this.current)) { this.current++; }
+           this.nodes[this.current] == nullptr) { this.current++; }
   }
   bool operator!=(unordered_map_sentinel end) { return this.current != end.position(); }
   bool operator==(unordered_map_sentinel end) { return this.current == end.position(); }
@@ -113,21 +46,21 @@ public:
 };
 
 class unordered_map_entry_projection<K, V> {
-  mut unordered_map_nodes<K, V>& nodes;
+  mut vector<unique_ptr<unordered_map_node<K, V>>>& nodes;
   mut size_t current;
 public:
-  unordered_map_entry_projection(mut unordered_map_nodes<K, V>& nodes,
+  unordered_map_entry_projection(mut vector<unique_ptr<unordered_map_node<K, V>>>& nodes,
                              size_t position) : nodes(nodes), current(position) {}
   map_entry<K, V>& read_entry() {
     gti_internal::require_container_argument(this.current < this.nodes.size());
-    return this.nodes.at(this.current).entry;
+    return this.nodes[this.current]->entry;
   }
   K& first() { return this.read_entry().first; }
   K& key() { return this.first(); }
   V& second() { return this.read_entry().second; }
   mut V& second() mut {
     gti_internal::require_container_argument(this.current < this.nodes.size());
-    return this.nodes.at(this.current).entry.second;
+    return this.nodes[this.current]->entry.second;
   }
   V& mapped() { return this.second(); }
   mut V& mapped() mut { return this.second(); }
@@ -137,14 +70,14 @@ public:
     gti_internal::require_container_argument(this.current < this.nodes.size());
     this.current++;
     while (this.current < this.nodes.size() &&
-           !this.nodes.live(this.current)) { this.current++; }
+           this.nodes[this.current] == nullptr) { this.current++; }
   }
 };
 
 class unordered_map_mut_iterator<K, V> {
   mut unordered_map_entry_projection<K, V> projection;
 public:
-  unordered_map_mut_iterator(mut unordered_map_nodes<K, V>& nodes,
+  unordered_map_mut_iterator(mut vector<unique_ptr<unordered_map_node<K, V>>>& nodes,
                              size_t position)
       : projection(unordered_map_entry_projection<K, V>(nodes, position)) {}
   map_entry<K, V>& operator*() { return this.projection.read_entry(); }

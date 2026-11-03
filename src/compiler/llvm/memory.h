@@ -5,12 +5,6 @@
 
 namespace lang::native_llvm {
 
-// Whether a validated nonempty request has a fitting fundamental-alignment
-// witness in the target layout. This does not select a platform/provider.
-[[nodiscard]] bool processMallocSatisfiesLayout(const llvm::DataLayout &layout,
-                                                std::uint64_t size,
-                                                std::uint64_t alignment);
-
 // Typed lifetime mechanisms only. Allocation ownership, initialized-slot sets,
 // growth and reference-count policy remain in their existing source/MIR owners.
 class Memory final {

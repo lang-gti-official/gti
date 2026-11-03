@@ -300,14 +300,6 @@ llvm::Function *Abi::declareFunction(HirFunctionInstanceId id) {
   auto *output = llvm::Function::Create(
       plan.type, llvm::GlobalValue::ExternalLinkage, name, session.module());
   plan.applyTo(*output);
-  if (!native && plan.statusResult && plan.resultDestination) {
-    const auto result = layouts.get(function->returnType);
-    if (!result.addressOnly &&
-        (result.value->isIntegerTy() || result.value->isFloatingPointTy()))
-      output->addParamAttr(
-          *plan.resultDestination,
-          llvm::Attribute::get(session.context(), "gti.scalar-result"));
-  }
   if (function->definitionKind == MirDefinitionKind::Source)
     session.requireSourceDefinition(id, *output);
   // Provenance survives independently of debug-info generation. This does not

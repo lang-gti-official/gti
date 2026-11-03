@@ -1829,56 +1829,6 @@ def dispatch_cases(root: Path) -> dict[str, DispatchCase]:
                                    failure_needle, cpp_limitation, endpoints,
                                    CPP_DIVERGENCES.get(name))
 
-    promotion_source = r'''
-import std.vector;
-import std.string;
-mut int calls = 0;
-mut int expected_calls = 62;
-interface Area { int area(); };
-class Square : public Area {
-  int side;
-public:
-  Square(int side) : side(side) {}
-  int area() override { calls++; return this.side * this.side; }
-};
-class Circle : public Area {
-  int radius;
-public:
-  Circle(int radius) : radius(radius) {}
-  int area() override { calls++; return 3 * this.radius * this.radius; }
-};
-class Audit {
-public:
-  Audit() {}
-  ~Audit() { int checked = 1 / (calls == expected_calls ? 1 : 0); }
-};
-int sum_areas(Area& item, int count) {
-  mut int sum = 0;
-  for (mut int i = 0; i < count; i++) { sum += item.area() + i % 7; }
-  return sum;
-}
-int main(int argc, std::vector<std::string> argv) {
-  Audit audit{};
-  Square square{argc + 1};
-  Circle circle{argc + 2};
-  int first = sum_areas(circle, 31);
-  int second = sum_areas(square, 31);
-  int expected = 31 * (3 * (argc + 2) * (argc + 2) + (argc + 1) * (argc + 1)) + 174;
-  return first + second == expected && calls == 62 ? 0 : 1;
-}
-'''
-    add("guarded-polymorphic-sums", promotion_source)
-    promotion_failure = promotion_source.replace(
-        "this.side * this.side", "this.side / (this.side - 2)").replace(
-        "expected_calls = 62", "expected_calls = 32")
-    add("guarded-polymorphic-sum-failure", promotion_failure,
-        kind="defined-failure", expected_exit=70,
-        failure_needle="this.side / (this.side - 2)")
-    add("guarded-polymorphic-wrong-cleanup", promotion_failure.replace(
-        "expected_calls = 32", "expected_calls = 33"),
-        kind="wrong-cleanup-trace", expected_exit=70,
-        failure_needle="this.side / (this.side - 2)")
-
     for name, relative in SUCCESS_FILES.items():
         add(name, (root / relative).read_text(encoding="utf-8"), origin=relative,
             cpp_limitation=CPP_LIMITATIONS.get(name),
@@ -2517,8 +2467,6 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
                                   "borrowed-carriers", "selected-relays", "upcast-carriers"),
         "virtual-invocation": ("fresh-local-virtual-call", "scalar-state-virtual-control",
                                "static-dispatch", "dispatch-cost-correctness",
-                               "guarded-polymorphic-sums", "guarded-polymorphic-sum-failure",
-                               "guarded-polymorphic-wrong-cleanup",
                                "virtual-signatures", "virtual-signature-failure",
                                "virtual-signature-wrong-cleanup", "temporary-receivers",
                                "temporary-receiver-failure",
@@ -2622,8 +2570,7 @@ def main() -> None:
     if len(sys.argv) == 3 and sys.argv[1] == "--list-evidence":
         print(json.dumps(evidence_manifest(Path(sys.argv[2]).resolve()), sort_keys=True))
         return
-    names = ("guarded-polymorphic-sums", "guarded-polymorphic-sum-failure",
-             "guarded-polymorphic-wrong-cleanup", *SUCCESS_FILES, *SUCCESS_SOURCES, *TRANSFER_SUCCESS_SOURCES, "borrowed-dispatch", "borrowed-mut-reference-chain",
+    names = (*SUCCESS_FILES, *SUCCESS_SOURCES, *TRANSFER_SUCCESS_SOURCES, "borrowed-dispatch", "borrowed-mut-reference-chain",
              "virtual-failure-cleanup", "generated-move-virtual-failure", "constructor-rollback", "cleanup-oracle-wrong-trace",
              "inline-field-virtual-failure", "inline-field-constructor-rollback",
              "inline-field-wrong-cleanup-trace", *REJECTIONS,

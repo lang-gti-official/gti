@@ -1670,14 +1670,6 @@ export int run() {
 #include <stdlib.h>
 static void *active;
 extern int32_t payload_owner_allocated_v1, payload_owner_released_v1;
-void *gti_rt_malloc_v1(uint64_t bytes) {
-  if (payload_owner_allocated_v1 || !bytes) abort();
-  void *address = malloc((size_t)bytes);
-  if (!address) abort();
-  active = address;
-  ++payload_owner_allocated_v1;
-  return address;
-}
 void *gti_rt_posix_memalign_v1(uint64_t bytes, uint64_t alignment, int32_t *status) {
   if (payload_owner_allocated_v1 || !bytes || !alignment) abort();
   void *address = NULL;

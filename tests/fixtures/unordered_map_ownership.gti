@@ -15,62 +15,6 @@ public:
   int read() { return this.value; }
 };
 
-mut int page_constructions = 0;
-mut int page_destructions = 0;
-class PagePayload<uint64_t Padding> {
-  uint8_t padding[Padding] = {};
-  int value;
-public:
-  PagePayload(int value) : value(value) { page_constructions++; }
-  PagePayload(PagePayload<Padding>& other) = delete;
-  PagePayload(PagePayload<Padding>&& other) = default;
-  ~PagePayload() { page_destructions++; }
-  int read() { return this.value; }
-};
-
-// Exercise all page extents, reuse at both sides of page boundaries, stable
-// addresses across growth/rehash/owner movement, and exact live-slot cleanup.
-bool page_boundaries<uint64_t Padding>() {
-  page_constructions = 0;
-  page_destructions = 0;
-  {
-    mut std::unordered_map<int, PagePayload<Padding>> values{};
-    values.reserve(std::size_t(17));
-    for (mut int key = 0; key < 33; key++) {
-      [[discard]] values.try_emplace(key, key);
-    }
-    int observed = 17;
-    const PagePayload<Padding>* address = &values.at(observed);
-    for (mut int key = 33; key < 130; key++) {
-      [[discard]] values.try_emplace(key, key);
-    }
-    int removed[5] = {0, 63, 64, 127, 128};
-    for (int& key : removed) {
-      if (values.erase(key) != 1) { return false; }
-    }
-    if (page_constructions != 130 || page_destructions != 5) { return false; }
-    for (int& key : removed) { [[discard]] values.try_emplace(key, key + 1000); }
-    [[discard]] values.try_emplace(observed, -1);
-    if (page_constructions != 135 || page_destructions != 5) { return false; }
-    values.rehash(std::size_t(521));
-    mut auto transferred = std::move(values);
-    if (address != &transferred.at(observed)) { return false; }
-    mut std::size_t seen = 0;
-    for (auto& entry : transferred) {
-      mut int expected = entry.first;
-      if (expected == 0 || expected == 63 || expected == 64 ||
-          expected == 127 || expected == 128) { expected += 1000; }
-      if (entry.second.read() != expected) { return false; }
-      seen++;
-    }
-    if (seen != std::size_t(130)) { return false; }
-    transferred.clear();
-    if (page_destructions != 135 || !transferred.empty()) { return false; }
-    [[discard]] transferred.try_emplace(9, 99);
-  }
-  return page_constructions == 136 && page_destructions == 136;
-}
-
 int main() {
   {
     mut std::unordered_map<std::string, std::unique_ptr<int>> owners{};
@@ -121,7 +65,5 @@ int main() {
     if (destructions != 2) { return 12; }
   }
   if (constructions != 2 || destructions != 2) { return 13; }
-  if (!page_boundaries<1>() || !page_boundaries<96>() ||
-      !page_boundaries<512>()) { return 17; }
   return 0;
 }

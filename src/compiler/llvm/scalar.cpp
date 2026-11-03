@@ -2,13 +2,10 @@
 
 #include <algorithm>
 #include <array>
-#include <limits>
 #include <llvm/ADT/APFloat.h>
-#include <llvm/IR/CFG.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/GlobalVariable.h>
 #include <llvm/IR/Intrinsics.h>
-#include <optional>
 
 namespace lang::native_llvm {
 
@@ -20,93 +17,6 @@ llvm::ConstantInt *integerConstant(llvm::IntegerType *type, bool negative,
   return llvm::ConstantInt::get(type->getContext(), bits);
 }
 namespace {
-// Repeated reads are equal only along one unchanged, nonsynchronizing path.
-// This covers ordinary field/parameter loads before LLVM's GVN has merged
-// them, without assuming that a receiver or an arbitrary native call is pure.
-bool sameScalarValue(llvm::Value *left, llvm::Value *right) {
-  if (llvm::isa<llvm::UndefValue>(left) || llvm::isa<llvm::UndefValue>(right) ||
-      llvm::isa<llvm::PoisonValue>(left) || llvm::isa<llvm::PoisonValue>(right))
-    return false;
-  if (left == right)
-    return true;
-  auto *first = llvm::dyn_cast<llvm::LoadInst>(left);
-  auto *second = llvm::dyn_cast<llvm::LoadInst>(right);
-  if (!first || !second || !first->isSimple() || !second->isSimple() ||
-      first->getType() != second->getType())
-    return false;
-  auto *firstAddress = first->getPointerOperand();
-  auto *secondAddress = second->getPointerOperand();
-  if (firstAddress != secondAddress) {
-    auto *firstGep = llvm::dyn_cast<llvm::GetElementPtrInst>(firstAddress);
-    auto *secondGep = llvm::dyn_cast<llvm::GetElementPtrInst>(secondAddress);
-    if (!firstGep || !secondGep || !firstGep->isIdenticalTo(secondGep))
-      return false;
-  }
-  const auto unchanged = [](llvm::Instruction *earlier,
-                            llvm::Instruction *later) {
-    auto *current = later;
-    for (unsigned remaining = 128; remaining; --remaining) {
-      if (auto *previous = current->getPrevNode()) {
-        current = previous;
-      } else {
-        auto *predecessor = current->getParent()->getSinglePredecessor();
-        if (!predecessor)
-          return false;
-        current = predecessor->getTerminator();
-      }
-      if (current == earlier)
-        return true;
-      if (current->mayHaveSideEffects() || llvm::isa<llvm::FenceInst>(current))
-        return false;
-      if (auto *load = llvm::dyn_cast<llvm::LoadInst>(current);
-          load && !load->isSimple())
-        return false;
-    }
-    return false;
-  };
-  return unchanged(first, second) || unchanged(second, first);
-}
-
-// A successful k*x*x is nonnegative and at most
-// k*floor(sqrt(domain_max/k))^2. The first multiplication must already be
-// nonwrapping; arbitrary wrapped products do not have this postcondition.
-std::optional<std::uint64_t> squareFactor(llvm::Value *left, llvm::Value *right,
-                                          bool sign) {
-  if (sameScalarValue(left, right))
-    return 1;
-  const auto weighted =
-      [sign](llvm::Value *product,
-             llvm::Value *base) -> std::optional<std::uint64_t> {
-    auto *multiply = llvm::dyn_cast<llvm::BinaryOperator>(product);
-    if (!multiply || multiply->getOpcode() != llvm::Instruction::Mul ||
-        (sign ? !multiply->hasNoSignedWrap() : !multiply->hasNoUnsignedWrap()))
-      return std::nullopt;
-    for (unsigned index = 0; index < 2; ++index)
-      if (auto *constant =
-              llvm::dyn_cast<llvm::ConstantInt>(multiply->getOperand(index));
-          constant && !constant->isZero() &&
-          (!sign || !constant->getValue().isNegative()) &&
-          sameScalarValue(multiply->getOperand(1 - index), base))
-        return constant->getZExtValue();
-    return std::nullopt;
-  };
-  if (auto factor = weighted(left, right))
-    return factor;
-  return weighted(right, left);
-}
-
-std::uint64_t integerSquareRoot(std::uint64_t value) {
-  std::uint64_t low = 0, high = std::uint64_t{1} << 32;
-  while (low + 1 < high) {
-    const auto middle = low + (high - low) / 2;
-    if (middle <= value / middle)
-      low = middle;
-    else
-      high = middle;
-  }
-  return low;
-}
-
 bool floating(const SemanticType &type) {
   return type == SemanticType::Float || type == SemanticType::Double;
 }
@@ -137,24 +47,6 @@ MirOperation baseOperation(MirOperation operation) {
   }
 }
 } // namespace
-
-std::optional<std::uint64_t> checkedSquareResultBound(llvm::Value *left,
-                                                      llvm::Value *right,
-                                                      bool signedValue) {
-  auto *integer = llvm::dyn_cast<llvm::IntegerType>(left->getType());
-  if (!integer || right->getType() != integer || integer->getBitWidth() < 2 ||
-      integer->getBitWidth() > 64)
-    return std::nullopt;
-  const auto factor = squareFactor(left, right, signedValue);
-  if (!factor)
-    return std::nullopt;
-  const auto width = integer->getBitWidth();
-  const auto maximum = signedValue   ? (std::uint64_t{1} << (width - 1)) - 1
-                       : width == 64 ? std::numeric_limits<std::uint64_t>::max()
-                                     : (std::uint64_t{1} << width) - 1;
-  const auto root = integerSquareRoot(maximum / *factor);
-  return root * root * *factor;
-}
 
 Scalars::Scalars(Session &session, llvm::IRBuilder<> &ir, Guard guard)
     : session(session), ir(ir), guard(std::move(guard)) {}
@@ -535,10 +427,6 @@ llvm::Value *Scalars::arithmetic(MirOperation operation,
                             llvm::Intrinsic::ID signedId,
                             llvm::Intrinsic::ID unsignedId,
                             DefinedFailureDetail detail) -> llvm::Value * {
-    const auto squareBound =
-        signedId == llvm::Intrinsic::smul_with_overflow
-            ? checkedSquareResultBound(left, right, signedValue)
-            : std::nullopt;
     auto *pair = ir.CreateBinaryIntrinsic(signedValue ? signedId : unsignedId,
                                           left, right);
     // Ordinary GTI arithmetic cannot wrap on its successful continuation.
@@ -569,13 +457,6 @@ llvm::Value *Scalars::arithmetic(MirOperation operation,
     }
     guard(ir.CreateExtractValue(pair, 1),
           {DefinedFailureCode::IntegerOverflow, detail});
-    if (squareBound) {
-      // This is strictly after the detector's normal continuation. In
-      // particular, a poison flagged product on the failure edge is never
-      // consumed by an assumption and the original failure remains defined.
-      ir.CreateAssumption(ir.CreateICmpULE(
-          result, llvm::ConstantInt::get(integer, *squareBound)));
-    }
     return result;
   };
   switch (operation) {

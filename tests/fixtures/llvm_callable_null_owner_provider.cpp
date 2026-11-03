@@ -41,10 +41,6 @@ extern "C" std::int32_t gti_rt_posix_enomem_v1() { return ENOMEM; }
 
 extern "C" std::int32_t gti_rt_posix_einval_v1() { return EINVAL; }
 
-extern "C" void *gti_rt_malloc_v1(std::uint64_t bytes) {
-  (void)bytes;
-  std::abort();
-}
 extern "C" void *gti_rt_posix_memalign_v1(std::uint64_t bytes,
                                           std::uint64_t alignment,
                                           std::int32_t *status) {

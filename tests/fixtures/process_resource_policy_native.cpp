@@ -11,7 +11,6 @@
 namespace {
 int mode = 0;
 int calls = 0;
-int ordinary_calls = 0;
 int releases = 0;
 int size_queries = 0;
 int fail_on_call = 0;
@@ -68,14 +67,10 @@ extern "C" void provider_test_mode(std::int32_t selected) {
   observing = true;
   mode = selected;
   calls = 0;
-  ordinary_calls = 0;
   releases = 0;
   size_queries = 0;
   fail_on_call = 0;
   event_count = 0;
-}
-extern "C" std::int32_t provider_test_ordinary_calls() {
-  return ordinary_calls;
 }
 extern "C" std::int32_t provider_test_calls() { return calls; }
 extern "C" std::int32_t provider_test_releases() { return releases; }
@@ -139,20 +134,6 @@ extern "C" std::uint64_t gti_rt_posix_pointer_size_v1() {
 }
 extern "C" std::int32_t gti_rt_posix_enomem_v1() { return ENOMEM; }
 extern "C" std::int32_t gti_rt_posix_einval_v1() { return EINVAL; }
-extern "C" void *gti_rt_malloc_v1(std::uint64_t bytes) {
-  if (observing) {
-    ++calls;
-    ++ordinary_calls;
-    requested_bytes.at(calls - 1) = bytes;
-  }
-  if (mode >= 2 || (observing && fail_on_call > 0 && calls == fail_on_call))
-    return nullptr;
-  if (bytes == 0)
-    std::abort();
-  void *address = std::malloc(static_cast<std::size_t>(bytes));
-  remember(address);
-  return address;
-}
 extern "C" void *gti_rt_posix_memalign_v1(std::uint64_t bytes,
                                           std::uint64_t alignment,
                                           std::int32_t *status) {

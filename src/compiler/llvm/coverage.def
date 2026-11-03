@@ -586,7 +586,6 @@ LLVM_COVERAGE_ENTRY(PosixAllocate, 8, Pending, None, "all represented shapes rem
 LLVM_COVERAGE_ENTRY(PosixRelease, 8, Pending, None, "all represented shapes remain pending native lowering")
 LLVM_COVERAGE_ENTRY(AlignedAllocate, 8, Pending, None, "all represented shapes remain pending native lowering")
 LLVM_COVERAGE_ENTRY(AlignedRelease, 8, Pending, None, "all represented shapes remain pending native lowering")
-LLVM_COVERAGE_ENTRY(PosixMalloc, 8, Pending, None, "all represented shapes remain pending native lowering")
 LLVM_COVERAGE_SENTINEL(Count)
 LLVM_COVERAGE_END()
 

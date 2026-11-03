@@ -30,14 +30,6 @@ int main() {
   // Both indices are checked before anything moves. Equal valid indices work.
   jobs.swap_elements(std::size_t(0), std::size_t(0));
   jobs.swap_elements(std::size_t(0), std::size_t(2));
-  // Algorithms with their own bounds proof can avoid repeating the checks.
-  // Both indices are live; every element borrow ends before the swap.
-  if (jobs.size() > std::size_t(2)) {
-    unsafe {
-      jobs.swap_elements_unchecked(std::size_t(0), std::size_t(2));
-      jobs.swap_elements_unchecked(std::size_t(0), std::size_t(2));
-    }
-  }
 
   mut std::array<std::string, 2> active = std::array<std::string, 2>({std::string("day"), std::string("night")});
   mut std::array<std::string, 2> standby = std::array<std::string, 2>({std::string("dawn"), std::string("dusk")});

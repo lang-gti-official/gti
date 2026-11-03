@@ -68,17 +68,6 @@ int main() { std::unordered_map<int, int, Hash> values{}; return 0; }
 class Equal { public: bool operator()(Key& left, Key& right) { return true; }  public: Equal() = default; };
 int main() { std::unordered_map<Key, int, std::hash<Key>, Equal> values{}; return 0; }
 """,
-        "borrowed-value": """class View {
-  int& source;
-public: View(int& source) : source(source) {}
-};
-int main() {
-  mut int source = 42;
-  mut std::unordered_map<int, View> values{};
-  [[discard]] values.try_emplace(1, source);
-  return 0;
-}
-""",
     }
     with tempfile.TemporaryDirectory(prefix="gti-unordered-negative-") as temporary:
         root = pathlib.Path(temporary)
@@ -101,5 +90,4 @@ if __name__ == "__main__":
     reject_invalid_sources(pathlib.Path(sys.argv[1]).resolve())
     run_runtime_matrix(names=("unordered_map_core", "unordered_map_iteration",
                               "unordered_map_ownership", "unordered_map_collisions",
-                              "unordered_map_load_factor", "unordered_map_insert_result"),
-                       llvm_modes=True)
+                              "unordered_map_load_factor", "unordered_map_insert_result"))

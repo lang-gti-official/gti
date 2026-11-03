@@ -3,9 +3,7 @@
 
 #include <algorithm>
 #include <limits>
-#include <llvm/IR/Metadata.h>
 #include <llvm/Support/MathExtras.h>
-#include <llvm/Transforms/Utils/CallPromotionUtils.h>
 #include <stdexcept>
 #include <unordered_set>
 
@@ -373,12 +371,8 @@ llvm::Function *Dispatch::adjustment(HirClassInstanceId activeClass,
   const auto &selected = planned.selected;
   const auto *target =
       session.program().mir().findFunctionInstance(selected.target);
-  // Every logical view is checked above. The emitted adapter depends only on
-  // the exact root ABI, implementation ABI and byte adjustment. Views with
-  // those same inputs may share code; distinct adjustments still get distinct
-  // adapters. In particular, no runtime table/receiver invariance is assumed.
-  const AdjustmentKey key{activeClass, root, target->id,
-                          selected.receiverAdjustment};
+  const AdjustmentKey key{activeClass, sourceView, planned.physicalOwner,
+                          root,        target->id, selected.receiverAdjustment};
   if (const auto found = adjustments_.find(key); found != adjustments_.end())
     return found->second;
   auto *callee = session.abi().declareFunction(target->id);
@@ -543,19 +537,6 @@ llvm::GlobalVariable *Dispatch::table(HirClassInstanceId activeClass,
       llvm::cast<llvm::ArrayType>(type->getElementType(2)), slots);
   table->setInitializer(
       llvm::ConstantStruct::get(type, {offset, cleanup, entries}));
-  // Record only entries actually published by the verified physical planner.
-  // This is a candidate inventory, not a promise about all future callees.
-  std::vector<llvm::Metadata *> candidates;
-  for (std::size_t index = 0; index < slots.size(); ++index) {
-    candidates.push_back(
-        llvm::MDNode::get(session.context(),
-                          {llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
-                               llvm::Type::getInt64Ty(session.context()),
-                               view->slots[index].root)),
-                           llvm::ConstantAsMetadata::get(slots[index])}));
-  }
-  table->setMetadata("gti.dispatch.candidates",
-                     llvm::MDNode::get(session.context(), candidates));
   return table;
 }
 
@@ -725,12 +706,7 @@ LoadedVirtualCall Dispatch::loadCall(llvm::IRBuilder<> &ir,
   auto *entries = ir.CreateStructGEP(tableType(0), table, 2);
   auto *slot = ir.CreateGEP(session.layouts().pointer(), entries,
                             ir.getInt64(plan.slot));
-  auto *callee = ir.CreateLoad(session.layouts().pointer(), slot);
-  callee->setMetadata(
-      "gti.dispatch.root",
-      llvm::MDNode::get(session.context(),
-                        llvm::ConstantAsMetadata::get(ir.getInt64(plan.root))));
-  return {callee, receiver};
+  return {ir.CreateLoad(session.layouts().pointer(), slot), receiver};
 }
 
 llvm::Value *Dispatch::directReceiver(llvm::IRBuilder<> &ir,
@@ -772,123 +748,6 @@ llvm::Value *Dispatch::directReceiver(llvm::IRBuilder<> &ir,
         std::to_string(target->id) + " declaration " +
         std::to_string(target->declaration) + ")");
   return projectBase(session, ir, evaluatedReceiver, source, *adjustment);
-}
-
-// Promote before ordinary LLVM inlining, retaining a real indirect fallback.
-// No vptr invariance, family completeness, memory effects or branch weights
-// are inferred. Even an unlisted phase/view continues through the old call.
-std::size_t promoteGuardedDispatchCalls(llvm::Module &module) {
-  // Compare exact emitted adapter pointers, including distinct receiver
-  // adjustments. Canonical identical adapters need only one guard.
-  constexpr std::size_t maxCandidates = 4;
-  constexpr std::size_t maxSitesPerFunction = 4;
-  constexpr std::size_t maxSitesPerModule = 16;
-  constexpr std::size_t maxCandidateInstructions = 128;
-  std::map<std::uint64_t, std::vector<llvm::Function *>> families;
-  for (auto &global : module.globals()) {
-    const auto *inventory = global.getMetadata("gti.dispatch.candidates");
-    if (!inventory || !global.isConstant() || !global.hasLocalLinkage() ||
-        !global.hasInitializer())
-      continue;
-    for (const auto &operand : inventory->operands()) {
-      const auto *entry = llvm::dyn_cast_or_null<llvm::MDNode>(operand.get());
-      if (!entry || entry->getNumOperands() != 2)
-        continue;
-      const auto *root =
-          llvm::mdconst::dyn_extract<llvm::ConstantInt>(entry->getOperand(0));
-      auto *target =
-          llvm::mdconst::dyn_extract<llvm::Function>(entry->getOperand(1));
-      if (!root || root->getBitWidth() != 64 || !target ||
-          target->getParent() != &module)
-        continue;
-      auto &family = families[root->getZExtValue()];
-      if (std::find(family.begin(), family.end(), target) == family.end())
-        family.push_back(target);
-    }
-  }
-  struct Site {
-    llvm::CallInst *call;
-    std::vector<llvm::Function *> targets;
-  };
-  std::vector<Site> sites;
-  for (auto &function : module) {
-    std::size_t selected = 0;
-    if (function.hasPersonalityFn())
-      continue;
-    for (auto &block : function) {
-      for (auto &instruction : block) {
-        auto *call = llvm::dyn_cast<llvm::CallInst>(&instruction);
-        if (!call || call->getCalledFunction() || call->isTailCall() ||
-            call->isConvergent() || call->cannotDuplicate() ||
-            call->hasFnAttr(llvm::Attribute::ReturnsTwice) ||
-            call->getNumOperandBundles() != 0 ||
-            selected == maxSitesPerFunction ||
-            sites.size() == maxSitesPerModule)
-          continue;
-        const auto *load =
-            llvm::dyn_cast<llvm::LoadInst>(call->getCalledOperand());
-        const auto *marker =
-            load ? load->getMetadata("gti.dispatch.root") : nullptr;
-        if (!marker || marker->getNumOperands() != 1 || load->isVolatile() ||
-            load->isAtomic())
-          continue;
-        const auto *root = llvm::mdconst::dyn_extract<llvm::ConstantInt>(
-            marker->getOperand(0));
-        if (!root || root->getBitWidth() != 64)
-          continue;
-        const auto found = families.find(root->getZExtValue());
-        if (found == families.end() || found->second.empty() ||
-            found->second.size() > maxCandidates)
-          continue;
-        bool eligible = true;
-        for (auto *target : found->second) {
-          if (target->isDeclaration() || !target->hasLocalLinkage() ||
-              target->isVarArg() || target->hasPersonalityFn() ||
-              target->hasFnAttribute(llvm::Attribute::Convergent) ||
-              target->hasFnAttribute(llvm::Attribute::NoDuplicate) ||
-              target->hasFnAttribute(llvm::Attribute::ReturnsTwice) ||
-              target->getFunctionType() != call->getFunctionType() ||
-              target->getCallingConv() != call->getCallingConv() ||
-              !llvm::isLegalToPromote(*call, target)) {
-            eligible = false;
-            break;
-          }
-          // Include immediate implementation bodies in the budget, not just
-          // the small ABI-adjustment wrapper. Normal LLVM inlining still owns
-          // subsequent decisions; no force-inline attribute is introduced.
-          std::size_t cost = target->getInstructionCount();
-          std::set<llvm::Function *> counted{target};
-          for (const auto &targetBlock : *target)
-            for (const auto &operation : targetBlock)
-              if (const auto *invocation =
-                      llvm::dyn_cast<llvm::CallBase>(&operation))
-                if (auto *implementation = invocation->getCalledFunction();
-                    implementation && counted.insert(implementation).second)
-                  cost += implementation->getInstructionCount();
-          if (cost > maxCandidateInstructions) {
-            eligible = false;
-            break;
-          }
-        }
-        if (eligible) {
-          sites.push_back({call, found->second});
-          ++selected;
-        }
-      }
-    }
-  }
-  for (const auto &site : sites)
-    for (auto *target : site.targets)
-      (void)llvm::promoteCallWithIfThenElse(*site.call, target);
-  // These temporary inventories must not cause a second optimization/emission
-  // request to repeatedly promote the fallback or retain otherwise dead tables.
-  for (auto &global : module.globals())
-    global.setMetadata("gti.dispatch.candidates", nullptr);
-  for (auto &function : module)
-    for (auto &block : function)
-      for (auto &instruction : block)
-        instruction.setMetadata("gti.dispatch.root", nullptr);
-  return sites.size();
 }
 
 } // namespace lang::native_llvm

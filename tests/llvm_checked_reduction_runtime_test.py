@@ -152,51 +152,6 @@ def main():
                               f"{fixture.name}:{key_site}: runtime error[GTI-R0001]: integer_overflow in addition\n"))
             else:
                 cases.append((mode, count, 0, output + f"{total}\n1\n", ""))
-    key_site = next(index for index, line in enumerate(lines, 1)
-                    if "// standalone-key-boundary" in line)
-    for count in (0, 1, 2, 3, 4, 7, 15, 31, 32, 63, 127, 255):
-        for mode in (23, 24, 25, 26, 27):
-            base = 4294967295 - count % 31 if mode in (24, 27) else count % 17
-            values, output, failed = [], "", False
-            for index in range(count % 32):
-                if mode == 25 and index == 2:
-                    output += "9\n"
-                    break
-                key = base + index * (4 if mode >= 26 else 7)
-                if key > 4294967295:
-                    output += "9\n"
-                    failed = True
-                    break
-                values.append(key)
-                output += f"{key}\n9\n"
-            if failed:
-                cases.append((mode, count, 70, output + "2\n1\n",
-                              f"{fixture.name}:{key_site}: runtime error[GTI-R0001]: integer_overflow in addition\n"))
-            else:
-                output += "".join(f"{key}\n" for key in values)
-                cases.append((mode, count, 0, output + "2\n1\n", ""))
-    clamp_site = next(index for index, line in enumerate(lines, 1)
-                      if "// clamped-boundary" in line)
-    for count in (0, 1, 2, 3, 4, 7, 12, 13, 31, 32, 33, 63, 127, 255):
-        for mode in (28, 29, 30):
-            total = count % 7 if mode == 28 else 4294967295 - count % 13
-            visits, failed = 0, False
-            for index in range(min(count, 32)):
-                visits += 1
-                if mode == 30 and index == 2:
-                    break
-                if (index + count) % 3 != 1:
-                    increment = max(min(index + 1, 5), 1)
-                    if total + increment > 4294967295:
-                        failed = True
-                        break
-                    total += increment
-            output = "9\n" * visits + "2\n"
-            if failed:
-                cases.append((mode, count, 70, output + "1\n",
-                              f"{fixture.name}:{clamp_site}: runtime error[GTI-R0001]: integer_overflow in addition\n"))
-            else:
-                cases.append((mode, count, 0, output + f"{total}\n1\n", ""))
     modes = [("llvm-O0", ["--backend", "llvm", "-O0"]),
              ("llvm-O2", ["--backend", "llvm", "-O2"]),
              ("llvm-O3", ["--backend", "llvm", "-O3"]),
