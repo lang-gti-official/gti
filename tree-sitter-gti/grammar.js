@@ -32,8 +32,9 @@ module.exports = grammar({
     [$.extern_c_variable_declaration, $.extern_c_function_prototype],
     [$._base_type, $.numeric_conversion],
     [$.generic_function, $.user_type],
-    [$.generic_function, $.primary_expression],
-    [$.generic_function, $.user_type, $.primary_expression],
+    [$.concept_application, $.generic_function, $.primary_expression],
+    [$.concept_application, $.user_type, $.generic_function, $.primary_expression],
+    [$.concept_application, $.type_argument_clause],
     [$.user_type, $.primary_expression],
     [$.expression, $.argument_list],
     [$.constraint_predicate, $.expression],
@@ -1292,7 +1293,10 @@ module.exports = grammar({
         prec(
           PREC.postfix,
           seq(
-            field("function", $._postfix_expression),
+            field(
+              "function",
+              choice(prec.dynamic(1, $.generic_function), $._postfix_expression),
+            ),
             field("arguments", $.argument_list),
           ),
         ),
@@ -1374,7 +1378,7 @@ module.exports = grammar({
         $.call_expression,
         $.member_expression,
         $.index_expression,
-        $.generic_function,
+        $.concept_application,
         $.primary_expression,
       ),
 
@@ -1596,7 +1600,7 @@ function nonAssignmentExpression($) {
     $.member_expression,
     $.index_expression,
     $.update_expression,
-    $.generic_function,
+    $.concept_application,
     $.primary_expression,
   );
 }
