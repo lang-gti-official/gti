@@ -3522,6 +3522,9 @@ private:
       const std::vector<SemanticType> &arguments,
       const std::vector<std::string> *lookupScope = nullptr) const;
   mutable std::size_t expressionRequirementDepth = 0;
+  mutable std::shared_ptr<std::size_t> requirementQueryWork;
+  [[nodiscard]] bool
+  chargeRequirementQueryTypes(std::span<const SemanticType> arguments) const;
   struct ActiveRequirementQuery {
     const void *syntax = nullptr;
     std::vector<SemanticType> arguments;

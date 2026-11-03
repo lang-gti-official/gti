@@ -251,6 +251,7 @@ auto SemanticVisitor::Impl::unevaluatedExpressionWorker() const
       cloneLoopUse(call.receiver->loopUse);
   }
   worker->expressionRequirementDepth = expressionRequirementDepth;
+  worker->requirementQueryWork = requirementQueryWork;
   worker->activeRequirementQueries = activeRequirementQueries;
   worker->requestSession.trackAssertionDiagnostics = false;
   worker->requestSession.trackedAssertionFailed = false;
@@ -446,6 +447,24 @@ auto SemanticVisitor::Impl::expressionRequirementFact(
   return fact;
 }
 
+auto SemanticVisitor::Impl::chargeRequirementQueryTypes(
+    std::span<const SemanticType> arguments) const -> bool {
+  // Depth alone does not bound queries whose argument doubles at each step.
+  // Unevaluated workers share this root query's monotonically charged budget.
+  if (expressionRequirementDepth == 0 || !requirementQueryWork)
+    requirementQueryWork = std::make_shared<std::size_t>(0);
+  const auto charge = [&](const auto &self, const SemanticType &type) -> bool {
+    if (++*requirementQueryWork > 16384)
+      return false;
+    for (const auto &argument : type.arguments)
+      if (!self(self, argument))
+        return false;
+    return true;
+  };
+  return std::all_of(arguments.begin(), arguments.end(),
+                     [&](const auto &type) { return charge(charge, type); });
+}
+
 auto SemanticVisitor::Impl::requirementQueryIdentity(
     const void *syntax, std::span<const SemanticType> arguments) const
     -> ActiveRequirementQuery {
@@ -461,6 +480,12 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfied(
     const MemberRequirement &query,
     std::span<const SemanticType> inputArguments, std::string *reason,
     const std::vector<std::string> *lookupScope) const -> bool {
+  if (!chargeRequirementQueryTypes(inputArguments)) {
+    if (reason)
+      *reason = "Expression requirements exceed the 16384-node type-expansion "
+                "budget.";
+    return false;
+  }
   // A constraint on a forwarded open pack is universally quantified over
   // its elements. Probe one symbolic element with that pack's identity and
   // established facts, not a runtime pack value. Ordinary expressions outside
@@ -726,6 +751,9 @@ auto SemanticVisitor::Impl::constraintPredicateSatisfied(
   const auto *call = exprAs<Call>(application.predicate.get());
   if (!call)
     return reject("A constraint predicate must be a constexpr boolean call.");
+  if (!chargeRequirementQueryTypes(arguments))
+    return reject(
+        "Constraint predicates exceed the 16384-node type-expansion budget.");
   if (const auto capability =
           predicateCapabilityFor(application, arguments, lookupScope)) {
     if (capability->atomic != GenericConstraintKind::None)

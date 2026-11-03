@@ -852,6 +852,12 @@ pairs containing runtime-only owners remain runtime values. No allocation,
 owning-string construction, or user-defined comparison operator becomes
 compile-time eligible merely because a generic wrapper is marked `constexpr`.
 
+`pair<T, U>` also provides `operator==` and `operator!=` when both elements
+satisfy `std::equality_comparable`. Comparison reads corresponding fields and
+short-circuits; nested comparable pairs satisfy the same concept. A pair with
+noncomparable fields can still be constructed and used without comparison.
+These conditional operators require the LLVM backend.
+
 These facilities compose into static asset metadata without runtime file I/O:
 a constexpr function can inspect a literal path, return a passive record of
 derived values, and populate a `std::array` whose elements are inspected through
@@ -998,11 +1004,16 @@ identifies the existing or inserted element, and `second` reports whether an
 element was inserted. This is ordinary nested borrowed storage: retaining the
 pair protects its owner, moving the pair transfers that protection, and copying
 its exclusive iterator is rejected. `try_emplace` does not construct a mapped
-value on a duplicate key. `get_or_insert(key)` requires a default-initializable
-mapped type and returns a mutable reference, inserting a default value only
-when absent. The current API does not expose insertion through `operator[]`:
-the general operator requirements model cannot yet express that conditional
-default-construction requirement.
+value on a duplicate key. `get_or_insert(key)` and mutable `operator[](K key)`
+require a default-initializable mapped type and return a mutable reference,
+inserting a default value only when absent. Both acquire their exact owned key
+eagerly even on a hit: a named move-only key must be passed with `std::move`, or
+the caller supplies a fresh key. No implicit key conversion or read-only
+indexing overload is provided; `at` remains the non-inserting lookup operation.
+The exclusive result prevents conflicting access to the container while live.
+Non-default-constructible mapped types still support explicit insertion and
+lookup; the indexing requirement does not constrain the container itself.
+See [`190-conditional-member-operators.gti`](../../examples/190-conditional-member-operators.gti).
 
 `at` on a missing key raises `GTI-R0015` (`key_not_found`). Invalid sentinel
 dereference/increment and invalid load-factor arguments raise `GTI-R0016`

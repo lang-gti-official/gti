@@ -1319,6 +1319,18 @@ target_link_libraries(gti_general_requires_tests PRIVATE gti_compiler)
 add_test(NAME general_requires_semantics
   COMMAND gti_general_requires_tests "${PROJECT_SOURCE_DIR}")
 set_tests_properties(general_requires_semantics PROPERTIES TIMEOUT 120)
+add_test(NAME conditional_member_operators
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/conditional_member_operators_test.py"
+          $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}")
+set_tests_properties(conditional_member_operators PROPERTIES TIMEOUT 900)
+if(TARGET gti_lsp)
+  add_test(NAME conditional_member_operators_lsp
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/conditional_member_operators_lsp_test.py"
+            $<TARGET_FILE:gti_lsp>)
+  set_tests_properties(conditional_member_operators_lsp PROPERTIES TIMEOUT 90)
+endif()
 add_test(NAME general_requires_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/generic_symbolic_auto_local_runtime_test.py"
           $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/examples/173-general-requires.gti" --include-o1)

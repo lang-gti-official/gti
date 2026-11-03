@@ -26,6 +26,17 @@ BackendArtifact CppBackend::generate(LoweredProgram program) {
     throw std::logic_error("C++ backend requires a verified lowered program: " +
                            issues.front().detail);
   }
+  // Conditional operators are new source behavior. The frozen C++ protocol
+  // adapter vocabulary cannot represent their availability; decline concrete
+  // uses before snapshot construction, while retaining unused declarations.
+  for (const auto &instance : verified->program().functionInstances()) {
+    const auto *function =
+        verified->program().findFunctionDeclaration(instance.declaration);
+    if (function && function->overloadedOperator && function->hasRequiresClause)
+      throw BackendUnsupportedError(
+          "conditionally available member operators require the LLVM backend",
+          instance.instantiationSource.value_or(instance.source));
+  }
   // The retained C++ representation names types, aliases and namespace storage
   // by qualified spelling. Module-distinct homonyms require the LLVM backend;
   // reject them before native compilation rather than emitting duplicate C++

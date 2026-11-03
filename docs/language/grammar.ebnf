@@ -1572,8 +1572,9 @@ pack-expansion         = IDENTIFIER "..." ;
    pack of uint64_t generic values. Constructor-local `uint64_t` remains
    restricted to an inferred fixed-array extent.
 
-   A trailing clause is semantically rejected on an operator
-   or a virtual, pure, overriding, or interface method. Direct concept negation
+   Non-polymorphic member operators admit validity-only trailing clauses.
+   A trailing clause is semantically rejected on a virtual, pure, overriding,
+   or interface method, including an operator. Direct concept negation
    and concept, partial, or constraint-selected specialization are not
    implemented.
 
