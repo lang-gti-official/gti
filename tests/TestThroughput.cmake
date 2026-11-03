@@ -244,10 +244,39 @@ if(Python3_Interpreter_FOUND)
       message(FATAL_ERROR "Heavy case suite is not a parallel case suite: ${suite}")
     endif()
   endforeach()
-  # Long single-process gates get the same cold-tree ordering hint. A fresh
-  # CTest tree knows no durations, so without a hint these start late and run
-  # alone at the end. Values are measured seconds from a full run, used only
-  # for scheduling order; no case, assertion or timeout changes.
+  # Every registered test gets its observed duration as a scheduling hint.
+  # CTest runs higher COST first; a fresh tree knows no durations, so without
+  # this the largest tests start in declaration order and finish the shard
+  # alone (a 25-minute test starting at minute 60 is the measured 85-89-minute
+  # shard wall). tests/ci_test_durations.json is refreshed from CI JUnit; a
+  # test missing there keeps its default, and the explicit hints below still
+  # win so a stale table cannot demote a known long gate. Scheduling only: no
+  # case, assertion or timeout changes.
+  file(READ "${PROJECT_SOURCE_DIR}/tests/ci_test_durations.json" gti_durations_json)
+  string(JSON gti_durations_seconds GET "${gti_durations_json}" seconds)
+  string(JSON gti_durations_count LENGTH "${gti_durations_seconds}")
+  if(gti_durations_count GREATER 0)
+    math(EXPR gti_durations_last "${gti_durations_count} - 1")
+    foreach(index RANGE 0 ${gti_durations_last})
+      string(JSON gti_duration_name MEMBER "${gti_durations_seconds}" ${index})
+      if(NOT TEST "${gti_duration_name}")
+        continue()
+      endif()
+      string(JSON gti_duration_value GET "${gti_durations_seconds}" "${gti_duration_name}")
+      # The table stores seconds with a fraction; COST is an integer hint.
+      string(REGEX REPLACE "\\..*$" "" gti_duration_cost "${gti_duration_value}")
+      if(NOT gti_duration_cost MATCHES "^[0-9]+$")
+        message(FATAL_ERROR "ci_test_durations.json: non-numeric duration for ${gti_duration_name}")
+      endif()
+      get_test_property("${gti_duration_name}" COST gti_existing_cost)
+      if(gti_duration_cost GREATER 1 AND (NOT gti_existing_cost OR gti_existing_cost LESS gti_duration_cost))
+        set_tests_properties("${gti_duration_name}" PROPERTIES COST "${gti_duration_cost}")
+      endif()
+    endforeach()
+  endif()
+  # Long single-process gates keep an explicit hint that outranks the table.
+  # Values are measured seconds from a full run, used only for scheduling
+  # order; no case, assertion or timeout changes.
   set(gti_long_gate_costs
     failure_metadata 520
     cpp_mir_body_emitter_corpus 500
@@ -276,7 +305,10 @@ if(Python3_Interpreter_FOUND)
       message(FATAL_ERROR "Long gate is not registered: ${gti_long_gate}")
     endif()
     if(NOT gti_long_gate IN_LIST gti_parallel_case_suites)
-      set_tests_properties("${gti_long_gate}" PROPERTIES COST "${gti_long_gate_cost}")
+      get_test_property("${gti_long_gate}" COST gti_existing_cost)
+      if(NOT gti_existing_cost OR gti_existing_cost LESS gti_long_gate_cost)
+        set_tests_properties("${gti_long_gate}" PROPERTIES COST "${gti_long_gate_cost}")
+      endif()
     endif()
   endforeach()
   add_test(NAME test_case_jobs

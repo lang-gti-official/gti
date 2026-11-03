@@ -26,6 +26,7 @@ FORBIDDEN = (
 ACTION_USE = re.compile(r"^\s*(?:-\s+)?uses:\s*(\S+)@([^\s#]+)", re.MULTILINE)
 CI = ".github/workflows/ci.yml"
 FULL_VALIDATION = ".github/workflows/full-validation.yml"
+LLVM_PREBUILT = ".github/workflows/llvm-prebuilt.yml"
 NIGHTLY = ".github/workflows/nightly.yml"
 PREVIEW = ".github/workflows/preview.yml"
 ROLLUP = ".github/workflows/rollup.yml"
@@ -65,7 +66,7 @@ def main():
     workflows = sorted(p for p in tracked if p.startswith((".github/workflows/", ".gitea/workflows/")))
     # CI, nightly toolchain releases and the rollup bot run on GitHub. The frozen
     # Gitea release workflow stays as the record of the contract it replaces.
-    expect(set(workflows) == {CI, FULL_VALIDATION, NIGHTLY, PREVIEW, RELEASE, ROLLUP, CACHE, *RELEASE_TRAIN},
+    expect(set(workflows) == {CI, FULL_VALIDATION, LLVM_PREBUILT, NIGHTLY, PREVIEW, RELEASE, ROLLUP, CACHE, *RELEASE_TRAIN},
            f"unexpected live workflows: {workflows}")
     for relative in (CI, NIGHTLY, PREVIEW, RELEASE, ROLLUP, CACHE, *RELEASE_TRAIN, ".github/README.md", ".gitea/README.md",
                      ".gitea/ISSUE_TEMPLATE/bug_report.md",

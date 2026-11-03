@@ -19,10 +19,13 @@ permissions:
   actions: read
 
 concurrency:
-  # Only the newest main head needs proving; a superseded head's run is
-  # cancelled so runners go to the commit a channel could actually publish.
+  # Runs queue rather than cancel. The merge queue batches merges, so main can
+  # advance several times inside one full-validation run; cancelling the older
+  # run on every push left no head ever proven (the first run on the split
+  # gate was cancelled at 42 minutes). A superseded head's verdict is still
+  # evidence for the channels, and the newest head follows it.
   group: full-validation-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'push' }}
+  cancel-in-progress: false
 
 jobs:
   plan:
@@ -92,10 +95,9 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-${{ github.sha }}-${{ github.run_id }}
+          key: gti-ccache-v2-release-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'scripts/configure_ci_toolchain.sh') }}
           restore-keys: |
-            gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-
-            gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-release-
+            gti-ccache-v2-release-${{ runner.os }}-${{ runner.arch }}-
       - name: Check runner sanitizer execution
         run: python3 scripts/check_ci_sanitizers.py --cxx "${CXX}" --sanitizer address,undefined
       - name: Configure release build
@@ -166,20 +168,13 @@ jobs:
       - name: Report compiler cache statistics
         if: always()
         run: if command -v ccache >/dev/null 2>&1; then ccache --show-stats; fi
-      # The release suite shards restore this exact key and rebuild the same
-      # configuration from cached objects.
-      - name: Save compiler and LLVM/Clang cache, including partial builds
-        if: always() && steps.cache.outputs.cache-primary-key != '' && steps.cache.outputs.cache-hit != 'true'
-        continue-on-error: true
-        timeout-minutes: 10
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ${{ steps.cache.outputs.cache-primary-key }}
+      # llvm-prebuilt.yml owns the release cache under its toolchain-content
+      # key; a validation run only restores it. Saving a per-run key here
+      # evicted the reachable entries from the 10 GB cache.
 
   integration:
     name: Integration (${{ matrix.platform }} ${{ matrix.index }}/${{ matrix.shards }})
-    needs: [plan, package]
+    needs: [plan]
     if: needs.plan.outputs.mode == 'full'
     strategy:
       fail-fast: false
@@ -217,15 +212,15 @@ jobs:
         env:
           GTI_CACHE_DIRECTORY: ${{ runner.temp }}/gti-ccache/release
         run: bash scripts/configure_ci_cache.sh
-      - name: Restore the packaging job's object cache
+      - name: Restore the prebuilt LLVM/Clang and release object cache
         continue-on-error: true
         timeout-minutes: 10
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-${{ github.sha }}-${{ github.run_id }}
+          key: gti-ccache-v2-release-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'scripts/configure_ci_toolchain.sh') }}
           restore-keys: |
-            gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-
+            gti-ccache-v2-release-${{ runner.os }}-${{ runner.arch }}-
       - name: Configure release build
         # Hosted runners are slower than the hosts test bounds were measured on;
         # scale them as the merge queue does.
@@ -241,7 +236,7 @@ jobs:
           GTI_SHARD_INDEX: ${{ matrix.index }}
           GTI_SHARD_PLATFORM: ${{ matrix.platform }}
         run: >-
-          python3 scripts/validation_checks.py shard --build build
+          python3 scripts/validation_checks.py shard --build build --test-set full
           --shards "${GTI_SHARDS}" --index "${GTI_SHARD_INDEX}"
           --jobs "${GTI_TEST_JOBS}"
           --report "${RUNNER_TEMP}/shard/${GTI_SHARD_PLATFORM}-${GTI_SHARD_INDEX}.json"
@@ -312,10 +307,9 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-sanitizers-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-${{ github.sha }}
+          key: gti-ccache-v2-sanitizers-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'scripts/configure_ci_toolchain.sh') }}
           restore-keys: |
-            gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-sanitizers-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-
-            gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-sanitizers-
+            gti-ccache-v2-sanitizers-${{ runner.os }}-${{ runner.arch }}-
       - name: Check compiler sanitizer execution
         run: python3 scripts/check_ci_sanitizers.py --cxx "${CXX}" --sanitizer address,undefined
       - name: Configure
@@ -385,13 +379,11 @@ jobs:
             build-sanitized/Testing/Temporary/LastTestsFailed.log
           if-no-files-found: warn
           retention-days: 7
-      - name: Save compiler object cache
-        if: always() && steps.cache.outputs.cache-hit != 'true'
-        continue-on-error: true
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-sanitizers-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-${{ github.sha }}
+      # cache.yml owns the sanitizer cache under its content key; a validation
+      # run only restores it.
+      - name: Report compiler cache statistics
+        if: always()
+        run: ccache --show-stats || true
 
 
   verdict:
@@ -418,6 +410,16 @@ jobs:
           python3 scripts/named_test_shards.py verify
           --reports "${RUNNER_TEMP}/lifecycle-shards"
           --source "${{ github.sha }}" --count 2
+      - name: Refresh the shard duration table from this run
+        run: >-
+          python3 scripts/validation_checks.py durations
+          --reports "${RUNNER_TEMP}/shards"
+      - name: Upload the refreshed duration table
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ci-test-durations
+          path: tests/ci_test_durations.json
+          retention-days: 30
       - name: Decide full validation acceptance
         env:
           GTI_VALIDATION_MODE: ${{ needs.plan.outputs.mode }}
@@ -430,7 +432,7 @@ jobs:
   report:
     # A red main must be visible without anyone watching the Actions tab:
     # one `main-broken` issue is opened or updated on failure and closed when
-    # main is green again. A cancelled run (superseded head) reports nothing.
+    # main is green again. A cancelled run reports nothing.
     name: Report main status
     if: always() && github.event_name == 'push' && needs.verdict.result != 'cancelled'
     needs: [verdict]
