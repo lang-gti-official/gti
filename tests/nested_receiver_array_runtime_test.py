@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from backend_modes import keep_cpp, native_modes
 
 
 def main():
@@ -16,16 +17,14 @@ def main():
     lines = source.read_text().splitlines()
     sites = {marker: next(i for i, line in enumerate(lines, 1) if f"// {marker}" in line)
              for marker in ("matrix-read", "matrix-write", "grid-read", "grid-write")}
-    modes = [(standard, level, []) for standard in ("c++20", "c++23")
-             for level in ("-O0", "-O1", "-O3")]
-    modes.append(("c++23", "-O1", ["-fsanitize=address,undefined"]))
+    modes = native_modes()
     with tempfile.TemporaryDirectory(prefix="gti-nested-receiver-array-") as directory:
-        for index, (standard, level, native_flags) in enumerate(modes):
+        for index, (label, flags, native) in enumerate(modes):
             binary = Path(directory) / str(index)
             built = subprocess.run(
-                [str(compiler), str(source), "--std", standard, level,
-                 "--keep-cpp", "-o", str(binary), "--",
-                 str(source.with_suffix(".cpp")), *native_flags],
+                [str(compiler), str(source), *flags,
+                 *keep_cpp(flags), "-o", str(binary), "--",
+                 str(source.with_suffix(".cpp")), *native],
                 capture_output=True, text=True, timeout=120)
             assert built.returncode == 0, (built.stdout, built.stderr)
             for mode, site in enumerate((None, "matrix-read", "matrix-write",
@@ -43,7 +42,7 @@ def main():
                         rf".*nested_receiver_array\.gti:{sites[site]}: runtime error"
                         r"\[GTI-R\d+\]: .*\n", ran.stderr), (mode, ran)
                     assert "bounds" in ran.stderr, (mode, ran)
-            print(f"{standard} {level} {native_flags}: nested receiver arrays passed", flush=True)
+            print(f"{label} {native}: nested receiver arrays passed", flush=True)
 
 
 if __name__ == "__main__":

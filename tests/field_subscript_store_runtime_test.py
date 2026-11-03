@@ -19,6 +19,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -209,28 +210,24 @@ def main() -> int:
         source = root / "field-store.gti"
         source.write_text(POSITIVE_SOURCE, encoding="utf8")
 
-        for standard in ("c++20", "c++23"):
-            for optimization in ("O0", "O3"):
-                label = f"{standard}-{optimization}"
-                executable = root / f"field-store-{label}"
-                built = run(
-                    [
-                        str(compiler),
-                        str(source),
-                        "--std",
-                        standard,
-                        f"-{optimization}",
-                        "-o",
-                        str(executable),
-                    ]
-                )
-                if built.returncode != 0 or "Internal compiler error" in (
-                    built.stderr
-                ):
-                    return fail(f"build {label}", built)
-                executed = run([str(executable)])
-                if executed.returncode != 0:
-                    return fail(f"run {label}", executed)
+        for label, flags, native in native_modes():
+            executable = root / f"field-store-{label}"
+            built = run(
+                [
+                    str(compiler),
+                    str(source),
+                    *flags,
+                    "-o",
+                    str(executable),
+                ]
+            )
+            if built.returncode != 0 or "Internal compiler error" in (
+                built.stderr
+            ):
+                return fail(f"build {label}", built)
+            executed = run([str(executable)])
+            if executed.returncode != 0:
+                return fail(f"run {label}", executed)
 
         serialized_path = root / "field-store.mir"
         emitted = run(
@@ -258,9 +255,7 @@ def main() -> int:
             [
                 str(compiler),
                 str(failure_source),
-                "--std",
-                "c++23",
-                "-O0",
+                *native_modes(levels=("O0",))[0][1],
                 "-o",
                 str(failure_executable),
             ]

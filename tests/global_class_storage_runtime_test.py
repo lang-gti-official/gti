@@ -5,6 +5,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from backend_modes import is_cpp_mode, native_modes
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -29,35 +30,30 @@ def main() -> int:
         prefix="gti-global-class-storage-"
     ) as temporary:
         root = pathlib.Path(temporary)
-        for optimization in ("O0", "O3"):
-            for standard in ("c++20", "c++23"):
-                mode = f"{optimization}-{standard}"
-                executable = root / mode
-                built = run(
-                    [
-                        str(compiler),
-                        str(source),
-                        f"-{optimization}",
-                        "--std",
-                        standard,
-                        "-o",
-                        str(executable),
-                    ]
-                )
-                if built.returncode != 0:
-                    return fail(built)
-                executed = run([str(executable)])
-                if executed.returncode != 0:
-                    return fail(executed)
+        for mode, flags, _native in native_modes():
+            executable = root / mode
+            built = run(
+                [
+                    str(compiler),
+                    str(source),
+                    *flags,
+                    "-o",
+                    str(executable),
+                ]
+            )
+            if built.returncode != 0:
+                return fail(built)
+            executed = run([str(executable)])
+            if executed.returncode != 0:
+                return fail(executed)
 
-                emitted = root / f"{mode}.cpp"
+            emitted = root / f"{mode}.cpp"
+            if is_cpp_mode(flags):
                 emission = run(
                     [
                         str(compiler),
                         str(source),
-                        f"-{optimization}",
-                        "--std",
-                        standard,
+                        *flags,
                         "--emit-cpp",
                         "-o",
                         str(emitted),
@@ -65,6 +61,7 @@ def main() -> int:
                 )
                 if emission.returncode != 0:
                     return fail(emission)
+            if is_cpp_mode(flags):
                 generated = emitted.read_text(encoding="utf8")
                 # This cleanup-free, statically initialized object has native
                 # storage. Both functions must address that same object; no

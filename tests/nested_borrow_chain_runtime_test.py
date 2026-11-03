@@ -15,6 +15,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -236,66 +237,60 @@ def main() -> int:
             failure_source.write_text(text, encoding="utf8")
             failure_sources.append((label, failure_source))
 
-        for standard in ("c++20", "c++23"):
-            for optimization in ("O0", "O3"):
-                executable = root / f"nested-borrow-chain-{standard}-{optimization}"
+        for mode, flags, native in native_modes():
+            executable = root / f"nested-borrow-chain-{mode}"
+            built = run(
+                [
+                    str(compiler),
+                    str(success_source),
+                    *flags,
+                    "-o",
+                    str(executable),
+                ]
+            )
+            if built.returncode != 0:
+                return fail(built)
+            executed = run([str(executable)])
+            if (
+                executed.returncode != 0
+                or executed.stdout != ""
+                or executed.stderr != ""
+            ):
+                sys.stderr.write(
+                    "a retained borrow built from another borrowed call "
+                    f"result did not reach the original object for {mode}: exit={executed.returncode} "
+                    f"stdout={executed.stdout!r} stderr={executed.stderr!r}\n"
+                )
+                return 1
+
+            for label, failure_source in failure_sources:
+                failure_executable = root / f"{label}-{mode}"
                 built = run(
                     [
                         str(compiler),
-                        str(success_source),
-                        "--std",
-                        standard,
-                        f"-{optimization}",
+                        str(failure_source),
+                        *flags,
                         "-o",
-                        str(executable),
+                        str(failure_executable),
                     ]
                 )
                 if built.returncode != 0:
                     return fail(built)
-                executed = run([str(executable)])
+                executed = run([str(failure_executable)])
                 if (
-                    executed.returncode != 0
-                    or executed.stdout != ""
-                    or executed.stderr != ""
+                    executed.returncode != 70
+                    or "GTI-R0001" not in executed.stderr
+                    or "integer_overflow" not in executed.stderr
+                    or "GTI-R0014" in executed.stderr
                 ):
                     sys.stderr.write(
-                        "a retained borrow built from another borrowed call "
-                        f"result did not reach the original object for {standard} "
-                        f"{optimization}: exit={executed.returncode} "
-                        f"stdout={executed.stdout!r} stderr={executed.stderr!r}\n"
+                        f"{label} did not report the defined failure raised "
+                        "while a retained borrow chain was live for "
+                        f"{mode}: "
+                        f"exit={executed.returncode} stdout={executed.stdout!r} "
+                        f"stderr={executed.stderr!r}\n"
                     )
                     return 1
-
-                for label, failure_source in failure_sources:
-                    failure_executable = root / f"{label}-{standard}-{optimization}"
-                    built = run(
-                        [
-                            str(compiler),
-                            str(failure_source),
-                            "--std",
-                            standard,
-                            f"-{optimization}",
-                            "-o",
-                            str(failure_executable),
-                        ]
-                    )
-                    if built.returncode != 0:
-                        return fail(built)
-                    executed = run([str(failure_executable)])
-                    if (
-                        executed.returncode != 70
-                        or "GTI-R0001" not in executed.stderr
-                        or "integer_overflow" not in executed.stderr
-                        or "GTI-R0014" in executed.stderr
-                    ):
-                        sys.stderr.write(
-                            f"{label} did not report the defined failure raised "
-                            "while a retained borrow chain was live for "
-                            f"{standard} {optimization}: "
-                            f"exit={executed.returncode} stdout={executed.stdout!r} "
-                            f"stderr={executed.stderr!r}\n"
-                        )
-                        return 1
 
     return 0
 

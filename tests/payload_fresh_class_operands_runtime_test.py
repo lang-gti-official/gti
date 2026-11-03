@@ -6,6 +6,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 # A move-only class with an active destructor takes the transferred-value path;
 # construction and destruction must stay balanced.
@@ -69,9 +70,9 @@ FAILURE_REPORT = re.compile(
     r"multiplication\n")
 
 
-def build(compiler, source, executable, standard, optimization):
+def build(compiler, source, executable, flags):
     return subprocess.run(
-        [str(compiler), str(source), "--std", standard, optimization, "-o",
+        [str(compiler), str(source), *flags, "-o",
          str(executable)], text=True, capture_output=True, check=False)
 
 
@@ -94,41 +95,38 @@ def main() -> int:
             path = root / f"{name}.gti"
             path.write_text(text, encoding="utf-8")
             programs[name] = path
-        for standard in ("c++20", "c++23"):
-            for optimization in ("-O0", "-O3"):
-                label = f"{standard}{optimization}"
-                for name, source in programs.items():
-                    executable = root / f"{name}-{label}"
-                    built = build(compiler, source, executable, standard,
-                                  optimization)
-                    if built.returncode != 0:
-                        failures.append(f"{name} {label}: build failed\n"
-                                        f"{built.stdout}{built.stderr}")
-                        continue
-                    if name != "fail":
-                        ran = subprocess.run([str(executable)], text=True,
-                                             capture_output=True, check=False)
-                        if (ran.returncode != 0 or
-                                (name == "original" and (ran.stdout or ran.stderr))):
-                            failures.append(
-                                f"{name} {label}: exit {ran.returncode} "
-                                f"{ran.stdout!r} {ran.stderr!r}")
-                        continue
-                    passing = subprocess.run([str(executable)], text=True,
-                                             capture_output=True, check=False)
-                    if passing.returncode != 0 or passing.stdout != "0\n":
+        for label, flags, native in native_modes():
+            for name, source in programs.items():
+                executable = root / f"{name}-{label}"
+                built = build(compiler, source, executable, flags)
+                if built.returncode != 0:
+                    failures.append(f"{name} {label}: build failed\n"
+                                    f"{built.stdout}{built.stderr}")
+                    continue
+                if name != "fail":
+                    ran = subprocess.run([str(executable)], text=True,
+                                         capture_output=True, check=False)
+                    if (ran.returncode != 0 or
+                            (name == "original" and (ran.stdout or ran.stderr))):
                         failures.append(
-                            f"fail {label} success path: exit "
-                            f"{passing.returncode} {passing.stdout!r}")
-                    failing = subprocess.run([str(executable), "overflow"],
-                                             text=True, capture_output=True,
-                                             check=False)
-                    if (failing.returncode != 70 or failing.stdout != "0\n" or
-                            not FAILURE_REPORT.fullmatch(failing.stderr)):
-                        failures.append(
-                            f"fail {label} failure path: exit "
-                            f"{failing.returncode} {failing.stdout!r} "
-                            f"{failing.stderr!r}")
+                            f"{name} {label}: exit {ran.returncode} "
+                            f"{ran.stdout!r} {ran.stderr!r}")
+                    continue
+                passing = subprocess.run([str(executable)], text=True,
+                                         capture_output=True, check=False)
+                if passing.returncode != 0 or passing.stdout != "0\n":
+                    failures.append(
+                        f"fail {label} success path: exit "
+                        f"{passing.returncode} {passing.stdout!r}")
+                failing = subprocess.run([str(executable), "overflow"],
+                                         text=True, capture_output=True,
+                                         check=False)
+                if (failing.returncode != 70 or failing.stdout != "0\n" or
+                        not FAILURE_REPORT.fullmatch(failing.stderr)):
+                    failures.append(
+                        f"fail {label} failure path: exit "
+                        f"{failing.returncode} {failing.stdout!r} "
+                        f"{failing.stderr!r}")
     if failures:
         sys.stderr.write("\n".join(failures) + "\n")
         return 1

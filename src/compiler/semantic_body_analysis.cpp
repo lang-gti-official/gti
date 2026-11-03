@@ -132,6 +132,7 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   requestSession.programConcreteEffects =
       std::make_shared<ProgramConcreteEffectState>();
   requestSession.stagedConstants = std::make_shared<StagedConstantResults>();
+  requestSession.stagedConstants->enabled = reuseConstantEvaluations;
   requestSession.cThreadCallUses.clear();
   requestSession.rawBorrowCallUses.clear();
   requestSession.rawResultQueries.reset();
@@ -1103,15 +1104,32 @@ auto SemanticVisitor::Impl::visitConstexprForStmt(const ConstexprForStmt &stmt)
     semanticModel.recordConstexprForExpansion(stmt, std::nullopt);
     return;
   }
-  if (elements->size() > kConstexprForElementLimit ||
-      constexprForExpandedBodies + elements->size() > kConstexprForBodyLimit) {
+  // Both limits are checked before any copy is analysed, so an over-budget
+  // statement expands nothing.
+  const bool tooManyElements =
+      elements->size() > compileLimits.constexprForElements;
+  if (tooManyElements || constexprForExpandedBodies + elements->size() >
+                             compileLimits.constexprForCopies) {
+    auto CompileLimits::*const limit =
+        tooManyElements ? &CompileLimits::constexprForElements
+                        : &CompileLimits::constexprForCopies;
     report(stmt.forKeyword(),
-           "'constexpr for' expansion exceeds the compile-time budget (" +
-               std::to_string(kConstexprForElementLimit) +
-               " elements per statement, " +
-               std::to_string(kConstexprForBodyLimit) +
-               " expanded bodies per declaration).",
+           tooManyElements
+               ? "This 'constexpr for' statement has " +
+                     std::to_string(elements->size()) +
+                     " elements, more than its limit of " +
+                     std::to_string(compileLimits.constexprForElements) +
+                     " elements per statement."
+               : "This 'constexpr for' statement would expand " +
+                     std::to_string(elements->size()) + " more bodies after " +
+                     std::to_string(constexprForExpandedBodies) +
+                     " already expanded in this declaration, more than its "
+                     "limit of " +
+                     std::to_string(compileLimits.constexprForCopies) +
+                     " expanded bodies per declaration.",
            "GTI-S2108");
+    diagnostics.back().hints.push_back(
+        compileLimitHint(compileLimitInfo(limit), compileLimits.*limit));
     semanticModel.recordConstexprForExpansion(stmt, std::nullopt);
     return;
   }
@@ -2078,6 +2096,8 @@ auto SemanticVisitor::Impl::visitStaticAssertDecl(const StaticAssertDecl &stmt)
     }
     reporter.reportStaticAssertEvaluationFailure(
         stmt, evaluated.failure, evaluated.detail, evaluated.location);
+    if (!evaluated.limitHint.empty())
+      diagnostics.back().hints.push_back(evaluated.limitHint);
     evaluated.trace.appendTo(diagnostics.back());
     appendStaticAssertSubstitutions(diagnostics.back());
     semanticModel.recordStaticAssertResult(stmt, StaticAssertResult::Failed);
@@ -10809,7 +10829,7 @@ auto SemanticVisitor::Impl::validateLayoutClassAssertions(
         continue;
       if (!work)
         work = std::make_shared<LayoutAssertionWork>();
-      if (open->size() >= constexprCallDepthLimit) {
+      if (open->size() >= layoutAssertionDepthLimit) {
         report(query,
                "Layout query class assertions exceeded the compiler "
                "instantiation-depth limit.",
@@ -10817,7 +10837,7 @@ auto SemanticVisitor::Impl::validateLayoutClassAssertions(
         work->failure = diagnostics.back();
         return false;
       }
-      if (work->instances >= constexprExpressionStepLimit) {
+      if (work->instances >= layoutAssertionInstanceLimit) {
         report(query,
                "Layout query class assertions exceeded the compiler "
                "instantiation-work limit.",
@@ -13485,7 +13505,7 @@ auto SemanticVisitor::Impl::evaluateConstexprMutation(
 auto SemanticVisitor::Impl::defaultConstexprValue(
     const SemanticType &type, ConstexprInterpreter &context) const
     -> ConstantEvaluation {
-  if (context.work->steps++ >= constexprExpressionStepLimit) {
+  if (!chargeConstexprStep(context)) {
     return {.failure = ConstantEvaluationFailure::ResourceLimit};
   }
   if (const std::optional<CheckedIntegerDomain> domain =
@@ -13559,6 +13579,14 @@ auto SemanticVisitor::Impl::evaluateConstexprConstruction(
     const ExprList &explicitArguments, const Token &callSite,
     ConstexprInterpreter &context, const Expr *contextualArgument)
     -> ConstexprEvaluation {
+  // One nested constexpr call level (with any staged analysis it needs) per
+  // entry; CompileLimits::constexprDepth bounds it, not the host stack.
+  if (nativeStackNearlyExhausted())
+    return onFreshNativeStack([&] {
+      return evaluateConstexprConstruction(source, resolved, explicitArguments,
+                                           callSite, context,
+                                           contextualArgument);
+    });
   if (resolved.directInitialization) {
     if (explicitArguments.size() != 1)
       return constexprFailure(callSite,
@@ -13595,11 +13623,12 @@ auto SemanticVisitor::Impl::evaluateConstexprConstruction(
         "The selected constructor is not an available constexpr "
         "constructor.");
   }
-  if (context.callDepth >= constexprCallDepthLimit) {
+  if (context.callDepth >= compileLimits.constexprDepth) {
+    recordLimitExhaustion(context, &CompileLimits::constexprDepth);
     return constexprFailure(
         callSite, ConstantEvaluationFailure::ResourceLimit,
         "The constexpr call depth exceeded the compiler limit of " +
-            std::to_string(constexprCallDepthLimit) + ".");
+            std::to_string(compileLimits.constexprDepth) + ".");
   }
 
   const SemanticType constructedType =
@@ -13727,8 +13756,15 @@ auto SemanticVisitor::Impl::evaluateConstexprConstruction(
   context.scopes.emplace_back();
   context.substitutions.push_back(substitution);
   ++context.callDepth;
+  const FunctionDecl *const enclosingFunction = context.executingFunction;
+  const ConstructorDecl *const enclosingConstructor =
+      context.executingConstructor;
+  context.executingFunction = nullptr;
+  context.executingConstructor = declaration;
   const auto restore = [&]() {
     --context.callDepth;
+    context.executingFunction = enclosingFunction;
+    context.executingConstructor = enclosingConstructor;
     context.scopes.resize(enclosingScopeCount);
     context.substitutions.resize(enclosingSubstitutionCount);
     context.receivers.resize(enclosingReceiverCount);
@@ -13849,9 +13885,70 @@ auto SemanticVisitor::Impl::evaluateConstexprExpression(
   return evaluateConstexprExpression(*expression, context);
 }
 
+auto SemanticVisitor::Impl::chargeConstexprStep(
+    ConstexprInterpreter &context) const -> bool {
+  if (context.work->steps++ < compileLimits.constexprSteps)
+    return true;
+  recordLimitExhaustion(context, &CompileLimits::constexprSteps);
+  return false;
+}
+
+auto SemanticVisitor::Impl::recordLimitExhaustion(
+    ConstexprInterpreter &context, std::size_t CompileLimits::*limit,
+    std::string_view function) const -> void {
+  std::string executing(function);
+  if (executing.empty() && context.executingFunction != nullptr) {
+    const FunctionInfo *info =
+        semanticModel.findFunction(*context.executingFunction);
+    executing = info != nullptr ? info->qualifiedName
+                                : context.executingFunction->name().lexeme;
+  } else if (executing.empty() && context.executingConstructor != nullptr) {
+    executing = context.executingConstructor->name().lexeme;
+  }
+  context.work->exhaustion = ConstexprWorkBudget::Exhaustion{
+      .limit = limit, .function = std::move(executing)};
+}
+
+auto SemanticVisitor::Impl::describeLimitExhaustion(
+    ConstexprEvaluation &failure, const ConstexprInterpreter &context) const
+    -> void {
+  if (failure.failure != ConstantEvaluationFailure::ResourceLimit ||
+      !context.work->exhaustion || !context.work->exhaustion->limit)
+    return;
+  const auto &exhaustion = *context.work->exhaustion;
+  const CompileLimitInfo &limit = compileLimitInfo(exhaustion.limit);
+  const std::size_t value = compileLimits.*exhaustion.limit;
+  const std::string executing =
+      exhaustion.function.empty()
+          ? std::string()
+          : " while executing '" + exhaustion.function + "'";
+  if (exhaustion.limit == &CompileLimits::constexprSteps)
+    failure.detail = "The request used all " + std::to_string(value) +
+                     " steps of its constant-evaluation execution-step "
+                     "limit" +
+                     executing + ".";
+  else if (exhaustion.limit == &CompileLimits::constexprDepth)
+    failure.detail = "The constexpr call depth exceeded the request's limit "
+                     "of " +
+                     std::to_string(value) + " nested calls" + executing + ".";
+  else
+    failure.detail = "The request exceeded its '" + std::string(limit.key) +
+                     "' limit of " + std::to_string(value) + executing + ".";
+  failure.limitHint = compileLimitHint(limit, value);
+}
+
 auto SemanticVisitor::Impl::evaluateConstexprExpression(
     const Expr &source, ConstexprInterpreter &context) -> ConstexprEvaluation {
-  if (context.work->steps++ >= constexprExpressionStepLimit) {
+  ConstexprEvaluation result = evaluateConstexprNode(source, context);
+  if (result.failure == ConstantEvaluationFailure::ResourceLimit)
+    describeLimitExhaustion(result, context);
+  return result;
+}
+
+auto SemanticVisitor::Impl::evaluateConstexprNode(const Expr &source,
+                                                  ConstexprInterpreter &context)
+    -> ConstexprEvaluation {
+  if (!chargeConstexprStep(context)) {
     return constexprFailure(expressionToken(source),
                             ConstantEvaluationFailure::ResourceLimit);
   }
@@ -14680,7 +14777,7 @@ auto SemanticVisitor::Impl::executeConstexprStatement(
   if (statement == nullptr) {
     return {};
   }
-  if (context.work->steps++ >= constexprExpressionStepLimit) {
+  if (!chargeConstexprStep(context)) {
     return constexprStatementFailure(
         constexprFailure({}, ConstantEvaluationFailure::ResourceLimit));
   }
@@ -14960,17 +15057,24 @@ auto SemanticVisitor::Impl::executeConstexprFunction(
     const GenericSubstitution &substitution,
     const std::optional<ConstantValue> &receiver, const Token &callSite,
     ConstexprInterpreter &context) -> ConstexprEvaluation {
+  if (nativeStackNearlyExhausted())
+    return onFreshNativeStack([&] {
+      return executeConstexprFunction(function, returnType, arguments,
+                                      substitution, receiver, callSite,
+                                      context);
+    });
   if (const auto *info = semanticModel.findFunction(function);
       info != nullptr && info->bodyDeclaration() != &function) {
     return executeConstexprFunction(*info->bodyDeclaration(), returnType,
                                     arguments, substitution, receiver, callSite,
                                     context);
   }
-  if (context.callDepth >= constexprCallDepthLimit) {
+  if (context.callDepth >= compileLimits.constexprDepth) {
+    recordLimitExhaustion(context, &CompileLimits::constexprDepth);
     return constexprFailure(
         callSite, ConstantEvaluationFailure::ResourceLimit,
         "The constexpr call depth exceeded the compiler limit of " +
-            std::to_string(constexprCallDepthLimit) + ".");
+            std::to_string(compileLimits.constexprDepth) + ".");
   }
   const bool hasPack = std::any_of(
       function.parameters().begin(), function.parameters().end(),
@@ -15042,6 +15146,11 @@ auto SemanticVisitor::Impl::executeConstexprFunction(
     context.receivers.push_back(*receiver);
   }
   ++context.callDepth;
+  const FunctionDecl *const enclosingFunction = context.executingFunction;
+  const ConstructorDecl *const enclosingConstructor =
+      context.executingConstructor;
+  context.executingFunction = &function;
+  context.executingConstructor = nullptr;
   ConstexprEvaluation setupFailure;
   if (const FunctionInfo *info = semanticModel.findFunction(function)) {
     if (info->ownerClass != 0) {
@@ -15071,6 +15180,8 @@ auto SemanticVisitor::Impl::executeConstexprFunction(
         executeConstexprStatements(function.body()->statements(), context);
   }
   --context.callDepth;
+  context.executingFunction = enclosingFunction;
+  context.executingConstructor = enclosingConstructor;
   context.scopes.resize(enclosingScopeCount);
   context.substitutions.resize(enclosingSubstitutionCount);
   context.receivers.resize(enclosingReceiverCount);
@@ -15147,6 +15258,8 @@ auto SemanticVisitor::Impl::reportConstexprFailure(
   reporter.reportConstexprFailure(declaration, type, evaluation.failure,
                                   evaluation.detail, evaluation.location,
                                   evaluation.libraryLocation);
+  if (!evaluation.limitHint.empty())
+    diagnostics.back().hints.push_back(evaluation.limitHint);
   evaluation.trace.appendTo(diagnostics.back());
 }
 
@@ -15154,6 +15267,8 @@ auto SemanticVisitor::Impl::reportConstexprConditionFailure(
     const IfStmt &statement, const ConstexprEvaluation &evaluation) -> void {
   reporter.reportConstexprConditionFailure(
       statement, evaluation.failure, evaluation.detail, evaluation.location);
+  if (!evaluation.limitHint.empty())
+    diagnostics.back().hints.push_back(evaluation.limitHint);
   evaluation.trace.appendTo(diagnostics.back());
 }
 

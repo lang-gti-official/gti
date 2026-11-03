@@ -1,5 +1,6 @@
 #pragma once
 
+#include "gti/compile_limits.h"
 #include "gti/configuration_flags.h"
 #include "gti/diagnostic.h"
 #include "gti/failure_metadata.h"
@@ -42,6 +43,13 @@ struct FrontendOptions {
   // Declared but possibly inactive switches; this set never selects a branch.
   ConfigurationFlags declaredConfigurationFlags;
   RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off;
+  // Per-request compile-time resource limits for the whole compilation; they
+  // join every semantic cache identity below.
+  CompileLimits limits;
+  // Reuse staged constant results and lowered call closures within this
+  // analysis (see "Bounded Constant Evaluation" in static-semantics.md).
+  // Reuse never changes which requests succeed; tests clear it to prove so.
+  bool reuseConstantEvaluations = true;
   bool analyzeRecoveredProgram = false;
   // Editor-only partial snapshots may inspect available units after a load
   // failure. The graph stays invalid and never reaches HIR or code generation.

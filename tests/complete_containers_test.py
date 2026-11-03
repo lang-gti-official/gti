@@ -8,6 +8,7 @@ import sys
 import tempfile
 
 from lambda_pack_invocation_runtime_test import main as run_runtime_matrix
+from backend_modes import native_modes
 
 
 def reject_invalid(compiler):
@@ -100,26 +101,25 @@ def cleanup_matrix(compiler):
     source = pathlib.Path(__file__).parent / "fixtures" / "complete_containers_cleanup.gti"
     bounds = source.with_name("complete_containers_bounds.gti")
     with tempfile.TemporaryDirectory(prefix="gti-containers-cleanup-") as directory:
-        for standard in ("c++20", "c++23"):
-            for level in ("O0", "O1", "O3"):
-                binary = pathlib.Path(directory) / f"cleanup-{standard}-{level}"
-                built = subprocess.run([str(compiler), str(source), "--std", standard, f"-{level}", "-o", str(binary)],
-                                       capture_output=True, text=True, timeout=120)
-                assert built.returncode == 0, (standard, level, built.stderr)
-                for arguments in ([], ["fail"], ["fail", "deque"]):
-                    result = subprocess.run([str(binary), *arguments], capture_output=True, text=True, timeout=30)
-                    assert sorted(map(int, result.stdout.splitlines())) == list(range(1, 11)), result
-                    if arguments:
-                        assert result.returncode == 70 and re.search(r"runtime error\[GTI-R0002\]: division_by_zero", result.stderr), result
-                    else:
-                        assert result.returncode == 0 and not result.stderr, result
-                built = subprocess.run([str(compiler), str(bounds), "--std", standard, f"-{level}", "-o", str(binary)],
-                                       capture_output=True, text=True, timeout=120)
-                assert built.returncode == 0, (standard, level, built.stderr)
-                for count in range(9):
-                    result = subprocess.run([str(binary), *(["bounds"] * count)], capture_output=True, text=True, timeout=30)
-                    code = "GTI-R0016" if count in (5, 6) else "GTI-R0007"
-                    assert result.returncode == 70 and result.stdout == "99\n" and f"runtime error[{code}]" in result.stderr, result
+        for mode, flags, _native in native_modes():
+            binary = pathlib.Path(directory) / f"cleanup-{mode}"
+            built = subprocess.run([str(compiler), str(source), *flags, "-o", str(binary)],
+                                   capture_output=True, text=True, timeout=120)
+            assert built.returncode == 0, (mode, built.stderr)
+            for arguments in ([], ["fail"], ["fail", "deque"]):
+                result = subprocess.run([str(binary), *arguments], capture_output=True, text=True, timeout=30)
+                assert sorted(map(int, result.stdout.splitlines())) == list(range(1, 11)), result
+                if arguments:
+                    assert result.returncode == 70 and re.search(r"runtime error\[GTI-R0002\]: division_by_zero", result.stderr), result
+                else:
+                    assert result.returncode == 0 and not result.stderr, result
+            built = subprocess.run([str(compiler), str(bounds), *flags, "-o", str(binary)],
+                                   capture_output=True, text=True, timeout=120)
+            assert built.returncode == 0, (mode, built.stderr)
+            for count in range(9):
+                result = subprocess.run([str(binary), *(["bounds"] * count)], capture_output=True, text=True, timeout=30)
+                code = "GTI-R0016" if count in (5, 6) else "GTI-R0007"
+                assert result.returncode == 70 and result.stdout == "99\n" and f"runtime error[{code}]" in result.stderr, result
         print("containers: normal and constructor-failure cleanup matrix passed", flush=True)
 
 
