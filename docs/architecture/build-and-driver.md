@@ -341,6 +341,36 @@ the running build while pending submissions consolidate into the next build.
 Same-commit retries may complete an interrupted upload after the tag moved.
 BUILD_ID is uploaded last so a racing installer rejects inconsistent assets.
 
+Maintainer-operated preview consolidation can use `scripts/preview_remote.py`
+instead of repeating production builds in GitHub Actions. Its generated remote
+plan configures the same optimized bundled-LLVM release profile, builds the
+installed/test target closure, runs combined admission and installed consumers,
+and exports the resulting packages. Each platform must have a successful,
+clean, exact-source remote-runner report executing that complete known plan.
+Linux uses Ubuntu 24.04, either directly or through an immutable Docker image
+ID built from `scripts/preview-ubuntu24.Dockerfile`; newer host distributions
+cannot silently raise the package's runtime requirements. The macOS compiler
+and runtime build targets 26.0 explicitly through CMake. GTI program checks,
+including installed consumers, use the supported implicit native host policy;
+the build's deployment-target environment must not leak into their invocations.
+Both platforms use the same
+checksum-pinned Neovim setup as CI. Receipts bind the production environment
+and any container image ID as well as source and package identities.
+`record` binds package hashes to those reports; `check` verifies both platforms
+and embedded inclusion records; `admit` records that evidence through the preview
+helper and publishes the append-only source candidate. `publish` uses the same
+withdrawal checks, source ordering, exact tag lease and BUILD_ID-last upload as
+the Actions publisher. The operator may cancel the duplicate Actions packaging
+run for that admitted commit after retaining both production receipts.
+
+Remote preview provenance is schema 2 with `executor: remote-runner`, real
+remote run IDs, source snapshot hashes and report/request hashes. It never
+claims a GitHub Actions run or build attestation. Publication requires the
+retained reports again; checksums alone cannot admit manually supplied archives.
+The schema-1 CI artifact path is unchanged and rejects remote preview receipts
+for nightly or release-train admission. This facility does not install or
+activate a toolchain, merge preview into main, or waive any original PR gate.
+
 This does not qualify preview artifacts for nightly or advance main. Preview
 can include features whose original PR review and complete integration are
 pending. Nightly still requires successful full CI on its selected main source;

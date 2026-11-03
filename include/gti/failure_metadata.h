@@ -104,6 +104,13 @@ public:
     return callerLocationAssignments;
   }
 
+  // Reporting permissions collected from checked caller-tracked operations;
+  // these do not create local failure detectors or change call effects.
+  [[nodiscard]] const std::vector<DefinedFailureOutcome> &
+  callerOutcomes() const {
+    return callerOutcomes_;
+  }
+
   [[nodiscard]] const FailureSiteDescriptor *findSite(FailureSiteId id) const;
 
   [[nodiscard]] std::optional<FailureSiteId>
@@ -124,6 +131,7 @@ private:
   std::vector<FailureSiteDescriptor> siteTable;
   std::vector<FailureOriginAssignment> originAssignments;
   std::vector<CallerLocationAssignment> callerLocationAssignments;
+  std::vector<DefinedFailureOutcome> callerOutcomes_;
 };
 
 struct FailureMetadataVerificationResult {

@@ -51,7 +51,7 @@ def emitted_body_count(text: str) -> int:
     return len(set(MARKER_PATTERN.findall(text)))
 
 
-def census(gti: Path, root: Path) -> dict[str, int | None]:
+def census(gti: Path, root: Path, lowered_census: Path | None = None) -> dict[str, int | None]:
     """Per-example MIR-emitted body counts. None means the example failed."""
     counts: dict[str, int | None] = {}
     target = reviewed.host_target()
@@ -69,7 +69,7 @@ def census(gti: Path, root: Path) -> dict[str, int | None]:
                 # Inventory comes from the sealed LoweredProgram, independently
                 # of target emission. Native execution remains the corpus oracle.
                 inventory = subprocess.run(
-                    [str(gti.parent / "gti_lowered_program_census"), str(root),
+                    [str(lowered_census or gti.parent / "gti_lowered_program_census"), str(root),
                      "--target", target, source.name],
                     capture_output=True, text=True, env=env, timeout=examples.CENSUS_TIMEOUT)
                 if inventory.returncode != 0:
@@ -111,6 +111,8 @@ def main() -> int:
     parser.add_argument("gti")
     parser.add_argument("root")
     parser.add_argument("baseline")
+    parser.add_argument("--lowered-census", type=Path,
+                        help="explicit build dependency for LLVM-only example inventories")
     parser.add_argument("--target", choices=reviewed.TARGETS,
                         help="assert the native host target; cross-target execution is not supported")
     parser.add_argument(
@@ -134,7 +136,7 @@ def main() -> int:
         print(f"FAIL: {error}", file=sys.stderr)
         return 1
 
-    current = census(gti, root)
+    current = census(gti, root, arguments.lowered_census)
     if not current:
         print("FAIL: no examples/*.gti found", file=sys.stderr)
         return 1

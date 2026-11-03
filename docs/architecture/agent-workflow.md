@@ -342,6 +342,106 @@ configure command above updates an existing LAN-address configuration too.
 Detached runs retain their recorded endpoint; configuring a new default does
 not rewrite their connection records.
 
+### Opt-in Google Spot pilot
+
+`--runner gcp-spot` is a development-runner pilot, not a compiler backend,
+CI gate or default. `scripts/gcp_spot_runner.py` wraps the same snapshot,
+executor and result path. Local hosts and their selection are unchanged.
+The checked-in example is disabled and expired. Offline planning never invokes
+Google or creates resources:
+
+```sh
+python3 scripts/gcp_spot_runner.py --policy scripts/gcp_spot_policy.example.json plan
+```
+
+**Owner setup:** use a dedicated Google project. Verify in the billing console
+that the account is still an **unupgraded Free Trial**, and check credit expiry
+and currency. Remaining credits alone are not proof. The BillingAccount API
+does not supply a reliable trial-status field; a short-lived owner
+acknowledgement is deliberate, not an automatic proof. The helper never upgrades
+billing, changes quotas, creates IAM/networking or falls back to on-demand VMs.
+Trial quotas may prevent the chosen profile; do not automatically upgrade.
+
+Prepare a versioned Ubuntu x64 image with Python, Git, CMake, Ninja, GCC/G++ 14,
+the required LLVM/native dependencies, OpenSSH and Google guest/OS Login agents.
+It must publish its public SSH host keys in the `hostkeys/` guest attributes.
+The controller needs the Google Cloud CLI already authenticated; the helper
+does not run login or download service-account keys.
+Put no provisioning credentials in the image. Configure a private subnet with Private
+Google Access and SSH ingress restricted to IAP. Grant the controller reviewed,
+project-scoped VM/disk lifecycle, subnet/image read, guest-attribute read, OS
+Login and IAP tunnel permissions, plus read access to the linked billing
+account/project. Workers have **no service account and no public IP**. No NAT,
+always-on controller VM or shared cache disk is provisioned. Image, storage and
+network setup can have costs of their own.
+
+Copy `scripts/gcp_spot_policy.example.json` outside the repository to
+`~/.config/gti/spot-runner.json` (or select `--spot-policy PATH`). Set the actual
+project, billing account, account email, controller hostname, zone, versioned
+image and subnet. Review conservative all-in pricing in the billing currency,
+including compute, boot/image storage, networking and request/setup overhead.
+`hourly_ceiling_micros` and `per_run_extra_micros` are **owner-entered ceilings,
+not fetched price quotes**. Example numbers are not advertised Google prices.
+One currency unit is 1,000,000 micros. Pricing and trial acknowledgements must
+cover the lease and expire within seven days. Only the named controller host
+may provision; copied checkouts/policies do not create another allowed pool.
+
+Phase one admits one concurrent VM, E2 standard 4/8 vCPUs, at most 100 GiB boot
+storage, a 90-minute VM lifetime and a 60-minute job timeout. The job leaves at
+least 15 minutes of lifecycle headroom. Daily allowance is at most 5 currency
+units and lifetime trial allowance at most 20; lower values are valid. Every
+attempt reserves the entire VM lifetime rounded up, plus overhead. Successful
+deletion does not refund the allowance. UTC days reset the daily subtotal,
+never the accumulated trial allowance.
+An independent pilot cap permits at most two attempts per UTC day and eight
+attempts in total (at most 12 VM-hours), even if price estimates are wrong.
+These counters also never refund or reset automatically. After enablement:
+
+```sh
+python3 scripts/remote_runner.py --runner gcp-spot run --target gti --target gti_tests --target gti_lsp --ctest-regex '^compiler_pipeline$'
+python3 scripts/remote_runner.py --runner gcp-spot status
+python3 scripts/remote_runner.py --runner gcp-spot clean
+```
+
+Only foreground runs with explicit targets/steps are admitted; there is no full
+suite, detached mode, cloud-first selection or retry loop. The journal under
+`~/.local/state/gti-spot-runner/` is shared across clones/worktrees, locked across
+processes and written before creation. It is pinned to one project/account and
+currency. Do not delete it to reclaim space or reset limits. Missing/corrupt
+history, unresolved creation or failed cleanup blocks admission. This is a
+cooperating-tool allowance, not a security boundary against an operator with
+Google credentials or permission to edit the journal. Entire-state deletion or
+restoration from an old backup can reset its history; it is persistent state,
+not a disposable cache. Missing history is detected while its pool marker remains.
+
+Creation requests a provider-enforced maximum runtime, Spot termination action DELETE,
+no automatic restart and an auto-deleted boot disk. Returned resource facts are
+verified. The runtime cap is independent of the controller's wall clock; the
+journal's UTC expiry is a conservative reaping deadline, not a reason to restart
+or renew a VM. IAP SSH uses provider-fetched guest host keys, never disabled host-key
+checking, and explicitly disables agent/port forwarding. Normal completion, errors, cancellation and SIGTERM attempt VM/disk
+cleanup and verify absence before releasing the slot. A lost insert response
+is quarantined even when a list currently shows no VM: absence cannot prove an
+in-flight creation will not finish. An operator must reconcile that ambiguity;
+never erase the record. `clean` reaps expired confirmed leases, or a selected
+run ID explicitly. Cleanup verifies resource ownership, not merely a prefix.
+
+**Commissioning remains required:** tests create no paid resources. The owner
+must exercise success, cancellation, preemption and lost-controller scenarios,
+verify actual deletion/billing and retain receipts. Provider expiry survives
+client failure, but `clean` is not an independently scheduled cloud janitor.
+Normal results are fetched before deletion; preemption, SIGKILL or controller
+loss can lose results. Durable off-worker results, an independent orphan
+reaper, live pricing/cost reconciliation and a multi-host provisioning broker
+are prerequisites before three workers, retries, detached runs or cloud-first
+selection. Ordinary budget alerts are delayed, not a Compute Engine hard cap.
+
+Google references: [trial rules](https://docs.cloud.google.com/free/docs/free-cloud-features),
+[Spot lifecycle](https://docs.cloud.google.com/compute/docs/instances/spot),
+[VM expiry](https://docs.cloud.google.com/compute/docs/instances/limit-vm-runtime),
+[budget limits](https://docs.cloud.google.com/billing/docs/how-to/budgets),
+[IAP/host-key security](https://docs.cloud.google.com/solutions/connecting-securely).
+
 All runs use one window **per host**, not their isolated Git directories. The
 Mini's is `/private/tmp/gti-remote-runner/window`; Ubuntu uses
 `/tmp/gti-remote-runner/window`. The authoritative `build_window.Window` uses
@@ -822,6 +922,17 @@ In full integration, production packaging builds the pinned bundled LLVM/Clang
 release configuration on both platforms and validates the staged toolchain
 before archiving it. The integration shards reuse its object cache, with the
 same bundled release configuration; the cache never substitutes for validation.
+Compiler object caches use a 2 GB local ccache limit per job, separate from
+GitHub's repository-wide cache quota and the runner's filesystem capacity.
+The main-branch warmup builds only `gti` (plus `gti_lsp` for native profiles),
+using CI's identical compile configuration; it does not link every sanitizer
+test executable. It trims restored caches before compiling and removes its
+scratch build tree before cache archival, leaving room for the upload archive,
+and saves only when that build ran to completion. Validation runs (`ci.yml`,
+`full-validation.yml`) only restore the shared main caches; `cache.yml` and
+`llvm-prebuilt.yml` are the only writers. Cache misses merely recompile
+objects: they never relax validation or artifact admission.
+
 `validation_checks.py shard` builds the optimized tree, takes the
 complete CTest inventory, and runs its share of a deterministic partition:
 longest first onto the lightest shard, weighted by `tests/ci_test_durations.json`
@@ -924,7 +1035,10 @@ and comment to every open, non-draft PR on `main` that no longer merges
 cleanly, whichever path it was on: the merge queue drops a conflicting entry
 without a run, a status or a comment, and merge-when-ready never fires, so a
 PR that waited while `main` moved otherwise vanishes from every pipeline (on
-2026-11-03, 13 of 31 open PRs). The census baselines
+2026-11-03, 13 of 31 open PRs). An open rollup that no longer merges with
+`main` is closed the same way, with a comment, so its members return to the
+pool and the next `compose` rebuilds from current heads instead of leaving
+them "busy" behind a rollup the queue would drop without a verdict. The census baselines
 (`tests/mir_census_baseline.json`, `tests/lowered_program_census_baseline.json`)
 store per-example counts only, never totals, and the LLVM readiness provider
 inventories hash example and stdlib sources rather than those manifest files,
@@ -1026,6 +1140,23 @@ silently replaced. `preview status [SUBMISSION]` reports progress, or lists
 submissions without contacting the remote build host. Submission success means
 queued, not preview-validated or published.
 
+When an already included feature has a newer, focused-verified head accepted
+into main and its owning test names changed, use `preview refresh my-task
+--tests replacement_check --reason 'Explain the accepted migration'`. This is
+an explicit detached refresh of that same task PR, not admission of a closed,
+unmerged PR. It requires the merged head in current main, retains the previous
+head/tests/contributions in the feature's append-only `history`, and records
+the replacement checks, accepted main identity and reason. The old source must
+be an ancestor of the accepted head. Checks cannot be changed again without a
+new accepted head. The accepted head enters preview through the candidate's
+main merge, so the feature counts as admitted again: the combined source
+still rebuilds and passes the replacement checks (`preview_examples.py
+--pending` selects them until that preview is published) and example admission
+before publication; neither test failures nor missing registration are
+ignored. A pre-merge submission waiting in the
+queue retains its record and becomes superseded; it does not prevent this
+explicit accepted-head refresh. Other features' records are unchanged.
+
 The worker copies its small tooling closure outside the task worktree so normal
 task cleanup is safe. A separate single-slot preview semaphore serializes
 admissions; it consumes no ordinary build slot while waiting. Once selected,
@@ -1050,6 +1181,10 @@ automatically launching a duplicate uncertain run.
 
 The lower-level `prepare`, `verify`, `publish`, `seed`, `resume` and `revert`
 commands remain for maintainer recovery, not mandatory feature-delivery steps.
+For an explicitly requested combined downloadable release, the production
+remote plan and exact-package admission in `scripts/preview_remote.py` can
+supply both-platform evidence to this same candidate lifecycle. See
+[remote preview distribution](build-and-driver.md#managed-toolchains-and-preview-distribution).
 For example, `preview prepare my-task --worktree /absolute/new-candidate
 --tests owning_test`, followed by `preview verify CANDIDATE` and
 `preview publish CANDIDATE`, still supports explicit local validation settings.
