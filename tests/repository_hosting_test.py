@@ -25,6 +25,9 @@ FORBIDDEN = (
 )
 ACTION_USE = re.compile(r"^\s*(?:-\s+)?uses:\s*(\S+)@([^\s#]+)", re.MULTILINE)
 CI = ".github/workflows/ci.yml"
+FULL_VALIDATION = ".github/workflows/full-validation.yml"
+LLVM_PREBUILT = ".github/workflows/llvm-prebuilt.yml"
+CPP_BACKEND = ".github/workflows/cpp-backend.yml"
 NIGHTLY = ".github/workflows/nightly.yml"
 PREVIEW = ".github/workflows/preview.yml"
 ROLLUP = ".github/workflows/rollup.yml"
@@ -64,7 +67,7 @@ def main():
     workflows = sorted(p for p in tracked if p.startswith((".github/workflows/", ".gitea/workflows/")))
     # CI, nightly toolchain releases and the rollup bot run on GitHub. The frozen
     # Gitea release workflow stays as the record of the contract it replaces.
-    expect(set(workflows) == {CI, NIGHTLY, PREVIEW, RELEASE, ROLLUP, CACHE, *RELEASE_TRAIN},
+    expect(set(workflows) == {CI, FULL_VALIDATION, LLVM_PREBUILT, CPP_BACKEND, NIGHTLY, PREVIEW, RELEASE, ROLLUP, CACHE, *RELEASE_TRAIN},
            f"unexpected live workflows: {workflows}")
     for relative in (CI, NIGHTLY, PREVIEW, RELEASE, ROLLUP, CACHE, *RELEASE_TRAIN, ".github/README.md", ".gitea/README.md",
                      ".gitea/ISSUE_TEMPLATE/bug_report.md",
@@ -116,39 +119,48 @@ def main():
            and preview.count("contents: write") == 1,
            "preview must retain combined admission, exact package checks and isolated publication")
     ci, nightly, release = text(root, CI), text(root, NIGHTLY), text(root, RELEASE)
+    full = text(root, FULL_VALIDATION)
     expect("merge_group:" in ci and "ready_for_review" in ci and "name: CI gate" in ci
            and "GTI_EVENT_PATH: ${{ github.event_path }}" in ci
            and '--event "${GTI_EVENT_PATH}"' in ci
            and "python3 tests/repository_hosting_test.py ." in ci
-           and "npm run test:source-text" in ci and "--target gti_docgen" in ci
-           and "cmp build/documentation-index.json" in ci
-           and "validation_checks.py shard" in ci and "--shard-reports" in ci
+           and "npm run test:source-text" in ci
            and "installed_library_smoke" in ci
            and ci.count("validation_checks.py declared --event") == 2,
-           "CI lost its gate, merge-queue suite, Tree-sitter or compiler-owned documentation checks")
+           "CI lost its gate, Tree-sitter or installed-toolchain checks")
+    expect("--target gti_docgen" in full and "cmp build/documentation-index.json" in full
+           and "validation_checks.py shard" in full and "--shard-reports" in full
+           and "branches: [main]" in full and "merge_group" not in full and "pull_request" not in full
+           and "Full validation verdict" in full and "main-broken" in full,
+           "full validation lost its post-integration suite, documentation check or broken-main report")
     declared_steps = [step for step in re.split(r"^      - ", ci, flags=re.MULTILINE)
                       if "validation_checks.py declared --event" in step]
     expect(len(declared_steps) == 2 and all(
         "if: github.event_name == 'pull_request'" in step for step in declared_steps),
         "PR declarations must only run on pull_request; manual CI has no PR body")
     # Every native job takes the one reviewed toolchain; none installs its own.
-    expect(ci.count("bash scripts/configure_ci_toolchain.sh") == 5 and "llvm-18" not in ci
-           and "brew install" not in ci and "macos-26" in ci and "macos-15" not in ci,
+    expect(ci.count("bash scripts/configure_ci_toolchain.sh") == 2
+           and full.count("bash scripts/configure_ci_toolchain.sh") == 5
+           and "llvm-18" not in ci + full and "brew install" not in ci + full
+           and "macos-26" in ci and "macos-26" in full and "macos-15" not in ci + full,
            "native CI jobs must use the reviewed compiler from configure_ci_toolchain.sh")
-    expect("-DCMAKE_BUILD_TYPE=Debug" not in ci and "-DCMAKE_BUILD_TYPE=RelWithDebInfo" in ci
-           and '-DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g"' in ci
-           and "check_ci_sanitizers.py" in ci and "--sanitizer address,undefined" in ci,
+    expect("-DCMAKE_BUILD_TYPE=Debug" not in ci + full and "-DCMAKE_BUILD_TYPE=RelWithDebInfo" in full
+           and '-DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g"' in full
+           and "check_ci_sanitizers.py" in full and "--sanitizer address,undefined" in full,
            "sanitizer verification must retain an optimized compiler with symbols")
     expect("permissions:\n  contents: read" in ci and "pull_request_target" not in ci
            and "secrets." not in ci,
            "CI must run untrusted pull requests with a read-only token and no secrets")
+    expect("permissions:\n  contents: read" in full and "pull_request_target" not in full
+           and "secrets." not in full and full.count("issues: write") == 1,
+           "full validation runs with a read-only token and writes only its broken-main issue")
     expect("macos-15" not in release and "macOS-ARM64)" not in release
            and "Linux-X64) platform=linux-x64" in release,
            "the frozen Gitea workflow must stay the Linux-only record it was")
-    expect("macos-26, platform: darwin-arm64" in ci and "ubuntu-24.04, platform: linux-x64" in ci
-           and "ubuntu-24.04-arm" not in ci and "configure_ci_toolchain.sh" not in nightly
+    expect("macos-26, platform: darwin-arm64" in full and "ubuntu-24.04, platform: linux-x64" in full
+           and "ubuntu-24.04-arm" not in ci + full and "configure_ci_toolchain.sh" not in nightly
            and "release_artifacts.py verify" in nightly,
-           "integration produces reviewed packages; nightly only verifies and publishes them")
+           "full validation produces reviewed packages; nightly only verifies and publishes them")
     expect("pull_request_target" not in nightly and "\npermissions:\n  contents: read\n" in nightly
            and set(re.findall(r"secrets\.([A-Za-z0-9_]+)", nightly)) <= {"GITHUB_TOKEN"}
            and nightly.count("contents: write") == 1,
@@ -164,9 +176,10 @@ def main():
     check_release_train(root, ci)
     beta, backport, cache = text(root, BETA), text(root, BACKPORT), text(root, CACHE)
     # The main-branch cache warm-up only helps if it compiles exactly what CI
-    # compiles: every configure command it runs must appear verbatim in ci.yml.
+    # compiles: every configure command it runs must appear verbatim in the
+    # merge gate (native profile) or full validation (sanitizer profile).
     warmups = re.findall(r"\n        run: >-\n((?:          [^\n]*\n)+)", cache)
-    expect(len(warmups) == 2 and all(block in ci for block in warmups)
+    expect(len(warmups) == 2 and all(block in ci or block in full for block in warmups)
            and "push:\n    branches: [main]" in cache and "secrets." not in cache
            and "pull_request" not in cache,
            "the compiler-cache warm-up must run on main with ci.yml's exact configure commands")

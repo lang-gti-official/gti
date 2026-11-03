@@ -806,7 +806,8 @@ CheckResult checkCompiledScalarProject(const ProjectBuildPlan &plan,
             plan.packageWarnings(), plan.rawPointerAudit(),
             plan.programRequest(), plan.declaredConfigurationFlags(),
             plan.rawPointerAuditLibraryFindings())
-            .withBackend(plan.backend());
+            .withBackend(plan.backend())
+            .withCompileLimits(plan.compileLimits());
     ScalarCheckBackend sink;
     if (producer) {
       (void)environment(request, toolchain.runtimeLibrary);

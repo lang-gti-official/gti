@@ -3919,6 +3919,13 @@ private:
                  const std::vector<SemanticType> &classArguments,
                  const std::vector<CompileTimeValue> &classValueArguments,
                  HirBody &body) {
+    // Macro expansions lower inline, so statement and expression nesting is
+    // bounded by CompileLimits::macroDepth rather than by written syntax.
+    if (nativeStackNearlyExhausted())
+      return onFreshNativeStack([&] {
+        return lowerStatement(statement, model, classArguments,
+                              classValueArguments, body);
+      });
     const std::optional<HirStatementId> lowered = lowerStatementImpl(
         statement, model, classArguments, classValueArguments, body);
     if (lowered && statement != nullptr && !body.statements.empty() &&
@@ -5827,6 +5834,11 @@ private:
                   const std::vector<SemanticType> &classArguments,
                   const std::vector<CompileTimeValue> &classValueArguments,
                   HirBody &body) {
+    if (nativeStackNearlyExhausted())
+      return onFreshNativeStack([&] {
+        return lowerExpression(expression, model, classArguments,
+                               classValueArguments, body);
+      });
     ensurePlaceDomain(body);
     if (const Token *caller = model.findMacroDefault(expression);
         caller && !activeDefaultArguments.contains(&expression))

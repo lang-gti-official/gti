@@ -49,7 +49,8 @@ Code:
   enforces it.
 - The Git stash stack is shared by every worktree and session. Never use a bare
   `git stash` or `git stash pop`.
-- Do not run the complete suite to finish a task: the merge queue runs it.
+- Do not run the complete suite to finish a task: post-integration full
+  validation runs it on each main head.
   Focused `ctest -R '^name$'` runs and single-file `gti` compiles need no slot.
   Builds and any broad run still go through the shared build window, because
   several sessions share this machine:
