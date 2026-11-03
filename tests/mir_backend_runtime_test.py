@@ -175,7 +175,7 @@ def main() -> int:
                         return 1
 
                     constant = function_definition(generated, "mir_constant")
-                    if optimization == "O0":
+                    if level == "O0":
                         exact_transform = (
                             "__gti_mir_v_2 = __gti_mir_v_1;" in constant
                             and "__gti_mir_v_2 = static_cast<std::int32_t>(42);"

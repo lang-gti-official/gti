@@ -296,7 +296,7 @@ consumers = [
   "lsp_protocol",
   "diagnostic_recovery_lsp",
   "generic_algorithm_errors",
-  "^generic_algorithm_breadth_(cpp20|cpp23|no_elide|sanitized)$",
+  "generic_algorithm_breadth",
 ]
 
 [[area]]
@@ -1067,7 +1067,7 @@ owners = [
   "vector_construction_only_runtime",
   "vector_prepared_constructor_runtime",
   "vector_scalar_constructor_runtime",
-  "^generic_algorithm_breadth_(cpp20|cpp23|no_elide|sanitized)$",
+  "generic_algorithm_breadth",
   "generic_algorithm_cluster",
   "generic_algorithm_errors",
 ]

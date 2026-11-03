@@ -87,8 +87,7 @@ def selected_slot(body: str, class_name: str) -> str | None:
     return None if match is None else match.group(1)
 
 
-def validate_family(generated: str, optimization: str, standard: str) -> bool:
-    mode = f"{optimization}/{standard}"
+def validate_family(generated: str, mode: str) -> bool:
     if generated.count(DESTRUCTOR_MARKER) != 4:
         sys.stderr.write(f"{mode} did not select exactly four MIR destructors\n")
         return False
