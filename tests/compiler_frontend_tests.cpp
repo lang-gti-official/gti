@@ -3213,7 +3213,7 @@ import std.vector;
 int main() {
   mut std::vector<std::string> names{};
   names.push_back(std::string("a"));
-  std::println(std::format("{}", names.size()));
+  std::println(std::runtime_format("{}", names.size()));
   return 0;
 }
 )";

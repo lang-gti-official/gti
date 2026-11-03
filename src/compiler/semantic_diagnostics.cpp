@@ -85,6 +85,9 @@ void SemanticDiagnosticReporter::reportConstexprFailure(
       "conversions, fixed-array or structural-field observation, or calls "
       "to available constexpr functions and constructors.";
   switch (failure) {
+  case ConstantEvaluationFailure::LibraryFailure:
+    message = "Library validation failed during constant evaluation.";
+    break;
   case ConstantEvaluationFailure::NonConstantReference:
     message = "The initializer for constexpr binding '" +
               declaration.name().lexeme +
@@ -710,6 +713,9 @@ void SemanticDiagnosticReporter::reportConstexprConditionFailure(
       "Use literals, earlier constexpr bindings, supported aggregate "
       "observation, or calls to available constexpr functions.";
   switch (failure) {
+  case ConstantEvaluationFailure::LibraryFailure:
+    message = "Library validation failed during constant evaluation.";
+    break;
   case ConstantEvaluationFailure::NonConstantReference:
     message = "The condition of 'if constexpr' reads a binding that is not "
               "constexpr.";
@@ -775,6 +781,9 @@ void SemanticDiagnosticReporter::reportStaticAssertEvaluationFailure(
       "queries, aggregate observation, or calls to available constexpr "
       "functions.";
   switch (failure) {
+  case ConstantEvaluationFailure::LibraryFailure:
+    message = "Library validation failed during constant evaluation.";
+    break;
   case ConstantEvaluationFailure::NonConstantReference:
     message = "The condition of 'static_assert' reads a binding that is not "
               "constexpr.";

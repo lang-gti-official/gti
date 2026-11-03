@@ -1,0 +1,157 @@
+{
+  "schema": 1,
+  "base": "e3532e6715dd6344b0085e367982a8f2d496bda1",
+  "members": [
+    {
+      "pr": 172,
+      "head": "9e31b87439620da860fc453647b7e6b2458b3c8d",
+      "plan": {
+        "tier": "T2",
+        "rationale": "Rollup member #172: its declared Validation T0/T1 tests; the merge queue runs the complete suite on the combined candidate",
+        "regressions": [
+          "consteval_runtime",
+          "consteval_lsp"
+        ],
+        "owning": [
+          "aggregate_std_lsp",
+          "code_snippets",
+          "compiler_pipeline",
+          "constexpr_aggregate_runtime",
+          "constexpr_allocation_example",
+          "constexpr_allocation_runtime",
+          "constexpr_array_mir_runtime",
+          "constexpr_asset_table_runtime",
+          "constexpr_builders_example",
+          "constexpr_chrono_runtime",
+          "constexpr_dependent_branches_runtime",
+          "constexpr_enum_builders_runtime",
+          "constexpr_library_runtime",
+          "constexpr_mutation_runtime",
+          "constexpr_operators_runtime",
+          "constexpr_payload_enum_runtime",
+          "constexpr_readonly_references_runtime",
+          "constexpr_record_mir_runtime",
+          "constexpr_results_runtime",
+          "constexpr_text_runtime",
+          "constexpr_tryable_runtime",
+          "conversion_operators",
+          "conversion_operators_runtime",
+          "default_parameters_runtime",
+          "deferred_assertions_runtime",
+          "diagnostic_explanations",
+          "diagnostic_registry_generator",
+          "documentation_index",
+          "extensible_formatting_lsp",
+          "extensible_formatting_runtime",
+          "format_output_matrix_runtime",
+          "function_item_runtime",
+          "function_item_semantic_ir",
+          "general_requires_semantics",
+          "integral_enum_formatting_runtime",
+          "integral_enum_lsp",
+          "lsp_code_snippets",
+          "panic_adoption_runtime",
+          "source_modules_runtime",
+          "stdlib_surface_manifest",
+          "temporary_argument_borrow_runtime",
+          "test_ownership_map",
+          "testing_assertions_runtime",
+          "mir_census_profile_controls"
+        ],
+        "cross_phase": [],
+        "unaffected": "Not assessed per member by the rollup bot; the merge queue runs every registered test",
+        "targets": [
+          "gti"
+        ],
+        "platforms": [
+          "darwin",
+          "linux"
+        ],
+        "reproduction": {
+          "exception": "Recorded in the description of #172; a rollup reproduces no member failure"
+        },
+        "broader": [
+          "aggregate_std_lsp",
+          "code_snippets",
+          "compiler_pipeline",
+          "constexpr_aggregate_runtime",
+          "constexpr_allocation_example",
+          "constexpr_allocation_runtime",
+          "constexpr_array_mir_runtime",
+          "constexpr_asset_table_runtime",
+          "constexpr_builders_example",
+          "constexpr_chrono_runtime",
+          "constexpr_dependent_branches_runtime",
+          "constexpr_enum_builders_runtime",
+          "constexpr_library_runtime",
+          "constexpr_mutation_runtime",
+          "constexpr_operators_runtime",
+          "constexpr_payload_enum_runtime",
+          "constexpr_readonly_references_runtime",
+          "constexpr_record_mir_runtime",
+          "constexpr_results_runtime",
+          "constexpr_text_runtime",
+          "constexpr_tryable_runtime",
+          "conversion_operators",
+          "conversion_operators_runtime",
+          "default_parameters_runtime",
+          "deferred_assertions_runtime",
+          "diagnostic_explanations",
+          "diagnostic_registry_generator",
+          "documentation_index",
+          "extensible_formatting_lsp",
+          "extensible_formatting_runtime",
+          "format_output_matrix_runtime",
+          "function_item_runtime",
+          "function_item_semantic_ir",
+          "general_requires_semantics",
+          "integral_enum_formatting_runtime",
+          "integral_enum_lsp",
+          "lsp_code_snippets",
+          "panic_adoption_runtime",
+          "source_modules_runtime",
+          "stdlib_surface_manifest",
+          "temporary_argument_borrow_runtime",
+          "test_ownership_map",
+          "testing_assertions_runtime",
+          "mir_census_profile_controls"
+        ]
+      }
+    },
+    {
+      "pr": 183,
+      "head": "73a700ecbaae6a66c95ed3f365a3af2ea113f372",
+      "plan": {
+        "tier": "T1",
+        "rationale": "Rollup member #183: its declared Validation T0/T1 tests; the merge queue runs the complete suite on the combined candidate",
+        "regressions": [
+          "include_suggestions",
+          "module_map_lsp"
+        ],
+        "owning": [
+          "lsp_repair_contract",
+          "lsp_include_suggestions",
+          "frontend_cache_invalidation",
+          "lsp_protocol",
+          "module_navigation_lsp",
+          "source_modules_lsp",
+          "diagnostic_recovery_lsp",
+          "lsp_repair_groups",
+          "compiler_pipeline"
+        ],
+        "cross_phase": [],
+        "unaffected": "Not assessed per member by the rollup bot; the merge queue runs every registered test",
+        "targets": [
+          "gti"
+        ],
+        "platforms": [
+          "darwin",
+          "linux"
+        ],
+        "reproduction": {
+          "exception": "Recorded in the description of #183; a rollup reproduces no member failure"
+        }
+      }
+    }
+  ]
+}

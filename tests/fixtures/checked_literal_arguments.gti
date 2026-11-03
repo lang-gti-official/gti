@@ -1,0 +1,83 @@
+import std.format;
+import std.panic;
+import std.string;
+
+constexpr int parse_milliseconds(std::string_view text) {
+  if (text.size() < 3 || text[text.size() - 2] != 'm' || text[text.size() - 1] != 's') {
+    std::panic("Duration must end in ms");
+  }
+  mut int result = 0;
+  for (mut std::size_t index = 0; index + 2 < text.size(); index++) {
+    uint8_t digit = uint8_t(text[index]);
+    if (digit < uint8_t('0') || digit > uint8_t('9')) { std::panic("Duration requires decimal digits"); }
+    result = result * 10 + int(digit) - int(uint8_t('0'));
+  }
+  return result;
+}
+struct Milliseconds {
+  int value;
+  implicit consteval Milliseconds(std::string_view text) : value(parse_milliseconds(text)) {}
+};
+int wait_time(Milliseconds delay, int payload) { return delay.value + payload; }
+int forward(Milliseconds delay, int payload) { return wait_time(delay, payload); }
+std::string log_text<Args...>(std::format_pattern<Args...> pattern, Args... args) {
+  return std::format(pattern, args...);
+}
+struct Token { int value; };
+class std::formatter<Token> {
+public:
+  constexpr formatter() {}
+  constexpr bool validate(std::format_spec& spec) { return spec.type == '\0' || spec.type == 'd'; }
+  expected<void, std::format_errc> format(Token& token, mut std::string& output, std::format_spec& spec) {
+    if (!validate(spec)) { return unexpected(std::format_errc::invalid_format); }
+    std::formatter<int> numeric{};
+    return numeric.format(token.value, output, spec);
+  }
+};
+mut int dropped = 0;
+struct OwnedToken {
+  std::string text;
+  OwnedToken(std::string value) : text(std::move(value)) {}
+  ~OwnedToken() { dropped++; }
+};
+class std::formatter<OwnedToken> {
+public:
+  formatter() = default;
+  expected<void, std::format_errc> format(OwnedToken& token, mut std::string& output, std::format_spec& spec) {
+    output.append(token.text.view());
+    return;
+  }
+};
+mut int evaluations = 0;
+int next() { evaluations++; return 12; }
+std::string format_int(std::format_pattern<int> pattern, int value) { return std::format(pattern, value); }
+int main() {
+  if (forward("150ms", 7) != 157) { return 1; }
+  Token token = {.value = 5};
+  if (log_text("{} {:d}", next(), token) != "12 5" || evaluations != 1) { return 2; }
+  std::format_pattern<int> pattern = "value={:04}";
+  if (log_text(pattern, 7) != "value=0007") { return 3; }
+  std::string input = std::string("{}-{}");
+  auto runtime = std::try_runtime_format(input.view(), 1, 2);
+  if (!runtime || runtime.value() != "1-2") { return 4; }
+  auto bad_type = std::try_runtime_format("{:x}", "text");
+  if (bad_type || bad_type.error() != std::format_errc::invalid_format) { return 5; }
+  auto bad_count = std::try_runtime_format("{} {}", 1);
+  if (bad_count || bad_count.error() != std::format_errc::argument_count_mismatch) { return 6; }
+  auto bad_grammar = std::try_runtime_format("{", 1);
+  if (bad_grammar || bad_grammar.error() != std::format_errc::invalid_format) { return 7; }
+  auto empty = std::format("{{literal}}");
+  if (empty != "{literal}") { return 8; }
+  auto callback = format_int;
+  if (callback("{}", 42) != "42") { return 9; }
+  mut std::string appended = std::string("prefix");
+  std::format_to(appended, "={}", 1);
+  auto added = std::try_format_to(appended, "/{}", 2);
+  auto formatted = std::try_format("{}", 3);
+  auto printed = std::try_print("{}", "");
+  if (!added || !formatted || !printed || appended != "prefix=1/2" || formatted.value() != "3") { return 10; }
+  auto owned = log_text("{} {}", std::string("text"), OwnedToken(std::string("owned")));
+  if (owned != "text owned" || dropped != 1) { return 11; }
+  std::println("{}", 42);
+  return 0;
+}

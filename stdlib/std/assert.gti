@@ -3,6 +3,7 @@ export module assert;
 // Assertions are source policy over the general typed macro facility.
 // NDEBUG disables only debug_assert; assert is always checked.
 import std.panic;
+import std.format;
 import std.source_location;
 // Declare this optional configuration switch without changing its value.
 #ifdef NDEBUG
@@ -22,7 +23,7 @@ export namespace std {
     std::string_view condition_text =
         std::expression_text(condition, "assertion condition");
     if (!condition) {
-      std::panic("Assertion failed: {}", condition_text);
+      std::runtime_panic("Assertion failed: {}", condition_text);
     }
   }
 
@@ -30,7 +31,7 @@ export namespace std {
   [[track_caller]]
   #macro assert<Args...>(bool condition, std::string_view pattern, Args... args) {
     if (!condition) {
-      std::panic(pattern, args...);
+      std::runtime_panic(pattern, args...);
     }
   }
 
@@ -41,7 +42,7 @@ export namespace std {
       std::string_view condition_text =
           std::expression_text(condition, "assertion condition");
       if (!condition) {
-        std::panic("Debug assertion failed: {}", condition_text);
+        std::runtime_panic("Debug assertion failed: {}", condition_text);
       }
     }
   }
@@ -51,7 +52,7 @@ export namespace std {
   #macro debug_assert<Args...>(bool condition, std::string_view pattern, Args... args) {
     if (std::debug_assertions_enabled) {
       if (!condition) {
-        std::panic(pattern, args...);
+        std::runtime_panic(pattern, args...);
       }
     }
   }

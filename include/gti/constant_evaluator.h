@@ -106,6 +106,7 @@ enum class ConstantEvaluationFailure {
   UnsupportedExpression,
   UnsupportedType,
   NonConstantReference,
+  LibraryFailure,
   ResourceLimit,
   InvalidOperands,
   IntegerOverflow,

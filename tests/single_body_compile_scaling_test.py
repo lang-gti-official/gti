@@ -38,15 +38,15 @@ void show(expected<std::string, std::format_errc> result) {
 
 # One block covers integers of several widths, chars, text, bools and floats,
 # with both the fallible and the infallible formatting entry points.
-BLOCK = """  show(std::try_format("[{:>8}]", int32_t(-12345)));
-  show(std::try_format("[{:#x}]", uint64_t(48879)));
-  show(std::try_format("[{:^7}]", int8_t(7)));
-  show(std::try_format("[{:c}]", 'a'));
-  show(std::try_format("[{:.2}]", "formatting"));
-  show(std::try_format("[{:8}]", std::string("gti")));
-  show(std::try_format("[{:6}]", true));
-  show(std::try_format("[{:.3f}]", double(3.14159265)));
-  std::println(std::format("{}|{:04}", int64_t(-1), uint16_t(2)));
+BLOCK = """  show(std::try_runtime_format("[{:>8}]", int32_t(-12345)));
+  show(std::try_runtime_format("[{:#x}]", uint64_t(48879)));
+  show(std::try_runtime_format("[{:^7}]", int8_t(7)));
+  show(std::try_runtime_format("[{:c}]", 'a'));
+  show(std::try_runtime_format("[{:.2}]", "formatting"));
+  show(std::try_runtime_format("[{:8}]", std::string("gti")));
+  show(std::try_runtime_format("[{:6}]", true));
+  show(std::try_runtime_format("[{:.3f}]", double(3.14159265)));
+  std::println(std::runtime_format("{}|{:04}", int64_t(-1), uint16_t(2)));
 """
 
 SMALL = 45

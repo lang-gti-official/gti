@@ -2,6 +2,7 @@ export module format;
 import "detail/charconv_parse.gti";
 
 import std.charconv;
+import std.meta;
 import std.string;
 import "detail/panic.gti";
 namespace gti_internal {
@@ -50,13 +51,26 @@ export struct format_spec {
   mut size_t precision;
   mut char type;
 
-  format_spec()
+  constexpr format_spec()
       : fill(' '), alignment('\0'), sign('-'), alternate(false),
         zero_pad(false), width(0), has_precision(false), precision(0),
         type('\0') {}
 };
 
 namespace detail {
+// The same parsed field structure drives compile-time checks and execution.
+constexpr bool checked_integral_spec(format_spec& spec) {
+  if (spec.has_precision) { return false; }
+  if (spec.type == 'c') {
+    return spec.sign == '-' && !spec.alternate && !spec.zero_pad;
+  }
+  return spec.type == '\0' || spec.type == 'd' || spec.type == 'x' ||
+         spec.type == 'X' || spec.type == 'o' || spec.type == 'b' || spec.type == 'B';
+}
+constexpr bool checked_text_spec(format_spec& spec) {
+  return (spec.type == '\0' || spec.type == 's') && spec.sign == '-' &&
+         !spec.alternate && !spec.zero_pad;
+}
 struct enum_underlying_probe<T, U> {
   bool matches() requires std::enum_underlying<T, U> { return true; }
 };
@@ -67,7 +81,10 @@ struct enum_underlying_probe<T, U> {
 /// The primary formats integral enums using their exact underlying integer.
 export class formatter<T> {
 public:
-  formatter() = default;
+  constexpr formatter() {}
+  constexpr bool validate(format_spec& spec) requires std::integral_enum<T> {
+    return detail::checked_integral_spec(spec);
+  }
   expected<void, format_errc> format(T& value, mut string& output,
                                     format_spec& spec)
       requires std::integral_enum<T> {
@@ -150,26 +167,26 @@ struct format_field {
   mut size_t end;
   mut format_spec spec;
 
-  format_field() : argument_index(0), end(0), spec(format_spec()) {}
+  constexpr format_field() : argument_index(0), end(0), spec(format_spec()) {}
 };
 
-bool format_digit(char value) {
+constexpr bool format_digit(char value) {
   uint8_t code = uint8_t(value);
   return code >= uint8_t('0') && code <= uint8_t('9');
 }
 
-bool format_alignment(char value) {
+constexpr bool format_alignment(char value) {
   return value == '<' || value == '>' || value == '^';
 }
 
-bool format_type(char value) {
+constexpr bool format_type(char value) {
   return value == 's' || value == 'c' || value == 'd' || value == 'x' ||
          value == 'X' || value == 'o' || value == 'b' || value == 'B' ||
          value == 'f' || value == 'F' || value == 'e' || value == 'E' ||
          value == 'g' || value == 'G';
 }
 
-bool parse_format_number(string_view pattern, mut size_t& cursor,
+constexpr bool parse_format_number(string_view pattern, mut size_t& cursor,
                          mut size_t& value) {
   if (cursor >= pattern.size() || !format_digit(pattern[cursor])) {
     return false;
@@ -189,7 +206,7 @@ bool parse_format_number(string_view pattern, mut size_t& cursor,
 
 /// Parses one field beginning at `open`. `indexing_mode` is zero before the
 /// first field, one for automatic fields, and two for explicit numeric fields.
-bool parse_format_field(string_view pattern, size_t open,
+constexpr bool parse_format_field(string_view pattern, size_t open,
                         mut size_t& next_automatic,
                         mut uint8_t& indexing_mode,
                         mut format_field& field) {
@@ -282,7 +299,7 @@ bool parse_format_field(string_view pattern, size_t open,
   return true;
 }
 
-expected<void, format_errc> validate_format_pattern(string_view pattern,
+constexpr expected<void, format_errc> validate_format_pattern(string_view pattern,
                                                      size_t argument_count) {
   mut size_t cursor = 0;
   mut size_t next_automatic = 0;
@@ -443,7 +460,7 @@ char format_digit_character(uint8_t digit, bool uppercase) {
 format_argument_status append_integral<std::integral T>(mut string& output,
                                                          T& value,
                                                          format_spec& spec) {
-  if (spec.has_precision) {
+  if (!checked_integral_spec(spec)) {
     return format_argument_status::invalid_specifier;
   }
   mut char presentation = spec.type;
@@ -552,12 +569,12 @@ struct floating_format_selection {
   mut bool general;
   mut int32_t precision;
 
-  floating_format_selection()
+  constexpr floating_format_selection()
       : style(chars_format::general), uppercase(false), general(false),
         precision(int32_t(-1)) {}
 };
 
-bool select_floating_format(format_spec& spec,
+constexpr bool select_floating_format(format_spec& spec,
                             mut floating_format_selection& selection) {
   mut char presentation = spec.type;
   if (presentation == '\0') {
@@ -710,7 +727,10 @@ void append_format_literal(mut string& output, string_view pattern,
 
 export class std::formatter<int8_t> {
 public:
-  formatter() = default;
+  constexpr formatter() {}
+  constexpr bool validate(std::format_spec& spec) {
+    return std::detail::checked_integral_spec(spec);
+  }
   expected<void, std::format_errc> format(int8_t& value, mut std::string& output, std::format_spec& spec) {
     return std::detail::format_result(this.append(output, value, spec));
   }
@@ -724,7 +744,10 @@ private:
 };
 export class std::formatter<uint8_t> {
 public:
-  formatter() = default;
+  constexpr formatter() {}
+  constexpr bool validate(std::format_spec& spec) {
+    return std::detail::checked_integral_spec(spec);
+  }
   expected<void, std::format_errc> format(uint8_t& value, mut std::string& output, std::format_spec& spec) {
     return std::detail::format_result(this.append(output, value, spec));
   }
@@ -738,7 +761,10 @@ private:
 };
 export class std::formatter<int16_t> {
 public:
-  formatter() = default;
+  constexpr formatter() {}
+  constexpr bool validate(std::format_spec& spec) {
+    return std::detail::checked_integral_spec(spec);
+  }
   expected<void, std::format_errc> format(int16_t& value, mut std::string& output, std::format_spec& spec) {
     return std::detail::format_result(this.append(output, value, spec));
   }
@@ -752,7 +778,10 @@ private:
 };
 export class std::formatter<uint16_t> {
 public:
-  formatter() = default;
+  constexpr formatter() {}
+  constexpr bool validate(std::format_spec& spec) {
+    return std::detail::checked_integral_spec(spec);
+  }
   expected<void, std::format_errc> format(uint16_t& value, mut std::string& output, std::format_spec& spec) {
     return std::detail::format_result(this.append(output, value, spec));
   }
@@ -766,7 +795,10 @@ private:
 };
 export class std::formatter<int32_t> {
 public:
-  formatter() = default;
+  constexpr formatter() {}
+  constexpr bool validate(std::format_spec& spec) {
+    return std::detail::checked_integral_spec(spec);
+  }
   expected<void, std::format_errc> format(int32_t& value, mut std::string& output, std::format_spec& spec) {
     return std::detail::format_result(this.append(output, value, spec));
   }
@@ -780,7 +812,10 @@ private:
 };
 export class std::formatter<uint32_t> {
 public:
-  formatter() = default;
+  constexpr formatter() {}
+  constexpr bool validate(std::format_spec& spec) {
+    return std::detail::checked_integral_spec(spec);
+  }
   expected<void, std::format_errc> format(uint32_t& value, mut std::string& output, std::format_spec& spec) {
     return std::detail::format_result(this.append(output, value, spec));
   }
@@ -794,7 +829,10 @@ private:
 };
 export class std::formatter<int64_t> {
 public:
-  formatter() = default;
+  constexpr formatter() {}
+  constexpr bool validate(std::format_spec& spec) {
+    return std::detail::checked_integral_spec(spec);
+  }
   expected<void, std::format_errc> format(int64_t& value, mut std::string& output, std::format_spec& spec) {
     return std::detail::format_result(this.append(output, value, spec));
   }
@@ -808,7 +846,10 @@ private:
 };
 export class std::formatter<uint64_t> {
 public:
-  formatter() = default;
+  constexpr formatter() {}
+  constexpr bool validate(std::format_spec& spec) {
+    return std::detail::checked_integral_spec(spec);
+  }
   expected<void, std::format_errc> format(uint64_t& value, mut std::string& output, std::format_spec& spec) {
     return std::detail::format_result(this.append(output, value, spec));
   }
@@ -823,7 +864,11 @@ private:
 
 export class std::formatter<bool> {
 public:
-  formatter() = default;
+  constexpr formatter() {}
+  constexpr bool validate(std::format_spec& spec) {
+    if (spec.type == '\0' || spec.type == 's') { return std::detail::checked_text_spec(spec); }
+    return std::detail::checked_integral_spec(spec);
+  }
   expected<void, std::format_errc> format(bool& value, mut std::string& output, std::format_spec& spec) {
     return std::detail::format_result(this.append(output, value, spec));
   }
@@ -846,7 +891,13 @@ private:
 
 export class std::formatter<char> {
 public:
-  formatter() = default;
+  constexpr formatter() {}
+  constexpr bool validate(std::format_spec& spec) {
+    if (spec.type == '\0' || spec.type == 'c') {
+      return spec.sign == '-' && !spec.alternate && !spec.zero_pad && !spec.has_precision;
+    }
+    return std::detail::checked_integral_spec(spec);
+  }
   expected<void, std::format_errc> format(char& value, mut std::string& output, std::format_spec& spec) {
     return std::detail::format_result(this.append(output, value, spec));
   }
@@ -870,7 +921,11 @@ private:
 
 export class std::formatter<float> {
 public:
-  formatter() = default;
+  constexpr formatter() {}
+  constexpr bool validate(std::format_spec& spec) {
+    mut std::detail::floating_format_selection selection{};
+    return std::detail::select_floating_format(spec, selection);
+  }
   expected<void, std::format_errc> format(float& value, mut std::string& output, std::format_spec& spec) {
     return std::detail::format_result(this.append(output, value, spec));
   }
@@ -885,7 +940,11 @@ private:
 
 export class std::formatter<double> {
 public:
-  formatter() = default;
+  constexpr formatter() {}
+  constexpr bool validate(std::format_spec& spec) {
+    mut std::detail::floating_format_selection selection{};
+    return std::detail::select_floating_format(spec, selection);
+  }
   expected<void, std::format_errc> format(double& value, mut std::string& output, std::format_spec& spec) {
     return std::detail::format_result(this.append(output, value, spec));
   }
@@ -900,7 +959,10 @@ private:
 
 export class std::formatter<std::string_view> {
 public:
-  formatter() = default;
+  constexpr formatter() {}
+  constexpr bool validate(std::format_spec& spec) {
+    return std::detail::checked_text_spec(spec);
+  }
   expected<void, std::format_errc> format(std::string_view& value, mut std::string& output, std::format_spec& spec) {
     return std::detail::format_result(this.append(output, value, spec));
   }
@@ -909,8 +971,7 @@ private:
   std::detail::format_argument_status append(mut std::string& output,
                                               std::string_view& value,
                                               std::format_spec& spec) {
-    if ((spec.type != '\0' && spec.type != 's') || spec.sign != '-' ||
-        spec.alternate || spec.zero_pad) {
+    if (!std::detail::checked_text_spec(spec)) {
       return std::detail::format_argument_status::invalid_specifier;
     }
     std::detail::append_text(output, value, spec, '<');
@@ -920,7 +981,10 @@ private:
 
 export class std::formatter<std::string> {
 public:
-  formatter() = default;
+  constexpr formatter() {}
+  constexpr bool validate(std::format_spec& spec) {
+    return std::detail::checked_text_spec(spec);
+  }
   expected<void, std::format_errc> format(std::string& value, mut std::string& output, std::format_spec& spec) {
     return std::detail::format_result(this.append(output, value, spec));
   }
@@ -929,8 +993,7 @@ private:
   std::detail::format_argument_status append(mut std::string& output,
                                               std::string& value,
                                               std::format_spec& spec) {
-    if ((spec.type != '\0' && spec.type != 's') || spec.sign != '-' ||
-        spec.alternate || spec.zero_pad) {
+    if (!std::detail::checked_text_spec(spec)) {
       return std::detail::format_argument_status::invalid_specifier;
     }
     std::detail::append_text(output, value.view(), spec, '<');
@@ -939,25 +1002,62 @@ private:
 };
 
 namespace std {
-export expected<string, format_errc> try_format(string_view pattern) {
-  expected<void, format_errc> validation =
-      detail::validate_format_pattern(pattern, size_t(0));
-  if (!validation) {
-    return unexpected(validation.error());
+namespace detail {
+constexpr bool checked_argument_spec<T>(std::meta::type<T> argument, format_spec& spec) {
+  if constexpr (requires(formatter<T>& writer, format_spec& candidate) {
+    { writer.validate(candidate) } -> bool;
+  }) {
+    formatter<T> writer{};
+    return writer.validate(spec);
+  } else {
+    // Custom formatters may opt into source-defined constant validation.
+    // Their runtime errors remain recoverable through try_format.
+    return true;
   }
-
-  mut string output = string();
-  output.reserve(pattern.size());
-  mut size_t cursor = 0;
-  while (cursor < pattern.size()) {
-    detail::append_format_literal(output, pattern, cursor);
-  }
-  return std::move(output);
+}
 }
 
-export expected<string, format_errc>
-try_format<First, Args...>(string_view pattern, First first, Args... args) requires formattable<First> {
-  mut size_t argument_count = 1;
+/// A pattern whose grammar and built-in argument presentations were checked.
+/// Forward this value through wrappers to retain the same validation proof.
+export struct format_pattern<Args...> {
+  string_view text;
+  /// @runtime_escape the std::runtime_* or std::try_runtime_* APIs, for example std::runtime_format(value, ...)
+  implicit consteval format_pattern(string_view value) : text(value) {
+    expected<void, format_errc> validation = detail::validate_format_pattern(
+        value, std::meta::type<format_pattern<Args...>>().argument_count());
+    if (!validation) {
+      if (validation.error() == format_errc::argument_count_mismatch) {
+        detail::panic("Format pattern field count or index does not match the arguments");
+      }
+      detail::panic("Invalid format pattern: brace, index, or presentation syntax");
+    }
+    mut size_t cursor = 0;
+    mut size_t automatic = 0;
+    mut uint8_t indexing = uint8_t(0);
+    while (cursor < value.size()) {
+      if (value[cursor] != '{') { cursor++; continue; }
+      if (cursor + 1 < value.size() && value[cursor + 1] == '{') {
+        cursor += 2;
+        continue;
+      }
+      mut detail::format_field field{};
+      bool parsed = detail::parse_format_field(value, cursor, automatic, indexing, field);
+      if (!parsed) { detail::panic("Invalid format pattern"); }
+      mut size_t index = 0;
+      constexpr for (auto argument : std::meta::arguments_of<format_pattern<Args...>>()) {
+        if (index == field.argument_index && !detail::checked_argument_spec(argument, field.spec)) {
+          detail::panic("Format presentation does not accept this argument type");
+        }
+        index++;
+      }
+      cursor = field.end;
+    }
+  }
+};
+
+expected<string, format_errc>
+try_runtime_format_impl<Args...>(string_view pattern, Args... args) {
+  mut size_t argument_count = 0;
   (detail::count_format_argument(argument_count, args), ...);
   expected<void, format_errc> validation =
       detail::validate_format_pattern(pattern, argument_count);
@@ -989,9 +1089,6 @@ try_format<First, Args...>(string_view pattern, First first, Args... args) requi
     format_spec selected_spec = field.spec;
     mut detail::format_argument_status status =
         detail::format_argument_status::appended;
-    detail::append_selected_format_argument(output, requested,
-                                            candidate, status, selected_spec,
-                                            first);
     (detail::append_selected_format_argument(output, requested,
                                              candidate, status, selected_spec,
                                              args), ...);
@@ -1010,22 +1107,10 @@ try_format<First, Args...>(string_view pattern, First first, Args... args) requi
 }
 
 /// Appends one fully formatted result. Failure leaves `output` unchanged.
-export expected<void, format_errc> try_format_to(mut string& output,
-                                      string_view pattern) {
-  mut expected<string, format_errc> formatted = try_format(pattern);
-  if (!formatted) {
-    return unexpected(formatted.error());
-  }
-  output.append(formatted.value().view());
-  return;
-}
-
-/// Appends one fully formatted result. Failure leaves `output` unchanged.
-export expected<void, format_errc>
-try_format_to<First, Args...>(mut string& output, string_view pattern, First first,
-                          Args... args) requires formattable<First> {
+expected<void, format_errc>
+try_runtime_format_to_impl<Args...>(mut string& output, string_view pattern, Args... args) {
   mut expected<string, format_errc> formatted =
-      try_format(pattern, std::move(first), args...);
+      try_runtime_format_impl(pattern, args...);
   if (!formatted) {
     return unexpected(formatted.error());
   }
@@ -1085,36 +1170,20 @@ expected<void, print_errc> submit_print(string_view text) {
 }
 
 /// Formats an owning result, panicking at the caller on formatting failure.
-export [[track_caller]]
-string format(string_view pattern) {
-  mut auto result = try_format(pattern);
+
+[[track_caller]]
+string runtime_format_impl<Args...>(string_view pattern, Args... args) {
+  mut auto result = try_runtime_format_impl(pattern, args...);
   if (!result) {
     detail::panic_format_error(result.error());
   }
   return std::move(result).expect("Formatting succeeded without a value");
 }
 
-export [[track_caller]]
-string format<First, Args...>(string_view pattern, First first, Args... args) requires formattable<First> {
-  mut auto result = try_format(pattern, std::move(first), args...);
-  if (!result) {
-    detail::panic_format_error(result.error());
-  }
-  return std::move(result).expect("Formatting succeeded without a value");
-}
-
-export [[track_caller]]
-void format_to(mut string& output, string_view pattern) {
-  auto result = try_format_to(output, pattern);
-  if (!result) {
-    detail::panic_format_error(result.error());
-  }
-}
-
-export [[track_caller]]
-void format_to<First, Args...>(mut string& output, string_view pattern,
-                              First first, Args... args) requires formattable<First> {
-  auto result = try_format_to(output, pattern, std::move(first), args...);
+[[track_caller]]
+void runtime_format_to_impl<Args...>(mut string& output, string_view pattern,
+                              Args... args) {
+  auto result = try_runtime_format_to_impl(output, pattern, args...);
   if (!result) {
     detail::panic_format_error(result.error());
   }
@@ -1125,9 +1194,9 @@ export expected<void, print_errc> try_print(string_view text) {
   return detail::submit_print(text);
 }
 
-export expected<void, print_errc>
-try_print<First, Args...>(string_view pattern, First first, Args... args) requires formattable<First> {
-  mut auto formatted = try_format(pattern, std::move(first), args...);
+expected<void, print_errc>
+try_runtime_print_impl<Args...>(string_view pattern, Args... args) {
+  mut auto formatted = try_runtime_format_impl(pattern, args...);
   if (!formatted) {
     return unexpected(detail::print_format_error(formatted.error()));
   }
@@ -1140,9 +1209,9 @@ export expected<void, print_errc> try_println(string_view text) {
   return detail::submit_print(line.view());
 }
 
-export expected<void, print_errc>
-try_println<First, Args...>(string_view pattern, First first, Args... args) requires formattable<First> {
-  mut auto formatted = try_format(pattern, std::move(first), args...);
+expected<void, print_errc>
+try_runtime_println_impl<Args...>(string_view pattern, Args... args) {
+  mut auto formatted = try_runtime_format_impl(pattern, args...);
   if (!formatted) {
     return unexpected(detail::print_format_error(formatted.error()));
   }
@@ -1150,19 +1219,149 @@ try_println<First, Args...>(string_view pattern, First first, Args... args) requ
   return detail::submit_print(formatted.value().view());
 }
 
-export [[track_caller]]
-void print<First, Args...>(string_view pattern, First first, Args... args) requires formattable<First> {
-  auto result = try_print(pattern, std::move(first), args...);
+[[track_caller]]
+void runtime_print_impl<Args...>(string_view pattern, Args... args) {
+  auto result = try_runtime_print_impl(pattern, args...);
   if (!result) {
     detail::panic_print_error(result.error());
   }
 }
 
-export [[track_caller]]
-void println<First, Args...>(string_view pattern, First first, Args... args) requires formattable<First> {
-  auto result = try_println(pattern, std::move(first), args...);
+[[track_caller]]
+void runtime_println_impl<Args...>(string_view pattern, Args... args) {
+  auto result = try_runtime_println_impl(pattern, args...);
   if (!result) {
     detail::panic_print_error(result.error());
   }
+}
+
+// Checked literals and explicitly requested dynamic patterns share execution.
+export [[track_caller]]
+expected<string, format_errc> try_format<Args...>(format_pattern<Args...> pattern, Args... args) {
+  return try_runtime_format_impl(pattern.text, args...);
+}
+
+export [[track_caller]]
+string format<Args...>(format_pattern<Args...> pattern, Args... args) {
+  return runtime_format_impl(pattern.text, args...);
+}
+
+export [[track_caller]]
+expected<void, format_errc> try_format_to<Args...>(mut string& output, format_pattern<Args...> pattern, Args... args) {
+  return try_runtime_format_to_impl(output, pattern.text, args...);
+}
+
+export [[track_caller]]
+void format_to<Args...>(mut string& output, format_pattern<Args...> pattern, Args... args) {
+  runtime_format_to_impl(output, pattern.text, args...);
+}
+
+export [[track_caller]]
+expected<void, print_errc> try_print<Args...>(format_pattern<Args...> pattern, Args... args) {
+  return try_runtime_print_impl(pattern.text, args...);
+}
+
+export [[track_caller]]
+expected<void, print_errc> try_println<Args...>(format_pattern<Args...> pattern, Args... args) {
+  return try_runtime_println_impl(pattern.text, args...);
+}
+
+export [[track_caller]]
+void print<Args...>(format_pattern<Args...> pattern, Args... args) {
+  runtime_print_impl(pattern.text, args...);
+}
+
+export [[track_caller]]
+void println<Args...>(format_pattern<Args...> pattern, Args... args) {
+  runtime_println_impl(pattern.text, args...);
+}
+
+
+/// Runtime validation; dynamic pattern errors keep their recoverable category.
+export [[track_caller]]
+expected<string, format_errc> try_runtime_format(string_view pattern) {
+  return try_runtime_format_impl(pattern);
+}
+export [[track_caller]]
+expected<string, format_errc> try_runtime_format<First, Args...>(string_view pattern, First first, Args... args)
+    requires formattable<First> {
+  return try_runtime_format_impl(pattern, std::move(first), args...);
+}
+
+/// Runtime validation; dynamic pattern errors keep their recoverable category.
+export [[track_caller]]
+expected<void, format_errc> try_runtime_format_to(mut string& output, string_view pattern) {
+  return try_runtime_format_to_impl(output, pattern);
+}
+export [[track_caller]]
+expected<void, format_errc> try_runtime_format_to<First, Args...>(mut string& output, string_view pattern, First first, Args... args)
+    requires formattable<First> {
+  return try_runtime_format_to_impl(output, pattern, std::move(first), args...);
+}
+
+/// Runtime validation; dynamic pattern errors keep their recoverable category.
+export [[track_caller]]
+string runtime_format(string_view pattern) {
+  return runtime_format_impl(pattern);
+}
+export [[track_caller]]
+string runtime_format<First, Args...>(string_view pattern, First first, Args... args)
+    requires formattable<First> {
+  return runtime_format_impl(pattern, std::move(first), args...);
+}
+
+/// Runtime validation; dynamic pattern errors keep their recoverable category.
+export [[track_caller]]
+void runtime_format_to(mut string& output, string_view pattern) {
+  runtime_format_to_impl(output, pattern);
+}
+export [[track_caller]]
+void runtime_format_to<First, Args...>(mut string& output, string_view pattern, First first, Args... args)
+    requires formattable<First> {
+  runtime_format_to_impl(output, pattern, std::move(first), args...);
+}
+
+/// Runtime validation; dynamic pattern errors keep their recoverable category.
+export [[track_caller]]
+expected<void, print_errc> try_runtime_print(string_view pattern) {
+  return try_runtime_print_impl(pattern);
+}
+export [[track_caller]]
+expected<void, print_errc> try_runtime_print<First, Args...>(string_view pattern, First first, Args... args)
+    requires formattable<First> {
+  return try_runtime_print_impl(pattern, std::move(first), args...);
+}
+
+/// Runtime validation; dynamic pattern errors keep their recoverable category.
+export [[track_caller]]
+expected<void, print_errc> try_runtime_println(string_view pattern) {
+  return try_runtime_println_impl(pattern);
+}
+export [[track_caller]]
+expected<void, print_errc> try_runtime_println<First, Args...>(string_view pattern, First first, Args... args)
+    requires formattable<First> {
+  return try_runtime_println_impl(pattern, std::move(first), args...);
+}
+
+/// Runtime validation; dynamic pattern errors keep their recoverable category.
+export [[track_caller]]
+void runtime_print(string_view pattern) {
+  runtime_print_impl(pattern);
+}
+export [[track_caller]]
+void runtime_print<First, Args...>(string_view pattern, First first, Args... args)
+    requires formattable<First> {
+  runtime_print_impl(pattern, std::move(first), args...);
+}
+
+/// Runtime validation; dynamic pattern errors keep their recoverable category.
+export [[track_caller]]
+void runtime_println(string_view pattern) {
+  runtime_println_impl(pattern);
+}
+export [[track_caller]]
+void runtime_println<First, Args...>(string_view pattern, First first, Args... args)
+    requires formattable<First> {
+  runtime_println_impl(pattern, std::move(first), args...);
 }
 }

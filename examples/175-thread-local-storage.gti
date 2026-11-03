@@ -14,7 +14,7 @@ public:
     return this.visits;
   }
   ~ThreadState() {
-    std::println("{} retired after {} visits", this.label.view(), this.visits);
+    std::runtime_println("{} retired after {} visits", this.label.view(), this.visits);
   }
 };
 
@@ -55,7 +55,7 @@ int main() {
   // objects retain their independent values and retire when main exits.
   int main_count = state.visit();
   int observed = worker_result.load(std::memory_order_acquire());
-  std::println("worker {} main {}", observed, main_count);
+  std::runtime_println("worker {} main {}", observed, main_count);
   return observed == 14 && main_count == 2 && Registry::visit() == 2 &&
          local_visit() == 2 ? 0 : 4;
 }

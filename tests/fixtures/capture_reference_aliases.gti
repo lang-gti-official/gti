@@ -45,7 +45,7 @@ int main() {
     for (mut int32_t step = 0; step < 2; step += 1) total += accessor;
     return total + twice(again) + left * 10 + right + box.read();
   };
-  std::println("read {}", read());
+  std::runtime_println("read {}", read());
 
   // Mutable aliases write through the capture. A read-only alias of a
   // mutable capture ends before the capture itself is written again.
@@ -62,11 +62,11 @@ int main() {
       count += 1;
       return before + cell.read();
     };
-    std::println("bump {}", bump());
-    std::println("bump {}", bump());
+    std::runtime_println("bump {}", bump());
+    std::runtime_println("bump {}", bump());
   }
-  std::println("count {}", count);
-  std::println("cell {}", cell.read());
+  std::runtime_println("count {}", count);
+  std::runtime_println("cell {}", cell.read());
 
   // Element aliases through a captured container.
   mut std::vector<int32_t> values{};
@@ -84,7 +84,7 @@ int main() {
     int32_t& second = values[std::size_t(1)];
     return first + second;
   };
-  std::println("sum {}", sum());
+  std::runtime_println("sum {}", sum());
 
   // A mutable alias of one field leaves the sibling field reachable through
   // the capture, as for a reference parameter.
@@ -98,7 +98,7 @@ int main() {
     };
     swap();
   }
-  std::println("swapped {}", swapped.left * 10 + swapped.right);
+  std::runtime_println("swapped {}", swapped.left * 10 + swapped.right);
 
   // A closure nested in a capturing closure aliases its own capture.
   auto outer = [&box]() -> int32_t {
@@ -110,6 +110,6 @@ int main() {
     };
     return selected + inner();
   };
-  std::println("nested {}", outer());
+  std::runtime_println("nested {}", outer());
   return 0;
 }

@@ -1,5 +1,41 @@
 # Compiler Verification
 
+## Checked immediate arguments (#169)
+
+The final call tier changes semantic selection and constant publication (T2).
+`testConsteval` in `compiler_pipeline` covers exact input types, trailing defaults,
+read-only references, ordinary/temporary-borrow precedence, constructor and
+function ambiguity, non-inference, operator/assignment fences, function items,
+forwarding and request-local reuse. Its repeated-call fixture requires at least
+49 cache reuses and fewer than five MIR executions for 50 identical validations;
+cache hits retain deterministic work charges. An infinite validator is rejected.
+
+`consteval_runtime` runs the user-defined duration and checked formatting clients
+on LLVM at O0/O1/O3, verifies the C++ GTI-B0003 boundary, and checks rejected
+literals without replacing existing outputs. It includes a 300-character/16-field
+pattern, a custom formatter validator, owning arguments with exactly-once cleanup,
+ordinary generic/function-item forwarding, owner-backed dynamic views, and checked
+formatted panic cleanup. `consteval_lsp` checks hover, library messages, UTF-16
+argument spans and repair. Runtime formatting, integral-enum/custom formatters,
+panic adoption, deferred assertions and their editor tests retain the explicit
+runtime API as the C++ oracle. No comparator expectation is removed.
+
+On macOS arm64 with an optimized compiler, three compile-only observations of
+one versus 50 identical checked format calls had medians 1.04s and 1.09s. A
+2,000,000-iteration O3 integer/text formatting workload had seven-run medians
+0.190s on the parent, 0.183s through the explicit runtime API and 0.190s through
+the checked API. These measurements show comparable runtime cost, not a claimed
+speedup. Both new executables were 157736 bytes versus 157728 on the parent.
+Interposing the actual POSIX aligned-allocation provider recorded the same
+2,000,004 calls and 98,000,256 requested bytes for all three. Startup libc
+allocation counts were also identical. The successful runtime operation retains
+one output allocation; checked validation adds no runtime pattern allocation.
+
+The complete suite belongs to the merge queue. Focused contributor evidence also
+includes the related constexpr/call/diagnostic tests, compiler_pipeline, native
+O0/O3 smoke, surface inventory and both target profiles of the format-dependent
+example census.
+
 ## Default module discovery
 
 `project_model` owns declaration-driven registration, explicit interface and

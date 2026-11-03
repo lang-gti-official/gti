@@ -28,7 +28,7 @@ public:
         spec.sign != '-' || spec.alternate || spec.zero_pad || spec.alignment != '\0') {
       return unexpected(std::format_errc::invalid_format);
     }
-    return std::try_format_to(output, "({}, {})", value.x, value.y);
+    return std::try_runtime_format_to(output, "({}, {})", value.x, value.y);
   }
 public:
   formatter() = default;
@@ -37,11 +37,11 @@ public:
 int main() {
   app::AssetId id = {.value = uint64_t(42)};
   app::Point point = {.x = 3, .y = 7};
-  std::println("asset={:08x} at {}", id, point);
+  std::runtime_println("asset={:08x} at {}", id, point);
 
   // A valid static type can still reject a dynamic format specification.
   mut std::string destination{"unchanged"};
-  auto rejected = std::try_format_to(destination, "{:x}", point);
+  auto rejected = std::try_runtime_format_to(destination, "{:x}", point);
   if (rejected || rejected.error() != std::format_errc::invalid_format ||
       destination != "unchanged") {
     return 1;

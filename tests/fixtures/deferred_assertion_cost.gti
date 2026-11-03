@@ -87,10 +87,10 @@ int main(int argc, std::vector<std::string> argv) {
     uint64_t saved = state;
     for (mut uint32_t stage = uint32_t(0); stage < uint32_t(2); ++stage) {
       if (stage == uint32_t(0)) {
-        if (saved == uint64_t(0)) { std::panic("{}", diagnostic()); }
+        if (saved == uint64_t(0)) { std::runtime_panic("{}", diagnostic()); }
       } else {
         if (std::debug_assertions_enabled) {
-          if (saved == uint64_t(0)) { std::panic("{}", diagnostic()); }
+          if (saved == uint64_t(0)) { std::runtime_panic("{}", diagnostic()); }
         }
       }
     }

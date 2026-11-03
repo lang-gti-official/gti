@@ -5,7 +5,7 @@
     "stdlib/std.gti": "6bf76540ce1d32024871a3fce4b9512fd6fd494511f919db63450e2b4796a0f7",
     "stdlib/std/algorithm.gti": "0b11f6332b1aa9cb3f0b5be90680a81e5f5e7fcd6cc38322f65263e87d6f7f2b",
     "stdlib/std/array.gti": "affed4f1d587a71a098ef7c9b381e6c255d8b639492abbe9a46b31e00115adde",
-    "stdlib/std/assert.gti": "c34ddabb3ce77983232aa13452cf036dba6202cdbd8d2bb7e1c0d9f0a8b6d78d",
+    "stdlib/std/assert.gti": "289add8dae2682412d4e72813fe3cc91e008bb70a50640fa1ff399ab58333c7d",
     "stdlib/std/atomic.gti": "d51045256225848941363200bff10a2fe1bf30b66915a06b89e1fce546d1aed1",
     "stdlib/std/build.gti": "686b681a0da828fadd4bc8ab78dac6fc910da74c12dd5b3eff97f80fda1f8141",
     "stdlib/std/charconv.gti": "e01943092dfd86a7e2f67a31d422db1fbaa4fd2f91e0ea1ea9f891b5bb43499f",
@@ -23,7 +23,7 @@
     "stdlib/std/detail/memory_capabilities.gti": "f4add458d438acc7f60ab55c981fd046db11d3fb51b8d81f371892f86243702f",
     "stdlib/std/detail/memory_core.gti": "4fbde597a84587a8108230d8ee58d8b62d7e4cd6c0791a4b22a3ea16b3ed4e37",
     "stdlib/std/detail/memory_storage.gti": "e548b028aa64ee6b36fa66fbf87f731eb284cdc88cd4c4fa00c0ae95d6e8b3ca",
-    "stdlib/std/detail/panic.gti": "c78f8a45be7af44e0379ff3c9c77448f5271538859789f252b658abb4b950154",
+    "stdlib/std/detail/panic.gti": "b4ac28585057f13b0b2695c7339832df839a77f4f455b3cc78e66dc9eedb2bc5",
     "stdlib/std/detail/resource_core.gti": "3af137631b16e0c323850cafa4e43bcbb25eb168cb332d95fbecdd4301e53135",
     "stdlib/std/detail/resource_lease.gti": "f1a66da927f3a040de99b66c55cf2af1bb76779cb75f541c719d06a45c2443f4",
     "stdlib/std/detail/unordered_map_iterators.gti": "42bbf9226971876d0388a6a32ebed8e82c7ccbfdcd1f0f1404960da2fdd7bf96",
@@ -31,13 +31,13 @@
     "stdlib/std/environment.gti": "3a8c583446b14f97b3c3f3b1ae9dad7c206c830222bd31e8b1650e6f4d0cd826",
     "stdlib/std/experimental/optional.gti": "9ef1e87987c636fa141de4f844c264f07147e816db9c365d98f334f32689c083",
     "stdlib/std/filesystem.gti": "a579044390fadec9e7854eccd4d5901f13ab85288bf71a19ee97cadad2693de6",
-    "stdlib/std/format.gti": "6bb96b2a640689505878eeafc4ed2b75989c5821638e12114d5661ecdbe0ea67",
+    "stdlib/std/format.gti": "e2aa72a9140fd8cd579bffb15f3fec93eb050bc97aeaf8a4ed87879c5e2fee5e",
     "stdlib/std/forward_list.gti": "8d39227073b9f98eb6bc83a7a7103bc630497345830bc7e618dcc01fccb917ef",
     "stdlib/std/functional.gti": "094c1baa47c93162e8ad139c30e5bd0070cff7c5e2343fb3fd32ca880f8437ac",
     "stdlib/std/http.gti": "7810cf7acaee803670f346e0103fa6c0cdfca62aca8edda538cfa880e8ae3521",
     "stdlib/std/io.gti": "8c28bff6f539a82e47f507db2cff429e74307b0dbe6128de48c0b47fd329c0b3",
     "stdlib/std/iterator.gti": "586855579c50031612b0136d001e21dd31c4387dcf115c9fe4485bd12d2577e3",
-    "stdlib/std/json.gti": "85e0213cd253a521937160a0cac1d3e5be1eaa622f34442831a4d2dbffe7b812",
+    "stdlib/std/json.gti": "5ad218e3421387cdd597ae1b7110256cbc37485ee3e4ecbbc2bec5d3b6cf6607",
     "stdlib/std/list.gti": "d8c0a951c3ef5a9fefb8fd69882c8d2b313c9b502d32df906e8e38da809f7923",
     "stdlib/std/map.gti": "73bbf9e8c529c923f3391b94b83e330b90c02b933a7b2cfd9f3c171ee01a6955",
     "stdlib/std/memory.gti": "cf4a99569c5e3d3ddd352ae4a6019586a64ff5fe27e2d637a6bf1c91e4bd62c1",
@@ -46,7 +46,7 @@
     "stdlib/std/numeric.gti": "fa0d3a929076f3f614ebef4c10c897c513e91712332d00b24fc58e78af5bd0cf",
     "stdlib/std/optional.gti": "a67d746ef0f8f5eb14c256b5595725febe56425cfec76fea484f5717fd1ca0d1",
     "stdlib/std/paired_span.gti": "06244b15782f49e35b229fa20238489c578305d8b09a70e9b22ba77f7d5dfffa",
-    "stdlib/std/panic.gti": "3d57fe9c9292a04c6671534abaa3fd9b9287c47247f5c2d40e686344c25cd222",
+    "stdlib/std/panic.gti": "d56e09c4354a326ca6e4464e1d8643af8e62d9bfde8dbc7822d0ea00439ff6b6",
     "stdlib/std/polymorphic.gti": "009f2fe6faec263700c6d734d8db3448b25cde6cca9c9adfea2e8807ed3a594a",
     "stdlib/std/process.gti": "632b0c183f363b66872ae2c17a00516ac9b103bfd580527fc639fd0996e1324b",
     "stdlib/std/queue.gti": "38c9d92a49aa37fcd56dadaa3c2639e5c963b79efa5286f30b407016bc909eed",
@@ -1142,6 +1142,36 @@
       "expected": {
         "exit_code": 0,
         "stdout": "value=7 host=gitea.example ok=1 enabled=true\ndone\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "format-checked",
+      "mode": "run",
+      "source": "tests/fixtures/checked_literal_arguments.gti",
+      "backend": "llvm",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "42\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "format-checked-panic",
+      "mode": "run",
+      "source": "tests/fixtures/checked_format_panic.gti",
+      "backend": "llvm",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
         "stderr": ""
       }
     },
@@ -3890,23 +3920,34 @@
       "status": "executable",
       "operations": [
         "std::format",
+        "std::format_pattern<Args...>",
         "std::format_spec",
         "std::format_to",
         "std::formattable<T>",
         "std::formatter<T>",
+        "std::formatter<T>::validate(format_spec&)",
         "std::print(pattern,Args...)",
         "std::println(pattern,Args...)",
+        "std::runtime_format",
+        "std::runtime_format_to",
+        "std::runtime_print",
+        "std::runtime_println",
         "std::try_format",
         "std::try_format_to",
         "std::try_print",
-        "std::try_println"
+        "std::try_println",
+        "std::try_runtime_format",
+        "std::try_runtime_format_to",
+        "std::try_runtime_print",
+        "std::try_runtime_println"
       ],
       "case_ids": [
         "format",
         "format-customization",
         "format-panic-adoption",
         "integral-enum-formatting",
-        "integral-enum-example"
+        "integral-enum-example",
+        "format-checked"
       ],
       "required_instantiations": [
         "zero arguments",
@@ -3915,12 +3956,15 @@
         "counted string view with embedded zero",
         "indexed and typed format specifications",
         "custom formatter delegation and composition",
-        "recoverable value-dependent formatter rejection"
+        "recoverable value-dependent formatter rejection",
+        "checked generic pack forwarding and custom presentation validation"
       ],
       "evidence": [
         "tests/fixtures/stdlib_surface_format.gti",
         "tests/fixtures/extensible_formatting.gti",
-        "stdlib/std/format.gti"
+        "stdlib/std/format.gti",
+        "tests/consteval_runtime_test.py",
+        "tests/fixtures/checked_literal_arguments.gti"
       ]
     },
     {
@@ -5681,10 +5725,12 @@
       "status": "executable",
       "operations": [
         "std::panic(string_view)",
-        "std::panic(string_view,Args...)"
+        "std::panic(string_view,Args...)",
+        "std::runtime_panic"
       ],
       "case_ids": [
-        "panic-expected"
+        "panic-expected",
+        "format-checked-panic"
       ],
       "required_instantiations": [
         "raw counted message",
@@ -5694,7 +5740,8 @@
         "tests/fixtures/stdlib_surface_panic_expected.gti",
         "tests/panic_runtime_test.py",
         "tests/panic_contract_tests.cpp",
-        "stdlib/std/panic.gti"
+        "stdlib/std/panic.gti",
+        "tests/fixtures/checked_format_panic.gti"
       ]
     },
     {

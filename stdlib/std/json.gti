@@ -436,7 +436,7 @@ expected<void, error> append_floating(mut std::string& out, double value) {
   if (value != value) {
     return unexpected(error(errc::number_out_of_range, std::size_t(0), std::size_t(0), std::size_t(0)));
   }
-  std::string text = std::format("{}", value);
+  std::string text = std::runtime_format("{}", value);
   std::string_view view = text.view();
   if (view.size() == std::size_t(0) || view[std::size_t(0)] == 'i' || view[std::size_t(0)] == 'n' ||
       (view.size() > std::size_t(1) && view[std::size_t(0)] == '-' && view[std::size_t(1)] == 'i')) {

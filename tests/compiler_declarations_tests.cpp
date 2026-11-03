@@ -5900,10 +5900,10 @@ int main() { Overloaded r{}; int value = 7; bool condition = true;
   const std::string formatPrefix =
       "import std.format;\nimport std.string;\nstruct Item { public: "
       "Item() = default; };\n";
-  for (const auto &call :
-       {"std::format(\"{}\", Item())", "std::try_format(\"{}\", Item())",
-        "std::try_format(\"{} {}\", 1, Item())",
-        "std::format(\"{0}\", 1, Item())"}) {
+  for (const auto &call : {"std::runtime_format(\"{}\", Item())",
+                           "std::try_runtime_format(\"{}\", Item())",
+                           "std::try_runtime_format(\"{} {}\", 1, Item())",
+                           "std::runtime_format(\"{0}\", 1, Item())"}) {
     const auto invalid = analyze(formatPrefix + "int main() { [[discard]] " +
                                  call + "; return 0; }");
     expect(!invalid.canGenerateCode() &&
