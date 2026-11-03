@@ -4843,6 +4843,7 @@ private:
       const AppliedConceptRequirement &requirement) const;
   mutable std::vector<std::pair<ConceptId, std::vector<SemanticType>>>
       activeConformanceRequirements;
+  mutable std::size_t conformanceRequirementWork = 0;
   [[nodiscard]] std::optional<std::size_t>
   protocolBorrowContractFailure(const RegisteredConformance &conformance,
                                 const std::vector<SemanticType> &binding) const;

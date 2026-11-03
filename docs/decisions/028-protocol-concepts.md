@@ -203,7 +203,8 @@ written constraints. Requirements never rank blocks, make overlapping heads
 disjoint, or enable fallback. Their guaranteed conjuncts are facts in associated
 type definitions and operation bodies, alongside the block's own application.
 Inline protocol constraints remain excluded. Recursive checks detect cycles
-and bound active protocol nesting to 64 applications; failure reports the leaf
+and bound active protocol nesting to 64 applications and 16,384 visited type
+nodes per root query; failure reports the leaf
 requirement rather than synthesizing an absent-block explanation for a cycle.
 The existing ordinary-function lowering remains unchanged through HIR and MIR.
 

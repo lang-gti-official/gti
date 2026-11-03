@@ -42,6 +42,11 @@ with tempfile.TemporaryDirectory(prefix="gti-protocol-requirements-") as tempora
                       "for <T> concept C<X<T>> requires C<X<X<T>>> { "
                       "int get(X<T>& v) { return 0; } }; "
                       "int main() { X<int> x{}; return C<X<int>>::get(x); }", "nesting limit"),
+        "doubling": ("concept C<T> { int get(T& v); }; struct X<T> { X() = default; }; "
+                     "struct Pair<A, B> {}; "
+                     "for <T> concept C<X<T>> requires C<X<Pair<T, T>>> { "
+                     "int get(X<T>& v) { return 0; } }; "
+                     "int main() { X<int> x{}; return C<X<int>>::get(x); }", "type-expansion budget"),
         "overlap": (PREFIX + "for <T> concept score<Box<T>> requires std::integral<T> { "
                     "int read(Box<T>& v) { return 0; } }; int main() { return 0; }", "overlap"),
     }
@@ -51,4 +56,4 @@ with tempfile.TemporaryDirectory(prefix="gti-protocol-requirements-") as tempora
                       str(directory / (name + ".mir"))], success=False, fragment=expected)
         if "error[GTI-S" not in output:
             raise AssertionError(output)
-print("protocol requirements: LLVM O0/O3 and 5 bounded rejection cases passed")
+print("protocol requirements: LLVM O0/O3 and 6 bounded rejection cases passed")

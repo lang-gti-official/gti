@@ -1232,7 +1232,8 @@ Selection is exact:
 Recursive requirements may compose nested generic types. A failed requirement
 makes the selected application unsatisfied; it never falls back to another
 block. Requirements do not make overlapping patterns disjoint. Cyclic
-requirements and chains deeper than 64 active protocol applications fail with
+requirements and chains deeper than 64 active protocol applications, or queries exceeding 16,384
+visited argument-type nodes, fail with
 an attributable constraint diagnostic. Associated-type projections retain their
 independent cycle and depth checks.
 

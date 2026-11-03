@@ -1321,14 +1321,29 @@ auto SemanticVisitor::Impl::protocolConformanceFailure(
   if (requirement.arguments.size() != conceptInfo.parameterIds.size()) {
     return failure;
   }
+  if (activeConformanceRequirements.empty())
+    conformanceRequirementWork = 0;
+  const auto charge = [&](const auto &self, const SemanticType &type) -> bool {
+    if (++conformanceRequirementWork > maximumProjectionWork)
+      return false;
+    for (const auto &argument : type.arguments)
+      if (!self(self, argument))
+        return false;
+    return true;
+  };
+  const bool withinBudget = std::all_of(
+      requirement.arguments.begin(), requirement.arguments.end(),
+      [&](const auto &type) { return charge(charge, type); });
   const auto key = std::pair{requirement.conceptId, requirement.arguments};
-  if (activeConformanceRequirements.size() >= maximumProjectionDepth ||
+  if (!withinBudget ||
+      activeConformanceRequirements.size() >= maximumProjectionDepth ||
       std::find(activeConformanceRequirements.begin(),
                 activeConformanceRequirements.end(), key) !=
           activeConformanceRequirements.end()) {
     failure.missingConformance = false;
     failure.expressionFailure =
-        "Conformance requirements are cyclic or exceed the nesting limit.";
+        "Conformance requirements are cyclic or exceed the nesting limit or "
+        "type-expansion budget.";
     return failure;
   }
   activeConformanceRequirements.push_back(key);
