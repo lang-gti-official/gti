@@ -557,7 +557,7 @@ class Rollup:
                   "conflicting": [], "rebased": []}
         for pr in self.pulls("open"):
             if is_rollup(pr):
-                self.reconcile_open(pr, queued, history, report)
+                self.reconcile_open(pr, queued, history, report, main)
             else:
                 self.flag_conflict(pr, main, report)
         horizon = self.now() - timedelta(days=self.merged_days)
@@ -596,11 +596,22 @@ class Rollup:
             self.unlabel(number, REBASE)
             report["rebased"].append(number)
 
-    def reconcile_open(self, pr, queued, history, report):
+    def reconcile_open(self, pr, queued, history, report, main=None):
         number, head = pr["number"], pr["head"]["sha"]
         record = self.manifest(pr)
         if record is None:
             report["invalid"].append(number)
+            return
+        if main is not None and self.fetch_pull(number) is not None and self.merge_tree(main, head) is None:
+            # The queue would drop it at its turn without a verdict, and its
+            # members would stay "busy" in an open rollup forever: close it so
+            # the next compose rebuilds from current heads on current main.
+            self.comment(number, f"This rollup no longer merges with `main` at `{main}`, so the bot closed it; "
+                                 "its open members return to the rollup pool and the next rollup is composed "
+                                 "on current main (members that themselves conflict are labelled `needs-rebase`).")
+            self.close(number)
+            self.delete_branch(pr["head"]["ref"], head)
+            report["stale"].append(number)
             return
         if number in queued:
             report["waiting"].append(number)
