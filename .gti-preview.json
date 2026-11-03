@@ -243,10 +243,22 @@
         "85a96e81e07dc5e8c7663c6122be6d29d7661c1f"
       ],
       "merge": "85a96e81e07dc5e8c7663c6122be6d29d7661c1f"
+    },
+    {
+      "task": "pack-move-only-diagnostic",
+      "pr": 167,
+      "head": "6bfe991832320e77fa4ca28774cd44002d39701e",
+      "tests": [
+        "compiler_pipeline"
+      ],
+      "contributions": [
+        "75519e9a2a45555830754aabd86275f0e3fc1fcb"
+      ],
+      "merge": "75519e9a2a45555830754aabd86275f0e3fc1fcb"
     }
   ],
   "removed": [],
   "main": "e3532e6715dd6344b0085e367982a8f2d496bda1",
-  "previous": "1e739f24b8b9e2f8e6da10de9afc1f1fd995263d",
-  "candidate": "af706270c1a84c4cbb849c0128dc61ea"
+  "previous": "6ed26ced974fd54d982116907badf799926d7bf7",
+  "candidate": "057adc41bbc54e5b8302ebe4930a60f6"
 }
