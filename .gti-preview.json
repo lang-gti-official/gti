@@ -559,7 +559,7 @@
     {
       "task": "preview-manual-publisher",
       "pr": 177,
-      "head": "cd308d0352fc5596ff3b9e15f1d22488d31ebbdc",
+      "head": "9d90d249454d87e7c3703adb1b355b19dc7b569c",
       "tests": [
         "ci_release",
         "compiler_pipeline",
@@ -572,9 +572,10 @@
       "contributions": [
         "f0fbf09e0d98219b14a3fd556d704f769ed9bc31",
         "728fda28d17e64221938f92d838deef01aee5e8a",
-        "30c32f012d1ee8e2148a64e83932af1b88ea2496"
+        "30c32f012d1ee8e2148a64e83932af1b88ea2496",
+        "1a3353e4a934def6e66d0019af64cab2c6299357"
       ],
-      "merge": "30c32f012d1ee8e2148a64e83932af1b88ea2496"
+      "merge": "1a3353e4a934def6e66d0019af64cab2c6299357"
     }
   ],
   "removed": [],
