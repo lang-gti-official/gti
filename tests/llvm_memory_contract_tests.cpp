@@ -9,7 +9,6 @@
 #include <llvm/Analysis/MemoryBuiltins.h>
 #include <llvm/Analysis/TargetLibraryInfo.h>
 #include <llvm/Passes/PassBuilder.h>
-#include <llvm/TargetParser/Triple.h>
 
 #include <array>
 #include <filesystem>
@@ -251,8 +250,7 @@ void providerContracts() {
       llvm::IRBuilder<> escape(release);
       escape.CreateCall(observe, {acquire});
     }
-    llvm::TargetLibraryInfoImpl libraryImpl(
-        llvm::Triple(session.module().getTargetTriple()));
+    llvm::TargetLibraryInfoImpl libraryImpl(session.module().getTargetTriple());
     llvm::TargetLibraryInfo library(libraryImpl);
     expect(llvm::isRemovableAlloc(acquire, &library) == (variant != 1),
            "allocation removability comes from the sealed call edge");
