@@ -2503,12 +2503,17 @@ retain their own origins instead of being folded under that parent.
 viability tiers. `ResolvedCallInfo` and `ResolvedOperatorInfo` publish the selected
 `ephemeralBorrowArguments`; HIR preserves them as `ReadTemporaryBorrow` inputs.
 The producer proof admits passive scalar operations, plain-enum results and
-ownerless string literals as well as aggregate temporaries. The target proof
+ownerless string literals as well as aggregate temporaries. A temporary counted
+text view also qualifies when its source producer and stored-borrow summary
+prove stable external storage through the full expression. Unknown or transient
+text owners remain rejected. The target proof
 uses the temporary parameter index to exclude that parameter from every returned
 borrow origin; a result retaining a different caller-owned argument is valid.
 Untracked pointer-like results remain rejected. MIR independently rechecks the
 producer, per-parameter result contract, full-expression obligation and loan end.
 No backend reclassifies source expressions or selects overloads.
+Fallible scalar producers arm their temporary obligation only on the MIR Invoke
+success edge; lazy branches retain a hidden scalar slot and conditional cleanup.
 
 Resolved ordinary method calls and class `operator()` calls retain a
 `CallReceiverMode` alongside the exact selected target. The mode distinguishes

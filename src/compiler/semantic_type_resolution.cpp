@@ -1113,15 +1113,16 @@ auto SemanticVisitor::Impl::ephemeralBorrowResultSupported(
   if (function.returnBorrowOrigin == BorrowOriginKind::Argument &&
       (function.returnBorrowParameter == *temporaryParameter ||
        std::find(function.returnBorrowParameters.begin(),
-                 function.returnBorrowParameters.end(), *temporaryParameter) !=
-           function.returnBorrowParameters.end()))
+                 function.returnBorrowParameters.end(),
+                 *temporaryParameter) != function.returnBorrowParameters.end()))
     return false;
   return std::none_of(function.returnBorrowFields.begin(),
-                      function.returnBorrowFields.end(), [&](const auto &field) {
-    return field.origin == BorrowOriginKind::None ||
-           (field.origin == BorrowOriginKind::Argument &&
-            field.parameter == *temporaryParameter);
-  });
+                      function.returnBorrowFields.end(),
+                      [&](const auto &field) {
+                        return field.origin == BorrowOriginKind::None ||
+                               (field.origin == BorrowOriginKind::Argument &&
+                                field.parameter == *temporaryParameter);
+                      });
 }
 
 auto SemanticVisitor::Impl::ephemeralBorrowTargetSupported(
@@ -1148,12 +1149,24 @@ auto SemanticVisitor::Impl::ephemeralTemporaryArgumentMatches(
     const CallableCandidate &function, const SemanticType &parameter,
     const SemanticType &argument, const ExprPtr &expression,
     std::size_t parameterIndex) -> bool {
+  // Borrowed generic results may transport a moved by-value parameter.
+  // Resolve its body before asking the shared return-contract query, just
+  // as selected-call publication does, so import and call order cannot
+  // decide whether the temporary observer parameter is accepted.
+  if (function.returnBorrowOrigin == BorrowOriginKind::None &&
+      typeTraits(function.returnType).containsBorrowedState) {
+    const FunctionInfo *target = semanticModel.findFunction(function.id);
+    if (!target && instanceBaseModel)
+      target = instanceBaseModel->findFunction(function.id);
+    if (target)
+      ensureBodyAnalyzed(*target);
+  }
   if (parameter.kind != SemanticType::Reference ||
       parameter.referenceAccess != AccessMode::ReadOnly ||
       parameter.arguments.size() != 1 ||
       parameter.arguments.front() != argument ||
-      !isTemporaryBorrowReferentType(argument) ||
-      !expression || !ephemeralBorrowTargetSupported(function, parameterIndex)) {
+      !isTemporaryBorrowReferentType(argument) || !expression ||
+      !ephemeralBorrowTargetSupported(function, parameterIndex)) {
     return false;
   }
   if (argument.kind == SemanticType::FunctionItem &&
@@ -1199,8 +1212,8 @@ auto SemanticVisitor::Impl::ephemeralTemporaryArgumentMatches(
 
 auto SemanticVisitor::Impl::functionCallArgumentMatch(
     const CallableCandidate &function, std::size_t index,
-    const SemanticType &argument, const ExprPtr &expression,
-    bool deferred) -> CallArgumentMatchKind {
+    const SemanticType &argument, const ExprPtr &expression, bool deferred)
+    -> CallArgumentMatchKind {
   if (index >= function.parameterTypes.size()) {
     return CallArgumentMatchKind::Mismatch;
   }

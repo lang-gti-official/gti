@@ -4080,13 +4080,11 @@ private:
     EphemeralReadBorrow,
   };
 
-  [[nodiscard]] bool
-  ephemeralBorrowResultSupported(
+  [[nodiscard]] bool ephemeralBorrowResultSupported(
       const CallableCandidate &function,
       std::optional<std::size_t> temporaryParameter = std::nullopt) const;
 
-  [[nodiscard]] bool
-  ephemeralBorrowTargetSupported(
+  [[nodiscard]] bool ephemeralBorrowTargetSupported(
       const CallableCandidate &function,
       std::optional<std::size_t> temporaryParameter = std::nullopt) const;
 

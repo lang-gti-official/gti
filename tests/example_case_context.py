@@ -18,11 +18,15 @@ LLVM_ONLY_EXAMPLES = frozenset({
     "181-general-object-layout.gti",
     "182-bounded-array-borrows.gti",
     "183-immediate-functions.gti",
+    "186-scalar-temporary-borrows.gti",
+    "187-operator-temporary-borrows.gti",
 })
 
 
 def cpp_limitation(name):
-    return {"182-bounded-array-borrows.gti": "generic fixed-array reference signatures",
+    return {"186-scalar-temporary-borrows.gti": "scalar and operator temporary reference arguments",
+            "187-operator-temporary-borrows.gti": "scalar and operator temporary reference arguments",
+            "182-bounded-array-borrows.gti": "generic fixed-array reference signatures",
             "181-general-object-layout.gti": "general sizeof/alignof",
             "183-immediate-functions.gti": "aggregate constant publication"}.get(
                 name, "wrapping atomic read-modify-write")

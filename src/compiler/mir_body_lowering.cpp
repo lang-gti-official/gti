@@ -6140,7 +6140,8 @@ private:
         temporary->info.category != ValueCategory::Value ||
         (temporary->info.traits.containsBorrowedState &&
          !allowBorrowedCarrier &&
-         temporary->info.type.kind != SemanticType::Class)) {
+         temporary->info.type.kind != SemanticType::Class &&
+         temporary->info.type.kind != SemanticType::StringView)) {
       valid = false;
       return {};
     }
@@ -6181,6 +6182,7 @@ private:
     // is a transport identity, not a second materialization.
     const bool conditionalResult =
         (temporary->kind == HirValueKind::Conditional ||
+         temporary->kind == HirValueKind::Logical ||
          temporary->kind == HirValueKind::ScopedResult ||
          isAssignmentExpression(temporary->kind)) &&
         materialized != nullptr &&
@@ -7474,7 +7476,8 @@ private:
           const auto dependency =
               findMirTemporaryCarrierDependency(output, *source);
           if (!dependency || (source->type.kind != SemanticType::Lambda &&
-                              source->type.kind != SemanticType::Class))
+                              source->type.kind != SemanticType::Class &&
+                              source->type.kind != SemanticType::StringView))
             valid = false;
           else
             output.loans[inputLoan - 1].storedDependency = dependency.loan->id;
@@ -10519,11 +10522,11 @@ private:
                            .hirValue = value.id,
                            .destination = temporary,
                            .operands = {std::move(operand)},
-                           .info = ExpressionInfo{
-                               .type = SemanticType::Bool,
-                               .category = ValueCategory::Place,
-                               .access = AccessMode::Mutable,
-                               .traits = value.info.traits}};
+                           .info =
+                               ExpressionInfo{.type = SemanticType::Bool,
+                                              .category = ValueCategory::Place,
+                                              .access = AccessMode::Mutable,
+                                              .traits = value.info.traits}};
       if (resultObligation != 0) {
         appendLifecycle(stage, {.kind = MirLifecycleEventKind::Initialize,
                                 .target = resultObligation});
@@ -11926,8 +11929,20 @@ private:
                                     .source = drop});
     }
     if (value->kind != HirValueKind::PayloadExtraction ||
-        value->info.category != ValueCategory::Place)
-      (void)initializeValueLifecycle(instruction, *value);
+        value->info.category != ValueCategory::Place) {
+      const auto resultDrop = dropObligationForValue(value->id);
+      if (resultDrop && routeFailureEdgesHere() &&
+          instruction.definedFailure.mayUnwind() &&
+          isPassiveScalarValueType(value->info.type) && !instruction.loan &&
+          !instruction.ownership && instruction.lifecycle.empty()) {
+        // Checked scalar evaluation publishes no value on failure. A
+        // call-scoped temporary becomes live only on the success edge,
+        // including when a lazy branch later needs hidden result storage.
+        instruction.successResultDrop = resultDrop;
+      } else {
+        (void)initializeValueLifecycle(instruction, *value);
+      }
+    }
     if (instruction.operation == MirOperation::Closure &&
         !value->captureBorrowDependencies.empty()) {
       const auto *target = program.findLambda(*instruction.lambdaTarget);

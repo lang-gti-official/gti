@@ -8898,14 +8898,16 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
       info != nullptr && (info->type.kind == SemanticType::Lambda ||
                           info->type.kind == SemanticType::FunctionItem);
   const bool scalar = info != nullptr &&
-      (isPassiveScalarValueType(info->type) ||
-       (info->type.kind == SemanticType::Enum && !payloadEnum));
-  const bool literalText = info != nullptr &&
-      info->type.kind == SemanticType::StringView &&
+                      (isPassiveScalarValueType(info->type) ||
+                       (info->type.kind == SemanticType::Enum && !payloadEnum));
+  const bool literalText =
+      info != nullptr && info->type.kind == SemanticType::StringView &&
       exprAs<LiteralExpr>(transparentTemporaryProducer(expression)) != nullptr;
+  const bool text =
+      info != nullptr && info->type.kind == SemanticType::StringView;
   if (info == nullptr || info->category != ValueCategory::Value ||
       (info->type.kind != SemanticType::Class && !payloadEnum && !callable &&
-       !scalar && !literalText)) {
+       !scalar && !text)) {
     return result;
   }
   result.type = info->type;
@@ -8913,7 +8915,7 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
     result.failure = FreshTemporaryValueFailure::ExplicitMove;
     return result;
   }
-  if (!payloadEnum && !callable && !scalar && !literalText) {
+  if (!payloadEnum && !callable && !scalar && !text) {
     const ClassInfo *record = classInfo(info->type);
     if (record == nullptr || (record->kind != ClassKind::Class &&
                               record->kind != ClassKind::Struct)) {
@@ -8921,7 +8923,8 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
       return result;
     }
   }
-  if (info->traits.containsBorrowedState && !callable) {
+  if ((info->traits.containsBorrowedState && !callable) ||
+      (text && !literalText)) {
     result.failure = FreshTemporaryValueFailure::BorrowedState;
     return result;
   }
@@ -9080,8 +9083,8 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
   return result;
 }
 
-auto SemanticVisitor::Impl::freshTemporaryBorrowValue(
-    const ExprPtr &expression) -> FreshTemporaryValueAssessment {
+auto SemanticVisitor::Impl::freshTemporaryBorrowValue(const ExprPtr &expression)
+    -> FreshTemporaryValueAssessment {
   FreshTemporaryValueAssessment result = freshTemporaryValue(expression);
   if (result.failure != FreshTemporaryValueFailure::BorrowedState) {
     return result;

@@ -4947,7 +4947,10 @@ public:
                                    event.source ? event.source : event.target)
                              : nullptr;
       add(Shape::ConditionalDrop,
-          drop ? (dispatchProofs.contains(drop->dropType.type)
+          drop ? (!drop->dropType.requiresActiveCleanup &&
+                          passiveReference(drop->dropType.type)
+                      ? std::optional(Shape::PassiveReference)
+                  : dispatchProofs.contains(drop->dropType.type)
                       ? dispatchProofs.cleanup(drop->dropType)
                       : classShape(drop->dropType.type))
                : std::nullopt);
@@ -5088,8 +5091,9 @@ public:
           : (place.root == MirPlaceRootKind::Loan ||
              (place.root == MirPlaceRootKind::Value &&
               (findMirTemporaryMaterialization(mir, place, place.sourceValue) ||
-               findMirMovedTemporaryMaterialization(mir, place, place.sourceValue)))) &&
-                passiveReference(place.type)
+               findMirMovedTemporaryMaterialization(mir, place,
+                                                    place.sourceValue)))) &&
+                  passiveReference(place.type)
               ? std::optional(Shape::PassiveReference)
               : placeClassShape(place));
       add(place.access);
@@ -5204,7 +5208,10 @@ public:
       }
     }
     for (const auto &drop : mir.dropObligations) {
-      add(drop.kind, dispatchProofs.contains(drop.dropType.type)
+      add(drop.kind, !drop.dropType.requiresActiveCleanup &&
+                             passiveReference(drop.dropType.type)
+                         ? std::optional(Shape::PassiveReference)
+                     : dispatchProofs.contains(drop.dropType.type)
                          ? dispatchProofs.cleanup(drop.dropType)
                          : classShape(drop.dropType.type));
       cleanup(drop.dropType);
@@ -5368,7 +5375,8 @@ public:
               passiveReference(stage.info.type) &&
                       (stage.callInputKind == HirCallInputKind::ReadBorrow ||
                        stage.callInputKind == HirCallInputKind::MutableBorrow ||
-                       stage.callInputKind == HirCallInputKind::ReadTemporaryBorrow)
+                       stage.callInputKind ==
+                           HirCallInputKind::ReadTemporaryBorrow)
                   ? std::optional(Shape::PassiveReference)
                   : inputShape);
         }

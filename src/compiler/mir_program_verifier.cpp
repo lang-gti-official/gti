@@ -1544,10 +1544,9 @@ exactInPlaceConstructionRoles(const std::vector<SemanticType> &arguments,
 
 // Temporary argument borrows and borrowed-carrier receivers cannot export
 // reference-like results, including untracked raw/native address values.
-[[nodiscard]] bool
-supportsEphemeralBorrowResult(const MirFunctionInstance *target,
-                              const ExpressionInfo &result,
-                              std::optional<std::size_t> parameter = std::nullopt) {
+[[nodiscard]] bool supportsEphemeralBorrowResult(
+    const MirFunctionInstance *target, const ExpressionInfo &result,
+    std::optional<std::size_t> parameter = std::nullopt) {
   if (!target || target->returnType.kind == SemanticType::RawPointer ||
       target->returnType.kind == SemanticType::NativeFunction ||
       target->returnType.kind == SemanticType::CString)
@@ -1563,15 +1562,15 @@ supportsEphemeralBorrowResult(const MirFunctionInstance *target,
   if (target->returnBorrowOrigin == BorrowOriginKind::Argument &&
       (target->returnBorrowParameter == *parameter ||
        std::find(target->returnBorrowParameters.begin(),
-                 target->returnBorrowParameters.end(), *parameter) !=
-           target->returnBorrowParameters.end()))
+                 target->returnBorrowParameters.end(),
+                 *parameter) != target->returnBorrowParameters.end()))
     return false;
   return std::none_of(target->returnBorrowFields.begin(),
                       target->returnBorrowFields.end(), [&](const auto &field) {
-    return field.origin == BorrowOriginKind::None ||
-           (field.origin == BorrowOriginKind::Argument &&
-            field.parameter == *parameter);
-  });
+                        return field.origin == BorrowOriginKind::None ||
+                               (field.origin == BorrowOriginKind::Argument &&
+                                field.parameter == *parameter);
+                      });
 }
 
 [[nodiscard]] std::optional<MirPlaceId>
@@ -2417,8 +2416,8 @@ uniqueMirClassInstanceForType(const MirProgram &program,
                                   contract.boundary ==
                                       CallableBoundary::Confined;
                          }));
-        const bool supportedResult =
-            supportsEphemeralBorrowResult(functionTarget, instruction.info, index);
+        const bool supportedResult = supportsEphemeralBorrowResult(
+            functionTarget, instruction.info, index);
         const std::size_t argumentObligations =
             argumentPlace == nullptr
                 ? 0

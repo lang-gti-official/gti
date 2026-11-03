@@ -4587,6 +4587,7 @@ private:
             input->info.category != ValueCategory::Value ||
             (input->info.traits.containsBorrowedState &&
              input->info.type.kind != SemanticType::Class &&
+             input->info.type.kind != SemanticType::StringView &&
              (input->kind != HirValueKind::Lambda ||
               input->captureBorrowDependencies.empty()))) {
           return std::nullopt;

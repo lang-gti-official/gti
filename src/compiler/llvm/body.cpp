@@ -2312,6 +2312,24 @@ private:
       memory.publish(*instruction.loan, result);
     if (instruction.result && result)
       values.at(*instruction.result) = result;
+    if (instruction.result && result &&
+        !addressValue(session.program().mir(), instruction.info.type)) {
+      // Scalar and counted-text values normally remain SSA values. A
+      // branch-local temporary borrowed by a call needs storage that also
+      // remains nameable by its conditional full-expression cleanup.
+      for (const auto &drop : input.dropObligations) {
+        const auto *place = input.findPlace(drop.place);
+        if (drop.kind == MirDropObligationKind::Value &&
+            drop.value == instruction.hirValue && place &&
+            place->root == MirPlaceRootKind::Temporary &&
+            place->sourceValue == instruction.hirValue &&
+            (instruction.destination == place->id ||
+             instruction.successResultDrop == drop.id)) {
+          store(result, memory.address(place->id), place->type);
+          break;
+        }
+      }
+    }
     if (published.matched()) {
       if (!result)
         throw std::logic_error(
