@@ -1,0 +1,23 @@
+import std.string;
+import std.vector;
+
+mut int sequence = 0;
+int produce() { sequence = sequence * 10 + 1; return 7; }
+int later(int divisor) { sequence = sequence * 10 + 2; return 1 / divisor; }
+int observe(int& value, int second) { sequence = sequence * 10 + 3; return value + second; }
+class Owner {
+public:
+  Owner() { std::println("construct"); }
+  ~Owner() { std::println("destroy"); }
+  bool operator==(Owner& other) { std::println("compare"); return true; }
+};
+int inspect(Owner& owner, int& value, int divisor) { return value / divisor; }
+int main(int argc, std::vector<std::string> argv) {
+  bool skip = false;
+  if (skip && observe(1 / (produce() - 7), 1) == 1) { return 1; }
+  if (observe(produce(), later(1)) != 8 || sequence != 123) { return 2; }
+  if (!(Owner() == Owner())) { return 3; }
+  int divisor = argc == 2 ? 0 : 1;
+  int value = inspect(Owner(), produce(), later(divisor) - (argc == 3 ? 1 : 0));
+  return value - 7;
+}

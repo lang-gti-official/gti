@@ -6368,6 +6368,7 @@ auto SemanticVisitor::Impl::resolveOperator(
   struct ViableOperator {
     CallableCandidate function;
     CallReceiverMode receiverMode = CallReceiverMode::None;
+    std::vector<std::size_t> ephemeralBorrowArguments;
   };
   std::vector<ViableOperator> viable;
   for (const CallableCandidate &declared : overloadSet.overloads) {
@@ -6404,24 +6405,32 @@ auto SemanticVisitor::Impl::resolveOperator(
     if (candidate.parameterTypes.size() != concreteArguments.size()) {
       continue;
     }
-    bool exact = true;
+    bool matches = true;
+    std::vector<std::size_t> ephemeralBorrowArguments;
     for (std::size_t index = 0; index < concreteArguments.size(); ++index) {
       const auto &argument = concreteArguments[index];
-      if (argument.type != SemanticType::Unknown &&
-          candidate.parameterTypes[index] != SemanticType::Unknown &&
-          !(argument.forwardedPackElement
-                ? forwardedPackArgumentMatches(candidate.parameterTypes[index],
-                                               argument.type)
-                : exactOperatorArgumentMatches(candidate.parameterTypes[index],
-                                               argument.type,
-                                               *argument.expression))) {
-        exact = false;
-        break;
+      if (argument.type == SemanticType::Unknown ||
+          candidate.parameterTypes[index] == SemanticType::Unknown ||
+          (argument.forwardedPackElement
+               ? forwardedPackArgumentMatches(candidate.parameterTypes[index],
+                                              argument.type)
+               : exactOperatorArgumentMatches(candidate.parameterTypes[index],
+                                              argument.type,
+                                              *argument.expression)))
+        continue;
+      if (!argument.forwardedPackElement &&
+          ephemeralTemporaryArgumentMatches(candidate,
+                                             candidate.parameterTypes[index],
+                                             argument.type,
+                                             *argument.expression, index)) {
+        ephemeralBorrowArguments.push_back(index);
+        continue;
       }
+      matches = false;
+      break;
     }
-    if (!exact) {
+    if (!matches)
       continue;
-    }
     if (!candidate.requirements.empty()) {
       rejectedRequirements = true;
       continue;
@@ -6455,8 +6464,20 @@ auto SemanticVisitor::Impl::resolveOperator(
       rejectedCompilerPrivate = true;
       continue;
     }
-    viable.push_back({.function = candidate, .receiverMode = receiverMode});
+    viable.push_back({.function = candidate, .receiverMode = receiverMode,
+                      .ephemeralBorrowArguments =
+                          std::move(ephemeralBorrowArguments)});
   }
+
+  // Preserve the ordinary-call tiers: every exact match outranks any
+  // candidate requiring temporary materialization. Within a tier selection
+  // is unique-match, never a reference-versus-value preference.
+  if (std::any_of(viable.begin(), viable.end(), [](const auto &candidate) {
+        return candidate.ephemeralBorrowArguments.empty();
+      }))
+    std::erase_if(viable, [](const auto &candidate) {
+      return !candidate.ephemeralBorrowArguments.empty();
+    });
 
   if (preferReadOnlyReceiver &&
       std::any_of(viable.begin(), viable.end(),
@@ -6570,8 +6591,11 @@ auto SemanticVisitor::Impl::resolveOperator(
               continue;
             std::string reason;
             if (info->category == ValueCategory::Value) {
-              reason = "is a temporary value; this candidate requires an "
-                       "existing place for its reference parameter.";
+              reason = parameter.referenceAccess == AccessMode::Mutable
+                           ? "is a temporary; a mutable reference requires an existing mutable place."
+                           : !ephemeralBorrowTargetSupported(candidate, index)
+                                 ? "is a temporary; this target lacks a source-body or non-escaping result proof for this argument."
+                                 : "is not a supported fresh value with proven stable dependencies.";
             } else if (parameter.referenceAccess == AccessMode::Mutable &&
                        info->access != AccessMode::Mutable) {
               reason = "is read-only; this candidate requires exclusive "
@@ -6588,15 +6612,27 @@ auto SemanticVisitor::Impl::resolveOperator(
       }
       diagnostic.hints.emplace_back(
           referenceMismatch
-              ? "Reference parameters require an existing place with the "
-                "declared access. Bind a temporary to a local before using "
-                "it, or use an operator accepting an owned value."
+              ? "A readonly reference accepts a supported fresh temporary only "
+                "when the selected source target cannot retain that argument. "
+                "Mutable references require existing mutable places."
               : "GTI operator calls do not perform implicit conversions, rank "
                 "candidates, reverse operands, or use ADL; match the exact "
                 "parameter types and ownership requirements.");
       diagnostics.emplace_back(std::move(diagnostic));
     } else {
-      report(token, "Use of " + object + " is ambiguous.", "GTI-S2022");
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2022", DiagnosticPhase::Semantics, token,
+          "Use of " + object + " is ambiguous.");
+      for (const auto &candidate : viable)
+        diagnostic.related.push_back(
+            {tokenSpan(candidate.function.declaration->name()),
+             "Viable candidate: " + functionSignatureSpelling(candidate.function)});
+      diagnostic.hints.emplace_back(
+          "GTI requires one exact candidate in the selected tier. A readonly "
+          "reference parameter accepts both existing places and supported "
+          "temporaries; adding a same-type value overload makes named-place "
+          "calls ambiguous.");
+      diagnostics.emplace_back(std::move(diagnostic));
     }
     return std::nullopt;
   }
@@ -6782,6 +6818,7 @@ auto SemanticVisitor::Impl::resolveOperator(
       .receiverMode = selectedReceiverMode,
       .returnType = selected.returnType,
       .parameterTypes = selected.parameterTypes,
+      .ephemeralBorrowArguments = viable.front().ephemeralBorrowArguments,
       .borrowOrigin = operatorBorrowOrigin,
       .borrowArgument = operatorBorrowParameter,
       .borrowAccess = operatorBorrowAccess,

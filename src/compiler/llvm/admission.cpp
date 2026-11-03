@@ -5085,7 +5085,11 @@ public:
           : place.root == MirPlaceRootKind::Value &&
                   scalarArrayProjection(mir, place)
               ? std::optional(Shape::CheckedArrayProjection)
-          : place.root == MirPlaceRootKind::Loan && passiveReference(place.type)
+          : (place.root == MirPlaceRootKind::Loan ||
+             (place.root == MirPlaceRootKind::Value &&
+              (findMirTemporaryMaterialization(mir, place, place.sourceValue) ||
+               findMirMovedTemporaryMaterialization(mir, place, place.sourceValue)))) &&
+                passiveReference(place.type)
               ? std::optional(Shape::PassiveReference)
               : placeClassShape(place));
       add(place.access);
@@ -5306,7 +5310,10 @@ public:
           for (const auto &drop : mir.dropObligations)
             for (const auto &event : stage.lifecycle)
               if (event.source == drop.id)
-                storageShape = classShape(drop.dropType.type);
+                storageShape = !drop.dropType.requiresActiveCleanup &&
+                                       passiveReference(drop.dropType.type)
+                                   ? std::optional(Shape::PassiveReference)
+                                   : classShape(drop.dropType.type);
         if (stage.kind == MirInstructionKind::CleanupBeforeAssign &&
             stage.replacementCleanup)
           storageShape = classShape(stage.replacementCleanup->type);
@@ -5360,7 +5367,8 @@ public:
           add(stage.callInputKind,
               passiveReference(stage.info.type) &&
                       (stage.callInputKind == HirCallInputKind::ReadBorrow ||
-                       stage.callInputKind == HirCallInputKind::MutableBorrow)
+                       stage.callInputKind == HirCallInputKind::MutableBorrow ||
+                       stage.callInputKind == HirCallInputKind::ReadTemporaryBorrow)
                   ? std::optional(Shape::PassiveReference)
                   : inputShape);
         }

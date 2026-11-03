@@ -4583,12 +4583,10 @@ private:
             parameter.referenceAccess != AccessMode::ReadOnly ||
             parameter.arguments.size() != 1 ||
             parameter.arguments.front() != input->info.type ||
-            (input->info.type.kind != SemanticType::Class &&
-             input->info.type.kind != SemanticType::Enum &&
-             input->info.type.kind != SemanticType::Lambda &&
-             input->info.type.kind != SemanticType::FunctionItem) ||
+            !isTemporaryBorrowReferentType(input->info.type) ||
             input->info.category != ValueCategory::Value ||
             (input->info.traits.containsBorrowedState &&
+             input->info.type.kind != SemanticType::Class &&
              (input->kind != HirValueKind::Lambda ||
               input->captureBorrowDependencies.empty()))) {
           return std::nullopt;
@@ -4865,7 +4863,9 @@ private:
         orderedReceiver(receiverValue, resolved.receiverMutability,
                         resolved.receiverMode, body);
     const std::optional<std::vector<HirCallArgument>> plannedArguments =
-        orderedArguments(arguments, resolved.parameterTypes, body);
+        orderedArguments(arguments, resolved.parameterTypes, body,
+                         std::numeric_limits<std::size_t>::max(),
+                         resolved.ephemeralBorrowArguments);
     if (!plannedReceiver || !plannedArguments) {
       lifecycleValid = false;
       return;
@@ -7595,7 +7595,10 @@ private:
           receiver->info.category == ValueCategory::Value &&
           receiver->info.type.kind == SemanticType::Class &&
           receiver->info.traits.containsBorrowedState;
-      if ((freshReceiver || borrowedValueReceiver || explicitConversion) &&
+      const bool temporaryArguments =
+          resolved != nullptr && !resolved->ephemeralBorrowArguments.empty();
+      if ((freshReceiver || borrowedValueReceiver || explicitConversion ||
+           temporaryArguments) &&
           value.operands.size() >= value.parameterTypes.size() + 1) {
         const HirValueId receiverValue = value.operands.front();
         std::vector<HirValueId> arguments(
@@ -7606,7 +7609,9 @@ private:
             orderedReceiver(receiverValue, resolved->receiverMutability,
                             resolved->receiverMode, body);
         const std::optional<std::vector<HirCallArgument>> plannedArguments =
-            orderedArguments(arguments, value.parameterTypes, body);
+            orderedArguments(arguments, value.parameterTypes, body,
+                             std::numeric_limits<std::size_t>::max(),
+                             resolved->ephemeralBorrowArguments);
         if (plannedReceiver && plannedArguments) {
           value.receiver = receiverValue;
           value.callPlan = HirCallPlan{.receiver = *plannedReceiver,

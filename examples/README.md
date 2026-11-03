@@ -187,6 +187,8 @@ You do not need to read the entire sequence to find an API pattern:
 | Consume a fallible view while retaining its external success borrow | [165: borrowed payload results](165-borrowed-payload-results.gti) |
 | Use optional, one-step implicit returns, consuming access, move assignment and `?` | [166: source optional](166-source-optional.gti) |
 | Name a mapper's result in an ordinary source wrapper | [167: callable result types](167-callable-result-types.gti) |
+| Observe scalar expressions through one readonly reference API | [186: scalar temporary borrows](186-scalar-temporary-borrows.gti) |
+| Compare fresh cursors and pass scalar expressions to operators | [187: operator temporary borrows](187-operator-temporary-borrows.gti) |
 | Select an instance method from metadata and call it with runtime data | [182: reflected method dispatch](185-reflected-method-dispatch.gti) |
 | Give a source class owned, void and borrowed profiles | [168: source value profiles](168-source-value-profiles.gti) |
 | Use global source-defined results with constexpr, callbacks and checked borrows | [169: source expected](169-source-expected.gti) |
@@ -861,6 +863,11 @@ namespace-qualified types, overloads and borrowed APIs from two compiled librari
 
 The [compiled type forwarding example](compiled-type-forwarding/README.md) shares
 dependency-owned records and enums through a chain and diamond of compiled libraries.
+
+[`186-scalar-temporary-borrows.gti`](186-scalar-temporary-borrows.gti) shows
+scalar and plain-enum temporary arguments, explicit move and lazy evaluation.
+[`187-operator-temporary-borrows.gti`](187-operator-temporary-borrows.gti) shows
+read-only operator arguments and stable external cursor dependencies.
 
 [`188-concept-conditions.gti`](188-concept-conditions.gti) tests a named structural
 concept and a protocol concept in `if constexpr`, then invokes the selected

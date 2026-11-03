@@ -1,0 +1,20 @@
+// A cursor owns its small shell and retains a checked external dependency.
+class Cursor {
+  int& source;
+public:
+  Cursor(int& value) : source(value) {}
+  bool operator==(Cursor& other) { return this.source == other.source; }
+};
+Cursor cursor(int& source) { return Cursor(source); }
+class Counter {
+  int value;
+public:
+  Counter(int value) : value(value) {}
+  int operator+(int& other) { return this.value + other; }
+};
+int main() {
+  int owner = 7;
+  Counter counter{7};
+  if (!(cursor(owner) == cursor(owner))) { return 1; }
+  return (counter + 35) - 42;
+}

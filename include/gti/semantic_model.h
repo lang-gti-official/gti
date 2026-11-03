@@ -1651,6 +1651,7 @@ struct ResolvedOperatorInfo {
   CallReceiverMode receiverMode = CallReceiverMode::None;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
+  std::vector<std::size_t> ephemeralBorrowArguments;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
   AccessMode borrowAccess = AccessMode::ReadOnly;

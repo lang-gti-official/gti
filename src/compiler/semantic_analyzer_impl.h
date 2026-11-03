@@ -4085,19 +4085,24 @@ private:
   };
 
   [[nodiscard]] bool
-  ephemeralBorrowResultSupported(const CallableCandidate &function) const;
+  ephemeralBorrowResultSupported(
+      const CallableCandidate &function,
+      std::optional<std::size_t> temporaryParameter = std::nullopt) const;
 
   [[nodiscard]] bool
-  ephemeralBorrowTargetSupported(const CallableCandidate &function) const;
+  ephemeralBorrowTargetSupported(
+      const CallableCandidate &function,
+      std::optional<std::size_t> temporaryParameter = std::nullopt) const;
 
   [[nodiscard]] bool ephemeralTemporaryArgumentMatches(
       const CallableCandidate &function, const SemanticType &parameter,
-      const SemanticType &argument, const ExprPtr &expression) const;
+      const SemanticType &argument, const ExprPtr &expression,
+      std::size_t parameterIndex);
 
   [[nodiscard]] CallArgumentMatchKind
   functionCallArgumentMatch(const CallableCandidate &function,
                             std::size_t index, const SemanticType &argument,
-                            const ExprPtr &expression, bool deferred) const;
+                            const ExprPtr &expression, bool deferred);
 
   void reportCallArgumentMismatch(std::size_t index,
                                   const SemanticType &parameter,
@@ -6175,8 +6180,11 @@ private:
   [[nodiscard]] FreshTemporaryValueAssessment
   freshTemporaryValue(const ExprPtr &expression) const;
 
-  // Receiver-only extension. Temporary reference arguments retain the stricter
-  // self-contained-value rule in freshTemporaryValue.
+  // A temporary carrier may retain only proven stable external dependencies.
+  // Shared by receivers and call-scoped reference arguments.
+  [[nodiscard]] FreshTemporaryValueAssessment
+  freshTemporaryBorrowValue(const ExprPtr &expression);
+
   [[nodiscard]] FreshTemporaryValueAssessment
   freshTemporaryReceiverValue(const ExprPtr &expression);
 
