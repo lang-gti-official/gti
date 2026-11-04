@@ -250,7 +250,7 @@ def main() -> int:
 
     print(
         f"MIR corpus oracle ({arguments.backend}, {target}): {len(sources)} examples, "
-        f"{sum(expected[source.name] for source in sources)} reviewed body identities, "
+        f"{sum(expected.get(source.name, 0) for source in sources)} reviewed body identities, "
         f"{len(configurations)} endpoint configurations"
     )
     if failures:

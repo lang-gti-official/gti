@@ -541,7 +541,7 @@
       }
     },
     "038-vector-emplace.gti": {
-      "bodies": 248,
+      "bodies": 247,
       "generated_items": 159,
       "generated_kinds": {
         "program_initialization": 0,
@@ -1126,17 +1126,17 @@
       }
     },
     "077-callable-concepts.gti": {
-      "bodies": 192,
-      "generated_items": 140,
+      "bodies": 160,
+      "generated_items": 112,
       "generated_kinds": {
         "program_initialization": 1,
         "hosted_entry": 1,
-        "structural_operator_adapter": 28,
+        "structural_operator_adapter": 23,
         "callable_adapter": 22,
         "lifecycle_cleanup": 3,
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
-        "concrete_instance_adapter": 85,
+        "concrete_instance_adapter": 62,
         "thread_local_storage": 0
       }
     },
@@ -1246,17 +1246,17 @@
       }
     },
     "087-associative-containers.gti": {
-      "bodies": 509,
-      "generated_items": 363,
+      "bodies": 453,
+      "generated_items": 319,
       "generated_kinds": {
         "program_initialization": 1,
         "hosted_entry": 1,
         "structural_operator_adapter": 41,
         "callable_adapter": 20,
-        "lifecycle_cleanup": 11,
+        "lifecycle_cleanup": 9,
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
-        "concrete_instance_adapter": 289,
+        "concrete_instance_adapter": 247,
         "thread_local_storage": 0
       }
     },
@@ -1276,17 +1276,17 @@
       }
     },
     "089-library-workflow.gti": {
-      "bodies": 972,
-      "generated_items": 669,
+      "bodies": 919,
+      "generated_items": 628,
       "generated_kinds": {
         "program_initialization": 1,
         "hosted_entry": 1,
         "structural_operator_adapter": 61,
         "callable_adapter": 20,
-        "lifecycle_cleanup": 20,
+        "lifecycle_cleanup": 18,
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
-        "concrete_instance_adapter": 566,
+        "concrete_instance_adapter": 527,
         "thread_local_storage": 0
       }
     },
@@ -1456,17 +1456,17 @@
       }
     },
     "101-owned-algorithm-results.gti": {
-      "bodies": 358,
-      "generated_items": 263,
+      "bodies": 327,
+      "generated_items": 236,
       "generated_kinds": {
         "program_initialization": 1,
         "hosted_entry": 1,
-        "structural_operator_adapter": 36,
+        "structural_operator_adapter": 31,
         "callable_adapter": 21,
         "lifecycle_cleanup": 7,
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
-        "concrete_instance_adapter": 197,
+        "concrete_instance_adapter": 175,
         "thread_local_storage": 0
       }
     },
@@ -1501,8 +1501,8 @@
       }
     },
     "104-move-only-ordering.gti": {
-      "bodies": 276,
-      "generated_items": 190,
+      "bodies": 259,
+      "generated_items": 178,
       "generated_kinds": {
         "program_initialization": 1,
         "hosted_entry": 1,
@@ -1511,7 +1511,7 @@
         "lifecycle_cleanup": 5,
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
-        "concrete_instance_adapter": 126,
+        "concrete_instance_adapter": 114,
         "thread_local_storage": 0
       }
     },
@@ -2026,17 +2026,17 @@
       }
     },
     "139-ordered-search.gti": {
-      "bodies": 213,
-      "generated_items": 153,
+      "bodies": 196,
+      "generated_items": 138,
       "generated_kinds": {
         "program_initialization": 0,
         "hosted_entry": 1,
-        "structural_operator_adapter": 28,
+        "structural_operator_adapter": 23,
         "callable_adapter": 21,
         "lifecycle_cleanup": 3,
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
-        "concrete_instance_adapter": 100,
+        "concrete_instance_adapter": 90,
         "thread_local_storage": 0
       }
     },
@@ -2551,17 +2551,17 @@
       }
     },
     "173-general-requires.gti": {
-      "bodies": 207,
-      "generated_items": 103,
+      "bodies": 194,
+      "generated_items": 97,
       "generated_kinds": {
         "program_initialization": 1,
         "hosted_entry": 1,
-        "structural_operator_adapter": 33,
+        "structural_operator_adapter": 28,
         "callable_adapter": 26,
         "lifecycle_cleanup": 3,
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
-        "concrete_instance_adapter": 39,
+        "concrete_instance_adapter": 38,
         "thread_local_storage": 0
       }
     },
@@ -2716,7 +2716,7 @@
       }
     },
     "183-immediate-functions.gti": {
-      "bodies": 112,
+      "bodies": 111,
       "generated_items": 60,
       "generated_kinds": {
         "program_initialization": 1,
@@ -2781,32 +2781,32 @@
     "x86_64-unknown-linux": {
       "examples": {
         "087-associative-containers.gti": {
-          "bodies": 508,
-          "generated_items": 362,
+          "bodies": 452,
+          "generated_items": 318,
           "generated_kinds": {
             "program_initialization": 1,
             "hosted_entry": 1,
             "structural_operator_adapter": 41,
             "callable_adapter": 20,
-            "lifecycle_cleanup": 11,
+            "lifecycle_cleanup": 9,
             "native_interop_adapter": 0,
             "thread_task_adapter": 0,
-            "concrete_instance_adapter": 288,
+            "concrete_instance_adapter": 246,
             "thread_local_storage": 0
           }
         },
         "089-library-workflow.gti": {
-          "bodies": 971,
-          "generated_items": 668,
+          "bodies": 918,
+          "generated_items": 627,
           "generated_kinds": {
             "program_initialization": 1,
             "hosted_entry": 1,
             "structural_operator_adapter": 61,
             "callable_adapter": 20,
-            "lifecycle_cleanup": 20,
+            "lifecycle_cleanup": 18,
             "native_interop_adapter": 0,
             "thread_task_adapter": 0,
-            "concrete_instance_adapter": 565,
+            "concrete_instance_adapter": 526,
             "thread_local_storage": 0
           }
         }
