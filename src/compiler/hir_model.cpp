@@ -2834,6 +2834,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           semantic == nullptr && deferred.contains(statement.id);
       const HirRangeIteration *range =
           statement.rangeIteration ? &*statement.rangeIteration : nullptr;
+      if (range != nullptr && range->consumingLowering)
+        source = range->consumingLowering.get();
       const auto bindingFor = [&](HirBindingId id) -> const HirBinding * {
         const auto found = std::find_if(
             body.bindings.begin(), body.bindings.end(),
@@ -2877,6 +2879,74 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       const HirStatement *elementOwnerStatement =
           range == nullptr ? nullptr
                            : body.findStatement(range->elementOwnerStatement);
+      if (range != nullptr &&
+          range->strategy == RangeIterationStrategy::Consuming) {
+        const auto *condition = body.findValue(range->comparison);
+        const auto *transfer = body.findValue(range->begin);
+        const auto *core = body.findStatement(range->coreLoop);
+        const auto *lowering =
+            statement.body ? body.findStatement(*statement.body) : nullptr;
+        const auto selected = [&](const HirValue *call, FunctionId declaration,
+                                  HirCallInputKind access) {
+          const auto *target =
+              call && call->functionTarget
+                  ? program.findFunctionInstance(*call->functionTarget)
+                  : nullptr;
+          const auto *receiver = call && call->receiver
+                                     ? body.findValue(*call->receiver)
+                                     : nullptr;
+          return target && target->declaration == declaration &&
+                 !target->staticMember && target->parameterTypes.empty() &&
+                 call->callPlan && call->callPlan->receiver &&
+                 call->callPlan->arguments.empty() &&
+                 call->callPlan->receiver->kind == access && receiver &&
+                 iterator && receiver->symbol == iterator->info.symbol;
+        };
+        if (!source || !range->consumingLowering || !owner || !iterator ||
+            !element || !condition || !elementAccessValue || !transfer ||
+            !core || !lowering || lowering->source != source->lowered().get() ||
+            core->source != source->coreLoop() ||
+            core->kind != HirStatementKind::For ||
+            !exactBinding(range->owner, source->ownerBinding()) ||
+            !exactBinding(range->iterator, source->iteratorBinding()) ||
+            !exactBinding(range->element, source->elementBinding()) ||
+            !exactValue(range->source, source->ownerBinding()->initializer()) ||
+            !exactValue(range->begin,
+                        source->iteratorBinding()->initializer()) ||
+            !exactValue(range->comparison, source->coreLoop()->condition()) ||
+            !exactValue(range->elementAccessValue,
+                        source->elementBinding()->initializer()) ||
+            range->rangeType != owner->info.type ||
+            range->iteratorType != iterator->info.type ||
+            range->elementType != element->info.type ||
+            owner->info.type.kind == SemanticType::Reference ||
+            owner->info.traits.containsBorrowedState ||
+            range->owner == range->iterator ||
+            range->iterator == range->element ||
+            range->owner == range->element ||
+            transfer->intrinsic != IntrinsicKind::Move ||
+            condition->info.type != SemanticType::Bool ||
+            !selected(condition, range->compareFunction,
+                      HirCallInputKind::ReadBorrow) ||
+            !selected(elementAccessValue, range->dereferenceFunction,
+                      HirCallInputKind::MutableBorrow) ||
+            elementAccessValue->info.category != ValueCategory::Value ||
+            elementAccessValue->info.traits.containsBorrowedState ||
+            elementAccessValue->borrowOrigin != BorrowOriginKind::None ||
+            !elementAccessValue->borrowFields.empty() ||
+            !elementAccessValue->borrowArguments.empty() ||
+            elementAccessValue->borrowPlace ||
+            element->info.type.kind == SemanticType::Reference ||
+            range->rangeCarrier != 0 || range->sentinel != 0 ||
+            range->rangeLoan != 0 || range->elementLoan != 0 ||
+            range->elementOwner != 0 || range->increment != 0 ||
+            !range->ownsRangeTemporary || range->compareFunction == 0 ||
+            range->dereferenceFunction == 0) {
+          result.errors.emplace_back(
+              "consuming range HIR lost its owned cursor/value protocol");
+        }
+        continue;
+      }
       const bool exactConcreteTypes =
           range != nullptr && rangeCarrier != nullptr && iterator != nullptr &&
           sentinel != nullptr && element != nullptr &&

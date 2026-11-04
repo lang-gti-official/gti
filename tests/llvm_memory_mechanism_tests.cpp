@@ -302,7 +302,12 @@ static void *allocate(uint64_t bytes, uint64_t alignment, int32_t *status) {
   address = _aligned_malloc((size_t)bytes, (size_t)alignment);
   *status = address ? 0 : ENOMEM;
 #else
-  *status = posix_memalign(&address, (size_t)alignment, (size_t)bytes);
+  if (alignment) {
+    *status = posix_memalign(&address, (size_t)alignment, (size_t)bytes);
+  } else {
+    address = malloc((size_t)bytes);
+    *status = address ? 0 : ENOMEM;
+  }
 #endif
   }
   if (*status == 0) regions[attempts - 1] = address;
@@ -325,6 +330,9 @@ static void release(void *address) {
     free(address);
 #endif
   }
+}
+void *gti_rt_malloc_v1(uint64_t bytes) {
+  int32_t status; return allocate(bytes, 0, &status);
 }
 void *gti_rt_posix_memalign_v1(uint64_t bytes, uint64_t alignment, int32_t *status) {
   return allocate(bytes, alignment, status);

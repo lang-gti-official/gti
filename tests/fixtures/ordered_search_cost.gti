@@ -193,7 +193,13 @@ int exercise(std::size_t length, int key) {
   bool found = std::binary_search(values.begin(), end, key, CostOrder());
   if (!check_cost(length, levels + 1)) { return 7; }
   if (found != (expected_lower != expected_upper)) { return 8; }
-  if (exercise_jumps(length, key, levels, expected_lower, expected_upper) != 0) { return 9; }
+  if (exercise_jumps(length, key, levels, expected_lower, expected_upper) != 0) { return 11; }
+
+  reset_cost();
+  auto greatest = std::max_element(values.begin(), end, CostOrder());
+  if (!check_cost(length, length - 1) || calls != length - 1 ||
+      increments > std::size_t(2) * length) { return 9; }
+  if (*greatest != int((length - 1) / 2)) { return 10; }
   return 0;
 }
 

@@ -1,4 +1,5 @@
 export module vector;
+import "detail/sequence_removal.gti";
 import "detail/memory_storage.gti";
 
 import std.span;
@@ -12,6 +13,39 @@ namespace std {
 // custom movement or assignment. Independent storage excludes checked borrows.
 export concept vector_element<T> = std::relocatable<T> && std::storage_element<T>;
 namespace detail {
+// Owns one allocation and a remaining live interval, never a vector with holes.
+// A range loop takes this value into an exclusive hidden cursor before calling
+// the ordinary has_next/take_next protocol. No element borrows escape it.
+class vector_consuming_range<std::vector_element T> {
+  mut prefix_owner<T> storage;
+  mut size_t first = 0;
+  mut size_t last = 0;
+public:
+  vector_consuming_range(prefix_owner<T> storage)
+      : storage(std::move(storage)) {
+    this.last = this.storage.length();
+    // Transfer element cleanup to this interval; storage retains allocation
+    // ownership and releases it after this object's destructor has drained it.
+    unsafe { this.storage.set_initialized_length_unchecked(size_t(0)); }
+  }
+  vector_consuming_range(vector_consuming_range<T>& other) = delete;
+  vector_consuming_range(vector_consuming_range<T>&& other) = default;
+  bool has_next() { return this.first < this.last; }
+  T take_next() mut {
+    gti_internal::index_bounds_check(this.first, this.last);
+    size_t index = this.first;
+    this.first = gti_internal::integer_wrapping_add(this.first, size_t(1));
+    unsafe { return std::take_at(this.storage.address() + index); }
+  }
+  ~vector_consuming_range() {
+    unsafe {
+      mut gti_internal::prefix_suffix_drain<T> remaining{
+          this.storage.address(), this.first, this.last};
+      remaining.finish();
+    }
+  }
+};
+
 class vector_sentinel {
   size_t final_position;
 
@@ -209,6 +243,13 @@ public:
   using reverse_iterator = detail::vector_mut_iterator<T, 1>;
   using const_reverse_iterator = detail::vector_iterator<T, 1>;
 
+  /// Consumes this vector without copying elements or reallocating storage.
+  /// The returned range yields owned elements in order and destroys any
+  /// remaining elements when iteration ends, including an early exit.
+  detail::vector_consuming_range<T> into_range() && {
+    return detail::vector_consuming_range<T>(std::move(this.data));
+  }
+
   vector() : data(std::detail::prefix_owner<T>()) {}
 
   /// Collection-brace protocol: reserve once, then consume each owned element.
@@ -256,6 +297,13 @@ public:
     requires std::relocatable<T> {
     gti_internal::index_bounds_check(left, this.size());
     gti_internal::index_bounds_check(right, this.size());
+    unsafe { this.swap_elements_unchecked(left, right); }
+  }
+
+  /// Restoring swap with caller-proven live indices. Both indices must be
+  /// less than size(), even when equal. No element loan may survive the call.
+  unsafe void swap_elements_unchecked(size_t left, size_t right) mut
+    requires std::relocatable<T> {
     unsafe { this.data.swap_elements_unchecked(left, right); }
   }
 
@@ -484,4 +532,19 @@ public:
     return std::move(result);
   }
 };
+}
+
+namespace std {
+/// Remove matching elements, preserve the order of the rest, and return the count.
+export [[discardable]] size_t erase_if<std::vector_element T, Predicate>(mut vector<T>& values, mut Predicate predicate)
+    requires std::detail::indexed_predicate<Predicate, vector<T>> {
+  size_t retained = std::detail::compact_remove_if(values, predicate);
+  return std::detail::erase_tail(values, retained);
+}
+
+/// Remove elements equal to value and return the number destroyed.
+export [[discardable]] size_t erase<std::vector_element T>(mut vector<T>& values, T& value) requires std::equality_comparable<T> {
+  size_t retained = std::detail::compact_remove(values, value);
+  return std::detail::erase_tail(values, retained);
+}
 }

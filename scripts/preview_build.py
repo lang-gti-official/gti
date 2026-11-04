@@ -36,6 +36,13 @@ def build_targets(source, build, selected):
             cache.get('CMAKE_BUILD_TYPE') not in {'Release', 'RelWithDebInfo', 'MinSizeRel'}):
         raise ValueError('preview requires this source with an optimized build')
     reply = build / '.cmake/api/v1/reply'
+    if not any(reply.glob('index-*.json')):
+        # A tree configured without a file-API query has no target model.
+        # Request one and reconfigure in place; the cache is unchanged.
+        query = build / '.cmake/api/v1/query'
+        query.mkdir(parents=True, exist_ok=True)
+        (query / 'codemodel-v2').touch()
+        subprocess.run(['cmake', '-S', str(source), '-B', str(build)], check=True)
     index = json.loads(sorted(reply.glob('index-*.json'))[-1].read_text())
     model = json.loads((reply / index['reply']['codemodel-v2']['jsonFile']).read_text())
     configurations = model['configurations']

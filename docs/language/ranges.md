@@ -32,6 +32,48 @@ byte-slice transports.
 
 ## Range protocol
 
+### Consuming values
+
+An owned range can yield independent values through an exact read-only
+`bool has_next()` and exact mutable `T take_next() mut`, both with no
+parameters. This protocol applies when the class has neither `begin` nor
+`begin_mut`; existing iterator/sentinel ranges keep their existing protocol.
+The range and yielded values cannot contain checked borrowed state. Legacy
+non-owning text handles (`string_view` and `c_string`) cannot be yielded by this
+protocol because their type traits do not prove expression-independent ownership. A value
+binding is required; reference bindings are rejected. `T` may be move-only
+and need not support default construction or assignment.
+
+```gti
+auto values = split(line);
+for (auto value : std::move(values).into_range()) {
+  row.insert(headers[index].clone(), std::move(value));
+  index++;
+}
+```
+
+`vector<T>::into_range() &&` transfers the vector's allocation and live
+elements to a range. `values` is unavailable after the explicit move. The
+range expression is evaluated once and moved into a hidden mutable cursor;
+each successful `take_next()` initializes a fresh iteration-local value.
+`continue` checks `has_next()` again. `break`, return and defined failure
+clean up the current value and the cursor normally. An element transferred
+elsewhere remains owned by its destination.
+
+The vector range owns a shrinking live interval, not a vector with vacant
+slots. It yields elements in index order without cloning, replacement objects
+or additional allocation, and destroys the remaining interval in reverse
+order on exit. A first destructor failure still drains the remaining objects;
+a second failure follows the ordinary failure-during-cleanup rule.
+
+The protocol is structural: unrelated user-defined classes may implement it
+in ordinary GTI. Neither `std::vector` nor the `into_range` name grants any
+compiler permission. Generic code can express the two method requirements
+with ordinary member constraints. This new owning storage path is implemented
+by the LLVM backend; it does not extend the deprecated C++ backend.
+
+### Borrowed traversal
+
 The iterator/sentinel and complete-range contracts below describe GTI's own
 checked traversal model, not native C++ iterator requirements.
 

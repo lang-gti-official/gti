@@ -305,8 +305,35 @@ void testThunks(Session &session) {
            "publishing functions or tables");
     std::map<std::pair<std::vector<unsigned>, unsigned>, llvm::GlobalVariable *>
         physical;
+    std::map<
+        std::tuple<HirFunctionInstanceId, HirFunctionInstanceId, std::int64_t>,
+        llvm::Function *>
+        adapters;
     for (const auto &view : dispatch.views(active.id)) {
       auto *table = dispatch.table(active.id, view.viewClass);
+      const auto *candidates = table->getMetadata("gti.dispatch.candidates");
+      expect(candidates && candidates->getNumOperands() == view.slots.size(),
+             "candidate inventory is emitted with the physical table slots");
+      if (candidates && candidates->getNumOperands() == view.slots.size())
+        for (unsigned index = 0; index < view.slots.size(); ++index) {
+          const auto *entry =
+              llvm::dyn_cast<llvm::MDNode>(candidates->getOperand(index));
+          const auto *root =
+              entry && entry->getNumOperands() == 2
+                  ? llvm::mdconst::dyn_extract<llvm::ConstantInt>(
+                        entry->getOperand(0))
+                  : nullptr;
+          const auto *target = entry && entry->getNumOperands() == 2
+                                   ? llvm::mdconst::dyn_extract<llvm::Function>(
+                                         entry->getOperand(1))
+                                   : nullptr;
+          const auto *slots = table->getInitializer()->getAggregateElement(2U);
+          expect(root && root->getZExtValue() == view.slots[index].root &&
+                     target && slots &&
+                     slots->getAggregateElement(index) == target,
+                 "every candidate is the actual adjustment thunk at its "
+                 "verified root slot");
+        }
       const auto key =
           std::pair{view.location.owner.indices, view.location.index};
       const auto [shared, inserted] = physical.emplace(key, table);
@@ -352,10 +379,17 @@ void testThunks(Session &session) {
                "valid typed IR");
         if (!thunk)
           continue;
-        expect(
-            dispatch.adjustment(active.id, view.profileOwner, slot.root) ==
-                thunk,
-            "thunk cache retains source and physical receiver presentations");
+        const auto adapterKey =
+            std::tuple{slot.root, slot.target, slot.receiverAdjustment};
+        const auto [adapter, newAdapter] = adapters.emplace(adapterKey, thunk);
+        expect(newAdapter || adapter->second == thunk,
+               "identical root, target and adjustment share one adapter");
+        for (const auto &[otherKey, otherThunk] : adapters)
+          expect(otherKey == adapterKey || otherThunk != thunk,
+                 "different root, target or adjustment keeps distinct code");
+        expect(dispatch.adjustment(active.id, view.profileOwner, slot.root) ==
+                   thunk,
+               "thunk cache retains the verified physical receiver adjustment");
         llvm::CallInst *call = nullptr;
         std::vector<const llvm::StoreInst *> stores;
         for (auto &block : *thunk)
@@ -596,6 +630,16 @@ void testCallPlans(Session &session) {
             llvm::BasicBlock::Create(session.context(), "entry", probe));
         const auto loaded =
             dispatch.loadCall(ir, instruction, plan, probe->getArg(0));
+        const auto *marker = llvm::cast<llvm::LoadInst>(loaded.callee)
+                                 ->getMetadata("gti.dispatch.root");
+        const auto *taggedRoot =
+            marker && marker->getNumOperands() == 1
+                ? llvm::mdconst::dyn_extract<llvm::ConstantInt>(
+                      marker->getOperand(0))
+                : nullptr;
+        expect(taggedRoot && taggedRoot->getZExtValue() == plan.root,
+               "only the verified physical callee load carries its root "
+               "candidate key");
         const auto loads = std::count_if(
             probe->getEntryBlock().begin(), probe->getEntryBlock().end(),
             [](const auto &operation) {
@@ -4947,6 +4991,262 @@ int main(void) { return gti_relocation_probe(); }
   }
 }
 
+// Exercise the real planner inventory: physically different logical views
+// with identical adapter inputs share code. Synthetic tagged calls alone
+// cannot prove admission or canonicalization.
+void testSourceGuardedDispatchPromotion() {
+  const auto frontend =
+      Frontend().analyze("guarded-mixed-source.gti", std::string(R"(
+interface Area { int area(); };
+class Square : public Area {
+  int side;
+public:
+  Square(int value) : side(value) {}
+  int area() override { return this.side * this.side; }
+};
+class Circle : public Area {
+  int radius;
+public:
+  Circle(int value) : radius(value) {}
+  int area() override { return 3 * this.radius * this.radius; }
+};
+int sum_areas(Area& value, int count) {
+  mut int result = 0;
+  for (mut int index = 0; index < count; index++) { result += value.area(); }
+  return result;
+}
+int main() {
+  Square square{2};
+  Circle circle{3};
+  return sum_areas(square, 5) + sum_areas(circle, 5);
+}
+)"));
+  expect(frontend.canGenerateCode(), "mixed-record promotion source is valid");
+  if (!frontend.canGenerateCode())
+    return;
+  std::vector<LoweredProgramIssue> issues;
+  const auto input = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+  expect(input.has_value(), "mixed-record promotion source seals");
+  if (!input)
+    return;
+  Session session(*input, {});
+  const auto admission = planLlvmAdmission(*input);
+  expect(admission.admitted(), "mixed-record promotion source is admitted");
+  if (!admission.admitted())
+    return;
+  lowerScalarProgram(session, admission);
+  llvm::Function *sum = nullptr;
+  for (const auto &instance : input->program().mir().functionInstances()) {
+    const auto *declaration =
+        input->program().findFunctionDeclaration(instance.declaration);
+    if (declaration && declaration->qualifiedName == "sum_areas")
+      sum = session.abi().declareFunction(instance.id);
+  }
+  expect(sum != nullptr, "source sum body is emitted");
+  if (!sum)
+    return;
+  std::set<llvm::Function *> physicalTargets;
+  for (const auto &global : session.module().globals())
+    if (const auto *inventory = global.getMetadata("gti.dispatch.candidates"))
+      for (const auto &operand : inventory->operands()) {
+        const auto *entry = llvm::cast<llvm::MDNode>(operand.get());
+        physicalTargets.insert(
+            llvm::mdconst::extract<llvm::Function>(entry->getOperand(1)));
+      }
+  expect(physicalTargets.size() == 2,
+         "two implementations share identical adapters across logical views");
+  expect(
+      promoteGuardedDispatchCalls(session.module()) > 0,
+      "real mixed-record emitted call meets promotion and instruction budgets");
+  unsigned indirect = 0, selectedDirect = 0;
+  for (const auto &block : *sum)
+    for (const auto &instruction : block)
+      if (const auto *call = llvm::dyn_cast<llvm::CallBase>(&instruction)) {
+        if (!call->getCalledFunction())
+          ++indirect;
+        else if (physicalTargets.contains(call->getCalledFunction()))
+          ++selectedDirect;
+      }
+  expect(indirect == 1 && selectedDirect == 2,
+         "real mixed-record call retains fallback and guards both canonical "
+         "targets");
+  session.verify();
+}
+
+// Raw pointer changes deliberately model a dispatch phase/slot change. The
+// candidate list omits one valid callee: promotion must retain that fallback.
+llvm::Function *populatePromotionProbe(llvm::Module &module,
+                                       unsigned candidates, bool tagged = true,
+                                       bool oversized = false) {
+  auto &context = module.getContext();
+  llvm::IRBuilder<> ir(context);
+  auto *pointer = llvm::PointerType::get(context, 0);
+  auto *type = llvm::FunctionType::get(ir.getInt32Ty(),
+                                       {pointer, ir.getInt32Ty()}, false);
+  std::array<llvm::Function *, 5> targets;
+  for (unsigned i = 0; i < targets.size(); ++i)
+    targets[i] =
+        llvm::Function::Create(type, llvm::GlobalValue::InternalLinkage,
+                               "promotion.target." + std::to_string(i), module);
+  auto *effects = new llvm::GlobalVariable(module, ir.getInt32Ty(), false,
+                                           llvm::GlobalValue::InternalLinkage,
+                                           ir.getInt32(0), "promotion.effects");
+  for (unsigned i = 0; i < targets.size(); ++i) {
+    auto *target = targets[i];
+    ir.SetInsertPoint(llvm::BasicBlock::Create(context, "entry", target));
+    ir.CreateStore(targets[(i + 1) % 3], target->getArg(0));
+    ir.CreateStore(
+        ir.CreateAdd(ir.CreateLoad(ir.getInt32Ty(), effects), ir.getInt32(1)),
+        effects);
+    llvm::Value *value =
+        ir.CreateAdd(target->getArg(1), ir.getInt32(10 * i + 1));
+    if (oversized && i == 0)
+      for (unsigned j = 0; j < 129; ++j)
+        value = ir.CreateAdd(value, target->getArg(1));
+    ir.CreateRet(value);
+  }
+  auto *array = llvm::ArrayType::get(pointer, candidates);
+  std::vector<llvm::Constant *> entries;
+  std::vector<llvm::Metadata *> rows;
+  for (unsigned i = 0; i < candidates; ++i) {
+    entries.push_back(targets[i]);
+    rows.push_back(llvm::MDNode::get(
+        context, {llvm::ConstantAsMetadata::get(ir.getInt64(19)),
+                  llvm::ConstantAsMetadata::get(targets[i])}));
+  }
+  auto *table = new llvm::GlobalVariable(
+      module, array, true, llvm::GlobalValue::InternalLinkage,
+      llvm::ConstantArray::get(array, entries), "promotion.table");
+  table->setMetadata("gti.dispatch.candidates",
+                     llvm::MDNode::get(context, rows));
+  auto *caller = llvm::Function::Create(
+      type, llvm::GlobalValue::InternalLinkage, "promotion.caller", module);
+  ir.SetInsertPoint(llvm::BasicBlock::Create(context, "entry", caller));
+  auto *loaded = ir.CreateLoad(pointer, caller->getArg(0));
+  if (tagged)
+    loaded->setMetadata(
+        "gti.dispatch.root",
+        llvm::MDNode::get(context,
+                          llvm::ConstantAsMetadata::get(ir.getInt64(19))));
+  ir.CreateRet(
+      ir.CreateCall(type, loaded, {caller->getArg(0), caller->getArg(1)}));
+
+  auto *probe = llvm::Function::Create(
+      llvm::FunctionType::get(ir.getInt32Ty(), {ir.getInt32Ty()}, false),
+      llvm::GlobalValue::ExternalLinkage, "gti_guarded_dispatch_probe", module);
+  ir.SetInsertPoint(llvm::BasicBlock::Create(context, "entry", probe));
+  auto *slot = ir.CreateAlloca(pointer);
+  auto *chosen = ir.CreateSelect(
+      ir.CreateICmpEQ(probe->getArg(0), ir.getInt32(0)), targets[0],
+      ir.CreateSelect(ir.CreateICmpEQ(probe->getArg(0), ir.getInt32(1)),
+                      targets[1], targets[2]));
+  ir.CreateStore(chosen, slot);
+  ir.CreateStore(ir.getInt32(0), effects);
+  auto *first = ir.CreateCall(caller, {slot, ir.getInt32(5)});
+  auto *second = ir.CreateCall(caller, {slot, ir.getInt32(5)});
+  auto *value = ir.CreateAdd(ir.CreateMul(first, ir.getInt32(100)), second);
+  ir.CreateRet(ir.CreateAdd(ir.CreateMul(value, ir.getInt32(10)),
+                            ir.CreateLoad(ir.getInt32Ty(), effects)));
+  return caller;
+}
+
+void testGuardedDispatchPromotion(const VerifiedLoweredProgram &input) {
+  for (unsigned scenario = 0; scenario < 8; ++scenario) {
+    llvm::LLVMContext context;
+    llvm::Module module("guarded-dispatch", context);
+    auto *caller = populatePromotionProbe(module, scenario == 1 ? 5 : 2,
+                                          scenario != 2, scenario == 3);
+    if (scenario == 4)
+      llvm::cast<llvm::LoadInst>(&caller->front().front())->setVolatile(true);
+    if (scenario == 5)
+      for (auto &instruction : caller->front())
+        if (auto *call = llvm::dyn_cast<llvm::CallInst>(&instruction))
+          call->setConvergent();
+    if (scenario == 6)
+      module.getGlobalVariable("promotion.table", true)->setConstant(false);
+    if (scenario == 7)
+      module.getFunction("promotion.target.0")
+          ->addFnAttr(llvm::Attribute::NoDuplicate);
+    expect(!llvm::verifyModule(module, &llvm::errs()),
+           "promotion control starts as valid IR");
+    const auto promoted = promoteGuardedDispatchCalls(module);
+    expect(promoted == (scenario == 0 ? 1U : 0U),
+           "only bounded tagged candidate sets are promoted");
+    unsigned direct = 0, indirect = 0;
+    for (const auto &block : *caller)
+      for (const auto &instruction : block) {
+        if (const auto *call = llvm::dyn_cast<llvm::CallBase>(&instruction))
+          call->getCalledFunction() ? ++direct : ++indirect;
+        if (instruction.isTerminator())
+          expect(!instruction.getMetadata(llvm::LLVMContext::MD_prof),
+                 "unprofiled promotion invents no likelihood weights");
+      }
+    expect(indirect == 1 && direct == (scenario == 0 ? 2U : 0U),
+           "exact direct targets supplement rather than replace the indirect "
+           "fallback");
+    expect(!llvm::verifyModule(module, &llvm::errs()) &&
+               promoteGuardedDispatchCalls(module) == 0,
+           "promotion repairs SSA and is idempotent");
+  }
+
+  const auto temporary =
+      std::filesystem::temp_directory_path() /
+      ("gti-guarded-dispatch-" +
+       std::to_string(
+           std::chrono::steady_clock::now().time_since_epoch().count()));
+  std::filesystem::create_directories(temporary);
+  const auto consumer = temporary / "consumer.c";
+  expect(driver::writeArtifact(consumer, R"(
+extern int gti_guarded_dispatch_probe(int);
+int main(void) {
+  return gti_guarded_dispatch_probe(0) != 6162 ||
+         gti_guarded_dispatch_probe(1) != 16262 ||
+         gti_guarded_dispatch_probe(2) != 26062;
+}
+)") == driver::ArtifactWriteStatus::Success,
+         "write guarded dispatch consumer");
+  driver::NativeToolchain toolchain;
+  const auto cobject = temporary / "consumer.o";
+  const auto compiled = toolchain.invoke(driver::NativeCCompileRequest(
+      driver::discoverCCompiler(), consumer, cobject, driver::CStandard::C17,
+      OptimizationLevel::O2, {}, {}));
+  expect(compiled.succeeded(), "compile guarded dispatch consumer");
+  if (!compiled.succeeded())
+    return;
+  for (const auto level :
+       {LlvmCodegenOptimization::None, LlvmCodegenOptimization::Aggressive}) {
+    Session session(input, {.optimization = level});
+    auto *caller = populatePromotionProbe(session.module(), 2);
+    expect(caller->size() == 1, "O0 input has no speculative dispatch branch");
+    if (level == LlvmCodegenOptimization::Aggressive)
+      expect(promoteGuardedDispatchCalls(session.module()) == 1,
+             "native O3 probe promotes its site");
+    session.verify();
+    const auto artifact = session.emitObject();
+    const auto object =
+        temporary /
+        (level == LlvmCodegenOptimization::None ? "plain.o" : "promoted.o");
+    expect(driver::writeArtifact(object, artifact.contents) ==
+               driver::ArtifactWriteStatus::Success,
+           "write guarded dispatch object");
+    driver::NativeInputs inputs;
+    inputs.finalLibraryFiles = {
+        cobject, driver::discoverToolchainLayout(nullptr).runtimeLibrary};
+    const auto executable =
+        temporary /
+        (level == LlvmCodegenOptimization::None ? "plain" : "promoted");
+    const auto linked = toolchain.invoke(driver::NativeLinkRequest(
+        driver::discoverNativeCompiler(), object, executable, inputs));
+    expect(linked.succeeded(), "link guarded dispatch native probe");
+    if (linked.succeeded())
+      expect(driver::invokeProcess({executable.string()}).succeeded(),
+             "known and unknown callees preserve effects and observe slot "
+             "changes at O0/O3");
+  }
+  std::filesystem::remove_all(temporary);
+}
+
 } // namespace
 
 int main() {
@@ -4977,6 +5277,8 @@ int main() { return 0; }
       gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
   if (!input)
     return 1;
+  testSourceGuardedDispatchPromotion();
+  testGuardedDispatchPromotion(*input);
   Session session(*input, {});
   test(session, *input);
   testPlaces(session);

@@ -150,6 +150,7 @@ struct SemanticLoanInfo {
 enum class RangeIterationStrategy {
   Structural,
   FixedArray,
+  Consuming,
 };
 
 // The semantic authority for one range statement. Generated syntax remains a
@@ -157,6 +158,9 @@ enum class RangeIterationStrategy {
 // access, protocol, and loan identities instead of rediscovering a range from
 // member spellings.
 struct ResolvedRangeIterationInfo {
+  // Semantics selects this ordinary-call lowering after resolving the range
+  // owner. Its arena is retained by the same snapshot as the selected calls.
+  std::shared_ptr<const RangeForStmt> consumingLowering;
   RangeIterationStrategy strategy = RangeIterationStrategy::Structural;
   SemanticType rangeType = SemanticType::Unknown;
   SemanticType iteratorType = SemanticType::Unknown;
@@ -519,6 +523,7 @@ enum class IntrinsicKind {
   ObjectConstruct,
   ObjectRelocate,
   ObjectRelocateRange,
+  ObjectTake,
   RequireVacantStorage,
   RequireLiveStorage,
   RequireRelocationCapacity,

@@ -11,6 +11,11 @@
 
 namespace lang::native_llvm {
 
+// Guarded representation refinement over already-emitted table entries.
+// Candidate metadata is advisory, never an exhaustive-target assertion.
+// Returns the number of indirect sites promoted; the fallback is retained.
+std::size_t promoteGuardedDispatchCalls(llvm::Module &module);
+
 struct DispatchSlotPlan {
   HirFunctionInstanceId root = 0;
   HirFunctionInstanceId target = 0;
@@ -143,9 +148,8 @@ private:
   std::map<HirClassInstanceId, std::vector<DispatchViewPlan>> views_;
   std::map<HirFunctionInstanceId, std::vector<HirFunctionInstanceId>> targets_;
   std::map<HirClassInstanceId, std::vector<HirFunctionInstanceId>> profiles_;
-  using AdjustmentKey =
-      std::tuple<HirClassInstanceId, HirClassInstanceId, HirClassInstanceId,
-                 HirFunctionInstanceId, HirFunctionInstanceId, std::int64_t>;
+  using AdjustmentKey = std::tuple<HirClassInstanceId, HirFunctionInstanceId,
+                                   HirFunctionInstanceId, std::int64_t>;
   using TableKey =
       std::tuple<HirClassInstanceId, std::vector<unsigned>, unsigned>;
   std::map<AdjustmentKey, llvm::Function *> adjustments_;

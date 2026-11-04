@@ -12,6 +12,7 @@
 #include <llvm/Passes/PassBuilder.h>
 #include <llvm/Support/raw_ostream.h>
 
+#include <algorithm>
 #include <array>
 #include <iostream>
 #include <stdexcept>
@@ -105,6 +106,10 @@ Outcome execute(llvm::Function &function, unsigned bound, unsigned pattern,
           result = left.bits.usub_ov(right.bits, unsignedOverflow);
           static_cast<void>(left.bits.ssub_ov(right.bits, signedOverflow));
           break;
+        case llvm::Instruction::Mul:
+          result = left.bits.umul_ov(right.bits, unsignedOverflow);
+          static_cast<void>(left.bits.smul_ov(right.bits, signedOverflow));
+          break;
         case llvm::Instruction::And:
           result = left.bits & right.bits;
           break;
@@ -126,6 +131,12 @@ Outcome execute(llvm::Function &function, unsigned bound, unsigned pattern,
           require(right.bits.ult(left.bits.getBitWidth()),
                   "oracle invalid shift");
           result = left.bits.lshr(right.bits);
+          break;
+        case llvm::Instruction::Shl:
+          require(right.bits.ult(left.bits.getBitWidth()),
+                  "oracle invalid shift");
+          result = left.bits.ushl_ov(right.bits, unsignedOverflow);
+          static_cast<void>(left.bits.sshl_ov(right.bits, signedOverflow));
           break;
         default:
           throw std::runtime_error("unknown oracle binary operation");
@@ -228,6 +239,21 @@ Outcome execute(llvm::Function &function, unsigned bound, unsigned pattern,
           pairs[call] = {
               {result, left.poison || right.poison},
               {llvm::APInt(1, overflow), left.poison || right.poison}};
+        } else if (callee->getIntrinsicID() == llvm::Intrinsic::umin ||
+                   callee->getIntrinsicID() == llvm::Intrinsic::umax ||
+                   callee->getIntrinsicID() == llvm::Intrinsic::smin ||
+                   callee->getIntrinsicID() == llvm::Intrinsic::smax) {
+          auto left = get(call->getArgOperand(0)),
+               right = get(call->getArgOperand(1));
+          const auto id = callee->getIntrinsicID();
+          const bool minimum =
+              id == llvm::Intrinsic::umin || id == llvm::Intrinsic::smin;
+          const bool less =
+              id == llvm::Intrinsic::smin || id == llvm::Intrinsic::smax
+                  ? left.bits.slt(right.bits)
+                  : left.bits.ult(right.bits);
+          values[call] = {(minimum == less) ? left.bits : right.bits,
+                          left.poison || right.poison};
         } else if (callee->getName() == "record") {
           auto value = get(call->getArgOperand(0));
           require(!value.poison, "poison effect operand");
@@ -292,7 +318,11 @@ struct Shape {
   bool indexIncrement = false;
   int boundedTargetBase = -1;
   bool truncatedTarget = false;
+  unsigned clampedTarget = 0;
   unsigned ancillaryKind = 0;
+  bool standaloneAdds = false;
+  unsigned ancillaryScale = 0;
+  bool ancillaryShift = false, flaggedAmount = false;
   bool vectorSide = false;
   bool intrinsicAdd = false;
   bool externalOverflow = false;
@@ -350,6 +380,24 @@ llvm::Function *makeLoop(llvm::Module &module, const Shape &shape,
     boundedTarget = builder.CreateAdd(
         remainder, llvm::ConstantInt::get(indexType, shape.boundedTargetBase),
         "bounded.target");
+    if (shape.clampedTarget) {
+      const bool signedClamp = shape.clampedTarget == 3;
+      const auto minimum =
+          signedClamp ? llvm::Intrinsic::smin : llvm::Intrinsic::umin;
+      const auto maximum =
+          signedClamp ? llvm::Intrinsic::smax : llvm::Intrinsic::umax;
+      llvm::Value *low =
+          llvm::ConstantInt::get(indexType, shape.boundedTargetBase);
+      llvm::Value *high =
+          llvm::ConstantInt::get(indexType, shape.boundedTargetBase + 7);
+      boundedTarget = builder.CreateBinaryIntrinsic(
+          minimum, shape.clampedTarget == 2 ? high : function->getArg(0),
+          shape.clampedTarget == 2 ? function->getArg(0) : high);
+      boundedTarget = builder.CreateBinaryIntrinsic(
+          maximum, shape.clampedTarget == 2 ? low : boundedTarget,
+          shape.clampedTarget == 2 ? boundedTarget : low, nullptr,
+          "clamped.target");
+    }
   }
   llvm::Value *ancillaryBase = function->getArg(4);
   if (shape.ancillaryKind == 2)
@@ -461,6 +509,17 @@ llvm::Function *makeLoop(llvm::Module &module, const Shape &shape,
       increment = builder.CreateTrunc(source, accType);
     }
   }
+  if (shape.boundedStep == 10 || shape.boundedStep == 11) {
+    llvm::Value *ceiling = llvm::ConstantInt::get(accType, 5);
+    llvm::Value *floor = llvm::ConstantInt::get(accType, 1);
+    increment = builder.CreateBinaryIntrinsic(
+        llvm::Intrinsic::umin,
+        shape.boundedStep == 11 ? ceiling : function->getArg(1),
+        shape.boundedStep == 11 ? function->getArg(1) : ceiling);
+    increment = builder.CreateBinaryIntrinsic(
+        llvm::Intrinsic::umax, shape.boundedStep == 11 ? floor : increment,
+        shape.boundedStep == 11 ? increment : floor);
+  }
   if (mixedIncrement)
     increment = mixedIncrement;
   if (shape.indexIncrement)
@@ -516,6 +575,16 @@ llvm::Function *makeLoop(llvm::Module &module, const Shape &shape,
     llvm::Value *amount = shape.ancillaryKind == 6
                               ? static_cast<llvm::Value *>(function->getArg(1))
                               : builder.CreateZExtOrTrunc(index, accType);
+    if (shape.ancillaryScale)
+      amount = shape.ancillaryShift
+                   ? builder.CreateShl(
+                         amount,
+                         llvm::ConstantInt::get(accType, shape.ancillaryScale),
+                         "scaled.amount", shape.flaggedAmount)
+                   : builder.CreateMul(
+                         amount,
+                         llvm::ConstantInt::get(accType, shape.ancillaryScale),
+                         "scaled.amount", shape.flaggedAmount);
     auto *pair = builder.CreateBinaryIntrinsic(
         llvm::Intrinsic::uadd_with_overflow, base, amount);
     auto *value = builder.CreateExtractValue(pair, 0);
@@ -639,7 +708,7 @@ std::string printed(llvm::Function &function) {
   function.print(stream);
   return output;
 }
-void optimize(llvm::Function &function) {
+void optimize(llvm::Function &function, bool standaloneAdds = false) {
   llvm::LoopAnalysisManager loops;
   llvm::FunctionAnalysisManager functions;
   llvm::CGSCCAnalysisManager cgscc;
@@ -650,12 +719,16 @@ void optimize(llvm::Function &function) {
   builder.registerCGSCCAnalyses(cgscc);
   builder.registerModuleAnalyses(modules);
   builder.crossRegisterProxies(loops, functions, cgscc, modules);
-  auto preserved = optimizeCheckedReductions(function, functions);
+  const auto run = [&](llvm::Function &target) {
+    return standaloneAdds ? optimizeCheckedInvariantAdds(target, functions)
+                          : optimizeCheckedReductions(target, functions);
+  };
+  auto preserved = run(function);
   functions.invalidate(function, preserved);
   require(!llvm::verifyFunction(function, &llvm::errs()),
           "reduction pass produced invalid IR");
   const auto once = printed(function);
-  preserved = optimizeCheckedReductions(function, functions);
+  preserved = run(function);
   functions.invalidate(function, preserved);
   require(printed(function) == once,
           "reduction pass repeatedly versions a loop");
@@ -667,7 +740,12 @@ void differential(const Shape &shape, bool expectChange) {
   auto *before = makeLoop(module, shape, "reference");
   auto *after = makeLoop(module, shape, "optimized");
   const auto original = printed(*after);
-  optimize(*after);
+  if (shape.standaloneAdds) {
+    optimize(*after);
+    require(printed(*after) == original,
+            "standalone fixture unexpectedly qualified as a reduction");
+  }
+  optimize(*after, shape.standaloneAdds);
   require((printed(*after) != original) == expectChange,
           "unexpected reduction admission decision");
   // A version selector must constrain the same chosen value used by the
@@ -717,18 +795,30 @@ void differential(const Shape &shape, bool expectChange) {
     // Freeze of a poison bounded expression may choose ANY bit pattern. An
     // out-of-envelope choice must select the untouched fallback, not license
     // the index bounds inferred from the expression's defined values.
+    const auto minimum =
+        std::max(unsigned(shape.boundedTargetBase),
+                 unsigned(shape.indexInitial) + unsigned(!shape.currentIndex));
     for (unsigned raw : {0U, 1U, 7U, 127U, 255U})
-      for (unsigned forced : {0U, 255U})
+      for (unsigned forced : {0U, 255U}) {
+        if (forced >= minimum &&
+            forced <= unsigned(shape.boundedTargetBase + 7))
+          continue;
         for (unsigned initial : {0U, 120U, 250U})
           require(
               execute(*before, raw, 0, false, false, -1, initial) ==
                   execute(*after, raw, 0, false, false, int(forced), initial),
               "out-of-envelope frozen target did not retain fallback");
+      }
     // Defined in-envelope refinement uses a raw argument selecting exactly
     // that target; the other raw argument deliberately selects a different one.
-    const auto chosen = unsigned(shape.boundedTargetBase + 3);
-    require(execute(*before, 3, 0) ==
-                execute(*after, 7, 0, false, false, int(chosen)),
+    const auto chosen =
+        std::max(unsigned(shape.boundedTargetBase + 3), minimum);
+    const auto selectedRaw = shape.clampedTarget
+                                 ? chosen
+                                 : chosen - unsigned(shape.boundedTargetBase);
+    require(execute(*before, selectedRaw, 0) ==
+                execute(*after, selectedRaw == 0 ? 7 : 0, 0, false, false,
+                        int(chosen)),
             "index envelope and fast latch used different frozen targets");
   }
   if (shape.ancillaryKind) {
@@ -740,11 +830,11 @@ void differential(const Shape &shape, bool expectChange) {
                                                   false, -1, base, -1, false,
                                                   base),
                   "ancillary addition changed value/overflow/effect trace");
-    if (shape.ancillaryKind == 1)
+    if (shape.ancillaryKind == 1 && expectChange)
       require(execute(*before, 3, 0, false, false, -1, 0, -1, false, 5) ==
                   execute(*after, 3, 0, false, false, -1, 0, -1, false, 250, 5),
               "fast ancillary computation did not use guarded frozen base");
-    if (shape.ancillaryKind == 4)
+    if (shape.ancillaryKind == 4 && expectChange)
       require(execute(*before, 3, 0, false, false, -1, 0, -1, false, 5) ==
                   execute(*after, 3, 0, false, false, -1, 0, -1, false, 5, 200),
               "out-of-envelope invariant freeze escaped to fast loop");
@@ -894,6 +984,48 @@ int main() {
       weighted.variableInitial = true;
       differential(weighted, true);
     }
+    // Source min/max clamps must retain their unsigned envelope even when
+    // the unclamped input is unknown. Signed clamps are not unsigned ranges.
+    for (unsigned kind : {1U, 2U, 3U}) {
+      Shape clamped;
+      clamped.indexIncrement = true;
+      clamped.boundedTargetBase = 4;
+      clamped.clampedTarget = kind;
+      clamped.indexInitial = 2;
+      clamped.intrinsicAdd = true;
+      clamped.variableInitial = true;
+      clamped.earlyExit = true;
+      differential(clamped, kind != 3);
+    }
+    for (unsigned kind : {10U, 11U}) {
+      Shape clampedIncrement;
+      clampedIncrement.boundedStep = kind;
+      clampedIncrement.intrinsicAdd = true;
+      clampedIncrement.variableInitial = true;
+      clampedIncrement.earlyExit = true;
+      differential(clampedIncrement, true);
+    }
+    for (bool current : {false, true}) {
+      for (int start : {0, 3}) {
+        Shape possiblyEmpty;
+        possiblyEmpty.indexIncrement = true;
+        possiblyEmpty.boundedTargetBase = 0;
+        possiblyEmpty.clampedTarget = 1;
+        possiblyEmpty.indexInitial = start;
+        possiblyEmpty.currentIndex = current;
+        possiblyEmpty.intrinsicAdd = true;
+        possiblyEmpty.variableInitial = true;
+        possiblyEmpty.earlyExit = true;
+        differential(possiblyEmpty, true);
+      }
+    }
+    Shape maximumStart;
+    maximumStart.indexIncrement = true;
+    maximumStart.boundedTargetBase = 248;
+    maximumStart.clampedTarget = 1;
+    maximumStart.indexInitial = 255;
+    maximumStart.intrinsicAdd = true;
+    differential(maximumStart, false);
     // Narrow accumulation makes a wrongly admitted long frozen traversal
     // overflow, while the defined bounded target has a short safe traversal.
     Shape narrowWeighted;
@@ -947,6 +1079,44 @@ int main() {
       ancillary.signedArithmetic = false;
       ancillary.variableInitial = kind == 2;
       differential(ancillary, true);
+    }
+    // No reduction: the only useful checked addition computes a stored key.
+    // Exhaustive 8-bit invariant inputs exercise both versions, including
+    // overflow observations and effects before an early exit.
+    for (unsigned kind = 1; kind <= 6; ++kind) {
+      Shape fill;
+      fill.standaloneAdds = true;
+      fill.step = 0;
+      fill.ancillaryKind = kind;
+      fill.boundedTargetBase = 16;
+      fill.indexInitial = 7;
+      fill.conditional = false;
+      fill.signedArithmetic = false;
+      differential(fill, kind <= 4);
+      if (kind == 1) {
+        fill.earlyExit = true;
+        differential(fill, true);
+        fill.earlyExit = false;
+        for (unsigned scale : {3U, 11U, 17U}) {
+          fill.ancillaryScale = scale;
+          differential(fill, scale != 17);
+        }
+        fill.ancillaryShift = true;
+        for (unsigned shift : {1U, 3U, 4U}) {
+          fill.ancillaryScale = shift;
+          differential(fill, shift != 4);
+        }
+        fill.ancillaryShift = false;
+        fill.ancillaryScale = 17;
+        fill.flaggedAmount = true;
+        llvm::LLVMContext context;
+        llvm::Module module("unproved-flagged-amount", context);
+        auto *function = makeLoop(module, fill, "fill");
+        const auto original = printed(*function);
+        optimize(*function, true);
+        require(printed(*function) == original,
+                "standalone addition trusted nowrap flags as bounds");
+      }
     }
     {
       Shape vectorSide;

@@ -27,13 +27,20 @@ class ProfileControls(unittest.TestCase):
         # the next --refresh-all), but both profiles record the same examples.
         self.assertEqual(set(mac), set(linux))
         names = set(mac)
-        self.assertEqual({name: (mac[name], linux[name]) for name in names
-                          if mac[name] != linux[name]}, {
-            "087-associative-containers.gti": (452, 451),
-            "089-library-workflow.gti": (918, 917),
-            "189-protocol-format-hash.gti": (448, 447),
-            "190-conditional-member-operators.gti": (525, 524),
-        })
+        # Reviewed macOS/Linux body differences, as offsets, applied once the
+        # example is recorded. Offsets (not absolute counts) so a PR that
+        # changes one of these examples does not have to edit this control.
+        profile_offsets = {
+            "087-associative-containers.gti": 1,
+            "089-library-workflow.gti": 1,
+            "186-consuming-ranges.gti": 1,
+            "189-protocol-format-hash.gti": 1,
+            "190-conditional-member-operators.gti": 1,
+        }
+        self.assertEqual({name: mac[name] - linux[name] for name in names
+                          if mac[name] != linux[name]},
+                         {name: offset for name, offset in profile_offsets.items()
+                          if name in names})
         lowered = json.loads((ROOT / "tests/lowered_program_census_baseline.json").read_text())
         for name, row in lowered["variants"][reviewed.TARGETS[1]]["examples"].items():
             if name not in names:
@@ -143,6 +150,15 @@ class ProfileControls(unittest.TestCase):
                 with patch.object(sys, "argv", argv), patch.object(oracle, "build_and_run", side_effect=emitted) as run:
                     self.assertEqual(oracle.main(), 0)
                     self.assertEqual(run.call_count, 4)  # Both endpoints for each selected example.
+                # An example the baseline has not recorded still runs, and the
+                # summary must not read its missing count.
+                unrecorded = deepcopy(DOCUMENT)
+                del unrecorded["examples"]["087-associative-containers.gti"]
+                unrecorded["variants"][reviewed.TARGETS[1]]["examples"].pop("087-associative-containers.gti", None)
+                baseline.write_text(json.dumps(unrecorded))
+                with patch.object(sys, "argv", argv), patch.object(oracle, "build_and_run", side_effect=emitted):
+                    self.assertEqual(oracle.main(), 0)
+                baseline.write_text(json.dumps(DOCUMENT))
                 # Even a selected-case run validates the entire corpus first.
                 bad = deepcopy(DOCUMENT)
                 bad["examples"]["001-basics.gti"] = 0

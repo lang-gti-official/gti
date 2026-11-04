@@ -28,6 +28,9 @@ int main() {
       }
       auto low = std::min_element(values.begin(), values.end());
       auto high = std::max_element(values.begin(), values.end());
+      auto compared_high = std::max_element(values.begin(), values.end(),
+          [](int& left, int& right) -> bool { return left < right; });
+      if (std::size_t(std::distance(values.begin(), compared_high)) != greatest) { return 7; }
       auto duplicate = std::adjacent_find(values.begin(), values.end());
       auto sorted = std::is_sorted_until(values.begin(), values.end());
       if (std::size_t(std::distance(values.begin(), low)) != least ||

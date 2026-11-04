@@ -5,6 +5,7 @@ extern "C" {
   void provider_test_mode(int32_t mode);
   int32_t provider_test_calls();
   int32_t provider_test_releases();
+  int32_t provider_test_region(void* address, uint64_t bytes, uint64_t alignment);
 }
 
 // The harness narrows only the copied provider's native-size bound to 8 bits.
@@ -23,6 +24,9 @@ int main() {
     provider.release(empty);
     if (provider_test_calls() != 0 || provider_test_releases() != 0) { return 4; }
     auto accepted = provider.allocate(std::layout(uint64_t(255), uint64_t(8))).expect("within limit");
+    // Use the region: process allocations are not observable effects (ADR 022),
+    // so an unused accepted allocation/release pair may be elided at -O3.
+    if (provider_test_region(accepted.address, accepted.bytes, accepted.alignment) != 0) { return 6; }
     provider.release(accepted);
     return provider_test_calls() == 1 && provider_test_releases() == 1 ? 0 : 5;
   }

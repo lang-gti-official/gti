@@ -14,6 +14,13 @@ llvm::PreservedAnalyses
 optimizeCheckedReductions(llvm::Function &function,
                           llvm::FunctionAnalysisManager &analyses);
 
+// Bounded checked additions in non-reducing loops (fills, stores, keys).
+// Run after the reduction/range passes so those stronger plans get priority.
+llvm::PreservedAnalyses
+optimizeCheckedInvariantAdds(llvm::Function &function,
+                             llvm::FunctionAnalysisManager &analyses);
+void registerCheckedInvariantAddPass(llvm::PassBuilder &builder);
+
 void registerCheckedReductionPass(llvm::PassBuilder &builder);
 
 } // namespace lang::native_llvm

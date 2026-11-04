@@ -27,6 +27,7 @@ enum class ProcessMemoryRuntimeOperation : std::uint8_t {
   PosixRelease,
   AlignedAllocate,
   AlignedRelease,
+  PosixMalloc,
   Count
 };
 

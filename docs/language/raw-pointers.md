@@ -274,6 +274,20 @@ The C++ backend implements the verified bitwise operation with a bulk byte copy
 and ends the retired trivial native shells, rather than inventing eligibility
 from C++ traits.
 
+`unsafe T std::take_at<T>(T* source)` transfers one live raw object into an
+ordinary owned return value, using the same complete, failure-free relocatable
+type contract as `relocate_at`. The caller proves exclusive access to writable,
+aligned, initialized storage and removes the source from any enclosing owner's
+live-object inventory. The source becomes vacant without running its destructor;
+the returned value owns its cleanup. Its original allocation stays with its
+storage owner. There is no allocation, replacement construction, user move hook
+or runtime validity check. Live checked borrows may not be invalidated by an
+unsafe transfer. This operation is implemented on LLVM.
+
+The source-defined vector consuming range uses `take_at` while advancing its
+remaining live interval. Its safe public API consumes the whole vector and never
+exposes a vector with vacant slots; see [consuming iteration](ranges.md#consuming-values).
+
 [`125-manual-object-lifetimes.gti`](../../examples/125-manual-object-lifetimes.gti)
 demonstrates a source-defined fixed-address owner, checked access to an
 immovable payload, slot reuse, explicit owning relocation and bitwise bulk

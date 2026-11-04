@@ -1,0 +1,45 @@
+import std.vector;
+import std.string;
+
+extern "C" {
+  void provider_test_mode(int32_t mode);
+  int32_t provider_test_calls();
+  int32_t provider_test_releases();
+}
+mut int drops = 0;
+class Cell {
+  int64_t number;
+public:
+  Cell(int64_t number) : number(number) {}
+  Cell(Cell& other) = delete;
+  Cell(Cell&& other) = default;
+  int64_t value() { return this.number; }
+  ~Cell() { drops++; }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  std::size_t count = 65536;
+  int rounds = argc > 2 ? 2048 : 32;
+  for (mut int round = 0; round < rounds; round++) {
+    provider_test_mode(0);
+    drops = 0;
+    mut int64_t sum = 0;
+    {
+      mut std::vector<Cell> values{};
+      values.reserve(count);
+      for (mut std::size_t index = 0; index < count; index++) {
+        values.emplace_back(int64_t(index));
+      }
+      if (argc == 2 || argc == 4) {
+        for (auto& cell : values) { sum += cell.value(); }
+      } else {
+        for (auto cell : std::move(values).into_range()) { sum += cell.value(); }
+      }
+    }
+    if (sum != int64_t(2147450880) || drops != 65536) { return 1; }
+    // Exactly the original allocation, with one matching release. Taking
+    // values must neither allocate nor replace an element with an object.
+    if (provider_test_calls() != 1 || provider_test_releases() != 1) { return 2; }
+  }
+  return 0;
+}

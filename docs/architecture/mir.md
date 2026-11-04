@@ -1605,6 +1605,17 @@ initialize a value, forming an optimization barrier. The backend performs the
 verified generated transfer, then ends the inactive source representation;
 it must not invoke source GTI cleanup or acquire/release a byte region.
 
+`ObjectTake` transfers one writable raw complete-object pointer into an owned
+result. It carries the same explicit `ObjectLifetime` permission and verified
+failure-free relocation facts. Its exact shape permits only the ordinary
+initialization event for the result's cleanup obligation, which lifecycle
+verification binds to the result and its consumers. There is no checked source
+obligation: retiring the raw source in its enclosing storage inventory is the
+unsafe caller's responsibility. Unknown-memory read/write, movement and
+initialization effects prevent removal or reordering across storage effects.
+LLVM uses the verified type's generated relocation into the ordinary result
+destination; it does not construct a replacement or invoke a custom move.
+
 `ObjectDestroy` generalizes this exact `elementCleanup` contract to one writable
 raw pointer. Semantics requires explicit `ObjectLifetime` unsafe permission and
 an inferred complete pointee type. HIR seeds the concrete lifecycle declaration;
@@ -4601,7 +4612,15 @@ This applies equally to source-defined accessors and allocation-backed members.
 `MirRangeIteration` owns the bounded range exceptions. It names the exact
 owner/range/iterator/sentinel bindings, strategy, access mode, parent range
 loan, child element loan, condition/body/increment/cleanup blocks, and
-owned-temporary drop. A fixed-array plan ties its dynamic index place to that
+owned-temporary drop. The consuming strategy has distinct source, cursor and
+value bindings, no range or element loan, and an exact source-to-cursor move.
+Body verification checks the condition's read-only cursor receiver, the
+producer's mutable cursor receiver and original HIR identity, initialization
+of the value binding from that producer, and the loop's cleanup successors.
+Program verification binds the producer to the selected independent-value
+method. Ordinary loop, call, failure and lifecycle lowering owns execution;
+backends do not recognize a public container or consuming method name.
+A fixed-array plan ties its dynamic index place to that
 inventory rather than claiming general indexed-place disjointness. A
 structural mutable plan carries the exclusive parent through the
 source iterator returned by `begin_mut()`. An inline reference proxy keeps

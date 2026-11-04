@@ -1216,6 +1216,39 @@ add_test(NAME optimizer_division_envelopes
                  "$<TARGET_FILE:gti>")
 set_tests_properties(optimizer_division_envelopes PROPERTIES
                      TIMEOUT 300)
+add_test(NAME optimizer_bounds_postconditions
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/optimizer_bounds_postconditions_test.py"
+                 "$<TARGET_FILE:gti>")
+set_tests_properties(optimizer_bounds_postconditions PROPERTIES TIMEOUT 300)
+add_test(NAME optimizer_interpolation
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/optimizer_interpolation_test.py"
+                 "$<TARGET_FILE:gti>")
+set_tests_properties(optimizer_interpolation PROPERTIES TIMEOUT 300)
+add_test(NAME optimizer_recurrence_capture
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/optimizer_recurrence_capture_test.py"
+                 "$<TARGET_FILE:gti>")
+set_tests_properties(optimizer_recurrence_capture PROPERTIES TIMEOUT 300)
+add_test(NAME llvm_checked_square_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/llvm_checked_square_test.py"
+                 "$<TARGET_FILE:gti>")
+set_tests_properties(llvm_checked_square_runtime PROPERTIES TIMEOUT 300)
+add_test(NAME llvm_bounded_recursion_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/llvm_bounded_recursion_test.py"
+                 "$<TARGET_FILE:gti>")
+set_tests_properties(llvm_bounded_recursion_runtime PROPERTIES TIMEOUT 300)
+add_executable(gti_optimizer_prefix_relocation_tests optimizer_prefix_relocation_tests.cpp)
+target_link_libraries(gti_optimizer_prefix_relocation_tests PRIVATE gti_compiler)
+add_test(NAME optimizer_prefix_relocation COMMAND gti_optimizer_prefix_relocation_tests)
+add_test(NAME optimizer_prefix_relocation_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/optimizer_prefix_relocation_runtime_test.py"
+                 "$<TARGET_FILE:gti>")
+set_tests_properties(optimizer_prefix_relocation_runtime PROPERTIES TIMEOUT 300)
 add_executable(gti_optimizer_raw_context_tests optimizer_raw_context_tests.cpp)
 target_link_libraries(gti_optimizer_raw_context_tests PRIVATE gti_compiler)
 add_test(NAME optimizer_raw_context COMMAND gti_optimizer_raw_context_tests)
@@ -2198,6 +2231,10 @@ add_executable(gti_llvm_optimization_pipeline_tests llvm_optimization_pipeline_t
 target_include_directories(gti_llvm_optimization_pipeline_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
 target_link_libraries(gti_llvm_optimization_pipeline_tests PRIVATE gti_llvm_backend gti_driver gti_runtime)
 add_test(NAME llvm_optimization_pipeline COMMAND gti_llvm_optimization_pipeline_tests)
+add_executable(gti_llvm_loop_invariant_tests llvm_loop_invariant_tests.cpp)
+target_include_directories(gti_llvm_loop_invariant_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_llvm_loop_invariant_tests PRIVATE gti_llvm_backend)
+add_test(NAME llvm_loop_invariants COMMAND gti_llvm_loop_invariant_tests)
 add_executable(gti_llvm_checked_reduction_tests llvm_checked_reduction_tests.cpp)
 target_include_directories(gti_llvm_checked_reduction_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
 target_link_libraries(gti_llvm_checked_reduction_tests PRIVATE gti_llvm_backend)
@@ -2894,6 +2931,10 @@ add_test(NAME nested_guarded_expected COMMAND gti_nested_guarded_expected_tests)
 add_executable(gti_structural_relocation_tests structural_relocation_tests.cpp)
 target_link_libraries(gti_structural_relocation_tests PRIVATE gti_cpp_backend)
 add_test(NAME structural_relocation COMMAND gti_structural_relocation_tests)
+
+add_executable(gti_consuming_range_tests consuming_range_tests.cpp)
+target_link_libraries(gti_consuming_range_tests PRIVATE gti_cpp_backend)
+add_test(NAME consuming_range COMMAND gti_consuming_range_tests)
 
 add_executable(gti_compact_owner_layout_tests compact_owner_layout_tests.cpp)
 target_link_libraries(gti_compact_owner_layout_tests PRIVATE gti_cpp_backend)
@@ -3902,6 +3943,11 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}"
   )
   set_tests_properties(stdlib_modules PROPERTIES TIMEOUT 600)
+  add_test(NAME removal_algorithms
+           COMMAND "${Python3_EXECUTABLE}"
+                   "${PROJECT_SOURCE_DIR}/tests/removal_algorithms_test.py"
+                   "$<TARGET_FILE:gti>")
+  set_tests_properties(removal_algorithms PROPERTIES TIMEOUT 900)
   # One entry: the harness runs the backends GTI_TEST_BACKENDS selects
   # (tests/backend_modes.py). The former c++20, no-elide and sanitized
   # variants were C++-backend-only configurations nothing ships.
@@ -5408,6 +5454,25 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(structural_relocation_runtime PROPERTIES TIMEOUT 600)
+
+  # One entry: the shared harness runs the backends GTI_TEST_BACKENDS selects
+  # (tests/backend_modes.py) and asserts the declared C++ limitation under the
+  # C++ profile, so no separate C++-only boundary registration remains.
+  add_test(NAME consuming_range_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/consuming_range_runtime_test.py"
+            "$<TARGET_FILE:gti>")
+  set_tests_properties(consuming_range_runtime PROPERTIES TIMEOUT 600)
+  add_test(NAME consuming_range_performance
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/consuming_range_performance_test.py"
+            "$<TARGET_FILE:gti>")
+  set_tests_properties(consuming_range_performance PROPERTIES TIMEOUT 180)
+  if(TARGET gti_lsp)
+    add_test(NAME consuming_range_lsp
+      COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/consuming_range_lsp_test.py"
+              "$<TARGET_FILE:gti_lsp>")
+    set_tests_properties(consuming_range_lsp PROPERTIES TIMEOUT 120)
+  endif()
 
   add_test(NAME compact_owner_layout_runtime
     COMMAND "${Python3_EXECUTABLE}"

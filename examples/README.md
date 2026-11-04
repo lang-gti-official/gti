@@ -171,6 +171,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Build URLs, GET JSON, or POST a JSON body | [93: HTTP/JSON client](093-http-json-client.gti), [local demo below](#http-and-json-without-an-external-service) |
 | Encode counted bytes as Base64 or hex; decode UTF-8 scalars | [94: text encoding](094-binary-text-encoding.gti) |
 | Duplicate a vector of strings or constrain a generic member call | [95: explicit cloning](095-explicit-cloning.gti) |
+| Consume owned vector elements into a record without cloning values | [186: consuming ranges](186-consuming-ranges.gti) |
 | Translate library errors into application errors | [96: error mapping](096-error-mapping.gti) |
 | Build and validate data at compile time | [97: constexpr tables](097-constexpr-tables.gti) |
 | Build constants with mutable helpers, result composition, constructors, enum states and reflection | [142: constexpr builders](142-constexpr-builders.gti) |
@@ -306,7 +307,7 @@ is a teaching helper, not a production server.
 | `087-associative-containers.gti` | ordered and hashed dictionaries, nested borrowed insertion results, moves, and owner reactivation |
 | `088-consuming-builders.gti` | consuming builder methods and explicit receiver movement |
 | `089-library-workflow.gti` | numeric option parsing, string editing, filesystem queries, owning work queues/history/sets, and emplacement with a move-only constructor argument |
-| `090-generic-algorithms.gti` | search, mutation, replacement, filtered copying, and chaining returned output cursors |
+| `090-generic-algorithms.gti` | stable compaction and container erasure; search, mutation, replacement, filtered copying, chaining returned output cursors, and maximum mapped-value selection |
 | `186-dynamic-json.gti` | owned dynamic objects and arrays, CSV-style construction, typed cells, checked access, explicit independent cloning, and parse/encode round trips |
 | `091-json-documents.gti` | decoding and encoding structs through reflection, optionals for `null` and absent members, pretty output, strict-grammar errors with paths and locations |
 | `092-json-codecs.gti` | a `std::json::codec` specialization for a class with an invariant, used automatically inside structs and vectors, and JSON Pointer errors through it |
@@ -321,7 +322,7 @@ is a teaching helper, not a production server.
 | `101-owned-algorithm-results.gti` | move-only string transformation and bounded comparator sorting for asset-build work |
 | `102-constexpr-frame-budget.gti` | compile-time duration budgets, passive asset metadata, and pre-epoch timestamp decomposition |
 | `103-resource-exchange.gti` | restoring exchange and swap of unrelated move-only resources without copying |
-| `104-move-only-ordering.gti` | sorting and reversing move-only jobs, checked indexed swap, and swapping owning arrays |
+| `104-move-only-ordering.gti` | sorting and reversing move-only jobs, checked and caller-proven indexed swaps, and swapping owning arrays |
 | `105-member-signature-contracts.gti` | exact source-defined mutable receiver and parameter contracts without executing their queries |
 | `106-custom-formatters.gti` | application-owned formatter specializations, presentation delegation and recoverable dynamic errors |
 | `107-composable-io.gti` | generic line reading, memory input, buffered output and explicit flushing |

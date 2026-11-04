@@ -116,6 +116,31 @@ test limit before the operation. This is not a process-wide cache: later
 operations observe the limit again. Descriptor size/alignment, nonnull address,
 actual address alignment and matching-provider rollback checks remain intact.
 
+On non-Windows targets, process allocation uses the sealed `gti_rt_malloc_v1`
+byte adapter when alignment is one, or when a target `void*` object both fits
+within the requested byte extent and has at least the requested alignment.
+This is a target-layout witness, not an assumed host maximum alignment: tiny
+non-byte-aligned and over-aligned requests keep `gti_rt_posix_memalign_v1` and
+its unchanged status mapping. Both routes release through the same POSIX free
+adapter. Windows keeps its aligned CRT pair. Zero-size requests make no native
+allocation; null on the ordinary route maps to resource exhaustion. Descriptor
+contents, actual address checks, exact release and failed sparse-region rollback
+are unchanged. This witness is source policy only: LLVM's compiler-owned
+scalar/box storage does not use the provider and allocates through the runtime
+owner pair described under the remaining allocation families below.
+
+The appended private operation has an exact fixed-width signature and target
+selection in `process_memory_runtime`; an application declaration with the same
+symbol stays an ordinary foreign call. Its MIR effect allocates but has no
+status-pointee write. Verified LLVM call edges retain nullable fresh-return
+`noalias`, without declaration-wide purity, nonnull, extent or capture promises.
+Injected allocation providers implement both routes with the same observation,
+failure and release accounting. `process_provider_target_contract`,
+`llvm_memory_contracts`, `resource_memory_runtime` and
+`process_storage_query_runtime` own the route/signature, size/alignment boundary,
+exhaustion and rollback controls. Allocation count and runtime improvements
+still require measurement; choosing the ordinary route is not allocation elision.
+
 | Allocation family | Current owner and rationale |
 | --- | --- |
 | Sparse object bytes and per-slot metadata | Source `try_allocate_sparse`, leases and process-resource policy in the private `stdlib/std/detail/memory_storage.gti` interface; POSIX/CRT adapters only acquire or release bytes. The old `gti_rt_memory_allocate_v1`/`release_v1`, sparse C++ allocation/bitmap helpers and sparse capability operations have no remaining consumers and are removed. |
@@ -215,6 +240,16 @@ Existing acceptance includes the
 and [object-lifetime tests](../../tests/object_lifetime_tests.cpp).
 These links identify existing acceptance evidence; this documentation ledger
 does not claim a new test run.
+
+Hash-table lookup follows the private bucket-chain invariant: each link is zero
+or the slot index plus one of a live, separately owned node. Insertion, erasure
+and rehashing maintain that invariant, and lookup's shared borrow excludes
+structural mutation during traversal. The source lookup therefore uses
+`get_unchecked` for these internal indices and borrows each node once per
+iteration. Public missing-key checks and user hash/equality calls retain their
+order and behavior; no unchecked public lookup is introduced. Collision,
+slot-reuse, rehashing, ownership and failure-cleanup tests cover this boundary
+on both backends.
 
 ### B. Source-Policy Migrations And Remaining Prerequisites
 
@@ -758,6 +793,26 @@ memory writes, and the native allocator's internal free-to-allocation ordering
 is not a GTI synchronization edge. The summaries let `process_resource` and
 its clients keep precise effects above the runtime; they do not authorize
 removing or reordering a call. [MIR](mir.md) records the representation.
+
+LLVM additionally records the existing process-allocation elision permission
+on exact result-only allocator and matching release call edges: allocation
+family, requested byte count, uninitialized storage, and the released pointer.
+Allocation touches only inaccessible allocator state; release additionally
+touches its argument region. Neither operation introduces a GTI synchronization
+edge or unwinds across the native ABI.
+The Windows family also records its alignment argument. The ordinary POSIX
+allocator and Windows aligned allocator can then participate in LLVM's
+allocation-pair removal. The POSIX status-writing allocator remains excluded
+because its status pointee is a separate output. Declarations with the same
+native symbol receive no such attributes, and application resources retain
+their observable calls. Nullable exhaustion and all required object cleanup
+remain intact; only an allocation that LLVM proves unnecessary may disappear,
+as allowed by the language's process-allocation rule.
+
+Region validation skips the address-alignment query for an already non-null
+region reporting alignment one. All byte addresses satisfy that case; larger
+reported alignments still inspect the actual address, and descriptor extent,
+native-size, alignment-shape and rollback checks remain in source.
 
 The old `gti_rt_memory_allocate_v1`/`gti_rt_memory_release_v1` pair has no remaining
 repository consumer and is retired rather than retaining a second validation
@@ -1716,6 +1771,12 @@ characters, and exclusive-receiver borrowing continues to exclude aliased
 source views. Fixed-array and general input-iterator constructors retain their
 existing per-element path.
 
+Indexed-range string construction validates both endpoints before allocating,
+then constructs the fresh owner's final capacity directly. It does not route
+an empty new owner through the general reserve/relocation path. Empty copies
+retain zero capacity and perform no allocation; nonempty copies keep the same
+counted bytes, independent ownership, trailing NUL and allocation-failure policy.
+
 Sparse and prefix relocation consume semantic `RelocationKind` facts verified
 against concrete MIR type tables. Raw-buffer growth selects general
 `relocate_range_at` for structurally bitwise-relocatable elements, transferring
@@ -1742,6 +1803,24 @@ uninitialized storage. Reverse and introsort
 are ordinary GTI over these APIs, with read-only comparison scopes ending
 before each mutation. No public container or algorithm name grants compiler
 authority, and neither the library nor backend adds a copy/clone pivot.
+
+Introsort discovers monotonic direction through equivalent prefixes, then scans
+only that direction; its comparison order is unchanged and the pending-range
+stacks are initialized only after the monotonic early return. Large partitions
+use two fixed 32-index buffers to collect misplaced elements from disjoint
+windows before restoring swaps. A boundary advances only after its window's
+recorded elements have all been paired. The small residual interval is rescanned
+by the original bounded two-pointer partition, so discarding buffer metadata
+never discards unclassified elements. The pivot remains in the owner, read-only
+comparison borrows end before mutation, and no element is copied or cloned.
+Buffers allocate no heap storage. The same depth budget, smaller-side traversal
+and heapsort fallback retain the O(n log n) worst-case comparison bound;
+comparator or relocation failure retains the original-element permutation.
+`restoring_indexed_runtime` checks exact monotonic comparison traces and
+move-only block-partition failure cleanup. `stdlib_adoption_runtime` checks
+both comparator overloads, distributions, allocation counts and the adaptive
+comparison adversary. This algorithm choice still requires measured performance
+acceptance rather than an assumed improvement from fewer scan branches.
 
 **Current gap:** The generated C++ support prelude still contains terminal
 integrity and low-level capability helpers that call `std::abort()`. These are
@@ -1773,3 +1852,15 @@ Language-facing ownership and native rules are documented in
 and [`docs/language/native-c-interop.md`](../language/native-c-interop.md).
 [ADR 004](../decisions/004-standard-library-runtime-boundary.md) records the
 rationale.
+
+
+### Source-defined removal algorithms
+
+`std/detail/sequence_removal.gti` owns indexed stable compaction and suffix
+cleanup. Public algorithm and container modules delegate to that shared policy.
+Checked restoring swaps preserve fully initialized vector/array slots; deque
+exchanges its node owners, string swaps bytes, and linked/associative containers
+unlink nodes under their existing exclusive owner borrow. These operations add
+no compiler name recognition, native runtime service, or backend authority.
+Predicates borrow one read-only element for the duration of the call; the loan
+ends before a swap/unlink. No element or cursor loan escapes the algorithm.

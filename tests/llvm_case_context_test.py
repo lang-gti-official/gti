@@ -71,6 +71,7 @@ def equivalent(cases: tuple[CaseContext, ...], root: Path) -> None:
                         "175-thread-local-storage.gti", "186-scalar-temporary-borrows.gti",
                         "187-operator-temporary-borrows.gti",
                     }
+                    else "GTI-B0003: raw object extraction" if source.name == "186-consuming-ranges.gti"
                     else "GTI-B0003: wrapping atomic read-modify-write")
             assert declared["compile_observation"] == expected_observation
             assert declared["case"]["execution_profile"] == (
@@ -161,6 +162,7 @@ def main() -> None:
                              "175-thread-local-storage.gti", "186-scalar-temporary-borrows.gti",
                              "187-operator-temporary-borrows.gti",
                          }
+                         else "GTI-B0003: raw object extraction" if source.name == "186-consuming-ranges.gti"
                          else "GTI-B0003: wrapping atomic read-modify-write")
             return subprocess.CompletedProcess(command, 65, "", rejection)
         output = Path(command[-1])

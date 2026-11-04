@@ -101,6 +101,58 @@ export class map<K, V, Compare = std::less<K>> {
     return 0;
   }
 
+  void erase_node(size_t node) mut {
+    // Reserve the vacant-slot record before changing any tree links.
+    this.free_slots.push_back(node);
+    size_t left = this.nodes[node - 1]->left;
+    size_t right = this.nodes[node - 1]->right;
+    size_t parent = this.nodes[node - 1]->parent;
+    mut size_t start = parent;
+    if (left == 0) { this.replace_link(parent, node, right); }
+    else if (right == 0) { this.replace_link(parent, node, left); }
+    else {
+      mut size_t successor = right;
+      while (this.nodes[successor - 1]->left != 0) {
+        successor = this.nodes[successor - 1]->left;
+      }
+      size_t ancestor = this.nodes[successor - 1]->parent;
+      if (ancestor == node) { start = successor; }
+      else {
+        size_t child = this.nodes[successor - 1]->right;
+        this.replace_link(ancestor, successor, child);
+        this.nodes[successor - 1]->right = right;
+        this.nodes[right - 1]->parent = successor;
+        start = ancestor;
+      }
+      this.replace_link(parent, node, successor);
+      this.nodes[successor - 1]->left = left;
+      this.nodes[left - 1]->parent = successor;
+    }
+    this.element_count--;
+    this.rebalance(start);
+    this.nodes[node - 1].reset();
+  }
+
+  size_t successor(size_t node) {
+    mut size_t next = this.nodes[node - 1]->right;
+    if (next != 0) {
+      while (this.nodes[next - 1]->left != 0) { next = this.nodes[next - 1]->left; }
+      return next;
+    }
+    mut size_t child = node;
+    next = this.nodes[child - 1]->parent;
+    while (next != 0 && this.nodes[next - 1]->right == child) {
+      child = next;
+      next = this.nodes[child - 1]->parent;
+    }
+    return next;
+  }
+
+  bool erase_matches<Predicate>(size_t node, mut Predicate& predicate)
+      requires std::predicate<Predicate, detail::map_entry<K, V>> {
+    return predicate(this.nodes[node - 1]->entry);
+  }
+
 public:
   using key_type = K;
   using mapped_type = V;
@@ -299,36 +351,24 @@ public:
   [[discardable]] size_t erase(K& key) mut {
     size_t node = this.locate(key);
     if (node == 0) { return 0; }
-    // Reserve the vacant-slot record before changing any tree links.
-    this.free_slots.push_back(node);
-    size_t left = this.nodes[node - 1]->left;
-    size_t right = this.nodes[node - 1]->right;
-    size_t parent = this.nodes[node - 1]->parent;
-    mut size_t start = parent;
-    if (left == 0) { this.replace_link(parent, node, right); }
-    else if (right == 0) { this.replace_link(parent, node, left); }
-    else {
-      mut size_t successor = right;
-      while (this.nodes[successor - 1]->left != 0) {
-        successor = this.nodes[successor - 1]->left;
-      }
-      size_t ancestor = this.nodes[successor - 1]->parent;
-      if (ancestor == node) { start = successor; }
-      else {
-        size_t child = this.nodes[successor - 1]->right;
-        this.replace_link(ancestor, successor, child);
-        this.nodes[successor - 1]->right = right;
-        this.nodes[right - 1]->parent = successor;
-        start = ancestor;
-      }
-      this.replace_link(parent, node, successor);
-      this.nodes[successor - 1]->left = left;
-      this.nodes[left - 1]->parent = successor;
-    }
-    this.element_count--;
-    this.rebalance(start);
-    this.nodes[node - 1].reset();
+    this.erase_node(node);
     return 1;
+  }
+
+  /// Visit entries in key order and destroy matches without copying keys.
+  [[discardable]] size_t erase_if<Predicate>(mut Predicate predicate) mut
+      requires std::predicate<Predicate, detail::map_entry<K, V>> {
+    mut size_t node = this.root;
+    if (node != 0) {
+      while (this.nodes[node - 1]->left != 0) { node = this.nodes[node - 1]->left; }
+    }
+    mut size_t removed = 0;
+    while (node != 0) {
+      size_t next = this.successor(node);
+      if (this.erase_matches(node, predicate)) { this.erase_node(node); removed++; }
+      node = next;
+    }
+    return removed;
   }
 
   void clear() mut {
@@ -338,4 +378,13 @@ public:
     this.nodes.clear();
   }
 };
+}
+
+namespace std {
+/// Destroy matching entries in key order and return their count.
+export [[discardable]] size_t erase_if<K, V, Compare, Predicate>(
+    mut map<K, V, Compare>& values, Predicate predicate)
+    requires std::predicate<Predicate, map<K, V, Compare>::value_type> {
+  return values.erase_if(std::move(predicate));
+}
 }

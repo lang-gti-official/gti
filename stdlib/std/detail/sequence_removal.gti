@@ -1,0 +1,67 @@
+export module detail_sequence_removal_impl;
+
+// One exclusive sequence borrow covers every permutation. Predicate calls
+// receive read-only elements and finish before any element is moved.
+export namespace std::detail {
+concept permutable_sequence<Range> = requires(Range& source, mut Range& target, size_t index) {
+  { source.size() } -> size_t;
+  { source[index] } -> auto& [[borrowed_from(source)]];
+  { target.swap_elements(index, index) } -> void;
+};
+
+concept indexed_predicate<Predicate, Range> = requires(mut Predicate& predicate, Range& source, size_t index) {
+  { source[index] } -> auto& [[borrowed_from(source)]];
+  { predicate(source[index]) } -> bool;
+};
+
+concept indexed_equality<Range, T> = std::equality_comparable<T> && requires(Range& source, size_t index) {
+  { source[index] } -> T& [[borrowed_from(source)]];
+};
+
+bool removal_matches<Range, Predicate>(Range& values, size_t index, mut Predicate& predicate)
+    requires indexed_predicate<Predicate, Range> {
+  return predicate(values[index]);
+}
+
+size_t compact_remove_if<Range, Predicate>(mut Range& values, mut Predicate& predicate)
+    requires permutable_sequence<Range> && indexed_predicate<Predicate, Range> {
+  mut size_t retained = 0;
+  size_t count = values.size();
+  for (mut size_t index = 0; index < count; index++) {
+    if (!removal_matches(values, index, predicate)) {
+      if (retained != index) { values.swap_elements(retained, index); }
+      retained++;
+    }
+  }
+  return retained;
+}
+
+bool removal_equals<Range, T>(Range& values, size_t index, T& value)
+    requires indexed_equality<Range, T> {
+  T& element = values[index];
+  return element == value;
+}
+
+size_t compact_remove<Range, T>(mut Range& values, T& value)
+    requires permutable_sequence<Range> && indexed_equality<Range, T> {
+  mut size_t retained = 0;
+  size_t count = values.size();
+  for (mut size_t index = 0; index < count; index++) {
+    if (!removal_equals(values, index, value)) {
+      if (retained != index) { values.swap_elements(retained, index); }
+      retained++;
+    }
+  }
+  return retained;
+}
+
+size_t erase_tail<Range>(mut Range& values, size_t retained)
+    requires requires(Range& source, mut Range& target) {
+      { source.size() } -> size_t;
+      { target.pop_back() } -> void;
+    } {
+  size_t removed = values.size() - retained;
+  while (values.size() > retained) { values.pop_back(); }
+  return removed;
+}
+}

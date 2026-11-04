@@ -1,4 +1,5 @@
 export module unordered_set;
+import "detail/key_removal.gti";
 import "detail/unordered_map_iterators.gti";
 
 import std.unordered_map;
@@ -66,6 +67,11 @@ public:
       : entries(unordered_map<K, bool, Hash, KeyEqual>(std::move(hash), std::move(equal))) {}
   unordered_set(unordered_set<K, Hash, KeyEqual>& other) = delete;
   unordered_set(unordered_set<K, Hash, KeyEqual>&& other) = default;
+  /// Destroy keys accepted by a read-only predicate and return their count.
+  [[discardable]] size_t erase_if<Predicate>(Predicate predicate) mut
+      requires std::predicate<Predicate, K> {
+    return this.entries.erase_if(detail::key_removal_predicate<K, Predicate>(std::move(predicate)));
+  }
   size_t size() { return this.entries.size(); }
   bool empty() { return this.entries.empty(); }
   bool contains(K& key) { return this.entries.contains(key); }
@@ -98,4 +104,12 @@ public:
   }
   [[discardable]] pair<iterator, bool> emplace<Args...>(Args... args) mut { return this.insert(K(args...)); }
 };
+}
+
+namespace std {
+/// Destroy matching keys and return their count.
+export [[discardable]] size_t erase_if<K, Hash, KeyEqual, Predicate>(mut unordered_set<K, Hash, KeyEqual>& values, Predicate predicate)
+    requires std::predicate<Predicate, K> {
+  return values.erase_if(std::move(predicate));
+}
 }

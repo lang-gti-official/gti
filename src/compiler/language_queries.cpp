@@ -2131,6 +2131,11 @@ private:
     for (const SymbolId symbol : symbols) {
       for (const SemanticOccurrence *occurrence :
            database.occurrencesForSymbol(symbol)) {
+        // `auto` carries the binding identity for inferred-type hover. It
+        // does not spell the binding's name and is never a reference or an
+        // edit site (including the written binding of a consuming loop).
+        if (occurrence->kind == SemanticOccurrenceKind::InferredType)
+          continue;
         if (!snapshot.semantics.canPresent(sourceUnit, *occurrence,
                                            snapshot.sourceGraph)) {
           continue;

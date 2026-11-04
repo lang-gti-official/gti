@@ -1,11 +1,13 @@
 #include "../src/compiler/optimization/evidence_set.h"
 #include "gti/frontend.h"
 #include "gti/mir_dominance.h"
+#include "gti/mir_editor.h"
 #include "gti/optimization/alias.h"
 #include "gti/optimization/dataflow.h"
 #include "gti/optimization/loops.h"
 #include "gti/optimization/safety.h"
 #include "gti/optimizer.h"
+#include "private_stdlib_fixture.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -980,6 +982,215 @@ int32_t flow() {
          "an unknown instruction answers conservatively");
 }
 
+void testSealedStatusCapture() {
+  lang::FrontendOptions options;
+  options.target.os = "linux";
+  options.target.vendor = "pc";
+  options.target.arch = "x86_64";
+  const auto frontend = gti_test::analyzeTrustedPrivateMemoryFixture(
+      "sealed-status-capture.gti", R"(
+import std.vector;
+import "../std/detail/memory_capabilities.gti";
+extern "C" { void remember_status(int32_t* value); }
+int32_t direct_status() {
+  mut int32_t status = 0;
+  unsafe {
+    void* block = gti_internal::runtime::gti_rt_posix_memalign_v1(
+        uint64_t(64), uint64_t(16), &status);
+    gti_internal::runtime::gti_rt_posix_free_v1(block);
+  }
+  return status;
+}
+int32_t stored_status() {
+  mut int32_t status = 0;
+  unsafe {
+    int32_t* pointer = &status;
+    void* block = gti_internal::runtime::gti_rt_posix_memalign_v1(
+        uint64_t(64), uint64_t(16), pointer);
+    gti_internal::runtime::gti_rt_posix_free_v1(block);
+  }
+  return status;
+}
+int32_t conditional_status(bool choose) {
+  mut int32_t status = 0;
+  mut int32_t other = 0;
+  unsafe {
+    void* block = gti_internal::runtime::gti_rt_posix_memalign_v1(
+        uint64_t(64), uint64_t(16), choose ? &status : &other);
+    gti_internal::runtime::gti_rt_posix_free_v1(block);
+  }
+  return status;
+}
+int32_t escaped_status() {
+  mut int32_t status = 0;
+  unsafe {
+    remember_status(&status);
+    void* block = gti_internal::runtime::gti_rt_posix_memalign_v1(
+        uint64_t(64), uint64_t(16), &status);
+    gti_internal::runtime::gti_rt_posix_free_v1(block);
+  }
+  return status;
+}
+int main() { mut std::vector<int32_t> values{}; values.reserve(uint64_t(8)); return 0; }
+)",
+      options);
+  expect(frontend.canGenerateCode(), "sealed status capture fixture lowers");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &d : frontend.diagnostics)
+      std::cerr << d.code << ": " << d.message << '\n';
+    return;
+  }
+  const auto summaries = lang::deriveMirProgramCaptureSummaries(frontend.mir);
+  std::size_t actualAllocators = 0;
+  for (const auto &hir : frontend.hir.functionInstances()) {
+    if (!hir.source)
+      continue;
+    const auto name = hir.source->name().lexeme;
+    const bool positive = name == "direct_status" || name == "allocate";
+    const bool negative = name == "stored_status" || name == "escaped_status" ||
+                          name == "conditional_status";
+    if (!positive && !negative)
+      continue;
+    const auto *function = frontend.mir.findFunctionInstance(hir.id);
+    if (!function)
+      continue;
+    const auto local = lang::analyzeMirLocalCaptures(
+        frontend.mir, {.kind = lang::MirBodyKind::Function, .owner = hir.id},
+        summaries);
+    for (const auto &block : function->body.blocks)
+      for (const auto &instruction : block.instructions) {
+        const auto *target =
+            instruction.functionTarget
+                ? frontend.mir.findFunctionInstance(*instruction.functionTarget)
+                : nullptr;
+        if (!target || target->processMemoryOperation !=
+                           lang::ProcessMemoryRuntimeOperation::PosixAllocate)
+          continue;
+        lang::HirBindingId status = 0;
+        for (const auto &place : function->body.places)
+          if (place.root == lang::MirPlaceRootKind::Binding &&
+              place.projections.empty() &&
+              place.type == lang::SemanticType::Int32)
+            status = place.binding;
+        expect(status != 0 && local.valid,
+               "status call identifies its local output");
+        if (!status || !local.valid)
+          continue;
+        expect(local.mayBeCapturedBefore(status, instruction.id) == negative,
+               positive
+                   ? "exclusive sealed status address remains private"
+                   : "stored or previously escaped status remains captured");
+        if (name == "direct_status")
+          for (const auto &afterBlock : function->body.blocks)
+            for (const auto &after : afterBlock.instructions)
+              expect(!local.mayBeCapturedBefore(status, after.id),
+                     "allocation result does not carry the status address into "
+                     "free");
+        if (name == "allocate")
+          ++actualAllocators;
+      }
+  }
+  expect(actualAllocators != 0,
+         "actual process allocation path exercises private status");
+
+  const auto *direct = findMirFunction(frontend, "direct_status");
+  expect(direct != nullptr, "direct status control exists");
+  if (direct) {
+    for (const bool staleUses : {false, true}) {
+      auto program = frontend.mir;
+      // Deliberately corrupt a separately owned copy for fail-closed controls.
+      auto *changed = const_cast<lang::MirFunctionInstance *>(
+          program.findFunctionInstance(direct->id));
+      lang::MirInstructionId call = 0;
+      lang::HirBindingId status = 0;
+      for (const auto &place : changed->body.places)
+        if (place.root == lang::MirPlaceRootKind::Binding &&
+            place.projections.empty() &&
+            place.type == lang::SemanticType::Int32)
+          status = place.binding;
+      for (auto &block : changed->body.blocks)
+        for (auto &instruction : block.instructions) {
+          const auto *target =
+              instruction.functionTarget
+                  ? program.findFunctionInstance(*instruction.functionTarget)
+                  : nullptr;
+          if (!target || target->processMemoryOperation !=
+                             lang::ProcessMemoryRuntimeOperation::PosixAllocate)
+            continue;
+          call = instruction.id;
+          if (!staleUses)
+            instruction.operands[0] = instruction.operands[2];
+        }
+      if (staleUses)
+        changed->body.valueUses.clear();
+      else
+        expect(lang::rebuildMirValueUses(changed->body),
+               "extra status use rebuilds");
+      const auto changedSummaries =
+          lang::deriveMirProgramCaptureSummaries(program);
+      const auto local = lang::analyzeMirLocalCaptures(
+          program, {.kind = lang::MirBodyKind::Function, .owner = direct->id},
+          changedSummaries);
+      expect(call && status && local.valid &&
+                 local.mayBeCapturedBefore(status, call),
+             staleUses
+                 ? "incomplete use inventory cannot privatize an address"
+                 : "an extra non-status SSA use cannot privatize an address");
+    }
+  }
+
+  const auto ordinary =
+      lang::Frontend().analyze("ordinary-status-capture.gti", R"(
+extern "C" {
+  void* gti_rt_posix_memalign_v1(uint64_t bytes, uint64_t alignment, int32_t* status);
+}
+int32_t ordinary_status() {
+  mut int32_t status = 0;
+  unsafe { void* block = gti_rt_posix_memalign_v1(uint64_t(64), uint64_t(16), &status); }
+  return status;
+}
+)");
+  expect(ordinary.canGenerateCode(), "same-symbol application provider lowers");
+  if (!ordinary.canGenerateCode()) {
+    for (const auto &d : ordinary.diagnostics)
+      std::cerr << d.code << ": " << d.message << '\n';
+    return;
+  }
+  const auto ordinarySummaries =
+      lang::deriveMirProgramCaptureSummaries(ordinary.mir);
+  const auto *function = findMirFunction(ordinary, "ordinary_status");
+  expect(function != nullptr, "ordinary provider caller exists");
+  if (!function)
+    return;
+  const auto local = lang::analyzeMirLocalCaptures(
+      ordinary.mir,
+      {.kind = lang::MirBodyKind::Function, .owner = function->id},
+      ordinarySummaries);
+  bool observed = false;
+  for (const auto &block : function->body.blocks)
+    for (const auto &instruction : block.instructions) {
+      const auto *target =
+          instruction.functionTarget
+              ? ordinary.mir.findFunctionInstance(*instruction.functionTarget)
+              : nullptr;
+      if (!target || target->externalSymbol != "gti_rt_posix_memalign_v1")
+        continue;
+      expect(target->processMemoryOperation ==
+                 lang::ProcessMemoryRuntimeOperation::None,
+             "application spelling supplies no trusted capture role");
+      for (const auto &place : function->body.places)
+        if (place.root == lang::MirPlaceRootKind::Binding &&
+            place.projections.empty() &&
+            place.type == lang::SemanticType::Int32 &&
+            local.involves(place.binding, instruction.id)) {
+          observed = true;
+          expect(local.mayBeCapturedBefore(place.binding, instruction.id),
+                 "ordinary native status address is exposed");
+        }
+    }
+  expect(observed, "ordinary status negative exercised");
+}
+
 void testUnknownCallEscapeAnalysis() {
   const std::string source = R"(
 extern "C" {
@@ -1357,6 +1568,7 @@ int main() {
   testUnknownCallEscapeAnalysis();
   testUnborrowedLocalReferenceDisjointness();
   testCaptureSummariesAndLocalFlow();
+  testSealedStatusCapture();
   testAliasAwareSafetyInvalidation();
   testConservativeSafetyEdgesAndUnionOverlap();
   testSparseConditionalConstants();

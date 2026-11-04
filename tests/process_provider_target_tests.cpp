@@ -86,6 +86,14 @@ void testTable() {
       lang::SemanticType::rawPointerTo(lang::SemanticType::Int32);
   const std::vector<lang::SemanticType> memalign{
       lang::SemanticType::UInt64, lang::SemanticType::UInt64, status};
+  expect(lang::exactProcessMemoryRuntimeOperation(
+             "gti_rt_malloc_v1", address,
+             std::vector<lang::SemanticType>{lang::SemanticType::UInt64}) ==
+             Operation::PosixMalloc,
+         "ordinary allocation has an exact one-argument private signature");
+  expect(!lang::processMemoryRuntimeSelectedForTarget(Operation::PosixMalloc,
+                                                      "windows"),
+         "ordinary process allocation is not a Windows capability");
   expect(lang::exactProcessMemoryRuntimeOperation("gti_rt_posix_memalign_v1",
                                                   address, memalign) ==
              Operation::PosixAllocate,
@@ -159,10 +167,10 @@ void testTarget(std::string_view os) {
   if (windows) {
     expected.insert({Operation::AlignedAllocate, Operation::AlignedRelease});
   } else {
-    expected.insert({Operation::PosixPointerSize,
-                     Operation::PosixOutOfMemoryStatus,
-                     Operation::PosixInvalidArgumentStatus,
-                     Operation::PosixAllocate, Operation::PosixRelease});
+    expected.insert(
+        {Operation::PosixPointerSize, Operation::PosixOutOfMemoryStatus,
+         Operation::PosixInvalidArgumentStatus, Operation::PosixAllocate,
+         Operation::PosixRelease, Operation::PosixMalloc});
   }
   std::set<Operation> classified;
   const auto &functions = result.mir.functionInstances();
@@ -178,6 +186,7 @@ void testTarget(std::string_view os) {
     if (function.processMemoryOperation == Operation::None) {
       expect(!function.externalSymbol.starts_with("gti_rt_posix_") &&
                  !function.externalSymbol.starts_with("gti_rt_aligned_") &&
+                 function.externalSymbol != "gti_rt_malloc_v1" &&
                  function.externalSymbol != "gti_rt_native_size_max_v1" &&
                  function.externalSymbol != "gti_rt_address_is_aligned_v1",
              "every trusted allocator declaration classifies");
@@ -192,6 +201,7 @@ void testTarget(std::string_view os) {
            "classification names its exact private declaration");
     const auto &summary = function.effectSummary;
     const bool allocation =
+        function.processMemoryOperation == Operation::PosixMalloc ||
         function.processMemoryOperation == Operation::PosixAllocate ||
         function.processMemoryOperation == Operation::AlignedAllocate;
     const bool release =
@@ -335,14 +345,23 @@ void testUntrustedDeclarations() {
   const auto application = analyze(options, "application.gti", R"(
 extern "C" {
 uint64_t gti_rt_native_size_max_v1();
+void* gti_rt_malloc_v1(uint64_t bytes);
+void gti_rt_posix_free_v1(void* address);
 }
-int main() { return gti_rt_native_size_max_v1() == uint64_t(0) ? 1 : 0; }
+int main() {
+  unsafe {
+    void* address = gti_rt_malloc_v1(uint64_t(17));
+    gti_rt_posix_free_v1(address);
+  }
+  return gti_rt_native_size_max_v1() == uint64_t(0) ? 1 : 0;
+}
 )",
                                    root / "stdlib");
   expect(application.canGenerateCode(),
          "an application may declare the runtime symbol itself");
   for (const auto &function : application.mir.functionInstances()) {
-    if (function.externalSymbol == "gti_rt_native_size_max_v1") {
+    if (function.externalSymbol == "gti_rt_native_size_max_v1" ||
+        function.externalSymbol == "gti_rt_malloc_v1") {
       expect(function.processMemoryOperation == Operation::None &&
                  function.effectSummary.traits.maySynchronize &&
                  function.effectSummary.traits.writesUnknownMemory,
