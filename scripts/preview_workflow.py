@@ -262,9 +262,19 @@ class Preview:
         focused = sorted({name for feature in load_preview_examples().pending_features(state["manifest"], root)
                           for name in tests(feature["tests"])})
         if not focused:
-            # The fixed example harnesses need the CLI/runtime, not C++ unit
-            # binaries. Arbitrary focused CTest names still require all targets.
-            steps[1]["argv"].extend(["--target", "gti", "gti_runtime", "gti_lsp"])
+            # The fixed example gate includes harnesses that drive C++ unit
+            # binaries (native C ABI emitters, compiled libraries), so build the
+            # toolchain products plus exactly what its checks name, as the
+            # remote production path does. Arbitrary focused CTest names still
+            # require all targets.
+            steps[1]["argv"] = ["python3", "scripts/preview_build.py", "--source", ".",
+                                "--build", build, "--parallel", str(jobs)]
+            # preview_build reads the CMake file-API model. Request it before
+            # configuring, so a candidate whose own preview_build predates
+            # the reconfigure fallback still finds a reply.
+            query = build + "/.cmake/api/v1/query"
+            steps[:0] = [{"kind": "build", "argv": ["cmake", "-E", "make_directory", query]},
+                         {"kind": "build", "argv": ["cmake", "-E", "touch", query + "/codemodel-v2"]}]
         steps.append({"kind": "suite", "argv": ["python3", "scripts/preview_examples.py", build,
                                                  *["--focused=" + name for name in focused]]})
         for index, step in enumerate(steps):
