@@ -2370,10 +2370,12 @@ uniqueMirClassInstanceForType(const MirProgram &program,
               published->kind == MirLoanKind::Stored && !published->entry &&
               !published->escapes &&
               published->producedBy == producer->hirValue;
+          // The result contract is the resolved declaration's, wherever its
+          // body lives: a dispatched interface method, a foreign function and
+          // a source function each publish a fresh value of their declared
+          // return type.
           exactProducer =
               (target != nullptr && argumentPlace != nullptr &&
-               target->definitionKind == MirDefinitionKind::Source &&
-               target->linkage == LanguageLinkage::Gti &&
                target->returnType == argumentPlace->type &&
                (target->returnBorrowOrigin == BorrowOriginKind::None ||
                 retainedCarrier));

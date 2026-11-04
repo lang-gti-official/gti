@@ -312,7 +312,8 @@ def main() -> int:
                 (
                     "do not satisfy any alternative in concept 'std::equality_comparable'",
                     "Required application 'std::equality_comparable<value>'.",
-                    "Provide safe, public, read-only bool == and != operators",
+                    "Provide available, safe, public, read-only bool == and != "
+                    "operators",
                 ),
             ),
             (
