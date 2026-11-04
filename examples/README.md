@@ -376,7 +376,7 @@ is a teaching helper, not a production server.
 | `170-view-fields.gti` | a class and a struct whose text fields view a local string, a copy sharing that dependency, a field read yielding a view of the same owner, a temporary token read within its expression, a factory whose token views its argument's owner, reads through a returned text reference and a generic holder's accessor, an optional whose payload views the string through an implicit conversion and whose `->` calls that view's members, a parser whose failure views the string passed to it, a diagnostic nested in a returned result, and an ownerless token that keeps its method calls |
 | `171-recursive-text-relays.gti` | recursive and mutually recursive functions relaying a view parameter, a recursion relaying a value's text field, a recursive method relaying the receiver's field, and an ownerless result from a literal argument |
 | `172-deferred-assertions.gti` | source-defined always-on/debug assertions, lazy formatted messages, skipped owning moves, and an application-defined typed macro |
-| `173-general-requires.gti` | exact expression/construction and mutation requirements, constexpr reflection predicates, symbolic declaration proofs and source concept composition over unrelated domain types |
+| `173-general-requires.gti` | exact expression/construction and mutation requirements, checked reference and borrow-carrying view results, constexpr reflection predicates, symbolic declaration proofs and source concept composition over unrelated domain types |
 | `174-typed-macros.gti` | typed `#macro` calls, lazy scalar/owning results and initializer contexts, local returns and evaluate-once bindings, fresh lambda captures, written expression text, hygienic lookup, and skipped owner movement |
 | `175-thread-local-storage.gti` | namespace, static-field and block `thread_local` storage, independent worker values and owning class cleanup before join; requires `--execution-profile concurrent` |
 | `176-profile-independent-atomics.gti` | source-defined atomic ticket counter usable in either execution profile; scalar operations do not enable threads or blocking waits |
@@ -795,6 +795,9 @@ checked expression proofs while its payload type remains symbolic. The example
 also demonstrates multi-check queries and exact result
 rejection, inferred results, checked borrowed origins, ordinary range loops,
 and one sized-range function used with both a fixed array and a user range.
+A user-defined view result names its borrowed origin like a reference result
+does, and a generic function reads through that view before advancing its
+source once the view's borrow has ended.
 Independent object-layout and borrow-state predicates let its own
 storage policy use the same facts as `std/memory`; a signed-or-unsigned
 disjunction demonstrates common guarantees in generic arithmetic. Inline source

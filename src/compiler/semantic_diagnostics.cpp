@@ -298,7 +298,8 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
     case MemberRequirementFailureKind::BorrowedResult:
       reason = "Member '" + leaf.memberName +
                "()' returns a reference or tracked borrowed state; this "
-               "requirement needs an owned result.";
+               "requirement needs an owned result. Name a borrowed result's "
+               "origin with [[borrowed_from(parameter)]].";
       break;
     case MemberRequirementFailureKind::Constraints:
       reason = "Member '" + leaf.memberName +
