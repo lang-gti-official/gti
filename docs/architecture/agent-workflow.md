@@ -835,6 +835,7 @@ advisory-CI policy. `.github/workflows/ci.yml` reports one required check,
 | `workflow_dispatch` on main | full | the same bounded gate, for recovery |
 | `push` to main, or `workflow_dispatch` (`full-validation.yml`) | full | post-integration full validation: production packaging and installed checks, bundled-release `integration` shards (Linux over the complete inventory, `--test-set full`; macOS over the `darwin` set, `--test-set darwin`), the compiler `sanitizers`, the LLVM-backend sanitizers and the thread sanitizer, all with `GTI_TEST_BACKENDS=llvm`; its `Full validation verdict` and retained packages are the nightly/beta/train evidence, a failure opens the `main-broken` issue, and the run refreshes `tests/ci_test_durations.json` (artifact `ci-test-durations`) for shard balancing |
 | PR or merge group | source-stdlib | lint, workflow regressions, source-library owners and consumers, declared PR regressions and native smoke on both platforms using an admitted full-CI compiler; merge groups also package the new source library |
+| PR or merge group | lsp | lint, workflow regressions and the `lsp` lane on both platforms: the adapter rebuilt against an admitted full-CI compiler SDK, registered LSP/editor consumers, declared PR regressions, native smoke and installed checks; merge groups also package the complete toolchain with the reused compiler's provenance |
 | PR or merge group | automation | lint and workflow regressions only |
 | PR or merge group | component | always fails: a batch component cannot merge directly |
 
@@ -1011,6 +1012,24 @@ before its real, disposable CMake/CTest batch fixtures run. `CIEnvironment` in
 `agent_workflow` executes these shell steps with missing event aliases and an
 initially tool-free PATH. The lightweight job also runs `repository_hosting`,
 the ownership-map coverage check and the planner's tests.
+
+### LSP adapter CI classification
+
+Only `src/lsp/`, `lua/gti/`, `lsp/` and `plugin/` adapter changes with allowlisted
+Python LSP/Neovim harnesses and documentation/fragments may use the `lsp` lane.
+`scripts/lsp_ci.py` owns this allowlist. Any shared compiler/stdlib/runtime/parser,
+build, CI, test-registration or unknown path retains full integration. A missing
+full-CI ancestor SDK or unequal shared-input identity also selects full CI.
+Contributors still record focused owning evidence and submit through the normal
+preview/PR lifecycle; this lane is not a local-validation exemption. Both platform
+LSP jobs must pass the CI gate: like `source-stdlib`, the lane is a mode-gated
+`ci.yml` job that runs on pull requests and merge groups, never a
+post-integration job. The full-CI SDK it reuses comes from `full-validation.yml`
+on a main head, and `lsp.yml` publishes components after a successful `CI`
+merge-group run or `Full validation` run. Reused compiler provenance is mandatory when
+nightly consumes their complete packages. LSP-only evidence cannot seed another
+compiler SDK. Independent component publication is detached after integration
+and does not require an agent to poll publication or install anything.
 
 ### Rollups
 
