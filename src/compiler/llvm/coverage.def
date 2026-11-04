@@ -504,6 +504,7 @@ LLVM_COVERAGE_ENTRY(ObjectDestroy, 8, Pending, None, "all represented shapes rem
 LLVM_COVERAGE_ENTRY(ObjectConstruct, 8, Pending, None, "all represented shapes remain pending native lowering")
 LLVM_COVERAGE_ENTRY(ObjectRelocate, 8, Pending, None, "all represented shapes remain pending native lowering")
 LLVM_COVERAGE_ENTRY(ObjectRelocateRange, 8, Pending, None, "all represented shapes remain pending native lowering")
+LLVM_COVERAGE_ENTRY(ObjectTake, 8, Pending, None, "native admission requires exact complete-object extraction")
 LLVM_COVERAGE_ENTRY(RequireVacantStorage, 8, Pending, None, "all represented shapes remain pending native lowering")
 LLVM_COVERAGE_ENTRY(RequireLiveStorage, 8, Pending, None, "all represented shapes remain pending native lowering")
 LLVM_COVERAGE_ENTRY(RequireRelocationCapacity, 8, Pending, None, "all represented shapes remain pending native lowering")

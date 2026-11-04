@@ -126,6 +126,8 @@ scalarReturnConversion(const MirBody &body, const MirOperand &operand);
                                    const MirInstruction &instruction);
 [[nodiscard]] bool objectRelocate(const MirProgram &program,
                                   const MirInstruction &instruction);
+[[nodiscard]] bool objectTake(const MirProgram &program,
+                              const MirInstruction &instruction);
 
 // Inert, const-preserving typed/erased address conversion; never a borrow or
 // an assertion that the pointee is initialized, aligned, live or writable.

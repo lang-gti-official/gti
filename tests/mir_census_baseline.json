@@ -86,7 +86,7 @@
     "087-associative-containers.gti": 508,
     "088-consuming-builders.gti": 180,
     "089-library-workflow.gti": 971,
-    "090-generic-algorithms.gti": 435,
+    "090-generic-algorithms.gti": 644,
     "091-json-documents.gti": 695,
     "092-json-codecs.gti": 666,
     "093-http-json-client.gti": 764,

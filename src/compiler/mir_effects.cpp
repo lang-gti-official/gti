@@ -416,6 +416,10 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
                     .writesUnknownMemory = true,
                     .movesValue = true,
                     .initializesValue = true}, // ObjectRelocateRange
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .writesUnknownMemory = true,
+                    .movesValue = true,
+                    .initializesValue = true}, // ObjectTake
     MirEffectTraits{.mayTrap = true},          // RequireVacantStorage
     MirEffectTraits{.mayTrap = true},          // RequireLiveStorage
     MirEffectTraits{.mayTrap = true},          // RequireRelocationCapacity
@@ -725,6 +729,7 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "object-construct",
     "object-relocate",
     "object-relocate-range",
+    "object-take",
     "require-vacant-storage",
     "require-live-storage",
     "require-relocation-capacity",

@@ -1,9 +1,14 @@
 import std.algorithm;
 import std.array;
 import std.list;
+import std.map;
 import std.set;
+import std.string;
 import std.vector;
 import std.utility;
+
+using ProfitEntry = std::map<std::string, float>::value_type;
+
 int main() {
   // Sequence search is generic; the returned cursor keeps its owner borrowed.
   std::list<int> priorities = {2, 4, 4, 9};
@@ -31,6 +36,17 @@ int main() {
                [](int& value) -> bool { return value > 3; });
   for (auto& value : selected) { std::println(value); }
 
+  // Compaction returns the kept prefix length and leaves all slots alive.
+  auto retained = std::remove_if(selected, [](int& value) -> bool { return value == 0; });
+  if (retained != 2 || selected.size() != 4) { return 1; }
+  int zero = 0;
+  if (std::remove(selected, zero) != 2) { return 2; }
+
+  // Erasure also destroys matches and shrinks the owner, returning the count.
+  if (std::erase(selected, zero) != 2 || selected.size() != 2) { return 3; }
+  if (std::erase_if(selected, [](int& value) -> bool { return value > 8; }) != 2 ||
+      !selected.empty()) { return 4; }
+
   // Continue from copy's returned cursor by moving its exclusive permission.
   // The destination cannot be accessed separately until that loan ends.
   std::vector<int> batch = {1, 2};
@@ -43,5 +59,16 @@ int main() {
       combined[std::size_t(2)] != 1 || combined[std::size_t(3)] != 2) {
     return 1;
   }
+
+  // Rank dictionary entries by their mapped values, without copying keys.
+  mut std::map<std::string, float> profit_change{};
+  profit_change.insert(std::string("Acme"), float(-4));
+  profit_change.insert(std::string("Beacon"), float(7));
+  auto greatest = std::max_element(profit_change.begin(), profit_change.end(),
+      [](ProfitEntry& left, ProfitEntry& right) -> bool {
+        return left.second < right.second;
+      });
+  // Empty ranges return an end position; ties keep the first in traversal order.
+  if (greatest != profit_change.end()) { std::println((*greatest).first); }
   return 0;
 }

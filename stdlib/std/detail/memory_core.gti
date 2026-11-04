@@ -135,6 +135,16 @@ export unsafe void relocate_range_at<T>(T* destination, T* source, size_t count)
   unsafe { gti_internal::object_relocate_range(destination, source, count); }
 }
 
+/// Transfers one live object from raw storage into the returned owned value.
+/// The caller proves a writable, aligned, initialized complete T with exclusive
+/// access, and retires the source from its enclosing storage owner's live set.
+/// Success leaves the source vacant without destroying it or releasing its
+/// allocation. Generated relocation cannot fail or call user movement code.
+export unsafe T take_at<T>(T* source)
+    requires layout_queryable<T> && relocatable<T> {
+  unsafe { return gti_internal::object_take(source); }
+}
+
 /// Asserts that address denotes a live T whose lifetime is covered by owner.
 /// The caller proves alignment, initialization and aliasing. The returned
 /// reference is checked against owner; the raw pointer itself remains nonowning.

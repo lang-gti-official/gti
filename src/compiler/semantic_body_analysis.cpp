@@ -2952,7 +2952,160 @@ auto SemanticVisitor::Impl::visitForStmt(const ForStmt &stmt) -> void {
 
 auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
     -> void {
-  analyze(stmt.lowered());
+  const auto *syntax = stmtAs<BlockStmt>(stmt.lowered().get());
+  if (syntax == nullptr || syntax->statements().empty())
+    return;
+  loanFlow.statementBoundaries.push_back({.region = loanFlow.currentRegion,
+                                          .order = loanFlow.currentOrder,
+                                          .statement = syntax});
+  beginScope();
+  // Protocol selection needs the checked owner type. Keep both parts in the
+  // same statement region so ordinary range loans retain their original
+  // endpoints and source-place identities.
+  const std::size_t region = loanFlow.nextRegion++;
+  recordSourceDebugStatement(*syntax);
+  analyzeStatementsInRegion(StmtList{syntax->statements().front()}, region, 0);
+  const BindingInfo *resolvedOwner =
+      semanticModel.findBinding(*stmt.ownerBinding());
+  SemanticType sourceType =
+      resolvedOwner == nullptr ? SemanticType::Unknown : resolvedOwner->type;
+  const bool ownedSource = sourceType.kind != SemanticType::Reference;
+  if (!ownedSource && sourceType.arguments.size() == 1) {
+    SemanticType referent = sourceType.arguments.front();
+    sourceType = std::move(referent);
+  }
+  const auto generated = [&](TokenKind kind, std::string spelling) {
+    const Token &anchor = stmt.colon();
+    return Token(kind, std::move(spelling), std::monostate{}, anchor.position,
+                 anchor.line, anchor.source, false, true);
+  };
+  const auto hasMember = [&](const char *name) {
+    return findMember(sourceType, generated(TokenKind::IDENTIFIER, name)) !=
+               nullptr ||
+           symbolicRangeMemberReturnType(sourceType, name).has_value() ||
+           symbolicReadMemberReturnType(sourceType, name).has_value();
+  };
+  // Existing begin/end ranges retain their protocol. An owning next-value
+  // range has no borrowed dereference: each take_next call returns a new owner.
+  const bool consuming = !hasMember("begin") && !hasMember("begin_mut") &&
+                         (hasMember("has_next") || hasMember("take_next"));
+  if (consuming) {
+    if (!ownedSource || typeTraits(sourceType).containsBorrowedState) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2083", DiagnosticPhase::Semantics, stmt.colon(),
+          "Consuming range iteration requires an owned value without stored "
+          "borrows.");
+      diagnostic.hints.emplace_back("Transfer a named range with "
+                                    "std::move(range); it becomes unavailable "
+                                    "after the transfer.");
+      diagnostics.emplace_back(std::move(diagnostic));
+    }
+    if (stmt.bindingType().reference) {
+      report(stmt.bindingName(),
+             "A consuming range yields owned values; use a value binding "
+             "without '&'.",
+             "GTI-S2083");
+    }
+    const Token cursorName = generated(
+        TokenKind::IDENTIFIER, stmt.ownerBinding()->name().lexeme + "_consume");
+    const auto variable = [](const Token &name) -> ExprPtr {
+      return std::make_unique<Variable>(name);
+    };
+    const auto memberCall = [&](const char *name) -> ExprPtr {
+      return std::make_unique<Call>(
+          std::make_unique<Get>(variable(cursorName),
+                                generated(TokenKind::DOT, "."),
+                                generated(TokenKind::IDENTIFIER, name)),
+          std::vector<TypeRef>{}, generated(TokenKind::RIGHT_PAREN, ")"),
+          ExprList{});
+    };
+    ExprList moveArguments;
+    moveArguments.push_back(variable(stmt.ownerBinding()->name()));
+    auto cursor = std::make_shared<VariableDecl>(
+        Mutability::Mutable, TypeRef(generated(TokenKind::AUTO, "auto")),
+        cursorName,
+        std::make_unique<Call>(
+            std::make_unique<QualifiedName>(NamePath(
+                std::vector<Token>{generated(TokenKind::IDENTIFIER, "std"),
+                                   generated(TokenKind::IDENTIFIER, "move")})),
+            std::vector<TypeRef>{}, generated(TokenKind::RIGHT_PAREN, ")"),
+            std::move(moveArguments)));
+    auto element = std::make_shared<VariableDecl>(
+        stmt.bindingMutability(), stmt.bindingType(), stmt.bindingName(),
+        memberCall("take_next"));
+    const auto *originalBody = stmtAs<BlockStmt>(stmt.coreLoop()->body().get());
+    StmtList iteration{element, originalBody->statements().back()};
+    auto loop = std::make_shared<ForStmt>(
+        std::make_shared<EmptyStmt>(generated(TokenKind::SEMICOLON, ";")),
+        memberCall("has_next"), nullptr,
+        std::make_unique<BlockStmt>(std::move(iteration)));
+    auto lowering = std::make_shared<RangeForStmt>(
+        stmt.keyword(), stmt.bindingMutability(), stmt.bindingType(),
+        stmt.bindingName(), stmt.colon(),
+        std::make_unique<BlockStmt>(
+            StmtList{syntax->statements().front(), cursor, loop}),
+        stmt.ownerBinding(), nullptr, cursor.get(), nullptr, element.get(),
+        loop.get(), nullptr, stmt.sourceBody());
+    analyzeStatementsInRegion(StmtList{cursor, loop}, region, 1);
+    const auto *hasNext =
+        semanticModel.findCall(*exprAs<Call>(loop->condition().get()));
+    const auto *takeNext =
+        semanticModel.findCall(*exprAs<Call>(element->initializer().get()));
+    const BindingInfo *cursorInfo = semanticModel.findBinding(*cursor);
+    const BindingInfo *elementInfo = semanticModel.findBinding(*element);
+    const auto exactCall = [&](const ResolvedCallInfo *call,
+                               CallReceiverMode receiver) {
+      return call != nullptr &&
+             (call->function != 0 || containsOpenTypeParameter(sourceType)) &&
+             call->parameterTypes.empty() && call->defaultArguments.empty() &&
+             call->receiverMode == receiver;
+    };
+    if (!exactCall(hasNext, CallReceiverMode::ReadOnlyPlace) ||
+        hasNext->returnType != SemanticType::Bool) {
+      report(stmt.colon(),
+             "A consuming range requires an exact read-only bool has_next().",
+             "GTI-S2083");
+    }
+    if (!exactCall(takeNext, CallReceiverMode::MutablePlace) ||
+        takeNext->returnType == SemanticType::Void ||
+        takeNext->returnType == SemanticType::Unknown ||
+        takeNext->returnType.kind == SemanticType::Reference ||
+        takeNext->returnType.kind == SemanticType::StringView ||
+        takeNext->returnType.kind == SemanticType::CString ||
+        typeTraits(takeNext->returnType).containsBorrowedState ||
+        takeNext->borrowOrigin != BorrowOriginKind::None ||
+        !takeNext->borrowFields.empty() || !takeNext->borrowArguments.empty() ||
+        takeNext->borrowPlace || takeNext->dependentTextReturn ||
+        takeNext->dependentTextPublication) {
+      report(
+          stmt.colon(),
+          "A consuming range requires an exact mutable take_next() returning "
+          "an independent owned value.",
+          "GTI-S2083");
+    }
+    semanticModel.record(
+        stmt,
+        {.consumingLowering = std::move(lowering),
+         .strategy = RangeIterationStrategy::Consuming,
+         .rangeType = sourceType,
+         .iteratorType = sourceType,
+         .elementType =
+             elementInfo == nullptr ? SemanticType::Unknown : elementInfo->type,
+         .owner = semanticModel.findBinding(*stmt.ownerBinding())->symbol,
+         .iterator = cursorInfo == nullptr ? 0 : cursorInfo->symbol,
+         .element = elementInfo == nullptr ? 0 : elementInfo->symbol,
+         .compareFunction = hasNext == nullptr ? 0 : hasNext->function,
+         .dereferenceFunction = takeNext == nullptr ? 0 : takeNext->function,
+         .ownsRangeTemporary = true});
+    endScope();
+    loanFlow.statementBoundaries.pop_back();
+    return;
+  }
+  analyzeStatementsInRegion(
+      StmtList(syntax->statements().begin() + 1, syntax->statements().end()),
+      region, 1);
+  endScope();
+  loanFlow.statementBoundaries.pop_back();
 
   const bool mutableElementRequested =
       stmt.bindingMutability() == Mutability::Mutable &&

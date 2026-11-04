@@ -2920,6 +2920,10 @@ add_executable(gti_structural_relocation_tests structural_relocation_tests.cpp)
 target_link_libraries(gti_structural_relocation_tests PRIVATE gti_cpp_backend)
 add_test(NAME structural_relocation COMMAND gti_structural_relocation_tests)
 
+add_executable(gti_consuming_range_tests consuming_range_tests.cpp)
+target_link_libraries(gti_consuming_range_tests PRIVATE gti_cpp_backend)
+add_test(NAME consuming_range COMMAND gti_consuming_range_tests)
+
 add_executable(gti_compact_owner_layout_tests compact_owner_layout_tests.cpp)
 target_link_libraries(gti_compact_owner_layout_tests PRIVATE gti_cpp_backend)
 add_test(NAME compact_owner_layout COMMAND gti_compact_owner_layout_tests)
@@ -3893,6 +3897,11 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}"
   )
   set_tests_properties(stdlib_modules PROPERTIES TIMEOUT 600)
+  add_test(NAME removal_algorithms
+           COMMAND "${Python3_EXECUTABLE}"
+                   "${PROJECT_SOURCE_DIR}/tests/removal_algorithms_test.py"
+                   "$<TARGET_FILE:gti>")
+  set_tests_properties(removal_algorithms PROPERTIES TIMEOUT 900)
   # One entry: the harness runs the backends GTI_TEST_BACKENDS selects
   # (tests/backend_modes.py). The former c++20, no-elide and sanitized
   # variants were C++-backend-only configurations nothing ships.
@@ -5399,6 +5408,25 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(structural_relocation_runtime PROPERTIES TIMEOUT 600)
+
+  # One entry: the shared harness runs the backends GTI_TEST_BACKENDS selects
+  # (tests/backend_modes.py) and asserts the declared C++ limitation under the
+  # C++ profile, so no separate C++-only boundary registration remains.
+  add_test(NAME consuming_range_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/consuming_range_runtime_test.py"
+            "$<TARGET_FILE:gti>")
+  set_tests_properties(consuming_range_runtime PROPERTIES TIMEOUT 600)
+  add_test(NAME consuming_range_performance
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/consuming_range_performance_test.py"
+            "$<TARGET_FILE:gti>")
+  set_tests_properties(consuming_range_performance PROPERTIES TIMEOUT 180)
+  if(TARGET gti_lsp)
+    add_test(NAME consuming_range_lsp
+      COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/consuming_range_lsp_test.py"
+              "$<TARGET_FILE:gti_lsp>")
+    set_tests_properties(consuming_range_lsp PROPERTIES TIMEOUT 120)
+  endif()
 
   add_test(NAME compact_owner_layout_runtime
     COMMAND "${Python3_EXECUTABLE}"
