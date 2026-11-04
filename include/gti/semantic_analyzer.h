@@ -102,6 +102,8 @@ public:
   // analyses `prefix`, a program made of a larger program's leading
   // compiler-trusted units, completely and freezes this analyzer's state
   // into the returned preamble; this analyzer is spent afterwards.
+  // Invalid or cancelled prefixes return null; cancellation is caught at the
+  // same boundary as check(program) and reported by cancelled().
   // adoptPreamble makes the next check(program) start from a copy of that
   // state and analyse only the declarations after the first
   // `prefixDeclarationCount`, which must be exactly the preamble's.

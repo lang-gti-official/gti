@@ -6161,6 +6161,13 @@ if(Python3_Interpreter_FOUND)
               "$<TARGET_FILE:gti_lsp>"
     )
     set_tests_properties(lsp_test_target PROPERTIES TIMEOUT 90)
+    add_test(
+      NAME lsp_completion_work
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/lsp_completion_work_test.py"
+              "$<TARGET_FILE:gti_lsp>"
+    )
+    set_tests_properties(lsp_completion_work PROPERTIES TIMEOUT 180)
     find_program(GTI_NEOVIM_EXECUTABLE nvim)
     if(GTI_NEOVIM_EXECUTABLE)
       add_test(NAME neovim_gtiup
@@ -6168,6 +6175,18 @@ if(Python3_Interpreter_FOUND)
                 "GTI_TEST_REPOSITORY=${PROJECT_SOURCE_DIR}"
                 "${GTI_NEOVIM_EXECUTABLE}" --headless -u NONE -i NONE
                 -l "${PROJECT_SOURCE_DIR}/tests/nvim_gtiup_test.lua")
+      add_test(
+        NAME neovim_toolchain
+        COMMAND "${CMAKE_COMMAND}" -E env
+                "GTI_TEST_REPOSITORY=${PROJECT_SOURCE_DIR}"
+                "XDG_STATE_HOME=${PROJECT_BINARY_DIR}/nvim-test/state"
+                "XDG_CACHE_HOME=${PROJECT_BINARY_DIR}/nvim-test/cache"
+                "XDG_DATA_HOME=${PROJECT_BINARY_DIR}/nvim-test/data"
+                "NVIM_LOG_FILE=${PROJECT_BINARY_DIR}/nvim-test.log"
+                "${GTI_NEOVIM_EXECUTABLE}" --headless -u NONE -i NONE
+                -l "${PROJECT_SOURCE_DIR}/tests/nvim_toolchain_test.lua"
+      )
+      set_tests_properties(neovim_toolchain PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77)
       add_test(
         NAME neovim_lsp_configuration
         COMMAND "${CMAKE_COMMAND}" -E env

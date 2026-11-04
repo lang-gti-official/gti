@@ -17,12 +17,14 @@ namespace lang {
 std::shared_ptr<const SemanticPreamble>
 SemanticVisitor::buildPreamble(Program prefix) {
   impl->buildingPreamble = true;
-  (void)impl->check(prefix);
+  // Use the public analysis boundary so cooperative cancellation cannot escape
+  // as an exception or freeze a partially populated prefix into a cache row.
+  const bool valid = check(prefix);
   impl->buildingPreamble = false;
   // A prefix can be incomplete even when the full program is valid (for
   // example a constexpr prototype completed by a later implementation unit).
   // Its provisional diagnostics must not become cached program diagnostics.
-  if (impl->hadError())
+  if (!valid || impl->analysisCancelled)
     return nullptr;
   impl->freezePreamble();
   // The caller's graph, sources and metrics die with this analysis; a
@@ -85,6 +87,7 @@ auto SemanticVisitor::Impl::detachFromCaller() -> void {
   sourceGraph = nullptr;
   sources = nullptr;
   workMetrics = nullptr;
+  cancellation = nullptr;
 }
 
 auto SemanticVisitor::Impl::blankLikeThis() const -> std::unique_ptr<Impl> {

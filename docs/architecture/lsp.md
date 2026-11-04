@@ -732,7 +732,7 @@ The process-local frontend cache is a thread-safe LRU. The compiler's generic
 bound is 256 rows and 64 MiB of conservatively estimated input/tree storage;
 the editor's `FrontendSnapshotState` uses 1,024 rows and 512 MiB
 (`editorFrontendCacheLimits`), because the lexical and parsed rows of one
-eight-include standard-library graph already exceed 64 MiB by that estimate.
+eight-module standard-library graph already exceed 64 MiB by that estimate.
 With the generic bound such a file evicted its own rows on every edit, reloaded,
 re-lexed and re-parsed the whole library, and could reuse no instance
 analysis. Lexical rows retain
@@ -747,6 +747,10 @@ dependency-provided flag that selects different syntax therefore invalidates
 an otherwise unchanged dependant parse. Dirty overlays additionally compare
 their exact bytes after lexical lookup, so they override disk state and a
 digest collision cannot select different text there.
+Entry-point requirements, test-entry synthesis and library export policy do not
+partition lexical or parsed rows: opening an executable and then a library
+file can reuse their common standard-library syntax. These options remain part
+of semantic cache identity.
 
 A generation change makes old rows unreachable immediately. Physical removal
 is left to the LRU, avoiding large AST destruction while the protocol thread is
@@ -772,7 +776,9 @@ validated first, and a failure simply analyses the instance again (see
 [semantic-analysis.md](semantic-analysis.md)). Editing a library unit, or
 reparsing it, selects another generation, which supersedes the old one. The
 cache is bounded by 8,192 entries, 192 MiB of estimated delta storage and four
-generations. Completion stops before HIR and does not use it. The benchmark exposes exact loaded,
+generations. Completion supplies the same cache context but stops before HIR,
+so it does not perform HIR instance discovery or store new instance deltas.
+The benchmark exposes exact loaded,
 lexed, parsed, semantically analysed, and cache-hit unit lists plus phase times
 through the opt-in `GTI_LSP_FRONTEND_TRACE` stream. Each record also carries a
 monotonic `finishedMicroseconds` time since server start, so concurrent work
@@ -796,7 +802,7 @@ An edit-triggered analysis (the edited document's own, and each dependant's)
 does not start at once. It waits for the document's median recent analysis
 time, bounded to 50-150 ms, and every further edit restarts the wait, so a
 typing burst is analysed once from its final text. A semantic request waiting
-on the document, shutdown, opening a document, and project invalidation
+on the document, opening a document, and project invalidation
 (manifest, lockfile, profile) run immediately. This is clangd's
 update-debounce policy, adopted after measuring that every keystroke re-runs
 semantic analysis and concrete HIR discovery; the old timings are not current
@@ -810,7 +816,10 @@ the flag at safe points (after registration, before finalization, at each
 top-level statement and each concrete-effect owner) and stops by unwinding to
 `SemanticVisitor::check`; the frontend then returns a result marked
 `cancelled` before HIR, so the instance cache receives nothing from it. A
-preamble built before the stop is complete and stays cached. The stopped run
+preamble built before the stop is complete and stays cached. Cold preamble
+construction uses the same cancellation boundary; an interrupted prefix is
+discarded before publication, and a completed prefix retains no request token.
+The stopped run
 is not published, does not count toward the debounce median, and is traced as
 `kind: "cancelled"` under `GTI_LSP_FRONTEND_TRACE`. Raw-pointer audits are not
 cancelled; they run only when the pool is idle.
@@ -846,6 +855,22 @@ completion request. Compile-time evaluation and macro expansion are not
 limited by that stack: like the compiler, a worker continues them on fresh
 stack segments of the same thread (see the frontend architecture), so editor
 analysis reaches exactly the configured compile-time limits.
+
+Completion adopts compatible trusted preambles instead of registering and
+checking the standard library again for each request. Its request-owned
+cancellation flag reaches the same compiler safe points as diagnostic analysis.
+An edit, close/reopen, newer completion on the same document, explicit
+`$/cancelRequest`, or shutdown stops obsolete work. Other documents' requests
+do not supersede it. Explicit cancellation returns `-32800`; a changed document
+or loaded dependency returns `-32801`; a newer completion on unchanged text
+returns `-32802`. Before replying, the worker validates the compiler's actual
+loaded-source digests and generations, plus missing and authored import lookup
+paths, even when the previous diagnostic snapshot has not discovered an import
+yet. Opening an overlay with exactly the disk bytes preserves a current result.
+The opt-in frontend trace records `completion-started`, `completion`, and
+`completion-cancelled`, with `requestId` linking their work records. Shutdown
+cancels active compiler work and rejects queued requests before joining workers;
+later requests are rejected until the client's `exit` notification.
 
 Editor analysis requests `FrontendOptions::stopAfter = Hir`. HIR is the
 compiler-owned discovery point for concrete generic instances, so stopping at
@@ -1061,6 +1086,20 @@ required; it is tracked in
 [`docs/plans/lsp-evolution.md`](../plans/lsp-evolution.md).
 
 ## Protocol Boundary
+
+The Neovim plugin honors explicit `GTI_PATH`, `GTI_LSP_PATH` and
+`GTI_TREE_SITTER_PATH` overrides. In legacy mode, an explicit compiler/server
+path's sibling parser takes precedence over the plugin's bundled parser; an explicit
+parser path remains first. Rolling channel version differences between plugin
+and toolchain are allowed, while the compiler and server must agree on version
+and on build identity when both identities are available. Grammar compatibility
+is checked independently. Managed `gtiup` selections follow each project's
+toolchain independently of the plugin version. Attachment does not spawn
+version probes or repeat a managed selection; it uses the launch record.
+`:GTIInfo` probes on demand and reports selected paths alongside the actual
+attached server command and its build/preview identity captured at launch
+(attachment fallback for custom command tables),
+so changing `PATH` does not misidentify a server that is already running.
 
 Editor snapshots publish the compiler-owned `GTI-I0014` error for removed GTI
 include syntax using the same source-loading rule as build/check requests. The

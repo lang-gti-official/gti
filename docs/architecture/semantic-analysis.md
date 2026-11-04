@@ -1949,6 +1949,13 @@ and an analysis with the raw-pointer audit enabled never uses it.
   preamble is built, every body that bounded analysis would have deferred is
   analysed in place but *held back*: its body diagnostics and the function
   records it consulted are kept beside the body instead of being reported.
+  Prefix construction receives the request's cancellation token and uses the
+  same cancellation checkpoints and catching boundary as ordinary `check`.
+  An invalid or interrupted prefix returns no preamble. Interrupted state is
+  never frozen or cached, and the frontend reports cancellation. A completed
+  preamble detaches caller-owned source, metrics and cancellation pointers
+  before caching. Cancelling a later resumed analysis preserves that complete
+  cached prefix.
 - **Resuming.** `SemanticVisitor::adoptPreamble` makes the next `check` copy
   the preamble's session state (the compiler-generated copy of
   `RequestSessionState`, with the catalog deep-copied and request-local

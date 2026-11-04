@@ -1768,14 +1768,31 @@ public:
     options.completionOffset = input.byteOffset;
     options.workMetrics = input.workMetrics;
     options.cache = input.cache;
+    options.instanceCache = input.instanceCache;
+    options.preambleCache = input.preambleCache;
+    options.cancellation = input.cancellation;
+    options.synthesizeTestEntry = false;
     options.sourceGenerations = input.sourceGenerations;
     options.sourceDigests = input.sourceDigests;
     const FrontendResult snapshot = Frontend(options).analyze(
         input.entryPath, input.source, input.preludePaths,
         input.sourceOverrides, input.standardLibraryRoots,
         input.packageSourceRoots);
-    if (auto modules = completeModuleImport(snapshot, input))
+    if (snapshot.cancelled)
+      return result;
+    for (const SourceUnit &unit : snapshot.sourceGraph.sourceUnits())
+      result.sourceDigests.emplace(unit.path.string(), unit.sourceDigest);
+    for (const auto &import : snapshot.sourceGraph.imports()) {
+      if (import.lookupPath)
+        result.sourceLookupPaths.push_back(*import.lookupPath);
+      if (import.authoredLookupPath)
+        result.sourceLookupPaths.push_back(*import.authoredLookupPath);
+    }
+    if (auto modules = completeModuleImport(snapshot, input)) {
+      modules->sourceDigests = std::move(result.sourceDigests);
+      modules->sourceLookupPaths = std::move(result.sourceLookupPaths);
       return std::move(*modules);
+    }
     const std::optional<SemanticCompletionContext> &context =
         snapshot.semantics.completionContext();
     const SourceUnit *completionUnit =
