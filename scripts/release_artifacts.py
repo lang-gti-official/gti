@@ -99,6 +99,28 @@ def verify(directory, sha, run_id, attempt, repository, consume=False, channel="
 # gate (ci.yml) proves only build and fast checks. A source-library merge run
 # of ci.yml may still seed compiler reuse.
 FULL_VALIDATION_WORKFLOW = ".github/workflows/full-validation.yml"
+INTEGRATION_ROW = re.compile(
+    r"\{os: [^,}]+, platform: (linux|darwin), shards: ([0-9]+), index: ([0-9]+)\}")
+
+
+def integration_shards(workflow: Path | None = None) -> dict[str, int]:
+    """Read the integration shard counts from full validation's own matrix.
+
+    Publication requires every shard that workflow runs, so a re-sharded
+    matrix cannot leave nightly waiting for job names that no longer exist.
+    """
+    path = workflow or Path(__file__).resolve().parent.parent / FULL_VALIDATION_WORKFLOW
+    rows: dict[str, set[tuple[int, int]]] = {}
+    for platform, shards, index in INTEGRATION_ROW.findall(path.read_text()):
+        rows.setdefault(platform, set()).add((int(shards), int(index)))
+    counts = {}
+    for platform in ("linux", "darwin"):
+        entries = rows.get(platform, set())
+        sizes = {size for size, _ in entries}
+        if len(sizes) != 1 or {index for _, index in entries} != set(range(next(iter(sizes)))):
+            raise ValueError(f"full validation has no complete {platform} integration matrix")
+        counts[platform] = sizes.pop()
+    return counts
 
 
 def release_evidence(repository, sha, request, full_only=False):
@@ -138,7 +160,7 @@ def release_evidence(repository, sha, request, full_only=False):
             raise ValueError("job inventory exceeded bound")
         required = {"Full validation verdict", *(f"Release package ({platform})" for platform in PLATFORMS),
                     *(f"Integration ({platform} {index}/{count})"
-                      for platform, count in (("linux", 6), ("darwin", 5)) for index in range(count))}
+                      for platform, count in integration_shards().items() for index in range(count))}
         def passed(names):
             return all(len(matches := [job for job in rows if job.get("name") == name]) == 1 and
                        matches[0].get("head_sha") == sha and matches[0].get("status") == "completed" and

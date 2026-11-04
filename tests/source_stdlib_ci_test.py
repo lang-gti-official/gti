@@ -36,7 +36,7 @@ def api_fixture(sha, source_lane=False, **changes):
                    head_sha=sha, path='.github/workflows/full-validation.yml', status='completed',
                    conclusion='success', repository={'full_name': REPO}, head_repository={'full_name': REPO})
         names = ['Full validation verdict'] + [f'Release package ({p})' for p in artifacts.PLATFORMS] + \
-                [f'Integration ({p} {i}/{n})' for p, n in [('linux', 6), ('darwin', 5)] for i in range(n)]
+                [f'Integration ({p} {i}/{n})' for p, n in artifacts.integration_shards().items() for i in range(n)]
     jobs = [dict(name=n, head_sha=sha, status='completed', conclusion='success') for n in names]
     assets = [dict(name=f'gti-nightly-{p}-2', expired=False) for p in artifacts.PLATFORMS]
     run.update(changes.get('run', {}))
