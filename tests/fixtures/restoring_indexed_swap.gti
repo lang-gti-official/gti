@@ -55,6 +55,14 @@ int main(int argc, std::vector<std::string> argv) {
   if (argc == 4) { values.swap_elements(std::size_t(3), std::size_t(3)); }
   if (argc == 5) { std::sort(values, Compare(3)); }
   values.swap_elements(std::size_t(0), std::size_t(0));
+  // Three live move-only resources. Every unchecked exchange restores both
+  // places, including a valid equal-index no-op, without running a destructor.
+  unsafe {
+    values.swap_elements_unchecked(std::size_t(0), std::size_t(2));
+    if (values[std::size_t(0)].id() != 2 || values[std::size_t(2)].id() != 3) { return 11; }
+    values.swap_elements_unchecked(std::size_t(0), std::size_t(2));
+    values.swap_elements_unchecked(std::size_t(1), std::size_t(1));
+  }
   std::sort(values, Compare(0));
   if (values[std::size_t(0)].id() != 1 || values[std::size_t(1)].id() != 2 || values[std::size_t(2)].id() != 3) { return 1; }
   std::reverse(values);
@@ -78,6 +86,10 @@ int main(int argc, std::vector<std::string> argv) {
   words.push_back(std::string("m"));
   std::sort(words);
   if (words[std::size_t(0)] != "a" || words[std::size_t(2)] != "z") { return 5; }
+  // Retain the checked owning-string wrapper as an independent API control;
+  // sorting now uses its own proved-index exchange path.
+  words.swap_elements(std::size_t(0), std::size_t(2));
+  words.swap_elements(std::size_t(0), std::size_t(2));
   mut std::array<std::string, 2> names = std::array<std::string, 2>({std::string("left"), std::string("right")});
   names.swap_elements(std::size_t(1), std::size_t(0));
   if (names[0] != "right" || names[1] != "left") { return 6; }

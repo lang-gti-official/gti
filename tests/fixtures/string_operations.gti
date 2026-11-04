@@ -1,5 +1,30 @@
 import std.string;
 
+// Differential oracle around every complete search window and its tail.
+// Includes embedded NUL, high bytes, an absent needle and all start positions.
+bool check_character_windows() {
+  int lengths[12] = {0, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 257};
+  int needles[10] = {0, 1, 15, 16, 31, 63, 127, 128, 254, 255};
+  for (auto& length : lengths) {
+    mut std::string bytes{};
+    for (mut int i = 0; i < length; i++) {
+      bytes.push_back(char(uint8_t((i * 13 + length) % 255)));
+    }
+    for (auto& code : needles) {
+      char needle = char(uint8_t(code));
+      for (mut std::size_t start = 0; start <= bytes.size() + std::size_t(1); start++) {
+        mut std::size_t expected = std::string::npos;
+        for (mut std::size_t scan = start; scan < bytes.size(); scan++) {
+          if (bytes[scan] == needle) { expected = scan; break; }
+        }
+        if (bytes.find(needle, start) != expected) { return false; }
+      }
+    }
+    if (bytes.find('\0', std::string::npos) != std::string::npos) { return false; }
+  }
+  return true;
+}
+
 int main() {
   std::string empty{};
   std::string text{"abcabc\0tail"};
@@ -64,5 +89,6 @@ int main() {
       addition.compare(addition) != 0) { return 19; }
   growing.replace(std::size_t(0), std::string::npos, addition);
   if (growing != addition) { return 20; }
+  if (!check_character_windows()) { return 21; }
   return 0;
 }

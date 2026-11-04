@@ -5497,6 +5497,43 @@ Other generated hierarchy transfers keep their supported C++20/23 comparisons.
 Normal move-chain cleanup and virtual failure after a move require exact,
 exactly-once numeric destructor traces without observing destructor dispatch.
 
+#### Guarded Native Dispatch Promotion
+
+At O2/O3, the LLVM backend may promote a bounded indirect dispatch site to
+pointer-guarded direct calls before ordinary LLVM inlining. The candidate
+inventory comes only from actual constant tables emitted by `Dispatch::table`;
+`loadCall` associates the physical slot load with its verified root. Every
+direct edge compares the currently loaded callee with the exact existing
+adjustment thunk and passes the original receiver, result and failure channels.
+LLVM's call-promotion utility repairs the control flow and result merge. The
+original indirect call remains as the fallback, including for an unlisted
+active phase or view. This does not create MIR/HIR instances or change virtual
+selection, lifetime, receiver adjustment, evaluation order or cleanup policy.
+
+The initial cost boundary is at most four distinct candidates per site, four
+sites per function and sixteen per module. Within one active class, logical
+views share an adapter only when its root ABI, implementation identity and
+receiver byte adjustment are identical. Every view is still independently
+planned and validated before consulting this cache; different adjustments
+retain distinct adapters. Promotion compares these exact emitted pointers,
+without assuming runtime view or table equivalence. Each candidate and its immediate
+implementation bodies total at most 128 LLVM instructions. Different physical
+signatures/calling conventions, indirect invokes, personality-bearing bodies,
+volatile/atomic callee loads, operand bundles, tail calls, convergence,
+nonduplicable operations and returns-twice functions remain unchanged.
+Ordinary LLVM inlining still owns further expansion. O0/O1 do not promote calls;
+there are no guessed branch weights, `!callees` exhaustive-family assertions,
+vptr invariance or added alias/effect promises. Temporary inventories are
+removed after the decision so repeated emission does not promote a fallback
+again. Mixed small polymorphic loops are the motivating family, not a source
+name match; runtime and code-size acceptance remain measured obligations.
+
+`llvm_dispatch_layout` checks admitted/rejected shapes, retained indirect
+fallbacks and O0/O3 native effects while the slot changes between calls and an
+unlisted callee executes. `llvm_dispatch_execution` retains phase, multiple-base,
+replacement and cleanup controls, and adds mixed user-record sums with a
+checked arithmetic failure after successful calls.
+
 #### Lifecycle Dispatch
 
 The backend-neutral lifecycle-dispatch contract, by owner decision on
@@ -5592,6 +5629,18 @@ remain obligations before O-LLVM-10 can complete.
 | Instance receiver | Explicit receiver address after result/failure destinations. |
 | Caller attribution | Exact site index and pinned artifact pointer, after receiver. This is attribution, not permission to originate a failure. |
 | Ordinary arguments | Source order, scalars/addresses directly and address-only values through already-staged storage. MIR owns moves, loans, cleanup and publication. |
+
+For optimized whole-program code, a private direct-call function may transport
+an integer (up to 64 bits), `float`, or `double` result alongside its success
+flag in an LLVM aggregate return. The ABI planner marks eligible scalar result
+destinations; the transformation independently requires every result-address
+use to be an ordinary store immediately followed by a successful return, with
+a store on every successful return. It rejects result-address reads, escapes,
+early/volatile/atomic publication, indirect/address-taken targets, and open
+signatures. Callers store the returned value only on the successful edge;
+failure leaves their destination untouched. This removes private scalar
+out-parameter traffic without changing MIR failure, cleanup, or public/native
+calling contracts. O0 retains the original convention.
 
 This table describes the **implemented** convention, not a final long-term
 failure-transport decision. The reviewed
@@ -5772,6 +5821,18 @@ detector, change failure routing, or apply to explicit wrapping, saturation or
 overflow-predicate operations. This preserves facts for LLVM's ordinary range,
 induction-variable and loop optimizations instead of feeding them the overflow
 intrinsic's wrapping result lane.
+
+Successful integer squares also retain a bounded result postcondition. For
+`k*x*x`, where `k` is a positive constant and the first product is already
+nonwrapping, the upper bound is `k*floor(sqrt(MAX/k))^2`. The backend computes
+this bound with integer arithmetic and emits an assumption only after the
+original overflow guard succeeds. It applies to ordinary signed or unsigned
+integers through 64 bits. Operand identity must be explicit SSA identity or
+repeated ordinary loads on one unchanged, nonsynchronizing path; intervening
+writes, opaque calls, volatile/atomic accesses, and differing addresses reject
+the memory form. Explicit wrapping products do not qualify. This lets LLVM
+remove later redundant bounds and overflow checks, including small offsets
+after a square, while preserving the original overflow and cleanup behavior.
 
 After the normal LLVM optimization pipeline has used those facts, a final
 arithmetic canonicalization reuses an existing overflow intrinsic's result lane

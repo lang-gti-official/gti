@@ -4,10 +4,13 @@
 #include "checked_ranges.h"
 #include "checked_reductions.h"
 #include "debug_info.h"
+#include "dispatch.h"
 #include "instrumentation.h"
+#include "loop_invariants.h"
 #include "private_atomics.h"
 
 #include <llvm/ADT/DenseMap.h>
+#include <llvm/ADT/SmallVector.h>
 #include <llvm/CodeGen/TargetLowering.h>
 #include <llvm/CodeGen/TargetSubtargetInfo.h>
 #include <llvm/Config/llvm-config.h>
@@ -29,7 +32,11 @@
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/TargetParser/Host.h>
 #include <llvm/TargetParser/Triple.h>
+#include <llvm/Transforms/IPO/HotColdSplitting.h>
+#include <llvm/Transforms/Utils/BasicBlockUtils.h>
+#include <llvm/Transforms/Utils/Cloning.h>
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <functional>
@@ -39,6 +46,289 @@
 #include <stdexcept>
 
 namespace lang::native_llvm {
+
+bool specializeBoundedRecursion(llvm::Module &module) {
+  // This is a bounded first profile of call-site range specialization. These
+  // operations bound every defined result without a memory, path, nowrap or
+  // undef assumption. In particular, never look through freeze: freezing a
+  // poison remainder may yield a value outside the remainder's domain.
+  const auto maximum = [](llvm::Value *value) -> std::optional<llvm::APInt> {
+    if (auto *binary = llvm::dyn_cast<llvm::BinaryOperator>(value)) {
+      if (binary->getOpcode() == llvm::Instruction::URem) {
+        const auto *divisor =
+            llvm::dyn_cast<llvm::ConstantInt>(binary->getOperand(1));
+        if (divisor && !divisor->isZero())
+          return divisor->getValue() - 1;
+      }
+      if (binary->getOpcode() == llvm::Instruction::And)
+        for (auto &operand : binary->operands())
+          if (const auto *mask =
+                  llvm::dyn_cast<llvm::ConstantInt>(operand.get()))
+            return mask->getValue();
+    }
+    if (const auto *extension = llvm::dyn_cast<llvm::ZExtInst>(value))
+      return llvm::APInt::getLowBitsSet(
+          value->getType()->getIntegerBitWidth(),
+          extension->getSrcTy()->getIntegerBitWidth());
+    return std::nullopt;
+  };
+  constexpr unsigned maximumClones = 8;
+  constexpr unsigned maximumBodyInstructions = 192;
+  constexpr unsigned maximumAddedInstructions = 1024;
+  llvm::SmallVector<llvm::Function *> candidates;
+  for (auto &function : module)
+    if (!function.isDeclaration() && function.hasLocalLinkage() &&
+        !function.isVarArg() && !function.hasPersonalityFn() &&
+        !function.hasAddressTaken() && !function.hasComdat() &&
+        !function.hasFnAttribute("gti.range-specialized") &&
+        !function.hasFnAttribute(llvm::Attribute::OptimizeNone) &&
+        !function.hasFnAttribute(llvm::Attribute::OptimizeForSize) &&
+        !function.hasFnAttribute(llvm::Attribute::MinSize) &&
+        !function.hasFnAttribute(llvm::Attribute::Convergent) &&
+        !function.hasFnAttribute(llvm::Attribute::NoDuplicate) &&
+        !function.hasFnAttribute(llvm::Attribute::ReturnsTwice) &&
+        function.size() <= 32 &&
+        function.getInstructionCount() <= maximumBodyInstructions)
+      candidates.push_back(&function);
+  unsigned clones = 0, added = 0;
+  for (auto *function : candidates) {
+    llvm::SmallVector<llvm::CallInst *> recursive;
+    bool eligible = true, checkedArithmetic = false;
+    for (auto &block : *function) {
+      if (block.hasAddressTaken())
+        eligible = false;
+      for (auto &instruction : block) {
+        if (llvm::isa<llvm::WithOverflowInst>(instruction))
+          checkedArithmetic = true;
+        if (auto *call = llvm::dyn_cast<llvm::CallBase>(&instruction)) {
+          if (!llvm::isa<llvm::CallInst>(call) || call->isConvergent() ||
+              call->cannotDuplicate() || call->getNumOperandBundles() ||
+              call->hasFnAttr(llvm::Attribute::ReturnsTwice) ||
+              llvm::cast<llvm::CallInst>(call)->isMustTailCall())
+            eligible = false;
+          if (call->getCalledFunction() == function) {
+            if (call->getFunctionType() != function->getFunctionType() ||
+                call->getCallingConv() != function->getCallingConv())
+              eligible = false;
+            else if (auto *direct = llvm::dyn_cast<llvm::CallInst>(call))
+              recursive.push_back(direct);
+          }
+        }
+      }
+    }
+    if (!eligible || !checkedArithmetic || recursive.empty())
+      continue;
+    llvm::SmallVector<std::pair<unsigned, llvm::APInt>> bounds;
+    for (auto &argument : function->args()) {
+      const auto *integer =
+          llvm::dyn_cast<llvm::IntegerType>(argument.getType());
+      if (!integer || integer->getBitWidth() < 8 ||
+          integer->getBitWidth() > 64 ||
+          argument.hasAttribute(llvm::Attribute::Range))
+        continue;
+      std::optional<llvm::APInt> bound;
+      for (auto *call : recursive) {
+        const auto known = maximum(call->getArgOperand(argument.getArgNo()));
+        if (!known) {
+          bound.reset();
+          break;
+        }
+        bound = bound ? llvm::APIntOps::umax(*bound, *known) : *known;
+      }
+      // Leave minor refinements to ordinary interprocedural propagation.
+      if (bound && bound->getActiveBits() + 4 <= integer->getBitWidth()) {
+        bounds.emplace_back(argument.getArgNo(), *bound);
+        if (bounds.size() == 2)
+          break;
+      }
+    }
+    const auto cost = function->getInstructionCount();
+    if (bounds.empty() || clones == maximumClones ||
+        cost > maximumAddedInstructions - added)
+      continue;
+    llvm::ValueToValueMapTy mapping;
+    auto *specialized = llvm::CloneFunction(function, mapping);
+    specialized->setName(function->getName() + ".bounded");
+    specialized->addFnAttr("gti.range-specialized");
+    function->addFnAttr("gti.range-specialized");
+    for (const auto &[index, bound] : bounds)
+      specialized->addParamAttr(
+          index, llvm::Attribute::get(
+                     module.getContext(), llvm::Attribute::Range,
+                     llvm::ConstantRange(llvm::APInt(bound.getBitWidth(), 0),
+                                         bound + 1)));
+    // A parameter range preserves poison semantics; unlike llvm.assume it
+    // does not introduce a new poison-consuming operation at function entry.
+    // Both the original and cloned self calls satisfy the recorded ranges.
+    // Other callers keep the original unrestricted signature and failures.
+    for (auto *call : recursive) {
+      auto *copy = llvm::cast<llvm::CallInst>(mapping.lookup(call));
+      copy->setCalledFunction(specialized);
+      call->setCalledFunction(specialized);
+    }
+    ++clones;
+    added += cost;
+  }
+  return clones != 0;
+}
+
+void promotePrivateScalarResults(llvm::Module &module) {
+  const auto nextInstruction = [](llvm::Instruction *instruction) {
+    do {
+      instruction = instruction->getNextNode();
+    } while (llvm::isa_and_nonnull<llvm::DbgInfoIntrinsic>(instruction));
+    return instruction;
+  };
+  const auto previousInstruction = [](llvm::Instruction *instruction) {
+    do {
+      instruction = instruction->getPrevNode();
+    } while (llvm::isa_and_nonnull<llvm::DbgInfoIntrinsic>(instruction));
+    return instruction;
+  };
+  llvm::SmallVector<llvm::Function *> candidates;
+  for (auto &function : module)
+    if (!function.isDeclaration() && function.hasLocalLinkage() &&
+        !function.isVarArg() && function.arg_size() > 0 &&
+        function.getReturnType()->isIntegerTy(1) &&
+        function.getAttributes().hasParamAttr(0, "gti.scalar-result"))
+      candidates.push_back(&function);
+  for (auto *function : candidates) {
+    llvm::SmallVector<llvm::CallInst *> calls;
+    bool eligible = !function->use_empty();
+    for (auto &use : function->uses()) {
+      auto *call = llvm::dyn_cast<llvm::CallInst>(use.getUser());
+      if (!call || !call->isCallee(&use) ||
+          call->getFunctionType() != function->getFunctionType() ||
+          call->isMustTailCall() || call->getNumOperandBundles() != 0 ||
+          call->isConvergent()) {
+        eligible = false;
+        break;
+      }
+      calls.push_back(call);
+    }
+    if (!eligible)
+      continue;
+    llvm::Type *scalar = nullptr;
+    llvm::Align alignment(1);
+    llvm::SmallVector<llvm::StoreInst *> stores;
+    llvm::SmallVector<llvm::ReturnInst *> returns;
+    auto *destination = function->getArg(0);
+    // The result address never participates in the computation or escapes.
+    // Each write is the final operation of a successful return, so moving it
+    // to the caller cannot reorder it with another observable callee action,
+    // even if the caller's destination aliases an ordinary input.
+    for (auto *user : destination->users()) {
+      auto *store = llvm::dyn_cast<llvm::StoreInst>(user);
+      auto *returned =
+          store
+              ? llvm::dyn_cast_or_null<llvm::ReturnInst>(nextInstruction(store))
+              : nullptr;
+      auto *status =
+          returned
+              ? llvm::dyn_cast<llvm::ConstantInt>(returned->getReturnValue())
+              : nullptr;
+      auto *type = store ? store->getValueOperand()->getType() : nullptr;
+      if (!store || store->getPointerOperand() != destination ||
+          store->isVolatile() || store->isAtomic() || !status ||
+          !status->isOne() ||
+          (!type->isIntegerTy() && !type->isFloatTy() && !type->isDoubleTy()) ||
+          (type->isIntegerTy() && type->getIntegerBitWidth() > 64) ||
+          (scalar && scalar != type)) {
+        eligible = false;
+        break;
+      }
+      alignment = stores.empty() ? store->getAlign()
+                                 : std::min(alignment, store->getAlign());
+      scalar = type;
+      stores.push_back(store);
+    }
+    if (!eligible || stores.empty())
+      continue;
+    for (auto &block : *function)
+      if (auto *returned =
+              llvm::dyn_cast<llvm::ReturnInst>(block.getTerminator())) {
+        auto *status =
+            llvm::dyn_cast<llvm::ConstantInt>(returned->getReturnValue());
+        auto *store = llvm::dyn_cast_or_null<llvm::StoreInst>(
+            previousInstruction(returned));
+        if (!status ||
+            (status->isOne() &&
+             (!store || store->getPointerOperand() != destination))) {
+          eligible = false;
+          break;
+        }
+        returns.push_back(returned);
+      }
+    if (!eligible)
+      continue;
+    auto &context = module.getContext();
+    auto *resultType =
+        llvm::StructType::get(scalar, llvm::Type::getInt1Ty(context));
+    llvm::SmallVector<llvm::Type *> parameterTypes;
+    llvm::SmallVector<llvm::AttributeSet> parameterAttributes;
+    for (unsigned index = 1; index < function->arg_size(); ++index) {
+      parameterTypes.push_back(function->getArg(index)->getType());
+      parameterAttributes.push_back(
+          function->getAttributes().getParamAttrs(index));
+    }
+    auto *promoted = llvm::Function::Create(
+        llvm::FunctionType::get(resultType, parameterTypes, false),
+        function->getLinkage(), function->getName() + ".scalar", module);
+    promoted->copyAttributesFrom(function);
+    promoted->setAttributes(llvm::AttributeList::get(
+        context, function->getAttributes().getFnAttrs(), {},
+        parameterAttributes));
+    promoted->copyMetadata(function, 0);
+    promoted->setSubprogram(function->getSubprogram());
+    for (unsigned index = 1; index < function->arg_size(); ++index) {
+      auto *argument = promoted->getArg(index - 1);
+      argument->takeName(function->getArg(index));
+      function->getArg(index)->replaceAllUsesWith(argument);
+    }
+    promoted->splice(promoted->begin(), function);
+    for (auto *returned : returns) {
+      auto *status = llvm::cast<llvm::ConstantInt>(returned->getReturnValue());
+      llvm::Value *value = llvm::PoisonValue::get(scalar);
+      if (status->isOne()) {
+        auto *store =
+            llvm::cast<llvm::StoreInst>(previousInstruction(returned));
+        value = store->getValueOperand();
+        store->eraseFromParent();
+      }
+      llvm::IRBuilder<> builder(returned);
+      llvm::Value *result = builder.CreateInsertValue(
+          llvm::PoisonValue::get(resultType), value, 0);
+      result = builder.CreateInsertValue(result, status, 1);
+      builder.CreateRet(result);
+      returned->eraseFromParent();
+    }
+    for (auto *call : calls) {
+      llvm::SmallVector<llvm::Value *> arguments;
+      llvm::SmallVector<llvm::AttributeSet> attributes;
+      for (unsigned index = 1; index < call->arg_size(); ++index) {
+        arguments.push_back(call->getArgOperand(index));
+        attributes.push_back(call->getAttributes().getParamAttrs(index));
+      }
+      llvm::IRBuilder<> builder(call);
+      auto *result = builder.CreateCall(promoted, arguments);
+      result->setCallingConv(call->getCallingConv());
+      result->setAttributes(llvm::AttributeList::get(
+          context, call->getAttributes().getFnAttrs(), {}, attributes));
+      result->setDebugLoc(call->getDebugLoc());
+      auto *status = builder.CreateExtractValue(result, 1);
+      call->replaceAllUsesWith(status);
+      auto *publication =
+          llvm::SplitBlockAndInsertIfThen(status, call->getNextNode(), false);
+      builder.SetInsertPoint(publication);
+      builder.CreateAlignedStore(builder.CreateExtractValue(result, 0),
+                                 call->getArgOperand(0), alignment);
+      call->eraseFromParent();
+    }
+    promoted->takeName(function);
+    function->eraseFromParent();
+  }
+}
+
 namespace {
 
 class Diagnostics final : public llvm::DiagnosticHandler {
@@ -652,6 +942,8 @@ BackendArtifact Session::emitObject() {
     }
   }
   const auto mode = diagnosticMode(options_.instrumentation);
+  if (options_.optimization != LlvmCodegenOptimization::None)
+    promotePrivateScalarResults(module_);
   if (instrumentsUndefinedMemory(mode)) {
     instrumentUndefinedMemory(module_);
     verify();
@@ -668,21 +960,62 @@ BackendArtifact Session::emitObject() {
   llvm::FunctionAnalysisManager functions;
   llvm::CGSCCAnalysisManager cgscc;
   llvm::ModuleAnalysisManager modules;
-  llvm::PassBuilder builder(machine_.get());
+  const auto level = pipelineLevel(options_.optimization);
+  llvm::PipelineTuningOptions tuning;
+  // LLVM's library defaults enable the loop vectorizer but leave SLP off.
+  // Independent adjacent scalar operations need the latter even without a
+  // loop. Keep its ordinary target cost model and all checked/strict semantics.
+  tuning.SLPVectorization = level == llvm::OptimizationLevel::O2 ||
+                            level == llvm::OptimizationLevel::O3;
+  if (options_.optimization == LlvmCodegenOptimization::Aggressive)
+    tuning.InlinerThreshold = 400;
+  llvm::PassBuilder builder(machine_.get(), tuning);
   registerPrivateAtomicPass(builder);
   registerCheckedOffsetPass(builder);
   registerCheckedReductionPass(builder);
   registerCheckedRangePass(builder);
+  registerCheckedInvariantAddPass(builder);
   builder.registerModuleAnalyses(modules);
   builder.registerCGSCCAnalyses(cgscc);
   builder.registerFunctionAnalyses(functions);
   builder.registerLoopAnalyses(loops);
   builder.crossRegisterProxies(loops, functions, cgscc, modules);
-  const auto level = pipelineLevel(options_.optimization);
+  if (level == llvm::OptimizationLevel::O2 ||
+      level == llvm::OptimizationLevel::O3)
+    (void)promoteGuardedDispatchCalls(module_);
   auto pipeline = level == llvm::OptimizationLevel::O0
                       ? builder.buildO0DefaultPipeline(level)
                       : builder.buildPerModuleDefaultPipeline(level);
   pipeline.run(module_, modules);
+  if (level == llvm::OptimizationLevel::O2 ||
+      level == llvm::OptimizationLevel::O3) {
+    const bool specialized = specializeBoundedRecursion(module_);
+    if (specialized)
+      modules.invalidate(module_, llvm::PreservedAnalyses::none());
+    // Inlining exposes complete checked-failure/cleanup regions only after
+    // the ordinary pipeline has simplified their ownership state. Outline
+    // LLVM's profitable cold regions, then give the now-smaller hot helpers
+    // one ordinary simplification/optimization round. No failure edge is
+    // erased or assigned invented likelihood, and there is no retry loop.
+    const auto outlined = llvm::HotColdSplittingPass().run(module_, modules);
+    modules.invalidate(module_, outlined);
+    const auto optimizeExposed = [&] {
+      auto exposed = builder.buildModuleSimplificationPipeline(
+          level, llvm::ThinOrFullLTOPhase::None);
+      exposed.addPass(builder.buildModuleOptimizationPipeline(
+          level, llvm::ThinOrFullLTOPhase::None));
+      exposed.run(module_, modules);
+    };
+    if (specialized || !outlined.areAllPreserved())
+      optimizeExposed();
+    // The smaller helpers above can now inline and create pointer PHIs that
+    // did not exist after the first pipeline. Prove those late loop invariants
+    // before one final ordinary cleanup round; do not retry to a fixed point.
+    if (foldInductivePointerLoops(module_)) {
+      modules.invalidate(module_, llvm::PreservedAnalyses::none());
+      optimizeExposed();
+    }
+  }
   reuseCheckedArithmeticResults(module_);
   modules.invalidate(module_, llvm::PreservedAnalyses::none());
   if (instrumentsAddress(mode))

@@ -1,0 +1,57 @@
+import std.string;
+import std.vector;
+
+class BoundsCleanup {
+public:
+  BoundsCleanup() {}
+  ~BoundsCleanup() { std::println(22); }
+};
+
+void evaluate(int mode, int input) {
+  BoundsCleanup cleanup{};
+  mut int index = input - 10;
+  if (input == 0) index = -2147483647 - 1;
+  if (input == 1) index = 2147483647;
+  mut int values[8] = {};
+  if (mode == 0) {
+    values[index] = 3;
+    std::println(index + 1);
+  } else if (mode == 1) {
+    std::println(values[index]);
+    index = 8;
+    std::println(values[index]);
+  } else if (mode == 2) {
+    if (index % 2 == 0) values[index] = 3;
+    std::println(index + 1);
+  } else if (mode == 3) {
+    mut std::vector<int> items{};
+    for (mut int i = 0; i < 8; i++) items.push_back(i);
+    std::println(items[std::size_t(index)]);
+    items.pop_back();
+    std::println(items[std::size_t(index)]);
+  } else if (mode == 4) {
+    values[index] = 3;
+    index = 2147483647;
+    std::println(index + 1);
+  } else if (mode == 5) {
+    for (mut int round = 0; round < 3; round++) {
+      values[index] = 3;
+      index = index + 1;
+    }
+    std::println(index);
+  } else if (mode == 6) {
+    values[0] = index;
+    values[values[0]] = 2147483647;
+    std::println(values[0] + 1);
+  } else {
+    mut int matrix[2][3] = {};
+    std::println(matrix[index][index + 1]);
+  }
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc != 3) return 10;
+  evaluate(int(argv[std::size_t(1)].size()),
+           int(argv[std::size_t(2)].size()));
+  return 0;
+}

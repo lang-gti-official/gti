@@ -644,7 +644,9 @@ namespace std {
       if (end > other.size()) {
         gti_internal::index_bounds_check(end, other.size());
       }
-      this.reserve(end - begin);
+      // This owner is still empty: construct its final storage directly rather
+      // than entering the general growth/relocation path used by reserve().
+      this.data = detail::terminated_prefix_owner(end - begin);
       unsafe { this.data.append(other.view(), begin, end - begin); }
     }
 
@@ -678,7 +680,34 @@ namespace std {
     size_t find(string_view needle) { return this.find(needle, size_t(0)); }
 
     size_t find(char needle, size_t position) {
-      for (mut size_t index = position; index < this.data.length(); index++) {
+      size_t length = this.data.length();
+      if (position >= length) { return string::npos; }
+      mut size_t index = position;
+      // Compare independent code units in a complete window before looking
+      // for the first match. The reduction permits vectorization without a
+      // target-specific byte operation or a read beyond the counted string.
+      while (length - index >= size_t(16)) {
+        mut uint8_t matched = uint8_t(0);
+        unsafe {
+          for (mut size_t lane = size_t(0); lane < size_t(16); lane++) {
+            size_t selected = gti_internal::integer_wrapping_add(index, lane);
+            matched |= this.data.read_unchecked(selected) == needle ? uint8_t(1) : uint8_t(0);
+          }
+        }
+        if (matched != uint8_t(0)) {
+          // The first match is inside this complete window. Keep its rescan
+          // bounded as well, without a dynamic string-length check per byte.
+          unsafe {
+            for (mut size_t lane = size_t(0); lane < size_t(16); lane++) {
+              size_t selected = gti_internal::integer_wrapping_add(index, lane);
+              if (this.data.read_unchecked(selected) == needle) { return selected; }
+            }
+          }
+        }
+        // The full-window guard proves this addition remains <= length.
+        index = gti_internal::integer_wrapping_add(index, size_t(16));
+      }
+      for (; index < length; index++) {
         unsafe { if (this.data.read_unchecked(index) == needle) { return index; } }
       }
       return string::npos;
