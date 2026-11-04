@@ -1,0 +1,108 @@
+import std.vector;
+import std.span;
+import std.memory;
+
+class ByteOwner {
+  uint8_t& byte;
+public:
+  ByteOwner(uint8_t& byte) : byte(byte) {}
+  uint8_t& get() { return this.byte; }
+  std::string_view text() {
+    unsafe {
+      const char* first = std::typed_address<char>(std::erase_address(&this.byte));
+      auto text = std::assume_string_view(first, std::size_t(1), this);
+      return text;
+    }
+  }
+  c_string ctext() {
+    unsafe {
+      const char* first = std::typed_address<char>(std::erase_address(&this.byte));
+      auto text = std::assume_c_string(first, this);
+      return text;
+    }
+  }
+};
+
+std::string_view copied_text(ByteOwner& owner) {
+  unsafe {
+    const char* first = std::typed_address<char>(std::erase_address(&owner.get()));
+    auto text = std::assume_string_view(first, std::size_t(1), owner);
+    return text;
+  }
+}
+
+c_string direct_c_text(ByteOwner& owner) {
+  unsafe {
+    const char* first = std::typed_address<char>(std::erase_address(&owner.get()));
+    return std::assume_c_string(first, owner);
+  }
+}
+c_string copied_c_text(ByteOwner& owner) {
+  unsafe {
+    const char* first = std::typed_address<char>(std::erase_address(&owner.get()));
+    auto text = std::assume_c_string(first, owner);
+    return text;
+  }
+}
+
+int check_text(ByteOwner& owner) {
+  unsafe {
+    const char* first = std::typed_address<char>(std::erase_address(&owner.get()));
+    std::string_view text = std::assume_string_view(first, std::size_t(1), owner);
+    return text.size() == std::size_t(1) && text[0] == 'h' ? 0 : 1;
+  }
+}
+
+int check_span(std::span<uint8_t>& input) {
+  unsafe {
+    const char* first = std::typed_address<char>(
+        std::erase_address(&input.get_unchecked(std::size_t(0))));
+    std::string_view text = std::assume_string_view(first, input.size(), input);
+    return text.size() == std::size_t(2) && text[1] == 'i' ? 0 : 2;
+  }
+}
+
+class Stream {
+  mut std::mutable_span<uint8_t> bytes;
+public:
+  Stream(std::mutable_span<uint8_t> storage) : bytes(std::move(storage)) {}
+  std::size_t inspect() {
+    auto view = this.bytes.as_span();
+    return view.size();
+  }
+  std::size_t inspect_mut() mut {
+    auto view = this.bytes.as_span();
+    auto copy = view;
+    return copy.size();
+  }
+};
+
+std::size_t shared_prefix(mut std::mutable_span<uint8_t>& input) {
+  auto view = input.as_span();
+  auto prefix = view.subspan(std::size_t(0), view.size());
+  return prefix.size();
+}
+
+int main() {
+  uint8_t bytes[2] = {uint8_t(104), uint8_t(0)};
+  uint8_t& byte = bytes[0];
+  ByteOwner owner{byte};
+  if (check_text(owner) != 0 || copied_text(owner)[0] != 'h') { return 1; }
+  if (direct_c_text(owner) != copied_c_text(owner)) { return 6; }
+  if (owner.text()[0] != 'h' || owner.ctext() != copied_c_text(owner)) { return 8; }
+  unsafe {
+    const uint8_t* first = std::c_string_bytes(copied_c_text(owner));
+    if (first[0] != uint8_t(104) || first[1] != uint8_t(0)) { return 7; }
+  }
+  mut std::vector<uint8_t> data = {uint8_t(104), uint8_t(105)};
+  { auto view = data.as_span(); if (check_span(view) != 0) { return 2; } }
+  {
+    mut auto storage = data.as_mutable_span();
+    if (shared_prefix(storage) != std::size_t(2)) { return 9; }
+    mut Stream stream{std::move(storage)};
+    if (stream.inspect() != std::size_t(2)) { return 3; }
+    if (stream.inspect_mut() != std::size_t(2)) { return 4; }
+  }
+  data[std::size_t(1)] = uint8_t(33);
+  return data[std::size_t(1)] == uint8_t(33) ? 0 : 5;
+}

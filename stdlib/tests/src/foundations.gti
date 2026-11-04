@@ -50,6 +50,7 @@ class increasing_add {
   mut int multiplier = 1;
 
 public:
+  increasing_add() = default;
   int operator()(int total, int& value) mut {
     int result = total + value * this.multiplier;
     this.multiplier++;
@@ -61,6 +62,7 @@ class increasing_product {
   mut int bonus = 0;
 
 public:
+  increasing_product() = default;
   int operator()(int& left, int& right) mut {
     this.bonus++;
     return left * right + this.bonus;
@@ -71,6 +73,7 @@ class increasing_reduce {
   mut int bonus = 0;
 
 public:
+  increasing_reduce() = default;
   int operator()(int total, int& value) mut {
     this.bonus++;
     return total + value + this.bonus;
@@ -81,6 +84,7 @@ class increasing_transform {
   mut int multiplier = 1;
 
 public:
+  increasing_transform() = default;
   int operator()(int& value) mut {
     int result = value * this.multiplier;
     this.multiplier++;
@@ -92,6 +96,7 @@ class alternating_predicate {
   mut bool accept = false;
 
 public:
+  alternating_predicate() = default;
   bool operator()(int& value) mut {
     this.accept = !this.accept;
     return this.accept;

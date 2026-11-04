@@ -1,5 +1,16 @@
 # Compiler Verification
 
+## Google Spot runner pilot
+
+`gcp_spot_runner` is entirely offline: strict policy parsing, disabled/expired
+admission, currency/account pinning, integer reservations, daily/total limits,
+missing/corrupt history, four competing controller processes, provider creation
+flags and returned-resource checks, verified IAP transport, cancellation and
+disconnection, unknown insert responses and failed deletion. `remote_runner`
+retains actual disposable Git/process/snapshot/cleanup regressions for fixed
+hosts. These are not live-cloud or billing receipts. Owner commissioning and
+expansion gates live in the [Spot contract](agent-workflow.md#opt-in-google-spot-pilot).
+
 ## Default module discovery
 
 `project_model` owns declaration-driven registration, explicit interface and
@@ -424,10 +435,14 @@ from the bounded-case-workers list in `tests/TestThroughput.cmake`
 paused full-suite runs while on battery power, so this change merged after
 targeted validation only. The full suite was not rerun on the final head.
 
-Not covered: constructing a carrier class directly from a returned reference
-(`Cursor(box.get())`) still stops in MIR construction, with "carrier reference
-result requires one exact stored dependency" for literal text and "dependent
-text value is relayed where its text field may outlive" for owned text.
+The initial slice did not cover constructing a carrier class directly from a
+returned reference. That boundary is now supported: `Cursor(box.get())`, a
+constructor receiving the same returned reference through a named binding,
+and an unrelated carrier of `Counter&` preserve the referent and its external
+owner. `accessor_text_carriers.gti` covers the literal-backed, owned-text,
+named-reference and unrelated-referent forms. The issue-reconciliation audit
+also confirms on published preview that changing the text owner while the
+carrier is live remains `GTI-S2017`.
 
 ## Dependent reference results (0.468.1)
 
@@ -1195,6 +1210,21 @@ status: it now builds.
 Deferred field storage (backend: a passive bound shell after other fields
 lives in an anonymous union and is published at its MIR point) is covered at
 three layers.
+
+`borrowed_field_publication_runtime` additionally checks direct and relayed
+copies of a stored text reference, direct and nested writes through stored
+mutable references, two concrete generic holders, and a scalar assignment
+between staging a callable and invoking it. It runs C++ standard, optimization,
+no-elide and sanitizer modes plus LLVM O0–O3. `carrier_shell_references` rejects
+forged text-relay origins and missing external owner dependencies, while
+`testBorrowedFieldCompoundAssignment` rejects forged stored-field projections.
+
+`owning_expression_transfers` checks discarded conditional and comma
+assignments with exact destructor counts, both branches, loop increments,
+failure ordering, and genuine temporary arms that remain live until the full
+expression ends. `testDiscardedOwningAssignment` independently rejects forged
+temporary identities, unconditional drops of inactive conditional slots, and
+missing cleanup obligations.
 
 `cpp_mir_body_emitter_text`:
 - `testMovedPassiveFieldAfterFallibleSibling` now requires the moved `Cursor`
@@ -8107,6 +8137,9 @@ whole-program HIR exists, covering array extents, static assertions, and
 discarded-branch exclusion. Completed-body closure tests reject missing roots
 and callees; ordinary failure-metadata/MIR verification still succeeds, while
 whole-program backend publication rejects the intentionally unsealed closure.
+Tracked-intrinsic staging also retains the exact semantic snapshot, rejects
+foreign declaration witnesses and erased snapshot identity, and proves that
+this identity alone never permits whole-program backend publication.
 Required-expression arithmetic failures retain their semantic diagnostic code
 and original source operator. Existing enum and returned-view evaluation stays
 covered while those families await MIR-profile migration.
@@ -9452,6 +9485,8 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `typed_differential_smoke` | one fixed real-compiler differential batch comparing original/transformed GTI, the independent evaluator, and independent C++ at O0/O3, plus injected evaluator/reference/GTI drift and retained evidence |
 | `feature_interaction_model` | constrained pairwise/selected-triple and full three-way coverage, seeded typed source generation, independent value/effect/cleanup expectations, metamorphic renaming, failure classifiers, retained evidence, and predicate-preserving bounded reduction |
 | `feature_interaction_smoke` | three fixed interaction programs through the real optimized compiler at C++20/C++23 and O0/O3, original/renamed variants, repeated execution, exact destructor/call/output checks, and negative ownership admission controls |
+| `stdlib_package_runtime` | copy the real `stdlib/tests` package into isolated directories and run its module graph plus declared native C++ source with LLVM/C++ in dev/release profiles; require the complete numeric/foundation success output |
+| `stdlib_api_contracts` | execute stateful set-policy swaps on LLVM/C++ at O0/O3, reject borrowed comparator/hash/equality policies at the public swap call, and reject unformattable first/middle/last arguments across all formatting/printing/panic overloads at the caller |
 | `stdlib_surface_manifest` | complete stdlib-source fingerprints and executable/scaffold/unsupported classification; injected missing-source, stale-source, missing-case, and wrong-case-kind rejection |
 | `stdlib_surface` | every currently classified executable stdlib entry through the production compiler/native-driver path at O0/O3 with exact exit/stdout/stderr, including counted I/O create/write/seek/chunk-read/append/close, standard streams, and strict Base64/hexadecimal encoding and decoding over all byte values, plus bounded expected diagnostics for unsupported surfaces. Each native build has a 300-second limit unless its case records a longer one, at most 900 seconds, with a `build_timeout_reason`; no case currently does |
 | `stdlib_include_sweep` | every shipped `std` module independently reaches C++ emission from an import-only source unit, including unused generic declarations |
@@ -11022,10 +11057,19 @@ host target to the LoweredProgram helper. Refreshing one measured profile keeps
 the other profile's reviewed counts; incomplete observations cannot update it.
 `mir_census_profile_controls` checks target selection, both consumers, malformed
 profiles and update isolation without claiming native execution evidence.
-The C++ body-emitter corpus retains example 183, `immediate-functions.gti`,
-in its structural readiness sweep and asserts the explicit unsupported
-`aggregate constant publication` boundary in its emission sweep. The native
-corpus oracle independently executes that LLVM-only example at O0 and O3.
+The remaining Linux differences in examples 087 and 089 come from native C
+scalar identity: `c_size_t` aliases C `unsigned long` on both Unix targets,
+while `uint64_t` aliases `unsigned long` on Linux and `unsigned long long` on
+macOS. Linux therefore shares the `std::layout_of` specialization used by
+storage allocation and the process resource's C-size bound; macOS retains two.
+Explicit target selection reproduces this difference on the same host, so it
+is not host-container iteration drift.
+The C++ body-emitter corpus retains examples 182, `bounded-array-borrows.gti`,
+and 183, `immediate-functions.gti`, in its structural readiness sweep and
+asserts their explicit unsupported `generic fixed-array reference signatures`
+and `aggregate constant publication` boundaries in its emission sweep. The
+native corpus oracle independently executes both LLVM-only examples at O0
+and O3.
 
 The base-constructor stage gate retains the existing generated-base, owning
 payload-argument and field-after-base ordering mutations. Checked/effectful
@@ -11311,6 +11355,15 @@ Only those example entries and corresponding totals change; the complete
 corpus census/oracle must still be run by the combined acceptance campaign.
 
 ### Bounded case workers and development selections
+
+The C++ MIR corpus worker shares one immutable frontend result between its
+readiness and text-agreement sweeps when their source and target profile match.
+Both sweeps still build their own representation rows and plans and retain all
+body, rejection, deterministic-text and aggregate assertions. Concurrent-profile
+readiness cases keep a distinct default-profile analysis for agreement. This
+reuse is confined to a single-source worker; `GTI_CPP_MIR_CORPUS_NO_REUSE=1`
+retains the independent-analysis path for differential timing and evidence.
+
 
 `compiler_pipeline` validates the complete named-test manifest before execution.
 Configure `-DGTI_COMPILER_TEST_ISOLATE_CASES=ON` to run every listed compiler case

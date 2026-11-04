@@ -61,8 +61,14 @@ def stage(source, destination, sha):
     (target / 'PREVIEW_SOURCE').write_text(sha + '\n')
 
 
-def check_packages(directory, sha, run_id, attempt):
-    verify(directory, sha, run_id, attempt, REPOSITORY, channel='preview')
+def check_packages(directory, sha, run_id, attempt, *, remote_results=None):
+    if remote_results is None:
+        verify(directory, sha, run_id, attempt, REPOSITORY, channel='preview')
+    else:
+        if run_id is not None or attempt is not None:
+            raise ValueError('remote preview evidence must not claim a GitHub run')
+        from preview_remote import verify as verify_remote
+        verify_remote(directory, sha, remote_results)
     inclusion = None
     for platform in PLATFORMS:
         with tarfile.open(directory / f'gti-preview-{platform}.tar.gz', 'r:gz') as archive:
@@ -110,9 +116,9 @@ def admit(request, sha, published, inclusion):
     return True
 
 
-def publish(directory, sha, request, run_id, attempt):
+def publish(directory, sha, request, run_id, attempt, *, remote_results=None):
     # Recheck everything immediately before moving the dedicated rolling tag.
-    inclusion = check_packages(directory, sha, run_id, attempt)
+    inclusion = check_packages(directory, sha, run_id, attempt, remote_results=remote_results)
     refs = command('git', 'ls-remote', REMOTE, 'refs/tags/preview').split()
     lease = checked_sha(refs[0]) if refs else ''
     if not admit(request, sha, lease, inclusion):
@@ -127,7 +133,9 @@ def publish(directory, sha, request, run_id, attempt):
     command('git', 'push', '--porcelain', '--force-with-lease=refs/tags/preview:' + lease,
             'origin', sha + ':refs/tags/preview')
     notes = directory.parent / 'preview-notes.txt'
-    notes.write_text(f'Combined preview source `{sha}`.\n\n'
+    evidence = ('Owner-operated remote-runner production validation; provenance names the exact remote runs. '
+                'No GitHub Actions build attestation is claimed.\n\n' if remote_results is not None else '')
+    notes.write_text(f'Combined preview source `{sha}`.\n\n' + evidence +
                      'Includes work whose main review/full integration may still be pending.\n'
                      'Both packaged platforms passed the registered combined preview admission and installed checks.\n'
                      'This is not nightly, beta or stable validation. See preview.json for inclusion records.\n')

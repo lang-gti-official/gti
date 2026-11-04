@@ -928,6 +928,38 @@ bool completeObjectType(const MirProgram &program,
   return eligible(eligible, selected, 0);
 }
 
+namespace {
+// Caller attribution is independent of the operation's object/unsafe shape.
+// Admit only the immutable selected declaration's contract and the canonical
+// caller anchor, then retain it in the exact comparison. All other metadata
+// remains neutral; this helper cannot erase evidence before validation.
+bool exactWithIntrinsicCallerContract(const MirProgram &program,
+                                      const MirInstruction &instruction,
+                                      MirInstruction exact) {
+  if (const auto &contract = instruction.intrinsicCallContract; contract) {
+    if (instruction.kind != MirInstructionKind::Call ||
+        contract->declaration() == 0 ||
+        contract->snapshot() != program.semanticSnapshot() ||
+        contract->intrinsic() != instruction.intrinsic ||
+        contract->neverReturns() != exact.neverReturns ||
+        contract->tracksCaller() != instruction.tracksCaller ||
+        instruction.tracksCaller != instruction.callerLocation.has_value() ||
+        instruction.tracksCaller != (instruction.callerLocationSite != 0) ||
+        (instruction.callerLocation &&
+         program.failureMetadata().callerSiteFor(*instruction.callerLocation) !=
+             instruction.callerLocationSite) ||
+        (!instruction.tracksCaller && instruction.forwardsCallerLocation))
+      return false;
+    exact.intrinsicCallContract = contract;
+    exact.tracksCaller = instruction.tracksCaller;
+    exact.callerLocation = instruction.callerLocation;
+    exact.callerLocationSite = instruction.callerLocationSite;
+    exact.forwardsCallerLocation = instruction.forwardsCallerLocation;
+  }
+  return instruction == exact;
+}
+} // namespace
+
 bool objectRelocate(const MirProgram &program,
                     const MirInstruction &instruction) {
   const bool range =
@@ -977,7 +1009,7 @@ bool objectRelocate(const MirProgram &program,
                              .parameterTypes = instruction.parameterTypes,
                              .intrinsic = instruction.intrinsic,
                              .info = instruction.info};
-  return instruction == exact;
+  return exactWithIntrinsicCallerContract(program, instruction, exact);
 }
 
 bool objectDestroy(const MirProgram &program,
@@ -1018,7 +1050,7 @@ bool objectDestroy(const MirProgram &program,
                              .definedFailure = instruction.definedFailure,
                              .elementCleanup = instruction.elementCleanup,
                              .info = instruction.info};
-  return instruction == exact;
+  return exactWithIntrinsicCallerContract(program, instruction, exact);
 }
 
 bool objectLayoutQuery(const MirProgram &program,
@@ -1043,7 +1075,7 @@ bool objectLayoutQuery(const MirProgram &program,
                              .intrinsic = instruction.intrinsic,
                              .objectLayoutType = instruction.objectLayoutType,
                              .info = instruction.info};
-  if (instruction != exact)
+  if (!exactWithIntrinsicCallerContract(program, instruction, exact))
     return false;
   return completeObjectType(program, *instruction.objectLayoutType);
 }
@@ -1141,7 +1173,7 @@ bool objectConstruct(const MirProgram &program,
                              .constructorKind = instruction.constructorKind,
                              .info = instruction.info,
                              .lifecycle = instruction.lifecycle};
-  return instruction == exact;
+  return exactWithIntrinsicCallerContract(program, instruction, exact);
 }
 
 bool rawPointerConversion(const MirInstruction &instruction) {
@@ -1988,7 +2020,8 @@ bool functionPointerOperation(const MirProgram &program,
 }
 
 const MirLoan *textAddressResultLoan(const MirBody &body,
-                                     const MirInstruction &instruction) {
+                                     const MirInstruction &instruction,
+                                     const MirProgram *program) {
   const bool counted =
       instruction.intrinsic == IntrinsicKind::TextViewFromAddress;
   const std::size_t witness = counted ? 2 : 1;
@@ -2021,22 +2054,21 @@ const MirLoan *textAddressResultLoan(const MirBody &body,
     return nullptr;
   // No representation, failure, synchronization, lifecycle or future metadata
   // can acquire meaning merely by accompanying a valid carrier assertion.
-  const MirInstruction exact{.id = instruction.id,
-                             .kind = MirInstructionKind::Call,
-                             .hirValue = instruction.hirValue,
-                             .hirStatement = instruction.hirStatement,
-                             .callSite = instruction.callSite,
-                             .unsafeOperation =
-                                 UnsafeOperationKind::RawDereference,
-                             .result = instruction.result,
-                             .operands = instruction.operands,
-                             .parameterTypes = instruction.parameterTypes,
-                             .loan = instruction.loan,
-                             .borrowOrigin = BorrowOriginKind::Argument,
-                             .borrowArgument = witness,
-                             .borrowAccess = AccessMode::ReadOnly,
-                             .intrinsic = instruction.intrinsic,
-                             .info = instruction.info};
+  MirInstruction exact{.id = instruction.id,
+                       .kind = MirInstructionKind::Call,
+                       .hirValue = instruction.hirValue,
+                       .hirStatement = instruction.hirStatement,
+                       .callSite = instruction.callSite,
+                       .unsafeOperation = UnsafeOperationKind::RawDereference,
+                       .result = instruction.result,
+                       .operands = instruction.operands,
+                       .parameterTypes = instruction.parameterTypes,
+                       .loan = instruction.loan,
+                       .borrowOrigin = BorrowOriginKind::Argument,
+                       .borrowArgument = witness,
+                       .borrowAccess = AccessMode::ReadOnly,
+                       .intrinsic = instruction.intrinsic,
+                       .info = instruction.info};
   auto traits = semanticTraits(instruction.info.type);
   traits.ownership = OwnershipKind::Borrowed;
   traits.copyAssignable = false;
@@ -2044,7 +2076,31 @@ const MirLoan *textAddressResultLoan(const MirBody &body,
   traits.containsBorrowedState = true;
   traits.transferCapable = false;
   traits.shareCapable = false;
-  if (instruction != exact || instruction.info.traits != traits ||
+  // Body verification has no artifact table. It checks the source snapshot
+  // and forwarding relation here; program verification and every backend
+  // caller additionally require the canonical artifact-local caller anchor.
+  bool exactShape = false;
+  if (program) {
+    exactShape = exactWithIntrinsicCallerContract(*program, instruction, exact);
+  } else {
+    if (const auto &contract = instruction.intrinsicCallContract; contract) {
+      if (!contract->declaration() ||
+          contract->snapshot() != body.placeDomain.snapshot ||
+          contract->intrinsic() != instruction.intrinsic ||
+          contract->neverReturns() || !contract->tracksCaller() ||
+          !instruction.tracksCaller || !instruction.callerLocation ||
+          !instruction.callerLocationSite ||
+          instruction.forwardsCallerLocation != body.hasCallerLocation)
+        return nullptr;
+      exact.intrinsicCallContract = contract;
+      exact.tracksCaller = instruction.tracksCaller;
+      exact.callerLocation = instruction.callerLocation;
+      exact.callerLocationSite = instruction.callerLocationSite;
+      exact.forwardsCallerLocation = instruction.forwardsCallerLocation;
+    }
+    exactShape = instruction == exact;
+  }
+  if (!exactShape || instruction.info.traits != traits ||
       instruction.info.updateArithmeticType != SemanticType::Unknown)
     return nullptr;
   for (std::size_t index = 0; index <= witness; ++index) {

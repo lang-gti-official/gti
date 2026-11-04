@@ -734,6 +734,21 @@ target_include_directories(
 target_include_directories("gti_runtime" SYSTEM PRIVATE ${CURL_INCLUDE_DIRS})
 target_compile_features("gti_runtime" PUBLIC cxx_std_20)
 set_target_properties(gti_runtime PROPERTIES POSITION_INDEPENDENT_CODE ON)
+# An archive that `gti` links into generated executables is built with the
+# host toolchain's view of the world, which knows nothing about this tree's
+# compile flags. A sanitized tree (-fsanitize in CMAKE_CXX_FLAGS) therefore
+# builds such archives uninstrumented, or every generated program fails to
+# link against the __asan_*/__ubsan_* symbols their members expect. Sanitizing
+# the runtime inside generated programs is the driver's instrumentation plan,
+# which recompiles the runtime units with matching flags. The runtime archive
+# is the toolchain product; tests that hand `gti` an archive of their own
+# (a cleanup oracle component) declare it the same way.
+function(gti_program_component target)
+  if(CMAKE_CXX_FLAGS MATCHES "-fsanitize=")
+    target_compile_options("${target}" PRIVATE -fno-sanitize=all)
+  endif()
+endfunction()
+gti_program_component(gti_runtime)
 set_source_files_properties(runtime/src/embedding.cpp PROPERTIES
   COMPILE_OPTIONS "$<$<CXX_COMPILER_ID:Clang,AppleClang,GNU>:-fvisibility=hidden>")
 target_link_libraries("gti_runtime" PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
@@ -867,6 +882,11 @@ target_compile_definitions(
   PRIVATE
     GTI_VERSION="${PROJECT_VERSION}"
 )
+# Building the compiler yields the complete `gti_toolchain` install component:
+# the editor grammar module ships beside every `gti`, so a tree that built only
+# the compiler can still stage the toolchain (`cmake --install --component
+# gti_toolchain`), as the installed-toolchain tests do.
+add_dependencies("gti" "gti_tree_sitter")
 
 # Build-time producer for the reference site's compiler-owned API manifest.
 # It is intentionally not installed with the user-facing toolchain.
