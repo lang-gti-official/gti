@@ -7933,7 +7933,8 @@ auto SemanticVisitor::Impl::collectBorrowReturnExpressions(
 
 auto SemanticVisitor::Impl::predeclaredPlace(const Expr *expression,
                                              const FunctionInfo &function,
-                                             SemanticType ownerType)
+                                             SemanticType ownerType,
+                                             bool lexicalLocals)
     -> std::optional<PredeclaredPlace> {
   if (expression == nullptr || function.declaration == nullptr)
     return std::nullopt;
@@ -7969,9 +7970,19 @@ auto SemanticVisitor::Impl::predeclaredPlace(const Expr *expression,
                             .type = ownerType}}
                       : std::nullopt;
     if (const auto *variable = exprAs<Variable>(current)) {
+      // A lexical binding shadows formals and fields when the caller asks
+      // for it; one whose declared type is unknown names no place.
+      if (lexicalLocals && textBorrowAliasFunction == function.declaration)
+        if (const auto local = textBorrowAliases.find(variable->name().lexeme);
+            local != textBorrowAliases.end())
+          return local->second.type.kind == SemanticType::Unknown
+                     ? std::nullopt
+                     : std::optional<PredeclaredPlace>{
+                           PredeclaredPlace{.type = local->second.type}};
       // Parameters take precedence over implicit instance fields, as in
-      // predeclaredTextBorrowSource. A shadowing local cannot be seen here;
-      // body analysis still rejects a dependent value under this contract.
+      // predeclaredTextBorrowSource. Otherwise a shadowing local cannot be
+      // seen here; body analysis still rejects a dependent value under this
+      // contract.
       for (std::size_t index = 0;
            index < parameters.size() && index < function.parameterTypes.size();
            ++index)
@@ -8120,7 +8131,7 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
       variable && textBorrowAliasFunction == function.declaration) {
     if (const auto alias = textBorrowAliases.find(variable->name().lexeme);
         alias != textBorrowAliases.end())
-      return alias->second;
+      return alias->second.source;
   }
   // A contract formal's text field may hold the caller's dynamic text
   // (L-OWN-02), so reading it relays that field's dependency. Any other
@@ -8181,9 +8192,11 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
   }
   // Text read through a raw pointer's index or `->` is raw memory under
   // unsafe obligations, not storage of the pointer's origin: like text a raw
-  // dereference reads, it has no GTI owner and nominates no relay.
+  // dereference reads, it has no GTI owner and nominates no relay. That holds
+  // wherever the pointer is held, a local binding of it included.
   const auto rawPointee = [&](const ExprPtr &object) {
-    const auto place = predeclaredPlace(object.get(), function, ownerType);
+    const auto place =
+        predeclaredPlace(object.get(), function, ownerType, true);
     if (!place)
       return false;
     const SemanticType &pointer = place->type.kind == SemanticType::Reference &&
@@ -8716,7 +8729,22 @@ auto SemanticVisitor::Impl::dynamicTextReturnBorrowSummary(
                                 ? predeclaredTextBorrowSource(
                                       local->initializer(), function, ownerType)
                                 : PredeclaredTextBorrowSource{};
-        textBorrowAliases.insert_or_assign(local->name().lexeme, source);
+        // The binding's declared type, or for `auto` the declared type of
+        // the place it copies; anything else needs body analysis.
+        SemanticType type = SemanticType::Unknown;
+        const auto &spelled = local->type().name.segments;
+        if (spelled.empty() || spelled.back().kind != TokenKind::AUTO) {
+          type = typeOf(local->type());
+        } else if (const auto copied = predeclaredPlace(
+                       local->initializer().get(), function, ownerType, true)) {
+          type = copied->type.kind == SemanticType::Reference &&
+                         copied->type.arguments.size() == 1
+                     ? SemanticType(copied->type.arguments.front())
+                     : copied->type;
+        }
+        textBorrowAliases.insert_or_assign(
+            local->name().lexeme,
+            TextBorrowAlias{.source = source, .type = std::move(type)});
       } else if (const auto *block = stmtAs<BlockStmt>(statement)) {
         const auto enclosing = textBorrowAliases;
         for (const auto &nested : block->statements())

@@ -1291,7 +1291,8 @@ int main() { return leak().empty() ? 1 : 0; }
 // on its validity, and raw writes are not checked text stores, so it has no
 // GTI owner to relay. A C string reached through `c_string*`, a view through
 // a raw pointer and a user-defined record's text field behind one each
-// return ownerless text.
+// return ownerless text, whether the pointer is a formal, a field or a local
+// binding of either.
 void testRawMemoryTextReads() {
   const auto result = analyzeText(R"gti(
 import std.string;
@@ -1330,6 +1331,31 @@ std::string_view wordAt(std::string_view* items, int32_t index) {
   unsafe { return items[index]; }
 }
 std::string_view nameAt(Entry* entry) { unsafe { return entry->name; } }
+c_string viaAuto(c_string* items) {
+  unsafe {
+    auto base = items;
+    return base[1];
+  }
+}
+c_string viaMutable(c_string* items) {
+  unsafe {
+    mut c_string* base = items;
+    base = base + 1;
+    return base[0];
+  }
+}
+c_string viaLocalRecord(Slots slots) {
+  unsafe {
+    Slots copy = slots;
+    return copy.items[0];
+  }
+}
+std::string_view viaLocalArrow(Entry* entry) {
+  unsafe {
+    Entry* local = entry;
+    return local->name;
+  }
+}
 int main() {
   mut c_string slots[3] = {nullptr, nullptr, nullptr};
   put(&slots[0], 1, "b");
@@ -1347,7 +1373,12 @@ int main() {
   if (wordAt(&words[0], 1) != "other" || nameAt(&entry) != "entry") {
     return 3;
   }
-  return keptView == "word" ? 0 : 4;
+  keptText = viaAuto(&slots[0]);
+  if (keptText != viaMutable(&slots[0]) || first(view) != viaLocalRecord(view)) {
+    return 5;
+  }
+  keptView = viaLocalArrow(&entry);
+  return keptView == "entry" ? 0 : 4;
 }
 )gti");
   if (!result.canGenerateCode())
@@ -1359,8 +1390,10 @@ int main() {
   // no relay. Semantics used to relay the pointer formal, and every call
   // reported GTI-B0001.
   if (result.canGenerateCode())
-    for (const char *name : {"second", "at", "viaLocal", "first",
-                             "viaReference", "viewAt", "wordAt", "nameAt"}) {
+    for (const char *name :
+         {"second", "at", "viaLocal", "first", "viaReference", "viewAt",
+          "wordAt", "nameAt", "viaAuto", "viaMutable", "viaLocalRecord",
+          "viaLocalArrow"}) {
       const auto *function = namedFunction(result, name);
       const auto *info =
           function ? result.semantics.findFunction(function->declaration)
