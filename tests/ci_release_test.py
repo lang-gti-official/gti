@@ -197,6 +197,26 @@ def editor_contract(root):
                 else:
                     raise AssertionError("accepted altered editor archive")
             assert not env_path.exists()
+    # A transient network failure is retried; a persistent one still fails.
+    with tempfile.TemporaryDirectory() as directory:
+        archive = pathlib.Path(directory) / "archive"
+        calls, naps = [], []
+        def flaky(url, timeout):
+            calls.append(url)
+            if len(calls) < 3:
+                raise editor.urllib.error.URLError("nodename nor servname provided")
+            return io.BytesIO(b"bytes")
+        with patch.object(editor.urllib.request, "urlopen", side_effect=flaky):
+            editor.download("https://example.invalid/a", archive, sleep=naps.append)
+        assert archive.read_bytes() == b"bytes" and len(calls) == 3 and len(naps) == 2
+        with patch.object(editor.urllib.request, "urlopen",
+                          side_effect=editor.urllib.error.URLError("down")):
+            try:
+                editor.download("https://example.invalid/a", archive, attempts=2, sleep=naps.append)
+            except editor.urllib.error.URLError:
+                pass
+            else:
+                raise AssertionError("a persistent network failure must still fail")
     toolchain = (root / "scripts/configure_ci_toolchain.sh").read_text()
     assert 'python3 "${repository}/scripts/configure_ci_editor.py"' in toolchain
 

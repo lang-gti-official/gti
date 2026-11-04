@@ -21,7 +21,12 @@ class Owner {
   Binding binding;
 public:
   Owner(Binding source) : binding(source) {}
-  ~Owner() { std::println("{}", this.binding.read()); }
+  ~Owner() {
+    // The explicit runtime entry point and a named operand keep the C++
+    // backend's formatting representation; checked patterns need LLVM.
+    int value = this.binding.read();
+    std::runtime_println("{}", value);
+  }
   int read() { return this.binding.read(); }
   Cursor begin() { return Cursor(this); }
   Finish end(int divisor) { int checked = 1 / divisor; return Finish(); }

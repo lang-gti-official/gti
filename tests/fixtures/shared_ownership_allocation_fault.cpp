@@ -1,10 +1,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <limits>
 #include <new>
 #ifndef _WIN32
 #include <cerrno>
-#include <dlfcn.h>
 #include <sys/resource.h>
 #endif
 
@@ -54,19 +55,41 @@ void *operator new(std::size_t size, const std::nothrow_t &) noexcept {
 }
 
 #ifndef _WIN32
-// Source owners allocate through the production process provider. Interpose
-// only its libc entry; successful calls still use the real allocator.
-extern "C" int posix_memalign(void **address, std::size_t alignment,
-                              std::size_t bytes)
-#if defined(__linux__)
-    noexcept
-#endif
-{
-  if (failScalarAllocation)
-    return ENOMEM;
-  using Allocate = int (*)(void **, std::size_t, std::size_t);
-  static auto real =
-      reinterpret_cast<Allocate>(dlsym(RTLD_NEXT, "posix_memalign"));
-  return real ? real(address, alignment, bytes) : ENOMEM;
+// Source owners allocate through the production process provider, which
+// selects malloc for fundamentally aligned requests and posix_memalign
+// otherwise. Fail both provider entries. This replaces the whole runtime
+// memory object, so its archive member is never linked beside these
+// definitions; successful calls still use the real allocator.
+extern "C" std::uint64_t gti_rt_native_size_max_v1() {
+  return (std::numeric_limits<std::size_t>::max)();
 }
+extern "C" std::int32_t gti_rt_address_is_aligned_v1(const void *address,
+                                                     std::uint64_t alignment) {
+  if (!address || alignment == 0 || (alignment & (alignment - 1)) != 0)
+    return 0;
+  return reinterpret_cast<std::uintptr_t>(address) % alignment == 0;
+}
+extern "C" std::uint64_t gti_rt_posix_pointer_size_v1() {
+  return sizeof(void *);
+}
+extern "C" std::int32_t gti_rt_posix_enomem_v1() { return ENOMEM; }
+extern "C" std::int32_t gti_rt_posix_einval_v1() { return EINVAL; }
+extern "C" void *gti_rt_malloc_v1(std::uint64_t bytes) {
+  if (failScalarAllocation)
+    return nullptr;
+  return std::malloc(static_cast<std::size_t>(bytes));
+}
+extern "C" void *gti_rt_posix_memalign_v1(std::uint64_t bytes,
+                                          std::uint64_t alignment,
+                                          std::int32_t *status) {
+  if (failScalarAllocation) {
+    *status = ENOMEM;
+    return nullptr;
+  }
+  void *address = nullptr;
+  *status = posix_memalign(&address, static_cast<std::size_t>(alignment),
+                           static_cast<std::size_t>(bytes));
+  return address;
+}
+extern "C" void gti_rt_posix_free_v1(void *address) { std::free(address); }
 #endif

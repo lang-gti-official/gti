@@ -3515,27 +3515,29 @@ def main():
             "if (!second) { return 15; } return 0; }\n",
             encoding="utf-8",
         )
-        for standard in ("c++20", "c++23"):
-            for optimization in ("-O0", "-O3"):
-                formatted_executable = (
-                    root / f"formatted-output-{standard}-{optimization[1:]}"
-                )
-                run(
-                    [
-                        gti,
-                        str(formatted_output),
-                        "-o",
-                        str(formatted_executable),
-                        "--std",
-                        standard,
-                        optimization,
-                    ]
-                )
-                assert run([str(formatted_executable)]).stdout == (
-                    "A\x00B|A\x007Bsigned=-9223372036854775808 "
-                    "unsigned=18446744073709551615 braces={} mixed=-8 65535 "
-                    "host=gitea.example enabled=true code=X ratio=1.25\n"
-                )
+        # Literal scalar and text arguments bind the formatting entry points'
+        # read-only parameters as call-scoped temporaries, which only the LLVM
+        # backend represents (docs/language/programs-and-targets.md, 6.3).
+        for optimization in ("-O0", "-O3"):
+            formatted_executable = (
+                root / f"formatted-output-llvm-{optimization[1:]}"
+            )
+            run(
+                [
+                    gti,
+                    str(formatted_output),
+                    "-o",
+                    str(formatted_executable),
+                    "--backend",
+                    "llvm",
+                    optimization,
+                ]
+            )
+            assert run([str(formatted_executable)]).stdout == (
+                "A\x00B|A\x007Bsigned=-9223372036854775808 "
+                "unsigned=18446744073709551615 braces={} mixed=-8 65535 "
+                "host=gitea.example enabled=true code=X ratio=1.25\n"
+            )
 
         invalid_float_print = root / "invalid-float-print.gti"
         invalid_float_print.write_text(
