@@ -17,6 +17,29 @@ void SemanticConstantTrace::appendTo(Diagnostic &diagnostic) const {
                                "this evaluation trace.");
 }
 
+std::string compileTimePanicText(const std::string &message) {
+  std::string quoted = "Compile-time evaluation panicked: \"";
+  for (const char character : message) {
+    switch (character) {
+    case '"':
+      quoted += "\\\"";
+      break;
+    case '\\':
+      quoted += "\\\\";
+      break;
+    case '\n':
+      quoted += "\\n";
+      break;
+    case '\t':
+      quoted += "\\t";
+      break;
+    default:
+      quoted += character;
+    }
+  }
+  return quoted + "\"";
+}
+
 SemanticMoveOrigins
 SemanticMoveOrigins::merge(const SemanticMoveOrigins &left,
                            const SemanticMoveOrigins &right) {
@@ -136,10 +159,24 @@ void SemanticDiagnosticReporter::reportConstexprFailure(
     message = "The constexpr evaluator cannot apply this operation to "
               "these operand types.";
     break;
+  case ConstantEvaluationFailure::Panicked:
+    message = "The initializer for constexpr binding '" +
+              declaration.name().lexeme + "' failed. " +
+              compileTimePanicText(failureDetail);
+    hint = "A panic that executes during compilation fails the request with "
+           "its message.";
+    break;
+  case ConstantEvaluationFailure::RuntimeOnlyCall:
+    message = "The initializer for constexpr binding '" +
+              declaration.name().lexeme +
+              "' reached a call that cannot run during compilation.";
+    hint = runtimeOnlyCallHint;
+    break;
   case ConstantEvaluationFailure::None:
     break;
   }
-  if (!failureDetail.empty()) {
+  if (!failureDetail.empty() &&
+      failure != ConstantEvaluationFailure::Panicked) {
     message += " " + failureDetail;
   }
 
@@ -750,10 +787,22 @@ void SemanticDiagnosticReporter::reportConstexprConditionFailure(
     message = "The constexpr evaluator cannot apply an operation in this "
               "'if constexpr' condition.";
     break;
+  case ConstantEvaluationFailure::Panicked:
+    message = "The condition of 'if constexpr' failed. " +
+              compileTimePanicText(failureDetail);
+    hint = "A panic that executes during compilation fails the request with "
+           "its message.";
+    break;
+  case ConstantEvaluationFailure::RuntimeOnlyCall:
+    message = "The condition of 'if constexpr' reached a call that cannot run "
+              "during compilation.";
+    hint = runtimeOnlyCallHint;
+    break;
   case ConstantEvaluationFailure::None:
     break;
   }
-  if (!failureDetail.empty()) {
+  if (!failureDetail.empty() &&
+      failure != ConstantEvaluationFailure::Panicked) {
     message += " " + failureDetail;
   }
   const Token &keyword = *statement.constexprKeyword();
@@ -779,6 +828,10 @@ void SemanticDiagnosticReporter::reportStaticAssertEvaluationFailure(
   case ConstantEvaluationFailure::NonConstantReference:
     message = "The condition of 'static_assert' reads a binding that is not "
               "constexpr.";
+    // A function's validity cannot depend on each call's arguments.
+    hint += " To check a parameter at each compile-time call, write "
+            "'if (!condition) { std::panic(\"message\"); }' in the function "
+            "body instead.";
     break;
   case ConstantEvaluationFailure::ResourceLimit:
     message = "The condition of 'static_assert' exceeded the compiler's "
@@ -813,11 +866,23 @@ void SemanticDiagnosticReporter::reportStaticAssertEvaluationFailure(
     message = "The constexpr evaluator cannot apply an operation in this "
               "'static_assert' condition.";
     break;
+  case ConstantEvaluationFailure::Panicked:
+    message = "The condition of 'static_assert' failed. " +
+              compileTimePanicText(failureDetail);
+    hint = "A panic that executes during compilation fails the request with "
+           "its message.";
+    break;
+  case ConstantEvaluationFailure::RuntimeOnlyCall:
+    message = "The condition of 'static_assert' reached a call that cannot "
+              "run during compilation.";
+    hint = runtimeOnlyCallHint;
+    break;
   case ConstantEvaluationFailure::UnsupportedExpression:
   case ConstantEvaluationFailure::None:
     break;
   }
-  if (!failureDetail.empty()) {
+  if (!failureDetail.empty() &&
+      failure != ConstantEvaluationFailure::Panicked) {
     message += " " + failureDetail;
   }
   Diagnostic diagnostic =

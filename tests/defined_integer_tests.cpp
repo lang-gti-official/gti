@@ -463,7 +463,9 @@ int after = 42;
       result.diagnostics.begin(), result.diagnostics.end(),
       [&](const lang::Diagnostic &candidate) {
         return candidate.code == "GTI-S2057" &&
-               candidate.message.find("terminal defined-failure operation") !=
+               candidate.message.find(
+                   "Compile-time evaluation panicked: \"The value of an "
+                   "expected holding an error was accessed.\"") !=
                    std::string::npos;
       });
   expect(!result.canGenerateCode() && diagnostic != result.diagnostics.end(),

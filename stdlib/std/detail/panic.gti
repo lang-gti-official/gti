@@ -6,7 +6,7 @@ export namespace std {
 namespace detail {
   /// Stops normal execution after preserving the message and running cleanup.
   [[noreturn, track_caller]]
-  void panic(string_view message) {
+  constexpr void panic(string_view message) {
     gti_internal::panic(message);
   }
 }
