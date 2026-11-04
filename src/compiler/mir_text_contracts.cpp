@@ -9,6 +9,7 @@
 #include <set>
 #include <span>
 #include <tuple>
+#include <unordered_map>
 #include <utility>
 
 namespace lang::mir_detail {
@@ -196,6 +197,21 @@ public:
 private:
   const MirProgram &program;
   MirVerificationResult result;
+  // The program is read-only throughout this verifier. Retain every Stored
+  // dependency in inventory order, including duplicates; filtering this
+  // invariant kind once avoids scanning thousands of unrelated call loans
+  // for each operand. The cache dies with this verification invocation.
+  mutable std::unordered_map<const MirBody *, std::vector<const MirLoan *>>
+      storedLoans;
+  const std::vector<const MirLoan *> &
+  storedDependencies(const MirBody &body) const {
+    const auto [entry, fresh] = storedLoans.try_emplace(&body);
+    if (fresh)
+      for (const auto &loan : body.loans)
+        if (loan.kind == MirLoanKind::Stored)
+          entry->second.push_back(&loan);
+    return entry->second;
+  }
   std::vector<std::set<std::size_t>> requirements;
   // Derived per function: the formal and receiver text fields it lets
   // outlive the call (L-OWN-02).
@@ -613,9 +629,10 @@ private:
                     [](const auto &projection) {
                       return projection.kind == MirProjectionKind::Field;
                     });
-    for (const auto &candidate : body.loans) {
-      if (!type || candidate.kind != MirLoanKind::Stored)
-        continue;
+    if (!type)
+      return std::nullopt;
+    for (const auto *entry : storedDependencies(body)) {
+      const auto &candidate = *entry;
       std::size_t prefix = 0;
       if (fieldPrefix &&
           std::find(candidate.carriers.begin(), candidate.carriers.end(),

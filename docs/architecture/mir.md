@@ -3142,6 +3142,12 @@ another body restores the previous index; thread-local scope isolates concurrent
 verification. No index survives a body edit, and mutable lowering queries retain
 the scan path.
 
+Text-contract verification likewise retains each body's Stored dependencies in
+inventory order for its read-only invocation. Operand designation checks still
+apply their complete field/path predicates and first-match rules, but do not
+rescan unrelated call-argument loans. The filtered inventory cannot survive
+mutation or a subsequent verifier invocation.
+
 Loan-flow verification uses one complete working state vector and adaptive CFG
 snapshots. Sparse snapshots contain every non-inactive loan; when storing IDs
 would cost more than the original state vector, a snapshot uses that dense
