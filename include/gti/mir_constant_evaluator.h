@@ -37,6 +37,8 @@ struct MirConstantEvaluation {
   // of the configurable CompileLimits; null for internal storage bounds.
   std::size_t CompileLimits::*exhaustedLimit = nullptr;
   std::string detail;
+  // For RuntimeOnlyCall, the signature-only callee execution reached.
+  HirFunctionInstanceId runtimeCallee = 0;
   struct CallSite {
     MirBodyAddress body;
     MirBlockId block = 0;

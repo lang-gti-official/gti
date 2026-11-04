@@ -353,8 +353,58 @@ private:
     return result;
   }
 
+  // A terminal failure stops the request with the message the operation would
+  // report at run time. This is the trusted operation's own compile-time
+  // meaning, bound by its declaration identity, not a rule for any wrapper.
+  MirConstantEvaluation terminalFailure(Frame &frame,
+                                        const MirInstruction &instruction) {
+    std::string message;
+    switch (instruction.intrinsic) {
+    case IntrinsicKind::Panic: {
+      if (instruction.operands.size() != 1)
+        return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+      auto text = operand(frame, instruction.operands.front());
+      if (!text)
+        return fail(frame, text.failure);
+      const auto *bytes = std::get_if<std::string>(&*text.value);
+      if (bytes == nullptr)
+        return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+      message = *bytes;
+      break;
+    }
+    case IntrinsicKind::FailEmptyOwner:
+      message = "An empty owner was accessed.";
+      break;
+    case IntrinsicKind::FailInactiveValue:
+      message = "The value of an expected holding an error was accessed.";
+      break;
+    case IntrinsicKind::FailInactiveError:
+      message = "The error of an expected holding a value was accessed.";
+      break;
+    default:
+      return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+    }
+    return fail(frame, ConstantEvaluationFailure::Panicked, std::move(message));
+  }
+
   MirConstantEvaluation throughCall(MirConstantEvaluation result,
                                     const Frame &caller) const {
+    // A [[track_caller]] function reports a terminal failure at the call that
+    // reached it, exactly as its run-time failure report does, so the
+    // innermost location is the call its user wrote.
+    if (result.failure == ConstantEvaluationFailure::Panicked &&
+        result.calls.empty() && result.body.kind == MirBodyKind::Function) {
+      const auto *callee = program.findFunctionInstance(result.body.owner);
+      if (callee != nullptr && callee->tracksCaller) {
+        result.function = caller.address.kind == MirBodyKind::Function
+                              ? caller.address.owner
+                              : 0;
+        result.body = caller.address;
+        result.block = caller.block;
+        result.instruction = caller.instruction;
+        return result;
+      }
+    }
     constexpr std::size_t limit = 8;
     if (result.calls.empty())
       result.calls.reserve(limit);
@@ -1338,9 +1388,7 @@ private:
     }
     if (instruction.kind == MirInstructionKind::Call &&
         intrinsicTerminalFailureOutcome(instruction.intrinsic))
-      return fail(frame, ConstantEvaluationFailure::InvalidOperands,
-                  "A terminal defined-failure operation executed during "
-                  "constant evaluation.");
+      return terminalFailure(frame, instruction);
     if (instruction.kind == MirInstructionKind::AllocateObject) {
       if (!instruction.destination || !instruction.objectAllocation)
         return fail(frame, ConstantEvaluationFailure::InvalidOperands);
@@ -1781,6 +1829,15 @@ private:
             program.findFunctionInstance(*instruction.functionTarget);
         if (!callee || callee->parameterTypes.size() != arguments.size())
           return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+        // Staging keeps only the signature of a callee that cannot run during
+        // compilation. Reaching its call, not merely containing it, fails.
+        if (callee->definitionKind != MirDefinitionKind::Source ||
+            !callee->constexprFunction ||
+            callee->linkage != LanguageLinkage::Gti) {
+          auto failed = fail(frame, ConstantEvaluationFailure::RuntimeOnlyCall);
+          failed.runtimeCallee = callee->id;
+          return failed;
+        }
         std::vector<std::optional<Location>> origins(arguments.size());
         for (std::size_t index = 0; index < arguments.size(); ++index) {
           if (callee->parameterTypes[index].kind != SemanticType::Reference)

@@ -200,7 +200,8 @@ auto SemanticVisitor::Impl::reportImmediateEvaluationFailure(
   report(site, "Consteval invocation must be evaluated during compilation.",
          "GTI-S2057");
   auto &diagnostic = diagnostics.back();
-  if (!result.detail.empty())
+  const bool panicked = result.failure == ConstantEvaluationFailure::Panicked;
+  if (!result.detail.empty() && !panicked)
     diagnostic.hints.push_back(result.detail);
   switch (result.failure) {
   case ConstantEvaluationFailure::ResourceLimit:
@@ -223,12 +224,18 @@ auto SemanticVisitor::Impl::reportImmediateEvaluationFailure(
     diagnostic.hints.emplace_back(
         "The constant conversion is outside the target type's range.");
     break;
+  case ConstantEvaluationFailure::RuntimeOnlyCall:
+    diagnostic.hints.emplace_back(runtimeOnlyCallHint);
+    break;
   default:
     break;
   }
   diagnostic.related.push_back(
       {tokenSpan(result.location),
-       result.failure == ConstantEvaluationFailure::NonConstantReference
+       panicked ? compileTimePanicText(result.detail)
+       : result.failure == ConstantEvaluationFailure::RuntimeOnlyCall
+           ? "This call cannot run during compilation."
+       : result.failure == ConstantEvaluationFailure::NonConstantReference
            ? "This expression depends on a runtime value."
            : "Constant evaluation failed at this operation."});
   diagnostic.related.push_back(
@@ -1349,6 +1356,19 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
            .nativeObjectLayout = closure->nativeObjectLayout});
     return ConstexprEvaluation{.value = std::move(result.value),
                                .location = callSite};
+  }
+  if (result.failure == ConstantEvaluationFailure::RuntimeOnlyCall) {
+    const auto *callee = mirProgram.findFunctionInstance(result.runtimeCallee);
+    const FunctionInfo *target =
+        callee != nullptr ? stagingModel.findFunction(callee->declaration)
+                          : nullptr;
+    const std::string name =
+        target != nullptr ? "'" + target->qualifiedName + "'" : "The callee";
+    result.detail =
+        target != nullptr && target->constexprFunction
+            ? "The constexpr definition of " + name +
+                  " must be available before this constant-evaluated call."
+            : name + " is not constexpr.";
   }
   // Library internals are not the user's to fix: a failure executed inside a
   // compiler-trusted unit is reported at the evaluation site that required
