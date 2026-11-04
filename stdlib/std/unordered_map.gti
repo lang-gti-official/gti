@@ -90,7 +90,7 @@ export class unordered_map<K, V, Hash = std::default_hash<K>, KeyEqual = std::eq
 
   bool erase_matches<Predicate>(size_t node, mut Predicate& predicate)
       requires std::predicate<Predicate, detail::map_entry<K, V>> {
-    return predicate(this.nodes[node - 1]->entry);
+    return predicate(this.nodes.at(node - 1).entry);
   }
 
 public:
@@ -216,13 +216,13 @@ public:
       mut size_t previous = 0;
       mut size_t node = this.buckets[bucket];
       while (node != 0) {
-        size_t next = this.nodes[node - 1]->next;
+        size_t next = this.nodes.at(node - 1).next;
         if (this.erase_matches(node, predicate)) {
           this.free_slots.push_back(node);
           if (previous == 0) { this.buckets[bucket] = next; }
-          else { this.nodes[previous - 1]->next = next; }
+          else { this.nodes.at(previous - 1).next = next; }
           this.element_count--;
-          this.nodes[node - 1].reset();
+          this.nodes.erase(node - 1);
           removed++;
         } else { previous = node; }
         node = next;

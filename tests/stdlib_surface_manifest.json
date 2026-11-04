@@ -64,7 +64,7 @@
     "stdlib/std/tcp.gti": "23022069c0f430cf86fa3c0bd567aa44cde7ef638d7bcb821148a0ac77959c04",
     "stdlib/std/testing.gti": "97481e862587cbeda0b36a1421c0cd66b89d896cdad601d4dc96086d88f2a2c3",
     "stdlib/std/thread.gti": "3fc42f30db431e05b406379bfc24999dc499a1105bee59c07fc1e794b350e77a",
-    "stdlib/std/unordered_map.gti": "9ecfb9369ef3ebc0a4df4353910f80ba1948849e097ea7c449c9bb370895674c",
+    "stdlib/std/unordered_map.gti": "779709b932ec9f799986dc7707168df86c6293d9cc3ba8a912b14cf0b8a08584",
     "stdlib/std/unordered_set.gti": "67a6b4767ab10a90ac0a1ed1077363deb38c3efa0bc199fa39777aa583d9b526",
     "stdlib/std/utility.gti": "25969598c6420f6f29a710a96ef01289c0207e74c75f5ddae669b53d9c53fe6f",
     "stdlib/std/vector.gti": "d565703eea39df411ad33fbc6d23022187319f09e468bca6679a2f0bf1420b02"

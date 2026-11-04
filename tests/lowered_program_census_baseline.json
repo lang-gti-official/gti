@@ -976,17 +976,17 @@
       }
     },
     "067-forward-iterators.gti": {
-      "bodies": 144,
-      "generated_items": 102,
+      "bodies": 152,
+      "generated_items": 110,
       "generated_kinds": {
         "program_initialization": 0,
         "hosted_entry": 1,
-        "structural_operator_adapter": 23,
+        "structural_operator_adapter": 28,
         "callable_adapter": 20,
         "lifecycle_cleanup": 3,
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
-        "concrete_instance_adapter": 55,
+        "concrete_instance_adapter": 58,
         "thread_local_storage": 0
       }
     },
@@ -2821,32 +2821,32 @@
       }
     },
     "189-protocol-format-hash.gti": {
-      "bodies": 449,
-      "generated_items": 282,
+      "bodies": 510,
+      "generated_items": 327,
       "generated_kinds": {
         "program_initialization": 1,
         "hosted_entry": 1,
         "structural_operator_adapter": 36,
         "callable_adapter": 21,
-        "lifecycle_cleanup": 7,
+        "lifecycle_cleanup": 9,
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
-        "concrete_instance_adapter": 216,
+        "concrete_instance_adapter": 259,
         "thread_local_storage": 0
       }
     },
     "190-conditional-member-operators.gti": {
-      "bodies": 525,
-      "generated_items": 371,
+      "bodies": 578,
+      "generated_items": 412,
       "generated_kinds": {
         "program_initialization": 1,
         "hosted_entry": 1,
         "structural_operator_adapter": 41,
         "callable_adapter": 20,
-        "lifecycle_cleanup": 11,
+        "lifecycle_cleanup": 13,
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
-        "concrete_instance_adapter": 297,
+        "concrete_instance_adapter": 336,
         "thread_local_storage": 0
       }
     },
@@ -2901,32 +2901,32 @@
           }
         },
         "189-protocol-format-hash.gti": {
-          "bodies": 448,
-          "generated_items": 281,
+          "bodies": 509,
+          "generated_items": 326,
           "generated_kinds": {
             "program_initialization": 1,
             "hosted_entry": 1,
             "structural_operator_adapter": 36,
             "callable_adapter": 21,
-            "lifecycle_cleanup": 7,
+            "lifecycle_cleanup": 9,
             "native_interop_adapter": 0,
             "thread_task_adapter": 0,
-            "concrete_instance_adapter": 215,
+            "concrete_instance_adapter": 258,
             "thread_local_storage": 0
           }
         },
         "190-conditional-member-operators.gti": {
-          "bodies": 524,
-          "generated_items": 370,
+          "bodies": 577,
+          "generated_items": 411,
           "generated_kinds": {
             "program_initialization": 1,
             "hosted_entry": 1,
             "structural_operator_adapter": 41,
             "callable_adapter": 20,
-            "lifecycle_cleanup": 11,
+            "lifecycle_cleanup": 13,
             "native_interop_adapter": 0,
             "thread_task_adapter": 0,
-            "concrete_instance_adapter": 296,
+            "concrete_instance_adapter": 335,
             "thread_local_storage": 0
           }
         }
