@@ -8114,6 +8114,14 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
   if (!expression) {
     return {};
   }
+  // A lexical binding shadows both formals and fields, even when its source
+  // is unknown. Immutable aliases retain their initializer's prospective owner.
+  if (const auto *variable = exprAs<Variable>(expression.get());
+      variable && textBorrowAliasFunction == function.declaration) {
+    if (const auto alias = textBorrowAliases.find(variable->name().lexeme);
+        alias != textBorrowAliases.end())
+      return alias->second;
+  }
   // A contract formal's text field may hold the caller's dynamic text
   // (L-OWN-02), so reading it relays that field's dependency. Any other
   // stored view holds ownerless text.
@@ -8665,6 +8673,11 @@ auto SemanticVisitor::Impl::dynamicTextReturnBorrowSummary(
                      ? std::nullopt
                      : std::optional<ClassId>{function.ownerClass};
 
+  const auto outerAliasFunction = textBorrowAliasFunction;
+  auto outerAliases = std::move(textBorrowAliases);
+  textBorrowAliasFunction = function.declaration;
+  textBorrowAliases.clear();
+
   // The least fixpoint over the returns of each set of mutually recursive
   // functions: every summary starts as that of no completed return, and a
   // recursive call reads the summary computed so far through its arguments.
@@ -8681,13 +8694,80 @@ auto SemanticVisitor::Impl::dynamicTextReturnBorrowSummary(
     provisionalTextBorrowGrew = false;
     TextRelaySources next = summary.sources;
     next.unknown = next.unknown || returns.empty();
-    for (const ExprPtr *returned : returns) {
-      if (next.settled())
-        break;
-      next.add(returned == nullptr ? PredeclaredTextBorrowSource{}
-                                   : predeclaredTextBorrowSource(
-                                         *returned, function, ownerType));
-    }
+    // Walk lexical scopes in source order. Mutable locals deliberately carry
+    // no predeclared alias proof: a path-sensitive assignment summary would be
+    // required to account for every subsequent rebind. The ordinary body check
+    // remains authoritative for the selected return contract.
+    textBorrowAliases.clear();
+    std::size_t remainingAliasStatements = 4096;
+    const auto visit = [&](const auto &self, const Stmt *statement,
+                           std::size_t depth) -> void {
+      if (!statement || next.settled())
+        return;
+      if (depth > 128 || remainingAliasStatements-- == 0) {
+        next.unknown = true;
+        return;
+      }
+      if (const auto *returned = stmtAs<ReturnStmt>(statement)) {
+        next.add(predeclaredTextBorrowSource(returned->value(), function,
+                                             ownerType));
+      } else if (const auto *local = stmtAs<VariableDecl>(statement)) {
+        const auto source = !local->isMutable() && !local->isStatic()
+                                ? predeclaredTextBorrowSource(
+                                      local->initializer(), function, ownerType)
+                                : PredeclaredTextBorrowSource{};
+        textBorrowAliases.insert_or_assign(local->name().lexeme, source);
+      } else if (const auto *block = stmtAs<BlockStmt>(statement)) {
+        const auto enclosing = textBorrowAliases;
+        for (const auto &nested : block->statements())
+          self(self, nested.get(), depth + 1);
+        textBorrowAliases = enclosing;
+      } else if (const auto *conditional = stmtAs<ConditionalStmt>(statement)) {
+        if (const auto *branch = conditional->activeBranch(target))
+          for (const auto &nested : *branch)
+            self(self, nested.get(), depth + 1);
+      } else if (const auto *branch = stmtAs<IfStmt>(statement)) {
+        const auto enclosing = textBorrowAliases;
+        self(self, branch->thenBranch().get(), depth + 1);
+        textBorrowAliases = enclosing;
+        self(self, branch->elseBranch().get(), depth + 1);
+        textBorrowAliases = enclosing;
+      } else if (const auto *selection = stmtAs<SwitchStmt>(statement)) {
+        const auto enclosing = textBorrowAliases;
+        for (const auto &arm : selection->arms()) {
+          for (const auto &nested : arm.statements)
+            self(self, nested.get(), depth + 1);
+          textBorrowAliases = enclosing;
+        }
+      } else if (const auto *loop = stmtAs<ForStmt>(statement)) {
+        const auto enclosing = textBorrowAliases;
+        self(self, loop->initializer().get(), depth + 1);
+        self(self, loop->body().get(), depth + 1);
+        textBorrowAliases = enclosing;
+      } else if (const auto *loop = stmtAs<RangeForStmt>(statement)) {
+        self(self, loop->lowered().get(), depth + 1);
+      } else if (const auto *loop = stmtAs<ConstexprForStmt>(statement)) {
+        if (const auto *expansion =
+                semanticModel.findConstexprForExpansion(*loop)) {
+          for (const auto &iteration : expansion->iterations)
+            self(self, iteration.block.get(), depth + 1);
+        } else {
+          const auto enclosing = textBorrowAliases;
+          self(self, loop->elementBinding().get(), depth + 1);
+          self(self, loop->body().get(), depth + 1);
+          textBorrowAliases = enclosing;
+        }
+      } else if (const auto *loop = stmtAs<DoWhileStmt>(statement)) {
+        const auto enclosing = textBorrowAliases;
+        self(self, loop->body().get(), depth + 1);
+        textBorrowAliases = enclosing;
+      } else if (const auto *loop = stmtAs<WhileStmt>(statement)) {
+        const auto enclosing = textBorrowAliases;
+        self(self, loop->body().get(), depth + 1);
+        textBorrowAliases = enclosing;
+      }
+    };
+    visit(visit, function.bodyDeclaration()->body().get(), 0);
     const bool grew = next != summary.sources;
     summary.sources = std::move(next);
     if (textBorrowReadDepth < summary.depth) {
@@ -8724,6 +8804,8 @@ auto SemanticVisitor::Impl::dynamicTextReturnBorrowSummary(
   summary.depth = 0;
   textBorrowReadDepth = std::min(outerReadDepth, textBorrowReadDepth);
 
+  textBorrowAliasFunction = outerAliasFunction;
+  textBorrowAliases = std::move(outerAliases);
   currentNamespace = enclosingNamespace;
   currentSourceUnit = enclosingSourceUnit;
   currentClass = enclosingClass;

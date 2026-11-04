@@ -89,6 +89,12 @@ int main(int argc, std::vector<std::string> argv) {
   std::println(open(literal.get()).size());
   Cursor cursor = open(owned.get());
   std::println(cursor.size());
+  Cursor direct_literal = Cursor(literal.get());
+  Cursor direct_owned = Cursor(owned.get());
+  std::string_view& owned_reference = owned.get();
+  Cursor direct_named = Cursor(owned_reference);
+  if (direct_literal.size() != 7 || direct_owned.size() != 5 ||
+      direct_named.size() != 5) { return 1; }
 
   // std::optional<std::string_view>::value() is an ordinary accessor.
   std::string_view text = "optional";
@@ -108,5 +114,7 @@ int main(int argc, std::vector<std::string> argv) {
   std::println(attach(panel.current()).read());
   Dial dial = attach(panel.current());
   std::println(dial.read());
+  Dial direct_dial = Dial(panel.current());
+  if (direct_dial.read() != 4) { return 2; }
   return 0;
 }

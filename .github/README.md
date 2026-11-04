@@ -166,9 +166,10 @@ reason, and approve the `stable` deployment. A backport is a pull request into
 
 ## Rollup bot
 
-`workflows/rollup.yml` runs `scripts/rollup.py` every 30 minutes, on manual
-dispatch, and when someone with write, maintain or admin permission comments
-exactly `/rollup` on an issue or pull request. It composes green PRs labelled
+`workflows/rollup.yml` runs `scripts/rollup.py` after each CI run completes,
+on manual dispatch, when someone with write, maintain or admin permission
+comments exactly `/rollup` on an issue or pull request, and on a half-hourly
+schedule that GitHub delivers only sporadically (a fallback, not the cadence). It composes green PRs labelled
 `rollup=maybe` or `rollup=always` into one `rollup/<date>-<n>` PR, queues that
 PR once its `CI gate` passes, and reconciles the result, so one complete queue
 run covers up to six PRs. Labels: `rollup=never` validates a PR alone, `p=N`
@@ -239,6 +240,11 @@ compilation; every required test and package check still runs.
 Before its build, the sanitizer job runs `scripts/check_ci_sanitizers.py`: a
 small, race-free ASan/UBSan probe with no GTI code, so a runner that cannot
 execute sanitizer binaries fails in seconds instead of after a long build.
+A sanitized tree builds `libgti_runtime.a` (and any test archive that `gti`
+links into a generated program) uninstrumented, because the host toolchain
+links those archives; the LLVM backend sanitizer job depends on this. That job
+runs the backend's test binaries and cheap control harnesses only: the
+execution harnesses cost 20-30 hours under ASan and stay native.
 Hosted jobs configure with `GTI_ENABLE_THREAD_SANITIZER_TESTS=OFF`; dedicated
 ThreadSanitizer CTests then report an explicit skip (return code 77), never a
 pass. A runner meant for TSAN must first pass

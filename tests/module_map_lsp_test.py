@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""An installed public-map edit invalidates existing editor snapshots."""
+"""An installed public-map edit invalidates existing editor snapshots.
+
+Missing-import discovery follows the same map: its remembered candidate
+scans never outlive the registration that resolved them.
+"""
 
 import json
 import os
@@ -16,9 +20,11 @@ def main():
         root = pathlib.Path(temporary)
         library = root / "stdlib"
         first, second = library / "std/first.gti", library / "std/second.gti"
+        third = library / "std/third.gti"
         write(library / "prelude.gti", "// Minimal installed prelude for this source-owner test.\n")
         write(first, "export module api; export int answer() { return 1; }\n")
         write(second, "export module api; export int answer() { return 2; }\n")
+        write(third, "export module extra; export int third_answer() { return 3; }\n")
         public_map = library / "module-map.json"
         write(public_map, json.dumps({"modules": {"api": "std/first.gti"}}))
         entry = root / "app/main.gti"
@@ -54,6 +60,30 @@ def main():
             removed = remap({})
             assert any(item.get("code") == "GTI-I0012" for item in removed), removed
             assert not definition(), "removed public map entry retained a stale definition"
+
+            use = root / "app/use.gti"
+            use_source = "int main() { return third_answer(); }\n"
+            write(use, use_source)
+            use_uri = open_document(session, use, use_source)
+            fix = "Add import std.extra;"
+
+            def advice(present):
+                def settled(diagnostics):
+                    offered = any(fix in item["message"] for item in diagnostics)
+                    return any(item.get("severity") == 1 for item in diagnostics) and offered == present
+                return diagnostics_for(session, use_uri, 1, settled)
+
+            advice(False)
+
+            def publish(modules, present):
+                write(public_map, json.dumps({"modules": modules}))
+                session.send({"jsonrpc": "2.0", "method": "workspace/didChangeWatchedFiles",
+                              "params": {"changes": [{"uri": public_map.resolve().as_uri(), "type": 2}]}})
+                return advice(present)
+
+            publish({"api": "std/first.gti", "extra": "std/third.gti"}, True)
+            publish({"api": "std/first.gti"}, False)
+            publish({"api": "std/first.gti", "extra": "std/third.gti"}, True)
         finally:
             session.close()
 

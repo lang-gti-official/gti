@@ -553,10 +553,13 @@ class Rollup:
     def reconcile(self):
         main = self.fetch_main()
         queued, history = self.queued(), self.queue_runs()
-        report = {"waiting": [], "failed": [], "requeued": [], "stale": [], "integrated": [], "invalid": []}
+        report = {"waiting": [], "failed": [], "requeued": [], "stale": [], "integrated": [], "invalid": [],
+                  "conflicting": [], "rebased": []}
         for pr in self.pulls("open"):
             if is_rollup(pr):
-                self.reconcile_open(pr, queued, history, report)
+                self.reconcile_open(pr, queued, history, report, main)
+            else:
+                self.flag_conflict(pr, main, report)
         horizon = self.now() - timedelta(days=self.merged_days)
         for pr in self.pulls("closed", pages=1):
             merged = pr.get("merged_at")
@@ -564,11 +567,51 @@ class Rollup:
                 self.reconcile_merged(pr, main, report)
         return report
 
-    def reconcile_open(self, pr, queued, history, report):
+    def flag_conflict(self, pr, main, report):
+        """Label an open PR that no longer merges with main, whichever path it takes.
+
+        The merge queue drops a conflicting entry without a run, a status or a
+        comment, and merge-when-ready simply never fires, so a PR that waited
+        while main moved disappears from every pipeline unnoticed (2026-11-03:
+        13 of 31 open PRs). `compose` already flags rollup candidates; this
+        covers `rollup=never` and auto-merge PRs too. The bot never resolves
+        conflicts; the label clears once the PR merges cleanly again.
+        """
+        number = pr["number"]
+        if pr.get("draft") or (pr.get("base") or {}).get("ref") != "main":
+            return
+        head = self.fetch_pull(number)
+        if head is None:
+            return
+        if self.merge_tree(main, head) is None:
+            report["conflicting"].append(number)
+            if REBASE not in labels(pr):
+                self.label(number, REBASE)
+                self.comment(number, f"This PR conflicts with `main` at `{main}`. The merge queue drops a conflicting "
+                                     "entry without a run or a comment and merge-when-ready never fires, so nothing "
+                                     "will integrate it until it is reconciled. Merge `main` (regenerating any "
+                                     "census baselines on the merged tree), push, and re-queue; the bot removes "
+                                     "`needs-rebase` once it merges cleanly. The bot never resolves conflicts.")
+        elif REBASE in labels(pr):
+            self.unlabel(number, REBASE)
+            report["rebased"].append(number)
+
+    def reconcile_open(self, pr, queued, history, report, main=None):
         number, head = pr["number"], pr["head"]["sha"]
         record = self.manifest(pr)
         if record is None:
             report["invalid"].append(number)
+            return
+        if main is not None and self.fetch_pull(number) is not None and self.merge_tree(main, head) is None:
+            # The queue would drop it at its turn without a verdict, and its
+            # members would stay "busy" in an open rollup forever: close it so
+            # the next compose rebuilds from current heads on current main.
+            self.comment(number, f"This rollup no longer merges with `main` at `{main}`, so the bot closed it; "
+                                 "its open members return to the rollup pool and the next rollup is composed "
+                                 "on current main (members that themselves conflict are labelled `needs-rebase`).")
+            self.close(number)
+            self.delete_branch(pr["head"]["ref"], head)
+            report["stale"].append(number)
             return
         if number in queued:
             report["waiting"].append(number)
@@ -693,8 +736,11 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         if args.command == "authorize":
-            event = json.loads(Path(args.event).read_text()) if args.event_name == "issue_comment" else {}
-            api = workflow.GitHub() if args.event_name == "issue_comment" else None
+            # A comment and a CI completion are judged on their payload and the
+            # API; a schedule or a manual dispatch needs neither.
+            inspected = args.event_name in {"issue_comment", "workflow_run"}
+            event = json.loads(Path(args.event).read_text()) if inspected else {}
+            api = workflow.GitHub() if inspected else None
             print("authorized=" + ("true" if authorize(args.event_name, event, api) else "false"))
             return 0
         api, token = client(write=not args.dry_run)

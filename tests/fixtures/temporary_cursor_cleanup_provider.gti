@@ -1,0 +1,42 @@
+// A temporary cursor borrows an owner whose cleanup needs another provider.
+// The provider must remain alive on both normal and later-argument failure paths.
+import std.format;
+import std.string;
+import std.vector;
+
+struct Provider {
+  int value = 42;
+public:
+  Provider() = default;
+  ~Provider() { std::println("provider"); }
+};
+struct Finish { public: Finish() = default; };
+class Binding {
+  Provider& provider;
+public:
+  Binding(Provider& source) : provider(source) {}
+  int read() { return this.provider.value; }
+};
+class Owner {
+  Binding binding;
+public:
+  Owner(Binding source) : binding(source) {}
+  ~Owner() { std::println("{}", this.binding.read()); }
+  int read() { return this.binding.read(); }
+  Cursor begin() { return Cursor(this); }
+  Finish end(int divisor) { int checked = 1 / divisor; return Finish(); }
+};
+class Cursor {
+  Owner& owner;
+public:
+  Cursor(Owner& source) : owner(source) {}
+  bool operator!=(Finish other) { return this.owner.read() != 0; }
+};
+int main(int argc, std::vector<std::string> argv) {
+  Provider provider{};
+  auto binding = Binding(provider);
+  Owner owner{binding};
+  int divisor = argc > 1 ? 0 : 1;
+  if (owner.begin() != owner.end(divisor)) { return 0; }
+  return 1;
+}

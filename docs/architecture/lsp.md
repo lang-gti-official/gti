@@ -1187,10 +1187,54 @@ syntax in the frozen source graph. Skipping discovery in that case avoids a
 workspace-wide scan whose speculative edits would all be rejected; fixing the
 syntax restores import suggestions on the next snapshot.
 
+The editor publishes the ordinary diagnostic and semantic snapshot before doing
+missing-import discovery. The compiler exposes immutable discovery: it reads that
+snapshot and returns diagnostic enrichment, without copying the semantic model
+or changing any published identities. The analysis worker performs this optional
+work after serving pending semantic requests. A newer edit cancels the candidate
+scan and speculative trials; publication also requires the same root generation,
+frontend pointer and discovery generation. Repairs, including negative searches,
+remain conservatively invalidated by source changes. Enrichment replaces only
+diagnostics, never the semantic snapshot or its tokens. Its cost is excluded from
+the edit-debounce median. The opt-in frontend trace reports `includeSuggestions`
+and `includeSuggestionsCancelled` separately from ordinary analysis.
+
+This separation addresses the error-recovery path where searching broad public
+facades for an unresolved type took seconds after the ordinary error was already
+known. CLI compilation still enriches its final diagnostics synchronously using
+the same discovery implementation and proof requirements.
+
 The service shares the bounded parsed-unit cache but retains no semantic IDs
 across snapshots. Edits preserve BOM/CRLF and follow a module header when the
 requesting file has one. Multiple valid files produce separate, deterministic,
 non-preferred alternatives rather than silently choosing a declaration.
+
+The editor also shares an `IncludeDiscoveryCache` across snapshots. It keeps
+only syntax-level facts derived from source text: each candidate text's token
+spellings, and each candidate interface's parse-only scan (export-surface
+declaration names, surface units and every unit the load read). A scan is
+reused only when its context is unchanged and every unit it read still has
+the same text. The context covers the frontend cache context (target and
+configuration), the prelude and library roots, and the source-owner
+resolution identity with its roots. Discovery reads the current text of each
+input from the frozen snapshot, an unsaved buffer or disk, and compares it.
+Rows from loads with unresolved imports are never stored. Explicit
+invalidation is therefore reclamation rather than the correctness mechanism.
+A source invalidation drops rows that read the path, and a project-model
+change clears the cache. The speculative analysis that proves each fix always
+runs again, so reuse cannot change a suggestion.
+
+Discovery also skips speculative analyses that provably cannot succeed. A
+missing name `a::b::name` resolves after an import only if every written
+qualifier resolves. A qualifier that no unit of the analysed program spells,
+other than as a qualifier of a use being repaired, can only gain a meaning
+from the imported export surface. That surface must then spell it. A
+candidate whose surface never spells such a qualifier is not analysed for
+that use. For example, standard-library interfaces that declare a `value`
+member are no longer analysed for `api::value`. A qualifier the program spells
+elsewhere imposes nothing: a namespace alias, a reopened namespace or a local
+declaration may already give it a meaning. Unqualified names keep the
+declaration-name filter alone.
 
 Open/change/close and watched-file events refresh snapshots that requested
 discovery, including negative searches and newly created files outside the

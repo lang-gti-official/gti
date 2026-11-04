@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Preview admission with real disposable Git repositories and fake builds/Gitea."""
 
-from contextlib import nullcontext
+from contextlib import nullcontext, redirect_stderr
+import io
 import json
 import os
 import re
@@ -15,6 +16,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import agent_workflow_test as lifecycle
+import agent_workflow
 from agent_workflow import git, WorkflowError
 from preview_workflow import Preview, tests as focused_tests
 import preview_workflow
@@ -82,11 +84,87 @@ class PreviewTests(unittest.TestCase):
         self.assertIn("example failed", result["error"])
         self.assertIsNone(jobs.preview.remote())
         self.assertNotIn("validated", self.flow.load("task"))
+        # The failure is reported on the PR and named until it is resolved.
+        comments = self.api.prs[0]["comments"]
+        self.assertEqual(len(comments), 1)
+        self.assertIn(state["id"], comments[0]["body"])
+        self.assertIn("example failed", comments[0]["body"])
+        self.assertIn("preview submit task", comments[0]["body"])
+        self.assertEqual(self.api.prs[0]["labels"], [])
+        attention = self.flow.preview_attention()
+        self.assertEqual([(row["task"], row["phase"], row["pr"]) for row in attention], [("task", "failed", 1)])
+        self.assertEqual(self.flow.status("task")[0]["preview_attention"]["submission"], state["id"])
         # Preview failure does not participate in verify/finish or its locks.
         self.flow.protection(True)
         self.flow.verify("task", [[sys.executable, "-c", "pass"]])
         self.flow.finish("task", "Normal PR despite optional preview failure", rollup=False)
         self.assertTrue(self.flow.pull(self.flow.load("task"))["merged"])
+        # Delivered work no longer needs a preview resubmission.
+        self.assertEqual(self.flow.preview_attention(), [])
+
+    def test_failure_report_is_posted_once_and_never_changes_the_outcome(self):
+        self.feature()
+        jobs, state = self.submit(["task_focused"])
+        request = self.flow.api.request
+
+        def refuse_comments(method, path, payload=None):
+            if path.startswith("/issues/"):
+                raise WorkflowError("GitHub POST comments failed (503)")
+            return request(method, path, payload)
+
+        with patch.object(Preview, "verify", side_effect=WorkflowError("example failed")), \
+                patch.object(self.flow.api, "request", side_effect=refuse_comments):
+            result = jobs.run(state["id"])
+        self.assertEqual(result["phase"], "failed")
+        self.assertIn("503", result["report_error"])
+        self.assertNotIn("reported", result)
+        self.assertEqual(self.api.prs[0]["comments"], [])
+        # A later report (for example a retry) posts once, then never again.
+        reported = jobs.save(jobs.report(result))
+        self.assertIn("reported", reported)
+        self.assertNotIn("report_error", reported)
+        reported.pop("reported")
+        jobs.report(reported)
+        self.assertEqual(len(self.api.prs[0]["comments"]), 1)
+
+    def test_failure_report_lists_unresolved_candidate_paths(self):
+        self.feature()
+        jobs, state = self.submit(["task_focused"])
+        with patch.object(Preview, "verify", side_effect=WorkflowError("needs resolution")), \
+                patch.object(jobs, "conflicts", return_value=["src/a.cpp", "tests/b.py"]):
+            jobs.run(state["id"])
+        body = self.api.prs[0]["comments"][0]["body"]
+        self.assertIn("`src/a.cpp`, `tests/b.py`", body)
+
+    def test_attention_names_stale_and_interrupted_until_resubmitted(self):
+        self.feature()
+        jobs, state = self.submit(["task_focused"])
+        state["pid"] = None
+        jobs.save(state)
+        # A dead worker cannot report itself; the helper names it instead.
+        self.assertEqual([row["phase"] for row in self.flow.preview_attention()], ["interrupted"])
+        self.assertEqual(self.api.prs[0]["comments"], [])
+        state.update(phase="stale", note="Inputs advanced twice")
+        jobs.save(state)
+        self.assertEqual([row["reason"] for row in self.flow.preview_attention()], ["Inputs advanced twice"])
+        _, replacement = self.submit()
+        replacement.update(phase="published")
+        jobs.save(replacement)
+        self.assertEqual(self.flow.preview_attention(), [])
+
+    def test_helper_commands_print_the_attention_notice(self):
+        self.feature()
+        jobs, state = self.submit(["task_focused"])
+        state.update(phase="failed", error="example failed")
+        jobs.save(state)
+        notice = io.StringIO()
+        with redirect_stderr(notice):
+            agent_workflow.preview_notice(self.flow)
+        self.assertIn("preview submissions need attention: task (PR 1, failed)", notice.getvalue())
+        with patch.object(self.flow, "preview_attention", side_effect=OSError("unreadable")), \
+                redirect_stderr(io.StringIO()) as quiet:
+            agent_workflow.preview_notice(self.flow)
+        self.assertEqual(quiet.getvalue(), "")
 
     def test_submission_publishes_and_cleans_only_its_generated_checkout(self):
         tree = self.feature()
@@ -137,6 +215,7 @@ class PreviewTests(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertNotEqual(*calls)
         self.assertIsNone(jobs.preview.remote())
+        self.assertIn("Preview admission stale", self.api.prs[0]["comments"][0]["body"])
 
     def test_interrupted_submission_is_observed_not_automatically_restarted(self):
         self.feature()
@@ -472,6 +551,108 @@ class PreviewTests(unittest.TestCase):
         recovered = preview.resume(state["id"])
         self.assertEqual(recovered["head"], state["head"])
         self.assertTrue(recovered["checkpointed"])
+
+    def accepted_replacement(self, pending=False):
+        tree = self.feature()
+        first = self.prepare()
+        self.verify(first)
+        Preview(self.flow).publish(first["id"])
+        (tree / "updated.txt").write_text("manager moved to its separately tested repository")
+        self.flow.checkpoint("task", "Accepted replacement", ["updated.txt"])
+        self.flow.verify("task", [[sys.executable, "-c", "pass"]])
+        old_submission = self.submit(["new_focused"])[1] if pending else None
+        head = git(tree, "rev-parse", "HEAD")
+        git(self.remote, "update-ref", "refs/heads/main", head)
+        self.api.prs[0].update(state="closed", merged=True, merge_commit_sha=head)
+        return first, head, old_submission
+
+    def test_refresh_accepted_checks_preserves_history_and_requires_new_admission(self):
+        first, head, _ = self.accepted_replacement()
+        original_record = self.flow.file("task").read_bytes()
+        preview = Preview(self.flow)
+        refreshed = preview.prepare("task", self.root / "refresh", ["new_focused"],
+                                    refresh="Manager moved out; use its replacement integration checks")
+        row = refreshed["manifest"]["features"][0]
+        self.assertEqual(row["head"], head)
+        self.assertEqual(row["tests"], ["new_focused"])
+        self.assertEqual(row["history"], first["manifest"]["features"])
+        self.assertEqual(row["contributions"], first["manifest"]["features"][0]["contributions"])
+        self.assertEqual(row["accepted_in_main"], refreshed["main"])
+        self.assertEqual(preview_examples.manifest_tests(Path(refreshed["worktree"]) / ".gti-preview.json"), ["new_focused"])
+        self.assertTrue(self.flow.ancestor(first["head"], refreshed["head"]))
+        self.assertTrue(self.flow.ancestor(head, refreshed["head"]))
+        with self.assertRaisesRegex(WorkflowError, "Validate the combined"):
+            preview.publish(refreshed["id"])
+        # The accepted head entered preview through this candidate's main
+        # merge, so the feature is pending again and its replacement checks
+        # are proven once, alongside the fixed example gate.
+        self.assertNotEqual(row["merge"], first["manifest"]["features"][0]["merge"])
+        self.assertEqual([f["task"] for f in preview_examples.pending_features(
+            refreshed["manifest"], Path(refreshed["worktree"]))], ["task"])
+        _, executed = self.verify(refreshed)
+        self.assertEqual(executed[-1], ["python3", "scripts/preview_examples.py", "out/preview-build",
+                                      "--focused=new_focused"])
+        preview.publish(refreshed["id"])
+        self.assertEqual(self.flow.file("task").read_bytes(), original_record)
+        self.assertEqual(git(self.remote, "rev-parse", "main"), head)
+        # Retrying the same refresh keeps history unchanged; changing test names
+        # again needs a new accepted source identity.
+        repeated = preview.prepare("task", self.root / "repeat", ["new_focused"], refresh="Retry")
+        self.assertEqual(repeated["manifest"]["features"][0], row)
+        self.assertEqual(preview_examples.pending_features(repeated["manifest"], Path(repeated["worktree"])), [])
+        with self.assertRaisesRegex(WorkflowError, "without a new accepted"):
+            preview.prepare("task", self.root / "weaker", ["different"], refresh="No source change")
+
+    def test_refresh_rejects_unaccepted_unverified_and_unrelated_heads(self):
+        first, head, _ = self.accepted_replacement()
+        preview = Preview(self.flow)
+        for changes, message in (({"merged": False}, "merged head"),
+                                 ({"number": 99}, "same task PR")):
+            old = {key: self.api.prs[0][key] for key in changes}
+            self.api.prs[0].update(changes)
+            task_record = self.flow.load("task")
+            original_pr = task_record["pr"]
+            if "number" in changes:
+                task_record["pr"] = changes["number"]; self.flow.save(task_record)
+            with self.assertRaisesRegex(WorkflowError, message):
+                preview.prepare("task", self.root / "rejected", ["new_focused"], refresh="Accepted change")
+            self.api.prs[0].update(old)
+            task_record["pr"] = original_pr; self.flow.save(task_record)
+        record = self.flow.load("task")
+        verified = record["verified"]
+        record["verified"] = {"head": first["manifest"]["features"][0]["head"]}
+        self.flow.save(record)
+        with self.assertRaisesRegex(WorkflowError, "focused verification"):
+            preview.prepare("task", self.root / "unverified", ["new_focused"], refresh="Accepted change")
+        record["verified"] = verified; self.flow.save(record)
+        with self.assertRaisesRegex(WorkflowError, "explicit reason"):
+            preview.prepare("task", self.root / "empty-reason", ["new_focused"], refresh=" ")
+        git(self.remote, "update-ref", "refs/heads/main", first["main"])
+        with self.assertRaisesRegex(WorkflowError, "merged head"):
+            preview.prepare("task", self.root / "not-in-main", ["new_focused"], refresh="Accepted change")
+
+    def test_refresh_submission_survives_merge_and_keeps_superseded_admission(self):
+        first, head, prior = self.accepted_replacement(pending=True)
+        jobs = Submissions(self.flow)
+        with patch("preview_submit.Popen") as spawn:
+            spawn.return_value.pid = os.getpid()
+            state = jobs.submit("task", ["new_focused"], refresh="Accepted manager migration")
+            self.assertNotEqual(state["id"], prior["id"])
+            self.assertEqual(jobs.load(prior["id"])["phase"], "queued")
+            self.assertEqual(jobs.submit("task", ["new_focused"], refresh="Accepted manager migration")["id"], state["id"])
+            self.assertEqual(spawn.call_count, 1)
+        self.assertEqual(jobs.run(prior["id"])["phase"], "superseded")
+        def verify(identity, *args, **kwargs):
+            self.assertTrue(kwargs["automatic"])
+            self.assertTrue(kwargs["remote"])
+            return self.verify(jobs.preview.load(identity))[0]
+        with patch.object(jobs.preview, "verify", side_effect=verify):
+            result = jobs.run(state["id"])
+        self.assertEqual(result["phase"], "published")
+        candidate = jobs.preview.load(result["candidate"])
+        self.assertEqual(candidate["manifest"]["features"][0]["head"], head)
+        self.assertEqual(candidate["manifest"]["features"][0]["history"], first["manifest"]["features"])
+        self.assertFalse(Path(candidate["worktree"]).exists())
 
     def test_revert_preserves_history_and_original_pr(self):
         self.feature()

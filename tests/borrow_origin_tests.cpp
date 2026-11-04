@@ -208,6 +208,62 @@ void checkStoredViewReturns() {
          "field, element, nested, parameter and generic stored views are "
          "exercised beside a dependent relay");
 
+  const auto alias =
+      analyzeWithStandardLibrary("shadowed-receiver-view-return.gti", R"gti(
+import std.string;
+class Holder {
+  std::string_view name = "stored";
+  std::string text{"owned"};
+public:
+  Holder() = default;
+  std::string_view Shadowed() {
+    std::string_view name = this.text.view();
+    return name;
+  }
+};
+int main() { Holder holder{}; return int(holder.Shadowed().size()) - 5; }
+)gti");
+  expect(alias.canGenerateCode() && lang::verifyMirProgram(alias.mir).valid(),
+         "an immutable local view may shadow a field and relay its receiver");
+  if (!alias.canGenerateCode())
+    for (const auto &diagnostic : alias.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  std::size_t checkedAliases = 0;
+  if (alias.canGenerateCode()) {
+    for (const auto &function : alias.mir.functionInstances()) {
+      const auto *declaration =
+          alias.semantics.findFunction(function.declaration);
+      if (!declaration || !declaration->qualifiedName.ends_with("::Shadowed"))
+        continue;
+      ++checkedAliases;
+      expect(
+          declaration->returnBorrowOrigin == lang::BorrowOriginKind::Receiver &&
+              function.returnBorrowOrigin == lang::BorrowOriginKind::Receiver &&
+              function.returnBorrowAccess == lang::AccessMode::ReadOnly &&
+              function.returnBorrowFields.empty(),
+          "shadowed local view retains exact receiver dependency, not stored "
+          "field relay");
+      std::size_t returned = 0;
+      for (const auto &block : function.body.blocks) {
+        if (block.terminator.kind != lang::MirTerminatorKind::Return)
+          continue;
+        ++returned;
+        expect(block.terminator.returnLoan.has_value(),
+               "receiver-backed local view publishes its escaping loan");
+        auto malformed = alias.mir;
+        auto *changed = const_cast<lang::MirFunctionInstance *>(
+            malformed.findFunctionInstance(function.id));
+        for (auto &candidate : changed->body.blocks)
+          if (candidate.id == block.id)
+            candidate.terminator.returnLoan.reset();
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "a same-named stored field cannot excuse missing receiver loan");
+      }
+      expect(returned == 1, "shadowed alias has one checked return");
+    }
+    expect(checkedAliases == 1, "exact shadowed alias method is checked");
+  }
+
   const auto invalid =
       analyzeWithStandardLibrary("invalid-stored-view-return.gti", R"gti(
 import std.string;
@@ -218,8 +274,8 @@ class Holder {
 public:
   Holder() = default;
   std::string_view Shadowed() {
-    std::string_view name = this.text.view();
-    return name;
+    std::string name{"local owner"};
+    return name.view();
   }
 };
 std::string_view Expired(bool stored) {

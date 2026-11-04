@@ -87,16 +87,16 @@
     "088-consuming-builders.gti": 180,
     "089-library-workflow.gti": 918,
     "090-generic-algorithms.gti": 435,
-    "091-json-documents.gti": 647,
-    "092-json-codecs.gti": 618,
-    "093-http-json-client.gti": 716,
+    "091-json-documents.gti": 695,
+    "092-json-codecs.gti": 666,
+    "093-http-json-client.gti": 764,
     "094-binary-text-encoding.gti": 229,
     "095-explicit-cloning.gti": 246,
     "096-error-mapping.gti": 43,
     "097-constexpr-tables.gti": 77,
     "098-shared-ownership.gti": 224,
     "099-borrowed-expected.gti": 206,
-    "100-owned-error-pipelines.gti": 473,
+    "100-owned-error-pipelines.gti": 521,
     "101-owned-algorithm-results.gti": 326,
     "102-constexpr-frame-budget.gti": 70,
     "103-resource-exchange.gti": 164,
@@ -127,7 +127,7 @@
     "128-inline-object-pool.gti": 223,
     "129-generic-payload-enums.gti": 223,
     "130-fresh-result-initialization.gti": 162,
-    "131-inferred-references.gti": 513,
+    "131-inferred-references.gti": 561,
     "132-qualified-type-members.gti": 174,
     "133-raw-text-owner-views.gti": 71,
     "134-standard-library-modules.gti": 310,
@@ -137,14 +137,14 @@
     "138-structural-construction.gti": 301,
     "139-ordered-search.gti": 195,
     "140-environment-configuration.gti": 192,
-    "141-reflected-json.gti": 710,
+    "141-reflected-json.gti": 758,
     "142-constexpr-builders.gti": 122,
     "143-checked-container-iteration.gti": 525,
     "144-checked-view-iteration.gti": 451,
     "145-live-slot-and-lane-iteration.gti": 411,
     "146-counted-text-view-iteration.gti": 190,
-    "147-standard-library-import.gti": 471,
-    "148-nested-configuration.gti": 633,
+    "147-standard-library-import.gti": 519,
+    "148-nested-configuration.gti": 681,
     "149-interface-static-factories.gti": 112,
     "150-out-of-class-methods.gti": 167,
     "150-protected-events.gti": 32,
@@ -180,20 +180,19 @@
     "180-compact-source-owners.gti": 193,
     "181-general-object-layout.gti": 170,
     "182-associated-type-families.gti": 281,
+    "182-bounded-array-borrows.gti": 156,
     "183-immediate-functions.gti": 11,
     "184-payload-borrow-chains.gti": 11,
     "185-reflected-method-dispatch.gti": 47,
-    "182-bounded-array-borrows.gti": 156
+    "186-dynamic-json.gti": 646
   },
-  "total": 28249,
   "target": "arm64-apple-macos",
   "variants": {
     "x86_64-unknown-linux": {
       "examples": {
         "087-associative-containers.gti": 451,
         "089-library-workflow.gti": 917
-      },
-      "total": 28247
+      }
     }
   }
 }

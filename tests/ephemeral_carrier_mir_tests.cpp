@@ -1280,9 +1280,22 @@ int main() {
     return;
   }
   bool checked = false;
+  bool checkedShell = false;
   for (const auto &function : frontend.mir.functionInstances()) {
     const auto &body = function.body;
     for (const auto &loan : body.loans) {
+      const auto *dependency = body.findLoan(loan.storedDependency);
+      if (loan.kind == lang::MirLoanKind::Stored && dependency &&
+          dependency->lifecycleBound &&
+          dependency->access == lang::AccessMode::ReadOnly) {
+        expect(loan.parent == 0,
+               "temporary cursor retains its owner's external dependency once");
+        auto doubled = body;
+        doubled.loans[loan.id - 1].parent = loan.storedDependency;
+        expect(!lang::verifyMirBody(doubled, function.id).valid(),
+               "a cursor cannot also parent on its independent dependency");
+        checkedShell = true;
+      }
       if (!loan.lifecycleBound || loan.parent == 0)
         continue;
       for (const auto &block : body.blocks) {
@@ -1317,6 +1330,8 @@ int main() {
       }
     }
   }
+  expect(checkedShell,
+         "cleanup-provider regression exercises a shared physical shell");
   expect(checked,
          "cleanup-provider regression exercises early ancestor retirement");
 }

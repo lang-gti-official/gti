@@ -67,7 +67,8 @@ def write_json(path, value):
 
 
 def validate_connection(config):
-    fields = {"host", "root", "python", "transport", "platform", "cpus", "memory_gib", "jobs", "test_jobs", "cc", "cxx"}
+    fields = {"host", "root", "python", "transport", "platform", "cpus", "memory_gib", "jobs", "test_jobs", "cc", "cxx",
+              "gcp_project", "gcp_zone", "gcp_account", "known_hosts"}
     if not isinstance(config, dict) or set(config) - fields:
         raise RunnerError("runner connection has unknown fields")
     host = config.get("host")
@@ -85,8 +86,21 @@ def validate_connection(config):
     for key in ("cc", "cxx"):
         if key in config and (not isinstance(config[key], str) or not config[key] or "\0" in config[key]):
             raise RunnerError(f"runner {key} must be a nonempty executable path/name")
-    if config.get("transport", "ssh") not in ("ssh", "tailscale"):
-        raise RunnerError("transport must be ssh or tailscale")
+    if config.get("transport", "ssh") not in ("ssh", "tailscale", "gcloud-iap"):
+        raise RunnerError("transport must be ssh, tailscale or gcloud-iap")
+    cloud_fields = {"gcp_project", "gcp_zone", "gcp_account", "known_hosts"}
+    if config.get("transport") == "gcloud-iap":
+        if not cloud_fields <= config.keys() or not re.fullmatch(r"gti-spot-[0-9a-f]{32}", host):
+            raise RunnerError("IAP requires a leased Spot instance and explicit project/zone/account/host keys")
+        for key in ("gcp_project", "gcp_zone"):
+            if not isinstance(config[key], str) or not re.fullmatch(r"[a-z][a-z0-9-]{2,62}", config[key]):
+                raise RunnerError(f"invalid IAP {key}")
+        if not isinstance(config["gcp_account"], str) or not re.fullmatch(r"[A-Za-z0-9_.+%-]+@[A-Za-z0-9.-]+", config["gcp_account"]):
+            raise RunnerError("invalid IAP account")
+        if not isinstance(config["known_hosts"], str) or not Path(config["known_hosts"]).is_absolute() or "\0" in config["known_hosts"]:
+            raise RunnerError("IAP host-key file must be an absolute local path")
+    elif cloud_fields & config.keys():
+        raise RunnerError("cloud identity fields require gcloud-iap transport")
     for key in ("jobs", "test_jobs", "cpus", "memory_gib"):
         if key in config and (type(config[key]) is not int or config[key] < 1):
             raise RunnerError(f"runner {key} must be a positive integer")
@@ -771,7 +785,15 @@ def connection(config, action, run_id=None, input_path=None, output_path=None):
     remote = shlex.join([config["python"], "-u", "-c", bootstrap, "_remote", action, config["root"], *([run_id] if run_id else [])])
     options = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=15",
                "-o", "ServerAliveCountMax=3"]
-    if config.get("transport", "ssh") == "tailscale":
+    if config.get("transport") == "gcloud-iap":
+        command = ["gcloud", "--quiet", "--account=" + config["gcp_account"], "compute", "ssh", config["host"],
+                   "--project=" + config["gcp_project"], "--zone=" + config["gcp_zone"],
+                   "--tunnel-through-iap", "--strict-host-key-checking=yes", "--ssh-key-expire-after=10m",
+                   "--ssh-flag=-oUserKnownHostsFile=" + config["known_hosts"],
+                   *["--ssh-flag=" + option for option in ("-oBatchMode=yes", "-oForwardAgent=no", "-oClearAllForwardings=yes", "-oConnectTimeout=10",
+                                                          "-oServerAliveInterval=15", "-oServerAliveCountMax=3")],
+                   "--command=" + remote]
+    elif config.get("transport", "ssh") == "tailscale":
         # Tailscale validates the node's advertised SSH host key; never use
         # StrictHostKeyChecking=no or silently fall back to unverified SSH.
         command = ["tailscale", "ssh", config["host"], *options, remote]
@@ -813,6 +835,7 @@ def parser():
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument("--repo", default=".", help="source worktree (default: current directory)")
     result.add_argument("--runner", help="named host: mini, ubuntu-6, ubuntu-8 (or a configured name)")
+    result.add_argument("--spot-policy", type=Path, help="owner-reviewed cloud policy for --runner gcp-spot")
     result.add_argument("--host", help="SSH alias or user@host; saved by configure")
     result.add_argument("--root", help="absolute remote directory ending in gti-remote-runner")
     result.add_argument("--python", help="remote Python 3.9+ executable")
@@ -832,7 +855,7 @@ def parser():
     run.add_argument("--build-type", choices=["Release", "RelWithDebInfo", "MinSizeRel"], default="Release")
     run.add_argument("--cmake-arg", action="append", default=[], help="use --cmake-arg=-DNAME=value")
     run.add_argument("--steps-file", help="instead of CMake, execute an exact-argv JSON step plan")
-    run.add_argument("--timeout", type=int, default=3 * 60 * 60, help="seconds, including window waits")
+    run.add_argument("--timeout", type=int, help="seconds, including window waits; default 3h, or the Spot policy limit")
     run.add_argument("--detach", action="store_true", help="return run ID immediately; status/fetch later")
     run.add_argument("--results", help="local results directory; default under Git common directory")
     run.add_argument("--platform", choices=["Darwin", "Linux"], help="require this remote OS before running steps")
@@ -849,6 +872,63 @@ def parser():
     return result
 
 
+def execute_run(args, local, name, config, run_id=None, before_submit=None):
+    """One executor for fixed hosts and owner-provisioned ephemeral hosts."""
+    if args.full_suite and args.ctest_regex:
+        raise RunnerError("choose --full-suite or --ctest-regex, not both")
+    if any(v is not None and v < 1 for v in (args.jobs, args.test_jobs)) or not 1 <= args.timeout <= 86400:
+        raise RunnerError("job counts must be positive; timeout must be 1..86400 seconds")
+    if any("CMAKE_BUILD_TYPE" in argument or "CMAKE_CONFIGURATION_TYPES" in argument for argument in args.cmake_arg):
+        raise RunnerError("choose the optimized configuration with --build-type, not --cmake-arg")
+    if args.platform and config.get("platform") and args.platform != config["platform"]:
+        raise RunnerError(f"run requires {args.platform}, selected runner {name} is {config['platform']}")
+    run_id = valid_id(run_id) if run_id else "run-" + uuid.uuid4().hex
+    steps = validate_steps(read_json(args.steps_file)) if args.steps_file else None
+    with tempfile.TemporaryDirectory(prefix="gti-runner-snapshot-") as temporary:
+        temporary = Path(temporary)
+        identity = snapshot(args.repo, temporary)
+        request = {"schema": SCHEMA, "id": run_id, "source": identity, "steps": steps,
+                   "targets": args.target, "ctest_regex": args.ctest_regex, "full_suite": args.full_suite,
+                   "runner": {"name": name, "host": config["host"]},
+                   "required_platform": args.platform or config.get("platform"),
+                   "cc": config.get("cc"), "cxx": config.get("cxx"),
+                   "jobs": args.jobs or config.get("jobs"), "test_jobs": args.test_jobs or config.get("test_jobs"), "build_type": args.build_type,
+                   "cmake_args": args.cmake_arg, "timeout": args.timeout}
+        write_json(temporary / "request.json", request)
+        packet = temporary / "upload.tar"
+        with tarfile.open(packet, "w") as archive:
+            for filename in ("head.bundle", "source.tar", "request.json"):
+                archive.add(temporary / filename, arcname=filename, recursive=False)
+            add_bytes(archive, "remote_runner.py", source_code().encode())
+            add_bytes(archive, "build_window.py", (Path(__file__).parent / "build_window.py").read_bytes())
+        if before_submit is not None:
+            before_submit()
+        record_connection(local, run_id, name, config)
+        print(f"Submitting {run_id} to {name} ({config['host']}): {identity['head']} / snapshot {identity['snapshot_sha256']}", flush=True)
+        connection(config, "submit", run_id, input_path=packet)
+    print(f"Run ID: {run_id}", flush=True)
+    if args.detach:
+        return 0
+    last = None
+    try:
+        while True:
+            state = connection(config, "status", run_id)["runs"][0]
+            progress = (state["state"], state.get("phase"))
+            if progress != last:
+                print(f"{run_id}: {progress[0]} / {progress[1] or 'preparing'}", flush=True)
+                last = progress
+            if state["state"] in TERMINAL:
+                break
+            time.sleep(5)
+    except KeyboardInterrupt:
+        connection(config, "cancel", run_id)
+        print(f"Cancellation requested. Use status/fetch {run_id} for cleanup and logs.", file=sys.stderr)
+        return 130
+    report = fetch(config, run_id, args.results or local / "results" / run_id)
+    print(f"Results: {args.results or local / 'results' / run_id}; remote run removed", flush=True)
+    return report["exit_code"]
+
+
 def main(argv=None):
     arguments = list(sys.argv[1:] if argv is None else argv)
     if arguments and arguments[0] == "_worker":
@@ -859,6 +939,13 @@ def main(argv=None):
             print(json.dumps(response, sort_keys=True), flush=True)
         return 0
     args = parser().parse_args(arguments)
+    if args.runner == "gcp-spot" or (not args.runner and os.environ.get("GTI_REMOTE_RUNNER") == "gcp-spot"):
+        from gcp_spot_runner import dispatch
+        return dispatch(args, sys.modules[__name__])
+    if args.spot_policy:
+        raise RunnerError("--spot-policy requires --runner gcp-spot")
+    if args.command == "run" and args.timeout is None:
+        args.timeout = 3 * 60 * 60
     local = local_directory(args.repo)
     path = local / "config.json"
     settings = load_settings(path)
@@ -885,6 +972,8 @@ def main(argv=None):
         return int(any("error" in state for state in states.values()))
     run_id = valid_id(args.run_id) if getattr(args, "run_id", None) else None
     name, config = select_connection(args, settings, local, run_id)
+    if name == "gcp-spot":
+        raise RunnerError("Spot leases are ephemeral: use --runner gcp-spot status/clean; successful foreground results are already local")
     if args.command == "configure":
         observed = connection(config, "status")  # validate connection and owned root before saving
         if config.get("platform") and observed.get("platform") != config["platform"]:
@@ -895,57 +984,7 @@ def main(argv=None):
         print(f"Saved {name} at {path}; remote window: {config['root']}/window")
         return 0
     if args.command == "run":
-        if args.full_suite and args.ctest_regex:
-            raise RunnerError("choose --full-suite or --ctest-regex, not both")
-        if any(v is not None and v < 1 for v in (args.jobs, args.test_jobs)) or not 1 <= args.timeout <= 86400:
-            raise RunnerError("job counts must be positive; timeout must be 1..86400 seconds")
-        if any("CMAKE_BUILD_TYPE" in argument or "CMAKE_CONFIGURATION_TYPES" in argument for argument in args.cmake_arg):
-            raise RunnerError("choose the optimized configuration with --build-type, not --cmake-arg")
-        if args.platform and config.get("platform") and args.platform != config["platform"]:
-            raise RunnerError(f"run requires {args.platform}, selected runner {name} is {config['platform']}")
-        run_id = "run-" + uuid.uuid4().hex
-        steps = validate_steps(read_json(args.steps_file)) if args.steps_file else None
-        with tempfile.TemporaryDirectory(prefix="gti-runner-snapshot-") as temporary:
-            temporary = Path(temporary)
-            identity = snapshot(args.repo, temporary)
-            request = {"schema": SCHEMA, "id": run_id, "source": identity, "steps": steps,
-                       "targets": args.target, "ctest_regex": args.ctest_regex, "full_suite": args.full_suite,
-                       "runner": {"name": name, "host": config["host"]},
-                       "required_platform": args.platform or config.get("platform"),
-                       "cc": config.get("cc"), "cxx": config.get("cxx"),
-                       "jobs": args.jobs or config.get("jobs"), "test_jobs": args.test_jobs or config.get("test_jobs"), "build_type": args.build_type,
-                       "cmake_args": args.cmake_arg, "timeout": args.timeout}
-            write_json(temporary / "request.json", request)
-            packet = temporary / "upload.tar"
-            with tarfile.open(packet, "w") as archive:
-                for filename in ("head.bundle", "source.tar", "request.json"):
-                    archive.add(temporary / filename, arcname=filename, recursive=False)
-                add_bytes(archive, "remote_runner.py", source_code().encode())
-                add_bytes(archive, "build_window.py", (Path(__file__).parent / "build_window.py").read_bytes())
-            record_connection(local, run_id, name, config)
-            print(f"Submitting {run_id} to {name} ({config['host']}): {identity['head']} / snapshot {identity['snapshot_sha256']}", flush=True)
-            connection(config, "submit", run_id, input_path=packet)
-        print(f"Run ID: {run_id}", flush=True)
-        if args.detach:
-            return 0
-        last = None
-        try:
-            while True:
-                state = connection(config, "status", run_id)["runs"][0]
-                progress = (state["state"], state.get("phase"))
-                if progress != last:
-                    print(f"{run_id}: {progress[0]} / {progress[1] or 'preparing'}", flush=True)
-                    last = progress
-                if state["state"] in TERMINAL:
-                    break
-                time.sleep(5)
-        except KeyboardInterrupt:
-            connection(config, "cancel", run_id)
-            print(f"Cancellation requested. Use status/fetch {run_id} for cleanup and logs.", file=sys.stderr)
-            return 130
-        report = fetch(config, run_id, args.results or local / "results" / run_id)
-        print(f"Results: {args.results or local / 'results' / run_id}; remote run removed", flush=True)
-        return report["exit_code"]
+        return execute_run(args, local, name, config)
     if args.command == "fetch":
         destination = args.results or local / "results" / run_id
         report = fetch(config, run_id, destination)

@@ -22,10 +22,10 @@ fi
   echo "CMAKE_C_COMPILER_LAUNCHER=${cache_launcher}"
   echo "CMAKE_CXX_COMPILER_LAUNCHER=${cache_launcher}"
   echo "CCACHE_DIR=${GTI_CACHE_DIRECTORY}"
-  echo "CCACHE_MAXSIZE=10G"
+  echo "CCACHE_MAXSIZE=2G"
   echo "CCACHE_COMPILERCHECK=content"
   # No path rewriting, omitted inputs, or PCH/time-macro correctness relaxations.
   echo "CCACHE_BASEDIR="
   echo "CCACHE_SLOPPINESS="
 } >> "${GTI_CI_ENV_FILE}"
-echo "Compiler object cache: ${GTI_CACHE_DIRECTORY} (10G, compiler-content identity)"
+echo "Compiler object cache: ${GTI_CACHE_DIRECTORY} (2G, compiler-content identity)"
