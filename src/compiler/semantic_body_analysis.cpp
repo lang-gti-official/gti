@@ -8008,6 +8008,39 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
           resolved.borrowArgument =
               *selected->borrowSource == 0 ? 0 : *selected->borrowSource - 2;
           resolved.borrowAccess = resolved.returnType.referenceAccess;
+          // A borrow-carrying value result is described by the same call
+          // facts a concrete carrier-returning call publishes: its access is
+          // its stored references', and an argument origin names the
+          // argument whose dependencies the value retains. The carrier's
+          // stored references are resolved by now, unlike when the concept
+          // was declared, so its access is checked against the origin here.
+          if (resolved.returnType.kind != SemanticType::Reference) {
+            const auto paths = storedReferencePaths(resolved.returnType);
+            resolved.borrowAccess =
+                std::any_of(paths.begin(), paths.end(),
+                            [](const StoredReferencePath &path) {
+                              return path.reference.referenceAccess ==
+                                     AccessMode::Mutable;
+                            })
+                    ? AccessMode::Mutable
+                    : AccessMode::ReadOnly;
+            const bool mutableOrigin =
+                *selected->borrowSource == 0
+                    ? selected->mutableReceiver
+                    : selected->arguments[*selected->borrowSource]
+                              .referenceAccess == AccessMode::Mutable;
+            if (resolved.borrowAccess == AccessMode::Mutable &&
+                !mutableOrigin) {
+              report(expr.paren(),
+                     "The required borrow-carrying result grants mutable "
+                     "access, but its borrow origin is read-only.",
+                     "GTI-S2029");
+              currentType = SemanticType::Unknown;
+              return;
+            }
+            if (resolved.borrowOrigin == BorrowOriginKind::Argument)
+              resolved.borrowArguments = {resolved.borrowArgument};
+          }
         }
         semanticModel.record(expr, std::move(resolved));
         currentType = callExpressionType(selected->arguments[1]);

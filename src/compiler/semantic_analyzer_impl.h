@@ -3594,6 +3594,13 @@ private:
       const MemberRequirement &query, std::span<const SemanticType> arguments,
       std::string *reason = nullptr,
       const std::vector<std::string> *lookupScope = nullptr) const;
+  // `{ e } -> C [[borrowed_from(x)]]` for a non-reference C: compares the
+  // dependencies a binding of e's value would retain against the origin x.
+  // `worker` is the query's isolated analyzer that has already analyzed e.
+  [[nodiscard]] static bool borrowedCarrierResultSatisfied(
+      Impl &worker, const MemberRequirement &query, const SemanticType &actual,
+      const SemanticType &required, const SemanticType &origin,
+      SymbolId originIdentity, std::string *reason);
   static void
   collectRequirementTypeArguments(const Expr *expression,
                                   std::vector<const TypeRef *> &types);

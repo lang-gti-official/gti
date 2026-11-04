@@ -53,3 +53,59 @@ concept writable<I, T> = requires(mut I& cursor, int index) {
             (identifier))
           (reference_declarator))
         (identifier)))))
+
+==================
+Borrow-carrying value requirement results
+==================
+concept views<S> = requires(S& source) {
+  { source.buffered() } -> std::span<uint8_t> [[borrowed_from(source)]];
+};
+concept infers<S> = requires(S& source) {
+  { source.view() } -> auto [[borrowed_from(source)]];
+};
+---
+
+(source_file
+  (concept_declaration
+    (identifier)
+    (identifier)
+    (constraint_expression
+      (member_requirement_expression
+        (type
+          (user_type
+            (identifier))
+          (reference_declarator))
+        (identifier)
+        (call_expression
+          (member_expression
+            (primary_expression
+              (identifier))
+            (identifier))
+          (argument_list))
+        (type
+          (user_type
+            (scoped_identifier
+              (identifier)
+              (identifier))
+            (type_argument_clause
+              (type
+                (primitive_type)))))
+        (identifier))))
+  (concept_declaration
+    (identifier)
+    (identifier)
+    (constraint_expression
+      (member_requirement_expression
+        (type
+          (user_type
+            (identifier))
+          (reference_declarator))
+        (identifier)
+        (call_expression
+          (member_expression
+            (primary_expression
+              (identifier))
+            (identifier))
+          (argument_list))
+        (type)
+        (identifier)))))

@@ -170,7 +170,7 @@
     "170-view-fields.gti": 218,
     "171-recursive-text-relays.gti": 171,
     "172-deferred-assertions.gti": 231,
-    "173-general-requires.gti": 193,
+    "173-general-requires.gti": 203,
     "174-typed-macros.gti": 240,
     "175-thread-local-storage.gti": 293,
     "176-profile-independent-atomics.gti": 25,

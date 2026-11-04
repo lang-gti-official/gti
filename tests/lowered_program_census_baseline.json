@@ -2721,9 +2721,9 @@
       }
     },
     "173-general-requires.gti": {
-      "declarations": 1826,
-      "bodies": 194,
-      "generated_items": 97,
+      "declarations": 1839,
+      "bodies": 204,
+      "generated_items": 98,
       "generated_kinds": {
         "program_initialization": 1,
         "hosted_entry": 1,
@@ -2732,7 +2732,7 @@
         "lifecycle_cleanup": 3,
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
-        "concrete_instance_adapter": 38,
+        "concrete_instance_adapter": 39,
         "thread_local_storage": 0
       }
     },

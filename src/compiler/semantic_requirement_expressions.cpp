@@ -404,9 +404,12 @@ auto SemanticVisitor::Impl::expressionRequirementFact(
       return std::nullopt;
     fact.arguments = {referent(arguments[*receiver]),
                       arguments[query.parameters().size()]};
+    // An inferred checked reference keeps its reference shape with a deferred
+    // referent. An inferred borrow-carrying value is a deferred value, never a
+    // reference: concrete instantiation supplies its type and dependencies.
     if (query.inferredResult())
       fact.arguments[1] =
-          query.borrowedFrom()
+          query.borrowedFrom() && query.result().reference
               ? SemanticType::referenceTo(SemanticType::Unknown,
                                           query.result().referenceMutability
                                               ? AccessMode::Mutable
@@ -427,9 +430,14 @@ auto SemanticVisitor::Impl::expressionRequirementFact(
   if (query.borrowedFrom()) {
     const auto origin = binding(*query.borrowedFrom());
     const auto &result = fact.arguments[1];
-    if (!receiver || !origin || result.kind != SemanticType::Reference ||
+    // A checked reference result states its access in its type. A
+    // borrow-carrying value's access belongs to its carrier type, whose
+    // stored references may not be resolved while concepts are declared;
+    // the open-body consumer checks that access against the origin.
+    if (!receiver || !origin ||
         arguments[*origin].kind != SemanticType::Reference ||
-        (result.referenceAccess == AccessMode::Mutable &&
+        (result.kind == SemanticType::Reference &&
+         result.referenceAccess == AccessMode::Mutable &&
          arguments[*origin].referenceAccess != AccessMode::Mutable))
       return std::nullopt;
     if (*origin == *receiver) {
@@ -637,8 +645,13 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfied(
   if (query.inferredResult() && actual == SemanticType::Unknown)
     return reject("The expression's operation remains unresolved. An inferred "
                   "result does not prove an unresolved compound operation.");
+  // `-> auto [[borrowed_from(x)]]` infers a borrow-carrying value; `-> auto&`
+  // infers a checked reference's referent.
+  const bool inferredCarrier = query.inferredResult() && query.borrowedFrom() &&
+                               !query.result().reference;
   const auto required =
-      query.inferredResult() && query.borrowedFrom()
+      inferredCarrier ? actual
+      : query.inferredResult() && query.borrowedFrom()
           ? SemanticType::referenceTo(actual, query.result().referenceMutability
                                                   ? AccessMode::Mutable
                                                   : AccessMode::ReadOnly)
@@ -653,8 +666,11 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfied(
       return reject("The borrow origin is not a requirement parameter.");
     const auto index =
         static_cast<std::size_t>(origin - query.bindings().begin());
-    if (required.kind != SemanticType::Reference ||
-        required.arguments.size() != 1 ||
+    if (required.kind != SemanticType::Reference)
+      return borrowedCarrierResultSatisfied(*worker, query, actual, required,
+                                            arguments[index],
+                                            parameterIdentities[index], reason);
+    if (required.arguments.size() != 1 ||
         arguments[index].kind != SemanticType::Reference)
       return reject("A borrowed requirement result needs a checked reference "
                     "result and a borrowed parameter origin.");
@@ -703,13 +719,68 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfied(
         "The expression does not have the exact required owned result type.");
   if (actual.kind == SemanticType::Reference ||
       worker->typeTraits(actual).containsBorrowedState)
-    return reject("Expression requirements currently require an owned, "
-                  "non-borrowed result.");
+    return reject("An unannotated result must be owned and non-borrowed; name "
+                  "a borrow-carrying result's origin with "
+                  "[[borrowed_from(parameter)]].");
   if (cacheable && primitiveRequirementProofCount < 1024) {
     primitiveRequirementProofs[&query].emplace_back(arguments.begin(),
                                                     arguments.end());
     ++primitiveRequirementProofCount;
   }
+  return true;
+}
+
+auto SemanticVisitor::Impl::borrowedCarrierResultSatisfied(
+    Impl &worker, const MemberRequirement &query, const SemanticType &actual,
+    const SemanticType &required, const SemanticType &origin,
+    SymbolId originIdentity, std::string *reason) -> bool {
+  const auto reject = [&](std::string message) {
+    if (reason)
+      *reason = std::move(message);
+    return false;
+  };
+  // The same origin rule as a checked reference result, applied to the
+  // dependencies a binding of this value retains. Whether a type carries
+  // borrowed state is the general type trait, never a type's spelling.
+  if (origin.kind != SemanticType::Reference)
+    return reject("A borrow-carrying requirement result needs a borrowed "
+                  "parameter origin.");
+  // A place exposes its referent as the expression type; it is a reference
+  // to a carrier, not a carrier value, and has its own checked form.
+  const auto *info = worker.semanticModel.findExpression(*query.expression());
+  if (!info || info->category == ValueCategory::Place)
+    return reject("The expression designates an existing borrow-carrying "
+                  "object, not a new value; require it as a checked "
+                  "reference result.");
+  if (actual != required)
+    return reject("The expression does not have the exact required "
+                  "borrow-carrying result type.");
+  if (!worker.typeTraits(required).containsBorrowedState)
+    return reject("The required result carries no borrowed state; an owned "
+                  "result is named without borrowed_from.");
+  // These are the dependencies a binding of the value would retain, so the
+  // query accepts exactly what concrete initialization would protect. An
+  // empty set is unproven, not ownerless, and is rejected.
+  const auto dependencies = worker.storedBorrowDependencies(query.expression());
+  if (dependencies.empty() || originIdentity == 0 ||
+      !worker.hasStableBorrowStorage(query.expression()) ||
+      std::any_of(dependencies.begin(), dependencies.end(),
+                  [&](const SemanticLoanDependency &dependency) {
+                    return !dependency.place.valid() ||
+                           dependency.place.receiver ||
+                           dependency.place.root != originIdentity;
+                  }))
+    return reject("The borrow-carrying result is not borrowed solely from "
+                  "the named requirement parameter.");
+  // Access comes from the carrier's own capabilities: a value that retains a
+  // mutable dependency needs a mutable origin.
+  if (origin.referenceAccess != AccessMode::Mutable &&
+      std::any_of(dependencies.begin(), dependencies.end(),
+                  [](const SemanticLoanDependency &dependency) {
+                    return dependency.access == AccessMode::Mutable;
+                  }))
+    return reject("A borrow-carrying result with mutable access requires a "
+                  "mutable borrowed origin.");
   return true;
 }
 
