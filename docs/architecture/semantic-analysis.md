@@ -4100,3 +4100,27 @@ contracts, generics and semantic-shaping constants still require the F1/F3
 schemas and staged query work in [ADR 032](../decisions/032-compiled-library-bundles.md).
 See the [scalar driver profile](build-and-driver.md#executable-scalar-separate-compilation-profile)
 for linkage, compatibility and the runnable source-absent example.
+
+### Checked immediate call arguments
+
+Ordinary call resolution completes its exact and temporary-reference pass before
+probing implicit immediate construction. The final pass skips inference through
+a mismatched checked class parameter, resolves other arguments, and selects one
+function and constructor without conversion ranking. Semantics records the
+contextual construction on the original argument and the resulting constant
+through the existing immediate publication path. The operand retains its source
+type and identity; HIR/MIR consume the proved destination constant. Operator
+resolution does not opt into this tier.
+
+`ResolvedCallInfo::checkedArguments` retains the selected construction and argument
+index for hover. The original occurrence remains the source identifier; adding
+validation must not change rename, reference or semantic-token identity.
+
+Immediate requests run under the request's configured step and call-depth
+limits (`CompileLimits`), like every other constant context. Nested execution
+inherits one budget. The existing request-local `StagedConstantResults` cache reuses completed
+exact requests while charging their original work. A terminal panic
+fails the request as `Panicked` with its constant text, the same compile-time
+panic rule as every other constant context; the immediate diagnostic owns
+caller blame and trace presentation. This reuses canonical verified MIR and
+never retries an immediate request through the compatibility AST interpreter.

@@ -41,40 +41,41 @@ def program() -> str:
     for spelling, values in INTEGERS.items():
         for value in values:
             for spec in INTEGER_SPECS:
-                lines.append(f'  show(std::try_format("[{{{spec}}}]", {spelling}({value})));')
+                lines.append(f'  show(std::try_runtime_format("[{{{spec}}}]", {spelling}({value})));')
             if not value.startswith("-") and 32 <= int(value) <= 126:
-                lines.append(f'  show(std::try_format("[{{:c}}]", {spelling}({value})));')
+                lines.append(f'  show(std::try_runtime_format("[{{:c}}]", {spelling}({value})));')
     for character in ["'a'", "'Z'", "'0'", "' '"]:
         for spec in CHAR_SPECS:
-            lines.append(f'  show(std::try_format("[{{{spec}}}]", {character}));')
+            pattern = f'"[{{{spec}}}]"'
+            lines.append(f'  show(std::try_runtime_format({pattern}, {character}));')
     for text in ['"gti"', '""', '"formatting"']:
         for spec in TEXT_SPECS:
-            lines.append(f'  show(std::try_format("[{{{spec}}}]", {text}));')
-            lines.append(f'  show(std::try_format("[{{{spec}}}]", std::string({text})));')
+            lines.append(f'  show(std::try_runtime_format("[{{{spec}}}]", {text}));')
+            lines.append(f'  show(std::try_runtime_format("[{{{spec}}}]", std::string({text})));')
     for boolean in ["true", "false"]:
         for spec in ["", ":6", ":^7", ":>8", ":.2"]:
-            lines.append(f'  show(std::try_format("[{{{spec}}}]", {boolean}));')
+            lines.append(f'  show(std::try_runtime_format("[{{{spec}}}]", {boolean}));')
     for value in ["0.0", "-1.5", "3.14159265", "0.0000001", "12345678.9"]:
         for spec in FLOAT_SPECS:
-            lines.append(f'  show(std::try_format("[{{{spec}}}]", double({value})));')
-            lines.append(f'  show(std::try_format("[{{{spec}}}]", float({value})));')
+            lines.append(f'  show(std::try_runtime_format("[{{{spec}}}]", double({value})));')
+            lines.append(f'  show(std::try_runtime_format("[{{{spec}}}]", float({value})));')
     # Mixed patterns, literals, escapes, positional fields and long output
     # share locals, so they form one group of their own.
     mixed = [
-        '  show(std::try_format("{}:{}|{{}}|{:>4}", int32_t(1), int64_t(-2), uint8_t(3)));',
-        '  show(std::try_format("{1}-{0}-{1}", int32_t(10), "x"));',
-        '  show(std::try_format("{:#x}{:#o}{:#b}", uint32_t(255), uint32_t(8), uint32_t(5)));',
-        '  show(std::try_format("{{{}}}", int32_t(9)));',
+        '  show(std::try_runtime_format("{}:{}|{{}}|{:>4}", int32_t(1), int64_t(-2), uint8_t(3)));',
+        '  show(std::try_runtime_format("{1}-{0}-{1}", int32_t(10), "x"));',
+        '  show(std::try_runtime_format("{:#x}{:#o}{:#b}", uint32_t(255), uint32_t(8), uint32_t(5)));',
+        '  show(std::try_runtime_format("{{{}}}", int32_t(9)));',
         '  mut std::string long_text = std::string();',
         '  for (mut int32_t index = 0; index < 200; index++) {',
-        '    long_text.append(std::format("{:04}|", index).view());',
+        '    long_text.append(std::runtime_format("{:04}|", index).view());',
         '  }',
         '  std::println(long_text.view());',
         '  mut std::string target = std::string("prefix:");',
-        '  [[discard]] std::try_format_to(target, "{}+{}", int32_t(4), int32_t(5));',
+        '  [[discard]] std::try_runtime_format_to(target, "{}+{}", int32_t(4), int32_t(5));',
         '  std::println(target.view());',
-        '  std::println(std::format("{}", std::try_format("{:q}", int32_t(1)).has_value()));',
-        '  std::println(std::format("{}", std::try_format("{} {}", int32_t(1)).has_value()));',
+        '  std::println(std::runtime_format("{}", std::try_runtime_format("{:q}", int32_t(1)).has_value()));',
+        '  std::println(std::runtime_format("{}", std::try_runtime_format("{} {}", int32_t(1)).has_value()));',
     ]
     lines += ["  return 0;", "}", ""]
     # Keep every body small: one function per group of ten statements.

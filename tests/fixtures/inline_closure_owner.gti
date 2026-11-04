@@ -70,7 +70,7 @@ bool bitwise<T>() {
 }
 
 void describe<Callable>(std::string_view label, Callable callable) {
-  std::println(std::format("{} bitwise {} holder {} bytes {}", label,
+  std::println(std::runtime_format("{} bitwise {} holder {} bytes {}", label,
                            bitwise<Callable>(), bitwise<holder<Callable>>(),
                            std::layout_of<holder<Callable>>().bytes));
 }
@@ -78,7 +78,7 @@ void describe<Callable>(std::string_view label, Callable callable) {
 // A one-string capture is exactly as large as the library's string, whatever
 // representation that string uses.
 void describe_text<Callable>(Callable callable) {
-  std::println(std::format("text bitwise {} holder {} string-sized {}",
+  std::println(std::runtime_format("text bitwise {} holder {} string-sized {}",
                            bitwise<Callable>(), bitwise<holder<Callable>>(),
                            std::layout_of<holder<Callable>>().bytes ==
                                std::layout_of<std::string>().bytes));

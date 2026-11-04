@@ -142,5 +142,14 @@
     "group": "generic-instantiation",
     "format": "Generic instantiation exceeded the compiler's {0} limit ({1}).",
     "arguments": 2
+  },
+  {
+    "id": "CheckedLiteralOverloadShadow",
+    "code": "GTI-S2125",
+    "phase": "Semantics",
+    "severity": "Warning",
+    "group": "checked-literal-overload",
+    "format": "An exact overload can bypass implicit consteval argument validation in this overload set.",
+    "arguments": 0
   }
 ]

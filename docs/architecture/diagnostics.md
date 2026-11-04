@@ -24,6 +24,17 @@ immediate constructor selected by bare `return;`. A `void` call outside the
 standalone statement shape explains that structural limit at its call site.
 
 
+Checked argument construction reports nonconstant input at the original argument
+with the parameter name and the constructor's `@runtime_escape` documentation,
+when present. A terminal panic executed by the immediate evaluator supplies its
+constant library message as the primary explanation without repeating it as a
+hint. `GTI-S2125` warns at the later declaration of a same-shaped exact/checked
+overload pair, relates the earlier declaration, and recommends a distinct runtime
+name or wrapper. Exact overload selection remains unchanged. Neither diagnostic
+has an automatic fix because changing an API or its validation policy requires
+an author decision. Hover names the selected checked constructor independently
+of these diagnostics; source-token and rename identity remain unchanged.
+
 Staged MIR constant-evaluation failures retain executed caller identities,
 which semantic staging maps to source spans before its HIR/MIR snapshot expires.
 `GTI-S2057` in constexpr bindings, `if constexpr` and `static_assert` appends

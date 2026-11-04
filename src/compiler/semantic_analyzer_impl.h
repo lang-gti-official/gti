@@ -3714,12 +3714,23 @@ private:
                               const std::vector<SemanticType> &argumentTypes,
                               const ExprList &expressions) const;
 
+  void warnCheckedOverloadOverlap(const CallableCandidate &left,
+                                  const CallableCandidate &right);
+  [[nodiscard]] bool
+  checkedArgumentNonDeduced(const SemanticType &parameter,
+                            const SemanticType &argument) const;
+  [[nodiscard]] bool checkedArgumentPotential(const ExprPtr &argument,
+                                              const SemanticType &source,
+                                              const SemanticType &target);
+  bool applyCheckedArgument(const ExprPtr &argument, const SemanticType &source,
+                            const SemanticType &target, const Token &parameter);
+
   bool applyVariadicFunctionTypeArguments(
       CallableCandidate &function,
       const std::vector<SemanticType> &explicitTypeArguments,
       const std::vector<CompileTimeValue> &explicitValueArguments,
       const std::vector<SemanticType> &argumentTypes, const ExprList &arguments,
-      const Token &paren);
+      const Token &paren, bool checkedArguments = false);
 
   bool inferTypeArguments(const SemanticType &pattern,
                           const SemanticType &argument,
@@ -3733,7 +3744,7 @@ private:
       const std::vector<SemanticType> &explicitTypeArguments,
       const std::vector<CompileTimeValue> &explicitValueArguments,
       const std::vector<SemanticType> &argumentTypes, const ExprList &arguments,
-      const Token &paren);
+      const Token &paren, bool checkedArguments = false);
 
   [[nodiscard]] bool tryInferTypeArguments(
       const SemanticType &pattern, const SemanticType &argument,
@@ -3750,7 +3761,8 @@ private:
       const ExprList &expressions, CallableCandidate &resolved,
       std::vector<SemanticType> &resolvedTypeArguments,
       std::vector<CompileTimeValue> &resolvedValueArguments,
-      ConstraintFailure *constraintFailure = nullptr);
+      ConstraintFailure *constraintFailure = nullptr,
+      bool checkedArguments = false);
 
   [[nodiscard]] static bool containsLambdaType(const SemanticType &type);
 
@@ -4280,7 +4292,8 @@ private:
       std::vector<AnalyzedCallArgument> arguments, const Token &paren,
       bool requireExactNullParameter = false,
       bool contextualConstruction = false,
-      std::vector<const ConstructorInfo *> *candidateProbe = nullptr);
+      std::vector<const ConstructorInfo *> *candidateProbe = nullptr,
+      bool checkedArgument = false);
 
   void selectConstructorCallArguments(
       const Expr *construction, const ReturnStmt *emptyReturn, ClassId classId,
@@ -4288,7 +4301,8 @@ private:
       const std::vector<CompileTimeValue> &valueArguments,
       std::vector<AnalyzedCallArgument> arguments, const Token &paren,
       bool requireExactNullParameter, bool contextualConstruction,
-      std::vector<const ConstructorInfo *> *candidateProbe);
+      std::vector<const ConstructorInfo *> *candidateProbe,
+      bool checkedArgument = false);
 
   void analyzeArrayMemberCall(const Call &call, const Get &member,
                               const std::vector<SemanticType> &argumentTypes,

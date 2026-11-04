@@ -187,6 +187,9 @@ while canonical language documents continue to describe actual support.
 - [032: Bundled compiled GTI libraries](decisions/032-compiled-library-bundles.md)
   — implemented container/envelope foundation and the separate-compilation design boundary.
 
+- [033: Checked immediate arguments](decisions/033-checked-immediate-arguments.md)
+  — final-tier constant construction and explicit runtime formatting.
+
 Decision records explain why a significant rule exists. They are not a second
 description of the implementation.
 

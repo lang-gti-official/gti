@@ -450,8 +450,9 @@ the GTI source graph does not.
 Initialization requires an exact type unless a specific rule permits a
 conversion. Numeric conversions use `Type(value)` and checked GTI semantics.
 Constructors are selected by one exact parameter list, and a class may declare
-conversion operators to other types (section 3.9.2). Neither defines an
-implicit conversion for calls or assignment. The initialization rule below
+conversion operators to other types (section 3.9.2). Neither defines a general
+implicit conversion for calls or assignment. Section 3.6 admits one bounded
+call exception through `implicit consteval` constructors. The initialization rule below
 selects one, declared `implicit`, for a declaration initializer or an explicitly
 declared value return type.
 
@@ -489,7 +490,8 @@ initialization error, with a hint naming the explicit form. The rule does not
 apply to `constexpr` bindings, range-`for` element bindings, reference fields,
 unions, abstract classes, a declared type that carries a borrow, or an
 initializer whose type comes from its destination: a brace list, a
-contextually typed call, or a function name. Function arguments and assignment never use it.
+contextually typed call, or a function name. Assignment never uses it. Function arguments use only the narrower checked
+immediate construction rule in section 3.6.
 
 The same one-step selection initializes an explicitly declared value return
 type from a return operand. For example, `Celsius read() { return 21; }` uses
@@ -758,7 +760,8 @@ not exempt it from alias checks. See the [thread-local contract](concurrency.md#
 
 An overload set is resolved to one unique candidate whose parameter types match
 exactly after generic substitution, apart from the bounded raw-pointer
-qualification and null compatibility defined above. Return types, parameter
+qualification and null compatibility defined above, the temporary-borrow tier
+below, and checked immediate argument construction. Return types, parameter
 names, and by-value parameter mutability do not distinguish overloads. GTI does
 not otherwise perform conversion ranking, return-type overloading, ADL, or a
 concrete-over-generic preference.
@@ -1070,6 +1073,44 @@ still requires an ownership contract beyond ordinary virtual dispatch.
 
 The selected callable, constructor, or operator identity is part of the
 program's semantics and must not be re-selected by a backend.
+
+### Checked immediate argument construction
+
+Only after the exact and temporary-borrow tiers are empty, a constant expression
+of type `T` may initialize a by-value class/struct parameter `P` through an
+accessible `implicit consteval` constructor. Its first explicit parameter must
+be exactly `T` or read-only `T&`; any trailing parameters need defaults. There
+is one construction, with no numeric conversion, chained constructor, conversion
+operator, ordinary implicit constructor, or reference destination. The existing
+construction ownership/access checks and immediate publication limits apply.
+Assignment and all operators, including `operator()` and `operator[]`, keep
+exact matching.
+
+The final tier requires one function and one constructor. It does not rank
+checked candidates by the number of conversions, receiver preference, generic
+specificity, or defaults. Generic inference does not use a class parameter
+satisfied by this conversion: infer its arguments elsewhere or supply them
+explicitly, then check the substituted class. For example:
+
+```gti
+std::string log<std::formattable Args...>(std::format_pattern<Args...> pattern, Args... args) {
+  return std::format(pattern, args...);
+}
+// Args comes from 42; the literal initializes format_pattern<int> afterward.
+auto text = log("value={}", 42);
+```
+
+An already constructed `P` passes exactly and forwards without revalidation.
+A nonconstant argument reports `GTI-S2057` at that argument, names the parameter,
+and requires a compile-time constant. A constructor documentation line
+`@runtime_escape <description>` adds library-authored runtime guidance. It has
+no effect on overloads or language semantics.
+
+An exact overload continues to win even for a literal. `GTI-S2125` warns when
+same-shaped overload declarations differ by an exact source parameter and a
+class parameter accepting that source through an implicit immediate constructor.
+API authors should separate runtime entry points by name or wrapper type. The
+warning is a declaration lint, not a change to exact-tier precedence.
 
 ### Namespace Function Items
 
@@ -2352,10 +2393,10 @@ cannot be immediate.
 An ordinary invocation of an immediate declaration must complete constant
 evaluation during semantic analysis, even when its surrounding expression or
 API also receives runtime arguments. Exact overload and constructor selection
-happens first; immediacy does not rank candidates or introduce conversions.
-An `implicit consteval` constructor participates in GTI's existing declaration
-initialization conversion. Ordinary function arguments still require exact
-types, such as `send(Port(443), runtime_payload)`.
+happens first; immediacy does not rank candidates. An `implicit consteval`
+constructor participates in declaration/return initialization and the final
+checked argument tier in section 3.6: `send(443, runtime_payload)` can initialize
+a by-value `Port` while the payload remains ordinary runtime data.
 
 Inside an immediate function or constructor body, parameters and local values
 may feed other constexpr or immediate calls: their enclosing immediate

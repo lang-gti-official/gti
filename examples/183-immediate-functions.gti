@@ -43,7 +43,7 @@ int exercise(int runtime_payload) {
   Port secure = 443;
   int sum = immediate_triangle(8);
   return transmit(secure, runtime_payload) +
-         transmit(Port(80), runtime_payload) +
+         transmit(80, runtime_payload) +
          transmit(default_port(), runtime_payload) + sum;
 }
 
@@ -55,5 +55,9 @@ int main() {
 // require_application_port(443) fails during compilation with the panic's
 // message, and require_application_port(runtime_payload) fails because its
 // argument is not a constant.
-// Function arguments keep GTI's explicit conversion rule: write Port(80),
-// not transmit(80, runtime_payload). `implicit` applies to declarations.
+// Constant arguments can use an implicit consteval constructor directly.
+// transmit(runtime_payload, 7) is rejected; construct a validated Port first.
+
+// The same rule supports source-defined format_pattern<Args...> wrappers:
+// std::format("port={}", runtime_payload) checks the pattern at compile time.
+// Dynamic formatting uses std::runtime_format(pattern, runtime_payload).

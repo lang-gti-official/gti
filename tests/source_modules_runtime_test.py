@@ -110,7 +110,7 @@ int main() {
   mut std::vector<int32_t> values{};
   values.push_back(legacy::base());
   values.push_back(2);
-  std::println(std::format("{}", values[std::size_t(0)] + values[std::size_t(1)]));
+  std::println(std::runtime_format("{}", values[std::size_t(0)] + values[std::size_t(1)]));
   return 0;
 }
 ''')

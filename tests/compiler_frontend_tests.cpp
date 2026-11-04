@@ -3218,7 +3218,7 @@ int main() {
   mut std::vector<std::string> names{};
   names.push_back(std::string("a"));
   std::size_t count = names.size();
-  std::println(std::format("{}", count));
+  std::println(std::runtime_format("{}", count));
   return 0;
 }
 )";

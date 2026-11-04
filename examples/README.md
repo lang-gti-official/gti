@@ -388,7 +388,7 @@ is a teaching helper, not a production server.
 | `179-weak-ownership.gti` | source-defined weak observation, checked promotion, expiry, and local owning callbacks with thread-affine payloads |
 | `180-compact-source-owners.gti` | general null-guarded pointer owners, compact shared/weak handles and exactly-once moved cleanup; LLVM only |
 | [181-general-object-layout.gti](181-general-object-layout.gti) | General `sizeof(T)` and `alignof(T)` constants, generic storage extents, and native runtime layout agreement (LLVM). |
-| [183-immediate-functions.gti](183-immediate-functions.gti) | Immediate functions, standalone void validation, and implicit bare-return construction composed with runtime arguments (LLVM). |
+| [183-immediate-functions.gti](183-immediate-functions.gti) | Immediate functions, checked literal arguments, standalone void validation, and implicit bare-return construction composed with runtime arguments (LLVM). |
 | [184-payload-borrow-chains.gti](184-payload-borrow-chains.gti) | Return nested payload references through a parameter and receiver, and copy a sibling before a mutable payload borrow. |
 | `185-reflected-method-dispatch.gti` | a generic compile-time metadata binder calling overload-selected methods on two unrelated runtime values; LLVM execution |
 | [186-literal-call-arguments.gti](186-literal-call-arguments.gti) | Fitting integer literal arguments in constructors, methods and lambdas, with exact-overload preference and documented rejection boundaries (LLVM). |

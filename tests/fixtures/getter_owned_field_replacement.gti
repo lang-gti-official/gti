@@ -9,7 +9,7 @@ public:
   int identity;
   Probe(int value) : identity(value) {}
   ~Probe() {
-    std::println("{}", this.identity);
+    std::runtime_println("{}", this.identity);
     if ((this.identity == 1 && cleanup_mode >= 1) ||
         (this.identity == 2 && cleanup_mode >= 2)) {
       int divisor = 0;

@@ -5,7 +5,7 @@
     "stdlib/std.gti": "6bf76540ce1d32024871a3fce4b9512fd6fd494511f919db63450e2b4796a0f7",
     "stdlib/std/algorithm.gti": "54fd1253b56bf208f0ddc019b15a29516d9a0420876113cf4e833be16dbf7df5",
     "stdlib/std/array.gti": "affed4f1d587a71a098ef7c9b381e6c255d8b639492abbe9a46b31e00115adde",
-    "stdlib/std/assert.gti": "c34ddabb3ce77983232aa13452cf036dba6202cdbd8d2bb7e1c0d9f0a8b6d78d",
+    "stdlib/std/assert.gti": "289add8dae2682412d4e72813fe3cc91e008bb70a50640fa1ff399ab58333c7d",
     "stdlib/std/atomic.gti": "d51045256225848941363200bff10a2fe1bf30b66915a06b89e1fce546d1aed1",
     "stdlib/std/build.gti": "686b681a0da828fadd4bc8ab78dac6fc910da74c12dd5b3eff97f80fda1f8141",
     "stdlib/std/charconv.gti": "e01943092dfd86a7e2f67a31d422db1fbaa4fd2f91e0ea1ea9f891b5bb43499f",
@@ -31,13 +31,13 @@
     "stdlib/std/environment.gti": "3a8c583446b14f97b3c3f3b1ae9dad7c206c830222bd31e8b1650e6f4d0cd826",
     "stdlib/std/experimental/optional.gti": "9ef1e87987c636fa141de4f844c264f07147e816db9c365d98f334f32689c083",
     "stdlib/std/filesystem.gti": "a579044390fadec9e7854eccd4d5901f13ab85288bf71a19ee97cadad2693de6",
-    "stdlib/std/format.gti": "8a8ccee3b09248f0361f36440b1434166d3407ac5b993220b42f6276d122d604",
+    "stdlib/std/format.gti": "64a4b23e3930db44cce6410801b8b0507154765006012ffa777f4fb3845afb1e",
     "stdlib/std/forward_list.gti": "8d39227073b9f98eb6bc83a7a7103bc630497345830bc7e618dcc01fccb917ef",
     "stdlib/std/functional.gti": "5880a83e6800a696963152328ae131a87e532c63e0c741fe64eca273c5d4092c",
     "stdlib/std/http.gti": "7810cf7acaee803670f346e0103fa6c0cdfca62aca8edda538cfa880e8ae3521",
     "stdlib/std/io.gti": "8c28bff6f539a82e47f507db2cff429e74307b0dbe6128de48c0b47fd329c0b3",
     "stdlib/std/iterator.gti": "586855579c50031612b0136d001e21dd31c4387dcf115c9fe4485bd12d2577e3",
-    "stdlib/std/json.gti": "59ffe60d769d7acea459e98bd9ec97e07cbf46030a35a0743afceda7a5d3b21c",
+    "stdlib/std/json.gti": "4a5f04c2245c0b2fc24428eeeccb03a54a503693ebabe5a489dee1845ab4c38f",
     "stdlib/std/list.gti": "d8c0a951c3ef5a9fefb8fd69882c8d2b313c9b502d32df906e8e38da809f7923",
     "stdlib/std/map.gti": "ef4d00691aaa30c44dc2256160fafd629fa387cf61fd2dc00494a21ecc1015b8",
     "stdlib/std/memory.gti": "cf4a99569c5e3d3ddd352ae4a6019586a64ff5fe27e2d637a6bf1c91e4bd62c1",
@@ -46,7 +46,7 @@
     "stdlib/std/numeric.gti": "fa0d3a929076f3f614ebef4c10c897c513e91712332d00b24fc58e78af5bd0cf",
     "stdlib/std/optional.gti": "a67d746ef0f8f5eb14c256b5595725febe56425cfec76fea484f5717fd1ca0d1",
     "stdlib/std/paired_span.gti": "06244b15782f49e35b229fa20238489c578305d8b09a70e9b22ba77f7d5dfffa",
-    "stdlib/std/panic.gti": "054a60273d6ad1a490e1328b11ff5ad2f05fed3fc304a52ee41c32964a7758da",
+    "stdlib/std/panic.gti": "672375b4d67ee43d44652134f54b450efb3fb3024432daac97bc421b5e1cd372",
     "stdlib/std/polymorphic.gti": "009f2fe6faec263700c6d734d8db3448b25cde6cca9c9adfea2e8807ed3a594a",
     "stdlib/std/process.gti": "632b0c183f363b66872ae2c17a00516ac9b103bfd580527fc639fd0996e1324b",
     "stdlib/std/queue.gti": "38c9d92a49aa37fcd56dadaa3c2639e5c963b79efa5286f30b407016bc909eed",
@@ -1246,6 +1246,36 @@
         "stderr": ""
       },
       "backend": "llvm"
+    },
+    {
+      "id": "format-checked",
+      "mode": "run",
+      "source": "tests/fixtures/checked_literal_arguments.gti",
+      "backend": "llvm",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "42\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "format-checked-panic",
+      "mode": "run",
+      "source": "tests/fixtures/checked_format_panic.gti",
+      "backend": "llvm",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
     },
     {
       "id": "format-cpp-temporary-rejection",
@@ -4191,18 +4221,28 @@
       "status": "executable",
       "operations": [
         "std::format",
+        "std::format_pattern<Args...>",
         "std::format_spec",
         "std::format_to",
         "std::formattable<T>",
         "std::formatter<T>",
+        "std::formatter<T>::validate(format_spec&)",
         "std::formatting<T>",
         "std::formatting<T>::format",
         "std::print(pattern,Args...)",
         "std::println(pattern,Args...)",
+        "std::runtime_format",
+        "std::runtime_format_to",
+        "std::runtime_print",
+        "std::runtime_println",
         "std::try_format",
         "std::try_format_to",
         "std::try_print",
-        "std::try_println"
+        "std::try_println",
+        "std::try_runtime_format",
+        "std::try_runtime_format_to",
+        "std::try_runtime_print",
+        "std::try_runtime_println"
       ],
       "case_ids": [
         "format",
@@ -4211,7 +4251,8 @@
         "integral-enum-formatting",
         "integral-enum-example",
         "protocol-format-hash",
-        "integral-enum-formatting-temporary"
+        "integral-enum-formatting-temporary",
+        "format-checked"
       ],
       "required_instantiations": [
         "zero arguments",
@@ -4224,6 +4265,7 @@
         "conditional generic protocol formatting with nested pairs and noncopyable leaves",
         "legacy exact formatter compatibility and protocol-first precedence",
         "borrowed call-result plain enums retain nonzero values and source evaluation order",
+        "checked generic pack forwarding and custom presentation validation",
         "unformattable first, middle and last argument rejected at public call"
       ],
       "evidence": [
@@ -4233,6 +4275,8 @@
         "tests/protocol_format_hash_runtime_test.py",
         "tests/integral_enum_formatting_runtime_test.py",
         "tests/reference_parameter_packs_test.py",
+        "tests/consteval_runtime_test.py",
+        "tests/fixtures/checked_literal_arguments.gti",
         "tests/stdlib_api_contracts_test.py"
       ]
     },
@@ -6028,10 +6072,12 @@
       "status": "executable",
       "operations": [
         "std::panic(string_view)",
-        "std::panic(string_view,Args...)"
+        "std::panic(string_view,Args...)",
+        "std::runtime_panic"
       ],
       "case_ids": [
-        "panic-expected"
+        "panic-expected",
+        "format-checked-panic"
       ],
       "required_instantiations": [
         "raw counted message",
@@ -6044,6 +6090,7 @@
         "tests/panic_contract_tests.cpp",
         "stdlib/std/panic.gti",
         "tests/reference_parameter_packs_test.py",
+        "tests/fixtures/checked_format_panic.gti",
         "tests/stdlib_api_contracts_test.py"
       ]
     },

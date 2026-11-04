@@ -290,6 +290,18 @@ auto SemanticVisitor::Impl::registerDeclarations(const StmtList &declarations)
   recordClassTypes();
   recordClassLifecycles();
   registerDesignatedConstructors();
+  const auto checkOverloads = [&](const Symbol &symbol) {
+    for (std::size_t right = 1; right < symbol.overloads.size(); ++right)
+      for (std::size_t left = 0; left < right; ++left)
+        warnCheckedOverloadOverlap(symbol.overloads[left],
+                                   symbol.overloads[right]);
+  };
+  catalog.namespaceSymbols.forEachValue(checkOverloads);
+  for (auto &[_, symbols] : catalog.internalNamespaceSymbols)
+    symbols.forEachValue(checkOverloads);
+  for (const auto &owner : classes)
+    for (const auto &[_, member] : owner.members)
+      checkOverloads(member.symbol);
 }
 
 auto SemanticVisitor::Impl::analyzeBodies(const StmtList &declarations,
@@ -8166,7 +8178,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     }
     valid = applyFunctionTypeArguments(resolved, explicitTypeArguments,
                                        explicitValueArguments, argumentTypes,
-                                       expr.arguments(), expr.paren()) &&
+                                       expr.arguments(), expr.paren(), true) &&
             valid;
     if (valid &&
         reportUnsupportedCallableReturn(candidate, resolved, expr.paren())) {
@@ -8177,10 +8189,10 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     std::vector<CompileTimeValue> resolvedValueArguments;
     CallableCandidate trial;
     ConstraintFailure constraintFailure;
-    if (tryInstantiateFunction(candidate, explicitTypeArguments,
-                               explicitValueArguments, argumentTypes,
-                               expr.arguments(), trial, resolvedTypeArguments,
-                               resolvedValueArguments, &constraintFailure)) {
+    if (tryInstantiateFunction(
+            candidate, explicitTypeArguments, explicitValueArguments,
+            argumentTypes, expr.arguments(), trial, resolvedTypeArguments,
+            resolvedValueArguments, &constraintFailure, true)) {
       resolved = std::move(trial);
     } else if (hasConstraintFailure(constraintFailure)) {
       if (valid) {
@@ -8233,6 +8245,19 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
         } else if (match == CallArgumentMatchKind::ContextualIntegerLiteral) {
           literalArguments.push_back(index);
         } else if (match == CallArgumentMatchKind::Mismatch) {
+          if (checkedArgumentPotential(expr.arguments()[index],
+                                       argumentTypes[index],
+                                       resolved.parameterTypes[index])) {
+            const Token parameter =
+                index < resolved.declaration->parameters().size()
+                    ? resolved.declaration->parameters()[index].name
+                    : resolved.declaration->name();
+            valid = applyCheckedArgument(
+                        expr.arguments()[index], argumentTypes[index],
+                        resolved.parameterTypes[index], parameter) &&
+                    valid;
+            continue;
+          }
           if (isContextualArrayArgument(expr.arguments()[index])) {
             const auto *initializer =
                 exprAs<ArrayInitializer>(expr.arguments()[index].get());
@@ -8311,6 +8336,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     std::vector<std::size_t> contextualIntegerLiteralArguments;
     ContextualCallArguments argumentAnalysis;
     CallReceiverMode receiverMode = CallReceiverMode::None;
+    std::vector<std::size_t> checkedArguments;
   };
   std::vector<ViableOverload> viable;
   // Retain a causal copy failure only for otherwise exact candidates: the
@@ -8331,93 +8357,135 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
   bool rejectedConsumingReceiver = false;
   std::optional<CallableCandidate> rejectedMutableFunction;
   bool rejectedCompilerPrivate = false;
-  for (const CallableCandidate &candidate : callee->overloads) {
-    ContextualCallArguments candidateArguments = argumentAnalysis;
-    if (!acceptsArgumentShape(candidate, candidateArguments.types) ||
-        !contextualizeFunctionItemArguments(
-            candidate, explicitTypeArguments, explicitValueArguments,
-            expr.arguments(), candidateArguments, false)) {
-      continue;
-    }
-    CallableCandidate resolved;
-    std::vector<SemanticType> resolvedTypeArguments;
-    std::vector<CompileTimeValue> resolvedValueArguments;
-    std::vector<std::size_t> resolvedEphemeralBorrowArguments;
-    std::vector<std::size_t> resolvedLiteralArguments;
-    ConstraintFailure constraintFailure;
-    if (!tryInstantiateFunction(candidate, explicitTypeArguments,
-                                explicitValueArguments,
-                                candidateArguments.types, expr.arguments(),
-                                resolved, resolvedTypeArguments,
-                                resolvedValueArguments, &constraintFailure)) {
-      if (hasConstraintFailure(constraintFailure)) {
-        constraintFailures.emplace_back(std::move(constraintFailure));
-      }
-      continue;
-    }
-    bool exact = true;
-    std::optional<std::size_t> rejectedCopy;
-    for (std::size_t index = 0; index < candidateArguments.types.size();
-         ++index) {
-      const CallArgumentMatchKind match = functionCallArgumentMatch(
-          resolved, index, candidateArguments.types[index],
-          expr.arguments()[index], candidateArguments.deferred[index]);
-      if (match == CallArgumentMatchKind::Mismatch) {
-        const bool copyFailure =
-            !candidateArguments.deferred[index] &&
-            index < resolved.parameterTypes.size() &&
-            callArgumentRejectedByOwnership(resolved.parameterTypes[index],
-                                            candidateArguments.types[index],
-                                            expr.arguments()[index]);
-        if (copyFailure) {
-          if (!rejectedCopy)
-            rejectedCopy = index;
-          continue;
-        }
-        exact = false;
+  for (const bool allowChecked : {false, true}) {
+    if (allowChecked) {
+      const bool hasCheckedParameter = std::any_of(
+          callee->overloads.begin(), callee->overloads.end(),
+          [&](const auto &candidate) {
+            return std::any_of(
+                candidate.parameterTypes.begin(),
+                candidate.parameterTypes.end(), [&](const auto &type) {
+                  return checkedArgumentNonDeduced(type, SemanticType::Unknown);
+                });
+          });
+      if (!hasCheckedParameter)
         break;
+      constraintFailures.clear();
+      rejectedCopies.clear();
+    }
+    for (const CallableCandidate &candidate : callee->overloads) {
+      ContextualCallArguments candidateArguments = argumentAnalysis;
+      if (!acceptsArgumentShape(candidate, candidateArguments.types) ||
+          !contextualizeFunctionItemArguments(
+              candidate, explicitTypeArguments, explicitValueArguments,
+              expr.arguments(), candidateArguments, false)) {
+        continue;
       }
-      if (match == CallArgumentMatchKind::EphemeralReadBorrow) {
-        resolvedEphemeralBorrowArguments.push_back(index);
-      } else if (match == CallArgumentMatchKind::ContextualIntegerLiteral) {
-        resolvedLiteralArguments.push_back(index);
+      CallableCandidate resolved;
+      std::vector<SemanticType> resolvedTypeArguments;
+      std::vector<CompileTimeValue> resolvedValueArguments;
+      std::vector<std::size_t> resolvedEphemeralBorrowArguments;
+      std::vector<std::size_t> resolvedLiteralArguments;
+      ConstraintFailure constraintFailure;
+      if (!tryInstantiateFunction(
+              candidate, explicitTypeArguments, explicitValueArguments,
+              candidateArguments.types, expr.arguments(), resolved,
+              resolvedTypeArguments, resolvedValueArguments, &constraintFailure,
+              allowChecked)) {
+        if (hasConstraintFailure(constraintFailure)) {
+          constraintFailures.emplace_back(std::move(constraintFailure));
+        }
+        continue;
       }
-    }
-    if (!exact) {
-      continue;
-    }
-    const CallReceiverMode receiverMode =
-        callReceiverMode(expr.callee(), resolved);
-    if (resolved.receiverMutability == ReceiverMutability::Consuming &&
-        receiverMode != CallReceiverMode::Consuming) {
-      rejectedConsumingReceiver = true;
-      continue;
-    }
-    if (resolved.ownerClass != 0 && !resolved.staticMember &&
-        resolved.receiverMutability == ReceiverMutability::Mutable &&
-        !receiverModeAllowsMutation(receiverMode)) {
-      rejectedMutableReceiver = true;
-      if (!rejectedMutableFunction) {
-        rejectedMutableFunction = resolved;
+      bool exact = true;
+      std::vector<std::size_t> checkedArguments;
+      std::optional<std::size_t> rejectedCopy;
+      for (std::size_t index = 0; index < candidateArguments.types.size();
+           ++index) {
+        const CallArgumentMatchKind match = functionCallArgumentMatch(
+            resolved, index, candidateArguments.types[index],
+            expr.arguments()[index], candidateArguments.deferred[index]);
+        if (match == CallArgumentMatchKind::Mismatch) {
+          const bool copyFailure =
+              !candidateArguments.deferred[index] &&
+              index < resolved.parameterTypes.size() &&
+              callArgumentRejectedByOwnership(resolved.parameterTypes[index],
+                                              candidateArguments.types[index],
+                                              expr.arguments()[index]);
+          if (copyFailure) {
+            if (!rejectedCopy)
+              rejectedCopy = index;
+            continue;
+          }
+          if (allowChecked &&
+              checkedArgumentPotential(expr.arguments()[index],
+                                       candidateArguments.types[index],
+                                       resolved.parameterTypes[index])) {
+            checkedArguments.push_back(index);
+          } else {
+            exact = false;
+            break;
+          }
+        }
+        if (match == CallArgumentMatchKind::EphemeralReadBorrow) {
+          resolvedEphemeralBorrowArguments.push_back(index);
+        } else if (match == CallArgumentMatchKind::ContextualIntegerLiteral) {
+          resolvedLiteralArguments.push_back(index);
+        }
       }
-      continue;
+      if (!exact) {
+        continue;
+      }
+      const CallReceiverMode receiverMode =
+          callReceiverMode(expr.callee(), resolved);
+      if (resolved.receiverMutability == ReceiverMutability::Consuming &&
+          receiverMode != CallReceiverMode::Consuming) {
+        rejectedConsumingReceiver = true;
+        continue;
+      }
+      if (resolved.ownerClass != 0 && !resolved.staticMember &&
+          resolved.receiverMutability == ReceiverMutability::Mutable &&
+          !receiverModeAllowsMutation(receiverMode)) {
+        rejectedMutableReceiver = true;
+        if (!rejectedMutableFunction) {
+          rejectedMutableFunction = resolved;
+        }
+        continue;
+      }
+      if (!isCompilerTrustedRequester(expr.paren()) &&
+          resolved.compilerPrivate) {
+        rejectedCompilerPrivate = true;
+        continue;
+      }
+      if (rejectedCopy) {
+        rejectedCopies.push_back({&candidate, std::move(resolved),
+                                  *rejectedCopy,
+                                  candidateArguments.types[*rejectedCopy]});
+        continue;
+      }
+      viable.push_back({&candidate, std::move(resolved),
+                        std::move(resolvedTypeArguments),
+                        std::move(resolvedValueArguments),
+                        std::move(resolvedEphemeralBorrowArguments),
+                        std::move(resolvedLiteralArguments),
+                        std::move(candidateArguments), receiverMode,
+                        std::move(checkedArguments)});
     }
-    if (!isCompilerTrustedRequester(expr.paren()) && resolved.compilerPrivate) {
-      rejectedCompilerPrivate = true;
-      continue;
-    }
-    if (rejectedCopy) {
-      rejectedCopies.push_back({&candidate, std::move(resolved), *rejectedCopy,
-                                candidateArguments.types[*rejectedCopy]});
-      continue;
-    }
-    viable.push_back({&candidate, std::move(resolved),
-                      std::move(resolvedTypeArguments),
-                      std::move(resolvedValueArguments),
-                      std::move(resolvedEphemeralBorrowArguments),
-                      std::move(resolvedLiteralArguments),
-                      std::move(candidateArguments), receiverMode});
+
+    if (!viable.empty())
+      break;
   }
+
+  // Checked construction is a final tier; no numeric or receiver ranking
+  // chooses between its candidates.
+  const bool ordinaryTier = std::any_of(
+      viable.begin(), viable.end(), [](const ViableOverload &candidate) {
+        return candidate.checkedArguments.empty();
+      });
+  if (ordinaryTier)
+    std::erase_if(viable, [](const ViableOverload &candidate) {
+      return !candidate.checkedArguments.empty();
+    });
 
   // Exact candidates form the first tier. A candidate reached only through
   // a call-only temporary borrow or a written integer literal's adopted type
@@ -8427,14 +8495,16 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     return !candidate.ephemeralBorrowArguments.empty() ||
            !candidate.contextualIntegerLiteralArguments.empty();
   };
-  if (std::any_of(viable.begin(), viable.end(),
+  if (ordinaryTier &&
+      std::any_of(viable.begin(), viable.end(),
                   [&](const ViableOverload &candidate) {
                     return !fallbackCandidate(candidate);
                   })) {
     std::erase_if(viable, fallbackCandidate);
   }
 
-  if (std::any_of(viable.begin(), viable.end(),
+  if (ordinaryTier &&
+      std::any_of(viable.begin(), viable.end(),
                   [](const ViableOverload &candidate) {
                     return candidate.function.receiverMutability ==
                            ReceiverMutability::Consuming;
@@ -8484,9 +8554,10 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
                   }) &&
       accessorResultUse(*callUse, readOnlyAccessor->function.returnType) ==
           ResultUseAccess::ReadOnly;
-  if (readOnlyAccessorUse) {
+  if (ordinaryTier && readOnlyAccessorUse) {
     std::erase_if(viable, mutableForm);
-  } else if (std::any_of(viable.begin(), viable.end(), mutableForm)) {
+  } else if (ordinaryTier &&
+             std::any_of(viable.begin(), viable.end(), mutableForm)) {
     std::erase_if(viable, readOnlyForm);
   }
 
@@ -8505,11 +8576,12 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       rankingArgumentTypes[index] = SemanticType::Unknown;
     }
   }
-  retainBestCallConversionMatches(
-      viable, rankingArgumentTypes,
-      [](const ViableOverload &candidate) -> const std::vector<SemanticType> & {
-        return candidate.function.parameterTypes;
-      });
+  if (ordinaryTier)
+    retainBestCallConversionMatches(viable, rankingArgumentTypes,
+                                    [](const ViableOverload &candidate)
+                                        -> const std::vector<SemanticType> & {
+                                      return candidate.function.parameterTypes;
+                                    });
 
   const bool hasUnknownArgument = std::any_of(
       argumentTypes.begin(), argumentTypes.end(),
@@ -8578,6 +8650,14 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       }
       reportOverloadResolutionFailure(expr, *callee, argumentTypes,
                                       exactMatches, constraintFailures);
+      if (!ordinaryTier && !exactMatches.empty()) {
+        diagnostics.back().message =
+            "Call is ambiguous; multiple overloads accept checked implicit "
+            "consteval argument construction.";
+        for (auto &related : diagnostics.back().related)
+          if (related.message.starts_with("Exact candidate: "))
+            related.message.replace(0, 17, "Checked candidate: ");
+      }
       if (!viable.empty() &&
           std::all_of(
               viable.begin(), viable.end(),
@@ -8592,6 +8672,17 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     return;
   }
 
+  for (const auto index : viable.front().checkedArguments) {
+    const auto &selected = viable.front().function;
+    const Token parameter = index < selected.declaration->parameters().size()
+                                ? selected.declaration->parameters()[index].name
+                                : selected.declaration->name();
+    if (!applyCheckedArgument(expr.arguments()[index], argumentTypes[index],
+                              selected.parameterTypes[index], parameter)) {
+      currentType = SemanticType::Unknown;
+      return;
+    }
+  }
   adoptContextualIntegerLiteralArguments(
       viable.front().function.parameterTypes, expr.arguments(),
       viable.front().argumentAnalysis.types,
