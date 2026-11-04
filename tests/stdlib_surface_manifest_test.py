@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import copy
+import importlib.util
 import pathlib
 import sys
 
@@ -25,6 +26,14 @@ def expect_failure(
     raise AssertionError(f"manifest unexpectedly passed injected failure {fragment!r}")
 
 
+def load_review_check(repository: pathlib.Path):
+    path = repository / "scripts" / "check_stdlib_surface_review.py"
+    spec = importlib.util.spec_from_file_location("check_stdlib_surface_review", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         raise SystemExit("usage: stdlib_surface_manifest_test.py <repository>")
@@ -34,13 +43,42 @@ def main() -> int:
     )
     surface.validate_manifest(original, repository)
 
+    # The census is the shipped tree: a source no entry classifies fails, and
+    # so does an entry naming a source the tree does not ship.
     missing_source = copy.deepcopy(original)
-    missing_source["source_fingerprints"].pop("stdlib/std/utility.gti")
+    missing_source["entries"] = [
+        entry for entry in missing_source["entries"]
+        if entry["source"] != "stdlib/std/utility.gti"
+    ]
     expect_failure(missing_source, repository, "stdlib source census differs")
+    expect_failure(missing_source, repository, "stdlib/std/utility.gti")
 
-    stale_source = copy.deepcopy(original)
-    stale_source["source_fingerprints"]["stdlib/std/utility.gti"] = "0" * 64
-    expect_failure(stale_source, repository, "changed without a surface review")
+    extra_source = copy.deepcopy(original)
+    extra_source["entries"][0]["source"] = "stdlib/std/not_shipped.gti"
+    expect_failure(extra_source, repository, "outside the stdlib source census")
+
+    # Review evidence comes from the change's diff, never a stored snapshot.
+    retired = copy.deepcopy(original)
+    retired["source_fingerprints"] = {}
+    expect_failure(retired, repository, "source_fingerprints is retired")
+
+    # The diff-based review check and this census must agree on which files
+    # are shipped stdlib sources.
+    review = load_review_check(repository)
+    census = {
+        path.relative_to(repository).as_posix()
+        for path in surface.stdlib_sources(repository)
+    }
+    candidates = {
+        path.relative_to(repository).as_posix()
+        for path in (repository / "stdlib").rglob("*") if path.is_file()
+    }
+    judged = {path for path in candidates if review.is_surface_source(path)}
+    if judged != census:
+        raise AssertionError(
+            "check_stdlib_surface_review.py and stdlib_sources disagree: "
+            f"review-only={sorted(judged - census)}, census-only={sorted(census - judged)}"
+        )
 
     missing_evidence = copy.deepcopy(original)
     executable = next(
@@ -80,7 +118,7 @@ def main() -> int:
     unexplained_timeout["cases"][0].pop("build_timeout_reason", None)
     expect_failure(unexplained_timeout, repository, "needs a build_timeout_reason")
 
-    print("stdlib surface census rejected missing, stale, and mismatched evidence")
+    print("stdlib surface census rejected missing, extra, retired, and mismatched evidence")
     return 0
 
 

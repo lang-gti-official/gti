@@ -83,6 +83,7 @@ jobs:
           python3 tests/build_window_test.py
           python3 tests/bounded_log_test.py
           python3 tests/release_version_test.py scripts/check_release_version.py
+          python3 tests/stdlib_surface_review_test.py scripts/check_stdlib_surface_review.py
           python3 tests/cut_release_test.py
           python3 tests/release_train_test.py
           python3 tests/ci_release_test.py .
@@ -116,7 +117,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - name: Require a version decision for shipped tooling changes
+      - name: Find where the candidate forked
+        id: range
         env:
           GTI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
           GTI_HEAD_SHA: ${{ github.sha }}
@@ -127,8 +129,17 @@ jobs:
           fi
           # Judge the candidate from where it forked, not from a main that has
           # advanced past it.
-          base="$(git merge-base "${base}" "${GTI_HEAD_SHA}")"
-          python3 scripts/check_release_version.py "${base}" "${GTI_HEAD_SHA}"
+          echo "base=$(git merge-base "${base}" "${GTI_HEAD_SHA}")" >> "${GITHUB_OUTPUT}"
+      - name: Require a version decision for shipped tooling changes
+        env:
+          GTI_FORK_SHA: ${{ steps.range.outputs.base }}
+          GTI_HEAD_SHA: ${{ github.sha }}
+        run: python3 scripts/check_release_version.py "${GTI_FORK_SHA}" "${GTI_HEAD_SHA}"
+      - name: Require a surface review for changed stdlib sources
+        env:
+          GTI_FORK_SHA: ${{ steps.range.outputs.base }}
+          GTI_HEAD_SHA: ${{ github.sha }}
+        run: python3 scripts/check_stdlib_surface_review.py "${GTI_FORK_SHA}" "${GTI_HEAD_SHA}"
 
   tree-sitter:
     name: Tree-sitter grammar

@@ -72,34 +72,16 @@ def validate_manifest(manifest: dict[str, Any], repository: pathlib.Path) -> Non
     repository = repository.resolve()
     require(manifest.get("schema") == SCHEMA, f"schema must be {SCHEMA}")
 
-    fingerprints = manifest.get("source_fingerprints")
-    require(isinstance(fingerprints, dict), "source_fingerprints must be an object")
+    # The census is the shipped source tree itself. Whether a changed source
+    # received a surface review is a property of the change, not of this
+    # snapshot: scripts/check_stdlib_surface_review.py judges it from the
+    # pull request's diff, so concurrent stdlib changes share no stored state.
+    require("source_fingerprints" not in manifest,
+            "source_fingerprints is retired; scripts/check_stdlib_surface_review.py "
+            "checks the surface review from the diff")
     expected_sources = {
         path.relative_to(repository).as_posix() for path in stdlib_sources(repository)
     }
-    actual_sources = set(fingerprints)
-    missing_sources = sorted(expected_sources - actual_sources)
-    extra_sources = sorted(actual_sources - expected_sources)
-    require(
-        not missing_sources and not extra_sources,
-        "stdlib source census differs: "
-        f"missing={missing_sources}, extra={extra_sources}",
-    )
-    require(
-        list(fingerprints) == sorted(fingerprints),
-        "source_fingerprints keys must be sorted",
-    )
-    for relative, expected in fingerprints.items():
-        require(
-            isinstance(expected, str) and len(expected) == 64,
-            f"invalid SHA-256 for {relative}",
-        )
-        actual = source_digest(repository / relative)
-        require(
-            actual == expected,
-            f"stdlib source changed without a surface review: {relative} "
-            f"(expected {expected}, found {actual})",
-        )
 
     cases = manifest.get("cases")
     require(isinstance(cases, list) and cases, "cases must be a nonempty array")
@@ -220,7 +202,10 @@ def validate_manifest(manifest: dict[str, Any], repository: pathlib.Path) -> Non
         status = entry.get("status")
         require(status in STATUSES, f"invalid status for {entry_id}: {status}")
         source = entry.get("source")
-        require(source in fingerprints, f"{entry_id} has unknown stdlib source: {source}")
+        require(
+            source in expected_sources,
+            f"{entry_id} names a source outside the stdlib source census: {source}",
+        )
         represented_sources.add(source)
 
         entry_operations = entry.get("operations")
@@ -287,8 +272,8 @@ def validate_manifest(manifest: dict[str, Any], repository: pathlib.Path) -> Non
     )
     require(
         represented_sources == expected_sources,
-        "every stdlib source must have at least one classified entry; "
-        f"missing={sorted(expected_sources - represented_sources)}",
+        "stdlib source census differs: every stdlib source must have at least one "
+        f"classified entry; missing={sorted(expected_sources - represented_sources)}",
     )
     require(
         referenced_cases == case_ids,

@@ -7,7 +7,8 @@ description: Apply GTI version and release policy to focused-validated work deli
 
 Read [the canonical finish-release skill](../../../.codex/skills/finish-release/SKILL.md)
 completely before deciding a changelog fragment or delivery. It owns the
-fragment and release-cut policy, `Release-Impact` trailers, delivery through
+fragment and release-cut policy, `Release-Impact` trailers, the
+`Stdlib-Surface` review of changed stdlib sources, delivery through
 the merge queue, and the rule that toolchain releases publish to
 GitHub Releases (the scheduled nightly workflow, and the beta/stable release
 train that cuts, betas and promotes on its own) while the `gti add`
