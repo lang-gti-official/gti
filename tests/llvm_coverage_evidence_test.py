@@ -292,12 +292,12 @@ def load_registry(registry: Path, root: Path,
 def example_provider_inventory(root: Path, provider: dict) -> dict:
     manifest_path = repository_path(root, provider["manifest"],
                                     "shipped examples manifest")
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    examples = manifest.get("examples")
-    require(isinstance(examples, dict) and examples,
-            "shipped examples census must be nonempty")
+    # Membership is the shipped corpus itself. The census baseline may lag it:
+    # an added example stays unrecorded there until the next --refresh-all.
+    examples = sorted(path.name for path in (root / "examples").glob("*.gti"))
+    require(examples, "shipped examples corpus must be nonempty")
     members = []
-    for name in sorted(examples):
+    for name in examples:
         source = repository_path(root, f"examples/{name}",
                                  f"shipped example {name}")
         members.append({"path": source.relative_to(root).as_posix(),
