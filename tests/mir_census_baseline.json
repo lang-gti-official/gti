@@ -181,7 +181,7 @@
     "181-general-object-layout.gti": 170,
     "182-associated-type-families.gti": 281,
     "182-bounded-array-borrows.gti": 156,
-    "183-immediate-functions.gti": 11,
+    "183-immediate-functions.gti": 111,
     "184-payload-borrow-chains.gti": 11,
     "185-reflected-method-dispatch.gti": 47,
     "186-dynamic-json.gti": 646
