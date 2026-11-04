@@ -334,7 +334,12 @@ appendTemplateArguments(TemplateSubstitution &substitution,
         return overlay.first == concrete;
       });
   if (prior != overlays.end()) {
-    return prior->second == parameterName;
+    // Signature/substitution validation has already proved that both source
+    // parameters denote this exact concrete type in the selected MIR
+    // instance. The body's type map needs one spelling, so retain the first
+    // in-scope alias; differing parameter names do not imply differing types.
+    // The native declaration still retains every original parameter identity.
+    return true;
   }
   const auto existing = std::find_if(rows.types.begin(), rows.types.end(),
                                      [&](const CppMirTypeRepresentation &row) {

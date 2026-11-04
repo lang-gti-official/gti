@@ -1,0 +1,27 @@
+import std.utility;
+
+mut int visits = 0;
+struct Value {
+  int number;
+  Value(int number) : number(number) {}
+  Value(Value& other) = delete;
+  ~Value() {}
+};
+struct Holder {
+  mut Value value;
+  Holder(int number) : value(Value(number)) {}
+};
+struct Indexer {
+  mut Holder item;
+  Indexer() : item(Holder(1)) {}
+  mut Holder& operator[](int index) mut {
+    visits++;
+    return this.item;
+  }
+};
+int main() {
+  mut Indexer indexer{};
+  Value replacement{2};
+  indexer[0].value = std::move(replacement);
+  return visits == 1 && indexer.item.value.number == 2 ? 0 : 1;
+}

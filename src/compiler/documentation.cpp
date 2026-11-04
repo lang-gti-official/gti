@@ -14,6 +14,26 @@
 namespace lang {
 namespace {
 
+void collectConformanceOperations(
+    const StmtList &statements,
+    std::unordered_set<const FunctionDecl *> &operations) {
+  for (const StmtPtr &statement : statements) {
+    if (const auto *space = stmtAs<NamespaceDecl>(statement.get())) {
+      collectConformanceOperations(space->declarations(), operations);
+    } else if (const auto *conditional =
+                   stmtAs<ConditionalStmt>(statement.get())) {
+      // Only active declarations have semantic records. Collecting identities
+      // from every branch cannot hide an unrelated active declaration.
+      for (const ConditionalBranch &branch : conditional->branches())
+        collectConformanceOperations(branch.statements, operations);
+    } else if (const auto *block = stmtAs<ConformanceDecl>(statement.get())) {
+      for (const StmtPtr &member : block->members())
+        if (const auto *function = stmtAs<FunctionDecl>(member.get()))
+          operations.insert(function);
+    }
+  }
+}
+
 [[nodiscard]] std::optional<DocumentationKind>
 documentationKind(const SymbolRecord &symbol,
                   const SemanticOccurrence *declaration,
@@ -509,6 +529,9 @@ DocumentationIndexResult DocumentationQueries::standardLibraryIndex(
 
   const SemanticModel &semantics = snapshot.semantics;
   const SemanticDatabase &database = semantics.database();
+  std::unordered_set<const FunctionDecl *> conformanceOperations;
+  collectConformanceOperations(snapshot.program.declarations(),
+                               conformanceOperations);
   std::unordered_set<std::string> seenKeys;
   for (const SymbolRecord &symbol : database.symbols()) {
     if (!symbol.defaultLibrary || symbol.access != AccessModifier::Public ||
@@ -521,6 +544,11 @@ DocumentationIndexResult DocumentationQueries::standardLibraryIndex(
     }
     const SemanticOccurrence *declaration =
         declarationOccurrence(database, symbol.id);
+    // A block operation is reached through its concept, not as a public
+    // namespace function. Its authored declaration still serves editor queries.
+    if (declaration != nullptr &&
+        conformanceOperations.contains(declaration->function))
+      continue;
     const std::optional<DocumentationKind> kind =
         documentationKind(symbol, declaration, semantics);
     if (!kind) {

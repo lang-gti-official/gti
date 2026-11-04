@@ -70,6 +70,26 @@ private:
   int secret = 1;
 };
 
+/// Measures an object through an explicit conformance.
+concept measurable<T> {
+  int measure(T& value);
+};
+for concept measurable<widget> {
+  int measure(widget& value) { return value.value(); }
+};
+namespace nested {
+class measured<T> {
+public:
+  int number;
+  measured(int number) : number(number) {}
+};
+for <T> concept measurable<measured<T>> {
+  int measure(measured<T>& value) { return value.number; }
+};
+}
+/// An ordinary namespace function with the same name as a block operation.
+int measure(widget& value) { return value.value(); }
+
 /// A move-only documented owner.
 class owner {
 public:
@@ -230,6 +250,21 @@ int main() {
              function->signature == "int32_t std::twice(int32_t value)" &&
              function->documentationMarkdown == "Doubles a value.",
          "free functions should retain signatures and documentation");
+
+  expect(
+      findDeclaration(projected.index, "std::measurable",
+                      lang::DocumentationKind::Concept) != nullptr &&
+          findDeclaration(projected.index, "std::measure",
+                          lang::DocumentationKind::Function) != nullptr,
+      "concepts and ordinary same-named functions remain public API entries");
+  expect(std::none_of(projected.index.declarations.begin(),
+                      projected.index.declarations.end(),
+                      [](const lang::DocumentationDeclaration &entry) {
+                        return entry.qualifiedName.find("__gti_conformance_") !=
+                               std::string::npos;
+                      }),
+         "concrete and nested generic conformance operations must not expose "
+         "their compiler-generated namespace in the public index");
 
   expect(
       findDeclaration(projected.index, "std::widget::hidden",

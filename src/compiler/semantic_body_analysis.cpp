@@ -8408,6 +8408,15 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     CallReceiverMode receiverMode = CallReceiverMode::None;
   };
   std::vector<ViableOverload> viable;
+  // Retain a causal copy failure only for otherwise exact candidates. An
+  // unrelated arity, type, constraint or receiver failure must not masquerade
+  // as a request to transfer ownership.
+  struct RejectedCopyOverload {
+    CallableCandidate function;
+    std::size_t argument;
+    SemanticType argumentType;
+  };
+  std::vector<RejectedCopyOverload> rejectedCopies;
   std::vector<ConstraintFailure> constraintFailures;
   bool rejectedMutableReceiver = false;
   bool rejectedConsumingReceiver = false;
@@ -8437,12 +8446,25 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       continue;
     }
     bool exact = true;
+    std::optional<std::size_t> rejectedCopy;
     for (std::size_t index = 0; index < candidateArguments.types.size();
          ++index) {
       const CallArgumentMatchKind match = functionCallArgumentMatch(
           resolved, index, candidateArguments.types[index],
           expr.arguments()[index], candidateArguments.deferred[index]);
       if (match == CallArgumentMatchKind::Mismatch) {
+        const auto *info =
+            semanticModel.findExpression(*expr.arguments()[index]);
+        const bool copyFailure =
+            index < resolved.parameterTypes.size() &&
+            resolved.parameterTypes[index] == candidateArguments.types[index] &&
+            info != nullptr && info->category == ValueCategory::Place &&
+            !typeTraits(candidateArguments.types[index]).copyable;
+        if (copyFailure) {
+          if (!rejectedCopy)
+            rejectedCopy = index;
+          continue;
+        }
         exact = false;
         break;
       }
@@ -8471,6 +8493,11 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     }
     if (!isCompilerTrustedRequester(expr.paren()) && resolved.compilerPrivate) {
       rejectedCompilerPrivate = true;
+      continue;
+    }
+    if (rejectedCopy) {
+      rejectedCopies.push_back({std::move(resolved), *rejectedCopy,
+                                candidateArguments.types[*rejectedCopy]});
       continue;
     }
     viable.push_back({&candidate, std::move(resolved),
@@ -8596,6 +8623,16 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
         } else {
           report(expr.paren(), "Mutable method requires a mutable receiver.");
         }
+        currentType = SemanticType::Unknown;
+        return;
+      }
+      if (viable.empty() && rejectedCopies.size() == 1) {
+        const auto &rejected = rejectedCopies.front();
+        reportCallArgumentMismatch(
+            rejected.argument,
+            rejected.function.parameterTypes[rejected.argument],
+            rejected.argumentType, expr.arguments()[rejected.argument],
+            "Function", &rejected.function);
         currentType = SemanticType::Unknown;
         return;
       }
@@ -14625,7 +14662,11 @@ auto SemanticVisitor::Impl::evaluateConstexprCall(
   if (declaration == nullptr || !declaration->isConstexpr()) {
     return constexprFailure(
         callSite, ConstantEvaluationFailure::UnsupportedExpression,
-        "The selected call does not name a constexpr function.");
+        declaration == nullptr
+            ? "The argument contains a call without a constant-evaluable "
+              "target."
+            : "Call to non-constexpr function '" + declaration->name().lexeme +
+                  "' cannot be evaluated during compilation.");
   }
   if (!constexprDefinitionsAnalyzed.contains(declaration) ||
       !declaredBeforeCurrent(declaration)) {
@@ -14732,6 +14773,13 @@ auto SemanticVisitor::Impl::evaluateConstexprCall(
     ConstexprEvaluation argument =
         evaluateConstexprExpression(*argumentExpressions[index], context);
     if (!argument) {
+      if (declaration->isConsteval() && !argument.genericDependency) {
+        argument.detail =
+            "Argument " + std::to_string(index + 1) +
+            " to immediate function '" + declaration->name().lexeme +
+            "' is not a constant expression." +
+            (argument.detail.empty() ? std::string{} : " " + argument.detail);
+      }
       return argument;
     }
     SemanticType parameterType =

@@ -18,6 +18,36 @@ element; subsequent fields and selected operators project from the reference
 carrier, not from the coarser range origin. The lowering query preserves this
 distinction without changing access permissions, active-loan rules or endpoints.
 
+A text result whose owner is a reference to a borrowed carrier retains its own
+producing loan. Its parent protects the carrier's physical storage, while the
+separate stored dependency retains the carrier's external owners. A local text
+binding is not a value copy of that differently typed entry carrier. Returning
+text publishes its exact evaluated SSA value alongside the owner loan: the
+value is the producing call's result or a copy from its retained local carrier.
+The owner address is never a substitute for the text representation. A shared
+reborrow through a receiver's nested reference field likewise retains the
+abstract entry's selected permission; read-only access to the carrier shell
+does not erase an exclusive field's authority or upgrade the shared child.
+While that shared child retains an exclusive entry, operations through the
+carrier remain suspended, including read-only methods, just as for a named
+borrowed carrier. Direct access to unrelated owned fields and shared reads
+through plain references retain their separate permissions.
+
+A returned carrier assembled from independent reference-returning calls keeps
+the parent of each additional input separately. Its second input is not a child
+of the first input's unrelated storage. Field-mapped return verification also
+preserves an owned receiver's explicit input borrow permission, without deriving
+writable access merely from a mutable place. These are compile-time provenance
+facts; they introduce no runtime loan state or allocation.
+
+A temporary view of a carrier's physical storage retains the carrier's
+external authority as one stored dependency. If selecting the receiver also
+selected that same authority as a parent, lowering removes the duplicate
+parent edge. This applies to shared cleanup-bound owners as well as exclusive
+carriers; it does not remove the dependency or shorten its cleanup lifetime.
+The verifier continues to reject duplicate parent/dependency identities and
+retirement of an independently owned provider before its dependent cleanup.
+
 Unique allocation of an already-built class value uses the selected generated
 copy/move policy. HIR stages a generated move as a consuming same-type value,
 not as a callable shared-reference formal. MIR reuses the separate checked
@@ -84,13 +114,25 @@ the selected declaration contract and that continuation. A terminal source
 function cannot contain a reachable `Return`.
 
 Caller transport is a separate fact from failure effects. A tracked MIR call
+to a trusted intrinsic retains an immutable, AST-free declaration contract
+issued by semantics, including its declaration identity, intrinsic identity,
+control flags and semantic snapshot. HIR checks the source call that selected
+that contract; MIR checks the flags and snapshot independently. Intrinsics do
+not acquire an ordinary executable function target merely to carry attributes.
+The sealed declaration inventory retains those selected intrinsic declarations
+even without executable instances. The same semantic control witness seals
+ordinary declaration flags, including declarations without a retained body;
+each MIR intrinsic witness must equal its exact sealed declaration witness.
+A tracked MIR call
 contains the exact semantic `CallerLocationOrigin`, its canonical artifact-local
 site ID, and whether the enclosing tracked function forwards its incoming token.
 `MirBody::hasCallerLocation` must agree with its concrete function declaration.
 `FailureMetadata` binds caller anchors separately from actual detector origins;
 the artifact descriptor admits the union of genuine detector outcomes and the
-bounded caller-tracked terminal outcomes at caller anchors: explicit panic,
-inactive success access, and inactive error access. A caller anchor does not
+bounded caller-tracked terminal outcomes and the checked local outcomes of
+explicitly tracked intrinsic declarations at caller anchors. This includes
+nonterminal condition checks such as missing-key detection. The metadata keeps
+this reporting inventory separate from local detector assignments. A caller anchor does not
 invent a local detector or make a failure-free wrapper fallible. Inline and
 cold record publication both select that same verified caller token; the
 detected category and detail remain those of the exact intrinsic.
@@ -2253,6 +2295,15 @@ publishes a `Return` loan that reborrows the call's result loan.
 shell rule takes the expected stored dependency exactly from the forwarded
 result loan, which is none when the callee's receiver holds ownerless text.
 
+A local text value copied from a stored reference field retains the receiver's
+abstract external owner entry. The exact typed field-and-dereference `Load`
+proves its source. A by-value text relay preserves that projected call origin
+and records the entry as a separate stored dependency; local publication does
+not replace the call origin with the receiver shell. Program verification
+checks both the staged argument's load and its matching external entry, and
+rejects removing either identity. This changes neither permitted escapes nor
+the lifetime required of the backing text owner.
+
 A construction may instead publish dynamic text (`L-OWN-02`, phase 1). Its
 `dependentTextPublication` flag marks borrow facts that belong to the call: the
 target constructor's own summary stays empty, because its other call sites
@@ -3406,6 +3457,14 @@ later-storage proof inside the merged executable program-initialization body;
 the initializer consumes the materialized constant rather than loading
 not-yet-initialized program storage.
 
+Receiver lowering honors the same substitution before considering the source
+expression's place category. A direct read-only receiver consumes the constant
+value, including through transparent grouping and comma expressions. Their
+dependency schedule preserves sequenced effects and emits the constant exactly
+once. Actual storage borrows and projections retain the semantic boundary's
+storage access and do not acquire a substitution merely because the binding is
+constant.
+
 `MirProgramInitializationPlan` is the pointer-free authority for the merged
 `Module/0` schedule. Ordered unit rows retain even empty source units. Dense
 step rows copy the exact storage kind, role, symbol, concrete static owner,
@@ -4014,6 +4073,12 @@ The selected reference parameter and concrete element/result type must agree;
 the element's retained HIR copy/move role remains authoritative. An owning move
 transfers the entry element obligation into the result's value obligation;
 copying independently initializes the result and leaves the pack available.
+When a constructed owning result then enters another call, its `CallInput`
+reparents that value obligation into the prepared parameter. This differs
+from direct forwarding of a pack element: adjacency of `Move` and `CallInput`
+alone does not establish a direct binding transfer. Verification requires the
+exact intermediate value obligation and rejects moving the already-consumed
+pack binding a second time.
 Cleanup-free results retain the normal no-value-drop convention, while the
 moved-from cleanup-free parameter still has its harmless lexical lifetime.
 The original construction expression supplies result provenance and the

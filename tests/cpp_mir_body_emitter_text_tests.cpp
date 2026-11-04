@@ -1714,6 +1714,104 @@ int main() {
   expect(carrierConstructors == 1, "the carrier fixture keeps its constructor");
 }
 
+void testOwningDeferredFieldStorage() {
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/deferred_owned_cleanup.gti";
+  std::ifstream input(path);
+  const std::string source((std::istreambuf_iterator<char>(input)), {});
+  const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+  expect(frontend.canGenerateCode(), "owning deferred fields retain valid MIR");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::MirConstructorInstance *outer = nullptr;
+  lang::SymbolId field = 0;
+  for (const auto &constructor : frontend.mir.constructorInstances())
+    for (const auto &initializer : constructor.initializers)
+      if (initializer.ownedParameter &&
+          lang::cppMirEngagedDeferredFieldStorage(
+              frontend.mir, constructor.owner, initializer.field)) {
+        outer = &constructor;
+        field = initializer.field;
+      }
+  expect(outer && field, "an owning reference carrier selects engaged storage");
+  if (!outer)
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  const auto address =
+      lang::MirBodyAddress{lang::MirBodyKind::Constructor, outer->id};
+  expect(
+      lang::CppMirBodyEmitter(frontend.mir, map)
+          .supportsFailureBodyText(address),
+      "owning deferred publication retains the constructor failure schedule");
+  const auto text = gti_test::emitCpp(frontend).contents;
+  expect(text.find("mir_deferred_field<::__gti_program::Reader> reader;") !=
+                 std::string::npos &&
+             text.find("(*this).reader.emplace(") != std::string::npos &&
+             text.find("this->reader.storage()") != std::string::npos,
+         "deferred ownership has inactive storage, explicit publication and "
+         "native cleanup access");
+  auto changed = frontend.mir;
+  bool forged = false;
+  for (const auto &constructor : changed.constructorInstances())
+    if (constructor.id == outer->id)
+      for (auto &block : const_cast<lang::MirBody &>(constructor.body).blocks)
+        for (auto &instruction : block.instructions)
+          if (instruction.kind == lang::MirInstructionKind::Initialize &&
+              instruction.constructorInitializer == 2 &&
+              !instruction.lifecycle.empty()) {
+            instruction.lifecycle.front().target = 0;
+            forged = true;
+          }
+  expect(forged && !lang::CppMirBodyEmitter(changed, map)
+                        .supportsFailureBodyText(address),
+         "owning deferred publication cannot omit its rollback obligation");
+  changed = frontend.mir;
+  for (const auto &constructor : changed.constructorInstances())
+    if (constructor.id == outer->id)
+      for (auto &initializer :
+           const_cast<lang::MirConstructorInstance &>(constructor).initializers)
+        if (initializer.field == field)
+          initializer.ownedParameter.reset();
+  expect(
+      !lang::cppMirDeferredFieldStorage(changed, outer->owner, field),
+      "engaged storage does not admit an unproved direct constructor producer");
+
+  const auto generic =
+      analyzeWithStandardLibrary("deferred-generic-policy.gti", R"(
+import std.vector;
+import std.utility;
+class Cursor<T> { public: T& value; Cursor(T& value) : value(value) {} };
+class Owner<T> { public: std::vector<int> prefix; Cursor<T> cursor;
+  Owner(Cursor<T> cursor) : prefix(std::vector<int>()), cursor(std::move(cursor)) {} };
+int main() { int a = 1; int64_t b = 2; Owner<int> x{Cursor<int>(a)};
+  Owner<int64_t> y{Cursor<int64_t>(b)}; return 0; }
+)");
+  expect(generic.canGenerateCode(), "generic deferred policy fixture is valid");
+  if (!generic.canGenerateCode())
+    return;
+  std::vector<std::pair<lang::HirClassInstanceId, lang::SymbolId>> owners;
+  for (const auto &owner : generic.mir.classInstances())
+    for (const auto &member : owner.declaredFields)
+      if (lang::cppMirDeferredFieldStorage(generic.mir, owner.id,
+                                           member.symbol))
+        owners.emplace_back(owner.id, member.symbol);
+  expect(owners.size() == 2,
+         "two concrete owners share one deferred template policy");
+  if (owners.size() != 2)
+    return;
+  auto inconsistent = generic.mir;
+  for (const auto &owner : inconsistent.classInstances())
+    if (owner.id == owners.back().first)
+      for (auto &member :
+           const_cast<lang::MirClassInstance &>(owner).declaredFields)
+        if (member.symbol == owners.back().second)
+          member.type = lang::SemanticType::Int32;
+  expect(!lang::cppMirDeferredFieldStorage(inconsistent, owners.front().first,
+                                           owners.front().second),
+         "a shared native template cannot choose incompatible field storage "
+         "across instances");
+}
+
 void testDeferredBoundShellFields() {
   // A borrowed carrier (a class whose references must be bound when it is
   // constructed) has no empty native value. A field of that type that can
@@ -10197,6 +10295,7 @@ constexpr NamedTest kTests[] = {
     {"testMovedPassiveFieldAfterFallibleSibling",
      testMovedPassiveFieldAfterFallibleSibling},
     {"testDeferredBoundShellFields", testDeferredBoundShellFields},
+    {"testOwningDeferredFieldStorage", testOwningDeferredFieldStorage},
     {"testMovedBorrowedPayloadAfterFallibleSibling",
      testMovedBorrowedPayloadAfterFallibleSibling},
     {"testMovedViewAfterFormalRead", testMovedViewAfterFormalRead},

@@ -9,14 +9,20 @@ FrontendSnapshotState::FrontendSnapshotState(
     : sharedCache(std::make_shared<FrontendCache>(limits)),
       sharedPreambleCache(std::make_shared<SemanticPreambleCache>()),
       sharedInstanceCache(
-          std::make_shared<InstanceAnalysisCache>(instanceLimits)) {}
+          std::make_shared<InstanceAnalysisCache>(instanceLimits)),
+      sharedIncludeDiscoveryCache(std::make_shared<IncludeDiscoveryCache>()) {}
 
 std::uint64_t
 FrontendSnapshotState::invalidate(std::string_view canonicalPath) {
   const std::lock_guard lock(mutex);
   const std::string path(canonicalPath);
   digests.erase(path);
+  sharedIncludeDiscoveryCache->invalidate(path);
   return ++generations[path];
+}
+
+void FrontendSnapshotState::invalidateIncludeDiscovery() {
+  sharedIncludeDiscoveryCache->clear();
 }
 
 FrontendSourceSnapshot FrontendSnapshotState::capture() const {
@@ -24,6 +30,7 @@ FrontendSourceSnapshot FrontendSnapshotState::capture() const {
   return {.cache = sharedCache,
           .instanceCache = sharedInstanceCache,
           .preambleCache = sharedPreambleCache,
+          .includeDiscoveryCache = sharedIncludeDiscoveryCache,
           .generations = generations,
           .digests = digests};
 }
@@ -72,6 +79,11 @@ FrontendSnapshotState::instanceCache() const {
 std::shared_ptr<SemanticPreambleCache>
 FrontendSnapshotState::preambleCache() const {
   return sharedPreambleCache;
+}
+
+std::shared_ptr<IncludeDiscoveryCache>
+FrontendSnapshotState::includeDiscoveryCache() const {
+  return sharedIncludeDiscoveryCache;
 }
 
 } // namespace lang::lsp
