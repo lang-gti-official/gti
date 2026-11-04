@@ -6201,10 +6201,9 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                   " has inconsistent active/suspended state at CFG join",
               successor);
         }
-        joined.emplace_hint(
-            joined.end(), loan,
-            static_cast<MirLoanFlowState>(static_cast<unsigned>(before) |
-                                          static_cast<unsigned>(incoming)));
+        joined.emplace_back(loan, static_cast<MirLoanFlowState>(
+                                      static_cast<unsigned>(before) |
+                                      static_cast<unsigned>(incoming)));
       }
       if (joined != *entry) {
         entry = std::move(joined);
