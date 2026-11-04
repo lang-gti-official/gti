@@ -86,7 +86,7 @@ def artifact_contract(root):
     sha, repository = "c" * 40, "lang-gti-official/gti"
     run = full_run(sha, status="completed", conclusion="success", run_attempt=2)
     names = ["Full validation verdict", *(f"Release package ({p})" for p in artifacts.PLATFORMS),
-             *(f"Integration ({p} {i}/{n})" for p, n in (("linux", 6), ("darwin", 5)) for i in range(n))]
+             *(f"Integration ({p} {i}/{n})" for p, n in artifacts.integration_shards().items() for i in range(n))]
     jobs = [gate_job(sha, name=n) for n in names]
     assets = [{"name": f"gti-nightly-{p}-2", "expired": False} for p in artifacts.PLATFORMS]
 
@@ -102,6 +102,13 @@ def artifact_contract(root):
             return {"artifacts": assets, "total_count": len(assets)}
         return artifacts.release_evidence(repository, sha, request)
 
+    # The required shards are the ones full validation actually runs.
+    full_text = (root / artifacts.FULL_VALIDATION_WORKFLOW).read_text()
+    shards = artifacts.integration_shards()
+    assert all(f"name: Integration (${{{{ matrix.platform }}}} ${{{{ matrix.index }}}}/${{{{ matrix.shards }}}})" in full_text
+               and f"platform: {p}, shards: {n}, index: {n - 1}}}" in full_text
+               and f"platform: {p}, shards: {n}, index: {n}}}" not in full_text
+               for p, n in shards.items()), shards
     assert evidence() == {"run_id": "7", "run_attempt": "2"}
     assert evidence(run={**run, "event": "workflow_dispatch"})["run_id"] == "7"
     rejected = [
@@ -119,6 +126,7 @@ def artifact_contract(root):
         {"jobs": jobs[1:]},
         {"jobs": [*jobs, jobs[0]]},
         {"jobs": [{**j, "conclusion": "skipped"} if j["name"].startswith("Integration") else j for j in jobs]},
+        {"jobs": [j for j in jobs if j["name"] != f"Integration (darwin {shards['darwin'] - 1}/{shards['darwin']})"]},
         {"assets": assets[:1]},
         {"assets": [{**a, "expired": True} for a in assets]},
         {"assets": [{**a, "name": a["name"].replace("-2", "-1")} for a in assets]},
