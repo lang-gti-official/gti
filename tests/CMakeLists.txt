@@ -1384,8 +1384,7 @@ add_test(NAME backend_contract_regressions
 set_tests_properties(backend_contract_regressions PROPERTIES TIMEOUT 600)
 add_test(NAME semantic_call_regressions_runtime
   COMMAND "${Python3_EXECUTABLE}"
-          "${PROJECT_SOURCE_DIR}/tests/semantic_call_regressions_runtime_test.py" $<TARGET_FILE:gti>
-          --mode llvm-O0 --mode llvm-O3 --mode c++23-O0 --mode c++23-O3)
+          "${PROJECT_SOURCE_DIR}/tests/semantic_call_regressions_runtime_test.py" $<TARGET_FILE:gti>)
 if(TARGET gti_lsp)
   add_test(NAME semantic_call_regressions_lsp
     COMMAND "${Python3_EXECUTABLE}"

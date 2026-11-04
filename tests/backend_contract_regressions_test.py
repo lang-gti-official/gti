@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 
+from backend_modes import cpp_modes, cpp_variant_mode, native_modes
 from sanitizer_support import scaled_timeout
 
 
@@ -76,51 +77,47 @@ def main():
                  (repository / "tests/fixtures/mutex_vector_storage.gti",
                   ["--execution-profile", "concurrent"]),
                  (success, []), (ordinary, [])]
-        modes = [("llvm", "O0", []), ("llvm", "O3", []),
-                 ("cpp", "O0", ["--std", "c++20"]),
-                 ("cpp", "O3", ["--std", "c++23"])]
-        for backend, optimization, extra in modes:
-            label = f"{backend}-{optimization}"
+        for label, mode, _native in native_modes():
             for source, flags in cases:
                 executable = root / f"{source.stem}-{label}"
-                require(run([str(compiler), str(source), "--backend", backend,
-                             f"-{optimization}", *extra, *flags, "-o", str(executable)],
+                require(run([str(compiler), str(source), *mode, *flags, "-o", str(executable)],
                             environment), f"{source.name} {label} build")
                 require(run([str(executable)], environment),
                         f"{source.name} {label} execution")
             source = repository / "tests/fixtures/projected_move_failure.gti"
             executable = root / f"projected-failure-{label}"
-            require(run([str(compiler), str(source), "--backend", backend,
-                         f"-{optimization}", *extra, "-o", str(executable)],
+            require(run([str(compiler), str(source), *mode, "-o", str(executable)],
                         environment), f"projected failure {label} build")
             result = run([str(executable)], environment)
             assert (result.returncode, result.stdout) == (70, "2\n1\n"), result
             assert "GTI-R0007" in result.stderr and "index_out_of_bounds" in result.stderr, result.stderr
             executable = root / f"failure-{label}"
-            require(run([str(compiler), str(failure), "--backend", backend,
-                         f"-{optimization}", *extra, "-o", str(executable)], environment),
+            require(run([str(compiler), str(failure), *mode, "-o", str(executable)], environment),
                     f"tracked intrinsic {label} build")
             result = run([str(executable)], environment)
             assert result.returncode == 70, (label, result.returncode, result.stderr)
             assert ("intrinsic-failure.gti:4: runtime error[GTI-R0015]: "
                     "key_not_found in key_lookup\n") in result.stderr, result.stderr
             assert "map.gti:" not in result.stderr, result.stderr
-            rejected = run([str(compiler), str(live_guard), "--backend", backend,
-                            "--execution-profile", "concurrent", "-O3",
+            rejected = run([str(compiler), str(live_guard), *mode,
+                            "--execution-profile", "concurrent",
                             "-o", str(root / "invalid")], environment)
             assert rejected.returncode != 0, rejected.stderr
             assert ("error[GTI-S2017]: Mutable method cannot use move-only storage "
                     "while a reference borrowed from it may still be live.") in rejected.stderr, rejected.stderr
             assert "GTI-B000" not in rejected.stderr, rejected.stderr
             print(f"{label}: projected moves, mutex growth/cleanup, intrinsic attribution pass")
-        for source, flags in cases[:2]:
-            executable = root / f"{source.stem}-sanitized"
-            require(run([str(compiler), str(source), "--backend", "cpp", "-O1",
-                         *flags, "-o", str(executable), "--",
-                         "-fsanitize=address,undefined", "-fno-omit-frame-pointer"],
-                        environment), f"{source.name} sanitizer build")
-            require(run([str(executable)], environment),
-                    f"{source.name} sanitizer execution")
+        # The instrumented C++ variant runs only when the policy selects C++.
+        sanitized = [cpp_variant_mode("cpp-sanitized", "O1",
+                                      ("-fsanitize=address,undefined", "-fno-omit-frame-pointer"))]
+        for label, mode, native in (sanitized if cpp_modes() else []):
+            for source, flags in cases[:2]:
+                executable = root / f"{source.stem}-{label}"
+                require(run([str(compiler), str(source), *mode, *flags,
+                             "-o", str(executable), "--", *native],
+                            environment), f"{source.name} sanitizer build")
+                require(run([str(executable)], environment),
+                        f"{source.name} sanitizer execution")
     return 0
 
 
