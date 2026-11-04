@@ -288,10 +288,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {kind: compiler, index: 1, count: 3, timeout-scale: 10}
-          - {kind: compiler, index: 2, count: 3, timeout-scale: 10}
-          - {kind: compiler, index: 3, count: 3, timeout-scale: 10}
-          - {kind: libraries, index: 1, count: 1, timeout-scale: 6}
+          - {kind: compiler, index: 1, count: 3}
+          - {kind: compiler, index: 2, count: 3}
+          - {kind: compiler, index: 3, count: 3}
+          - {kind: libraries, index: 1, count: 1}
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     env:
@@ -335,11 +335,19 @@ jobs:
           -DCMAKE_BUILD_TYPE=RelWithDebInfo
           -DGTI_BUILD_LSP=OFF
           -DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF
-          -DGTI_TEST_TIMEOUT_SCALE=${{ matrix.timeout-scale }}
+          -DGTI_TEST_TIMEOUT_SCALE=6
           -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
           -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g"
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
           -DCMAKE_JOB_POOLS=link=1 -DCMAKE_JOB_POOL_LINK=link
+      - name: Scale the compiler partition's timeout
+        # A compiler partition runs only compiler_pipeline, whose
+        # 1800-second bound scales ten times: the ownership partition alone
+        # needs more than three hours instrumented. Re-configuring changes
+        # only test properties, so the configure above stays identical to
+        # cache.yml's warm-up and its objects keep their cache hits.
+        if: matrix.kind == 'compiler'
+        run: cmake -S . -B build-sanitized -DGTI_TEST_TIMEOUT_SCALE=10
       - name: Build the targets the sanitizer subset runs
         # Instrumenting the whole tree took longer than the integration shards
         # while only these tests run; CTestTestfile.cmake names their targets.
@@ -354,11 +362,10 @@ jobs:
       - name: Test compiler and driver libraries
         # Instrumented suites run several times slower than plain ones, so
         # the configure step scales every test's timeout six times (the
-        # 600-second default becomes an hour). A compiler partition runs only
-        # compiler_pipeline, whose 1800-second bound scales ten times: the
-        # ownership partition alone needs more than three hours. The whole
-        # generated-C++ corpus and the failure-metadata matrix exceed even
-        # that under ASan and remain the native integration gates.
+        # 600-second default becomes an hour; ten times for a compiler
+        # partition, as configured above). The whole generated-C++ corpus
+        # and the failure-metadata matrix exceed even that under ASan and
+        # remain the native integration gates.
         env:
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
@@ -438,6 +445,11 @@ jobs:
       - name: Check compiler sanitizer execution
         run: python3 scripts/check_ci_sanitizers.py --cxx "${CXX}" --sanitizer address,undefined
       - name: Configure
+        # About forty instrumented executables each link the static LLVM
+        # libraries. With full debug information they filled the 39 GB left
+        # after free_ci_disk.sh (run 41879816098: "final link failed: No space
+        # left on device"). Line tables (-g1) still symbolize every ASan and
+        # UBSan report with its file and line.
         run: >-
           cmake -S . -B build-sanitized -G Ninja
           -DCMAKE_BUILD_TYPE=RelWithDebInfo
@@ -445,7 +457,7 @@ jobs:
           -DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF
           -DGTI_TEST_TIMEOUT_SCALE=6
           -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
-          -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g"
+          -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g1"
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
           -DCMAKE_JOB_POOLS=link=1 -DCMAKE_JOB_POOL_LINK=link
       - name: Build the targets the LLVM subset runs
