@@ -30,6 +30,7 @@ import sys
 import tempfile
 
 import census_budget as budget
+import census_store as store
 import example_case_context as examples
 import mir_census_baseline as reviewed
 
@@ -138,7 +139,7 @@ def main() -> int:
     baseline_path = Path(arguments.baseline)
 
     try:
-        document = json.loads(baseline_path.read_text(encoding="utf-8"))
+        document = store.load(baseline_path, "mir")
         target = reviewed.host_target()
         if arguments.target is not None and arguments.target != target:
             parser.error(f"--target {arguments.target} does not match executing host {target}")
@@ -178,7 +179,7 @@ def main() -> int:
         except ValueError as error:
             print(f"FAIL: {error}", file=sys.stderr)
             return 1
-        baseline_path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+        store.save(baseline_path, "mir", document)
         scope = "every example" if names is None else f"{len(names)} examples outside the budget"
         print(f"baseline updated ({target}): {scope}")
         return 0

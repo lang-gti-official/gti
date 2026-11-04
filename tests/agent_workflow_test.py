@@ -1240,7 +1240,7 @@ class ValidationChecks(unittest.TestCase):
                    "tests/encoding_runtime_test.py", "examples/094-encoding.gti",
                    "examples/README.md", "stdlib/README.md", "docs/language/encoding.md",
                    "changes/encoding.feature.md", "tests/stdlib_surface_manifest.json",
-                   "tests/mir_census_baseline.json", "tests/lowered_program_census_baseline.json"]
+                   "tests/census/094-encoding.json"]
         self.assertEqual(validation.focused_scope(source + allowed), "source-stdlib")
         self.assertEqual(validation.ci_mode({}, source + allowed), "source-stdlib")
         self.assertEqual(validation.focused_scope(["docs/index.md"]), "automation")

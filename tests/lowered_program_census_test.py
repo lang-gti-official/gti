@@ -22,6 +22,7 @@ import sys
 from pathlib import Path
 
 import census_budget as budget
+import census_store as store
 
 
 GENERATED_KINDS = (
@@ -134,8 +135,8 @@ def main() -> int:
     baseline_path = Path(arguments.baseline).resolve()
     names = sorted(path.name for path in (root / "examples").glob("*.gti"))
     baseline = None
-    if baseline_path.exists():
-        baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    if store.exists(baseline_path) and store.load(baseline_path, "lowered")["examples"]:
+        baseline = store.load(baseline_path, "lowered")
         if (baseline.get("target") != TARGETS[0] or
                 set(baseline.get("variants", {})) != set(TARGETS[1:])):
             raise ValueError("census target profiles differ from the baseline")
@@ -174,7 +175,7 @@ def main() -> int:
         return 1
     if arguments.update or arguments.refresh_all:
         document = refreshed(baseline, observed, None if arguments.refresh_all else outside)
-        baseline_path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+        store.save(baseline_path, "lowered", document)
         scope = "every example" if arguments.refresh_all else f"{len(outside)} examples outside the budget"
         print(f"baseline updated: {scope}")
     return 0

@@ -654,12 +654,16 @@ def capture_corpus(
 def capture_census_authorities(
     source_root: Path, raw_directory: Path, release_build: Path
 ) -> dict[str, Any]:
-    baseline_paths = (
-        source_root / "tests" / "mir_census_baseline.json",
-        source_root / "tests" / "lowered_program_census_baseline.json",
-    )
+    # One file per example under tests/census; the authority is the whole set.
+    census_files = sorted((source_root / "tests" / "census").glob("*.json"))
+    if not census_files:
+        raise SnapshotError("missing census baselines under tests/census")
+    combined = hashlib.sha256()
+    for path in census_files:
+        combined.update(path.name.encode() + b"\0" + bytes.fromhex(sha256_file(path)))
     result: dict[str, Any] = {
-        path.name: artifact_digest(path) for path in baseline_paths
+        "census": {"bytes": sum(path.stat().st_size for path in census_files),
+                   "sha256": combined.hexdigest()},
     }
     lowered_tool = release_build / "gti_lowered_program_census"
     if not lowered_tool.is_file():

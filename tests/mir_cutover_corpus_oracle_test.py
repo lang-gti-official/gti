@@ -30,6 +30,7 @@ import tempfile
 
 from backend_execution import Endpoint, execute
 import census_budget as budget
+import census_store as store
 import mir_census_baseline as reviewed
 from example_case_context import LLVM_ONLY_EXAMPLES, require_cpp_limitation
 
@@ -135,12 +136,12 @@ def main() -> int:
     runtime_library = Path(arguments.runtime_library).resolve()
     if arguments.jobs < 1:
         parser.error("--jobs must be at least one")
-    if not baseline_path.is_file():
+    if not store.exists(baseline_path):
         print(f"FAIL: missing MIR census baseline {baseline_path}", file=sys.stderr)
         return 1
 
     try:
-        baseline_document = json.loads(baseline_path.read_text(encoding="utf-8"))
+        baseline_document = store.load(baseline_path, "mir")
         target = reviewed.host_target()
         if arguments.target is not None and arguments.target != target:
             parser.error(f"--target {arguments.target} does not match executing host {target}")

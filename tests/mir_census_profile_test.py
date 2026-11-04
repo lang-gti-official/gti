@@ -11,13 +11,15 @@ import unittest
 from unittest.mock import patch
 
 import census_budget as budget
+import census_store as store
 import lowered_program_census_test as lowered_census
 import mir_census_baseline as reviewed
 import mir_census_test as census
 import mir_cutover_corpus_oracle_test as oracle
 
 ROOT = Path(__file__).resolve().parents[1]
-DOCUMENT = json.loads((ROOT / "tests/mir_census_baseline.json").read_text())
+CENSUS = ROOT / "tests/census"
+DOCUMENT = store.load(CENSUS, "mir")
 
 
 class ProfileControls(unittest.TestCase):
@@ -41,7 +43,7 @@ class ProfileControls(unittest.TestCase):
                           if mac[name] != linux[name]},
                          {name: offset for name, offset in profile_offsets.items()
                           if name in names})
-        lowered = json.loads((ROOT / "tests/lowered_program_census_baseline.json").read_text())
+        lowered = store.load(CENSUS, "lowered")
         for name, row in lowered["variants"][reviewed.TARGETS[1]]["examples"].items():
             if name not in names:
                 continue  # not yet recorded in the MIR census
@@ -125,7 +127,7 @@ class ProfileControls(unittest.TestCase):
         for module, extra in [(census, []), (oracle, ["/unused/runtime"])]:
             for target in ["invalid-triple", reviewed.TARGETS[1]]:
                 argv = ["test", "/unused/gti", str(ROOT),
-                        str(ROOT / "tests/mir_census_baseline.json"),
+                        str(CENSUS),
                         *extra, "--target", target]
                 with patch.object(sys, "argv", argv), patch.object(reviewed, "host_target", return_value=reviewed.TARGETS[0]), redirect_stderr(io.StringIO()), patch.object(census, "census") as observe, patch.object(oracle, "build_and_run") as execute:
                     with self.assertRaises(SystemExit) as failure:
@@ -243,7 +245,7 @@ class LoweredBudgetControls(unittest.TestCase):
            "generated_kinds": {kind: 0 for kind in lowered_census.GENERATED_KINDS}}
 
     def test_declarations_are_not_recorded_or_compared(self):
-        document = json.loads((ROOT / "tests/lowered_program_census_baseline.json").read_text())
+        document = store.load(CENSUS, "lowered")
         for rows in [document["examples"], *(v["examples"] for v in document["variants"].values())]:
             self.assertFalse(any("declarations" in row for row in rows.values()))
         legacy = dict(self.ROW, declarations=1000)
