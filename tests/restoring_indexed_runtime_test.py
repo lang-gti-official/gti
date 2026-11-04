@@ -27,7 +27,18 @@ if __name__ == "__main__":
         line = line_for(fixture, f'std::panic("{message}")')
         return f'restoring_indexed_swap.gti:{line}: runtime error[GTI-R0017]: panic: "{message}"\n'
 
-    main(names=("restoring_indexed_swap", "restoring_algorithm_order"), cases={"restoring_indexed_swap": [
+    sort_fixture = root / "tests/fixtures/restoring_algorithm_order.gti"
+    sort_line = line_for(sort_fixture, 'std::panic("block comparison failed")')
+    sort_failure = (f'restoring_algorithm_order.gti:{sort_line}: runtime error[GTI-R0017]: '
+                    'panic: "block comparison failed"\n')
+    main(names=("restoring_indexed_swap", "restoring_algorithm_order"), llvm_modes=True, cases={
+        "restoring_algorithm_order": [
+            ((), (0, "", "")),
+            (("x",), (70, "block permutation preserved\n", sort_failure)),
+            (("x",) * 2, (70, "block permutation preserved\n", sort_failure)),
+            (("x",) * 3, (70, "block permutation preserved\n", sort_failure)),
+            (("x",) * 4, (0, "block permutation preserved\n", "")),
+        ], "restoring_indexed_swap": [
         ((), (0, "20\n10\n30\n40\n1\n2\n3\n", "")),
         (("x",), (70, "2\n1\n3\n", bounds("vector", "left"))),
         (("x",) * 2, (70, "2\n1\n3\n", bounds("vector", "right"))),

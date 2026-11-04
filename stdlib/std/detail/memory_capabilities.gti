@@ -77,6 +77,7 @@ void gti_rt_aligned_free_v1(void* address);
 }
 #else
 export extern "C" {
+void* gti_rt_malloc_v1(uint64_t bytes);
 uint64_t gti_rt_posix_pointer_size_v1();
 int32_t gti_rt_posix_enomem_v1();
 int32_t gti_rt_posix_einval_v1();

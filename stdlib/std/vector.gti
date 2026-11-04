@@ -297,6 +297,13 @@ public:
     requires std::relocatable<T> {
     gti_internal::index_bounds_check(left, this.size());
     gti_internal::index_bounds_check(right, this.size());
+    unsafe { this.swap_elements_unchecked(left, right); }
+  }
+
+  /// Restoring swap with caller-proven live indices. Both indices must be
+  /// less than size(), even when equal. No element loan may survive the call.
+  unsafe void swap_elements_unchecked(size_t left, size_t right) mut
+    requires std::relocatable<T> {
     unsafe { this.data.swap_elements_unchecked(left, right); }
   }
 

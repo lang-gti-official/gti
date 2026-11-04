@@ -395,8 +395,13 @@ literal initialization, one positive literal step, one latch, and a finite
 nonnegative upper-bound interval proved at its dominating exit comparison. The
 comparison may follow exact source-defined calls only when their signatures,
 effects, and closed summaries prove that they cannot mutate or escape the
-counter; native, virtual, raw, unsafe, synchronizing, allocating, or otherwise
-opaque calls remain barriers. The accumulator must have one dominating literal
+counter. An otherwise opaque effect also cannot write a plain non-byte scalar
+local when the existing local capture analysis proves that no earlier path
+exposed its identity and the current instruction does not involve it. This
+extends the interpreter's capture invariant to finite trip counts and bounded
+sums across native or dynamic calls; it does not make those calls pure or
+preserve facts about referenced storage. Captured locals, references, projected
+fields and byte carriers retain the existing barriers. The accumulator must have one dominating literal
 initialization and one additive write and cannot escape or have another
 may-alias write. The product of the containing maximum trip counts and the
 already-proved per-update interval forms a checked GTI integer threshold. A
@@ -406,7 +411,29 @@ Irreducible CFGs and arithmetic used to derive an unrepresentable threshold
 fail closed. This is not a second solver, general recurrence engine, symbolic
 loop optimizer, or call transform.
 
-The admitted operations are deliberately narrow:
+The normal continuation of a checked integer conversion retains the
+intersection of its source interval and target domain. Thus a signed 32-bit
+value successfully converted to unsigned 64-bit remains at most `INT32_MAX`,
+which can bound a finite sum even when the value comes from a native or dynamic
+call. The conversion's own failure remains enabled, and its failure edge uses
+the pre-instruction state. This rule also applies to the sealed numeric alias
+and type-parameter conversion operations, but never to wrapping arithmetic.
+
+Checked integer interpolation also retains its shared endpoint identity:
+`a + (b - a) / k`, or its commuted addition, lies between `a` and `b` when
+`k` is positive. When `a < b` and `k >= 2`, its result is strictly below `b`.
+The proof follows only same-domain typed operations and inert staging, using
+the existing still-current scalar equivalence and dominating order facts.
+It can prove the final addition and later bounds; it never removes a possibly
+overflowing earlier subtraction or the divisor's own checks. Signed division
+retains truncation toward zero. Negative/unknown divisors, unrelated endpoints,
+changed loaded origins and mixed domains do not receive this rule. Widening
+uses independently retained endpoint envelopes; a narrower current interval
+does not become a persistent ordering assumption. Native exhaustive endpoint
+controls cover extreme signed values, both addition orders, zero/negative
+divisors, base replacement, the first failure and cleanup.
+
+The safety discharge families are:
 
 - fixed-array scalar reads and writes whose complete index interval is within
   the known extent. A multidimensional access folds every dimension into one
@@ -882,11 +909,27 @@ reordered. Unrelated user-defined witnesses exercise read-only and mutable
 formation, mutation through the alias, and a different pointee under the same
 witness; forged arithmetic proofs for the latter two are rejected.
 
+Successful fixed-array reads, writes and address preflights establish an index
+interval from zero through that dimension's extent minus one. The analysis
+records this only after the checked instruction, so it cannot justify removing
+that instruction's own check. Each dimension uses its own typed array place.
+The fact refines an immutable index value and only a still-current loaded
+origin; a write that aliases the origin invalidates it before refinement. A
+join retains only facts established on every incoming path, and loop widening
+does not turn a later successful access into evidence for the first iteration.
+These facts can prove later arithmetic or repeated indexing. Prefix preflights
+retain their own failure sites even when their successful bound discharges a
+later terminal multidimensional check. Native regressions cover mutation,
+aliasing, changed logical sizes, skipped checks, loops and cleanup at the first
+failure, against both an independent expected result and unoptimized execution.
+
 The trusted scalar bounds detector has no memory transfer: its exact void
 call takes two staged `uint64_t` values, compares them and may raise its defined
 failure. Successful execution therefore preserves unrelated scalar/object
-facts and does not make a source body opaque. Its existing Invoke failure edge
-still uses the pre-instruction state. This is not a source-container length or
+facts and does not make a source body opaque. It also records the same-domain
+strict order between its immutable arguments on success, using the existing
+relation representation and origin invalidation. Its existing Invoke failure
+edge still uses the pre-instruction state. This is not a source-container length or
 initialized-element invariant; those require independently represented facts.
 An unrelated record regression distinguishes the pure detector from an
 unknown field, conflicting field writes and an unreached call context.
@@ -1095,8 +1138,8 @@ mutable getters and by-value object inputs do not export this return contract.
 Implicit receiver roots remain analysis-only and never appear in proof records.
 
 Successful ordinary member summaries additionally retain bounded entry-relative
-integer-field updates: one exact owned receiver field equals its own entry
-value plus a proved constant offset. The relation is derived from typed loads,
+integer-field updates: one exact owned receiver field equals a named receiver
+entry field plus a proved constant offset. The relation is derived from typed loads,
 same-domain add/subtract, inert SSA staging, exact field assignment and nested
 closed calls, never by subtracting interval endpoints. It remains useful when
 different invocations have different starting values. Four calls that each
@@ -1117,8 +1160,14 @@ and by-value parameter-storage rules can preserve eligible owned fields.
 
 At an exact call the update transforms that caller's current field facts, with
 evidence rebased to the call rather than exporting callee-local MIR identities.
-Nested wrappers compose only exact same-field updates. Existing absolute
-postconditions can retain an independently proved widening envelope; exact
+Nested wrappers compose only exact named-field relations. A completed relation
+is an explicit successful postcondition, not a purity claim: replay snapshots
+the named input before normal opaque/global/synchronizing effect invalidation,
+then publishes only the independently proved, domain-checked scalar output.
+Unproved outputs and all pointer/prefix facts retain their normal invalidation.
+Every successful body path must establish the relation; raw mutation, actual
+synchronization and differing conditional writes do not manufacture one.
+Existing absolute postconditions can retain an independently proved widening envelope; exact
 constructor-initializer values carry a stable entry envelope, unlike arbitrary
 loop-produced singleton values. Closed non-writing, non-synchronizing and
 non-escaping calls do not erase caller memory merely because their numerical
@@ -1126,6 +1175,21 @@ postcondition is absent. Opaque calls retain their barriers. No instruction,
 failure edge or cleanup schedule is removed by these summary rules: even a
 net-zero update cannot erase an overflowing intermediate operation. Independent
 canonical replay derives the relation again; O0 remains transformation-free.
+
+A plain checked non-byte integer store also retains ordinary live scalar
+facts whose exact singleton value and integer domain match the value written.
+The written object either aliases the complete live scalar or is disjoint;
+both outcomes preserve that value. The ordinary live-object lifetime guarantee
+excludes partial overlap, and the owned-path admission excludes unions,
+capability backing and indexed/byte storage; width equality alone is not the
+justification. This rule retains no pointer, initialized
+prefix or entry-relative identity, and excludes raw, atomic, user-code and
+runtime writes. A different value or an unknown value still invalidates possible
+aliases. Scalar loads transport their scalar facts, never an `ObjectFact` for
+the enclosing aggregate. The independent `Cell` fixture covers equal values,
+different values, conditional writes, raw writes and overlapping byte writes;
+an isolated CLI reserve
+control checks the zero-count path through the actual optimized pass order.
 
 CFG argument transfer snapshots every incoming fact before publishing any
 destination block parameter. This includes integer intervals, loaded/field
@@ -1226,6 +1290,137 @@ transformation. No public or trusted-source unchecked-container spelling grants
 a discharge. Source-defined raw access keeps its unsafe obligations and actual
 load/store even when separately proved downstream arithmetic is discharged.
 
+### Successful Typed Prefix Relocation
+
+Closed-call value analysis has a separate successful-region transfer summary
+for one acyclic, verified bitwise relocation of non-byte integer elements.
+It records exact source/destination input addresses and an exact readonly
+count origin, including forwarding through source wrappers. This does not
+change the operation's native effects, unsafe nonoverlap obligations or
+failure behavior. A zero-count return is admitted only when that exact count
+is independently proved zero on the alternate exit.
+
+A raw region transfer alone supplies no initialized-prefix fact. Publication
+requires the destination endpoint to receive the original source endpoint,
+followed by source endpoint retirement to zero, on every successful path.
+Other writes, arbitrary count expressions, multiple/looped transfers,
+user-defined or aggregate movement and unsupported effects reject this
+summary. At the caller, publication additionally requires existing complete
+source-prefix coverage for element values, an empty destination, exact matching integer domains
+and independently nonaliasing carrier roots for the endpoint metadata. That
+last condition does **not** prove separation of the pointed-to regions:
+nonoverlap and live-source/vacant-destination requirements are the existing
+unsafe relocation contract, not inferred from carrier identity. The verifier
+checks the typed bitwise operation, while the caller remains responsible for
+these address/lifetime obligations. Defined guarded-overlap failure and
+subsequent pointer replacement are explicit controls. Ordinary call invalidation still
+retires source and alias snapshots; only the proved destination prefix and
+endpoint are republished. Capacity is never initialization evidence. Endpoint metadata is
+independent of element-value coverage: an empty source can publish its exact
+zero endpoint and retire the source without manufacturing an element envelope.
+
+Endpoint scalar publication does not require a known allocation address: its
+exact successful store and distinct carrier roots establish the count alone.
+Address and element-prefix publication still require their independent pointer
+and complete-initialization witnesses. No initialized coverage follows from a
+capacity or a copied count.
+
+Body-local equalities to receiver-entry scalar fields can follow that endpoint
+through an owned replacement and an isolated generated move. These identities
+remain outside ordinary object facts and call contexts; only the existing
+receiver-update summary exports the composed relation. Replay resolves its named
+entry source separately from the destination; a cross-field copy never reads
+the destination's previous value. Joins retain identical
+relations, and aliasing writes, unknown effects and unsupported publication
+retire them. A proved-disjoint local initialization cannot change a receiver
+scalar. Cleanup of a definitely moved shell reuses `mirDropFollowsDefiniteMove`
+from the lifecycle owner, retires the old storage, and preserves only separately
+justified scalar facts. Live, conditionally moved and reinitialized cleanup
+retain their ordinary effects; native counter controls observe those cases.
+
+The focused `optimizer_prefix_relocation` and
+`optimizer_prefix_relocation_runtime` controls use an application-owned
+carrier, overwritten values, retired sources, vacant capacity and failed
+transfers. Owning assertions select the exact downstream multiplication in
+reference-return getter cases; unrelated arithmetic is not evidence. Scalar
+getter controls retain the current precision limit: their shared return
+summary joins different calling contexts, unlike an exact returned reference
+whose load can use the caller's current prefix. Custom move bodies retain their existing source rejection;
+aggregate default movement remains outside this integer-only summary.
+Endpoint export normalizes the outer checked-reference dereference before
+matching its formal parameter; raw dereferences do not qualify. The supporting
+store profile distinguishes local scalar values (including raw pointer values)
+from writes through those values. Initializing an independent compiler scalar
+or boolean temporary preserves existing prefix facts, so conditional-expression
+staging does not erase them. Neither rule permits a nonlocal pointer write or
+an unknown effect to retain a prefix.
+
+Declaration-bound process-memory calls retain only live non-byte scalar fields
+and places across their ordinary opaque effect barrier. Allocation and queries
+write no existing live scalar; release requires retired storage without live
+objects; POSIX aligned allocation may overwrite its `int32_t` status argument,
+so same-width scalar facts are discarded. Raw pointee, prefix and address
+snapshots are never restored by this profile. Its marker propagates through
+supported source wrappers and excludes them from frame-local and append-prefix
+proofs. Ordinary foreign/custom allocator calls gain no such contract from a
+symbol name. Allocation, failure, ordering and general invalidation remain
+unchanged. Focused controls cover allocation/release, a foreign allocator and
+a status pointer overlapping a tracked field.
+
+The process-storage barrier is replayed through closed constructors and their
+field initializer summaries while preserving exact mutable arguments and globals.
+Declaration-only field inventory uses the canonical MIR classifier and causes no
+runtime write; actual initialization remains authoritative. Pure layout queries
+likewise do not invalidate memory. Neither rule assumes arbitrary fresh `this`
+storage or erases a constructor effect.
+
+A closed consuming call can preserve unrelated caller fields when its receiver
+is an exact prepared structural value containing only independent scalar fields,
+with no pointer, reference, resource, custom cleanup or receiver escape. Facts
+for that consumed value are retired. Pointer-bearing receivers require a separate closed body profile proving every
+write remains in owned receiver fields or independent local/temporary storage.
+That profile rejects raw/reference dereferences, opaque or synchronizing calls,
+active cleanup, foreign storage and captured-place writes. An exact owning
+prepared receiver may then retire its own fields without invalidating unrelated
+caller storage. Returning a stored pointer does not grant pointee immutability:
+ordinary capture summaries and subsequent writer invalidation remain in force. The
+process-storage success profile is independent of a coarser whole-invocation
+synchronization flag: every actual MIR synchronization operation marks the
+success state Unknown before specialized transfer, and that state is monotone
+through calls and joins. Only a completed non-Unknown process-storage profile
+can preserve its limited scalar fields; it stays opaque for recurrence proofs.
+Concurrent atomic-load and opaque-call controls retain their checks. Synchronization and sealed process-query definitions retire their old scalar,
+array and object result facts before returning from transfer: a loop's new
+atomic load or alignment observation cannot reuse a previous iteration's
+refined SSA result. Repeated changing observations retain their checked
+additions and defined overflow cleanup. A closed frame-local address relay may copy an address without
+writing its pointee; capture tracking remains unchanged, so a subsequent opaque
+writer still invalidates those facts.
+
+The shared structural transfer classifier also admits wholly passive payload
+enums, as it already did for such enums nested inside records. Ownership-bearing,
+borrowed and actively cleaned alternatives remain excluded. Moving extraction
+from that passive enum retires its exact source rather than all caller memory;
+no result pointer, variant or payload provenance is inferred. This extends
+effect precision, not language movement, variant-state or lifetime semantics.
+The native controls include consuming argument mutation, escaped-pointer writes
+and variant extraction followed by overflow, with deterministic cleanup.
+
+General ownership-shell move/replacement continues to retire prefix snapshots;
+this summary alone does not establish vector-growth optimization or a runtime
+gain.
+
+Generated movement of an ordinary cleanup-owning record can retain its integer
+field values separately from memory observations when the source is an
+uncaptured local binding and the staged value has exactly one distinct
+Initialize/Assign consumer. The verified generated move executes no user move
+body. Its fresh staging storage is not exposed, so an unrelated old-destination
+destructor cannot alter that value snapshot; cleanup failure never reaches
+publication. Snapshots are intersected at control-flow joins and retired on
+redefinition or consumption. Captured constructor self-addresses, self-move,
+borrowed/native/overlapping layouts, and other value uses are excluded. No
+pointer, pointee, allocation, or initialized-prefix fact crosses this path.
+
 ### Capture Analysis
 
 An unknown effect can reach only storage whose identity reached it. The
@@ -1239,6 +1434,111 @@ designates other storage, so it keeps nothing. The interpreter still marks the
 effect opaque. A constructed container's live length therefore survives
 building a second container through the opaque process allocator, and a loop
 counter survives printing.
+
+The sealed POSIX allocation adapter supplies one narrow native capture contract:
+its status-output argument is written but never retained or returned, on either
+outcome. Address formation remains exposing unless the complete SSA-use chain
+consists solely of same-type call-input staging into that exact argument role.
+The analysis independently rebuilds and checks the use inventory; storage,
+returns, edge arguments, pointer views, extra consumers and unknown/application
+providers reject the exception. This is a capture fact only: allocation, status
+writes, failure effects and ordinary memory invalidation are unchanged. The
+allocation result does not inherit the status address's provenance.
+
+A separate closed-call profile can prove that a wrapper touches only storage
+allocated during that invocation. Its pointer tokens carry provenance only;
+they establish no address equality, extent, initialization or source-level
+ownership. Releases of incoming pointers remain explicit parameter obligations.
+A caller discharges those obligations only against its own fresh-or-null tokens;
+unknown providers, callbacks, unresolved incoming/global releases and repeated
+releases reject the noninterference profile. A released
+token cannot be published as a fresh return value. Allocation and failure effects remain opaque and
+observable, and no memory fact is restored after invalidation.
+
+The bounded slice admits acyclic wrappers, passive aggregate constructors and
+read-only receiver methods. Exact typed pointer-field results transport
+provenance through construction, returns, staging and whole-record copies.
+Allocation tokens are rebased by call path, so fields returned from one
+allocation retain the same token, while separate invocations remain distinct.
+Receiver fields are input-relative obligations: a caller must establish their
+origins before a release or returned field can participate in this profile.
+Receiver stores remain excluded. Exact generated extraction of a passive own
+field from a consuming receiver is permitted, retaining caller-side retirement
+and origin obligations. Mutable/read-only receivers do not gain this exception.
+A `Once` marker is accepted only on an exact static source consuming member
+with the matching receiver type; dynamic adapters and mismatched target kinds
+remain excluded. Passive
+records enclosing payload enums need not be bytewise relocatable: their
+eligibility reuses the MIR effect owner's operation-specific generated-value
+classifier. The profile requires passive drop; each actual copy or move keeps
+its separate structural instruction proof, so deleted copy does not prohibit
+generated move. User copy/move and cleanup are not inferred passive.
+
+Passive payload transport uses the concrete MIR enum's variant and field
+identities. An inactive alternative contributes no pointer; an unknown field
+in an alternative that carries it stays unknown. All returning paths contribute
+to a conservative origin union. This transports pointer provenance only:
+effects are still checked on every path, including error alternatives. A token
+released on any path cannot be exported as fresh. Callbacks, unresolved
+incoming fields, mutated records and user cleanup reject the profile.
+
+The store inventory is keyed by binding identity, not by a particular MIR place
+view. Writable locals must denote their own ordinary storage; reference
+parameters, local reference aliases, foreign storage and inconsistent typed
+views are excluded. Structural call-input materialization may use a passive
+compiler-owned temporary. Plain integer, Boolean and floating-point control-flow
+temporaries may also be initialized or assigned; their complete instruction
+effects are still checked and they provide no pointer provenance.
+Consuming payload extraction requires owned local storage. Constructor
+publication admits exact passive fields and complete non-opaque field
+initialization. No pointee access, capture or ownership fact is inferred from
+a pointer field. Aggregate inspection has explicit depth, node and field-path
+budgets. Plain local raw-pointer stores conservatively union every written
+origin, retaining parameter entry origins; an unknown store rejects provenance.
+Aggregate fields still require one dominating store. Exact `NullPtr` to raw-pointer
+value staging transports the empty origin set; arbitrary pointer conversions
+do not acquire a null or fresh origin.
+
+Mutable source members can export a bounded own-field write footprint separately
+from returned or released entry origins. For a passive exact field assignment,
+a successful return publishes the pointer-origin inventory of that field; the
+source-level mutation still invalidates caller facts aliasing the receiver.
+A later read of an owned local descriptor uses the latest dominating mutation,
+while a call's returned/released inputs are resolved immediately before that
+call. Conditional or unordered publications, later whole-object replacement,
+projected loan views without a composed path and nested external receiver
+mutation remain excluded. A single incoming checked-reference parameter can
+carry an explicit `InputField` write footprint. Its outgoing field origins union
+the entry origin with every possible publication; a conditional assignment never
+silently replaces entry state. Bodies with another receiver/reference formal are
+rejected because distinct formal roots do not establish disjoint storage.
+Exact read/mutable-borrow call staging is unwrapped only through the existing
+referent place with a matching type. This transports allocation origins only,
+not initialized payload, capacity, lifetime or capture facts. Inspecting a plain
+shell's passive field does not make the shell's move or destructor passive.
+
+The all-path scan also admits exact operand-free terminal failure origins whose
+existing MIR contract has no memory or runtime effects; panic and all cleanup
+instructions retain their ordinary effects. Creating an ordinary local carrier
+for an exact escaping return loan does not write the referent. This separate
+rule retains the loan's return/escape identity and does not broaden the existing
+nonescaping-carrier predicate. A returned reference contributes no fresh pointer
+origin, and subsequent caller writes and escapes retain normal invalidation.
+Foreign/projected carrier storage, adapters, value moves/drops, and unresolved
+effects remain excluded.
+
+POSIX allocation is admitted only with an ordinary private local `int32_t`
+status slot and the capture analysis's complete exclusive status-use proof.
+Later address escapes, unknown callbacks and incoming status slots reject it;
+a slot used exclusively by multiple sealed allocations is permitted. The sealed
+alignment query inspects address bits without accessing pointed storage, as
+specified by its existing MIR effect contract. This does not make arbitrary
+queries pure or removable. Exact zero-operand type size/alignment queries reuse
+the existing inert layout-query predicate from body safety transfer; ordinary
+application queries remain opaque. Mutable receiver publication and loop-carried
+provenance remain unsupported. Unrelated initialized-prefix
+owners prove caller-side noninterference; this alone does not establish vector
+reserve or substring performance gains.
 
 The capture analysis extends the place alias and escape analysis in
 `alias.cpp`. It has two layers.
@@ -1514,6 +1814,79 @@ Native callable and cleanup regressions exercise failing inputs as well as
 successful execution. Performance remains a measured acceptance obligation:
 this preference is not a claim about the frequency or speed of every
 application's failure path.
+
+At O2/O3, one late LLVM hot/cold splitting pass separates profitable cold
+regions after ordinary inlining has exposed and simplified their cleanup state.
+If outlining, bounded recursive specialization or inductive pointer folding
+changes the module, one further standard LLVM module
+simplification/optimization round can inline the smaller hot helpers and
+optimize their exposed storage. There is no fixed-point retry or forced
+inlining. The pass uses LLVM's existing cost model and cold evidence; it adds
+no failure-likelihood hints or semantic assumptions. O0/O1 retain their
+original pipelines. Cold-path extraction retains failure records, cleanup
+order, side effects and return values. Focused runtime and code-size/build-cost
+measurements remain required before accepting this pipeline change.
+
+O3 uses an ordinary LLVM inlining threshold of 400; other levels retain LLVM's
+defaults. This is a profitability setting, not forced inlining or a change to
+the language's failure policy. The manual 34-program experiment measured large
+gains for monotonic sorting and a smaller gain for substring construction;
+code size, compilation cost and noisy comparisons remain separate acceptance
+evidence. The comparative corpus is not registered with CTest or CI.
+
+O2/O3 explicitly enable LLVM's SLP vectorizer as well as its loop vectorizer.
+LLVM's library defaults leave SLP disabled. SLP combines independent adjacent
+scalar operations, including unrolled byte comparisons and fixed-size numeric
+operations, using the target's ordinary profitability model. This adds no
+alignment, aliasing, no-wrap or fast-math assumptions and does not remove
+checked failure paths. O0/O1 retain their previous setting. The pipeline test
+uses sixteen independent byte comparisons without a loop; counted-string
+search executes the vectorized shape against a scalar oracle at window edges,
+unaligned starts, embedded NUL and high byte values.
+
+After O2/O3 cold-region outlining and the resulting helper inlining, a bounded
+induction proof can replace a loop's pointer PHI with its common entry constant.
+This placement includes PHIs introduced by that late inlining. A successful
+fold receives one ordinary simplification/optimization round; there is no
+fixed-point retry. Assuming that value for one
+iteration, the proof propagates exact scalar/pointer constants and loads from
+immutable globals with definitive initializers. Unknown conditions retain
+every successor. Every feasible backedge must return the original constant;
+otherwise the PHI remains unchanged. The loop body without header backedges
+must be acyclic, with at most 96 blocks and 2,048 instructions; a module admits
+at most 32 proof attempts and 16 successful folds. Nested/irreducible bodies,
+mutable or volatile/atomic loads, unknown entries, poison/undefined constants
+and unresolved values do not establish the proof.
+
+This resolves a circular dataflow limitation where an opaque fallback could
+change a pointer, but the pointer's proved initial value makes that fallback
+unreachable on every iteration. It does not assert vptr immutability, a closed
+set of virtual targets, extra memory effects or branch probabilities. A
+reachable callback or replacement that can change the next pointer rejects
+the fold. The pass only substitutes the proved value; ordinary LLVM passes
+simplify the resulting branches without moving observable effects or cleanup.
+
+After the first O2/O3 pipeline, a private recursive function can receive one
+additional body specialized for its recursive inputs. Every direct self call
+must independently bound the selected integer argument through a constant
+unsigned remainder, a constant bit mask, or zero extension. Bounds are joined
+across **all** self calls; at most two parameters are narrowed, by at least four
+bits. The unrestricted entry remains unchanged. Both original and cloned self
+calls then target the bounded body, whose LLVM parameter range records only
+the proven domain of defined values. No new `assume` consumes a possibly poison
+argument, and bounds are never transported through `freeze`.
+
+Admission requires private direct-call identity, checked arithmetic, at most
+192 instructions and 32 blocks, and no address-taking, variadic/personality,
+convergent, nonduplicable, must-tail or size-optimization boundary. A module adds
+at most eight clones and 1,024 instructions. A marker prevents repeat cloning;
+normal LLVM optimization owns subsequent simplification. Failure and cleanup
+paths remain in both bodies until ordinary proofs eliminate unreachable work.
+This is a structural first slice of call-site range specialization, not an
+assumption that arbitrary recursion has bounded inputs or results. The native
+regression checks unrestricted large inputs, both multiply and add failures,
+base-case returns, and recursive successful execution against O0 and C++.
+
 LLVM lowering preserves two kinds of successful-execution facts for its normal
 optimization pipeline: explicit verified safety discharges become assumptions
 on their exact detector, and checked scalar arithmetic yields a no-wrap result
@@ -1606,18 +1979,27 @@ complete traversal of that domain.
 A separate reduction starts at a nonnegative literal or an invariant input and carries only
 nonnegative bounded additions, PHIs and selects back to its header. Uniform
 increment envelopes come from constants, constant masks, unsigned remainders
-by nonzero constants, constant logical shifts, zero extensions, truncations, nonwrapping
-bounded additions, and complete PHI/select alternatives. The bounded analysis
+by nonzero constants, constant logical shifts, zero extensions, truncations,
+unsigned `min`/`max`, nonwrapping bounded additions and products, and complete
+PHI/select alternatives. Unsigned clamps use the full bit domain for an unknown
+operand, so `max(min(length, 32), 1)` independently establishes `[1, 32]` even
+when `length` has no other proof. Signed clamps do not acquire unsigned bounds;
+freezes still require the existing explicit target/base envelope checks. Products
+and left shifts require independently bounded inputs whose complete unsigned
+range fits the destination; nowrap flags never supply that proof. The bounded analysis
 uses the operations' bit-level meaning, never nowrap flags or a check that it
 will remove; cyclic or unknown bounds remain unsupported. Its
 maximum addition per iteration bounds every intermediate in that update DAG.
 A separate structural target envelope can prove that the unit-step index
 traverses a nonwrapping segment. The index and its next value can then serve as
 bounded increments, supporting conditional index-weighted sums. A next-index
-latch requires every target to be strictly above the initial index; a
-current-index latch permits equality but includes that final index. Dynamic
-target envelopes add explicit lower/upper checks on the frozen target, so a
-freeze of a poison expression cannot escape the assumed range. Truncation
+latch requires the fast target to be strictly above the initial index; a
+current-index latch permits equality but includes that final index. An envelope
+that includes empty or backwards segments is intersected with this nonwrapping
+interval, and the guard sends excluded targets to the untouched fallback. A
+next-index traversal starting at the maximum integer has no such interval.
+Dynamic target envelopes add explicit lower/upper checks on the frozen target,
+so a freeze of a poison expression cannot escape the assumed range. Truncation
 retains a narrower source envelope only when it fits the destination; otherwise
 it yields the complete unsigned destination range.
 The initial profile optimizes one reduction per transformed loop.
@@ -1656,6 +2038,15 @@ A base's structural envelope is checked explicitly before substitution, so
 freezing poison cannot invalidate a bound used elsewhere in the proof. The
 original fallback and outside overflow observations remain intact. Vector
 overflow intrinsics and additions with no independent amount bound are retained.
+
+A later standalone pass applies the same unsigned-add proof to loops without
+an accumulating sum, including buffer fills and indexed stores. It runs after
+the reduction and range passes so their stronger combined proofs take priority.
+It shares the traversal-envelope, invariant-base and fallback machinery above:
+only independently bounded amounts are admitted, and every original overflow
+observation remains on the fallback. Its clone and analysis budgets are the
+same as the reduction pass, applied separately. It does not recognize a
+container, string API or workload name.
 
 The guard and fast latch share one frozen bound so `undef` cannot select a
 small bound at entry and a different target each iteration. A dynamic reduction

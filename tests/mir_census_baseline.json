@@ -75,7 +75,7 @@
     "074-read-only-range-loans.gti": 140,
     "075-bounded-arena-pool.gti": 190,
     "076-scalar-atomics.gti": 87,
-    "077-callable-concepts.gti": 159,
+    "077-callable-concepts.gti": 191,
     "078-owning-payload-enums.gti": 11,
     "079-class-scoped-type-aliases.gti": 12,
     "080-function-items.gti": 146,
@@ -83,9 +83,9 @@
     "084-optional-values.gti": 29,
     "085-payload-enum-fields.gti": 16,
     "086-owning-callbacks.gti": 285,
-    "087-associative-containers.gti": 452,
+    "087-associative-containers.gti": 508,
     "088-consuming-builders.gti": 180,
-    "089-library-workflow.gti": 918,
+    "089-library-workflow.gti": 971,
     "090-generic-algorithms.gti": 644,
     "091-json-documents.gti": 695,
     "092-json-codecs.gti": 666,
@@ -97,10 +97,10 @@
     "098-shared-ownership.gti": 224,
     "099-borrowed-expected.gti": 206,
     "100-owned-error-pipelines.gti": 521,
-    "101-owned-algorithm-results.gti": 326,
+    "101-owned-algorithm-results.gti": 357,
     "102-constexpr-frame-budget.gti": 70,
     "103-resource-exchange.gti": 164,
-    "104-move-only-ordering.gti": 258,
+    "104-move-only-ordering.gti": 275,
     "105-member-signature-contracts.gti": 16,
     "106-custom-formatters.gti": 267,
     "107-composable-io.gti": 319,
@@ -135,7 +135,7 @@
     "136-inline-closure-cells.gti": 156,
     "137-declared-attributes.gti": 248,
     "138-structural-construction.gti": 301,
-    "139-ordered-search.gti": 195,
+    "139-ordered-search.gti": 212,
     "140-environment-configuration.gti": 192,
     "141-reflected-json.gti": 758,
     "142-constexpr-builders.gti": 122,
@@ -190,8 +190,8 @@
   "variants": {
     "x86_64-unknown-linux": {
       "examples": {
-        "087-associative-containers.gti": 451,
-        "089-library-workflow.gti": 917
+        "087-associative-containers.gti": 507,
+        "089-library-workflow.gti": 970
       }
     }
   }

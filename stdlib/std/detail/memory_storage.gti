@@ -75,21 +75,30 @@ public:
       void* address = gti_internal::runtime::gti_rt_aligned_malloc_v1(
           request.bytes, request.alignment);
 #else
-      mut uint64_t selected = request.alignment;
-      uint64_t native_minimum = std::layout_of<void*>().bytes;
-      if (selected < native_minimum) { selected = native_minimum; }
-      mut int32_t status = 0;
-      void* address = gti_internal::runtime::gti_rt_posix_memalign_v1(
-          request.bytes, selected, &status);
-      // Platform error constants matter only on the failure path.
-      if (status != 0) {
-        if (status == gti_internal::runtime::gti_rt_posix_einval_v1()) {
-          return unexpected(std::alloc_errc::invalid_alignment);
+      mut void* address = nullptr;
+      // A fitting pointer object witnesses fundamental alignment. The size
+      // gate matters on allocators whose guarantee depends on request size.
+      if (request.alignment == uint64_t(1) or
+          (request.alignment <= std::layout_of<void*>().alignment and
+           request.bytes >= std::layout_of<void*>().bytes)) {
+        address = gti_internal::runtime::gti_rt_malloc_v1(request.bytes);
+      } else {
+        mut uint64_t selected = request.alignment;
+        uint64_t native_minimum = std::layout_of<void*>().bytes;
+        if (selected < native_minimum) { selected = native_minimum; }
+        mut int32_t status = 0;
+        address = gti_internal::runtime::gti_rt_posix_memalign_v1(
+            request.bytes, selected, &status);
+        // Platform error constants matter only on the failure path.
+        if (status != 0) {
+          if (status == gti_internal::runtime::gti_rt_posix_einval_v1()) {
+            return unexpected(std::alloc_errc::invalid_alignment);
+          }
+          if (status == gti_internal::runtime::gti_rt_posix_enomem_v1()) {
+            return unexpected(std::alloc_errc::resource_exhausted);
+          }
+          return unexpected(std::alloc_errc::invalid_region);
         }
-        if (status == gti_internal::runtime::gti_rt_posix_enomem_v1()) {
-          return unexpected(std::alloc_errc::resource_exhausted);
-        }
-        return unexpected(std::alloc_errc::invalid_region);
       }
 #endif
       if (address == nullptr) { return unexpected(std::alloc_errc::resource_exhausted); }
@@ -583,7 +592,10 @@ export expected<void, std::alloc_errc> validate_region(
     return unexpected(std::alloc_errc::invalid_region);
   }
   unsafe {
-    if (runtime::gti_rt_address_is_aligned_v1(allocation.address, allocation.alignment) == 0) {
+    // Non-null byte addresses always satisfy unit alignment. Wider reported
+    // alignments still require the actual address observation.
+    if (allocation.alignment != uint64_t(1) &&
+        runtime::gti_rt_address_is_aligned_v1(allocation.address, allocation.alignment) == 0) {
       return unexpected(std::alloc_errc::invalid_alignment);
     }
   }

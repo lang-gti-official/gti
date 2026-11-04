@@ -34,6 +34,23 @@ int main() {
              !gti_rt_address_is_aligned_v1(aligned, 3),
          "address observer checks actual alignment without dereferencing");
 #if !defined(_WIN32)
+  for (const std::uint64_t extent :
+       {std::uint64_t(1), std::uint64_t(sizeof(void *)), std::uint64_t(137)}) {
+    auto *address = gti_rt_malloc_v1(extent);
+    expect(address != nullptr, "ordinary nonempty allocation succeeds");
+    if (!address)
+      continue;
+    expect(gti_rt_address_is_aligned_v1(
+               address, extent >= sizeof(void *) ? alignof(void *) : 1),
+           "ordinary allocation satisfies its fitting target witness");
+    auto *data = static_cast<unsigned char *>(address);
+    for (std::uint64_t i = 0; i < extent; ++i)
+      data[i] = static_cast<unsigned char>(i);
+    for (std::uint64_t i = 0; i < extent; ++i)
+      expect(data[i] == static_cast<unsigned char>(i),
+             "ordinary extent is writable");
+    gti_rt_posix_free_v1(address);
+  }
   expect(gti_rt_posix_pointer_size_v1() == sizeof(void *),
          "POSIX alignment normalization uses the actual pointer size");
   expect(gti_rt_posix_einval_v1() == EINVAL &&

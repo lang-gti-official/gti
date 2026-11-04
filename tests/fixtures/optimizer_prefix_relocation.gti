@@ -1,0 +1,359 @@
+import std.memory;
+import std.vector;
+import std.string;
+import std.atomic;
+
+class Audit { public: Audit() {} ~Audit() { std::println(99); } };
+
+// An application-owned carrier: its public identity supplies no compiler rule.
+class Parcel {
+  mut std::detail::prefix_owner<int32_t> slots;
+public:
+  Parcel(uint64_t capacity) : slots(std::detail::prefix_owner<int32_t>(capacity)) {}
+  void append(int32_t value) mut { this.slots.append_value(value); }
+  void send(mut Parcel& target) mut { this.slots.relocate_to(target.slots); }
+  uint64_t size() { return this.slots.length(); }
+  int32_t read(uint64_t index) { return this.slots.read(index); }
+  int32_t& borrow(uint64_t index) { return this.slots.read(index); }
+  void overwrite(int32_t value) mut { this.slots.read_mut(uint64_t(0)) = value; }
+};
+
+int32_t transferred_positive() {
+  Audit audit{};
+  mut Parcel source{uint64_t(4)};
+  mut Parcel destination{uint64_t(8)};
+  source.append(int32_t(9));
+  source.send(destination);
+  if (source.size() != uint64_t(0) || destination.size() != uint64_t(1)) { return -1; }
+  return destination.read(uint64_t(0)) * int32_t(2);
+}
+
+int32_t transferred_borrow_positive() {
+  Audit audit{};
+  mut Parcel source{uint64_t(4)};
+  mut Parcel destination{uint64_t(8)};
+  source.append(int32_t(9));
+  source.send(destination);
+  if (source.size() != uint64_t(0) || destination.size() != uint64_t(1)) { return -1; }
+  return destination.borrow(uint64_t(0)) * int32_t(2);
+}
+
+int32_t changed_destination() {
+  Audit audit{};
+  mut Parcel source{uint64_t(4)};
+  mut Parcel destination{uint64_t(8)};
+  source.append(int32_t(9));
+  source.send(destination);
+  destination.overwrite(int32_t(2147483647));
+  return destination.borrow(uint64_t(0)) * int32_t(2);
+}
+
+int32_t retired_source() {
+  Audit audit{};
+  mut Parcel source{uint64_t(4)};
+  mut Parcel destination{uint64_t(8)};
+  source.append(int32_t(9));
+  source.send(destination);
+  return source.read(uint64_t(0));
+}
+
+int32_t uninitialized_capacity() {
+  Audit audit{};
+  mut Parcel source{uint64_t(4)};
+  mut Parcel destination{uint64_t(8)};
+  source.append(int32_t(9));
+  source.send(destination);
+  return destination.read(uint64_t(1));
+}
+
+int32_t failing_transfer() {
+  Audit audit{};
+  mut Parcel source{uint64_t(4)};
+  mut Parcel destination{uint64_t(0)};
+  source.append(int32_t(9));
+  source.send(destination);
+  return destination.read(uint64_t(0)) * int32_t(2);
+}
+
+class Changed {
+  int32_t value;
+public:
+  Changed(int32_t value) : value(value) {}
+  Changed(Changed& other) = delete;
+  Changed(Changed&& other) = default;
+  int32_t read() { return this.value; }
+};
+
+int32_t user_move() {
+  mut std::detail::prefix_owner<Changed> source{uint64_t(1)};
+  mut std::detail::prefix_owner<Changed> destination{uint64_t(1)};
+  source.append(int32_t(3));
+  source.relocate_to(destination);
+  return destination.read(uint64_t(0)).read();
+}
+
+// A user-defined raw-region carrier with explicit unsafe lifetime obligations.
+// Endpoint metadata roots can be distinct while their pointer fields alias.
+void require_cell(bool condition) { int valid = 1 / (condition ? 1 : 0); }
+
+class CellView {
+  mut int32_t* pointer = nullptr;
+  mut uint64_t live = uint64_t(0);
+public:
+  CellView(mut int32_t* pointer) : pointer(pointer) {}
+  void append(int32_t value) mut {
+    require_cell(this.live == uint64_t(0));
+    unsafe { std::construct_at(this.pointer + this.live, value); }
+    this.live++;
+  }
+  void send(mut CellView& destination) mut {
+    require_cell(destination.live == uint64_t(0));
+    require_cell(this.pointer != destination.pointer);
+    unsafe { std::relocate_range_at(destination.pointer, this.pointer, this.live); }
+    destination.live = this.live;
+    this.live = uint64_t(0);
+  }
+  uint64_t size() { return this.live; }
+  void send_zero(mut CellView& destination) mut {
+    unsafe { std::relocate_range_at(destination.pointer, this.pointer, uint64_t(0)); }
+  }
+  void replace_from(mut CellView& other) mut {
+    require_cell(other.live == uint64_t(1));
+    require_cell(this.pointer != other.pointer);
+    if (this.live != uint64_t(0)) { unsafe { std::destroy_at(this.pointer); } }
+    this.pointer = other.pointer;
+    this.live = other.live;
+    other.live = uint64_t(0);
+  }
+  int32_t& borrow() {
+    require_cell(this.live == uint64_t(1));
+    unsafe { return std::assume_ref(this.pointer, this); }
+  }
+  int32_t read() {
+    require_cell(this.live == uint64_t(1));
+    unsafe { return std::assume_ref(this.pointer, this); }
+  }
+  ~CellView() {
+    if (this.live != uint64_t(0)) { unsafe { std::destroy_at(this.pointer); } }
+  }
+};
+
+uint64_t empty_endpoint_positive() {
+  Audit audit{};
+  mut std::uninitialized<int32_t> first{};
+  mut std::uninitialized<int32_t> second{};
+  mut CellView source{first.data()};
+  mut CellView destination{second.data()};
+  source.send(destination);
+  return destination.size() * uint64_t(2);
+}
+
+int32_t view_positive() {
+  Audit audit{};
+  mut std::uninitialized<int32_t> first{};
+  mut std::uninitialized<int32_t> second{};
+  {
+    mut CellView source{first.data()};
+    mut CellView destination{second.data()};
+    source.append(int32_t(9));
+    source.send(destination);
+    return destination.read() * int32_t(2);
+  }
+}
+
+int32_t view_borrow_positive() {
+  Audit audit{};
+  mut std::uninitialized<int32_t> first{};
+  mut std::uninitialized<int32_t> second{};
+  {
+    mut CellView source{first.data()};
+    mut CellView destination{second.data()};
+    source.append(int32_t(9));
+    source.send(destination);
+    return destination.borrow() * int32_t(2);
+  }
+}
+
+int32_t alias_guard_failure() {
+  Audit audit{};
+  mut std::uninitialized<int32_t> cell{};
+  {
+    mut CellView source{cell.data()};
+    mut CellView destination{cell.data()};
+    source.append(int32_t(9));
+    source.send(destination);
+    return destination.read() * int32_t(2);
+  }
+}
+
+int32_t replaced_base() {
+  Audit audit{};
+  mut std::uninitialized<int32_t> first{};
+  mut std::uninitialized<int32_t> second{};
+  mut std::uninitialized<int32_t> third{};
+  {
+    mut CellView source{first.data()};
+    mut CellView destination{second.data()};
+    mut CellView replacement{third.data()};
+    source.append(int32_t(9));
+    replacement.append(int32_t(2147483647));
+    source.send(destination);
+    destination.replace_from(replacement);
+    return destination.borrow() * int32_t(2);
+  }
+}
+
+int32_t partial_transfer() {
+  Audit audit{};
+  mut std::uninitialized<int32_t> first{};
+  mut std::uninitialized<int32_t> second{};
+  mut CellView source{first.data()};
+  mut CellView destination{second.data()};
+  source.append(int32_t(9));
+  source.send_zero(destination);
+  return destination.borrow() * int32_t(2);
+}
+
+
+class MetadataShell {
+  mut int32_t value;
+public:
+  MetadataShell(int32_t value) : value(value) {}
+  MetadataShell(MetadataShell& other) = delete;
+  MetadataShell(MetadataShell&& other) = default;
+  int32_t read() { return this.value; }
+  ~MetadataShell() { require_cell(this.value != int32_t(7)); }
+};
+
+mut int32_t* captured_metadata = nullptr;
+class CapturedMetadataShell {
+  mut int32_t value;
+public:
+  CapturedMetadataShell(int32_t value) : value(value) {
+    unsafe { captured_metadata = &this.value; }
+  }
+  CapturedMetadataShell(CapturedMetadataShell& other) = delete;
+  CapturedMetadataShell(CapturedMetadataShell&& other) = default;
+  int32_t read() { return this.value; }
+  ~CapturedMetadataShell() {}
+};
+
+int32_t metadata_move_positive() {
+  Audit audit{};
+  mut MetadataShell destination{int32_t(3)};
+  mut MetadataShell source{int32_t(9)};
+  destination = std::move(source);
+  return destination.read() * int32_t(2);
+}
+int32_t metadata_move_cleanup_failure() {
+  Audit audit{};
+  mut MetadataShell destination{int32_t(7)};
+  mut MetadataShell source{int32_t(9)};
+  destination = std::move(source);
+  return destination.read() * int32_t(2);
+}
+int32_t metadata_move_captured() {
+  Audit audit{};
+  mut CapturedMetadataShell destination{int32_t(3)};
+  mut CapturedMetadataShell source{int32_t(9)};
+  destination = std::move(source);
+  return destination.read() * int32_t(2);
+}
+
+class ScalarPacket {
+  mut int32_t value;
+public:
+  ScalarPacket(int32_t value) : value(value) {}
+  int32_t take() && { return std::move(this.value); }
+  int32_t replace(mut int32_t& target) && {
+    target = int32_t(2147483647);
+    return std::move(this.value);
+  }
+};
+class AddressRelay { public:
+  mut int32_t* address = nullptr;
+  AddressRelay(mut int32_t* address) : address(address) {}
+};
+class PointerScalarPacket {
+  mut int32_t* pointer = nullptr;
+  int32_t value;
+public:
+  PointerScalarPacket(mut int32_t* pointer) : pointer(pointer), value(3) {}
+  int32_t take() && { return this.value; }
+  void write() && { unsafe { *this.pointer = int32_t(2147483647); } }
+  int32_t* release() && { return this.pointer; }
+};
+enum ScalarVariant { number(int32_t value), other(int32_t value) };
+int32_t scalar_transport(int32_t mode) {
+  Audit audit{};
+  mut int32_t value = int32_t(9);
+  if (mode == int32_t(8)) {
+    mut Parcel storage{uint64_t(4)};
+    std::atomic<int32_t> signal{int32_t(0)};
+    int32_t observed = signal.load(std::memory_order_acquire());
+    require_cell(observed == int32_t(0));
+  } else if (mode >= int32_t(5)) {
+    unsafe {
+      mut PointerScalarPacket packet{&value};
+      if (mode == int32_t(5)) {
+        int32_t taken = std::move(packet).take();
+        require_cell(taken == int32_t(3));
+      } else if (mode == int32_t(6)) {
+        std::move(packet).write();
+      } else {
+        mut int32_t* pointer = std::move(packet).release();
+        *pointer = int32_t(2147483647);
+      }
+    }
+  } else if (mode == int32_t(0)) {
+    mut ScalarPacket packet{int32_t(3)};
+    int32_t taken = std::move(packet).take();
+    require_cell(taken == int32_t(3));
+  } else if (mode == int32_t(1)) {
+    mut ScalarPacket packet{int32_t(3)};
+    int32_t taken = std::move(packet).replace(value);
+    require_cell(taken == int32_t(3));
+  } else if (mode == int32_t(2)) {
+    unsafe {
+      AddressRelay relay{&value};
+      *relay.address = int32_t(2147483647);
+    }
+  } else {
+    mut ScalarVariant variant = ScalarVariant::number(int32_t(3));
+    switch (std::move(variant)) {
+      case ScalarVariant::number(number):
+        require_cell(number == int32_t(3));
+        if (mode == int32_t(4)) { value = int32_t(2147483647); }
+        break;
+      case ScalarVariant::other(number): value = number; break;
+    }
+  }
+  return value * int32_t(2);
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc == 24) { return scalar_transport(int32_t(8)) == int32_t(18) ? 0 : 1; }
+  if (argc == 21) { return scalar_transport(int32_t(5)) == int32_t(18) ? 0 : 1; }
+  if (argc == 22) { return scalar_transport(int32_t(6)); }
+  if (argc == 23) { return scalar_transport(int32_t(7)); }
+  if (argc == 16) { return scalar_transport(int32_t(0)) == int32_t(18) ? 0 : 1; }
+  if (argc == 17) { return scalar_transport(int32_t(1)); }
+  if (argc == 18) { return scalar_transport(int32_t(2)); }
+  if (argc == 19) { return scalar_transport(int32_t(3)) == int32_t(18) ? 0 : 1; }
+  if (argc == 20) { return scalar_transport(int32_t(4)); }
+  if (argc == 15) { return empty_endpoint_positive() == uint64_t(0) ? 0 : 1; }
+  if (argc == 12) { return metadata_move_positive() == int32_t(18) ? 0 : 1; }
+  if (argc == 13) { return metadata_move_cleanup_failure(); }
+  if (argc == 14) { return metadata_move_captured() == int32_t(18) ? 0 : 1; }
+  if (argc == 10) { return transferred_borrow_positive() == int32_t(18) ? 0 : 1; }
+  if (argc == 11) { return view_borrow_positive() == int32_t(18) ? 0 : 1; }
+  if (argc == 9) { return partial_transfer(); }
+  if (argc == 6) { return view_positive() == int32_t(18) ? 0 : 1; }
+  if (argc == 7) { return alias_guard_failure(); }
+  if (argc == 8) { return replaced_base(); }
+  if (argc == 2) { return changed_destination(); }
+  if (argc == 3) { return retired_source(); }
+  if (argc == 4) { return uninitialized_capacity(); }
+  if (argc == 5) { return failing_transfer(); }
+  return transferred_positive() == int32_t(18) && user_move() == int32_t(3) ? 0 : 1;
+}

@@ -1,0 +1,189 @@
+import std.memory;
+import std.vector;
+import std.string;
+
+class PrefixParcel {
+  mut std::detail::prefix_owner<int32_t> slots;
+public:
+  PrefixParcel() : slots(std::detail::prefix_owner<int32_t>(uint64_t(4))) {}
+  void append(int32_t value) mut { this.slots.append_value(value); }
+  int32_t& borrow() { return this.slots.read(uint64_t(0)); }
+};
+class FreshAudit { public: FreshAudit() {} ~FreshAudit() { std::println(99); } };
+void* fresh_pointer() {
+  unsafe {
+#if target.os == "windows"
+    return gti_internal::runtime::gti_rt_aligned_malloc_v1(uint64_t(64), uint64_t(16));
+#else
+    return gti_internal::runtime::gti_rt_malloc_v1(uint64_t(64));
+#endif
+  }
+}
+unsafe void release_pointer(void* pointer) {
+  unsafe {
+#if target.os == "windows"
+    gti_internal::runtime::gti_rt_aligned_free_v1(pointer);
+#else
+    gti_internal::runtime::gti_rt_posix_free_v1(pointer);
+#endif
+  }
+}
+void fresh_scratch() {
+  // scratch-begin
+  void* pointer = fresh_pointer();
+  unsafe { release_pointer(pointer); }
+  // scratch-end
+}
+class NativeAllocationDescriptor {
+public:
+  void* address = nullptr;
+  NativeAllocationDescriptor(void* address) : address(address) {}
+};
+NativeAllocationDescriptor native_descriptor() {
+  return NativeAllocationDescriptor(fresh_pointer());
+}
+class NativeTokenBox {
+  mut NativeAllocationDescriptor region;
+public:
+  NativeTokenBox(NativeAllocationDescriptor region) : region(region) {}
+  void release() { unsafe { release_pointer(this.region.address); } }
+  NativeAllocationDescriptor take() && { return std::move(this.region); }
+};
+void descriptor_scratch() {
+  NativeAllocationDescriptor empty{nullptr};
+  unsafe { release_pointer(empty.address); }
+  NativeTokenBox box{native_descriptor()};
+  NativeAllocationDescriptor taken = std::move(box).take();
+  unsafe { release_pointer(taken.address); }
+  NativeAllocationDescriptor first = native_descriptor();
+  NativeAllocationDescriptor second = native_descriptor();
+  unsafe {
+    release_pointer(first.address);
+    release_pointer(second.address);
+  }
+}
+enum class NativeAllocationPacket { absent, held(NativeAllocationDescriptor region) };
+NativeAllocationPacket native_packet(bool good) {
+  if (good) { return NativeAllocationPacket::held(native_descriptor()); }
+  return NativeAllocationPacket::absent;
+}
+class NativePacketEnvelope {
+public:
+  mut NativeAllocationPacket packet;
+  NativePacketEnvelope(NativeAllocationPacket packet) : packet(std::move(packet)) {}
+  NativePacketEnvelope(NativePacketEnvelope& other) = delete;
+  NativePacketEnvelope(NativePacketEnvelope&& other) = default;
+};
+void payload_scratch(bool good) {
+  mut NativePacketEnvelope envelope{native_packet(good)};
+  NativeAllocationPacket extracted = envelope.packet;
+  switch (std::move(extracted)) {
+  case NativeAllocationPacket::held(region):
+    unsafe { release_pointer(region.address); }
+    break;
+  case NativeAllocationPacket::absent: break;
+  }
+}
+void status_and_join_scratch(bool alternate) {
+  mut void* pointer = nullptr;
+  if (alternate) {
+    pointer = fresh_pointer();
+  } else {
+#if target.os == "windows"
+    unsafe { pointer = gti_internal::runtime::gti_rt_aligned_malloc_v1(uint64_t(64), uint64_t(16)); }
+#else
+    mut int32_t status = 0;
+    unsafe { pointer = gti_internal::runtime::gti_rt_posix_memalign_v1(uint64_t(64), uint64_t(16), &status); }
+#endif
+  }
+  unsafe { release_pointer(pointer); }
+}
+class NativeMutableDescriptor {
+  mut void* address = nullptr;
+public:
+  NativeMutableDescriptor(void* address) : address(address) {}
+  void attach(void* address) mut { this.address = address; }
+  void* take() mut {
+    void* previous = this.address;
+    this.address = nullptr;
+    return previous;
+  }
+};
+void fill_native_parameter(mut NativeMutableDescriptor& slot, bool choose) {
+  if (choose) { slot.attach(fresh_pointer()); }
+}
+void mutable_descriptor_scratch() {
+  mut NativeMutableDescriptor slot{nullptr};
+  fill_native_parameter(slot, true);
+  void* first = slot.take();
+  unsafe { release_pointer(first); }
+  fill_native_parameter(slot, false);
+  void* empty = slot.take();
+  unsafe { release_pointer(empty); }
+}
+class MutableMetadata {
+public:
+  mut int32_t length;
+  MutableMetadata(int32_t value) : length(value) {}
+  void overwrite() mut {
+    void* scratch = fresh_pointer();
+    unsafe { release_pointer(scratch); }
+    this.length = int32_t(2147483647);
+  }
+};
+void mutate_metadata_parameter(mut MutableMetadata& owner) {
+  owner.overwrite();
+}
+int32_t mutable_same_receiver_probe() {
+  mut MutableMetadata owner{int32_t(9)};
+  mutate_metadata_parameter(owner);
+  return owner.length * int32_t(2);
+}
+
+class NativeReferenceBox {
+  mut int32_t value;
+public:
+  NativeReferenceBox(int32_t value) : value(value) {}
+  int32_t& read(bool fail) {
+    if (fail) { gti_internal::fail_inactive_error(); }
+    int32_t& result = this.value;
+    return result;
+  }
+  mut int32_t& edit() mut {
+    mut int32_t& result = this.value;
+    return result;
+  }
+};
+void reference_scratch() {
+  void* scratch = fresh_pointer();
+  unsafe { release_pointer(scratch); }
+  NativeReferenceBox box{int32_t(7)};
+  int32_t observed = box.read(false);
+  if (observed != int32_t(7)) { gti_internal::fail_inactive_value(); }
+}
+int32_t mutated_reference_probe() {
+  mut NativeReferenceBox box{int32_t(9)};
+  mut int32_t& reference = box.edit();
+  reference = int32_t(2147483647);
+  return box.read(false) * int32_t(2);
+}
+int32_t fresh_probe(int32_t value) {
+  mut PrefixParcel parcel{};
+  parcel.append(value);
+  fresh_scratch();
+  reference_scratch();
+  mutable_descriptor_scratch();
+  descriptor_scratch();
+  payload_scratch(true);
+  payload_scratch(false);
+  status_and_join_scratch(value == int32_t(9));
+  return parcel.borrow() * int32_t(2);
+}
+int main(int argc, std::vector<std::string> argv) {
+  FreshAudit audit{};
+  if (argc == 3) { NativeReferenceBox box{int32_t(9)}; return box.read(true); }
+  if (argc == 5) { return mutable_same_receiver_probe(); }
+  if (argc == 4) { return mutated_reference_probe(); }
+  int32_t result = fresh_probe(argc > 1 ? int32_t(2147483647) : int32_t(9));
+  return result == int32_t(18) ? 0 : 2;
+}

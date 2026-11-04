@@ -1,0 +1,76 @@
+import std.string;
+
+extern "C" {
+  int32_t recurrence_mode();
+  int32_t recurrence_value();
+  int64_t recurrence_leaf();
+  void recurrence_barrier();
+  void recurrence_stash(int64_t* address);
+  void recurrence_alter(int64_t* address);
+}
+
+class RecurrenceCleanup {
+public:
+  RecurrenceCleanup() {}
+  ~RecurrenceCleanup() { std::println(99); }
+};
+
+interface NumberSource { int32_t next(); };
+class NativeNumber : public NumberSource {
+public:
+  NativeNumber() = default;
+  int32_t next() override { return recurrence_value(); }
+};
+
+uint64_t dynamic_sum(NumberSource& source) {
+  mut uint64_t sum = 0;
+  for (mut int32_t index = 0; index < 100; index++) {
+    sum += uint64_t(source.next());
+    recurrence_barrier();
+  }
+  return sum;
+}
+
+int64_t captured_sum(int32_t mode) {
+  mut int64_t sum = 0;
+  if (mode == 3) { unsafe { recurrence_stash(&sum); } }
+  for (mut int32_t index = 0; index < 100; index++) {
+    if (mode == 2) { unsafe { recurrence_alter(&sum); } }
+    recurrence_barrier();
+    sum += int64_t(1);
+  }
+  return sum;
+}
+
+class RecursiveCleanup {
+public:
+  RecursiveCleanup() {}
+  ~RecursiveCleanup() { std::println(55); }
+};
+
+int64_t recursive_scalar(int32_t depth, int64_t value) {
+  RecursiveCleanup cleanup{};
+  if (depth == 0) { return value + int64_t(1); }
+  return recursive_scalar(depth - 1, value) + recursive_scalar(depth - 1, value);
+}
+
+double recursive_float(int32_t depth, double value) {
+  if (depth == 0) { return value; }
+  return (recursive_float(depth - 1, value) + recursive_float(depth - 1, value)) * 0.5;
+}
+
+int main() {
+  RecurrenceCleanup cleanup{};
+  int32_t mode = recurrence_mode();
+  if (mode < 2) {
+    NativeNumber source{};
+    std::println(dynamic_sum(source));
+  } else if (mode < 5) {
+    std::println(captured_sum(mode));
+  } else if (mode < 7) {
+    std::println(recursive_scalar(5, recurrence_leaf()));
+  } else {
+    std::println(int64_t(recursive_float(5, double(recurrence_leaf()) + 0.5) * 2.0));
+  }
+  return 0;
+}

@@ -143,9 +143,52 @@ llvm::Value *Memory::providerCall(ProcessMemoryRuntimeOperation operation,
   // guarantees, not properties inferred from a public allocator name. Keep
   // them on this verified call edge: an ordinary foreign declaration does not
   // inherit them merely because it has the same symbol or physical signature.
-  if (operation == ProcessMemoryRuntimeOperation::PosixAllocate ||
+  if (operation == ProcessMemoryRuntimeOperation::PosixMalloc ||
+      operation == ProcessMemoryRuntimeOperation::PosixAllocate ||
       operation == ProcessMemoryRuntimeOperation::AlignedAllocate)
     call->addRetAttr(llvm::Attribute::NoAlias);
+  // GTI permits eliminating unused process allocations, including fallible
+  // ones. Describe only the exact native allocation/release edge, not the
+  // external declaration (which an unclassified C call can also reach).
+  // The POSIX status-writing allocator is excluded: its output pointee is an
+  // additional observable result, not just newly acquired storage.
+  const bool plainAllocation =
+      operation == ProcessMemoryRuntimeOperation::PosixMalloc ||
+      operation == ProcessMemoryRuntimeOperation::AlignedAllocate;
+  const bool release =
+      operation == ProcessMemoryRuntimeOperation::PosixRelease ||
+      operation == ProcessMemoryRuntimeOperation::AlignedRelease;
+  if (plainAllocation || release) {
+    const bool windows =
+        operation == ProcessMemoryRuntimeOperation::AlignedAllocate ||
+        operation == ProcessMemoryRuntimeOperation::AlignedRelease;
+    call->addFnAttr(llvm::Attribute::get(session.context(), "alloc-family",
+                                         windows ? "gti.process.aligned.v1"
+                                                 : "gti.process.posix.v1"));
+    call->setDoesNotThrow();
+    call->setMemoryEffects(
+        plainAllocation ? llvm::MemoryEffects::inaccessibleMemOnly()
+                        : llvm::MemoryEffects::inaccessibleOrArgMemOnly());
+    call->addFnAttr(llvm::Attribute::NoSync);
+    auto kind = plainAllocation ? llvm::AllocFnKind::Alloc |
+                                      llvm::AllocFnKind::Uninitialized
+                                : llvm::AllocFnKind::Free;
+    if (plainAllocation) {
+      call->addFnAttr(llvm::Attribute::getWithAllocSizeArgs(session.context(),
+                                                            0, std::nullopt));
+      if (windows) {
+        kind |= llvm::AllocFnKind::Aligned;
+        call->addParamAttr(1, llvm::Attribute::AllocAlign);
+      }
+    } else {
+      call->addParamAttr(0, llvm::Attribute::AllocatedPointer);
+    }
+    // Spelled through the integer-attribute constructor, which every supported
+    // LLVM provides; Attribute::getWithAllocKind arrived after LLVM 20.
+    call->addFnAttr(llvm::Attribute::get(session.context(),
+                                         llvm::Attribute::AllocKind,
+                                         static_cast<std::uint64_t>(kind)));
+  }
   // The POSIX status address is only written, never returned or retained. Do
   // not mechanically translate every MIR non-escaping argument: for example,
   // the alignment query returns information about its pointer's address bits.

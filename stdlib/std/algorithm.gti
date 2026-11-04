@@ -9,6 +9,8 @@ import "detail/sequence_removal.gti";
 import std.iterator;
 import std.functional;
 import std.vector;
+import std.array;
+import std.meta;
 namespace std {
 /// Stably compact kept elements into a prefix and return its length.
 /// The sequence size is unchanged; the suffix remains initialized.
@@ -262,75 +264,205 @@ public:
 // phase states the same comparator contract as the public overloads.
 
 // Insertion sort of [low, high).
-void sort_insertion<std::relocatable T, Compare>(mut std::vector<T>& values,
+// Safety: low <= high <= values.size(); the caller keeps the live range fixed.
+// next < high and low < position <= next justify both unchecked reads.
+unsafe void sort_insertion<std::relocatable T, Compare>(mut std::vector<T>& values,
                                                  mut Compare& compare,
                                                  size_t low, size_t high)
   requires std::vector_element<T> && std::comparator<Compare, T> {
-  for (mut size_t next = low + size_t(1); next < high; next++) {
-    mut size_t position = next;
-    while (position > low) {
-      mut bool before = false;
-      {
-        std::vector<T>& readable = values;
-        before = compare(readable[position], readable[position - size_t(1)]);
+  unsafe {
+    for (mut size_t next = low + size_t(1); next < high; next++) {
+      mut size_t position = next;
+      while (position > low) {
+        mut bool before = false;
+        {
+          std::vector<T>& readable = values;
+          before = compare(readable.get_unchecked(position), readable.get_unchecked(position - size_t(1)));
+        }
+        if (!before) {
+          break;
+        }
+        values.swap_elements_unchecked(position, position - size_t(1));
+        position--;
       }
-      if (!before) {
-        break;
-      }
-      values.swap_elements(position, position - size_t(1));
-      position--;
     }
   }
 }
 
+// Order-preserving keys for the builtin integral types. Signed keys invert
+// the sign bit after widening, so their unsigned order is natural T order.
+uint64_t sort_integral_key<std::integral T>(T value) {
+  if constexpr (std::meta::is_unsigned_integral<T>()) {
+    return uint64_t(value);
+  } else {
+    int64_t widened = int64_t(value);
+    uint64_t magnitude = uint64_t(widened & int64_t(9223372036854775807));
+    return widened < int64_t(0) ? magnitude : magnitude | (uint64_t(1) << uint64_t(63));
+  }
+}
+
+// Inverse of the natural-order key. Call only for a key observed in this
+// T range: the final narrowing conversion is then representable. Signed
+// reconstruction stays in int64_t's range, including its minimum value.
+T sort_integral_value<std::integral T>(uint64_t key) {
+  if constexpr (std::meta::is_unsigned_integral<T>()) {
+    return T(key);
+  } else {
+    if (key >= (uint64_t(1) << uint64_t(63))) {
+      return T(int64_t(key & uint64_t(9223372036854775807)));
+    }
+    return T((int64_t(key) - int64_t(9223372036854775807)) - int64_t(1));
+  }
+}
+
+// The caller supplies the first address of an exclusively borrowed live
+// array and 0 <= low < high within that array. Histogram totals sum to length;
+// cycling a misplaced value to the next slot of its digit bucket preserves
+// those totals and advances exactly one cursor. A destination bucket cannot
+// already be full while one of its values remains outside it. Primitive
+// integral assignment has no callback or failure. Each recursion fixes the
+// next differing byte, so depth is at most eight with fixed storage per level.
+// Counts and cursors never exceed high; the explicitly wrapping increments
+// and cumulative sums are therefore exact and cannot wrap in a live range.
+unsafe void sort_integral_interval<std::integral T>(T* values, size_t low, size_t high) {
+  if (high - low <= size_t(32)) {
+    unsafe {
+      for (mut size_t i = low + size_t(1); i < high; i++) {
+        T carried = values[i];
+        mut size_t at = i;
+        while (at > low && carried < values[at - size_t(1)]) {
+          values[at] = values[at - size_t(1)];
+          at--;
+        }
+        values[at] = carried;
+      }
+    }
+    return;
+  }
+  unsafe {
+    uint64_t first = sort_integral_key(values[low]);
+    mut uint64_t differences = uint64_t(0);
+    for (mut size_t i = low + size_t(1); i < high; i++) {
+      differences |= first ^ sort_integral_key(values[i]);
+    }
+    if (differences == uint64_t(0)) { return; }
+    mut uint64_t shift = uint64_t(56);
+    while ((differences >> shift) == uint64_t(0)) { shift -= uint64_t(8); }
+    mut std::array<size_t, 256> ends{};
+    for (mut size_t i = low; i < high; i++) {
+      size_t digit = size_t((sort_integral_key(values[i]) >> shift) & uint64_t(255));
+      mut size_t& count = ends.get_unchecked_mut(digit);
+      count = gti_internal::integer_wrapping_add(count, size_t(1));
+    }
+    if (shift == uint64_t(0)) {
+      // Only the last key byte differs. Each nonempty histogram bucket is
+      // one exact observed value, so emit its run directly. Primitive value
+      // construction and stores have no callbacks, allocation, or failure for
+      // these represented keys; counts preserve the complete input multiset.
+      uint64_t prefix = first & ~uint64_t(255);
+      mut size_t position = low;
+      for (mut size_t digit = size_t(0); digit < size_t(256); digit++) {
+        size_t count = ends.get_unchecked(digit);
+        if (count != size_t(0)) {
+          T value = sort_integral_value<T>(prefix | uint64_t(digit));
+          size_t end = gti_internal::integer_wrapping_add(position, count);
+          while (position < end) {
+            values[position] = value;
+            position++;
+          }
+        }
+      }
+      return;
+    }
+    mut std::array<size_t, 256> next{};
+    mut size_t limit = low;
+    for (mut size_t digit = size_t(0); digit < size_t(256); digit++) {
+      next.get_unchecked_mut(digit) = limit;
+      limit = gti_internal::integer_wrapping_add(limit, ends.get_unchecked(digit));
+      ends.get_unchecked_mut(digit) = limit;
+    }
+    for (mut size_t bucket = size_t(0); bucket < size_t(256); bucket++) {
+      mut size_t position = next.get_unchecked(bucket);
+      size_t end = ends.get_unchecked(bucket);
+      while (position < end) {
+        // Integral copies and assignments cannot invoke user code or fail.
+        // Carry the cycle's displaced value locally, writing each completed
+        // destination once; the temporary duplicate is never observable.
+        mut T carried = values[position];
+        mut size_t digit = size_t((sort_integral_key(carried) >> shift) & uint64_t(255));
+        while (digit != bucket) {
+          size_t destination = next.get_unchecked(digit);
+          T displaced = values[destination];
+          values[destination] = carried;
+          next.get_unchecked_mut(digit) = gti_internal::integer_wrapping_add(destination, size_t(1));
+          carried = displaced;
+          digit = size_t((sort_integral_key(carried) >> shift) & uint64_t(255));
+        }
+        values[position] = carried;
+        position = gti_internal::integer_wrapping_add(position, size_t(1));
+      }
+      next.get_unchecked_mut(bucket) = position;
+    }
+    mut size_t begin = low;
+    for (mut size_t bucket = size_t(0); bucket < size_t(256); bucket++) {
+      size_t end = ends.get_unchecked(bucket);
+      if (end - begin > size_t(1)) { sort_integral_interval(values, begin, end); }
+      begin = end;
+    }
+  }
+}
+
+// Safety: low <= high <= values.size(); the live range stays fixed.
 // Heapsort of [low, high). root < end/2 proves 2*root+1 is an in-range child
 // without overflow; an odd-sized heap's last parent also has children at
 // root == end/2-1.
-void sort_heap<std::relocatable T, Compare>(mut std::vector<T>& values,
+unsafe void sort_heap<std::relocatable T, Compare>(mut std::vector<T>& values,
                                             mut Compare& compare, size_t low,
                                             size_t high)
   requires std::vector_element<T> && std::comparator<Compare, T> {
-  mut size_t end = high - low;
-  mut size_t start = end / size_t(2);
-  while (end > size_t(1)) {
-    mut size_t root = size_t(0);
-    if (start > size_t(0)) {
-      start--;
-      root = start;
-    } else {
-      end--;
-      values.swap_elements(low, low + end);
-    }
-    while (root < end / size_t(2)) {
-      mut size_t child = root * size_t(2) + size_t(1);
-      if (child + size_t(1) < end) {
-        mut bool larger = false;
+  unsafe {
+    mut size_t end = high - low;
+    mut size_t start = end / size_t(2);
+    while (end > size_t(1)) {
+      mut size_t root = size_t(0);
+      if (start > size_t(0)) {
+        start--;
+        root = start;
+      } else {
+        end--;
+        values.swap_elements_unchecked(low, low + end);
+      }
+      while (root < end / size_t(2)) {
+        mut size_t child = root * size_t(2) + size_t(1);
+        if (child + size_t(1) < end) {
+          mut bool larger = false;
+          {
+            std::vector<T>& readable = values;
+            larger = compare(readable.get_unchecked(low + child),
+                             readable.get_unchecked(low + child + size_t(1)));
+          }
+          if (larger) {
+            child++;
+          }
+        }
+        mut bool before = false;
         {
           std::vector<T>& readable = values;
-          larger = compare(readable[low + child],
-                           readable[low + child + size_t(1)]);
+          before = compare(readable.get_unchecked(low + root), readable.get_unchecked(low + child));
         }
-        if (larger) {
-          child++;
+        if (!before) {
+          break;
         }
+        values.swap_elements_unchecked(low + root, low + child);
+        root = child;
       }
-      mut bool before = false;
-      {
-        std::vector<T>& readable = values;
-        before = compare(readable[low + root], readable[low + child]);
-      }
-      if (!before) {
-        break;
-      }
-      values.swap_elements(low + root, low + child);
-      root = child;
     }
   }
 }
 
 // Return a sampled index, never a copied pivot. A three-comparison decision
 // tree avoids allocating or sorting a temporary array of sample indices.
-// The caller checks storage access before lending these values. Keeping that
+// The caller establishes live storage before lending these values. Keeping that
 // access outside this policy helper lets an infallible relation stay infallible.
 size_t sort_median_index<std::relocatable T, Compare>(T& first, T& middle, T& last,
                                                        mut Compare& compare,
@@ -353,26 +485,38 @@ size_t sort_median_index<std::relocatable T, Compare>(T& first, T& middle, T& la
 // known, one comparison per adjacent pair suffices. Disorder returns early;
 // no element moves and a failed comparator leaves the input unchanged.
 // 1 means nondecreasing (including all equal), -1 nonincreasing, 0 neither.
+// index starts at one and each read is guarded by index < size(), so both
+// adjacent indices are live. The shared borrow prevents structural mutation.
 int sort_monotonic_direction<std::relocatable T, Compare>(std::vector<T>& values,
                                                            mut Compare& compare)
   requires std::vector_element<T> && std::comparator<Compare, T> {
-  mut int direction = 0;
-  for (mut size_t index = size_t(1); index < values.size(); index++) {
-    if (direction >= 0) {
-      if (compare(values[index], values[index - size_t(1)])) {
-        if (direction > 0) { return 0; }
-        direction = -1;
-      } else if (direction == 0 &&
-                 compare(values[index - size_t(1)], values[index])) {
-        direction = 1;
+  unsafe {
+    for (mut size_t index = size_t(1); index < values.size(); index++) {
+      if (compare(values.get_unchecked(index), values.get_unchecked(index - size_t(1)))) {
+        // Direction is now fixed. Continue with the same next comparison as
+        // the discovery loop, without testing direction on every element.
+        index++;
+        for (; index < values.size(); index++) {
+          if (compare(values.get_unchecked(index - size_t(1)), values.get_unchecked(index))) { return 0; }
+        }
+        return -1;
       }
-    } else if (compare(values[index - size_t(1)], values[index])) {
-      return 0;
+      if (compare(values.get_unchecked(index - size_t(1)), values.get_unchecked(index))) {
+        index++;
+        for (; index < values.size(); index++) {
+          if (compare(values.get_unchecked(index), values.get_unchecked(index - size_t(1)))) { return 0; }
+        }
+        return 1;
+      }
     }
+    return 1;
   }
-  return direction < 0 ? -1 : 1;
 }
 
+// Safety: low < high <= values.size(), high-low > 16, and the live range
+// remains fixed. Sample indices stay inside the range; block scans read only
+// the disjoint 32-element windows, and scalar scans test their bounds before
+// every read. These facts do not rely on the comparator choosing an answer.
 // Partitions [low, high), which holds more than 16 elements, and returns the
 // pivot's final index: earlier elements are not after it and later elements
 // are not before it. The pivot is the median of the first, middle and last
@@ -381,87 +525,147 @@ int sort_monotonic_direction<std::relocatable T, Compare>(std::vector<T>& values
 // 1993). Both scans stop at elements equal to the pivot, so runs of equal
 // elements split evenly, and both stay inside (low, high) whatever the
 // comparison answers.
-size_t sort_partition<std::relocatable T, Compare>(mut std::vector<T>& values,
+unsafe size_t sort_partition<std::relocatable T, Compare>(mut std::vector<T>& values,
                                                    mut Compare& compare,
                                                    size_t low, size_t high)
   requires std::vector_element<T> && std::comparator<Compare, T> {
-  size_t count = high - low;
-  size_t middle = low + count / size_t(2);
-  size_t last = high - size_t(1);
-  mut bool before = false;
-  mut size_t pivot = size_t(0);
-  {
-    std::vector<T>& readable = values;
-    if (count > size_t(40)) {
-      size_t step = count / size_t(8);
-      size_t first_sample = sort_median_index(
-          readable[low], readable[low + step], readable[low + step * size_t(2)],
-          compare, low, low + step, low + step * size_t(2));
-      size_t middle_sample = sort_median_index(
-          readable[middle - step], readable[middle], readable[middle + step],
-          compare, middle - step, middle, middle + step);
-      size_t last_sample = sort_median_index(
-          readable[last - step * size_t(2)], readable[last - step], readable[last],
-          compare, last - step * size_t(2), last - step, last);
-      pivot = sort_median_index(
-          readable[first_sample], readable[middle_sample], readable[last_sample],
-          compare, first_sample, middle_sample, last_sample);
-    } else {
-      pivot = sort_median_index(readable[low], readable[middle], readable[last],
-                                compare, low, middle, last);
-    }
-  }
-  values.swap_elements(low, pivot);
-  mut size_t left = low + size_t(1);
-  mut size_t right = last;
-  while (true) {
-    while (left <= right) {
-      {
-        std::vector<T>& readable = values;
-        before = compare(readable[left], readable[low]);
+  unsafe {
+    size_t count = high - low;
+    size_t middle = low + count / size_t(2);
+    size_t last = high - size_t(1);
+    mut bool before = false;
+    mut size_t pivot = size_t(0);
+    {
+      std::vector<T>& readable = values;
+      if (count > size_t(40)) {
+        size_t step = count / size_t(8);
+        size_t first_sample = sort_median_index(
+            readable.get_unchecked(low), readable.get_unchecked(low + step), readable.get_unchecked(low + step * size_t(2)),
+            compare, low, low + step, low + step * size_t(2));
+        size_t middle_sample = sort_median_index(
+            readable.get_unchecked(middle - step), readable.get_unchecked(middle), readable.get_unchecked(middle + step),
+            compare, middle - step, middle, middle + step);
+        size_t last_sample = sort_median_index(
+            readable.get_unchecked(last - step * size_t(2)), readable.get_unchecked(last - step), readable.get_unchecked(last),
+            compare, last - step * size_t(2), last - step, last);
+        pivot = sort_median_index(
+            readable.get_unchecked(first_sample), readable.get_unchecked(middle_sample), readable.get_unchecked(last_sample),
+            compare, first_sample, middle_sample, last_sample);
+      } else {
+        pivot = sort_median_index(readable.get_unchecked(low), readable.get_unchecked(middle), readable.get_unchecked(last),
+                                  compare, low, middle, last);
       }
-      if (!before) {
+    }
+    values.swap_elements_unchecked(low, pivot);
+    mut size_t left = low + size_t(1);
+    mut size_t right = last;
+    if (count > size_t(128)) {
+      // Compare whole disjoint windows before moving elements. Every recorded
+      // index names a misplaced element; paired restoring swaps classify both.
+      // The pivot stays at low and all comparator borrows end before mutation.
+      // The window-distance guard proves every address sum/subtraction stays
+      // in [left, right]. Counts start at zero and grow by at most one per
+      // iteration, so they never exceed 32. Wrapping arithmetic is exact under
+      // these invariants and avoids per-element overflow failure paths.
+      mut std::array<size_t, 32> left_offsets{};
+      mut std::array<size_t, 32> right_offsets{};
+      mut size_t left_count = size_t(0);
+      mut size_t right_count = size_t(0);
+      mut size_t left_used = size_t(0);
+      mut size_t right_used = size_t(0);
+      while (right - left >= size_t(64)) {
+        if (left_used == left_count) {
+          left_used = size_t(0);
+          left_count = size_t(0);
+          for (mut size_t index = size_t(0); index < size_t(32); index++) {
+            // Before this iteration, count <= index < the window width.
+            left_offsets.get_unchecked_mut(left_count) = index;
+            {
+              std::vector<T>& readable = values;
+              before = compare(readable.get_unchecked(gti_internal::integer_wrapping_add(left, index)),
+                               readable.get_unchecked(low));
+            }
+            left_count = gti_internal::integer_wrapping_add(left_count, before ? size_t(0) : size_t(1));
+          }
+        }
+        if (right_used == right_count) {
+          right_used = size_t(0);
+          right_count = size_t(0);
+          for (mut size_t index = size_t(0); index < size_t(32); index++) {
+            right_offsets.get_unchecked_mut(right_count) = index;
+            {
+              std::vector<T>& readable = values;
+              before = compare(readable.get_unchecked(low),
+                               readable.get_unchecked(gti_internal::integer_wrapping_sub(right, index)));
+            }
+            right_count = gti_internal::integer_wrapping_add(right_count, before ? size_t(0) : size_t(1));
+          }
+        }
+        while (left_used < left_count && right_used < right_count) {
+          // used < count <= 32; every stored offset is inside its window.
+          values.swap_elements_unchecked(
+              gti_internal::integer_wrapping_add(left, left_offsets.get_unchecked(left_used)),
+              gti_internal::integer_wrapping_sub(right, right_offsets.get_unchecked(right_used)));
+          left_used++;
+          right_used++;
+        }
+        // At least one window is complete. Never move an unfinished window's
+        // boundary: its remaining recorded offsets must stay valid.
+        if (left_used == left_count) { left += size_t(32); }
+        if (right_used == right_count) { right -= size_t(32); }
+      }
+      // Rescan the small residual interval, including any unfinished window.
+      // Discarding its offset metadata cannot discard unclassified elements.
+    }
+    while (true) {
+      while (left <= right) {
+        {
+          std::vector<T>& readable = values;
+          before = compare(readable.get_unchecked(left), readable.get_unchecked(low));
+        }
+        if (!before) {
+          break;
+        }
+        left++;
+      }
+      while (left <= right) {
+        {
+          std::vector<T>& readable = values;
+          before = compare(readable.get_unchecked(low), readable.get_unchecked(right));
+        }
+        if (!before) {
+          break;
+        }
+        right--;
+      }
+      if (left >= right) {
         break;
       }
+      values.swap_elements_unchecked(left, right);
       left++;
-    }
-    while (left <= right) {
-      {
-        std::vector<T>& readable = values;
-        before = compare(readable[low], readable[right]);
-      }
-      if (!before) {
-        break;
-      }
       right--;
     }
-    if (left >= right) {
-      break;
-    }
-    values.swap_elements(left, right);
-    left++;
-    right--;
+    values.swap_elements_unchecked(low, right);
+    return right;
   }
-  values.swap_elements(low, right);
-  return right;
 }
 
-// Adaptive introsort. Monotonic whole inputs finish in linear time; otherwise
-// a range longer than 16 elements is partitioned; shorter ranges
+// Shared order probe, followed by integral radix sorting or adaptive introsort.
+// Monotonic whole inputs finish in linear time. On the general path, a range
+// longer than 16 elements is partitioned; shorter ranges
 // finish with insertion sort, and a range that exhausts sort_depth_limit
 // partition levels finishes with heapsort, so comparisons stay O(n log n) for
 // every input. Each split leaves the larger side on a fixed stack and
 // continues with the smaller side, so at most log2(n) < 64 ranges wait at
-// once and sorting never allocates. Only checked restoring swaps move
+// once and sorting never allocates. Only restoring swaps move
 // elements, so an interrupted sort leaves a permutation of the original
-// elements.
+// elements. Every pending interval is a subrange of the original live prefix;
+// splitting at the returned in-range pivot preserves the unsafe helper
+// preconditions for reads and restoring swaps. Comparator borrows end before
+// each swap, and no comparator can resize the exclusively borrowed vector.
 void introsort<std::relocatable T, Compare>(mut std::vector<T>& values,
-                                            mut Compare& compare)
+                                            mut Compare& compare, bool integral_order)
   requires std::vector_element<T> && std::comparator<Compare, T> {
-  mut size_t lows[64] = {};
-  mut size_t highs[64] = {};
-  mut size_t depths[64] = {};
-  mut size_t waiting = size_t(0);
   mut size_t low = size_t(0);
   mut size_t high = values.size();
   if (high > size_t(16)) {
@@ -473,31 +677,51 @@ void introsort<std::relocatable T, Compare>(mut std::vector<T>& values,
     if (direction != 0) {
       if (direction < 0) {
         for (mut size_t left = size_t(0); left < high / size_t(2); left++) {
-          values.swap_elements(left, high - left - size_t(1));
+          unsafe { values.swap_elements_unchecked(left, high - left - size_t(1)); }
         }
       }
       return;
     }
   }
+  if constexpr (std::meta::is_integral<T>()) {
+    if (integral_order && high > size_t(128)) {
+      unsafe {
+        mut T& first = values.get_unchecked_mut(low);
+        sort_integral_interval(&first, low, high);
+      }
+      return;
+    }
+  }
+  mut std::array<size_t, 64> lows{};
+  mut std::array<size_t, 64> highs{};
+  mut std::array<size_t, 64> depths{};
+  mut size_t waiting = size_t(0);
   mut size_t depth = sort_depth_limit(high);
   while (true) {
     if (high - low <= size_t(16)) {
-      sort_insertion(values, compare, low, high);
+      unsafe { sort_insertion(values, compare, low, high); }
     } else if (depth == size_t(0)) {
-      sort_heap(values, compare, low, high);
+      unsafe { sort_heap(values, compare, low, high); }
     } else {
       depth--;
-      size_t pivot = sort_partition(values, compare, low, high);
+      mut size_t pivot = size_t(0);
+      unsafe { pivot = sort_partition(values, compare, low, high); }
       if (pivot - low < high - pivot - size_t(1)) {
-        lows[waiting] = pivot + size_t(1);
-        highs[waiting] = high;
-        depths[waiting] = depth;
+        // Continuing with the smaller side bounds pending ranges by
+        // floor(log2(original length)); size_t has at most 64 value bits.
+        unsafe {
+          lows.get_unchecked_mut(waiting) = pivot + size_t(1);
+          highs.get_unchecked_mut(waiting) = high;
+          depths.get_unchecked_mut(waiting) = depth;
+        }
         waiting++;
         high = pivot;
       } else {
-        lows[waiting] = low;
-        highs[waiting] = pivot;
-        depths[waiting] = depth;
+        unsafe {
+          lows.get_unchecked_mut(waiting) = low;
+          highs.get_unchecked_mut(waiting) = pivot;
+          depths.get_unchecked_mut(waiting) = depth;
+        }
         waiting++;
         low = pivot + size_t(1);
       }
@@ -507,20 +731,23 @@ void introsort<std::relocatable T, Compare>(mut std::vector<T>& values,
       break;
     }
     waiting--;
-    low = lows[waiting];
-    high = highs[waiting];
-    depth = depths[waiting];
+    unsafe {
+      low = lows.get_unchecked(waiting);
+      high = highs.get_unchecked(waiting);
+      depth = depths.get_unchecked(waiting);
+    }
   }
 }
 }
 
-// Both overloads sort in place with detail::introsort: O(n log n)
-// comparisons in the worst case, fixed auxiliary storage and no allocation.
+// Both overloads sort in place with O(n log n) worst-case comparisons and no
+// allocation. Natural builtin integral ordering uses a bounded radix helper;
+// the general comparator path retains restoring swaps and iterative introsort.
 // Neither promises stability; the order of equal elements is unspecified.
 export void sort<std::relocatable T>(mut std::vector<T>& values)
   requires std::vector_element<T> && std::totally_ordered<T> {
   mut detail::sort_less<T> less{};
-  detail::introsort(values, less);
+  detail::introsort(values, less, true);
 }
 
 // A complete-range comparator overload keeps one exact callable in the same
@@ -532,7 +759,7 @@ export void sort<std::relocatable T>(mut std::vector<T>& values)
 export void sort<std::relocatable T, Compare>(mut std::vector<T>& values,
                                     mut Compare compare)
   requires std::vector_element<T> && std::comparator<Compare, T> {
-  detail::introsort(values, compare);
+  detail::introsort(values, compare, false);
 }
 
 // Complete-range predicate and operation clients derive the element type from

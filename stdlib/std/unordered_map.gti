@@ -10,10 +10,10 @@ import std.cmath;
 namespace std {
 
 
-/// Owning hash table with cached hashes and separately owned stable entries.
+/// Owning hash table with cached hashes and stable entries in typed pages.
 /// Links are slot indexes (index + 1), never untracked pointers.
 export class unordered_map<K, V, Hash = std::hash<K>, KeyEqual = std::equal_to<K>> {
-  mut vector<unique_ptr<detail::unordered_map_node<K, V>>> nodes{};
+  mut detail::unordered_map_nodes<K, V> nodes{};
   mut vector<size_t> free_slots{};
   mut vector<size_t> buckets{};
   mut size_t element_count = 0;
@@ -23,24 +23,36 @@ export class unordered_map<K, V, Hash = std::hash<K>, KeyEqual = std::equal_to<K
 
   size_t locate(K& key, size_t hash) {
     if (this.buckets.empty()) { return 0; }
-    mut size_t node = this.buckets[hash % this.buckets.size()];
-    while (node != 0) {
-      if (this.nodes[node - 1]->hash == hash &&
-          this.equal(this.nodes[node - 1]->entry.first, key)) { return node; }
-      node = this.nodes[node - 1]->next;
+    // Buckets and links contain zero or a live node's slot plus one. Insert,
+    // erase and rehash maintain that invariant; this read borrow excludes
+    // structural mutation throughout the traversal. The bucket remainder is
+    // in range because the empty case returned before division.
+    unsafe {
+      mut size_t node = this.buckets.get_unchecked(hash % this.buckets.size());
+      while (node != 0) {
+        detail::unordered_map_node<K, V>& stored = this.nodes.at(node - size_t(1));
+        if (stored.hash == hash && this.equal(stored.entry.first, key)) { return node; }
+        node = stored.next;
+      }
     }
     return 0;
   }
 
   size_t first_position() {
     mut size_t position = 0;
-    while (position < this.nodes.size() && this.nodes[position] == nullptr) {
+    while (position < this.nodes.size() && !this.nodes.live(position)) {
       position++;
     }
     return position;
   }
 
   size_t minimum_buckets(size_t elements) {
+    // The default ratio is exact throughout double's consecutive-integer
+    // domain. Keep those ordinary insertions in integer arithmetic; larger
+    // requests retain the existing floating conversion and failure behavior.
+    if (this.load_limit == 1.0 && uint64_t(elements) <= uint64_t(9007199254740992)) {
+      return elements;
+    }
     double required = double(elements) / double(this.load_limit);
     mut size_t result = size_t(required);
     if (double(result) < required) { result++; }
@@ -60,19 +72,17 @@ export class unordered_map<K, V, Hash = std::hash<K>, KeyEqual = std::equal_to<K
   size_t add(K key, V value, size_t hash) mut {
     // User hashing/equality and element construction precede publication.
     // Rehash uses cached scalar hashes and never reinvokes user hash code.
-    auto owned = std::make_unique<detail::unordered_map_node<K, V>>(
-        std::move(key), std::move(value), hash, size_t(0));
     this.ensure_for_one();
     size_t bucket = hash % this.buckets.size();
     mut size_t added = this.nodes.size() + 1;
     if (this.free_slots.empty()) {
-      this.nodes.push_back(std::move(owned));
+      this.nodes.append(std::move(key), std::move(value), hash, size_t(0));
     } else {
       added = this.free_slots.back();
-      this.nodes[added - 1] = std::move(owned);
+      this.nodes.replace(added - 1, std::move(key), std::move(value), hash, size_t(0));
       this.free_slots.pop_back();
     }
-    this.nodes[added - 1]->next = this.buckets[bucket];
+    this.nodes.at(added - 1).next = this.buckets[bucket];
     this.buckets[bucket] = added;
     this.element_count++;
     return added - 1;
@@ -139,7 +149,7 @@ public:
     mut size_t result = 0;
     while (node != 0) {
       result++;
-      node = this.nodes[node - 1]->next;
+      node = this.nodes.at(node - 1).next;
     }
     return result;
   }
@@ -147,12 +157,12 @@ public:
   V& at(K& key) {
     size_t node = this.locate(key, this.hasher(key));
     gti_internal::require_key(node != 0);
-    return this.nodes[node - 1]->entry.second;
+    return this.nodes.at(node - 1).entry.second;
   }
   mut V& at(K& key) mut {
     size_t node = this.locate(key, this.hasher(key));
     gti_internal::require_key(node != 0);
-    return this.nodes[node - 1]->entry.second;
+    return this.nodes.at(node - 1).entry.second;
   }
 
   [[discardable]] pair<iterator, bool> insert(K key, V value) mut {
@@ -168,7 +178,8 @@ public:
     size_t hash = this.hasher(key);
     size_t node = this.locate(key, hash);
     if (node != 0) {
-      this.nodes[node - 1]->entry.second = std::move(value);
+      mut V& destination = this.nodes.at(node - 1).entry.second;
+      destination = std::move(value);
       return pair<iterator, bool>(iterator(this.nodes, node - 1), false);
     }
     size_t position = this.add(std::move(key), std::move(value), hash);
@@ -192,9 +203,9 @@ public:
   [[discardable]] mut V& get_or_insert(K key) mut requires std::default_initializable<V> {
     size_t hash = this.hasher(key);
     size_t node = this.locate(key, hash);
-    if (node != 0) { return this.nodes[node - 1]->entry.second; }
+    if (node != 0) { return this.nodes.at(node - 1).entry.second; }
     size_t position = this.add(std::move(key), V(), hash);
-    return this.nodes[position]->entry.second;
+    return this.nodes.at(position).entry.second;
   }
 
   /// Visit each live entry once, unlink matches, and return their count.
@@ -227,18 +238,18 @@ public:
     mut size_t previous = 0;
     mut size_t node = this.buckets[bucket];
     while (node != 0) {
-      if (this.nodes[node - 1]->hash == hash &&
-          this.equal(this.nodes[node - 1]->entry.first, key)) {
+      if (this.nodes.at(node - 1).hash == hash &&
+          this.equal(this.nodes.at(node - 1).entry.first, key)) {
         this.free_slots.push_back(node);
-        size_t next = this.nodes[node - 1]->next;
+        size_t next = this.nodes.at(node - 1).next;
         if (previous == 0) { this.buckets[bucket] = next; }
-        else { this.nodes[previous - 1]->next = next; }
+        else { this.nodes.at(previous - 1).next = next; }
         this.element_count--;
-        this.nodes[node - 1].reset();
+        this.nodes.erase(node - 1);
         return 1;
       }
       previous = node;
-      node = this.nodes[node - 1]->next;
+      node = this.nodes.at(node - 1).next;
     }
     return 0;
   }
@@ -252,9 +263,9 @@ public:
     mut vector<size_t> replacement{};
     replacement.resize(capacity, size_t(0));
     for (mut size_t index = 0; index < this.nodes.size(); index++) {
-      if (this.nodes[index] != nullptr) {
-        size_t bucket = this.nodes[index]->hash % capacity;
-        this.nodes[index]->next = replacement[bucket];
+      if (this.nodes.live(index)) {
+        size_t bucket = this.nodes.at(index).hash % capacity;
+        this.nodes.at(index).next = replacement[bucket];
         replacement[bucket] = index + 1;
       }
     }
@@ -263,6 +274,9 @@ public:
   void reserve(size_t requested) mut {
     size_t minimum = this.minimum_buckets(requested);
     if (minimum > this.buckets.size()) { this.rehash(minimum); }
+    // Entry objects keep their stable addresses; reserve the page index so
+    // insertion up to the requested size does not grow that index array.
+    this.nodes.reserve(requested);
   }
   void clear() mut {
     this.element_count = 0;
