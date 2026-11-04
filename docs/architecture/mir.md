@@ -3142,10 +3142,12 @@ another body restores the previous index; thread-local scope isolates concurrent
 verification. No index survives a body edit, and mutable lowering queries retain
 the scan path.
 
-Loan-flow verification uses one complete working state vector and sparse CFG
-snapshots containing every non-inactive loan. Joins merge both snapshots in ID
-order, treating absent IDs as Inactive and retaining all conditional-state,
-reservation and parking rejection rules. The working vector resets its live
+Loan-flow verification uses one complete working state vector and adaptive CFG
+snapshots. Sparse snapshots contain every non-inactive loan; when storing IDs
+would cost more than the original state vector, a snapshot uses that dense
+representation instead. Joins compare states in ID order, treating absent
+sparse IDs as Inactive and retaining all conditional-state, reservation and
+parking rejection rules through one shared predicate. The working vector resets its live
 IDs between blocks; expired loans do not occupy every successor snapshot. Its
 access checks enumerate a derived, ID-ordered set of non-inactive loans instead
 of rescanning every expired loan in a large body. Every state mutation marks its

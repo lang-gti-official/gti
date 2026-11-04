@@ -311,13 +311,14 @@ void testGeneralTextStepMatchesProductionEmission() {
         source.filename() == "182-bounded-array-borrows.gti";
     const bool aggregateConstant =
         source.filename() == "183-immediate-functions.gti";
+    const bool consumingRange = source.filename() == "186-consuming-ranges.gti";
     if (source.filename() == "066-managed-threads.gti" ||
         source.filename() == "098-shared-ownership.gti" ||
         source.filename() == "178-wrapping-atomic-counters.gti" ||
         source.filename() == "179-weak-ownership.gti" ||
         source.filename() == "180-compact-source-owners.gti" || generalLayout ||
         boundedArray || aggregateConstant || temporaryReference ||
-        freshClassSubscript) {
+        freshClassSubscript || consumingRange) {
       bool unsupported = false;
       try {
         static_cast<void>(gti_test::emitCpp(frontend, frontend.mir,
@@ -330,6 +331,7 @@ void testGeneralTextStepMatchesProductionEmission() {
             : generalLayout     ? "general sizeof/alignof"
             : boundedArray      ? "generic fixed-array reference signatures"
             : aggregateConstant ? "aggregate constant publication"
+            : consumingRange    ? "raw object extraction"
                                 : "wrapping atomic read-modify-write";
         unsupported =
             std::string(error.what()).find(limitation) != std::string::npos;
