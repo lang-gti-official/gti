@@ -3131,6 +3131,22 @@ IDs are body-local and start at one.
 
 ## Lowering And Verification
 
+Read-only body verification uses a scoped index of HIR source values and MIR
+instruction definitions. It retains every value for a source, so duplicate
+materializations remain ambiguous, and checks the exact defining block and
+producer predicate. Duplicate instruction IDs fall back to the original scan.
+The index supplies lookup speed, never proof authority. Nested verification of
+another body restores the previous index; thread-local scope isolates concurrent
+verification. No index survives a body edit, and mutable lowering queries retain
+the scan path.
+
+Loan-flow verification still owns the complete state vector and CFG joins. Its
+access checks enumerate a derived, ID-ordered set of non-inactive loans instead
+of rescanning every expired loan in a large body. Every state mutation marks its
+ID for refresh before the next query, including reservations, suspension,
+conditional states, parking and loan ends. Membership does not grant access or
+replace the existing conflict, escape, cleanup or parent-state checks.
+
 Thread-local objects have a separate `MirThreadLocalStorage` inventory and
 `ThreadLocalInitializer` bodies. `EnsureThreadLocal` names the exact declaration
 and initializer; independent verification checks inventory, passive data

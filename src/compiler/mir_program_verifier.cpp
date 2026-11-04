@@ -1878,6 +1878,7 @@ uniqueMirClassInstanceForType(const MirProgram &program,
     const MirProgram &program, const MirBody &body, std::size_t owner,
     const MirFunctionInstance *caller,
     const std::function<bool(HirFunctionInstanceId)> &completeReturnProof) {
+  const mir_detail::MirBodyReadScope readScope(body);
   for (const MirBlock &block : body.blocks) {
     for (const MirInstruction &instruction : block.instructions) {
       if (instruction.nativeCalleeType &&
@@ -17888,6 +17889,7 @@ verifyMirProgramContracts(const MirProgram &program) {
   for (const auto &storage : program.threadLocalStorage())
     initializerStorageSymbols.insert(storage.symbol);
   const auto verifyBody = [&](const MirBody &body, std::size_t owner) {
+    const mir_detail::MirBodyReadScope readScope(body);
     const bool noCallerActivation =
         body.kind == MirBodyKind::Module ||
         body.kind == MirBodyKind::ThreadLocalInitializer;
