@@ -74,12 +74,12 @@ def system_risk(paths):
 def source_stdlib_scope(paths):
     """Strict source-library eligibility; artifact admission is a separate step."""
     metadata = {"README.md", "stdlib/README.md", "examples/README.md",
-                "tests/stdlib_surface_manifest.json", "tests/mir_census_baseline.json",
-                "tests/lowered_program_census_baseline.json"}
+                "tests/stdlib_surface_manifest.json"}
     def library(path):
         return path.startswith("stdlib/std/") and path.endswith(".gti")
     def allowed(path):
         return (library(path) or path in metadata or
+                path.startswith("tests/census/") and path.endswith(".json") or
                 path.startswith(("docs/", "changes/")) and path.endswith(".md") or
                 path.startswith(("examples/", "tests/fixtures/")) and path.endswith(".gti") or
                 re.fullmatch(r"tests/[A-Za-z0-9_]+_test\.py", path) is not None)

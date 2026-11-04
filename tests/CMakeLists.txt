@@ -3211,7 +3211,7 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/cpp_mir_body_emitter_corpus_test.py"
             "$<TARGET_FILE:gti_cpp_mir_body_emitter_corpus_tests>"
             "${PROJECT_SOURCE_DIR}"
-            "${PROJECT_SOURCE_DIR}/tests/lowered_program_census_baseline.json"
+            "${PROJECT_SOURCE_DIR}/tests/census"
             --jobs=4
   )
   set_tests_properties(cpp_mir_body_emitter_corpus PROPERTIES PROCESSORS 4)
@@ -3256,7 +3256,7 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/lowered_program_census_test.py"
             "$<TARGET_FILE:gti_lowered_program_census>"
             "${PROJECT_SOURCE_DIR}"
-            "${PROJECT_SOURCE_DIR}/tests/lowered_program_census_baseline.json"
+            "${PROJECT_SOURCE_DIR}/tests/census"
   )
   set_tests_properties(lowered_program_corpus_census PROPERTIES TIMEOUT 1800)
   add_test(
@@ -3835,7 +3835,7 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/mir_census_test.py"
             "$<TARGET_FILE:gti>"
             "${PROJECT_SOURCE_DIR}"
-            "${PROJECT_SOURCE_DIR}/tests/mir_census_baseline.json"
+            "${PROJECT_SOURCE_DIR}/tests/census"
             --lowered-census "$<TARGET_FILE:gti_lowered_program_census>"
   )
   add_test(
@@ -3844,7 +3844,7 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/mir_cutover_corpus_oracle_test.py"
             "$<TARGET_FILE:gti>"
             "${PROJECT_SOURCE_DIR}"
-            "${PROJECT_SOURCE_DIR}/tests/mir_census_baseline.json"
+            "${PROJECT_SOURCE_DIR}/tests/census"
             "$<TARGET_FILE:gti_runtime>"
             "--jobs=4"
   )

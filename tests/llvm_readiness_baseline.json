@@ -9,7 +9,7 @@
     {
       "id": "shipped-examples",
       "kind": "source-census",
-      "manifest": "tests/mir_census_baseline.json",
+      "manifest": "tests/census/README.md",
       "member_count": 185,
       "inventory_sha256": "b60e0d2d46376a1f68dd62ce2d9409f218b8dd0a9fbde28055e204c9a50f6a5f"
     },

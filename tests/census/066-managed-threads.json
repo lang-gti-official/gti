@@ -1,0 +1,38 @@
+{
+  "lowered": {
+    "arm64-apple-macos": {
+      "bodies": 326,
+      "generated_items": 205,
+      "generated_kinds": {
+        "program_initialization": 1,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 27,
+        "callable_adapter": 21,
+        "lifecycle_cleanup": 9,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 6,
+        "concrete_instance_adapter": 140,
+        "thread_local_storage": 0
+      }
+    },
+    "x86_64-unknown-linux": {
+      "bodies": 326,
+      "generated_items": 205,
+      "generated_kinds": {
+        "program_initialization": 1,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 27,
+        "callable_adapter": 21,
+        "lifecycle_cleanup": 9,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 6,
+        "concrete_instance_adapter": 140,
+        "thread_local_storage": 0
+      }
+    }
+  },
+  "mir": {
+    "arm64-apple-macos": 326,
+    "x86_64-unknown-linux": 326
+  }
+}

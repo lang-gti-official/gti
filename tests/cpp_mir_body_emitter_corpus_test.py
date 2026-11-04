@@ -13,6 +13,8 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 import json
+
+import census_store as store
 import os
 from pathlib import Path
 import subprocess
@@ -177,10 +179,10 @@ def main() -> int:
         parser.error("--jobs must be at least one")
     if not binary.is_file():
         parser.error(f"missing body-emitter test binary: {binary}")
-    if not baseline_path.is_file():
+    if not store.exists(baseline_path):
         parser.error(f"missing lowered-program census baseline: {baseline_path}")
 
-    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    baseline = store.load(baseline_path, "lowered")
     expected_sources = set(baseline["examples"])
     sources = sorted((root / "examples").glob("*.gti"))
     actual_sources = {source.name for source in sources}

@@ -9493,7 +9493,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `backend_lowered_program_rejection` | C++, MIR, and native-header backends accept one valid lowered value and reject construction-seal and generated-inventory mutations before emission |
 | `backend_lowered_program_boundary` | structural prohibition on frontend includes/types, `BackendInput`, source-MIR/optimizer inputs, and builder leakage across production backend files and the standalone contract client |
 | `cpp_mir_control_flow` | deterministic backend-private direct-CFG plans; canonical block labels and edge slots; complete terminal vocabulary; repeated-target switch edges; and missing, duplicate, reordered, relabelled, retargeted, malformed-entry, and invalid-MIR rejection |
-| `lowered_program_corpus_census` | per-example body, generated-item, and generated-family counts held within the census budget (`tests/census_budget.py`) of `tests/lowered_program_census_baseline.json` across the complete shipped corpus for explicit macOS arm64 and Linux x86_64 targets, independently of the executing host; other inventory consumers default to the canonical macOS profile. Linux variants retain exact C ABI identity differences (four examples share one `layout_of<unsigned long>` instantiation there) rather than ignoring count drift |
+| `lowered_program_corpus_census` | per-example body, generated-item, and generated-family counts held within the census budget (`tests/census_budget.py`) of `tests/census/` (`lowered`) across the complete shipped corpus for explicit macOS arm64 and Linux x86_64 targets, independently of the executing host; other inventory consumers default to the canonical macOS profile. Linux variants retain exact C ABI identity differences (four examples share one `layout_of<unsigned long>` instantiation there) rather than ignoring count drift |
 | `mir_backend_first_family` | verified source/optimized MIR handoff, ordinary and failure-form general emission, optimized instruction control, and missing, stale, duplicated, or unauthorized snapshot rejection |
 | `mir_backend_first_family_runtime` | general verified-MIR execution at O0/O1/O3 under C++20/C++23, including body-identity markers and optimized-MIR artifact differences |
 | `mir_backend_scalar_cfg` | exact `scalar-cfg-v1` selection across scalar computations, places, assignment, branch, switch, short-circuit, and loop CFG; direct-label/goto spelling without mutable block dispatch; checked/call/reference near-miss fallback; optimized-literal control; and fail-closed same-domain operation and branch-routing mutations with unchanged source MIR |
@@ -9509,7 +9509,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `mir_backend_owned_lifecycle_runtime` | exact nested-scope construction, move-by-value, first-close ordering, and explicit cleanup at O0/O1/O3 under C++20/C++23, including emitted family markers and lifetime-slot schedule evidence |
 | `mir_backend_scalar_failure_callgraph` | atomic hosted `scalar-failure-callgraph-v1` selection; exact hidden bool/out-result/record ABI; local-site creation and unchanged call propagation; Return-only publication; reverse failure drops; unique terminal/firewall shape; complete HIR-body reverse-edge and selected-class representation closure; native/virtual/lambda/dynamic-initializer/checked-lifecycle/normal-ABI/cycle near misses; and fail-closed metadata, target, record, cleanup, and source-MIR mutations |
 | `mir_backend_scalar_failure_callgraph_runtime` | normal execution plus every admitted signed/unsigned fixed-integer detector outcome at O0/O1/O3 under C++20/C++23, with exact selected-body counts, reports, original source sites, status 70, stdout silence, one terminal call, and the immediate native-exception firewall |
-| `mir_census_regression` | every example compiles and its MIR body count stays within the census budget (`tests/census_budget.py`) of `tests/mir_census_baseline.json` |
+| `mir_census_regression` | every example compiles and its MIR body count stays within the census budget (`tests/census_budget.py`) of `tests/census/` (`mir`) |
 | `compiler_debug_tooling` | portable failure capture/replay plus decline-census body segmentation, body-kind-local spellability, deterministic generation, backend-only classification, and argument validation |
 | `mir_cutover_corpus_oracle` | every example builds and runs at `-O0`/C++20 and `-O3`/C++23 with identical exit status, stdout, and stderr, and recorded examples keep their body count within the census budget |
 | `cpp_mir_body_emitter_preflight` / `cpp_mir_body_emitter_text` / `cpp_mir_body_emitter_lifecycle` / `cpp_mir_body_emitter_census` / `cpp_mir_body_emitter_corpus` / `cpp_mir_body_emitter_corpus_protocol` | Manifest-backed tests split into preflight/representation, ordinary text, lifecycle/failure, and corpus-protocol executables; classification, immutable-plan lifetime, typed-edge, initializer, ownership, array, virtual-family, inline-capture, Expected, and reference-transfer assertions remain owned by focused suites; the census rejects missing or duplicate registrations, while the four-processor coordinator runs both corpus sweeps once per exact lowered-program census source and re-aggregates readiness floors, feature witnesses, determinism, direct control flow, and byte agreement; protocol tests reject malformed or mismatched worker evidence |
@@ -11092,7 +11092,7 @@ the requisite native lowering milestones, and does not certify support today.
 ### MIR And C++ Corpus Gates
 
 The MIR census and native corpus oracle select the reviewed host target from
-`mir_census_baseline.json`: common `arm64-apple-macos` counts with sparse
+`tests/census/` (`mir`): common `arm64-apple-macos` counts with sparse
 `x86_64-unknown-linux` overrides, matching the LoweredProgram census convention.
 Both validate the complete example inventory and every profile total before
 using a selected-case filter. Unknown hosts, targets, examples and malformed
@@ -11143,7 +11143,7 @@ Two complementary gates replace it:
 
 - `tests/mir_census_test.py` recompiles every `examples/*.gti` source and
   requires the exact per-example body-identity counts recorded in
-  `tests/mir_census_baseline.json` for the host target. The macOS arm64 base and
+  `tests/census/` (`mir`) for the host target. The macOS arm64 base and
   Linux x86_64 variant differ in four container examples by one
   `std::layout_of<c_size_t>()` body: on Linux, `c_size_t` and `uint64_t` have
   the same native C type identity and share an existing specialization; on
@@ -11156,7 +11156,7 @@ Two complementary gates replace it:
   status, stdout, and stderr.
 
 The reviewed corpus inventory is the checked-in
-`tests/mir_census_baseline.json`; documentation does not duplicate its changing
+`tests/census/` (`mir`); documentation does not duplicate its changing
 counts. The two-endpoint corpus matrix covers source and optimized MIR plus both
 supported C++ standards without retaining eight duplicate full-corpus jobs.
 Focused runtime matrices continue to exercise intermediate optimization levels

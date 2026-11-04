@@ -1073,7 +1073,7 @@ PR that waited while `main` moved otherwise vanishes from every pipeline (on
 `main` is closed the same way, with a comment, so its members return to the
 pool and the next `compose` rebuilds from current heads instead of leaving
 them "busy" behind a rollup the queue would drop without a verdict. The census baselines
-(`tests/mir_census_baseline.json`, `tests/lowered_program_census_baseline.json`)
+(one file per example under `tests/census/`)
 store per-example counts only, never totals, and a recorded example fails only
 when a count leaves the census budget (`tests/census_budget.py`: the larger of
 five counts or five percent). A PR therefore edits a census baseline only for

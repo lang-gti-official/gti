@@ -73,7 +73,7 @@ def sample_snapshot(digest: str = "a") -> dict:
         "builds": {"Debug": {"build": {"wall_seconds": 1.0}}},
         "diagnostics": {"bad": {"returncode": 65, "normalized_sha256": digest, "required_codes": ["X"]}},
         "census_authorities": {
-            "mir_census_baseline.json": artifact(),
+            "census": artifact(),
             "lowered_program_inventory": {"sha256": digest, "rows": 1, "command": {}},
         },
         "corpus": {
