@@ -1,0 +1,43 @@
+// Named concept tests choose one implementation without restating a contract.
+concept has_size<T> = requires(T& value) { { value.size() } -> uint64_t; };
+
+struct Packet {
+  uint64_t count = 3;
+public:
+  Packet() = default;
+  uint64_t size() { return this.count; }
+};
+
+uint64_t measure<T>(T& value) {
+  if constexpr (has_size<T>) {
+    return value.size();
+  } else {
+    return 0;
+  }
+}
+
+// Protocol satisfaction is the same Boolean query as structural satisfaction.
+concept measured<T> { uint64_t count(T& value); };
+for concept measured<Packet> {
+  uint64_t count(Packet& value) { return value.size(); }
+};
+
+uint64_t protocol_measure<T>(T& value) {
+  if constexpr (measured<T>) {
+    return measured<T>::count(value);
+  } else {
+    return 0;
+  }
+}
+
+static_assert(has_size<Packet> && !has_size<int>);
+constexpr bool integer_or_packet = std::integral<int> || has_size<Packet>;
+static_assert(integer_or_packet);
+
+int main() {
+  Packet packet{};
+  int scalar = 7;
+  if (measure(packet) != 3 || measure(scalar) != 0) { return 1; }
+  if (protocol_measure(packet) != 3 || protocol_measure(scalar) != 0) { return 2; }
+  return 0;
+}

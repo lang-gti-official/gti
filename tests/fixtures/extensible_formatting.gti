@@ -71,6 +71,7 @@ int main() {
   if (count || count.error() != std::format_errc::argument_count_mismatch || app::drops != 2) { return 4; }
   auto unsupported = std::try_print("{:s}", app::Owned(std::string("discard")));
   if (unsupported || unsupported.error() != std::print_errc::unsupported_argument || app::drops != 3) { return 5; }
-  std::println("{}", text.view());
+  std::string_view display = text.view();
+  std::println("{}", display);
   return 0;
 }

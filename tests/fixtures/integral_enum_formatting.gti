@@ -58,7 +58,11 @@ int main() {
   if (std::format("{} {} {} {}", Named::high, Status::failed, Signed8::sparse, Signed8::alias)
       != "named 9 12 12") { return 5; }
   if (std::format("{} {}", Payload::number(3), Status::ok) != "payload 0") { return 12; }
-  auto ordered = std::format("{} {}", next(0), next(1));
+  // Keep this existing C++ comparator on named enum storage. The separate
+  // integral_enum_formatting_temporary fixture covers borrowed call results.
+  auto first = next(0);
+  auto second = next(1);
+  auto ordered = std::format("{} {}", first, second);
   if (sequence != 2 || ordered != "9 9") { return 6; }
   auto bad_type = std::try_format("{:s}", Status::failed);
   if (bad_type || bad_type.error() != std::format_errc::invalid_format) { return 7; }

@@ -1,0 +1,102 @@
+==================
+Conditional member operators
+==================
+class Box<T> {
+  mut T& operator[](int index) mut requires std::default_initializable<T> { return this.value; }
+  bool operator==(Box<T>& other) requires std::equality_comparable<T> { return this.value == other.value; }
+  T operator()(T value) requires std::copyable<T> { return value; }
+};
+---
+
+(source_file
+  (class_declaration
+    (identifier)
+    (generic_parameter_clause
+      (generic_parameter
+        (identifier)))
+    (class_body
+      (operator_declaration
+        (type
+          (user_type
+            (identifier))
+          (reference_declarator))
+        (parameter_clause
+          (parameter
+            (type
+              (primitive_type))
+            (identifier)))
+        (requires_clause
+          (constraint_expression
+            (concept_application
+              (scoped_identifier
+                (identifier)
+                (identifier))
+              (type
+                (user_type
+                  (identifier))))))
+        (block
+          (return_statement
+            (initializer_expression
+              (member_expression
+                (primary_expression
+                  (this_expression))
+                (identifier))))))
+      (operator_declaration
+        (type
+          (primitive_type))
+        (parameter_clause
+          (parameter
+            (type
+              (user_type
+                (identifier)
+                (type_argument_clause
+                  (type
+                    (user_type
+                      (identifier)))))
+              (reference_declarator))
+            (identifier)))
+        (requires_clause
+          (constraint_expression
+            (concept_application
+              (scoped_identifier
+                (identifier)
+                (identifier))
+              (type
+                (user_type
+                  (identifier))))))
+        (block
+          (return_statement
+            (initializer_expression
+              (binary_expression
+                (member_expression
+                  (primary_expression
+                    (this_expression))
+                  (identifier))
+                (member_expression
+                  (primary_expression
+                    (identifier))
+                  (identifier)))))))
+      (operator_declaration
+        (type
+          (user_type
+            (identifier)))
+        (parameter_clause
+          (parameter
+            (type
+              (user_type
+                (identifier)))
+            (identifier)))
+        (requires_clause
+          (constraint_expression
+            (concept_application
+              (scoped_identifier
+                (identifier)
+                (identifier))
+              (type
+                (user_type
+                  (identifier))))))
+        (block
+          (return_statement
+            (initializer_expression
+              (primary_expression
+                (identifier)))))))))

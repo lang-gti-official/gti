@@ -603,6 +603,33 @@ private:
     blockRequirement.expression.nodes.push_back(
         {.kind = ConstraintExpressionKind::Application, .application = 0});
     blockRequirement.expression.root = 0;
+    std::optional<RequiresClause> requiresClause;
+    if (match({TokenKind::REQUIRES})) {
+      requiresClause = RequiresClause{previous(), constraintExpression()};
+      // Operation bodies see the block's own application and its explicit
+      // admission requirements through the ordinary function requirement path.
+      auto &combined = blockRequirement.expression;
+      const auto &extra = requiresClause->expression;
+      const auto applicationOffset = combined.applications.size();
+      const auto nodeOffset = combined.nodes.size();
+      combined.applications.insert(combined.applications.end(),
+                                   extra.applications.begin(),
+                                   extra.applications.end());
+      for (auto node : extra.nodes) {
+        if (node.kind == ConstraintExpressionKind::Application) {
+          node.application += applicationOffset;
+        } else {
+          node.left += nodeOffset;
+          node.right += nodeOffset;
+        }
+        combined.nodes.push_back(std::move(node));
+      }
+      combined.nodes.push_back({.kind = ConstraintExpressionKind::Conjunction,
+                                .left = combined.root,
+                                .right = extra.root + nodeOffset,
+                                .operation = requiresClause->keyword});
+      combined.root = combined.nodes.size() - 1;
+    }
     consume(TokenKind::LEFT_BRACE, "Expect '{' before conformance block body.");
     StmtList members;
     StmtList functions;
@@ -644,7 +671,7 @@ private:
 
     auto conformance = std::make_shared<ConformanceDecl>(
         forKeyword, std::move(genericParameters), std::move(conceptKeyword),
-        std::move(target), std::move(members));
+        std::move(target), std::move(members), std::move(requiresClause));
     stampExtent(conformance, forKeyword);
     StmtList declarations;
     declarations.push_back(std::move(conformance));
@@ -3661,6 +3688,16 @@ private:
         consume(TokenKind::LEFT_PAREN,
                 "Expect '(' after explicit generic arguments.");
         expr = finishCall(std::move(expr), std::move(typeArguments));
+      } else if (isConceptTestStart() && (exprAs<Variable>(expr.get()) ||
+                                          exprAs<QualifiedName>(expr.get()))) {
+        NamePath name = exprAs<Variable>(expr.get())
+                            ? NamePath(exprAs<Variable>(expr.get())->name())
+                            : exprAs<QualifiedName>(expr.get())->takeName();
+        std::vector<TypeRef> arguments = typeArgumentList();
+        expr = std::make_unique<ConceptTest>(
+            ConceptApplication{.name = std::move(name),
+                               .arguments = std::move(arguments)},
+            previous());
       } else if (match({TokenKind::LEFT_PAREN})) {
         expr = finishCall(std::move(expr), {});
       } else if (match({TokenKind::DOT})) {
@@ -3807,6 +3844,9 @@ private:
       collectRequirementTypes(group->expression().get(), types);
     } else if (const auto *get = exprAs<Get>(expression)) {
       collectRequirementTypes(get->object().get(), types);
+    } else if (const auto *test = exprAs<ConceptTest>(expression)) {
+      types.insert(types.end(), test->application().arguments.begin(),
+                   test->application().arguments.end());
     } else if (const auto *query = exprAs<MemberRequirement>(expression)) {
       if (!query->isExpressionRequirement())
         types.push_back(query->receiver());
@@ -4290,6 +4330,44 @@ private:
     }
     return peekAt(next).kind == TokenKind::GREATER &&
            peekAt(next + 1).kind == TokenKind::SCOPE;
+  }
+
+  [[nodiscard]] bool isConceptTestStart() const {
+    if (!check(TokenKind::LESS))
+      return false;
+    std::size_t next = 1;
+    if (peekAt(next).kind != TokenKind::GREATER) {
+      auto end = genericArgumentEnd(next);
+      if (!end)
+        return false;
+      next = *end;
+      while (peekAt(next).kind == TokenKind::COMMA) {
+        end = genericArgumentEnd(next + 1);
+        if (!end)
+          return false;
+        next = *end;
+      }
+    }
+    if (peekAt(next).kind != TokenKind::GREATER)
+      return false;
+    // These tokens cannot begin a comparison's right operand. In particular,
+    // keep `a < b > +c` and similar ordinary comparisons unchanged.
+    switch (peekAt(next + 1).kind) {
+    case TokenKind::RIGHT_PAREN:
+    case TokenKind::RIGHT_BRACKET:
+    case TokenKind::RIGHT_BRACE:
+    case TokenKind::SEMICOLON:
+    case TokenKind::COMMA:
+    case TokenKind::AND:
+    case TokenKind::OR:
+    case TokenKind::EQUAL_EQUAL:
+    case TokenKind::BANG_EQUAL:
+    case TokenKind::QUESTION:
+    case TokenKind::COLON:
+      return true;
+    default:
+      return false;
+    }
   }
 
   [[nodiscard]]

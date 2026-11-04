@@ -1,0 +1,34 @@
+import std.map;
+import std.unordered_map;
+import std.string;
+import std.utility;
+
+class Box<T> {
+  mut T value;
+public:
+  Box(T initial) : value(std::move(initial)) {}
+  mut T& operator[](int index) mut requires std::default_initializable<T> { return this.value; }
+  T& operator[](int index) requires std::copyable<T> { return this.value; }
+  bool operator==(Box<T>& other) requires std::equality_comparable<T> { return this.value == other.value; }
+  T operator()(T input) requires std::copyable<T> { return input; }
+};
+int main() {
+  mut Box<int> box{4};
+  box[0] = 5;
+  Box<int> other{5};
+  if (!(box == other) || other[0] != 5 || other(7) != 7) { return 1; }
+  std::pair<int, bool> first{2, true};
+  std::pair<int, bool> second{2, true};
+  if (!(first == second) || first != second) { return 2; }
+  mut std::map<int, int> ordered{};
+  ordered[1] = 4;
+  mut std::unordered_map<int, int> hashed{};
+  hashed[1] = 7;
+  int key = 1;
+  if (ordered.at(key) != 4 || hashed.at(key) != 7) { return 3; }
+  mut std::map<std::string, int> text_keys{};
+  std::string owned = "tea";
+  text_keys[std::move(owned)] = 9;
+  std::string lookup = "tea";
+  return text_keys.at(lookup) == 9 ? 0 : 4;
+}

@@ -1,0 +1,16 @@
+// One readonly API observes named values, expressions and moved locals.
+int twice(int& value) { return value * 2; }
+int make() { return 21; }
+enum Color { Red, Green };
+Color red() { return Color::Red; }
+bool is_red(Color& color) { return color == Color::Red; }
+int main() {
+  int named = 21;
+  int moved = 21;
+  if (twice(named) != 42 || twice(21) != 42 || twice(make()) != 42 ||
+      twice(int(20) + 1) != 42 || twice(std::move(moved)) != 42 ||
+      !is_red(red())) { return 1; }
+  bool skip = false;
+  if (skip && twice(1 / (make() - 21)) == 0) { return 2; }
+  return 0;
+}

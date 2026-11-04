@@ -184,14 +184,22 @@
     "183-immediate-functions.gti": 11,
     "184-payload-borrow-chains.gti": 11,
     "185-reflected-method-dispatch.gti": 47,
-    "186-dynamic-json.gti": 646
+    "186-dynamic-json.gti": 646,
+    "186-scalar-temporary-borrows.gti": 9,
+    "187-operator-temporary-borrows.gti": 14,
+    "188-concept-conditions.gti": 14,
+    "189-protocol-format-hash.gti": 448,
+    "190-conditional-member-operators.gti": 525,
+    "191-reference-parameter-packs.gti": 238
   },
   "target": "arm64-apple-macos",
   "variants": {
     "x86_64-unknown-linux": {
       "examples": {
         "087-associative-containers.gti": 451,
-        "089-library-workflow.gti": 917
+        "089-library-workflow.gti": 917,
+        "189-protocol-format-hash.gti": 447,
+        "190-conditional-member-operators.gti": 524
       }
     }
   }

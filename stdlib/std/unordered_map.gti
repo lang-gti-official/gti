@@ -12,7 +12,7 @@ namespace std {
 
 /// Owning hash table with cached hashes and separately owned stable entries.
 /// Links are slot indexes (index + 1), never untracked pointers.
-export class unordered_map<K, V, Hash = std::hash<K>, KeyEqual = std::equal_to<K>> {
+export class unordered_map<K, V, Hash = std::default_hash<K>, KeyEqual = std::equal_to<K>> {
   mut vector<unique_ptr<detail::unordered_map_node<K, V>>> nodes{};
   mut vector<size_t> free_slots{};
   mut vector<size_t> buckets{};
@@ -190,6 +190,12 @@ public:
     if (node != 0) { return this.nodes[node - 1]->entry.second; }
     size_t position = this.add(std::move(key), V(), hash);
     return this.nodes[position]->entry.second;
+  }
+
+  /// Return the entry, inserting a default value only when this exact owned key is absent.
+  /// The returned mutable reference exclusively borrows the map until its last use.
+  mut V& operator[](K key) mut requires std::default_initializable<V> {
+    return this.get_or_insert(std::move(key));
   }
 
   [[discardable]] size_t erase(K& key) mut {

@@ -154,16 +154,19 @@ void consume(char tag) {}
 int main() { Parcel p{42}; consume(1, p); return 0; }
 )GTI",
            "GTI-S2018", "deleted copy constructor", "p);", "std::move");
-  rejected(R"GTI(import std.string;
+  // Formatting entry points borrow each argument, so a named move-only
+  // string is neither copied nor consumed; by-value packs keep the
+  // deleted-copy diagnostic above.
+  accepted(R"GTI(import std.string;
 import std.format;
 
 int main() {
-  mut std::string s = "hello";
+  std::string s = "hello";
   std::println("{}", s);
+  std::println("{} {}", s, s);
   return 0;
 }
-)GTI",
-           "GTI-S2018", "deleted copy constructor", "s);", "std::move");
+)GTI");
   rejected(R"GTI(int dynamic_value() { return 7; }
 consteval int check(int value) { return value; }
 int main() { return check(dynamic_value()); }

@@ -2774,6 +2774,96 @@
         "concrete_instance_adapter": 266,
         "thread_local_storage": 0
       }
+    },
+    "186-scalar-temporary-borrows.gti": {
+      "bodies": 9,
+      "generated_items": 1,
+      "generated_kinds": {
+        "program_initialization": 0,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 0,
+        "callable_adapter": 0,
+        "lifecycle_cleanup": 0,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 0,
+        "thread_local_storage": 0
+      }
+    },
+    "187-operator-temporary-borrows.gti": {
+      "bodies": 14,
+      "generated_items": 1,
+      "generated_kinds": {
+        "program_initialization": 0,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 0,
+        "callable_adapter": 0,
+        "lifecycle_cleanup": 0,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 0,
+        "thread_local_storage": 0
+      }
+    },
+    "188-concept-conditions.gti": {
+      "bodies": 14,
+      "generated_items": 5,
+      "generated_kinds": {
+        "program_initialization": 0,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 0,
+        "callable_adapter": 0,
+        "lifecycle_cleanup": 0,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 4,
+        "thread_local_storage": 0
+      }
+    },
+    "189-protocol-format-hash.gti": {
+      "bodies": 449,
+      "generated_items": 282,
+      "generated_kinds": {
+        "program_initialization": 1,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 36,
+        "callable_adapter": 21,
+        "lifecycle_cleanup": 7,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 216,
+        "thread_local_storage": 0
+      }
+    },
+    "190-conditional-member-operators.gti": {
+      "bodies": 525,
+      "generated_items": 371,
+      "generated_kinds": {
+        "program_initialization": 1,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 41,
+        "callable_adapter": 20,
+        "lifecycle_cleanup": 11,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 297,
+        "thread_local_storage": 0
+      }
+    },
+    "191-reference-parameter-packs.gti": {
+      "bodies": 238,
+      "generated_items": 138,
+      "generated_kinds": {
+        "program_initialization": 1,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 26,
+        "callable_adapter": 19,
+        "lifecycle_cleanup": 3,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 88,
+        "thread_local_storage": 0
+      }
     }
   },
   "target": "arm64-apple-macos",
@@ -2807,6 +2897,36 @@
             "native_interop_adapter": 0,
             "thread_task_adapter": 0,
             "concrete_instance_adapter": 526,
+            "thread_local_storage": 0
+          }
+        },
+        "189-protocol-format-hash.gti": {
+          "bodies": 448,
+          "generated_items": 281,
+          "generated_kinds": {
+            "program_initialization": 1,
+            "hosted_entry": 1,
+            "structural_operator_adapter": 36,
+            "callable_adapter": 21,
+            "lifecycle_cleanup": 7,
+            "native_interop_adapter": 0,
+            "thread_task_adapter": 0,
+            "concrete_instance_adapter": 215,
+            "thread_local_storage": 0
+          }
+        },
+        "190-conditional-member-operators.gti": {
+          "bodies": 524,
+          "generated_items": 370,
+          "generated_kinds": {
+            "program_initialization": 1,
+            "hosted_entry": 1,
+            "structural_operator_adapter": 41,
+            "callable_adapter": 20,
+            "lifecycle_cleanup": 11,
+            "native_interop_adapter": 0,
+            "thread_task_adapter": 0,
+            "concrete_instance_adapter": 296,
             "thread_local_storage": 0
           }
         }

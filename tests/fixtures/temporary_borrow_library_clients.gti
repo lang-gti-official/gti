@@ -1,0 +1,32 @@
+import std.map;
+import std.set;
+import std.unordered_map;
+import std.unordered_set;
+import std.vector;
+import std.string;
+import std.algorithm;
+int measure(std::string_view& value) { return int(value.size()); }
+int main() {
+  mut std::set<int> set{}; set.insert(2);
+  auto si = set.find(2);
+  if (si == set.end_iterator()) { return 1; }
+  mut std::map<int, int> map{}; map.insert(2, 20);
+  auto mi = map.find(2);
+  if (mi == map.end_iterator()) { return 2; }
+  mut std::unordered_set<int> hashed_set{}; hashed_set.insert(2);
+  auto hi = hashed_set.find(2);
+  if (hi == hashed_set.end_iterator()) { return 3; }
+  mut std::unordered_map<int, int> hashed_map{}; hashed_map.insert(2, 20);
+  auto hmi = hashed_map.find(2);
+  if (hmi == hashed_map.end_iterator()) { return 4; }
+  mut std::vector<int> vector{}; vector.push_back(2); vector.push_back(3);
+  if (vector.begin() == vector.end_iterator()) { return 5; }
+  if (vector.end_iterator() - vector.begin() != std::ptrdiff_t(2)) { return 6; }
+  auto found = std::find(vector.begin(), vector.end(), 3);
+  if (found == vector.end()) { return 7; }
+  if (std::count(vector, 2) != 1) { return 8; }
+  std::string text{"hello"};
+  if (measure(text.view()) != 5) { return 10; }
+  if (text != std::string("hello")) { return 9; }
+  return 0;
+}

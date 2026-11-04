@@ -1359,6 +1359,22 @@ state: lifecycle traits still derive from actual fields and bases. Concrete
 storage and reference-referent validation remain frontend responsibilities.
 There is no public-library-name recognition or backend-selected expansion rule.
 
+A named `Args&...` or `mut Args&...` parameter stores an abstract
+`Reference<TypePack>` signature. Concrete substitution distributes the access
+mode over each object element, producing `TypePack<Reference<T>...>`; ordinary
+by-value packs remain distinct. Function, method and constructor inference bind
+the object elements, while explicit reference element arguments are rejected
+instead of applying reference collapsing. A body binds the grouped concrete
+pack, not a reference to the group. Forwarding and folds retain each element's
+origin and access: mutable elements may be reborrowed read-only, but read-only
+elements cannot acquire exclusive access. Named move-only values are observed
+without copying; multiple read-only aliases are permitted and exclusive alias
+conflicts use ordinary call checking. The first slice confines reference packs
+to invocations with non-borrowed results. Exact fresh read-only arguments use
+the same full-expression materialization and failure cleanup as fixed reference
+parameters, including ordinary source constructors whose result carries no
+borrow. Mutable arguments always require a mutable source place.
+
 Named method packs can bind the enclosing class's final generic pack by its
 resolved identity. Declaration signatures retain symbolic `TypePack` metadata;
 class substitution preserves that identity through symbolic base forwarding.
@@ -1377,8 +1393,8 @@ instance signatures flatten concrete packs independently of discovery path,
 while body bindings retain source pack identity for cleanup and forwarding.
 Each mutable-reference pack element has its own semantic entry loan, identified
 by the formal pack binding and constant element index. Whole-pack forwarding
-preserves the exact reference type/access rather than borrowing the grouped
-binding. These elements cannot be named independently or escape through a pack
+preserves the element origin and requested reference access rather than borrowing
+the grouped binding. These elements cannot be named independently or escape through a pack
 expression; the entry capabilities last for the invocation. HIR and MIR retain
 the projected identities and end the loans on normal and failure exits.
 Concrete by-value pack elements that carry reference fields likewise retain
@@ -2540,6 +2556,22 @@ retain their own origins instead of being folded under that parent.
 
 ## Temporary Value Call Capabilities
 
+`functionCallArgumentMatch` and operator resolution share the exact-then-temporary
+viability tiers. `ResolvedCallInfo` and `ResolvedOperatorInfo` publish the selected
+`ephemeralBorrowArguments`; HIR preserves them as `ReadTemporaryBorrow` inputs.
+The producer proof admits passive scalar operations, plain-enum results and
+ownerless string literals as well as aggregate temporaries. A temporary counted
+text view also qualifies when its source producer and stored-borrow summary
+prove stable external storage through the full expression. Unknown or transient
+text owners remain rejected. The target proof
+uses the temporary parameter index to exclude that parameter from every returned
+borrow origin; a result retaining a different caller-owned argument is valid.
+Untracked pointer-like results remain rejected. MIR independently rechecks the
+producer, per-parameter result contract, full-expression obligation and loan end.
+No backend reclassifies source expressions or selects overloads.
+Fallible scalar producers arm their temporary obligation only on the MIR Invoke
+success edge; lazy branches retain a hidden scalar slot and conditional cleanup.
+
 Resolved ordinary method calls and class `operator()` calls retain a
 `CallReceiverMode` alongside the exact selected target. The mode distinguishes
 read-only and mutable source places, reusable values, consuming receivers, and
@@ -2548,11 +2580,10 @@ freshness: ordinary construction, by-value GTI calls, typed macro result regions
 and value-producing GTI operators qualify for the bounded ephemeral-borrow
 contract. A concrete self-contained macro result uses its checked expansion and
 exact result type as producer authority, not an invented executable function
-call. The ordinary selected-target confinement, non-borrowing result, linkage,
-access and loan rules still apply. Receiver-only
-materialization also accepts owned movable class values from conditional
-expressions, lambda calls and copy/move construction; this does not broaden
-ephemeral argument borrowing. Reusable
+call. The ordinary selected-target confinement, parameter-specific result-origin,
+linkage, access and loan rules still apply. Conditional and built-in assignment
+results share argument materialization; lambda calls and copy/move construction
+retain their separate receiver support. Reusable
 targets remain non-static with non-borrowing results, apart from the existing
 nonescaping read-observation exception. A virtual target, including an
 override or interface implementation, keeps `CallDispatch::Virtual`: dispatch
@@ -2565,9 +2596,9 @@ type and lifecycle traits. Expression value category and access remain
 unchanged, preventing the receiver-only capability from authorizing general
 mutable-place operations.
 
-`freshTemporaryReceiverValue` extends that receiver assessment, but not
-`freshTemporaryValue`'s separate temporary-argument contract, to direct
-ordinary GTI construction/calls producing a class with a nonempty proven stable
+`freshTemporaryBorrowValue` extends the shared producer assessment for both
+receivers and readonly temporary arguments to direct ordinary GTI
+construction/calls producing a class with a nonempty proven stable
 stored-dependency set. It reuses `storedBorrowDependencies`, the resolved producer
 summary, and the existing stable-storage query. Native, virtual, unresolved,
 or temporary-owner production fails closed. Multiple proven stable origins
@@ -2702,6 +2733,10 @@ substitutions fails immediately rather than expanding a branching probe tree.
 Isolated query workers and typed-macro selection probes inherit that active
 identity stack without sharing mutable runtime flow or capture state. Changing
 concrete generic arguments remain distinct checks within the existing budget.
+Each root expression/predicate query additionally shares a 16,384-type-node
+work budget across its isolated workers. It is charged before copying query
+arguments or identities, bounding recursively expanding generic operator
+requirements even when every nested query has a distinct type.
 
 The nullary consuming-use concept is now a source expression query over an
 owned synthetic binding and `std::move(binding)()`. Its compound shape remains

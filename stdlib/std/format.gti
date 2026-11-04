@@ -3,6 +3,7 @@ import "detail/charconv_parse.gti";
 
 import std.charconv;
 import std.string;
+import std.utility;
 import "detail/panic.gti";
 namespace gti_internal {
 namespace runtime {
@@ -56,11 +57,12 @@ export struct format_spec {
         type('\0') {}
 };
 
-namespace detail {
-struct enum_underlying_probe<T, U> {
-  bool matches() requires std::enum_underlying<T, U> { return true; }
+/// A source-defined formatting implementation. Generic types conform once,
+/// with requirements on their components. The output borrows are call-local.
+export concept formatting<T> {
+  expected<void, format_errc> format(T& value, mut string& output,
+                                     format_spec& spec);
 };
-}
 
 /// Specialize this class for an application-owned type. A specialization
 /// supplies a public safe read-only format method with the formattable contract.
@@ -71,33 +73,19 @@ public:
   expected<void, format_errc> format(T& value, mut string& output,
                                     format_spec& spec)
       requires std::integral_enum<T> {
-    if constexpr (requires(detail::enum_underlying_probe<T, int8_t>& probe) {
-      { probe.matches() } -> bool;
-    }) {
+    if constexpr (std::enum_underlying<T, int8_t>) {
       return this.format_integral<int8_t>(value, output, spec);
-    } else if constexpr (requires(detail::enum_underlying_probe<T, uint8_t>& probe) {
-      { probe.matches() } -> bool;
-    }) {
+    } else if constexpr (std::enum_underlying<T, uint8_t>) {
       return this.format_integral<uint8_t>(value, output, spec);
-    } else if constexpr (requires(detail::enum_underlying_probe<T, int16_t>& probe) {
-      { probe.matches() } -> bool;
-    }) {
+    } else if constexpr (std::enum_underlying<T, int16_t>) {
       return this.format_integral<int16_t>(value, output, spec);
-    } else if constexpr (requires(detail::enum_underlying_probe<T, uint16_t>& probe) {
-      { probe.matches() } -> bool;
-    }) {
+    } else if constexpr (std::enum_underlying<T, uint16_t>) {
       return this.format_integral<uint16_t>(value, output, spec);
-    } else if constexpr (requires(detail::enum_underlying_probe<T, int32_t>& probe) {
-      { probe.matches() } -> bool;
-    }) {
+    } else if constexpr (std::enum_underlying<T, int32_t>) {
       return this.format_integral<int32_t>(value, output, spec);
-    } else if constexpr (requires(detail::enum_underlying_probe<T, uint32_t>& probe) {
-      { probe.matches() } -> bool;
-    }) {
+    } else if constexpr (std::enum_underlying<T, uint32_t>) {
       return this.format_integral<uint32_t>(value, output, spec);
-    } else if constexpr (requires(detail::enum_underlying_probe<T, int64_t>& probe) {
-      { probe.matches() } -> bool;
-    }) {
+    } else if constexpr (std::enum_underlying<T, int64_t>) {
       return this.format_integral<int64_t>(value, output, spec);
     } else {
       return this.format_integral<uint64_t>(value, output, spec);
@@ -114,11 +102,30 @@ private:
   }
 };
 
-export concept formattable<T> =
+namespace detail {
+concept legacy_formattable<T> =
     std::default_initializable<formatter<T>> &&
     requires(formatter<T>& writer, T& value, mut string& output, format_spec& spec) {
       { writer.format(value, output, spec) } -> expected<void, format_errc>;
     };
+}
+
+/// A type can supply the formatting protocol or an exact formatter specialization.
+/// When both exist the protocol is selected.
+export concept formattable<T> = formatting<T> || detail::legacy_formattable<T>;
+
+namespace detail {
+expected<void, format_errc> format_value<T>(T& value, mut string& output,
+                                           format_spec& spec)
+    requires formattable<T> {
+  if constexpr (formatting<T>) {
+    return formatting<T>::format(value, output, spec);
+  } else if constexpr (legacy_formattable<T>) {
+    formatter<T> writer{};
+    return writer.format(value, output, spec);
+  }
+}
+}
 
 namespace detail {
 enum class format_argument_status {
@@ -674,8 +681,7 @@ void append_selected_format_argument<T>(mut string& output,
     return;
   }
   if (candidate == requested) {
-    formatter<T> writer{};
-    auto formatted = writer.format(value, output, spec);
+    auto formatted = format_value(value, output, spec);
     if (!formatted) {
       switch (formatted.error()) {
       case format_errc::unsupported_argument:
@@ -956,7 +962,7 @@ export expected<string, format_errc> try_format(string_view pattern) {
 }
 
 export expected<string, format_errc>
-try_format<formattable First, formattable Args...>(string_view pattern, First first, Args... args) {
+try_format<formattable First, formattable Args...>(string_view pattern, First& first, Args&... args) {
   mut size_t argument_count = 1;
   (detail::count_format_argument(argument_count, args), ...);
   expected<void, format_errc> validation =
@@ -1022,10 +1028,10 @@ export expected<void, format_errc> try_format_to(mut string& output,
 
 /// Appends one fully formatted result. Failure leaves `output` unchanged.
 export expected<void, format_errc>
-try_format_to<formattable First, formattable Args...>(mut string& output, string_view pattern, First first,
-                          Args... args) {
+try_format_to<formattable First, formattable Args...>(mut string& output, string_view pattern, First& first,
+                          Args&... args) {
   mut expected<string, format_errc> formatted =
-      try_format(pattern, std::move(first), args...);
+      try_format(pattern, first, args...);
   if (!formatted) {
     return unexpected(formatted.error());
   }
@@ -1095,8 +1101,8 @@ string format(string_view pattern) {
 }
 
 export [[track_caller]]
-string format<formattable First, formattable Args...>(string_view pattern, First first, Args... args) {
-  mut auto result = try_format(pattern, std::move(first), args...);
+string format<formattable First, formattable Args...>(string_view pattern, First& first, Args&... args) {
+  mut auto result = try_format(pattern, first, args...);
   if (!result) {
     detail::panic_format_error(result.error());
   }
@@ -1113,8 +1119,8 @@ void format_to(mut string& output, string_view pattern) {
 
 export [[track_caller]]
 void format_to<formattable First, formattable Args...>(mut string& output, string_view pattern,
-                              First first, Args... args) {
-  auto result = try_format_to(output, pattern, std::move(first), args...);
+                              First& first, Args&... args) {
+  auto result = try_format_to(output, pattern, first, args...);
   if (!result) {
     detail::panic_format_error(result.error());
   }
@@ -1126,8 +1132,8 @@ export expected<void, print_errc> try_print(string_view text) {
 }
 
 export expected<void, print_errc>
-try_print<formattable First, formattable Args...>(string_view pattern, First first, Args... args) {
-  mut auto formatted = try_format(pattern, std::move(first), args...);
+try_print<formattable First, formattable Args...>(string_view pattern, First& first, Args&... args) {
+  mut auto formatted = try_format(pattern, first, args...);
   if (!formatted) {
     return unexpected(detail::print_format_error(formatted.error()));
   }
@@ -1141,8 +1147,8 @@ export expected<void, print_errc> try_println(string_view text) {
 }
 
 export expected<void, print_errc>
-try_println<formattable First, formattable Args...>(string_view pattern, First first, Args... args) {
-  mut auto formatted = try_format(pattern, std::move(first), args...);
+try_println<formattable First, formattable Args...>(string_view pattern, First& first, Args&... args) {
+  mut auto formatted = try_format(pattern, first, args...);
   if (!formatted) {
     return unexpected(detail::print_format_error(formatted.error()));
   }
@@ -1151,18 +1157,154 @@ try_println<formattable First, formattable Args...>(string_view pattern, First f
 }
 
 export [[track_caller]]
-void print<formattable First, formattable Args...>(string_view pattern, First first, Args... args) {
-  auto result = try_print(pattern, std::move(first), args...);
+void print<formattable First, formattable Args...>(string_view pattern, First& first, Args&... args) {
+  auto result = try_print(pattern, first, args...);
   if (!result) {
     detail::panic_print_error(result.error());
   }
 }
 
 export [[track_caller]]
-void println<formattable First, formattable Args...>(string_view pattern, First first, Args... args) {
-  auto result = try_println(pattern, std::move(first), args...);
+void println<formattable First, formattable Args...>(string_view pattern, First& first, Args&... args) {
+  auto result = try_println(pattern, first, args...);
   if (!result) {
     detail::panic_print_error(result.error());
   }
 }
 }
+
+// Concrete bridges keep the established scalar and text formatting policy.
+for concept std::formatting<int8_t> {
+  expected<void, std::format_errc> format(int8_t& value, mut std::string& output,
+                                         std::format_spec& spec) {
+    std::formatter<int8_t> writer{};
+    return writer.format(value, output, spec);
+  }
+};
+
+for concept std::formatting<int16_t> {
+  expected<void, std::format_errc> format(int16_t& value, mut std::string& output,
+                                         std::format_spec& spec) {
+    std::formatter<int16_t> writer{};
+    return writer.format(value, output, spec);
+  }
+};
+
+for concept std::formatting<int32_t> {
+  expected<void, std::format_errc> format(int32_t& value, mut std::string& output,
+                                         std::format_spec& spec) {
+    std::formatter<int32_t> writer{};
+    return writer.format(value, output, spec);
+  }
+};
+
+for concept std::formatting<int64_t> {
+  expected<void, std::format_errc> format(int64_t& value, mut std::string& output,
+                                         std::format_spec& spec) {
+    std::formatter<int64_t> writer{};
+    return writer.format(value, output, spec);
+  }
+};
+
+for concept std::formatting<uint8_t> {
+  expected<void, std::format_errc> format(uint8_t& value, mut std::string& output,
+                                         std::format_spec& spec) {
+    std::formatter<uint8_t> writer{};
+    return writer.format(value, output, spec);
+  }
+};
+
+for concept std::formatting<uint16_t> {
+  expected<void, std::format_errc> format(uint16_t& value, mut std::string& output,
+                                         std::format_spec& spec) {
+    std::formatter<uint16_t> writer{};
+    return writer.format(value, output, spec);
+  }
+};
+
+for concept std::formatting<uint32_t> {
+  expected<void, std::format_errc> format(uint32_t& value, mut std::string& output,
+                                         std::format_spec& spec) {
+    std::formatter<uint32_t> writer{};
+    return writer.format(value, output, spec);
+  }
+};
+
+for concept std::formatting<uint64_t> {
+  expected<void, std::format_errc> format(uint64_t& value, mut std::string& output,
+                                         std::format_spec& spec) {
+    std::formatter<uint64_t> writer{};
+    return writer.format(value, output, spec);
+  }
+};
+
+for concept std::formatting<bool> {
+  expected<void, std::format_errc> format(bool& value, mut std::string& output,
+                                         std::format_spec& spec) {
+    std::formatter<bool> writer{};
+    return writer.format(value, output, spec);
+  }
+};
+
+for concept std::formatting<char> {
+  expected<void, std::format_errc> format(char& value, mut std::string& output,
+                                         std::format_spec& spec) {
+    std::formatter<char> writer{};
+    return writer.format(value, output, spec);
+  }
+};
+
+for concept std::formatting<float> {
+  expected<void, std::format_errc> format(float& value, mut std::string& output,
+                                         std::format_spec& spec) {
+    std::formatter<float> writer{};
+    return writer.format(value, output, spec);
+  }
+};
+
+for concept std::formatting<double> {
+  expected<void, std::format_errc> format(double& value, mut std::string& output,
+                                         std::format_spec& spec) {
+    std::formatter<double> writer{};
+    return writer.format(value, output, spec);
+  }
+};
+
+for concept std::formatting<std::string_view> {
+  expected<void, std::format_errc> format(std::string_view& value, mut std::string& output,
+                                         std::format_spec& spec) {
+    std::formatter<std::string_view> writer{};
+    return writer.format(value, output, spec);
+  }
+};
+
+for concept std::formatting<std::string> {
+  expected<void, std::format_errc> format(std::string& value, mut std::string& output,
+                                         std::format_spec& spec) {
+    std::formatter<std::string> writer{};
+    return writer.format(value, output, spec);
+  }
+};
+
+/// Pairs use `(first, second)`, recursively using each element's default
+/// presentation. Pair-level presentation flags are rejected.
+for <T, U> concept std::formatting<std::pair<T, U>>
+    requires std::formattable<T> && std::formattable<U> {
+  expected<void, std::format_errc> format(std::pair<T, U>& value,
+                                         mut std::string& output,
+                                         std::format_spec& spec) {
+    if (spec.type != '\0' || spec.alignment != '\0' || spec.sign != '-' ||
+        spec.alternate || spec.zero_pad || spec.width != 0 || spec.has_precision) {
+      return unexpected(std::format_errc::invalid_format);
+    }
+    std::format_spec element_spec{};
+    output.push_back('(');
+    auto first = std::detail::format_value(value.first, output, element_spec);
+    if (!first) { return unexpected(first.error()); }
+    output.append(", ");
+    auto second = std::detail::format_value(value.second, output, element_spec);
+    if (!second) { return unexpected(second.error()); }
+    output.push_back(')');
+    return;
+  }
+};

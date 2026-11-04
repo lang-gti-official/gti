@@ -1569,13 +1569,16 @@ pack-expansion         = IDENTIFIER "..." ;
    parameters cover only its parameters, requirements, initializer list,
    defaults, and body; they are never explicit call arguments and do not
    escape to later class members. One final constructor-local type pack with
-   its named by-value parameter pack is implemented through ordered owned
-   argument staging, including exact final-field construction. This is not a
+   its named by-value or reference parameter pack is implemented through ordered
+   argument staging. Owned arguments support exact final-field construction;
+   reference arguments retain call-confined access and require a non-borrowed
+   constructor result. This is not a
    pack of uint64_t generic values. Constructor-local `uint64_t` remains
    restricted to an inferred fixed-array extent.
 
-   A trailing clause is semantically rejected on an operator
-   or a virtual, pure, overriding, or interface method. Direct concept negation
+   Non-polymorphic member operators admit validity-only trailing clauses.
+   A trailing clause is semantically rejected on a virtual, pure, overriding,
+   or interface method, including an operator. Direct concept negation
    and concept, partial, or constraint-selected specialization are not
    implemented.
 
@@ -1619,8 +1622,11 @@ pack-expansion         = IDENTIFIER "..." ;
    empty. `args...` is permitted only as the final argument of a call to another
    variadic function or method. This makes forwarding explicit without adding
    arbitrary expansion contexts, indexing, multiple packs,
-   reference-pack declarators or C++
-   forwarding-reference deduction. Concrete expansions also feed exact lambda
+   or C++ forwarding-reference deduction. `Args&... args` and
+   `mut Args&... args` explicitly borrow each object argument read-only or
+   mutably. They apply to functions, methods and constructors; there is no
+   reference collapsing, and reference-pack results cannot carry borrowed state.
+   Concrete expansions also feed exact lambda
    and nominal call-operator signatures. Source-defined
    `std::vector::emplace_back` uses this bounded form: it constructs an element
    in place but does not promise C++ perfect forwarding, so copyable arguments
@@ -1632,8 +1638,9 @@ pack-expansion         = IDENTIFIER "..." ;
    Repeated patterns and explicitly supplied pack elements must agree. If a
    named value pack is also present, its deduced list must agree as well,
    including exact reference elements. Metadata-only packs add no runtime
-   arguments. Decorated reference-pack declarators and overload ranking are
-   not introduced; signature-pattern primaries have their separate syntax.
+   arguments. Reference-pack declarators are separate from decorated type-list
+   expansions, which remain unsupported. No new overload ranking is introduced;
+   signature-pattern primaries have their separate syntax.
 
    Classes and structs may separately own one final type pack, without value
    parameters or defaults. A bare type-list expansion `Args...` may be the

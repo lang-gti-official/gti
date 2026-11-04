@@ -56,15 +56,21 @@ int main() {
             assert "Argument 6" not in str(errors), errors
             assert not publish(formatting.replace('1, 2, opaque', '1, 2, 3'))
             move = """import std.string;
-import std.format;
-int main() { std::string text{"hello"}; std::println("{}", text); return 0; }
+void consume<Args...>(int tag, Args... args) {}
+void consume(char tag) {}
+int main() { std::string text{"hello"}; consume(1, text); return 0; }
 """
             errors = publish(move)
             assert len(errors) == 1 and errors[0]["code"] == "GTI-S2018", errors
             offset = move.index("text);")
             assert errors[0]["range"]["start"] == lsp_position(move, offset), errors
             assert "deleted copy constructor" in str(errors[0]), errors
-            assert not publish(move.replace('"{}", text', '"{}", text.view()'))
+            assert not publish(move.replace('1, text', '1, text.view()'))
+            borrowed = """import std.string;
+import std.format;
+int main() { std::string text{"hello"}; std::println("{}", text); return 0; }
+"""
+            assert not publish(borrowed)
             assert not publish(fixture.read_text())
         finally:
             session.close()

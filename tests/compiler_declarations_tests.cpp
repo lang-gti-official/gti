@@ -5387,6 +5387,62 @@ int main() { Item value{}; return read(value); }
          "each failed disjunction branch must retain its own exact leaf "
          "explanation without combining unrelated proof facts");
 
+  const auto *disjunctionDiagnostic =
+      findDiagnosticByCode(disjunction.diagnostics, "GTI-S2029");
+  const auto disjunctionArgument = alternatives.find("value);");
+  expect(disjunctionDiagnostic != nullptr &&
+             disjunctionDiagnostic->message.find(
+                 "Argument 1 has type 'Item'") != std::string::npos &&
+             disjunctionDiagnostic->message.find("readable<Item>") !=
+                 std::string::npos &&
+             disjunctionDiagnostic->primary.start == disjunctionArgument &&
+             disjunctionDiagnostic->primary.end == disjunctionArgument + 5,
+         "a disjunction whose alternatives share one declared input should "
+         "blame its exact call argument and retain the concrete application");
+
+  const auto nestedDisjunction = lang::Frontend().analyze(
+      "nested-disjunction-constraint-provenance.gti", R"(
+concept snapshots<T> = requires(T& value) { { value.snapshot() } -> int; };
+concept serializes<T> = requires(T& value) { { value.serialize() } -> int; };
+concept readable<T> = snapshots<T> || serializes<T>;
+concept public_readable<T> = readable<T>;
+int read<public_readable T>(T& value) { return 0; }
+struct Item { public: Item() = default; };
+int main() { Item value{}; return read(value); }
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(
+      !nestedDisjunction.canGenerateCode() &&
+          hasDiagnostic(nestedDisjunction.diagnostics,
+                        "Argument 1 has type 'Item'") &&
+          hasDiagnostic(nestedDisjunction.diagnostics, "public_readable<Item>"),
+      "nested named disjunctions preserve their mapped input for inline "
+      "generic constraints");
+
+  for (const std::string &contract :
+       {std::string("concept readable<T, U> = snapshots<T> || serializes<U>;"),
+        std::string(
+            "concept readable<T, U> = snapshots<int> || serializes<T>;")}) {
+    const auto uncertainOrigin = lang::Frontend().analyze(
+        "disjunction-without-one-origin.gti", R"(
+concept snapshots<T> = requires(T& value) { { value.snapshot() } -> int; };
+concept serializes<T> = requires(T& value) { { value.serialize() } -> int; };
+)" + contract + R"(
+int read<T, U>(T& first, U& second) requires readable<T, U> { return 0; }
+struct Item { public: Item() = default; };
+int main() { Item first{}; Item second{}; return read(first, second); }
+)",
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    const auto *diagnostic =
+        findDiagnosticByCode(uncertainOrigin.diagnostics, "GTI-S2029");
+    expect(!uncertainOrigin.canGenerateCode() && diagnostic != nullptr &&
+               diagnostic->message.find("Argument") == std::string::npos &&
+               diagnostic->message.find("readable<Item, Item>") !=
+                   std::string::npos,
+           "closed or distinct disjunction inputs must not select an argument "
+           "because their concrete types happen to match");
+  }
+
   const std::string overloads = R"(
 concept snapshots<T> = requires(T& value) { { value.snapshot() } -> int; };
 concept serializes<T> = requires(T& value) { { value.serialize() } -> int; };
@@ -6866,8 +6922,8 @@ int main() {
          "a single non-generic member overload must check requirements after "
          "substituting its generic class arguments");
 
-  const lang::FrontendResult rejectedConstrainedOperator =
-      lang::Frontend().analyze("rejected-constrained-operator.gti", R"(
+  const lang::FrontendResult constrainedOperator = lang::Frontend().analyze(
+      "constrained-operator.gti", R"(
 class ConstrainedOperator<T> {
 public:
   bool operator()(T value)
@@ -6882,16 +6938,19 @@ public:
 public:
   ConstrainedOperator() = default;
 };
+int main() {
+  ConstrainedOperator<int> value{};
+  ConstrainedOperator<int> other{};
+  ConstrainedOperator<bool> unused{};
+  return value(4) && !(value != other) ? 0 : 1;
+}
 )",
-                               {standardLibraryPrelude()}, {},
-                               {standardLibraryRoot()});
-  expect(!rejectedConstrainedOperator.canGenerateCode() &&
-             hasDiagnosticCode(rejectedConstrainedOperator.diagnostics,
-                               "GTI-S2049") &&
-             hasDiagnostic(rejectedConstrainedOperator.diagnostics,
-                           "not supported on operator declarations"),
-         "bounded trailing requirements should reject operator declarations "
-         "instead of creating recursively constrained operator proof");
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(
+      constrainedOperator.canGenerateCode() &&
+          lang::verifyMirProgram(constrainedOperator.mir).valid(),
+      "non-polymorphic operators retain ordinary requirements through "
+      "concrete selection and verified MIR without constraining unused owners");
   const lang::FrontendResult rejectedPolymorphicRequirements =
       lang::Frontend().analyze("rejected-polymorphic-requires.gti", R"(
 class AbstractValues<T> {
@@ -9490,7 +9549,9 @@ void nonfinal_generic<Args..., T>(Args... values, T tail) {}
 void missing_parameter<Args...>() {}
 void wrong_type<Args...>(int... values) {}
 void mutable_pack<Args...>(mut Args... values) {}
-void reference_pack<Args...>(Args&... values) {}
+void forwarding_pack<Args...>(Args&&... values) {}
+[[borrowed_from(first)]]
+int& borrowed_result<Args...>(int& first, Args&... values) { return first; }
 void direct_use<Args...>(Args... values) { values; }
 void local_pack<Args...>(Args... values) { Args local; }
 void bad_forward<Args...>(Args... values) { fixed(values...); }
@@ -9505,7 +9566,11 @@ void not_a_pack(int value) { consume(value...); }
                         "must be bound by a final parameter pack") &&
           hasDiagnostic(invalid.diagnostics, "parameter pack type must name") &&
           hasDiagnostic(invalid.diagnostics, "Parameter packs are immutable") &&
-          hasDiagnostic(invalid.diagnostics, "only by-value parameter packs") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "arrays and forwarding references are not supported") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "A reference parameter pack requires a result with "
+                        "no borrowed state") &&
           hasDiagnostic(invalid.diagnostics,
                         "must be expanded as the final call argument") &&
           hasDiagnostic(
@@ -9514,7 +9579,9 @@ void not_a_pack(int value) { consume(value...); }
           hasDiagnostic(invalid.diagnostics,
                         "only be forwarded to another variadic") &&
           hasDiagnostic(invalid.diagnostics, "is not a parameter pack"),
-      "variadic diagnostics should explain every confined first-wave rule");
+      "variadic diagnostics should explain invalid pack placement, mutable "
+      "value packs, forwarding references, borrowed results, and invalid "
+      "expansions");
 
   lang::Lexer lexer;
   lang::Parser malformed(lexer.scan(R"(

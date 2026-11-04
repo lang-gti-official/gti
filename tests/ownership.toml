@@ -31,6 +31,10 @@ schema = 1
 reason = "registered only on some hosts or with optional tools or build options"
 tests = [
   # GTI_BUILD_LSP=OFF omits these registrations.
+  "scalar_temporary_borrow_lsp",
+  "concept_conditions_lsp",
+  "conditional_member_operators_lsp",
+  "reference_parameter_packs_lsp",
   "block_comment_lsp",
   "comment_placement_lsp",
   "concurrency_composition_lsp",
@@ -101,6 +105,9 @@ paths = [
   "tests/source_text_tests.cpp",
 ]
 owners = [
+  "concept_conditions",
+  "conditional_member_operators",
+  "reference_parameter_packs",
   "parser_conditional_recovery",
   "source_text_pipeline",
   "source_unit_services",
@@ -116,6 +123,9 @@ owners = [
   "scoped_configuration_defines",
 ]
 consumers = [
+  "concept_conditions_lsp",
+  "conditional_member_operators_lsp",
+  "reference_parameter_packs_lsp",
   "language_coverage_corpus",
   "lsp_protocol",
   "diagnostic_recovery_lsp",
@@ -143,6 +153,9 @@ owners = [
   "nested_type_syntax",
 ]
 consumers = [
+  "concept_conditions_lsp",
+  "conditional_member_operators_lsp",
+  "reference_parameter_packs_lsp",
   "lsp_protocol",
   "comment_placement_lsp",
   "export_placement_lsp",
@@ -266,6 +279,15 @@ paths = [
   "include/gti/concurrency.h",
 ]
 owners = [
+  "concept_conditions",
+  "conditional_member_operators",
+  "protocol_requirements_runtime",
+  "protocol_format_hash_runtime",
+  "reference_parameter_packs",
+  "reference_parameter_pack_mir",
+  "scalar_temporary_borrow",
+  "scalar_temporary_borrow_runtime",
+  "scalar_temporary_borrow_lsp",
   "^.*_semantic_ir$",
   "semantic_header_boundary",
   "semantic_header_self_containment",
@@ -303,6 +325,9 @@ owners = [
   "consuming_receiver_types",
 ]
 consumers = [
+  "concept_conditions_lsp",
+  "conditional_member_operators_lsp",
+  "reference_parameter_packs_lsp",
   "language_coverage_corpus",
   "lsp_protocol",
   "diagnostic_recovery_lsp",
@@ -430,6 +455,9 @@ owners = [
   "output_determinism",
 ]
 consumers = [
+  "concept_conditions",
+  "reference_parameter_pack_mir",
+  "reference_parameter_packs",
   "mir_full_expression",
   "mir_program_initialization",
   "lowered_program_contract",
@@ -453,6 +481,7 @@ paths = [
   "include/gti/mir*",
 ]
 owners = [
+  "reference_parameter_pack_mir",
   "^mir_",
   "borrow_origin_publication",
   "borrow_origin_publication_runtime",
@@ -472,6 +501,10 @@ owners = [
   "borrowing_callback_restoration_return",
 ]
 consumers = [
+  "concept_conditions",
+  "conditional_member_operators",
+  "protocol_requirements_runtime",
+  "reference_parameter_packs",
   "lowered_program_contract",
   "lowered_program_corpus_census",
   "cpp_mir_body_emitter_corpus",
@@ -1078,6 +1111,8 @@ paths = [
   "stdlib/std/detail/unordered_map_iterators.gti",
 ]
 owners = [
+  "conditional_member_operators",
+  "protocol_format_hash_runtime",
   "complete_containers",
   "complete_containers_collection",
   "container_contract_failure",
@@ -1121,6 +1156,8 @@ paths = [
   "stdlib/std/cstdio.gti",
 ]
 owners = [
+  "protocol_format_hash_runtime",
+  "reference_parameter_packs",
   "string_operations_runtime",
   "string_operations_errors",
   "string_ordering_runtime",
@@ -1182,6 +1219,9 @@ paths = [
   "stdlib/std/meta.gti",
 ]
 owners = [
+  "concept_conditions",
+  "conditional_member_operators",
+  "protocol_format_hash_runtime",
   "shared_ownership_runtime",
   "shared_ownership_failure",
   "unique_owner_access_runtime",

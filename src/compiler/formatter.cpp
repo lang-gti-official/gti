@@ -2337,7 +2337,13 @@ private:
     if (next == nullptr || next->kind == Kind::LeftParen ||
         next->kind == Kind::LeftBrace || next->kind == Kind::Comma ||
         next->kind == Kind::RightParen || next->kind == Kind::Greater ||
-        next->kind == Kind::Scope || next->kind == Kind::Semicolon) {
+        next->kind == Kind::Scope || next->kind == Kind::Semicolon ||
+        next->kind == Kind::RightBracket || next->kind == Kind::RightBrace ||
+        next->kind == Kind::Colon ||
+        (next->kind == Kind::Operator &&
+         (next->text == "&&" || next->text == "||" || next->text == "==" ||
+          next->text == "!=" || next->text == "?")) ||
+        next->text == "and" || next->text == "or") {
       return true;
     }
     if (next->kind == Kind::Operator &&

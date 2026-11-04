@@ -3,6 +3,9 @@
 namespace lang::semantic_spelling {
 
 std::string expressionSpelling(const Expr &expression) {
+  if (const auto *test = exprAs<ConceptTest>(&expression))
+    return typeRefSpelling(
+        TypeRef{test->application().name, test->application().arguments});
   if (const auto *query = exprAs<MemberRequirement>(&expression)) {
     const auto type = [](const TypeRef &value) {
       return (value.referenceMutability ? std::string("mut ") : std::string()) +

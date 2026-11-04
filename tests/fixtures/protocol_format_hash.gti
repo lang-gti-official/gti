@@ -1,0 +1,132 @@
+// One conditional conformance covers a whole generic family. Nested pairs
+// recursively format and hash their components, with no trait specialization.
+import std.format;
+import std.functional;
+import std.string;
+import std.utility;
+import std.unordered_map;
+
+struct Box<T> {
+  T value;
+  Box(T input) : value(std::move(input)) {}
+};
+
+for <T> concept std::formatting<Box<T>> requires std::formatting<T> {
+  expected<void, std::format_errc> format(Box<T>& box, mut std::string& output,
+                                         std::format_spec& spec) {
+    output.append("box(");
+    auto result = std::formatting<T>::format(box.value, output, spec);
+    if (!result) { return unexpected(result.error()); }
+    output.push_back(')');
+    return;
+  }
+};
+
+for <T> concept std::hashing<Box<T>> requires std::hashing<T> {
+  std::size_t hash(Box<T>& box) { return std::hashing<T>::hash(box.value); }
+};
+
+import std.unordered_set;
+
+struct Legacy {
+  int value;
+  Legacy(int v) : value(v) {}
+};
+class std::formatter<Legacy> {
+public:
+  formatter() = default;
+  expected<void, std::format_errc> format(Legacy& value, mut std::string& output,
+                                         std::format_spec& spec) {
+    output.append("legacy");
+    return;
+  }
+};
+class std::hash<Legacy> {
+public:
+  hash() = default;
+  std::size_t operator()(Legacy& value) { return std::size_t(value.value); }
+};
+
+struct Both { Both() = default; };
+class std::formatter<Both> {
+public:
+  formatter() = default;
+  expected<void, std::format_errc> format(Both& value, mut std::string& output,
+                                         std::format_spec& spec) {
+    output.append("wrong");
+    return;
+  }
+};
+class std::hash<Both> {
+  // Automatic hashing must not require this inaccessible legacy constructor.
+  hash() = default;
+public:
+  std::size_t operator()(Both& value) { return 99; }
+};
+for concept std::formatting<Both> {
+  expected<void, std::format_errc> format(Both& value, mut std::string& output,
+                                         std::format_spec& spec) {
+    output.append("protocol");
+    return;
+  }
+};
+for concept std::hashing<Both> {
+  std::size_t hash(Both& value) { return 11; }
+};
+
+// Destruction makes this an owning, non-copyable leaf. Protocol operations
+// and pair composition only borrow it.
+struct Owned {
+  int value;
+  Owned(int v) : value(v) {}
+  ~Owned() {}
+};
+for concept std::formatting<Owned> {
+  expected<void, std::format_errc> format(Owned& value, mut std::string& output,
+                                         std::format_spec& spec) {
+    return std::formatting<int>::format(value.value, output, spec);
+  }
+};
+for concept std::hashing<Owned> {
+  std::size_t hash(Owned& value) { return std::hashing<int>::hash(value.value); }
+};
+
+int main() {
+  auto pair = std::make_pair(1, true);
+  auto nested = std::make_pair(pair, 2);
+  if (std::format("{}", nested).view() != "((1, true), 2)") { return 1; }
+  Box<Box<int>> box{Box<int>(7)};
+  if (std::format("{}", box).view() != "box(box(7))") { return 2; }
+  auto old_pair = std::make_pair(Legacy(3), 1);
+  if (std::format("{}", old_pair).view() != "(legacy, 1)") { return 3; }
+  Both both{};
+  if (std::format("{}", both).view() != "protocol") { return 4; }
+  std::default_hash<Both> both_hash{};
+  if (both_hash(both) != 11) { return 5; }
+  std::default_hash<Box<Box<int>>> box_hash{};
+  if (box_hash(box) != 7) { return 6; }
+  static_assert(!std::hashable<Legacy>);
+  static_assert(!std::hashable<std::pair<Legacy, int>>);
+  mut std::unordered_map<std::pair<int, bool>, int> values{};
+  values.insert(std::make_pair(1, true), 42);
+  if (!values.contains(pair) || values.at(pair) != 42) { return 8; }
+  mut std::unordered_set<std::pair<std::pair<int, bool>, int>> keys{};
+  keys.insert(nested);
+  if (!keys.contains(nested)) { return 9; }
+  auto invalid = std::try_format("{:x}", pair);
+  if (invalid || invalid.error() != std::format_errc::invalid_format) { return 10; }
+  auto owned = std::make_pair(Owned(8), Owned(9));
+  mut std::string output{};
+  std::format_spec spec{};
+  auto result = std::formatting<std::pair<Owned, Owned>>::format(owned, output, spec);
+  if (!result || output.view() != "(8, 9)") { return 11; }
+  std::default_hash<std::pair<Owned, Owned>> owned_hash{};
+  auto first = owned_hash(owned);
+  if (first != owned_hash(owned)) { return 12; }
+  mut std::unordered_map<std::pair<std::string, int>, int> text_keys{};
+  text_keys.insert(std::make_pair(std::string("key"), 1), 12);
+  auto text_key = std::make_pair(std::string("key"), 1);
+  if (text_keys.at(text_key) != 12) { return 13; }
+  std::println(output.view());
+  return 0;
+}

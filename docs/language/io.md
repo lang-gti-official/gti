@@ -447,13 +447,14 @@ enum/integer conversion is introduced. See
 mut std::string host = std::string("gitea.example");
 std::string_view method = "api/v1/user";
 mut auto endpoint =
-    std::format("https://{}/{}", host.view(), method);
+    std::format("https://{}/{}", host, method);
 ```
 
-GTI's current named value packs are by value and reference-pack declarators
-are not yet implemented. Consequently a named move-only `std::string` is not
-copied implicitly: pass `text.view()` to borrow it, or `std::move(text)` to
-transfer it deliberately. A fresh `std::string(...)` can be passed directly.
+Formatting entry points borrow every argument read-only, including named
+move-only strings and custom formattable owners. No copy or ownership transfer
+is required. Fresh values stay alive through the caller's full expression;
+`std::move(text)` still explicitly consumes `text`. Named owners remain alive
+in the caller after formatting, rather than being destroyed at callee exit.
 Every formatting argument must satisfy `std::formattable`, including every
 element after the first. Formatting, printing, and formatted panic overloads
 check that contract at the public call, rather than reporting a private helper's
@@ -524,7 +525,7 @@ Successful submission is not a flush or a durability guarantee. Buffered host
 errors detected only by a later flush remain observable through
 `try_flush_stdout`; these wrappers do not add an implicit flush. Raw numeric
 and owning-string print callers can obtain a recoverable alternative by
-formatting through `try_print("{}", value)` (borrow strings with `.view()`).
+formatting through `try_print("{}", value)`, including named owning strings.
 Allocation failure while constructing an owning result follows the current
 allocation policy: infallible exhaustion reports `GTI-R0011` and aborts without
 cleanup, rather than becoming a format or print error. `try_format` recovers

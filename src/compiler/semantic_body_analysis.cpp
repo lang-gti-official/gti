@@ -2164,7 +2164,7 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
     allowPackTypeReference = true;
     validateType(parameter.type);
     allowPackTypeReference = previousAllowPack;
-    const SemanticType declaredType = typeOf(parameter);
+    const SemanticType declaredType = parameterBindingType(parameter);
     const SemanticType parameterType =
         parameter.pack && declaredType.kind == SemanticType::TypeParameter
             ? SemanticType::typePack(declaredType.genericParameterId)
@@ -2269,7 +2269,7 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
 
   for (const Parameter &parameter : stmt.parameters()) {
     if (!parameter.name.lexeme.empty()) {
-      const SemanticType declaredType = typeOf(parameter);
+      const SemanticType declaredType = parameterBindingType(parameter);
       const SemanticType parameterType =
           parameter.pack && declaredType.kind == SemanticType::TypeParameter
               ? SemanticType::typePack(declaredType.genericParameterId)
@@ -3486,12 +3486,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
            "GTI-S2039");
   }
   if (stmt.requiresClause()) {
-    if (stmt.operatorName()) {
-      report(stmt.requiresClause()->keyword,
-             "Trailing requires clauses are not supported on operator "
-             "declarations in the bounded requirements model.",
-             "GTI-S2049");
-    } else if (polymorphic) {
+    if (polymorphic) {
       report(stmt.requiresClause()->keyword,
              "Trailing requires clauses are not supported on polymorphic "
              "methods in the bounded requirements model.",
@@ -3572,7 +3567,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
     if (!intrinsicDeclaration) {
       validateReferencePlacement(parameter.type, true, "function parameter");
     }
-    const SemanticType declaredType = typeOf(parameter);
+    const SemanticType declaredType = parameterBindingType(parameter);
     const SemanticType parameterType =
         parameter.pack && declaredType.kind == SemanticType::TypeParameter
             ? SemanticType::typePack(declaredType.genericParameterId)
@@ -3831,7 +3826,7 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
 
   for (const Parameter &parameter : stmt.parameters()) {
     if (!parameter.name.lexeme.empty()) {
-      const SemanticType declaredType = typeOf(parameter);
+      const SemanticType declaredType = parameterBindingType(parameter);
       recordProgramCleanupEffects(declaredType, tokenSpan(parameter.name));
       declare(parameter.name,
               parameter.pack && declaredType.kind == SemanticType::TypeParameter
@@ -4782,7 +4777,13 @@ auto SemanticVisitor::Impl::visitIfStmt(const IfStmt &stmt) -> void {
     }
 
     semanticModel.recordConstexprBranch(stmt, *selected);
+    // A successful concept test supplies exactly the same declaration facts
+    // as its requires-clause application. Keep them confined to this arm.
+    requirementScopes.push_back(
+        *selected ? conceptConditionRequirements(*stmt.condition())
+                  : std::vector<AppliedConceptRequirement>{});
     analyzeConditionalArm(*selected ? stmt.thenBranch() : stmt.elseBranch());
+    requirementScopes.pop_back();
     return;
   }
 
@@ -10195,7 +10196,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
     validateType(parameter.type);
     allowPackTypeReference = previousAllowPack;
     validateReferencePlacement(parameter.type, true, "lambda parameter");
-    const SemanticType declaredType = typeOf(parameter);
+    const SemanticType declaredType = parameterBindingType(parameter);
     const SemanticType parameterType =
         parameter.pack && declaredType.kind == SemanticType::TypeParameter
             ? SemanticType::typePack(declaredType.genericParameterId)
@@ -11438,6 +11439,64 @@ auto SemanticVisitor::Impl::visitMemberRequirementExpr(
   semanticModel.recordConstant(expr, ConstantValue{satisfied});
 }
 
+auto SemanticVisitor::Impl::visitConceptTestExpr(const ConceptTest &expr)
+    -> void {
+  currentType = SemanticType::Bool;
+  const auto &application = expr.application();
+  // Reuse the constraint resolver for visibility, arity, type validation,
+  // occurrences and satisfaction. Its temporary clause never escapes: the
+  // applied query is rebound to the persistent expression-owned syntax.
+  RequiresClause clause{.keyword = application.name.last()};
+  clause.expression.applications.push_back(application);
+  clause.expression.nodes.push_back(
+      {.kind = ConstraintExpressionKind::Application, .application = 0});
+  clause.expression.root = 0;
+  const auto before = diagnostics.size();
+  auto requirements = resolveRequirements(&clause, currentNamespace);
+  if (diagnostics.size() != before || requirements.size() != 1) {
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  auto &requirement = requirements.front();
+  requirement.syntax = &application;
+  requirement.expression = nullptr;
+  requirement.expressionApplication = ConstraintExpressionNode::invalidIndex;
+  const bool satisfied = !firstConceptApplicationFailure(requirement);
+  currentType = SemanticType::Bool;
+  if (!satisfied &&
+      std::any_of(requirement.arguments.begin(), requirement.arguments.end(),
+                  containsOpenTypeParameter)) {
+    if (analyzingDependentConstantCondition)
+      constantConditionGenericDependency = true;
+    return;
+  }
+  semanticModel.recordConstant(expr, ConstantValue{satisfied});
+}
+
+auto SemanticVisitor::Impl::conceptConditionRequirements(const Expr &expr) const
+    -> std::vector<AppliedConceptRequirement> {
+  if (const auto *group = exprAs<Grouping>(&expr))
+    return conceptConditionRequirements(*group->expression());
+  if (const auto *logical = exprAs<Logical>(&expr);
+      logical && logical->oper().kind == TokenKind::AND) {
+    auto facts = conceptConditionRequirements(*logical->left());
+    auto right = conceptConditionRequirements(*logical->right());
+    facts.insert(facts.end(), right.begin(), right.end());
+    return facts;
+  }
+  const auto *test = exprAs<ConceptTest>(&expr);
+  if (!test)
+    return {};
+  const auto &application = test->application();
+  const auto id = resolveConceptPath(application.name, currentNamespace);
+  if (!id)
+    return {};
+  AppliedConceptRequirement fact{.conceptId = *id, .syntax = &application};
+  for (const auto &argument : application.arguments)
+    fact.arguments.push_back(typeOf(argument));
+  return {std::move(fact)};
+}
+
 auto SemanticVisitor::Impl::visitLiteralExpr(const LiteralExpr &expr) -> void {
   if (contextualOperatorIntegerType &&
       std::holds_alternative<std::uint64_t>(expr.value())) {
@@ -11634,7 +11693,6 @@ auto SemanticVisitor::Impl::visitPackFoldExpr(const PackFold &expr) -> void {
   const bool exactElementShape =
       elementParameter != nullptr &&
       elementParameter->kind == SemanticType::Reference &&
-      elementParameter->referenceAccess == AccessMode::ReadOnly &&
       elementParameter->arguments.size() == 1 &&
       elementParameter->arguments.front().kind == SemanticType::TypeParameter &&
       elementParameter->arguments.front().genericParameterId ==
@@ -11643,7 +11701,7 @@ auto SemanticVisitor::Impl::visitPackFoldExpr(const PackFold &expr) -> void {
     report(call->paren(),
            "A pack-fold target must be one non-overloaded free generic "
            "function returning void, with one inferred type parameter and "
-           "a final read-only reference to that element type.",
+           "a final reference to that element type.",
            "GTI-S2023");
     valid = false;
   }
@@ -11697,9 +11755,14 @@ auto SemanticVisitor::Impl::visitPackFoldExpr(const PackFold &expr) -> void {
       }
       bool argumentsMatch = true;
       for (std::size_t index = 0; index < concreteArguments.size(); ++index) {
-        if (!callArgumentMatches(resolved.parameterTypes[index],
-                                 concreteArguments[index],
-                                 call->arguments()[index])) {
+        const bool matches =
+            index == packIndex && element.kind == SemanticType::Reference
+                ? forwardedPackArgumentMatches(resolved.parameterTypes[index],
+                                               element)
+                : callArgumentMatches(resolved.parameterTypes[index],
+                                      concreteArguments[index],
+                                      call->arguments()[index]);
+        if (!matches) {
           reportCallArgumentMismatch(index, resolved.parameterTypes[index],
                                      concreteArguments[index],
                                      call->arguments()[index], "Pack fold");
@@ -14000,7 +14063,8 @@ auto SemanticVisitor::Impl::evaluateConstexprNode(const Expr &source,
                               context);
     }
   }
-  if (exprAs<LayoutQuery>(&source) != nullptr ||
+  if (exprAs<ConceptTest>(&source) != nullptr ||
+      exprAs<LayoutQuery>(&source) != nullptr ||
       exprAs<MemberRequirement>(&source) != nullptr) {
     if (const std::optional<ConstantValue> value =
             semanticModel.findConstant(source)) {
@@ -14008,7 +14072,14 @@ auto SemanticVisitor::Impl::evaluateConstexprNode(const Expr &source,
     }
     ConstexprEvaluation failure = constexprFailure(
         expressionToken(source), ConstantEvaluationFailure::UnsupportedType);
-    if (const auto *query = exprAs<LayoutQuery>(&source)) {
+    if (const auto *test = exprAs<ConceptTest>(&source)) {
+      failure.genericDependency = std::any_of(
+          test->application().arguments.begin(),
+          test->application().arguments.end(), [&](const TypeRef &type) {
+            return containsOpenTypeParameter(
+                constexprType(typeOf(type), context));
+          });
+    } else if (const auto *query = exprAs<LayoutQuery>(&source)) {
       const auto layout =
           evaluateLayout(constexprType(typeOf(query->type()), context));
       failure.genericDependency =

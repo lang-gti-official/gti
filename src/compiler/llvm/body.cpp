@@ -784,8 +784,12 @@ private:
   }
   void failedOperation() {
     const auto &term = current->terminator;
-    if (term.kind != MirTerminatorKind::Invoke || !term.failureRecord)
-      throw std::logic_error("LLVM failed operation lost its Invoke record");
+    if (term.kind != MirTerminatorKind::Invoke || !term.failureRecord ||
+        stage == nullptr || term.invokeInstruction != stage->id)
+      throw std::logic_error(
+          "LLVM failed operation lost its Invoke record in '" +
+          function.getName().str() + "', block " + std::to_string(current->id) +
+          ", instruction " + std::to_string(stage ? stage->id : 0));
     // An abandoned callee wrote no record; never read its channel.
     abandonIfRequested();
     // A compiled-library propagation-only body has no observable failure
@@ -1600,6 +1604,16 @@ private:
     if (!recipe || (!obligation && !instruction.destination))
       throw BackendUnsupportedError(
           "LLVM cleanup requires its exact sealed obligation/recipe");
+    if (!recipe->requiresActiveCleanup &&
+        !addressValue(session.program().mir(), recipe->type)) {
+      // A passive SSA value has a checked lifetime but no runtime cleanup.
+      // In particular, failure before its producer cannot materialize that
+      // value merely to call an empty cleanup helper: the SSA definition
+      // does not dominate such a failure edge. Retire only its live flag.
+      if (obligation)
+        ir.CreateStore(ir.getFalse(), live.at(obligation->id));
+      return;
+    }
     auto *done =
         llvm::BasicBlock::Create(session.context(), "drop.done", &function);
     if (obligation) {
@@ -2318,6 +2332,24 @@ private:
       memory.publish(*instruction.loan, result);
     if (instruction.result && result)
       values.at(*instruction.result) = result;
+    if (instruction.result && result &&
+        !addressValue(session.program().mir(), instruction.info.type)) {
+      // Scalar and counted-text values normally remain SSA values. A
+      // branch-local temporary borrowed by a call needs storage that also
+      // remains nameable by its conditional full-expression cleanup.
+      for (const auto &drop : input.dropObligations) {
+        const auto *place = input.findPlace(drop.place);
+        if (drop.kind == MirDropObligationKind::Value &&
+            drop.value == instruction.hirValue && place &&
+            place->root == MirPlaceRootKind::Temporary &&
+            place->sourceValue == instruction.hirValue &&
+            (instruction.destination == place->id ||
+             instruction.successResultDrop == drop.id)) {
+          store(result, memory.address(place->id), place->type);
+          break;
+        }
+      }
+    }
     if (published.matched()) {
       if (!result)
         throw std::logic_error(

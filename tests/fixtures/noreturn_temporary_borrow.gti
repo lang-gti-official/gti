@@ -1,0 +1,24 @@
+import std.panic;
+import std.string;
+import std.vector;
+
+class Owner {
+  int id;
+  bool fail;
+public:
+  Owner(int id, bool fail) : id(id), fail(fail) {}
+  ~Owner() {
+    std::println(this.id);
+    if (this.fail) { std::panic("cleanup"); } // cleanup-panic
+  }
+};
+
+[[noreturn]]
+void stop(int& first, Owner& left, Owner& right, int& last) {
+  std::panic("terminal"); // terminal-panic
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Owner outer{9, false};
+  stop(1, Owner(1, false), Owner(2, argc > 1), 2);
+}

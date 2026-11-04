@@ -1346,6 +1346,7 @@ struct ResolvedConstructionInfo {
   std::vector<CompileTimeValue> valueArguments;
   std::vector<AppliedConceptRequirement> requirements;
   std::vector<SemanticType> parameterTypes;
+  std::vector<std::size_t> ephemeralBorrowArguments;
   std::vector<const Expr *> defaultArguments;
   // Designated struct construction supplies every field in declaration order,
   // including declaration defaults. These are caller-side MIR inputs.
@@ -1651,6 +1652,7 @@ struct ResolvedOperatorInfo {
   CallReceiverMode receiverMode = CallReceiverMode::None;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
+  std::vector<std::size_t> ephemeralBorrowArguments;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
   AccessMode borrowAccess = AccessMode::ReadOnly;
