@@ -962,7 +962,7 @@ export expected<string, format_errc> try_format(string_view pattern) {
 }
 
 export expected<string, format_errc>
-try_format<First, Args...>(string_view pattern, First& first, Args&... args) requires formattable<First> {
+try_format<formattable First, formattable Args...>(string_view pattern, First& first, Args&... args) {
   mut size_t argument_count = 1;
   (detail::count_format_argument(argument_count, args), ...);
   expected<void, format_errc> validation =
@@ -1028,8 +1028,8 @@ export expected<void, format_errc> try_format_to(mut string& output,
 
 /// Appends one fully formatted result. Failure leaves `output` unchanged.
 export expected<void, format_errc>
-try_format_to<First, Args...>(mut string& output, string_view pattern, First& first,
-                          Args&... args) requires formattable<First> {
+try_format_to<formattable First, formattable Args...>(mut string& output, string_view pattern, First& first,
+                          Args&... args) {
   mut expected<string, format_errc> formatted =
       try_format(pattern, first, args...);
   if (!formatted) {
@@ -1101,7 +1101,7 @@ string format(string_view pattern) {
 }
 
 export [[track_caller]]
-string format<First, Args...>(string_view pattern, First& first, Args&... args) requires formattable<First> {
+string format<formattable First, formattable Args...>(string_view pattern, First& first, Args&... args) {
   mut auto result = try_format(pattern, first, args...);
   if (!result) {
     detail::panic_format_error(result.error());
@@ -1118,8 +1118,8 @@ void format_to(mut string& output, string_view pattern) {
 }
 
 export [[track_caller]]
-void format_to<First, Args...>(mut string& output, string_view pattern,
-                              First& first, Args&... args) requires formattable<First> {
+void format_to<formattable First, formattable Args...>(mut string& output, string_view pattern,
+                              First& first, Args&... args) {
   auto result = try_format_to(output, pattern, first, args...);
   if (!result) {
     detail::panic_format_error(result.error());
@@ -1132,7 +1132,7 @@ export expected<void, print_errc> try_print(string_view text) {
 }
 
 export expected<void, print_errc>
-try_print<First, Args...>(string_view pattern, First& first, Args&... args) requires formattable<First> {
+try_print<formattable First, formattable Args...>(string_view pattern, First& first, Args&... args) {
   mut auto formatted = try_format(pattern, first, args...);
   if (!formatted) {
     return unexpected(detail::print_format_error(formatted.error()));
@@ -1147,7 +1147,7 @@ export expected<void, print_errc> try_println(string_view text) {
 }
 
 export expected<void, print_errc>
-try_println<First, Args...>(string_view pattern, First& first, Args&... args) requires formattable<First> {
+try_println<formattable First, formattable Args...>(string_view pattern, First& first, Args&... args) {
   mut auto formatted = try_format(pattern, first, args...);
   if (!formatted) {
     return unexpected(detail::print_format_error(formatted.error()));
@@ -1157,7 +1157,7 @@ try_println<First, Args...>(string_view pattern, First& first, Args&... args) re
 }
 
 export [[track_caller]]
-void print<First, Args...>(string_view pattern, First& first, Args&... args) requires formattable<First> {
+void print<formattable First, formattable Args...>(string_view pattern, First& first, Args&... args) {
   auto result = try_print(pattern, first, args...);
   if (!result) {
     detail::panic_print_error(result.error());
@@ -1165,7 +1165,7 @@ void print<First, Args...>(string_view pattern, First& first, Args&... args) req
 }
 
 export [[track_caller]]
-void println<First, Args...>(string_view pattern, First& first, Args&... args) requires formattable<First> {
+void println<formattable First, formattable Args...>(string_view pattern, First& first, Args&... args) {
   auto result = try_println(pattern, first, args...);
   if (!result) {
     detail::panic_print_error(result.error());

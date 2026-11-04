@@ -43,6 +43,7 @@ tests = [
   "executable_entry_cli_lsp",
   "export_placement_lsp",
   "extensible_formatting_lsp",
+  "semantic_call_regressions_lsp",
   "frontend_cache_invalidation",
   "include_removal_lsp",
   "lsp_code_snippets",
@@ -265,6 +266,9 @@ consumers = [
 [[area]]
 area = "semantics"
 paths = [
+  "tests/semantic_call_regression_tests.cpp",
+  "tests/semantic_call_regressions*_test.py",
+  "tests/fixtures/semantic_call_regressions.gti",
   "src/compiler/semantic_*",
   "include/gti/semantic_*",
   "include/gti/generic_constraint.h",
@@ -311,6 +315,8 @@ owners = [
   "function_signature_types",
   "callable_return_type",
   "stored_callable_types",
+  "semantic_call_regressions",
+  "semantic_call_regressions_runtime",
   "owning_function_types",
   "consuming_receiver_types",
 ]
@@ -321,6 +327,7 @@ consumers = [
   "language_coverage_corpus",
   "lsp_protocol",
   "diagnostic_recovery_lsp",
+  "semantic_call_regressions_lsp",
   "generic_algorithm_errors",
   "generic_algorithm_breadth",
 ]
@@ -460,6 +467,11 @@ consumers = [
 area = "mir"
 risk = "shared"
 paths = [
+  "tests/borrow_origin_publication_tests.cpp",
+  "tests/borrow_origin_publication_runtime_test.py",
+  "tests/fixtures/borrowed_text_field_reborrow.gti",
+  "tests/fixtures/temporary_cursor_cleanup_provider.gti",
+  "tests/fixtures/receiver_field_carriers*.gti",
   "src/compiler/mir_*",
   "src/compiler/mir.cpp",
   "include/gti/mir*",
@@ -467,6 +479,8 @@ paths = [
 owners = [
   "reference_parameter_pack_mir",
   "^mir_",
+  "borrow_origin_publication",
+  "borrow_origin_publication_runtime",
   "ephemeral_carrier_mir",
   "borrowing_callbacks_mir",
   "storage_adoption_contract",
@@ -570,6 +584,12 @@ consumers = [
 [[area]]
 area = "backend-common"
 paths = [
+  "tests/backend_contract_regressions_test.py",
+  "tests/fixtures/projected_move_assignment.gti",
+  "tests/fixtures/projected_move_failure.gti",
+  "tests/fixtures/projected_move_user.gti",
+  "tests/fixtures/mutex_vector_storage.gti",
+  "tests/panic_contract_tests.cpp",
   "src/compiler/backend.cpp",
   "src/compiler/native_header.cpp",
   "src/compiler/failure_metadata.cpp",
@@ -586,6 +606,8 @@ paths = [
 ]
 owners = [
   "backend_execution_protocol",
+  "backend_contract_regressions",
+  "panic_contracts",
   "backend_lowered_program_boundary",
   "failure_metadata",
   "failure_descriptor_backend",
@@ -965,6 +987,7 @@ owners = [
 consumers = [
   "format_output_matrix_runtime",
   "json_runtime",
+  "json_dynamic_runtime",
 ]
 
 [[area]]
@@ -1017,6 +1040,8 @@ consumers = [
 area = "stdlib"
 paths = [
   "stdlib/",
+  "tests/stdlib_api_contracts_test.py",
+  "tests/fixtures/set_swap_contract.gti",
 ]
 owners = [
   "stdlib_surface",
@@ -1027,6 +1052,7 @@ owners = [
   "stdlib_include_sweep",
   "stdlib_discardable",
   "stdlib_adoption_runtime",
+  "stdlib_api_contracts",
 ]
 consumers = [
   "language_coverage_corpus",
@@ -1274,12 +1300,12 @@ consumers = [
 area = "stdlib-package-tests"
 paths = [
   "stdlib/tests/",
+  "tests/stdlib_package_runtime_test.py",
 ]
 owners = [
-  "^trusted_body_analysis_[0-3]$",
-  "body_analysis_order",
+  "stdlib_package_runtime",
 ]
-consumers = []
+consumers = ["project_cli_workflow"]
 
 # ---------------------------------------------------------------------------
 # Driver, CLI, projects, packages and caches
@@ -1754,9 +1780,13 @@ consumers = [
 area = "remote-runner"
 paths = [
   "scripts/remote_runner.py",
+  "scripts/gcp_spot_runner.py",
+  "scripts/gcp_spot_policy.example.json",
+  "tests/gcp_spot_runner_test.py",
 ]
 owners = [
   "remote_runner",
+  "gcp_spot_runner",
 ]
 consumers = [
   "agent_workflow",

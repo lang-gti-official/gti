@@ -1,0 +1,41 @@
+import std.vector;
+import std.mutex;
+import std.memory;
+import std.atomic;
+
+std::atomic<int> drops{0};
+struct Payload {
+  int value;
+  Payload(int v) : value(v) {}
+  ~Payload() { drops.store(drops.load() + 1); }
+};
+struct Wrapped {
+  std::mutex<std::unique_ptr<Payload>> protected_value;
+  Wrapped(int v)
+      : protected_value(std::mutex<std::unique_ptr<Payload>>(std::make_unique<Payload>(v))) {}
+};
+int main() {
+  {
+    mut std::vector<std::mutex<int>> values{};
+    for (mut int i = 0; i < 32; i++) {
+      values.push_back(std::mutex<int>(i));
+    }
+    for (mut std::size_t i = 0; i < values.size(); i++) {
+      mut auto guard = values[i].lock();
+      guard.get() += 1;
+    }
+    for (mut std::size_t i = 0; i < values.size(); i++) {
+      auto guard = values[i].lock();
+      if (guard.get() != int(i) + 1) { return 1; }
+    }
+    mut std::vector<Wrapped> owners{};
+    for (mut int i = 0; i < 16; i++) { owners.push_back(Wrapped(i)); }
+    for (mut std::size_t i = 0; i < owners.size(); i++) {
+      auto& wrapped = owners[i];
+      auto guard = wrapped.protected_value.lock();
+      if (guard.get()->value != int(i)) { return 2; }
+    }
+    if (drops.load() != 0) { return 3; }
+  }
+  return drops.load() == 16 ? 0 : 4;
+}

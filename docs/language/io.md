@@ -455,6 +455,12 @@ move-only strings and custom formattable owners. No copy or ownership transfer
 is required. Fresh values stay alive through the caller's full expression;
 `std::move(text)` still explicitly consumes `text`. Named owners remain alive
 in the caller after formatting, rather than being destroyed at callee exit.
+Every formatting argument must satisfy `std::formattable`, including every
+element after the first. Formatting, printing, and formatted panic overloads
+check that contract at the public call, rather than reporting a private helper's
+argument position. The recoverable overloads use the same static contract;
+their error result represents formatting or output failures, not a missing
+formatter for a static argument type.
 
 `{}` consumes the next argument. `{0}` selects an explicit zero-based argument
 and may reuse or reorder it; automatic and explicit indexing cannot be mixed.

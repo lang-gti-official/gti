@@ -865,6 +865,15 @@ concrete result or using that result to distinguish overloads. An unresolved
 outer generic parameter cannot supply an exact result context. A typed local
 can supply the context explicitly when selection otherwise remains ambiguous.
 
+An active structural call requirement can itself establish the exact owned
+result of a generic invocation, including a callable stored in a field. Such
+results compose in arithmetic, comparison and other expressions without an
+extra typed local. A disjunction establishes a result only when every
+alternative proves that same result for the same receiver and argument types;
+borrowed and consumed argument alternatives do not thereby become identical
+invocation permissions. Concrete instantiation still checks the selected call,
+receiver access, argument ownership and the ordinary result boundary.
+
 When the outer receiver is itself an open generic callable, a direct nested
 invocation such as `outer(inner(value))` records a deferred result obligation
 instead. Concrete semantic instantiation resolves `inner` first, then checks
@@ -885,6 +894,12 @@ supported, including reference reborrows; this does not permit access upgrades,
 consuming a borrowed object, reference packs, capture, storage or escape of a
 confined callable. No `requires` clause is necessary; callable concepts can
 add an explicit signature requirement.
+
+Generic owned-transport metadata also describes ordinary values. A concrete
+value without lexical closure state remains subject to ordinary ownership and
+reference binding; returning it by move does not impose a callable-confinement
+requirement on a later call that borrows it. Actual closure-containing values
+and unresolved generic forwarding retain their callable boundary checks.
 
 A conditional in an `auto` value initializer can defer a direct open callable
 arm's result until concrete semantic instantiation. Either or both arms may

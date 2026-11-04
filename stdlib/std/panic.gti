@@ -15,7 +15,7 @@ export namespace std {
   /// Formats a terminal message. A format error uses a bounded literal fallback
   /// rather than recursively attempting to format another panic message.
   [[noreturn, track_caller]]
-  void panic<First, Args...>(string_view pattern, First& first, Args&... args) requires formattable<First> {
+  void panic<formattable First, formattable Args...>(string_view pattern, First& first, Args&... args) {
     mut expected<std::string, std::format_errc> message =
         std::try_format(pattern, first, args...);
     if (message) {

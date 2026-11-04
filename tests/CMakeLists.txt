@@ -1128,6 +1128,19 @@ target_link_libraries(gti_carrier_shell_reference_tests PRIVATE gti_cpp_backend)
 target_precompile_headers(gti_carrier_shell_reference_tests
                           REUSE_FROM gti_compiler_test_pch)
 add_test(NAME carrier_shell_references COMMAND gti_carrier_shell_reference_tests)
+add_executable(gti_borrow_origin_publication_tests borrow_origin_publication_tests.cpp)
+target_link_libraries(gti_borrow_origin_publication_tests PRIVATE gti_cpp_backend)
+target_precompile_headers(gti_borrow_origin_publication_tests
+                          REUSE_FROM gti_compiler_test_pch)
+add_test(NAME borrow_origin_publication COMMAND gti_borrow_origin_publication_tests)
+add_test(NAME borrow_origin_publication_runtime
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/borrow_origin_publication_runtime_test.py" $<TARGET_FILE:gti>)
+add_executable(gti_semantic_call_regression_tests semantic_call_regression_tests.cpp)
+target_link_libraries(gti_semantic_call_regression_tests PRIVATE gti_compiler)
+target_precompile_headers(gti_semantic_call_regression_tests
+                          REUSE_FROM gti_compiler_test_pch)
+add_test(NAME semantic_call_regressions COMMAND gti_semantic_call_regression_tests)
 add_test(NAME carrier_reference_runtime
   COMMAND "${Python3_EXECUTABLE}"
           "${PROJECT_SOURCE_DIR}/tests/carrier_reference_runtime_test.py" $<TARGET_FILE:gti>)
@@ -1335,8 +1348,7 @@ target_link_libraries(gti_trusted_body_analysis_tests PRIVATE gti_compiler)
 # Keep all entries and fixture checks, but do not put the entire growing corpus
 # under one platform-dependent aggregate deadline.
 file(GLOB gti_trusted_body_entries CONFIGURE_DEPENDS
-  "${PROJECT_SOURCE_DIR}/examples/*.gti"
-  "${PROJECT_SOURCE_DIR}/stdlib/tests/*.gti")
+  "${PROJECT_SOURCE_DIR}/examples/*.gti")
 list(SORT gti_trusted_body_entries)
 foreach(gti_trusted_partition RANGE 0 3)
   set(gti_trusted_partition_entries)
@@ -1358,6 +1370,27 @@ foreach(gti_trusted_partition RANGE 0 3)
   set_tests_properties(trusted_body_analysis_${gti_trusted_partition}
     PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE)
 endforeach()
+add_test(NAME stdlib_package_runtime
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/stdlib_package_runtime_test.py" $<TARGET_FILE:gti>)
+set_tests_properties(stdlib_package_runtime PROPERTIES TIMEOUT 720)
+add_test(NAME stdlib_api_contracts
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/stdlib_api_contracts_test.py" $<TARGET_FILE:gti>)
+set_tests_properties(stdlib_api_contracts PROPERTIES TIMEOUT 300)
+add_test(NAME backend_contract_regressions
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/backend_contract_regressions_test.py" $<TARGET_FILE:gti>)
+set_tests_properties(backend_contract_regressions PROPERTIES TIMEOUT 600)
+add_test(NAME semantic_call_regressions_runtime
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/semantic_call_regressions_runtime_test.py" $<TARGET_FILE:gti>)
+if(TARGET gti_lsp)
+  add_test(NAME semantic_call_regressions_lsp
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/semantic_call_regressions_lsp_test.py" $<TARGET_FILE:gti_lsp>)
+  set_tests_properties(semantic_call_regressions_lsp PROPERTIES TIMEOUT 120)
+endif()
 add_executable(gti_instance_reuse_tests "${PROJECT_SOURCE_DIR}/tests/instance_reuse_tests.cpp")
 target_link_libraries(gti_instance_reuse_tests PRIVATE gti_compiler)
 add_test(NAME instance_reuse COMMAND gti_instance_reuse_tests "${PROJECT_SOURCE_DIR}")
@@ -1596,6 +1629,12 @@ add_test(NAME deferred_bound_field_runtime
                  "${PROJECT_SOURCE_DIR}/tests/deferred_bound_field_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(deferred_bound_field_runtime PROPERTIES TIMEOUT 240)
+
+add_test(NAME borrowed_field_publication_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/borrowed_field_publication_runtime_test.py"
+                 "$<TARGET_FILE:gti>")
+set_tests_properties(borrowed_field_publication_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME passive_text_view_class_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/passive_text_view_class_runtime_test.py"
@@ -2228,6 +2267,8 @@ set_tests_properties(llvm_polymorphic_storage_mechanisms PROPERTIES TIMEOUT 120)
 # does not enter the LLVM evidence manifest or public admission/coverage gates.
 add_library(gti_llvm_cleanup_release_oracle STATIC
   llvm_cleanup_release_oracle.cpp)
+# Generated programs link this archive: see gti_program_component.
+gti_program_component(gti_llvm_cleanup_release_oracle)
 add_executable(gti_llvm_cleanup_composition_execution_tests
   llvm_cleanup_composition_execution_tests.cpp)
 add_dependencies(gti_llvm_cleanup_composition_execution_tests
@@ -2587,6 +2628,14 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(stdlib_surface_context_controls PROPERTIES TIMEOUT 180)
 
+  add_test(NAME llvm_borrowed_dispatch_regressions
+           COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_borrowed_dispatch_regressions_test.py"
+                   "$<TARGET_FILE:gti>")
+  set_tests_properties(llvm_borrowed_dispatch_regressions PROPERTIES TIMEOUT 600)
+  add_test(NAME owning_expression_transfers
+           COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/owning_expression_transfers_test.py"
+                   "$<TARGET_FILE:gti>")
+  set_tests_properties(owning_expression_transfers PROPERTIES TIMEOUT 600)
   add_test(NAME llvm_dispatch_execution
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_dispatch_execution_test.py"
                    "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
@@ -3067,6 +3116,9 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/remote_runner_test.py"
   )
   set_tests_properties(remote_runner PROPERTIES TIMEOUT 120)
+  add_test(NAME gcp_spot_runner
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/gcp_spot_runner_test.py")
+  set_tests_properties(gcp_spot_runner PROPERTIES TIMEOUT 60)
   add_test(
     NAME cmake_test_ownership
     COMMAND "${Python3_EXECUTABLE}"
@@ -4035,6 +4087,13 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/fixtures/json_config.gti"
   )
   set_tests_properties(json_runtime PROPERTIES TIMEOUT 1200)
+  add_test(
+    NAME json_dynamic_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/json_dynamic_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(json_dynamic_runtime PROPERTIES TIMEOUT 1200)
   add_test(
     NAME constexpr_text_runtime
     COMMAND "${Python3_EXECUTABLE}"

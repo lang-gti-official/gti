@@ -312,6 +312,156 @@ auto SemanticVisitor::Impl::callableSignatureRequirement(const Call &call) const
   return result;
 }
 
+auto SemanticVisitor::Impl::symbolicCallableResultTypes(
+    const SemanticType &receiver, std::span<const SemanticType> arguments) const
+    -> std::vector<SemanticType> {
+  // Project only the result of a structural invocation. Different alternatives
+  // may require different argument ownership; those are not interchangeable
+  // invocation permissions. Every alternative must establish the same result,
+  // and concrete call analysis still checks its exact access/ownership rules.
+  using Results = std::vector<SemanticType>;
+  std::size_t budget = 2048;
+  const auto referent = [](const SemanticType &type) -> const SemanticType & {
+    return type.kind == SemanticType::Reference && type.arguments.size() == 1
+               ? type.arguments.front()
+               : type;
+  };
+  const auto append = [](Results &to, const Results &from) {
+    for (const auto &type : from)
+      if (std::find(to.begin(), to.end(), type) == to.end())
+        to.push_back(type);
+  };
+  std::function<Results(const AppliedConceptRequirement &, unsigned)> leaf;
+  std::function<Results(std::span<const AppliedConceptRequirement>,
+                        const ConstraintExpression &, std::size_t, unsigned)>
+      tree;
+  tree = [&](std::span<const AppliedConceptRequirement> set,
+             const ConstraintExpression &shape, std::size_t index,
+             unsigned depth) -> Results {
+    if (depth > 64 || budget == 0 || index >= shape.nodes.size())
+      return {};
+    --budget;
+    const auto &node = shape.nodes[index];
+    if (node.kind == ConstraintExpressionKind::Application) {
+      const auto found =
+          std::find_if(set.begin(), set.end(), [&](const auto &item) {
+            return item.expression == &shape &&
+                   item.expressionApplication == node.application;
+          });
+      return found == set.end() ? Results{} : leaf(*found, depth + 1);
+    }
+    Results left = tree(set, shape, node.left, depth + 1);
+    Results right = tree(set, shape, node.right, depth + 1);
+    if (node.kind == ConstraintExpressionKind::Conjunction) {
+      append(left, right);
+    } else {
+      std::erase_if(left, [&](const auto &type) {
+        return std::find(right.begin(), right.end(), type) == right.end();
+      });
+    }
+    return left;
+  };
+  leaf = [&](const AppliedConceptRequirement &item, unsigned depth) -> Results {
+    if (depth > 64 || budget == 0)
+      return {};
+    --budget;
+    if (item.syntax && item.syntax->memberRequirement) {
+      const auto &query = *item.syntax->memberRequirement;
+      if (!query.isExpressionRequirement() || query.inferredResult() ||
+          item.arguments.size() <= query.parameters().size())
+        return {};
+      const auto *call = directCall(query.expression());
+      if (!call || !call->typeArguments().empty() ||
+          call->arguments().size() != arguments.size())
+        return {};
+      const auto ungroup = [&](const ExprPtr &expression) -> const ExprPtr * {
+        const ExprPtr *value = &expression;
+        while (const auto *group = exprAs<Grouping>(value->get())) {
+          if (budget == 0)
+            return nullptr;
+          --budget;
+          value = &group->expression();
+        }
+        return value;
+      };
+      const auto binding =
+          [&](const ExprPtr &expression) -> std::optional<std::size_t> {
+        const ExprPtr *value = ungroup(expression);
+        if (value == nullptr)
+          return std::nullopt;
+        if (const auto *move = exprAs<Call>(value->get())) {
+          const ExprPtr *callee = ungroup(move->callee());
+          const auto target =
+              callee ? intrinsicCandidate(*callee) : std::nullopt;
+          if (!target || target->record().intrinsic != IntrinsicKind::Move ||
+              move->arguments().size() != 1)
+            return std::nullopt;
+          value = ungroup(move->arguments().front());
+        }
+        const auto *variable = value ? exprAs<Variable>(value->get()) : nullptr;
+        if (!variable)
+          return std::nullopt;
+        for (std::size_t index = 0; index < query.bindings().size(); ++index)
+          if (query.bindings()[index].lexeme == variable->name().lexeme)
+            return index;
+        return std::nullopt;
+      };
+      const auto boundReceiver = binding(call->callee());
+      if (!boundReceiver ||
+          referent(item.arguments[*boundReceiver]) != receiver)
+        return {};
+      for (std::size_t index = 0; index < arguments.size(); ++index) {
+        const auto bound = binding(call->arguments()[index]);
+        if (!bound ||
+            referent(item.arguments[*bound]) != referent(arguments[index]))
+          return {};
+      }
+      return {item.arguments[query.parameters().size()]};
+    }
+    if (item.conceptId == 0 || item.conceptId > concepts.size())
+      return {};
+    const auto &conceptInfo = concepts[item.conceptId - 1];
+    if (conceptInfo.protocol || !conceptInfo.definitionExpression)
+      return {};
+    const auto substitution = conceptSubstitution(conceptInfo, item.arguments);
+    std::vector<AppliedConceptRequirement> expanded;
+    for (const auto &pattern : conceptInfo.definitionRequirements) {
+      AppliedConceptRequirement applied{
+          .conceptId = pattern.conceptId,
+          .syntax = pattern.syntax,
+          .expression = conceptInfo.definitionExpression,
+          .expressionApplication = pattern.expressionApplication,
+          .lookupScope = conceptInfo.namespaceScope};
+      for (const auto &argument : pattern.arguments) {
+        if (!argument.parameter)
+          applied.arguments.push_back(
+              substituteType(argument.concrete, substitution));
+        else if (*argument.parameter < item.arguments.size())
+          applied.arguments.push_back(item.arguments[*argument.parameter]);
+        else
+          return {};
+      }
+      expanded.push_back(std::move(applied));
+    }
+    return tree(expanded, *conceptInfo.definitionExpression,
+                conceptInfo.definitionExpression->root, depth + 1);
+  };
+  Results result;
+  for (const auto &scope : requirementScopes) {
+    const auto shaped =
+        std::find_if(scope.begin(), scope.end(), [](const auto &item) {
+          return item.expression != nullptr;
+        });
+    if (shaped != scope.end())
+      append(result,
+             tree(scope, *shaped->expression, shaped->expression->root, 0));
+    else
+      for (const auto &item : scope)
+        append(result, leaf(item, 0));
+  }
+  return budget == 0 ? Results{} : result;
+}
+
 auto SemanticVisitor::Impl::analyzeDeferredCallableCall(
     const Call &call, const SemanticType &calleeType,
     const std::vector<SemanticType> &argumentTypes) -> void {
@@ -346,6 +496,17 @@ auto SemanticVisitor::Impl::analyzeDeferredCallableCall(
   bool valid = true;
   SemanticType returnType = SemanticType::Void;
   bool inferResultFromInstantiation = false;
+  // The result is a projection of an already-proved structural call
+  // requirement. It remains exact even when the invocation is nested in an
+  // expression without an expected result type. Concrete reanalysis still
+  // selects and validates the actual callable and its ownership contract.
+  const auto requiredResults =
+      symbolicCallableResultTypes(calleeType, argumentTypes);
+  if (requiredResults.size() == 1 &&
+      requiredResults.front().kind != SemanticType::Reference &&
+      !typeTraits(requiredResults.front()).containsBorrowedState &&
+      !containsLambdaType(requiredResults.front()))
+    returnType = requiredResults.front();
   if (contextualCallableResult && contextualCallableResult->call == &call) {
     returnType = contextualCallableResult->type;
     inferResultFromInstantiation =
@@ -4497,10 +4658,16 @@ auto SemanticVisitor::Impl::validateConfinedCallableArguments(
     const CallableParameterContract *targetContract =
         callableParameterContract(candidate.id, index);
     const bool lexicalClosure = containsClosureObjectType(argumentTypes[index]);
-    const bool ordinaryValueContract = sourceContract != nullptr &&
-                                       sourceContract->ownedTransport &&
-                                       sourceContract->ownedTransport->kind ==
-                                           CallableOwnedTransportKind::Value;
+    // A generic owned-transport proof also describes ordinary records.
+    // Once substituted, a value without lexical closure state follows the
+    // normal value/reference rules; returning that value does not turn it
+    // into a confined callable. Open types and actual closures still require
+    // the callable boundary proof.
+    const bool ordinaryValueContract =
+        sourceContract != nullptr && sourceContract->ownedTransport &&
+        (sourceContract->ownedTransport->kind ==
+             CallableOwnedTransportKind::Value ||
+         (!lexicalClosure && !containsOpenTypeParameter(argumentTypes[index])));
     const bool provenBoundary =
         (sourceContract != nullptr &&
          (sourceContract->boundary == CallableBoundary::Confined ||

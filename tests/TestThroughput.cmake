@@ -89,6 +89,8 @@ endforeach()
 
 if(Python3_Interpreter_FOUND)
   set(gti_parallel_case_suites
+    borrow_origin_publication_runtime
+    semantic_call_regressions_runtime
     consteval_runtime
     callable_return_type_runtime
     borrowed_enum_field_cleanup_runtime
@@ -151,6 +153,8 @@ if(Python3_Interpreter_FOUND)
     mixed_constructor_parameter_runtime
     moved_passive_constructor_field_runtime
     deferred_bound_field_runtime
+    borrowed_field_publication_runtime owning_expression_transfers
+    llvm_borrowed_dispatch_regressions
     passive_text_view_class_runtime
     passive_function_item_class_runtime
     passive_class_move_and_copy_runtime

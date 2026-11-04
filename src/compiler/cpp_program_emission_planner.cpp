@@ -2496,7 +2496,7 @@ public:
   // or move) must be trivial.
   void emitLoweredDeferredFieldDeclaration(
       const LoweredDeclaration &row, const LoweredStorageDeclaration &storage,
-      const LoweredClassInitializerSelection *classInitializers) {
+      const LoweredClassInitializerSelection *classInitializers, bool engaged) {
     if (classInitializers != nullptr) {
       const auto found = classInitializers->fields.find(storage.symbol);
       if (found != classInitializers->fields.end() && !found->second.empty())
@@ -2504,6 +2504,12 @@ public:
             "deferred field storage cannot carry a native default initializer");
     }
     writeIndent();
+    if (engaged) {
+      output << "::gti_internal::backend::mir_deferred_field<";
+      emitLoweredStorageRepresentationType(storage);
+      output << "> " << row.name << ";\n";
+      return;
+    }
     output << "union { unsigned char __gti_deferred_" << row.name << "{}; ";
     emitLoweredStorageRepresentationType(storage);
     output << ' ' << row.name << "; };\n";
@@ -3422,17 +3428,24 @@ public:
            << "(::gti_internal::backend::mir_empty_state_constructor_tag_v1) "
               "noexcept";
     if (!fields.empty()) {
-      output << " : ";
+      bool separator = false;
       for (std::size_t index = 0; index < fields.size(); ++index) {
-        if (index != 0) {
-          output << ", ";
-        }
         const auto *storage =
             std::get_if<LoweredStorageDeclaration>(&fields[index]->payload);
         if (storage == nullptr) {
           throw std::logic_error(
               "lowered empty-state constructor lost a field payload");
         }
+        const auto instance = std::find_if(
+            mir.classInstances().begin(), mir.classInstances().end(),
+            [&](const MirClassInstance &candidate) {
+              return candidate.declaration == declaration.id;
+            });
+        if (instance != mir.classInstances().end() &&
+            cppMirDeferredFieldStorage(mir, instance->id, storage->symbol))
+          continue;
+        output << (separator ? ", " : " : ");
+        separator = true;
         output << fields[index]->name
                << "(::gti_internal::backend::mir_empty_state_v1<"
                   "std::remove_cv_t<decltype("
@@ -4077,6 +4090,9 @@ public:
             if (storage != nullptr &&
                 storage->symbol == step.uniqueOwnerField) {
               receiver = "this->" + field->name;
+              if (cppMirEngagedDeferredFieldStorage(
+                      mir, descriptor.classInstance.value(), storage->symbol))
+                receiver += ".storage()";
               break;
             }
           }
@@ -4319,19 +4335,16 @@ public:
     }
     emitLoweredConstexprAggregateFactory(classRow, declaration, access,
                                          concreteInstance);
-    // Deferred field storage is a property of one exact MIR class instance:
-    // a concrete instance, or the only instance of a non-generic class.
+    // The deferred-field query proves one storage policy across every
+    // instance sharing a declaration. A native generic template can therefore
+    // use any of its checked instances as the representative for that query.
     const MirClassInstance *deferralOwner = concreteInstance;
-    if (deferralOwner == nullptr && declaration.genericParameters.empty() &&
-        declaration.exactSpecializationPrimary == 0) {
+    if (deferralOwner == nullptr) {
       for (const MirClassInstance &instance : mir.classInstances()) {
         if (instance.declaration != declaration.id)
           continue;
-        if (deferralOwner != nullptr) {
-          deferralOwner = nullptr;
-          break;
-        }
         deferralOwner = &instance;
+        break;
       }
     }
     for (const LoweredDeclaration *member : loweredChildren(classRow.id)) {
@@ -4367,9 +4380,10 @@ public:
         if (!storage->staticStorage && deferralOwner != nullptr &&
             cppMirDeferredFieldStorage(mir, deferralOwner->id,
                                        storage->symbol)) {
-          emitLoweredDeferredFieldDeclaration(*member, concreteStorage,
-                                              initializers ? &*initializers
-                                                           : nullptr);
+          emitLoweredDeferredFieldDeclaration(
+              *member, concreteStorage, initializers ? &*initializers : nullptr,
+              cppMirEngagedDeferredFieldStorage(mir, deferralOwner->id,
+                                                storage->symbol));
           continue;
         }
         emitLoweredStorageDeclaration(*member, concreteStorage, true,

@@ -31,13 +31,13 @@
     "stdlib/std/environment.gti": "3a8c583446b14f97b3c3f3b1ae9dad7c206c830222bd31e8b1650e6f4d0cd826",
     "stdlib/std/experimental/optional.gti": "9ef1e87987c636fa141de4f844c264f07147e816db9c365d98f334f32689c083",
     "stdlib/std/filesystem.gti": "a579044390fadec9e7854eccd4d5901f13ab85288bf71a19ee97cadad2693de6",
-    "stdlib/std/format.gti": "c47af029e7f6e7a449c49cd9b4e3f9e4e876a0889a5934fb7736058950aef6a2",
+    "stdlib/std/format.gti": "8a8ccee3b09248f0361f36440b1434166d3407ac5b993220b42f6276d122d604",
     "stdlib/std/forward_list.gti": "8d39227073b9f98eb6bc83a7a7103bc630497345830bc7e618dcc01fccb917ef",
     "stdlib/std/functional.gti": "5880a83e6800a696963152328ae131a87e532c63e0c741fe64eca273c5d4092c",
     "stdlib/std/http.gti": "7810cf7acaee803670f346e0103fa6c0cdfca62aca8edda538cfa880e8ae3521",
     "stdlib/std/io.gti": "8c28bff6f539a82e47f507db2cff429e74307b0dbe6128de48c0b47fd329c0b3",
     "stdlib/std/iterator.gti": "586855579c50031612b0136d001e21dd31c4387dcf115c9fe4485bd12d2577e3",
-    "stdlib/std/json.gti": "85e0213cd253a521937160a0cac1d3e5be1eaa622f34442831a4d2dbffe7b812",
+    "stdlib/std/json.gti": "59ffe60d769d7acea459e98bd9ec97e07cbf46030a35a0743afceda7a5d3b21c",
     "stdlib/std/list.gti": "d8c0a951c3ef5a9fefb8fd69882c8d2b313c9b502d32df906e8e38da809f7923",
     "stdlib/std/map.gti": "ef4d00691aaa30c44dc2256160fafd629fa387cf61fd2dc00494a21ecc1015b8",
     "stdlib/std/memory.gti": "cf4a99569c5e3d3ddd352ae4a6019586a64ff5fe27e2d637a6bf1c91e4bd62c1",
@@ -46,14 +46,14 @@
     "stdlib/std/numeric.gti": "fa0d3a929076f3f614ebef4c10c897c513e91712332d00b24fc58e78af5bd0cf",
     "stdlib/std/optional.gti": "a67d746ef0f8f5eb14c256b5595725febe56425cfec76fea484f5717fd1ca0d1",
     "stdlib/std/paired_span.gti": "06244b15782f49e35b229fa20238489c578305d8b09a70e9b22ba77f7d5dfffa",
-    "stdlib/std/panic.gti": "df03aec87b809ae4a8932c5da8c8ede3a65c9a55448094604eadedae788aa11c",
+    "stdlib/std/panic.gti": "d2f5b046d21fb0efb074d1827156f93577bbbf6372bf41131f7e7470070bce92",
     "stdlib/std/polymorphic.gti": "009f2fe6faec263700c6d734d8db3448b25cde6cca9c9adfea2e8807ed3a594a",
     "stdlib/std/process.gti": "632b0c183f363b66872ae2c17a00516ac9b103bfd580527fc639fd0996e1324b",
     "stdlib/std/queue.gti": "38c9d92a49aa37fcd56dadaa3c2639e5c963b79efa5286f30b407016bc909eed",
     "stdlib/std/random.gti": "41d83ba6833118988fcc0559abde9042cd423a201b468c77b6f33da3cd2eabec",
     "stdlib/std/resource.gti": "dbc11a50bbad24af5830001cb8d99025e21e1054bde19c2fc43ab0338234370c",
     "stdlib/std/resource_vector.gti": "8858e551fbebd2e2e9806a71f6ee97b39a9acb43cc8b9584f681fd9b1d811f77",
-    "stdlib/std/set.gti": "51dda8c0219afea2cca82160d7f3a062f1eefac41b5959455b887dfcd277f1ae",
+    "stdlib/std/set.gti": "97eda79bfecaa7ac8fe57badcdbf7b844fe6ec3ad5f7e9805133932d361b3bb6",
     "stdlib/std/simd.gti": "c525bc03c27ff0f3921aaaa7ff03931dacad40578895dac142b0863f1b5fb9ce",
     "stdlib/std/source_location.gti": "c748203afe96c27c06465ffd6b38728becb85bcceca6e8097f75a8460eb74f95",
     "stdlib/std/span.gti": "effe13ba9bd0beeb1f04c84f17b5bd4458686ff713e3eb6756a65a8b0e8a7409",
@@ -63,7 +63,7 @@
     "stdlib/std/testing.gti": "97481e862587cbeda0b36a1421c0cd66b89d896cdad601d4dc96086d88f2a2c3",
     "stdlib/std/thread.gti": "3fc42f30db431e05b406379bfc24999dc499a1105bee59c07fc1e794b350e77a",
     "stdlib/std/unordered_map.gti": "566586e159a1a519114a88ff2ba54a4d56228bdf8ff29efd9487613163d159b4",
-    "stdlib/std/unordered_set.gti": "9ee55b4641c6052909d9c7815d816afc536cf4d8466004543143142e6cc64afc",
+    "stdlib/std/unordered_set.gti": "5bbc8c88e9eb5151b52c74ef3a9998673e89bdf3e7c1d943ad659ea643951b0e",
     "stdlib/std/utility.gti": "25969598c6420f6f29a710a96ef01289c0207e74c75f5ddae669b53d9c53fe6f",
     "stdlib/std/vector.gti": "65d48f1d767a11f2d44606f4748485e0cfb430529db8c8b54d79040b75eeb24c"
   },
@@ -1607,6 +1607,21 @@
       }
     },
     {
+      "id": "json-dynamic",
+      "mode": "run",
+      "source": "tests/fixtures/json_dynamic.gti",
+      "backend": "llvm",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
       "id": "json-owning-error-backend",
       "mode": "run",
       "source": "tests/fixtures/json_expected_value_backend_bug.gti",
@@ -2435,6 +2450,20 @@
       "id": "sequence-unchecked-resource",
       "mode": "run",
       "source": "tests/fixtures/sequence_unchecked_resource.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "set-swap-contract",
+      "mode": "run",
+      "source": "tests/fixtures/set_swap_contract.gti",
       "optimizations": [
         "O0",
         "O3"
@@ -4089,7 +4118,8 @@
         "recoverable value-dependent formatter rejection",
         "conditional generic protocol formatting with nested pairs and noncopyable leaves",
         "legacy exact formatter compatibility and protocol-first precedence",
-        "borrowed call-result plain enums retain nonzero values and source evaluation order"
+        "borrowed call-result plain enums retain nonzero values and source evaluation order",
+        "unformattable first, middle and last argument rejected at public call"
       ],
       "evidence": [
         "tests/fixtures/stdlib_surface_format.gti",
@@ -4097,7 +4127,8 @@
         "stdlib/std/format.gti",
         "tests/protocol_format_hash_runtime_test.py",
         "tests/integral_enum_formatting_runtime_test.py",
-        "tests/reference_parameter_packs_test.py"
+        "tests/reference_parameter_packs_test.py",
+        "tests/stdlib_api_contracts_test.py"
       ]
     },
     {
@@ -4692,14 +4723,19 @@
         "std::json::error::prepend_index",
         "std::json::error::prepend_key",
         "std::json::ignore",
+        "std::json::member",
         "std::json::name",
+        "std::json::object",
         "std::json::read_file",
+        "std::json::value",
+        "std::json::value_kind",
         "std::json::write_file",
         "std::json::write_file_pretty"
       ],
       "case_ids": [
         "json",
         "json-config",
+        "json-dynamic",
         "json-owning-error-backend",
         "json-parity",
         "owned-error-pipelines"
@@ -4709,16 +4745,20 @@
         "name and ignore attributes",
         "every errc through decode failures with offsets, JSON Pointer paths and line/column",
         "strict strings: UTF-8 validation, escapes, surrogate pairs, control characters",
-        "pretty printing and decode limits"
+        "pretty printing and decode limits",
+        "owned dynamic scalar, array and object values, cloning, mutation, direct object codecs and dynamic fields in reflected structs"
       ],
       "evidence": [
         "docs/language/json.md",
         "examples/141-reflected-json.gti",
+        "examples/186-dynamic-json.gti",
         "stdlib/std/json.gti",
         "tests/fixtures/json_config.gti",
+        "tests/fixtures/json_dynamic.gti",
         "tests/fixtures/json_parity.gti",
         "tests/fixtures/stdlib_owned_error_pipelines.gti",
         "tests/fixtures/stdlib_surface_json.gti",
+        "tests/json_dynamic_runtime_test.py",
         "tests/reflection_runtime_test.py"
       ]
     },
@@ -5886,14 +5926,16 @@
       ],
       "required_instantiations": [
         "raw counted message",
-        "formatted int argument"
+        "formatted int argument",
+        "unformattable first, middle and last argument rejected at public call"
       ],
       "evidence": [
         "tests/fixtures/stdlib_surface_panic_expected.gti",
         "tests/panic_runtime_test.py",
         "tests/panic_contract_tests.cpp",
         "stdlib/std/panic.gti",
-        "tests/reference_parameter_packs_test.py"
+        "tests/reference_parameter_packs_test.py",
+        "tests/stdlib_api_contracts_test.py"
       ]
     },
     {
@@ -6485,16 +6527,19 @@
         "complete-containers-collection",
         "complete-sets",
         "complete-containers-ownership",
-        "container-member-aliases"
+        "container-member-aliases",
+        "set-swap-contract"
       ],
       "required_instantiations": [
         "int",
-        "move-only Key and stateful Compare"
+        "move-only Key and stateful Compare",
+        "relocatable policy swap with state preserved; borrowed policy rejected at call"
       ],
       "evidence": [
         "tests/complete_containers_test.py",
         "tests/fixtures/complete_containers_ownership.gti",
-        "tests/fixtures/stdlib_surface_container_aliases.gti"
+        "tests/fixtures/stdlib_surface_container_aliases.gti",
+        "tests/stdlib_api_contracts_test.py"
       ]
     },
     {
@@ -7248,20 +7293,23 @@
         "container-member-aliases",
         "protocol-format-hash",
         "hash-legacy-policy-state",
-        "hash-legacy-policy-state-cpp"
+        "hash-legacy-policy-state-cpp",
+        "set-swap-contract"
       ],
       "required_instantiations": [
         "int",
         "move-only Key with collision-heavy Hash and Equal",
         "protocol-derived default hash for nested pair keys, including owning string elements",
-        "explicit seeded legacy and composite pair policies remain stable through lookup, rehash/reserve and container moves with exactly-once destruction"
+        "explicit seeded legacy and composite pair policies remain stable through lookup, rehash/reserve and container moves with exactly-once destruction",
+        "relocatable policy swap with state preserved; borrowed policy rejected at call"
       ],
       "evidence": [
         "tests/complete_containers_test.py",
         "tests/fixtures/complete_containers_ownership.gti",
         "tests/fixtures/stdlib_surface_container_aliases.gti",
         "tests/protocol_format_hash_runtime_test.py",
-        "tests/fixtures/legacy_hash_policy_state.gti"
+        "tests/fixtures/legacy_hash_policy_state.gti",
+        "tests/stdlib_api_contracts_test.py"
       ]
     },
     {

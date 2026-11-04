@@ -38,6 +38,43 @@ private:
   std::chrono::steady_clock::time_point started_;
 };
 
+// The two corpus sweeps consume the same immutable frontend result in each
+// single-source worker. They still build their own representation rows, plans
+// and text. Keep the distinct concurrent readiness profile separate from the
+// default-profile agreement sweep, and never retain a whole corpus in memory.
+std::shared_ptr<const lang::FrontendResult>
+analyzeCorpusSource(const std::filesystem::path &source,
+                    bool concurrentProfile) {
+  static std::filesystem::path cachedSource;
+  static bool cachedConcurrentProfile = false;
+  static std::shared_ptr<const lang::FrontendResult> cached;
+  const bool reuse = corpusSource.has_value() &&
+                     std::getenv("GTI_CPP_MIR_CORPUS_NO_REUSE") == nullptr;
+  if (reuse && cached && cachedSource == source &&
+      cachedConcurrentProfile == concurrentProfile)
+    return cached;
+  std::ifstream input(source);
+  std::stringstream buffer;
+  buffer << input.rdbuf();
+  const auto standardLibrary =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  lang::TargetInfo target = lang::TargetInfo::host();
+  if (concurrentProfile) {
+    target.executionProfile = lang::ExecutionProfile::Concurrent;
+    target.runtimeCapabilities.threads = true;
+  }
+  auto result = std::make_shared<const lang::FrontendResult>(
+      lang::Frontend({.target = target})
+          .analyze(source.string(), buffer.str(),
+                   {standardLibrary / "prelude.gti"}, {}, {standardLibrary}));
+  if (reuse) {
+    cachedSource = source;
+    cachedConcurrentProfile = concurrentProfile;
+    cached = result;
+  }
+  return result;
+}
+
 bool sameAnalysis(const lang::CppMirBodyEmissionAnalysis &left,
                   const lang::CppMirBodyEmissionAnalysis &right) {
   return left.body == right.body && left.readiness == right.readiness &&
@@ -55,8 +92,6 @@ bool sameAnalysis(const lang::CppMirBodyEmissionAnalysis &left,
 }
 
 void testExampleCorpusEmissionReadiness() {
-  const std::filesystem::path repository =
-      std::filesystem::path(__FILE__).parent_path().parent_path();
   const std::vector<std::filesystem::path> sources = exampleCorpusSources();
   expect(!sources.empty(), "the example corpus should be discoverable");
 
@@ -67,23 +102,17 @@ void testExampleCorpusEmissionReadiness() {
   std::size_t invalidIssues = 0;
   for (const std::filesystem::path &source : sources) {
     const CorpusProgress progress(source, "readiness");
-    std::ifstream input(source);
-    std::stringstream buffer;
-    buffer << input.rdbuf();
-    const std::filesystem::path standardLibrary = repository / "stdlib";
-    lang::TargetInfo target = lang::TargetInfo::host();
-    if (source.filename() == "066-managed-threads.gti" ||
+    const bool concurrentProfile =
+        source.filename() == "066-managed-threads.gti" ||
         source.filename() == "076-scalar-atomics.gti" ||
-        source.filename() == "175-thread-local-storage.gti") {
+        source.filename() == "175-thread-local-storage.gti";
+    lang::TargetInfo target = lang::TargetInfo::host();
+    if (concurrentProfile) {
       target.executionProfile = lang::ExecutionProfile::Concurrent;
       target.runtimeCapabilities.threads = true;
     }
-    const lang::FrontendResult frontend =
-        lang::Frontend({.target = target})
-            // Preserve source identity so quoted sibling includes resolve
-            // exactly as they do when compiling this example from the CLI.
-            .analyze(source.string(), buffer.str(),
-                     {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
+    const auto analysis = analyzeCorpusSource(source, concurrentProfile);
+    const lang::FrontendResult &frontend = *analysis;
     progress.checkpoint("frontend");
     if (!frontend.canGenerateCode()) {
       ++rejected;
@@ -239,8 +268,6 @@ void testExampleCorpusEmissionReadiness() {
 // complete direct-CFG representation across that corpus.
 
 void testGeneralTextStepMatchesProductionEmission() {
-  const std::filesystem::path repository =
-      std::filesystem::path(__FILE__).parent_path().parent_path();
   const std::vector<std::filesystem::path> sources = exampleCorpusSources();
   expect(!sources.empty(), "the example corpus should be discoverable");
 
@@ -254,13 +281,8 @@ void testGeneralTextStepMatchesProductionEmission() {
   bool directControlFlowBodies = true;
   for (const std::filesystem::path &source : sources) {
     const CorpusProgress progress(source, "agreement");
-    std::ifstream input(source);
-    std::stringstream buffer;
-    buffer << input.rdbuf();
-    const std::filesystem::path standardLibrary = repository / "stdlib";
-    const lang::FrontendResult frontend = lang::Frontend().analyze(
-        source.string(), buffer.str(), {standardLibrary / "prelude.gti"}, {},
-        {standardLibrary});
+    const auto analysis = analyzeCorpusSource(source, false);
+    const lang::FrontendResult &frontend = *analysis;
     progress.checkpoint("frontend");
     if (!frontend.canGenerateCode()) {
       continue;
@@ -285,6 +307,8 @@ void testGeneralTextStepMatchesProductionEmission() {
     // them; the native corpus oracle executes both LLVM endpoints.
     const bool generalLayout =
         source.filename() == "181-general-object-layout.gti";
+    const bool boundedArray =
+        source.filename() == "182-bounded-array-borrows.gti";
     const bool aggregateConstant =
         source.filename() == "183-immediate-functions.gti";
     if (source.filename() == "066-managed-threads.gti" ||
@@ -292,7 +316,8 @@ void testGeneralTextStepMatchesProductionEmission() {
         source.filename() == "178-wrapping-atomic-counters.gti" ||
         source.filename() == "179-weak-ownership.gti" ||
         source.filename() == "180-compact-source-owners.gti" || generalLayout ||
-        aggregateConstant || temporaryReference || freshClassSubscript) {
+        boundedArray || aggregateConstant || temporaryReference ||
+        freshClassSubscript) {
       bool unsupported = false;
       try {
         static_cast<void>(gti_test::emitCpp(frontend, frontend.mir,
@@ -303,6 +328,7 @@ void testGeneralTextStepMatchesProductionEmission() {
             : temporaryReference
                 ? "scalar, plain-enum, and text temporary reference arguments"
             : generalLayout     ? "general sizeof/alignof"
+            : boundedArray      ? "generic fixed-array reference signatures"
             : aggregateConstant ? "aggregate constant publication"
                                 : "wrapping atomic read-modify-write";
         unsupported =
