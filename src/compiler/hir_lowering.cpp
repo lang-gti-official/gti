@@ -4022,11 +4022,13 @@ private:
           body);
     }
     if (const auto *rangeFor = stmtAs<RangeForStmt>(statement)) {
+      const ResolvedRangeIterationInfo *resolved =
+          model.findRangeIteration(*rangeFor);
+      if (resolved != nullptr && resolved->consumingLowering)
+        rangeFor = resolved->consumingLowering.get();
       const std::optional<HirStatementId> loweredBody =
           lowerStatement(rangeFor->lowered().get(), model, classArguments,
                          classValueArguments, body);
-      const ResolvedRangeIterationInfo *resolved =
-          model.findRangeIteration(*rangeFor);
       const auto bindingFor = [&](const VariableDecl *declaration) {
         if (declaration == nullptr)
           return HirBindingId{0};
@@ -4056,6 +4058,7 @@ private:
       };
       HirRangeIteration range;
       if (resolved != nullptr) {
+        range.consumingLowering = resolved->consumingLowering;
         range.strategy = resolved->strategy;
         range.rangeType = resolved->rangeType;
         range.iteratorType = resolved->iteratorType;
@@ -6812,6 +6815,7 @@ private:
         if ((value.intrinsic == IntrinsicKind::ObjectDestroy ||
              value.intrinsic == IntrinsicKind::ObjectRelocate ||
              value.intrinsic == IntrinsicKind::ObjectRelocateRange ||
+             value.intrinsic == IntrinsicKind::ObjectTake ||
              value.intrinsic == IntrinsicKind::ObjectConstruct) &&
             resolved->typeArguments.size() == 1)
           (void)seedConcreteDeclarationType(resolved->typeArguments.front());

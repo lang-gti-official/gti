@@ -1,4 +1,5 @@
 export module deque;
+import "detail/sequence_removal.gti";
 
 import std.vector;
 import std.memory;
@@ -182,6 +183,18 @@ public:
   }
   T& operator[](size_t index) { return this.at(index); }
   mut T& operator[](size_t index) mut { return this.at(index); }
+  /// Exchange two live slots without moving their owned elements.
+  void swap_elements(size_t left, size_t right) mut {
+    gti_internal::index_bounds_check(left, this.length);
+    gti_internal::index_bounds_check(right, this.length);
+    if (left == right) { return; }
+    size_t first = this.physical(left);
+    size_t second = this.physical(right);
+    auto saved = this.slots[first].take();
+    auto replacement = this.slots[second].take();
+    this.slots[first].put(std::move(replacement));
+    this.slots[second].put(std::move(saved));
+  }
   T& front() { return this.at(size_t(0)); }
   mut T& front() mut { return this.at(size_t(0)); }
   T& back() {
@@ -299,4 +312,19 @@ public:
   reverse_iterator rbegin_mut() mut { return reverse_iterator(this.slots, this.head, this.length, this.length); }
   reverse_iterator rend_mut() mut { return reverse_iterator(this.slots, this.head, this.length, size_t(0)); }
 };
+}
+
+namespace std {
+/// Remove matching elements, preserve the order of the rest, and return the count.
+export [[discardable]] size_t erase_if<T, Predicate>(mut deque<T>& values, mut Predicate predicate)
+    requires std::detail::indexed_predicate<Predicate, deque<T>> {
+  size_t retained = std::detail::compact_remove_if(values, predicate);
+  return std::detail::erase_tail(values, retained);
+}
+
+/// Remove elements equal to value and return the number destroyed.
+export [[discardable]] size_t erase<T>(mut deque<T>& values, T& value) requires std::equality_comparable<T> {
+  size_t retained = std::detail::compact_remove(values, value);
+  return std::detail::erase_tail(values, retained);
+}
 }

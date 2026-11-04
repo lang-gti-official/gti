@@ -361,6 +361,7 @@ struct HirStructuredBindingElement {
 };
 
 struct HirRangeIteration {
+  std::shared_ptr<const RangeForStmt> consumingLowering;
   RangeIterationStrategy strategy = RangeIterationStrategy::Structural;
   SemanticType rangeType = SemanticType::Unknown;
   SemanticType iteratorType = SemanticType::Unknown;

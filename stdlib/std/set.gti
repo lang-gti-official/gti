@@ -1,4 +1,5 @@
 export module set;
+import "detail/key_removal.gti";
 import "detail/map_iterators.gti";
 
 import std.map;
@@ -64,6 +65,11 @@ public:
       : entries(map<K, bool, Compare>(std::move(compare))) {}
   set(set<K, Compare>& other) = delete;
   set(set<K, Compare>&& other) = default;
+  /// Destroy keys accepted by a read-only predicate and return their count.
+  [[discardable]] size_t erase_if<Predicate>(Predicate predicate) mut
+      requires std::predicate<Predicate, K> {
+    return this.entries.erase_if(detail::key_removal_predicate<K, Predicate>(std::move(predicate)));
+  }
   size_t size() { return this.entries.size(); }
   bool empty() { return this.entries.empty(); }
   bool contains(K& key) { return this.entries.contains(key); }
@@ -95,4 +101,12 @@ public:
     return this.insert(K(args...));
   }
 };
+}
+
+namespace std {
+/// Destroy matching keys and return their count.
+export [[discardable]] size_t erase_if<K, Compare, Predicate>(mut set<K, Compare>& values, Predicate predicate)
+    requires std::predicate<Predicate, K> {
+  return values.erase_if(std::move(predicate));
+}
 }

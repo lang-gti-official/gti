@@ -3487,6 +3487,9 @@ public:
         stage.intrinsic == IntrinsicKind::ObjectRelocateRange)
       return mir_detail::objectRelocate(program, stage) &&
              relocatableRepresentation(stage.parameterTypes[0].arguments[0]);
+    if (stage.intrinsic == IntrinsicKind::ObjectTake)
+      return mir_detail::objectTake(program, stage) &&
+             relocatableRepresentation(stage.info.type);
     if (stage.intrinsic == IntrinsicKind::ObjectDestroy) {
       if (!mir_detail::objectDestroy(program, stage))
         return false;

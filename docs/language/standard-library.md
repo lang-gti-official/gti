@@ -376,7 +376,7 @@ The current implemented foundation includes:
   indexed access and read-only `contains(T& value)` membership search,
   reserve, resize, shrink-to-fit, clear, push/pop, indexed insertion/erasure,
   read-only traversal, in-place emplacement, explicit cloneable-element
-  cloning, and construction from one contextual fixed-array value such as
+  cloning, consuming `into_range() &&` traversal on LLVM, and construction from one contextual fixed-array value such as
   `std::vector<int>({1, 2, 3})`; this constructor copies elements from its
   owned array parameter and therefore requires copyable `T` when used.
   `contains` borrows a named `T` value, compares in order until the first match,
@@ -407,7 +407,8 @@ The current implemented foundation includes:
   `count_if`, exact-value `find` and `count`, and returned-callable `for_each`,
   plus `partition_point`, default/comparator `binary_search` and bounds,
   subsequence and repeated-value search,
-  adjacent search, extrema, sortedness, bounded sequence comparison, and
+  adjacent search, extrema (including comparator `max_element`), sortedness,
+  bounded sequence comparison, and
   prefix comparison. Structural whole-range predicates, `contains`, `count`,
   `fill`, `replace`, and `replace_if` accept nominal ranges and fixed arrays.
   Output `copy`, `copy_n`, `copy_if`, replacement-copy and removal-copy
@@ -421,8 +422,8 @@ The current implemented foundation includes:
   Iterator clients accept a distinct exact sentinel type. `find` returns its
   moved iterator while retaining the concrete borrowed-owner dependency, and
   both `for_each` forms return the exact moved callable after repeated confined
-  invocation. Predicate, operation, and comparator clients state public exact
-  concepts, accept read-callable or mut-callable targets, and reject consuming
+  invocation. Predicate, operation, and comparator clients state exact callable
+  requirements, accept read-callable or mut-callable targets, and reject consuming
   once-callables; and
 - `std.cmath` binary32 classification, absolute value, rounding, roots,
   powers, remainder, exponentials, logarithms, and trigonometry. Public
@@ -1072,6 +1073,20 @@ indices are checked against the initialized length before mutation. Equal
 **valid** indices are a no-op; equal invalid indices still fail. Bounds failure
 uses ordinary defined-failure cleanup and leaves the sequence unchanged.
 
+`std::max_element(first, last, compare)` accepts a forward iterator and its
+possibly distinct sentinel. The comparator receives the read-only dereference
+results and must be safely repeatable with an exact `bool` result; it may carry
+mutable state. `compare(a, b)` means that `a` precedes `b` in a strict weak order.
+The result is the first greatest element under that order, or an iterator equal
+to `last` for an empty range. Equivalent maxima keep traversal order (key order
+for `std::map`). Elements need no `operator<`, and borrowed elements are neither
+copied nor moved. The algorithm owns one comparator, makes exactly
+`max(N - 1, 0)` comparisons, uses constant auxiliary space without allocating,
+and preserves the returned iterator's owner dependency. It also accepts
+independent copyable values returned by application-defined cursors. See
+[`090-generic-algorithms.gti`](../../examples/090-generic-algorithms.gti) for
+selecting the greatest mapped profit without cloning organization names.
+
 Whole-vector `std::reverse` and both `std::sort` overloads accept relocatable
 move-only elements. Sort uses adaptive iterative introsort. Whole inputs longer
 than 16 elements first receive a monotonic-order probe: a nondecreasing range
@@ -1653,3 +1668,46 @@ explicit cloning, structural lifecycle rules and reset/emplacement policy.
 Changing those choices requires its own general contract and acceptance evidence.
 The remaining families above are goals, not permanent restrictions or permission
 to substitute similarly named C++ facilities without a GTI contract.
+
+
+## Stable removal and erasure
+
+`import std.algorithm;` provides `std::remove(sequence, value)` and
+`std::remove_if(sequence, predicate)`. Both return the retained **length** as
+`std::size_t`, preserve kept-element order, and leave size/capacity unchanged.
+The suffix remains initialized with unspecified order; compaction does not
+run element destructors. These are whole-sequence operations, not C++
+iterator-pair/returned-cursor overloads.
+
+The contract is structural: read-only `size() -> std::size_t`, read-only
+checked subscript, and mutable `swap_elements(std::size_t, std::size_t) -> void`.
+Vector, array, deque, string, and unrelated user-defined sequences satisfy it.
+A raw fixed array lacks that member protocol. Predicates return exactly bool,
+receive read-only elements, and may be read- or mut-callable; consuming
+once-callables and mutable-element predicates are rejected. Value removal
+requires the exact element type and equality comparison. Aliasing the comparison
+value or a captured owner with the exclusive sequence borrow is rejected.
+
+Each container module exports its own `std::erase_if(container, predicate)`;
+vector, deque, string, list, and forward_list also export `std::erase(container,
+value)`. They return the number destroyed and shrink the owner. Fixed-size
+array supports compaction only. Map/unordered_map predicates receive read-only
+`value_type&` entries; set/unordered_set predicates receive read-only keys.
+Linked lists expose `remove_if` members; associative owners expose `erase_if`
+members. None copies keys or retained elements. Deque and linked containers
+can erase immovable elements by changing node ownership alone.
+
+Indexed compaction makes exactly n predicate/equality calls and at most n
+swaps, uses O(1) auxiliary space, and allocates no storage itself. Vector,
+deque, string, list, and forward_list erasure take O(n) time. String operations
+filter bytes, preserve embedded NULs unless selected, and maintain the separate
+terminator. Map/set erasure visits entries in key order and takes O(n log n)
+worst case. Hash erasure visits bucket chains in O(bucket_count + n); order is
+unspecified. Associative vacant-slot bookkeeping can allocate before unlinking.
+A callback/finalizer failure propagates through ordinary cleanup: completed
+changes are not rolled back, but slots remain initialized and ownership unique.
+
+Example `090-generic-algorithms.gti` demonstrates all four free operations.
+The `removal_algorithms` check covers stable prefixes, all keep/remove patterns,
+move-only and immovable cleanup, collisions, node reuse, exact predicate counts,
+allocation-free vector filtering, and invalid borrow/callback contracts.
