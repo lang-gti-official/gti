@@ -2182,7 +2182,8 @@ private:
   }
 
   [[nodiscard]] MirTemporaryCarrierDependency
-  temporaryReceiverCarrier(const MirPlace &place) const {
+  temporaryReceiverCarrier(const MirPlace &place,
+                           bool failureCleanup = false) const {
     const auto carrier = findMirTemporaryCarrierDependency(output, place);
     if (!carrier)
       return {};
@@ -2198,11 +2199,33 @@ private:
                  loan.source == place.id &&
                  loan.storedDependency == carrier.loan->id;
         });
-    return receiver ? carrier : MirTemporaryCarrierDependency{};
+    // A copied receiver input precedes its call's later arguments, but a
+    // result loan that borrows this shell is formed only at the call. Failure
+    // edges in those arguments keep the shell's dependency until its cleanup,
+    // as such a result loan will require; dropping first is valid either way.
+    // Normal schedules still wait for that loan, since an external-only
+    // operator result keeps its own schedule across conditional joins.
+    const auto copiedReceiver = [&] {
+      if (!failureCleanup || place.root != MirPlaceRootKind::Value ||
+          place.value == 0)
+        return false;
+      for (const MirBlock &block : output.blocks)
+        for (const MirInstruction &instruction : block.instructions)
+          if (instruction.kind == MirInstructionKind::CallInput &&
+              instruction.callInputRole == MirCallInputRole::Receiver &&
+              instruction.operands.size() == 1 &&
+              instruction.operands.front().kind == MirOperandKind::Value &&
+              instruction.operands.front().value == place.value)
+            return true;
+      return false;
+    };
+    return receiver || copiedReceiver() ? carrier
+                                        : MirTemporaryCarrierDependency{};
   }
 
-  [[nodiscard]] std::unordered_set<MirLoanId> temporaryCarrierLoans(
-      const std::vector<MirDropObligationId> &retired = {}) const {
+  [[nodiscard]] std::unordered_set<MirLoanId>
+  temporaryCarrierLoans(const std::vector<MirDropObligationId> &retired = {},
+                        bool failureCleanup = false) const {
     std::unordered_set<MirLoanId> retained;
     for (const TemporaryDrop &temporary : temporaryDrops) {
       if (containsDrop(retired, temporary.obligation))
@@ -2210,8 +2233,9 @@ private:
       const auto *drop = output.findDropObligation(temporary.obligation);
       const auto *place =
           drop == nullptr ? nullptr : output.findPlace(drop->place);
-      const auto carrier = place == nullptr ? MirTemporaryCarrierDependency{}
-                                            : temporaryReceiverCarrier(*place);
+      const auto carrier =
+          place == nullptr ? MirTemporaryCarrierDependency{}
+                           : temporaryReceiverCarrier(*place, failureCleanup);
       if (!carrier)
         continue;
       for (const MirLoan &loan : output.loans) {
@@ -2230,11 +2254,12 @@ private:
     const auto *drop = output.findDropObligation(obligation);
     const auto *place =
         drop == nullptr ? nullptr : output.findPlace(drop->place);
-    const auto carrier = place == nullptr ? MirTemporaryCarrierDependency{}
-                                          : temporaryReceiverCarrier(*place);
+    const auto carrier = place == nullptr
+                             ? MirTemporaryCarrierDependency{}
+                             : temporaryReceiverCarrier(*place, failureCleanup);
     if (!carrier)
       return {};
-    auto retained = failureCleanup ? temporaryCarrierLoans(retired)
+    auto retained = failureCleanup ? temporaryCarrierLoans(retired, true)
                                    : retainedReborrowAncestors(retired);
     // Retiring this temporary does not retire an independently owned carrier
     // whose cleanup still needs the same resource ancestry. Exclude only the
@@ -3072,7 +3097,7 @@ private:
   emitOrderedFailureDrain(const std::vector<MirDropObligationId> &consumedDrops,
                           const std::vector<MirLoanId> &endedLoans,
                           std::vector<MirLoanId> &deferredConstructorLoans) {
-    const auto retained = temporaryCarrierLoans(consumedDrops);
+    const auto retained = temporaryCarrierLoans(consumedDrops, true);
     auto allEnded = endedLoans;
     for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
       for (auto loan = scope->loans.rbegin(); loan != scope->loans.rend();
