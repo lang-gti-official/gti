@@ -31,7 +31,13 @@ does not erase an exclusive field's authority or upgrade the shared child.
 While that shared child retains an exclusive entry, operations through the
 carrier remain suspended, including read-only methods, just as for a named
 borrowed carrier. Direct access to unrelated owned fields and shared reads
-through plain references retain their separate permissions.
+through plain references retain their separate permissions. A shared local
+reborrow of an exclusive formal carrier, such as a reference binding or the
+range binding of `for (x : formal)`, retains the formal's stored dependency.
+A shared mapped result read through that reborrow selects the dependency as
+its parent; the suspended formal shell is the reborrow's ancestor rather than
+a competing sibling. The reborrow never selects it for an exclusive result,
+and the formal itself stays suspended until the result ends.
 
 A returned carrier assembled from independent reference-returning calls keeps
 the parent of each additional input separately. Its second input is not a child
