@@ -26,9 +26,9 @@ standalone statement shape explains that structural limit at its call site.
 
 Checked argument construction reports nonconstant input at the original argument
 with the parameter name and the constructor's `@runtime_escape` documentation,
-when present. A terminal panic executed by the immediate evaluator supplies its
-constant library message as the primary explanation without repeating it as a
-hint. `GTI-S2125` warns at the later declaration of a same-shaped exact/checked
+when present. A terminal panic executed while checking the argument follows the
+compile-time panic rule below: the invocation stays primary and the library's
+message is carried on the failing-operation note. `GTI-S2125` warns at the later declaration of a same-shaped exact/checked
 overload pair, relates the earlier declaration, and recommends a distinct runtime
 name or wrapper. Exact overload selection remains unchanged. Neither diagnostic
 has an automatic fix because changing an API or its validation policy requires

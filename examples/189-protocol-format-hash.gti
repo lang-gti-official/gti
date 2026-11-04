@@ -29,8 +29,10 @@ for <T> concept std::hashing<Box<T>> requires std::hashing<T> {
 int main() {
   auto pair = std::make_pair(1, true);
   Box<int> box{7};
-  std::println("{}", pair);
-  std::println("{}", box);
+  // This cross-backend example opts into runtime pattern validation; LLVM
+  // programs can use the checked std::println literal form directly.
+  std::runtime_println("{}", pair);
+  std::runtime_println("{}", box);
   mut std::unordered_map<std::pair<int, bool>, int> values{};
   values.insert(std::make_pair(1, true), 42);
   std::default_hash<Box<int>> hasher{};

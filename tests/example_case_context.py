@@ -35,7 +35,7 @@ def cpp_limitation(name):
             "161-consuming-matches.gti": "scalar, plain-enum, and text temporary reference arguments",
             "175-thread-local-storage.gti": "scalar, plain-enum, and text temporary reference arguments",
             "190-conditional-member-operators.gti": "fresh class-valued subscript arguments",
-            "191-reference-parameter-packs.gti": "scalar, plain-enum, and text temporary reference arguments",
+            "191-reference-parameter-packs.gti": "aggregate constant publication",
             "186-scalar-temporary-borrows.gti": "scalar, plain-enum, and text temporary reference arguments",
             "187-operator-temporary-borrows.gti": "scalar, plain-enum, and text temporary reference arguments",
             "182-bounded-array-borrows.gti": "generic fixed-array reference signatures",

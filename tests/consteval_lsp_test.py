@@ -182,7 +182,11 @@ int main() { /* 😀 */ report(""); return 0; }
 """
             diagnostics = publish(message_source)
             error = next(item for item in diagnostics if item.get("code") == "GTI-S2057")
-            assert error["message"] == "Pattern must not be empty", error
+            # The shared compile-time panic rule keeps the invocation primary
+            # and carries the library's message on the failing-operation note.
+            assert "Consteval invocation" in error["message"], error
+            assert any('Compile-time evaluation panicked: "Pattern must not be empty"'
+                       in item["message"] for item in error["relatedInformation"]), error
             argument = message_source.index('report("")') + len("report(")
             assert error["range"] == {"start": lsp_position(message_source, argument),
                                       "end": lsp_position(message_source, argument + 2)}, error

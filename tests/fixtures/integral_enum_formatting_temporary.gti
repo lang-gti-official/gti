@@ -14,7 +14,7 @@ Status next(int expected_sequence) {
 int main() {
   // Each nonzero result needs distinct temporary reference storage, evaluated
   // in source order and live through the borrowed formatting argument pack.
-  auto ordered = std::format("{} {}", next(0), next(1));
+  auto ordered = std::runtime_format("{} {}", next(0), next(1));
   if (sequence != 2 || ordered != "9 12") { return 1; }
   return 0;
 }

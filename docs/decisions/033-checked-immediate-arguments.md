@@ -33,8 +33,11 @@ public library type. User-defined checked ports and durations prove the rule.
   literal-text contract.
 - A literal/constant-message panic executed in an immediate body produces a
   caller-span `GTI-S2057` with the library message and existing trace. The
-  identity-bound terminal panic operation supplies that message. This is the
-  prerequisite slice of #174; formatted compile-time messages remain there.
+  identity-bound terminal panic operation supplies that message. Integration
+  with #174's shared compile-time panic rule (2026-11-04) reports it as that
+  rule's `Panicked` failure: the invocation remains the primary span and the
+  message appears on the failing-operation note. Formatted compile-time messages
+  remain a #174 follow-up.
 - Immediate requests run under the request's configurable step and call-depth
   limits (`CompileLimits`: `constexpr-steps`, `constexpr-depth`), the same
   limits as every other constant context. Nested requests inherit their
