@@ -95,7 +95,7 @@ namespace std::testing {
   namespace detail {
     void append_value<T>(mut std::string& output, T& value)
         requires std::formattable<T> {
-      auto result = std::try_format_to(output, "{}", value);
+      auto result = std::try_runtime_format_to(output, "{}", value);
       if (!result) { output.append("<formatting failed>"); }
     }
 

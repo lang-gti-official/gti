@@ -40,6 +40,24 @@ void scalarValues() {
              "scalar producer " + expression);
   accepted(scalar + "int main() { return red(pick()) ? 0 : 1; }",
            "plain enum factory");
+  // A call's fresh result follows its resolved declaration wherever the body
+  // lives: interface dispatch and foreign functions publish it the same way.
+  accepted(scalar + R"gti(
+interface meter { int measure(); };
+class gauge : public meter {
+  int value;
+public:
+  gauge(int value) : value(value) {}
+  int measure() override { return this.value; }
+};
+int main() { gauge owner = gauge(42); meter& view = owner; return read(view.measure()) - 42; }
+)gti",
+           "dispatched interface result");
+  accepted(scalar + R"gti(
+extern "C" { int abs(int value); }
+int main() { return read(abs(-42)) - 42; }
+)gti",
+           "foreign function result");
   accepted(R"gti(
 bool read(bool& value) { return value; }
 char read(char& value) { return value; }
