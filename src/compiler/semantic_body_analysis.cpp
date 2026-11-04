@@ -7688,6 +7688,12 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
         return;
       }
     }
+    {
+      const auto parameters = calleeType.nativeFunctionParameterTypes();
+      adoptFittingContextualIntegerLiteralArguments(
+          std::vector<SemanticType>(parameters.begin(), parameters.end()),
+          expr.arguments(), argumentTypes, &argumentAnalysis.deferred);
+    }
     analyzeNativeIndirectCall(expr, calleeType, argumentTypes);
     return;
   }
@@ -7704,6 +7710,10 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
         return;
       }
     }
+    adoptFittingContextualIntegerLiteralArguments(
+        std::vector<SemanticType>(calleeType.lambdaParameterTypes().begin(),
+                                  calleeType.lambdaParameterTypes().end()),
+        expr.arguments(), argumentTypes, &argumentAnalysis.deferred);
     analyzeLambdaCall(expr, calleeType, argumentTypes);
     return;
   }
@@ -7720,6 +7730,11 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
         return;
       }
     }
+    adoptFittingContextualIntegerLiteralArguments(
+        std::vector<SemanticType>(
+            calleeType.functionItemParameterTypes().begin(),
+            calleeType.functionItemParameterTypes().end()),
+        expr.arguments(), argumentTypes, &argumentAnalysis.deferred);
     analyzeFunctionItemCall(expr, calleeType, argumentTypes);
     return;
   }
@@ -8008,6 +8023,39 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
           resolved.borrowArgument =
               *selected->borrowSource == 0 ? 0 : *selected->borrowSource - 2;
           resolved.borrowAccess = resolved.returnType.referenceAccess;
+          // A borrow-carrying value result is described by the same call
+          // facts a concrete carrier-returning call publishes: its access is
+          // its stored references', and an argument origin names the
+          // argument whose dependencies the value retains. The carrier's
+          // stored references are resolved by now, unlike when the concept
+          // was declared, so its access is checked against the origin here.
+          if (resolved.returnType.kind != SemanticType::Reference) {
+            const auto paths = storedReferencePaths(resolved.returnType);
+            resolved.borrowAccess =
+                std::any_of(paths.begin(), paths.end(),
+                            [](const StoredReferencePath &path) {
+                              return path.reference.referenceAccess ==
+                                     AccessMode::Mutable;
+                            })
+                    ? AccessMode::Mutable
+                    : AccessMode::ReadOnly;
+            const bool mutableOrigin =
+                *selected->borrowSource == 0
+                    ? selected->mutableReceiver
+                    : selected->arguments[*selected->borrowSource]
+                              .referenceAccess == AccessMode::Mutable;
+            if (resolved.borrowAccess == AccessMode::Mutable &&
+                !mutableOrigin) {
+              report(expr.paren(),
+                     "The required borrow-carrying result grants mutable "
+                     "access, but its borrow origin is read-only.",
+                     "GTI-S2029");
+              currentType = SemanticType::Unknown;
+              return;
+            }
+            if (resolved.borrowOrigin == BorrowOriginKind::Argument)
+              resolved.borrowArguments = {resolved.borrowArgument};
+          }
         }
         semanticModel.record(expr, std::move(resolved));
         currentType = callExpressionType(selected->arguments[1]);
@@ -8174,12 +8222,15 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       return;
     } else {
       std::vector<std::size_t> ephemeralBorrowArguments;
+      std::vector<std::size_t> literalArguments;
       for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
         const CallArgumentMatchKind match = functionCallArgumentMatch(
             resolved, index, argumentTypes[index], expr.arguments()[index],
             argumentAnalysis.deferred[index]);
         if (match == CallArgumentMatchKind::EphemeralReadBorrow) {
           ephemeralBorrowArguments.push_back(index);
+        } else if (match == CallArgumentMatchKind::ContextualIntegerLiteral) {
+          literalArguments.push_back(index);
         } else if (match == CallArgumentMatchKind::Mismatch) {
           if (isContextualArrayArgument(expr.arguments()[index])) {
             const auto *initializer =
@@ -8210,6 +8261,11 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
           }
           valid = false;
         }
+      }
+      if (valid) {
+        adoptContextualIntegerLiteralArguments(resolved.parameterTypes,
+                                               expr.arguments(), argumentTypes,
+                                               literalArguments);
       }
       if (valid && argumentAnalysis.hasDeferred()) {
         valid = finishContextualCallArguments(
@@ -8251,6 +8307,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     std::vector<SemanticType> typeArguments;
     std::vector<CompileTimeValue> valueArguments;
     std::vector<std::size_t> ephemeralBorrowArguments;
+    std::vector<std::size_t> contextualIntegerLiteralArguments;
     ContextualCallArguments argumentAnalysis;
     CallReceiverMode receiverMode = CallReceiverMode::None;
   };
@@ -8281,6 +8338,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     std::vector<SemanticType> resolvedTypeArguments;
     std::vector<CompileTimeValue> resolvedValueArguments;
     std::vector<std::size_t> resolvedEphemeralBorrowArguments;
+    std::vector<std::size_t> resolvedLiteralArguments;
     ConstraintFailure constraintFailure;
     if (!tryInstantiateFunction(candidate, explicitTypeArguments,
                                 explicitValueArguments,
@@ -8317,6 +8375,8 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       }
       if (match == CallArgumentMatchKind::EphemeralReadBorrow) {
         resolvedEphemeralBorrowArguments.push_back(index);
+      } else if (match == CallArgumentMatchKind::ContextualIntegerLiteral) {
+        resolvedLiteralArguments.push_back(index);
       }
     }
     if (!exact) {
@@ -8351,16 +8411,23 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
                       std::move(resolvedTypeArguments),
                       std::move(resolvedValueArguments),
                       std::move(resolvedEphemeralBorrowArguments),
+                      std::move(resolvedLiteralArguments),
                       std::move(candidateArguments), receiverMode});
   }
 
+  // Exact candidates form the first tier. A candidate reached only through
+  // a call-only temporary borrow or a written integer literal's adopted type
+  // is considered when no exact candidate exists, and selection still
+  // requires one unique candidate; neither mismatch kind ranks candidates.
+  const auto fallbackCandidate = [](const ViableOverload &candidate) {
+    return !candidate.ephemeralBorrowArguments.empty() ||
+           !candidate.contextualIntegerLiteralArguments.empty();
+  };
   if (std::any_of(viable.begin(), viable.end(),
-                  [](const ViableOverload &candidate) {
-                    return candidate.ephemeralBorrowArguments.empty();
+                  [&](const ViableOverload &candidate) {
+                    return !fallbackCandidate(candidate);
                   })) {
-    std::erase_if(viable, [](const ViableOverload &candidate) {
-      return !candidate.ephemeralBorrowArguments.empty();
-    });
+    std::erase_if(viable, fallbackCandidate);
   }
 
   if (std::any_of(viable.begin(), viable.end(),
@@ -8495,11 +8562,24 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       }
       reportOverloadResolutionFailure(expr, *callee, argumentTypes,
                                       exactMatches, constraintFailures);
+      if (!viable.empty() &&
+          std::all_of(
+              viable.begin(), viable.end(),
+              [](const ViableOverload &candidate) {
+                return !candidate.contextualIntegerLiteralArguments.empty();
+              })) {
+        appendContextualIntegerLiteralAmbiguityHint(
+            viable.front().contextualIntegerLiteralArguments);
+      }
     }
     currentType = SemanticType::Unknown;
     return;
   }
 
+  adoptContextualIntegerLiteralArguments(
+      viable.front().function.parameterTypes, expr.arguments(),
+      viable.front().argumentAnalysis.types,
+      viable.front().contextualIntegerLiteralArguments);
   if (argumentAnalysis.hasDeferred() &&
       !finishContextualCallArguments(
           viable.front().function.parameterTypes, expr.arguments(),
@@ -12180,7 +12260,8 @@ auto SemanticVisitor::Impl::visitUnaryExpr(const Unary &expr) -> void {
     return;
   }
   if (expr.oper().kind == TokenKind::MINUS) {
-    if (const auto *literal = exprAs<LiteralExpr>(expr.right().get());
+    if (const auto *literal =
+            contextualIntegerLiteral(expr.right().get(), false);
         literal != nullptr) {
       const auto *magnitude = std::get_if<std::uint64_t>(&literal->value());
       if (magnitude != nullptr && *magnitude == (std::uint64_t{1} << 63U)) {

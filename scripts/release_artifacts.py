@@ -103,7 +103,7 @@ FULL_VALIDATION_WORKFLOW = ".github/workflows/full-validation.yml"
 
 def release_evidence(repository, sha, request, full_only=False):
     """Accept a successful full validation of a main head (push or dispatch), or a
-    source-library merge CI run for compiler reuse.
+    source-library or LSP-lane merge CI run that reused an admitted compiler.
 
     With full_only, source-library jobs cannot seed compiler reuse.
     Latest-attempt jobs and attempt-qualified artifact names prohibit mixing
@@ -144,8 +144,10 @@ def release_evidence(repository, sha, request, full_only=False):
                        matches[0].get("head_sha") == sha and matches[0].get("status") == "completed" and
                        matches[0].get("conclusion") == "success" for name in names)
         source_required = {"CI gate", *(f"Source stdlib ({platform})" for platform in PLATFORMS)}
+        lsp_required = {"CI gate", *(f"LSP ({platform})" for platform in PLATFORMS)}
         full = full_run and passed(required)
-        if not full and (full_only or not source_run or not passed(source_required)):
+        lsp = source_run and passed(lsp_required)
+        if not full and (full_only or not source_run or not (passed(source_required) or lsp)):
             continue
         artifacts = request(f"{base}/actions/runs/{run_id}/artifacts?per_page=100")
         if artifacts.get("total_count", 0) > 100:
@@ -156,7 +158,7 @@ def release_evidence(repository, sha, request, full_only=False):
             continue
         result = {"run_id": str(run_id), "run_attempt": str(attempt)}
         if not full:
-            result["validation_mode"] = "source-stdlib"
+            result["validation_mode"] = "lsp" if lsp else "source-stdlib"
         return result
     raise ValueError(f"{sha} has no successful release-producing integration CI with retained packages; run full CI on main")
 

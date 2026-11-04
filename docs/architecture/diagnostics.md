@@ -37,6 +37,22 @@ trace. These notes are explanatory, not an automatic repair. CLI and LSP share
 them. This is the staged MIR profile, not a claim of complete AST compatibility,
 generic-instantiation or every constant-context trace coverage.
 
+Two staged failures are authoritative in every constant context; neither is
+retried in the AST compatibility evaluator. An executed panic or other trusted
+terminal failure carries its message as
+`Compile-time evaluation panicked: "<message>"`. Constexpr bindings,
+`if constexpr` and `static_assert` put that text in the primary message at the
+failing call. An immediate invocation keeps the invocation as its primary span
+and puts the text on the failing-operation note. `[[track_caller]]` frames move
+that location to the call that reached them, so it is the panic call the user
+wrote, not the library's runtime-terminal operation. An executed call to a
+function that is not `constexpr`, or whose constexpr definition is not yet
+available, is reported at that call. The diagnostic names the callee, and its
+shared hint explains that only executed operations must be compile-time
+capable. Lazy staging means an unexecuted call of either kind produces no
+diagnostic. A `static_assert` that reads a non-constexpr binding, such as a
+parameter, additionally hints at `if (!condition) { std::panic("..."); }`.
+
 `GTI-S2012` rejects zero-argument class/struct construction when no constructor
 was explicitly declared for it. The construction site is primary; a related
 span names the type declaration, and the hint suggests supplying required
@@ -769,6 +785,13 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   token, retain a negative sign in the message, and emit only the range
   diagnostic rather than cascading with unary-unsigned or mixed-operand
   errors. No replacement is universally correct, so do not attach a fix-it.
+- A written integer literal argument that fits no exact candidate keeps the
+  call's exact-type diagnostic (`GTI-S2003`, `GTI-S2012`, `GTI-S2022`) and
+  adds a hint naming the literal's value and the parameter type it does not
+  fit. When several candidates accept the literal and none matches exactly,
+  the ambiguity diagnostic (`GTI-S2013`, or `GTI-S2022` for operators) adds a
+  hint naming the literal argument positions and the explicit conversion
+  form; GTI never ranks those candidates.
 - `GTI-S2033` owns the obsolete unqualified `string` spelling. Explain the
   implemented ownership choice: `std::string` after `import std.string;` is
   owning, while prelude-provided `std::string_view` is non-owning. Do not offer

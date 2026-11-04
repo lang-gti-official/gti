@@ -1,0 +1,57 @@
+// A temporary view indexed through a copied receiver keeps the view's owner
+// dependency until the view is destroyed, including on the failure edge of a
+// later index argument. An argument selects that failing edge.
+import std.span;
+import std.string;
+import std.vector;
+import std.format;
+
+void checked(int divisor) { int value = 7 / divisor; }
+
+class Trace {
+  int identity;
+public:
+  Trace(int value) : identity(value) {}
+  Trace(Trace&) = delete;
+  ~Trace() { std::println("{}", this.identity); }
+};
+
+class Window {
+  mut std::vector<uint8_t> bytes{};
+public:
+  Window() {
+    this.bytes.push_back(uint8_t(4));
+    this.bytes.push_back(uint8_t(5));
+  }
+  std::span<uint8_t> view() {
+    auto all = this.bytes.as_span();
+    return all.subspan(std::size_t(0), this.bytes.size());
+  }
+};
+
+class Lens {
+  Window& window;
+  mut std::vector<uint8_t> bytes{};
+public:
+  Lens(Window& window) : window(window) { this.bytes.push_back(uint8_t(6)); }
+  std::span<uint8_t> view() {
+    auto all = this.bytes.as_span();
+    return all.subspan(std::size_t(0), this.bytes.size());
+  }
+};
+
+std::size_t position(int requested, int divisor) {
+  checked(divisor);
+  return std::size_t(requested);
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Trace outer{1};
+  Window window{};
+  Lens lens{window};
+  int divisor = argc > 1 ? 0 : 1;
+  uint8_t first = window.view()[position(1, 1)];
+  uint8_t second = lens.view()[position(0, divisor)];
+  std::println("{}", int(first) * 10 + int(second));
+  return 0;
+}

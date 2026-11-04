@@ -3,6 +3,7 @@ import std.array;
 import std.list;
 import std.set;
 import std.vector;
+import std.utility;
 int main() {
   // Sequence search is generic; the returned cursor keeps its owner borrowed.
   std::list<int> priorities = {2, 4, 4, 9};
@@ -29,5 +30,18 @@ int main() {
   std::copy_if(weights.begin(), weights.end(), selected.begin_mut(),
                [](int& value) -> bool { return value > 3; });
   for (auto& value : selected) { std::println(value); }
+
+  // Continue from copy's returned cursor by moving its exclusive permission.
+  // The destination cannot be accessed separately until that loan ends.
+  std::vector<int> batch = {1, 2};
+  mut std::vector<int> combined = {0, 0, 0, 0};
+  {
+    auto next = std::copy(batch.begin(), batch.end(), combined.begin_mut());
+    std::copy(batch.begin(), batch.end(), std::move(next));
+  }
+  if (combined[std::size_t(0)] != 1 || combined[std::size_t(1)] != 2 ||
+      combined[std::size_t(2)] != 1 || combined[std::size_t(3)] != 2) {
+    return 1;
+  }
   return 0;
 }

@@ -134,6 +134,40 @@ void put_cell<C>(mut C& owner, int value) requires std::writes_to<C, int> {
 void put_cell_at<C>(mut C& owner, std::ptrdiff_t offset, int value)
     requires std::subscripts_to_mut<C, int> { owner[offset] = value; }
 
+// A value that carries a borrow names its origin as a reference result does.
+// The view is an ordinary user class. Satisfaction checks the dependencies a
+// binding of the result retains, so a view of a different input, a global or
+// a temporary cannot satisfy it, and a generic caller keeps the source
+// borrowed for exactly as long as the view lives.
+class Window {
+  int& first;
+public:
+  Window(int& first) : first(first) {}
+  int read() { return this.first; }
+};
+class Reading {
+  mut int value = 7;
+public:
+  Reading() = default;
+  Window window() { return Window(this.value); }
+  void advance() mut { this.value += 1; }
+};
+concept windowed<S> = requires(S& source) {
+  { source.window() } -> Window [[borrowed_from(source)]];
+};
+concept advancing<S> = requires(mut S& source) { { source.advance() } -> void; };
+int read_then_advance<S>(mut S& source) requires windowed<S> && advancing<S> {
+  mut int seen = 0;
+  {
+    Window view = source.window();
+    seen = view.read();
+  }
+  // The window and its borrow of source ended with the block above; advancing
+  // while it was still live would be rejected.
+  source.advance();
+  return seen;
+}
+
 concept integer_type<T> = std::meta::is_integral<T>();
 concept transferable_value<T> = std::meta::is_transferable<T>();
 
@@ -408,6 +442,19 @@ int main() {
   static_assert(!(requires(Cell& owner, Cell& other) {
     { *owner } -> int& [[borrowed_from(other)]];
   }));
+  // `-> auto` infers the carrier type; the origin is still checked. An
+  // unannotated result promises an owned value, so a borrowing view fails it.
+  static_assert(requires(Reading& source) {
+    { source.window() } -> auto [[borrowed_from(source)]];
+  });
+  static_assert(!(requires(Reading& source, Reading& other) {
+    { source.window() } -> Window [[borrowed_from(other)]];
+  }));
+  static_assert(!(requires(Reading& source) { { source.window() } -> Window; }));
+  mut Reading reading{};
+  if (read_then_advance(reading) != 7) { return 23; }
+  Window advanced = reading.window();
+  if (advanced.read() != 8) { return 24; }
   static_assert(names_runtime_type<RuntimeObject>());
   static_assert(requires(FinalTask task) {
     { std::move(task)() } -> void;

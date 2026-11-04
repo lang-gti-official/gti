@@ -7,6 +7,7 @@
 #include "gti/optimization/coverage.h"
 #include "gti/optimization/devirtualization.h"
 #include "gti/optimization/pass.h"
+#include "mir_verification_queries.h"
 #include "mir_verification_support.h"
 
 #include <algorithm>
@@ -319,6 +320,13 @@ identityLiteral(const MirBody &body, const MirInstruction &identity) {
       identity.operation != MirOperation::Identity ||
       identity.operands.size() != 1 ||
       identity.operands.front().kind != MirOperandKind::Value) {
+    return std::nullopt;
+  }
+  // A contextual signed minimum is a single checked literal represented by
+  // a magnitude/Identity/Negate chain. Folding just a carrier introduces a
+  // provenance use and breaks that chain's mandatory single-use proof. Leave
+  // it intact until a transform can replace the complete signed literal.
+  if (mir_detail::fusedSignedMinimumNegation(body, identity) != nullptr) {
     return std::nullopt;
   }
   return chasedLiteral(body, identity.operands.front().value);
@@ -837,7 +845,10 @@ public:
           if (instruction.tombstone ||
               instruction.kind != MirInstructionKind::Compute ||
               instruction.operation == MirOperation::Literal ||
-              !instruction.result) {
+              !instruction.result ||
+              (instruction.operation == MirOperation::Identity &&
+               mir_detail::fusedSignedMinimumNegation(*body, instruction) !=
+                   nullptr)) {
             continue;
           }
           const MirSccpValueFact *fact = sccp->find(*instruction.result);

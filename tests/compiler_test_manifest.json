@@ -330,6 +330,10 @@
       "suite": "declarations"
     },
     {
+      "name": "testContextualIntegerLiteralArguments",
+      "suite": "declarations"
+    },
+    {
       "name": "testOwnershipSemanticFoundation",
       "suite": "ownership"
     },
@@ -771,6 +775,10 @@
     },
     {
       "name": "testNativeStackSegmentsAreInvisible",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testLazyStagingAndCompileTimePanic",
       "suite": "constexpr"
     },
     {
