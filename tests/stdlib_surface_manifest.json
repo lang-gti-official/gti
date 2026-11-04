@@ -500,6 +500,20 @@
       }
     },
     {
+      "id": "charconv-constexpr-integer",
+      "mode": "run",
+      "source": "tests/fixtures/charconv_constexpr_integer.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
       "id": "charconv-float",
       "mode": "run",
       "source": "tests/fixtures/charconv_float.gti",
@@ -657,6 +671,20 @@
       "id": "composable-io",
       "mode": "run",
       "source": "tests/fixtures/composable_io.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "composable-io-buffered-source",
+      "mode": "run",
+      "source": "tests/fixtures/composable_io_buffered_source.gti",
       "optimizations": [
         "O0",
         "O3"
@@ -2933,34 +2961,6 @@
         "stderr": ""
       },
       "backend": "llvm"
-    },
-    {
-      "id": "charconv-constexpr-integer",
-      "mode": "run",
-      "source": "tests/fixtures/charconv_constexpr_integer.gti",
-      "optimizations": [
-        "O0",
-        "O3"
-      ],
-      "expected": {
-        "exit_code": 0,
-        "stdout": "",
-        "stderr": ""
-      }
-    },
-    {
-      "id": "composable-io-buffered-source",
-      "mode": "run",
-      "source": "tests/fixtures/composable_io_buffered_source.gti",
-      "optimizations": [
-        "O0",
-        "O3"
-      ],
-      "expected": {
-        "exit_code": 0,
-        "stdout": "",
-        "stderr": ""
-      }
     }
   ],
   "entries": [
