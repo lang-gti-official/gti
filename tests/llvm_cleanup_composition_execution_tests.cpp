@@ -524,29 +524,23 @@ private:
   }
 
   void verifyReleaseProvider() {
-    const auto operation = session.program().mir().target().os == "windows"
-                               ? ProcessMemoryRuntimeOperation::AlignedRelease
-                               : ProcessMemoryRuntimeOperation::PosixRelease;
-    const auto *signature = processMemoryRuntimeSignature(operation);
-    const std::vector<SemanticType> parameters{
-        SemanticType::rawPointerTo(SemanticType::Void)};
-    if (!signature ||
-        signature->symbol != processMemoryRuntimeSymbol(operation) ||
-        signature->returnType != SemanticType::Void ||
-        signature->parameters != parameters ||
-        exactProcessMemoryRuntimeOperation(
-            signature->symbol, signature->returnType, signature->parameters) !=
-            operation ||
-        !processMemoryRuntimeSelectedForTarget(
-            operation, session.program().mir().target().os))
-      throw std::runtime_error("cleanup selected a foreign release contract");
-    const auto abi =
-        session.abi().nativeC(signature->returnType, signature->parameters);
-    auto *function = session.module().getFunction(signature->symbol);
-    if (!function || function->getFunctionType() != abi.type ||
+    // Generated owner storage is released through the runtime owner pair
+    // (address, alignment), never the source-owned process provider.
+    auto *function = session.module().getFunction("gti_rt_owner_release_v1");
+    auto &context = session.context();
+    auto *expected = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(context),
+        {llvm::PointerType::get(context, 0), llvm::Type::getInt64Ty(context)},
+        false);
+    if (!function || function->getFunctionType() != expected ||
         !function->hasExternalLinkage() || !function->isDeclaration() ||
         function->getCallingConv() != llvm::CallingConv::C)
       throw std::runtime_error("cleanup release declaration changed ABI");
+    for (const auto operation : {ProcessMemoryRuntimeOperation::PosixRelease,
+                                 ProcessMemoryRuntimeOperation::AlignedRelease})
+      if (session.module().getFunction(processMemoryRuntimeSymbol(operation)))
+        throw std::runtime_error(
+            "cleanup released generated storage through the process provider");
   }
 
   void observeCleanupEntry(llvm::Function &cleanup) {

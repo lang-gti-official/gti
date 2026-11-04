@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
+#include <new>
 
 namespace {
 std::uint64_t allocations = 0;
@@ -46,4 +47,34 @@ extern "C" void gti_rt_posix_free_v1(void *address) {
   if (address)
     --live;
   std::free(address);
+}
+
+// Generated owners allocate through the runtime owner pair rather than the
+// process provider; count both so an inline callback that allocates either
+// kind of storage is observed. Matches the runtime's nothrow new selection.
+extern "C" void *gti_rt_owner_allocate_v1(std::uint64_t bytes,
+                                          std::uint64_t alignment) {
+  void *address =
+      alignment > __STDCPP_DEFAULT_NEW_ALIGNMENT__
+          ? ::operator new(
+                static_cast<std::size_t>(bytes),
+                std::align_val_t(static_cast<std::size_t>(alignment)),
+                std::nothrow)
+          : ::operator new(static_cast<std::size_t>(bytes), std::nothrow);
+  if (address) {
+    ++allocations;
+    ++live;
+  }
+  return address;
+}
+extern "C" void gti_rt_owner_release_v1(void *address,
+                                        std::uint64_t alignment) {
+  if (!address)
+    return;
+  --live;
+  if (alignment > __STDCPP_DEFAULT_NEW_ALIGNMENT__)
+    ::operator delete(address,
+                      std::align_val_t(static_cast<std::size_t>(alignment)));
+  else
+    ::operator delete(address);
 }

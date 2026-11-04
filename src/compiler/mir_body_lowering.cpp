@@ -509,7 +509,6 @@ public:
       lowerStatements(source.roots);
     }
     if (!terminated()) {
-      retireConstructorRollback();
       // A void body's end is an exit like any `return;`: it may share its
       // cleanup with the body's other exits.
       const bool sharedEnd = (output.kind == MirBodyKind::Function ||
@@ -520,6 +519,13 @@ public:
                              emitSharedExit(SharedExitCarrier{}, 0);
       if (!sharedEnd) {
         emitScopeExit(0);
+        // A constructor completes only after its body-local cleanup succeeds:
+        // a failing local destructor is a defined-failure edge of the body,
+        // so its drain must still roll back every completed field. Retire
+        // the armed set at the one normal exit (constructors have no
+        // `return`), after the scope-exit drops and before the terminator.
+        if (!terminated())
+          retireConstructorRollback();
         if (output.kind == MirBodyKind::Module ||
             output.kind == MirBodyKind::FieldInitializers ||
             output.kind == MirBodyKind::StaticFieldInitializers) {
