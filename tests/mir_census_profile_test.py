@@ -27,12 +27,16 @@ class ProfileControls(unittest.TestCase):
         # the next --refresh-all), but both profiles record the same examples.
         self.assertEqual(set(mac), set(linux))
         names = set(mac)
-        self.assertEqual({name: (mac[name], linux[name]) for name in names
-                          if mac[name] != linux[name]}, {
+        # Reviewed profile differences apply once their example is recorded.
+        profile_differences = {
             "087-associative-containers.gti": (452, 451),
             "089-library-workflow.gti": (918, 917),
             "186-consuming-ranges.gti": (450, 449),
-        })
+        }
+        self.assertEqual({name: (mac[name], linux[name]) for name in names
+                          if mac[name] != linux[name]},
+                         {name: counts for name, counts in profile_differences.items()
+                          if name in names})
         lowered = json.loads((ROOT / "tests/lowered_program_census_baseline.json").read_text())
         for name, row in lowered["variants"][reviewed.TARGETS[1]]["examples"].items():
             if name not in names:
