@@ -9791,7 +9791,10 @@ compile job and 4096 MiB per test worker, since an instrumented compiler
 suite grows several times larger than its plain run (six workers on a 12 GiB
 runner had the ownership suite OOM-killed). The sanitizer job also scales
 every test timeout six times (`-DGTI_TEST_TIMEOUT_SCALE=6`, so the 600-second
-default becomes an hour) and runs
+default becomes an hour). Its three compiler partitions run only
+`compiler_pipeline`, split round-robin by suite, and scale its 1800-second
+bound ten times: the instrumented ownership suite alone took more than three
+hours on 2026-11-04 (run 41837802931). The job runs
 the emitter's preflight, text, lifecycle, census and corpus-protocol checks
 rather than the whole generated-C++ corpus, and omits `failure_metadata`:
 both exceeded an hour under ASan on the 6-core runner and remain the plain
