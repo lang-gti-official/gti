@@ -293,6 +293,7 @@ owners = [
   "unsafe_expression_contract",
   "discardable_result",
   "conversion_operators",
+  "literal_call_arguments_runtime",
   "function_signature_types",
   "callable_return_type",
   "stored_callable_types",

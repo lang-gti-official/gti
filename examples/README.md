@@ -189,6 +189,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Use optional, one-step implicit returns, consuming access, move assignment and `?` | [166: source optional](166-source-optional.gti) |
 | Name a mapper's result in an ordinary source wrapper | [167: callable result types](167-callable-result-types.gti) |
 | Select an instance method from metadata and call it with runtime data | [182: reflected method dispatch](185-reflected-method-dispatch.gti) |
+| Pass fitting literals to integer parameters without casts | [186: literal call arguments](186-literal-call-arguments.gti) |
 | Give a source class owned, void and borrowed profiles | [168: source value profiles](168-source-value-profiles.gti) |
 | Use global source-defined results with constexpr, callbacks and checked borrows | [169: source expected](169-source-expected.gti) |
 | Keep independent per-thread state with lazy initialization and deterministic cleanup | [175: thread-local storage](175-thread-local-storage.gti) |
@@ -388,6 +389,7 @@ is a teaching helper, not a production server.
 | [183-immediate-functions.gti](183-immediate-functions.gti) | Immediate functions, standalone void validation, and implicit bare-return construction composed with runtime arguments (LLVM). |
 | [184-payload-borrow-chains.gti](184-payload-borrow-chains.gti) | Return nested payload references through a parameter and receiver, and copy a sibling before a mutable payload borrow. |
 | `185-reflected-method-dispatch.gti` | a generic compile-time metadata binder calling overload-selected methods on two unrelated runtime values; LLVM execution |
+| [186-literal-call-arguments.gti](186-literal-call-arguments.gti) | Fitting integer literal arguments in constructors, methods and lambdas, with exact-overload preference and documented rejection boundaries (LLVM). |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |

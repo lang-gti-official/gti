@@ -4850,6 +4850,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(contextual_numeric_literals_runtime PROPERTIES TIMEOUT 180)
   add_test(
+    NAME literal_call_arguments_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/literal_call_arguments_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(literal_call_arguments_runtime PROPERTIES TIMEOUT 180)
+  add_test(
     NAME implicit_return_move_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/implicit_return_move_runtime_test.py"

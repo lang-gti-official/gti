@@ -6332,6 +6332,7 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
     const ConstructorInfo *constructor = nullptr;
     std::vector<SemanticType> parameterTypes;
     bool generatedDefault = false;
+    std::vector<std::size_t> contextualIntegerLiteralArguments;
   };
   std::vector<ViableConstructor> viable;
   const Token &location = initializer.target.name.last();
@@ -6346,6 +6347,7 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
     std::vector<SemanticType> parameterTypes;
     parameterTypes.reserve(constructor.parameterTypes.size());
     bool exact = true;
+    std::vector<std::size_t> literalArguments;
     for (std::size_t index = 0; index < constructor.parameterTypes.size();
          ++index) {
       const SemanticType parameter =
@@ -6356,13 +6358,20 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
       }
       if (!callArgumentMatches(parameter, argumentTypes[index],
                                initializer.arguments[index])) {
+        if (contextualIntegerLiteralArgumentFits(
+                parameter, argumentTypes[index],
+                initializer.arguments[index])) {
+          literalArguments.push_back(index);
+          continue;
+        }
         exact = false;
         break;
       }
     }
     if (exact) {
       viable.push_back({&constructor, std::move(parameterTypes),
-                        requestsStructuralDefaultConstruction(constructor)});
+                        requestsStructuralDefaultConstruction(constructor),
+                        std::move(literalArguments)});
     }
   }
   if (initializer.arguments.empty() &&
@@ -6371,6 +6380,15 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
     viable.push_back({nullptr, {}, true});
   }
 
+  const auto literalFallback = [](const ViableConstructor &candidate) {
+    return !candidate.contextualIntegerLiteralArguments.empty();
+  };
+  if (std::any_of(viable.begin(), viable.end(),
+                  [&](const ViableConstructor &candidate) {
+                    return !literalFallback(candidate);
+                  })) {
+    std::erase_if(viable, literalFallback);
+  }
   retainBestCallConversionMatches(viable, argumentTypes,
                                   [](const ViableConstructor &candidate)
                                       -> const std::vector<SemanticType> & {
@@ -6407,11 +6425,22 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
         }
       }
       diagnostics.emplace_back(std::move(diagnostic));
+      if (!viable.empty() &&
+          std::all_of(viable.begin(), viable.end(), literalFallback)) {
+        appendContextualIntegerLiteralAmbiguityHint(
+            viable.front().contextualIntegerLiteralArguments);
+      }
     }
     return;
   }
 
   const ViableConstructor &selected = viable.front();
+  for (const std::size_t index : selected.contextualIntegerLiteralArguments) {
+    if (index < initializer.arguments.size() && index < argumentTypes.size()) {
+      argumentTypes[index] = adoptContextualIntegerLiteralArgument(
+          initializer.arguments[index], selected.parameterTypes[index]);
+    }
+  }
   if (selected.constructor != nullptr && selected.constructor->requiresUnsafe) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2055", DiagnosticPhase::Semantics, location,

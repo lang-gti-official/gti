@@ -1,0 +1,23 @@
+// Written integer literals adopt a uniquely selected integer parameter type.
+// Named values retain their declared type. Exact default-type matches win;
+// two fitting fallback overloads remain ambiguous rather than being ranked.
+class Window {
+  uint16_t width;
+  uint16_t height;
+public:
+  Window(uint16_t width, uint16_t height) : width(width), height(height) {}
+  uint32_t area() { return uint32_t(this.width) * uint32_t(this.height); }
+  bool contains(uint16_t x, uint16_t y) { return x < this.width && y < this.height; }
+};
+int choose(int value) { return 1; }
+int choose(uint64_t value) { return 2; }
+int main() {
+  Window window{640, 480};
+  if (window.area() != 307200 || !window.contains(639, 479)) { return 1; }
+  if (window.contains(640, 0) || choose(5) != 1) { return 2; }
+  auto increment = [](uint16_t value) -> uint16_t { return uint16_t(value + 1); };
+  if (increment(41) != 42) { return 3; }
+  // A named int would need an explicit conversion to uint16_t here.
+  // window.contains(-1, 0) and Window{65536, 1} are rejected as out of range.
+  return 0;
+}

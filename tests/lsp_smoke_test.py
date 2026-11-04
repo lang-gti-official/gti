@@ -11837,7 +11837,7 @@ def main():
         "std::unique_ptr<Pixel> moved = std::move(owner); "
         "auto copied_owner = moved; "
         "int borrowed = inspect_pixel(*moved); int moved_value = owner->x; "
-        "uint64_t exact = overloaded(uint64_t(1)); overloaded(1); "
+        "uint64_t exact = overloaded(uint64_t(1)); overloaded(true); "
         'Shade invalid_shade = Shade("bad"); '
         "mut int buffer[1 + 2] = {1, 2, 3}; buffer[1] += 2; "
         "int invalid_array = buffer[3]; uint64_t buffer_size = buffer.size(); "
@@ -12072,7 +12072,7 @@ def main():
         if diagnostic["code"] == "GTI-S2012"
         and "overloaded" in diagnostic["message"]
     )
-    assert "exactly matches argument types (int32_t)" in overload["message"]
+    assert "exactly matches argument types (bool)" in overload["message"]
     assert len(overload["relatedInformation"]) == 2
     assert all(
         "Candidate:" in related["message"]

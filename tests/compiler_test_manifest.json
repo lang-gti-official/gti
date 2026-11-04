@@ -330,6 +330,10 @@
       "suite": "declarations"
     },
     {
+      "name": "testContextualIntegerLiteralArguments",
+      "suite": "declarations"
+    },
+    {
       "name": "testOwnershipSemanticFoundation",
       "suite": "ownership"
     },

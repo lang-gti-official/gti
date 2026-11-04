@@ -1873,6 +1873,25 @@ the selected parameter types. `ResolvedCallInfo` and
 the concrete fixed-array parameter types. Braces never acquire an independent
 semantic type.
 
+A written integer literal argument is analyzed at its default type and may
+match a candidate's integer parameter of another type as a
+`CallArgumentMatchKind::ContextualIntegerLiteral` when its mathematical value
+fits. Function, constructor, base-initializer and operator selection keep such
+candidates in the same fallback tier as call-only temporary borrows: any
+exact candidate discards them, and the tier still requires one unique
+candidate. After selection, `adoptContextualIntegerLiteralArgument` re-runs
+the operand retyping that `value == 0` uses, so the recorded expression type
+and HIR literal carry the selected parameter type; MIR and the backends see an
+exactly typed literal and add no conversion. Single-signature callees
+(lambdas, function items, native function pointers) adopt every fitting
+literal directly. Ambiguity reports append a hint naming the literal
+positions; a literal outside the parameter range keeps the exact-type
+diagnostic with a value-specific hint. The later bounded raw-pointer/text
+compatibility ranking ignores argument positions admitted only by literal or
+temporary-borrow fallback. It cannot prefer a candidate merely because fewer
+literal positions require adaptation; this also holds for constructors and
+base initializers.
+
 An explicit ordinary function or method generic suffix is classified before
 candidate selection using its syntax, the target parameter kinds, and the
 lexical constant catalog. Closed `uint64_t` expression trees contain literals,

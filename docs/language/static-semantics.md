@@ -548,7 +548,30 @@ integer may widen to a strictly wider signed destination. An integer value is
 also assignment-compatible with `float` or `double`, and `float` may widen to
 `double`. `double` never implicitly narrows to `float`, including through a
 compound assignment. These assignment compatibilities do not participate in
-call or constructor overload selection.
+call or constructor overload selection, apart from the literal argument rule
+below.
+
+A written integer literal argument, optionally parenthesized and optionally
+preceded by one unary `+` or `-`, adopts the integer parameter type of the
+selected callable when no candidate matches the call exactly. Candidates whose
+parameters match exactly, with the literal at its default type, form the first
+tier and are always preferred; only when that tier is empty do candidates
+remain whose sole mismatches are call-only temporary borrows or literal
+arguments whose mathematical value, including its sign, is representable in
+the integer parameter type. Selection still requires one unique candidate, so
+a literal that fits several candidate parameter types is ambiguous and needs
+an explicit conversion. The rule applies to function, method, constructor,
+base-initializer, operator, lambda, function-item and native-function-pointer
+calls. It never retypes a named value or a named constant, never targets a
+floating-point parameter, never participates in generic inference, and never
+ranks candidates. `twice(4)`, `values[0]`, `values.push_back(1)` and
+`Counter{3}` therefore resolve against `uint64_t` parameters, while
+`narrow(300)` against `uint8_t` and `twice(-1)` against `uint64_t` remain
+errors that name the literal's value.
+See [example 186](../../examples/186-literal-call-arguments.gti) for a
+source-defined window API and exact-overload preference. Adding an exact
+overload later can redirect a literal call; callers needing a fixed signature
+can pass an explicitly typed argument.
 
 Integer-to-floating assignment conversion is a rounding conversion, not a
 value-preserving widening guarantee. It uses the destination's IEEE binary32
