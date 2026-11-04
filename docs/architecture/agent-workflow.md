@@ -614,6 +614,21 @@ exactly once. Missing, stale, failed or timed-out case evidence fails the gate.
 Compiler sanitizer jobs build only the targets of `compiler_pipeline`; library
 jobs retain the library subset targets. This avoids filling runner disks with
 unexecuted sanitizer library binaries in compiler jobs.
+The LLVM backend sanitizer job runs the backend's test binaries and its cheap
+control harnesses (`GTI_LLVM_SANITIZER_TESTS` in `full-validation.yml`) in the
+same sanitized tree under the LLVM-only backend policy. The `llvm_*` execution
+harnesses compile and run dozens of programs each; under ASan they cost 20-30
+hours of test time in total (measured 2026-11-03: the thread, placement and
+memory execution harnesses alone took 41-68 minutes each on six cores), and
+several bound their compiler subprocesses at a fixed 90 seconds that no timeout
+scale reaches, so they remain native integration gates. Any archive that `gti`
+links into a generated program is built uninstrumented in a sanitized tree
+(`gti_program_component` in CMake: the runtime archive and the cleanup oracle
+component): such archives are linked by the host toolchain, and runtime code
+inside a generated program is sanitized through the driver's instrumentation
+plan, which recompiles the runtime units with matching flags. Building `gti`
+also builds the Tree-sitter grammar module, so a tree that built only its
+tests' targets can still stage the `gti_toolchain` install component.
 This avoids assigning the entire lifecycle suite to one library shard without
 removing sanitizer coverage or increasing timeouts. Runner termination still
 fails full validation; this scheduling change does not claim to repair host loss.
@@ -1040,9 +1055,17 @@ PR that waited while `main` moved otherwise vanishes from every pipeline (on
 pool and the next `compose` rebuilds from current heads instead of leaving
 them "busy" behind a rollup the queue would drop without a verdict. The census baselines
 (`tests/mir_census_baseline.json`, `tests/lowered_program_census_baseline.json`)
-store per-example counts only, never totals, and the LLVM readiness provider
-inventories hash example and stdlib sources rather than those manifest files,
-so two PRs conflict there only when they change the same example. A single eligible member enters the
+store per-example counts only, never totals, and a recorded example fails only
+when a count leaves the census budget (`tests/census_budget.py`: the larger of
+five counts or five percent). A PR therefore edits a census baseline only for
+an example it changes materially, and `--update` rewrites only those rows; an
+added example is reported as unrecorded until someone runs `--refresh-all`.
+Declarations are not recorded, because one more stdlib function changed that
+count in nearly every example. Two PRs conflict there only when both move the
+same example past its budget. The LLVM readiness baseline pins no provider
+member count or inventory digest: the audit derives both from the tree on every
+run (a pinned copy went stale whenever two PRs that each added a stdlib-surface
+case or example merged in sequence, and the merge queue does not run the audit). A single eligible member enters the
 merge queue alone, so it cannot wait indefinitely for a second PR. With no
 eligible members it does nothing. Otherwise it commits `.gti-validation/batches/rollup-<date>-<n>.json`
 (the batch manifest schema that `validation_checks.py full` checks) and opens

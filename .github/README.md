@@ -240,6 +240,11 @@ compilation; every required test and package check still runs.
 Before its build, the sanitizer job runs `scripts/check_ci_sanitizers.py`: a
 small, race-free ASan/UBSan probe with no GTI code, so a runner that cannot
 execute sanitizer binaries fails in seconds instead of after a long build.
+A sanitized tree builds `libgti_runtime.a` (and any test archive that `gti`
+links into a generated program) uninstrumented, because the host toolchain
+links those archives; the LLVM backend sanitizer job depends on this. That job
+runs the backend's test binaries and cheap control harnesses only: the
+execution harnesses cost 20-30 hours under ASan and stay native.
 Hosted jobs configure with `GTI_ENABLE_THREAD_SANITIZER_TESTS=OFF`; dedicated
 ThreadSanitizer CTests then report an explicit skip (return code 77), never a
 pass. A runner meant for TSAN must first pass

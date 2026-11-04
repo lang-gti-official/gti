@@ -1384,8 +1384,7 @@ add_test(NAME backend_contract_regressions
 set_tests_properties(backend_contract_regressions PROPERTIES TIMEOUT 600)
 add_test(NAME semantic_call_regressions_runtime
   COMMAND "${Python3_EXECUTABLE}"
-          "${PROJECT_SOURCE_DIR}/tests/semantic_call_regressions_runtime_test.py" $<TARGET_FILE:gti>
-          --mode llvm-O0 --mode llvm-O3 --mode c++23-O0 --mode c++23-O3)
+          "${PROJECT_SOURCE_DIR}/tests/semantic_call_regressions_runtime_test.py" $<TARGET_FILE:gti>)
 if(TARGET gti_lsp)
   add_test(NAME semantic_call_regressions_lsp
     COMMAND "${Python3_EXECUTABLE}"
@@ -2256,6 +2255,8 @@ set_tests_properties(llvm_polymorphic_storage_mechanisms PROPERTIES TIMEOUT 120)
 # does not enter the LLVM evidence manifest or public admission/coverage gates.
 add_library(gti_llvm_cleanup_release_oracle STATIC
   llvm_cleanup_release_oracle.cpp)
+# Generated programs link this archive: see gti_program_component.
+gti_program_component(gti_llvm_cleanup_release_oracle)
 add_executable(gti_llvm_cleanup_composition_execution_tests
   llvm_cleanup_composition_execution_tests.cpp)
 add_dependencies(gti_llvm_cleanup_composition_execution_tests
