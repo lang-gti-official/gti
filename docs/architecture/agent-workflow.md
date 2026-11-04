@@ -1055,8 +1055,14 @@ PR that waited while `main` moved otherwise vanishes from every pipeline (on
 pool and the next `compose` rebuilds from current heads instead of leaving
 them "busy" behind a rollup the queue would drop without a verdict. The census baselines
 (`tests/mir_census_baseline.json`, `tests/lowered_program_census_baseline.json`)
-store per-example counts only, never totals, so two PRs conflict there only
-when they change the same example. The LLVM readiness baseline pins no provider
+store per-example counts only, never totals, and a recorded example fails only
+when a count leaves the census budget (`tests/census_budget.py`: the larger of
+five counts or five percent). A PR therefore edits a census baseline only for
+an example it changes materially, and `--update` rewrites only those rows; an
+added example is reported as unrecorded until someone runs `--refresh-all`.
+Declarations are not recorded, because one more stdlib function changed that
+count in nearly every example. Two PRs conflict there only when both move the
+same example past its budget. The LLVM readiness baseline pins no provider
 member count or inventory digest: the audit derives both from the tree on every
 run (a pinned copy went stale whenever two PRs that each added a stdlib-surface
 case or example merged in sequence, and the merge queue does not run the audit). A single eligible member enters the
