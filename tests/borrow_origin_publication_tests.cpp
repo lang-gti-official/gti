@@ -463,6 +463,80 @@ int main() {
           hasDiagnosticCode(rejected.diagnostics, "GTI-S2017") &&
           !hasDiagnosticCode(rejected.diagnostics, "GTI-B0001"),
       "an exclusive parent remains suspended while its shared child is live");
+
+  // Issue #217: a shared local reborrow of an exclusive formal carrier (a
+  // reference binding, or the range binding of `for (x : formal)`) selects
+  // the formal's stored dependency for a shared mapped result. The suspended
+  // formal shell is that alias's ancestor, not a competing sibling.
+  auto aliased = declarations;
+  aliased.replace(aliased.find("int main()"), 0,
+                  "int through_alias(mut Write& input) { Write& alias = input; "
+                  "auto view = alias.read(); return view.get(); } ");
+  aliased.replace(aliased.find("return holder.get() - 4;"),
+                  std::string("return holder.get() - 4;").size(),
+                  "mut int other = 4; mut Write direct{other}; "
+                  "return holder.get() + through_alias(direct) - 8;");
+  const auto aliasRead = lang::Frontend().analyze(
+      "formal-alias-shared-read.gti", aliased, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  for (const auto &diagnostic : aliasRead.diagnostics)
+    if (diagnostic.severity == lang::DiagnosticSeverity::Error)
+      std::cerr << diagnostic.message << '\n';
+  expect(aliasRead.canGenerateCode() &&
+             !hasDiagnosticCode(aliasRead.diagnostics, "GTI-B0001"),
+         "a shared alias of an exclusive formal carrier can read its stored "
+         "referent");
+  std::size_t checkedAliases = 0;
+  if (aliasRead.canGenerateCode())
+    for (const auto &function : aliasRead.mir.functionInstances())
+      for (const auto &loan : function.body.loans) {
+        const auto *parent = function.body.findLoan(loan.parent);
+        if (loan.entry || loan.kind != lang::MirLoanKind::Stored ||
+            loan.access != lang::AccessMode::ReadOnly || !parent ||
+            !parent->entry || parent->kind != lang::MirLoanKind::Stored ||
+            parent->access != lang::AccessMode::Mutable)
+          continue;
+        const auto alias = std::find_if(
+            function.body.loans.begin(), function.body.loans.end(),
+            [&](const auto &candidate) {
+              return !candidate.entry &&
+                     candidate.kind == lang::MirLoanKind::Local &&
+                     candidate.access == lang::AccessMode::ReadOnly &&
+                     candidate.storedDependency == parent->id;
+            });
+        if (alias == function.body.loans.end())
+          continue;
+        // The alias is shared: it cannot select the exclusive dependency for
+        // an exclusive result, and the result must keep its exact parent.
+        for (int mutation = 0; mutation != 2; ++mutation) {
+          auto forged = aliasRead.mir;
+          auto *body = lang::findMirBody(
+              forged, {lang::MirBodyKind::Function, function.id});
+          if (mutation == 0)
+            body->loans[loan.id - 1].access = lang::AccessMode::Mutable;
+          else
+            body->loans[loan.id - 1].parent = 0;
+          expect(!lang::verifyMirProgram(forged).valid(),
+                 "a shared formal alias cannot forge exclusive or parentless "
+                 "referent authority " +
+                     std::to_string(mutation));
+        }
+        checkedAliases++;
+      }
+  expect(checkedAliases == 1,
+         "the formal alias read has one exact shared stored child");
+  auto aliasConflict = aliased;
+  const std::string aliasRelay = "auto view = alias.read(); return view.get();";
+  aliasConflict.replace(aliasConflict.find(aliasRelay), aliasRelay.size(),
+                        "auto view = alias.read(); input.bump(); "
+                        "return view.get();");
+  const auto aliasRejected = lang::Frontend().analyze(
+      "formal-alias-conflict.gti", aliasConflict, {standardLibraryPrelude()},
+      {}, {standardLibraryRoot()});
+  expect(!aliasRejected.semanticValid &&
+             hasDiagnosticCode(aliasRejected.diagnostics, "GTI-S2017") &&
+             !hasDiagnosticCode(aliasRejected.diagnostics, "GTI-B0001"),
+         "a formal stays suspended while its alias's shared child is live");
 }
 
 void checkReceiverFields() {
