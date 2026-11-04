@@ -1,7 +1,7 @@
 // Ordered and hashed sets keyed by application classes: a move-only
 // totally-ordered Version in std::set (default std::less), bounds traversal,
-// a std::hash<Coord> specialization driving unordered_set/unordered_map with
-// the default equal_to, and a reversed std::greater<std::string> set.
+// a std::hash<Coord> specialization selected explicitly as the
+// unordered_set/unordered_map policy with the default equal_to, and a reversed std::greater<std::string> set.
 import std.set;
 import std.unordered_set;
 import std.unordered_map;
@@ -88,7 +88,7 @@ int main() {
   }
 
   // Hashed coordinates with a user specialization of std::hash.
-  mut std::unordered_set<Coord> visited{};
+  mut std::unordered_set<Coord, std::hash<Coord>> visited{};
   for (mut int step = 0; step < 20; step++) {
     [[discard]] visited.insert(Coord(step % 5, step % 3));
   }
@@ -97,7 +97,7 @@ int main() {
   Coord absent = Coord(4, 4);
   if (!visited.contains(origin) || visited.contains(absent)) { return 9; }
 
-  mut std::unordered_map<Coord, std::string> labels{};
+  mut std::unordered_map<Coord, std::string, std::hash<Coord>> labels{};
   [[discard]] labels.insert(Coord(1, 1), std::string("tree"));
   [[discard]] labels.insert(Coord(2, 3), std::string("rock"));
   [[discard]] labels.insert_or_assign(Coord(1, 1), std::string("bush"));

@@ -37,6 +37,9 @@ int main() {
     }
   }
   adoption_count_end();
+  // Engaged optionals add no allocation beyond their string's. Process
+  // allocations are not observable effects (ADR 022): only the length is
+  // used, so optimization may remove the strings' allocations themselves.
   return length == uint64_t(1464) &&
-         adoption_allocations() == uint64_t(24) ? 0 : 5;
+         adoption_allocations() <= uint64_t(24) ? 0 : 5;
 }

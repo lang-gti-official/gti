@@ -1,6 +1,6 @@
-// A generic LRU cache class over unordered_map<K, V> plus list<K> recency:
-// generic-class fields of library containers, constrained K (hashable,
-// equality-comparable, copyable), move-only V (std::string), borrowed
+// A generic LRU cache class over unordered_map<K, V, std::hash<K>> plus
+// list<K> recency: generic-class fields of library containers, constrained K
+// (hashable, equality-comparable, copyable), move-only V (std::string), borrowed
 // lookups returning receiver-tied V&, eviction with list::remove/pop_back,
 // and range-for over a dependent field inside a generic-class method.
 import std.unordered_map;
@@ -9,7 +9,7 @@ import std.string;
 import std.functional;
 
 class LruCache<std::integral K, std::movable V> {
-  mut std::unordered_map<K, V> entries;
+  mut std::unordered_map<K, V, std::hash<K>> entries;
   mut std::list<K> recency;
   std::size_t capacity;
   mut std::size_t evictions;
@@ -19,7 +19,7 @@ public:
                std::default_initializable<std::equal_to<K>> &&
                std::read_callable<std::hash<K>, K, std::size_t> &&
                std::read_binary_callable<std::equal_to<K>, K, K, bool>
-      : entries(std::unordered_map<K, V>()), recency(std::list<K>()),
+      : entries(std::unordered_map<K, V, std::hash<K>>()), recency(std::list<K>()),
         capacity(capacity), evictions(0) {}
   std::size_t size() { return this.entries.size(); }
   std::size_t evicted() { return this.evictions; }
