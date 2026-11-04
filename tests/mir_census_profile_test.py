@@ -141,6 +141,15 @@ class ProfileControls(unittest.TestCase):
                 with patch.object(sys, "argv", argv), patch.object(oracle, "build_and_run", side_effect=emitted) as run:
                     self.assertEqual(oracle.main(), 0)
                     self.assertEqual(run.call_count, 4)  # Both endpoints for each selected example.
+                # An example the baseline has not recorded still runs, and the
+                # summary must not read its missing count.
+                unrecorded = deepcopy(DOCUMENT)
+                del unrecorded["examples"]["087-associative-containers.gti"]
+                unrecorded["variants"][reviewed.TARGETS[1]]["examples"].pop("087-associative-containers.gti", None)
+                baseline.write_text(json.dumps(unrecorded))
+                with patch.object(sys, "argv", argv), patch.object(oracle, "build_and_run", side_effect=emitted):
+                    self.assertEqual(oracle.main(), 0)
+                baseline.write_text(json.dumps(DOCUMENT))
                 # Even a selected-case run validates the entire corpus first.
                 bad = deepcopy(DOCUMENT)
                 bad["examples"]["001-basics.gti"] = 0
