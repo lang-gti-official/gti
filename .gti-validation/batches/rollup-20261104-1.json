@@ -1,0 +1,247 @@
+{
+  "schema": 1,
+  "base": "6b37f25d73d82154a0c2307301cdc75098279656",
+  "members": [
+    {
+      "pr": 171,
+      "head": "05a32b23aa0c4acf2031908a0aaaf2f52725c137",
+      "plan": {
+        "tier": "T2",
+        "rationale": "Rollup member #171: its declared Validation T0/T1 tests; the merge queue runs the complete suite on the combined candidate",
+        "regressions": [
+          "borrow_carrier_receivers_runtime"
+        ],
+        "owning": [
+          "carrier_shell_references",
+          "borrow_carrier_receivers",
+          "ephemeral_carrier_mir",
+          "ephemeral_carrier_receiver_runtime",
+          "carrier_reference_runtime",
+          "cleanup_bound_borrow",
+          "cleanup_bound_borrow_runtime",
+          "borrowed_receiver_carriers_regressions",
+          "retained_borrowed_call_result_runtime",
+          "temporary_argument_borrow_runtime",
+          "fallible_borrow_runtime",
+          "borrowed_argument_fallible_condition_runtime",
+          "borrowed_argument_inner_temporary_runtime",
+          "borrowed_argument_nested_owning_argument_runtime",
+          "temporary_owner_borrow_runtime",
+          "cursor_carrier_publication",
+          "cpp_mir_body_emitter_lifecycle",
+          "composable_io_runtime",
+          "mir_census_regression",
+          "compiler_pipeline"
+        ],
+        "cross_phase": [],
+        "unaffected": "Not assessed per member by the rollup bot; the merge queue runs every registered test",
+        "targets": [
+          "gti"
+        ],
+        "platforms": [
+          "darwin",
+          "linux"
+        ],
+        "reproduction": {
+          "exception": "Recorded in the description of #171; a rollup reproduces no member failure"
+        },
+        "broader": [
+          "carrier_shell_references",
+          "borrow_carrier_receivers",
+          "ephemeral_carrier_mir",
+          "ephemeral_carrier_receiver_runtime",
+          "carrier_reference_runtime",
+          "cleanup_bound_borrow",
+          "cleanup_bound_borrow_runtime",
+          "borrowed_receiver_carriers_regressions",
+          "retained_borrowed_call_result_runtime",
+          "temporary_argument_borrow_runtime",
+          "fallible_borrow_runtime",
+          "borrowed_argument_fallible_condition_runtime",
+          "borrowed_argument_inner_temporary_runtime",
+          "borrowed_argument_nested_owning_argument_runtime",
+          "temporary_owner_borrow_runtime",
+          "cursor_carrier_publication",
+          "cpp_mir_body_emitter_lifecycle",
+          "composable_io_runtime",
+          "mir_census_regression",
+          "compiler_pipeline"
+        ]
+      }
+    },
+    {
+      "pr": 178,
+      "head": "f2806dcabaf0f42d9161d4e38454db50409b821d",
+      "plan": {
+        "tier": "T2",
+        "rationale": "Rollup member #178: its declared Validation T0/T1 tests; the merge queue runs the complete suite on the combined candidate",
+        "regressions": [
+          "compiler_pipeline",
+          "consteval_runtime",
+          "consteval_lsp"
+        ],
+        "owning": [
+          "compile_limits",
+          "defined_integer_arithmetic",
+          "constexpr_aggregate_runtime",
+          "constexpr_text_runtime",
+          "constexpr_array_mir_runtime",
+          "constexpr_readonly_references_runtime",
+          "constexpr_mutation_runtime",
+          "constexpr_results_runtime",
+          "constexpr_allocation_runtime",
+          "constexpr_payload_enum_runtime",
+          "constexpr_tryable_runtime",
+          "constexpr_allocation_example",
+          "constexpr_enum_builders_runtime",
+          "constexpr_builders_example",
+          "constexpr_chrono_runtime",
+          "constexpr_library_runtime",
+          "constexpr_dependent_branches_runtime",
+          "constexpr_operators_runtime",
+          "constexpr_asset_table_runtime",
+          "constexpr_record_mir_runtime",
+          "macro_values_semantic_ir",
+          "macro_values_runtime",
+          "macro_result_failures",
+          "deferred_assertions",
+          "deferred_assertions_runtime",
+          "deferred_assertions_lsp",
+          "testing_assertions_runtime",
+          "panic_contracts",
+          "panic_runtime",
+          "panic_adoption_runtime",
+          "source_expected_example_runtime",
+          "practical_examples",
+          "typed_differential_smoke",
+          "feature_interaction_smoke"
+        ],
+        "cross_phase": [],
+        "unaffected": "Not assessed per member by the rollup bot; the merge queue runs every registered test",
+        "targets": [
+          "gti"
+        ],
+        "platforms": [
+          "darwin",
+          "linux"
+        ],
+        "reproduction": {
+          "exception": "Recorded in the description of #178; a rollup reproduces no member failure"
+        },
+        "broader": [
+          "compile_limits",
+          "defined_integer_arithmetic",
+          "constexpr_aggregate_runtime",
+          "constexpr_text_runtime",
+          "constexpr_array_mir_runtime",
+          "constexpr_readonly_references_runtime",
+          "constexpr_mutation_runtime",
+          "constexpr_results_runtime",
+          "constexpr_allocation_runtime",
+          "constexpr_payload_enum_runtime",
+          "constexpr_tryable_runtime",
+          "constexpr_allocation_example",
+          "constexpr_enum_builders_runtime",
+          "constexpr_builders_example",
+          "constexpr_chrono_runtime",
+          "constexpr_library_runtime",
+          "constexpr_dependent_branches_runtime",
+          "constexpr_operators_runtime",
+          "constexpr_asset_table_runtime",
+          "constexpr_record_mir_runtime",
+          "macro_values_semantic_ir",
+          "macro_values_runtime",
+          "macro_result_failures",
+          "deferred_assertions",
+          "deferred_assertions_runtime",
+          "deferred_assertions_lsp",
+          "testing_assertions_runtime",
+          "panic_contracts",
+          "panic_runtime",
+          "panic_adoption_runtime",
+          "source_expected_example_runtime",
+          "practical_examples",
+          "typed_differential_smoke",
+          "feature_interaction_smoke"
+        ]
+      }
+    },
+    {
+      "pr": 184,
+      "head": "aafad057b0359e0f4c0a6aa4c3cd76c5114f31c9",
+      "plan": {
+        "tier": "T2",
+        "rationale": "Rollup member #184: its declared Validation T0/T1 tests; the merge queue runs the complete suite on the combined candidate; its tier was not declared, so it is recorded as T2",
+        "regressions": [
+          "general_requires_semantics",
+          "general_requires_runtime",
+          "general_requires_lsp",
+          "member_requirement_lsp",
+          "compiler_pipeline"
+        ],
+        "owning": [
+          "borrow_origin",
+          "borrow_origin_syntax",
+          "borrowing_capture_semantics",
+          "bounded_array_borrows",
+          "cleanup_bound_borrow",
+          "complete_borrow_summaries",
+          "fresh_callable_borrow",
+          "generic_discovery",
+          "generic_initialization",
+          "local_reference_inference",
+          "parser_conditional_recovery",
+          "practical_examples",
+          "protocol_concepts",
+          "reference_payload_semantics",
+          "release_version_policy",
+          "semantic_header_boundary",
+          "semantic_header_self_containment",
+          "temporary_owner_borrow",
+          "tree_sitter_queries",
+          "trusted_body_analysis_0",
+          "trusted_body_analysis_1",
+          "trusted_body_analysis_2",
+          "trusted_body_analysis_3"
+        ],
+        "cross_phase": [],
+        "unaffected": "Not assessed per member by the rollup bot; the merge queue runs every registered test",
+        "targets": [
+          "gti"
+        ],
+        "platforms": [
+          "darwin",
+          "linux"
+        ],
+        "reproduction": {
+          "exception": "Recorded in the description of #184; a rollup reproduces no member failure"
+        },
+        "broader": [
+          "borrow_origin",
+          "borrow_origin_syntax",
+          "borrowing_capture_semantics",
+          "bounded_array_borrows",
+          "cleanup_bound_borrow",
+          "complete_borrow_summaries",
+          "fresh_callable_borrow",
+          "generic_discovery",
+          "generic_initialization",
+          "local_reference_inference",
+          "parser_conditional_recovery",
+          "practical_examples",
+          "protocol_concepts",
+          "reference_payload_semantics",
+          "release_version_policy",
+          "semantic_header_boundary",
+          "semantic_header_self_containment",
+          "temporary_owner_borrow",
+          "tree_sitter_queries",
+          "trusted_body_analysis_0",
+          "trusted_body_analysis_1",
+          "trusted_body_analysis_2",
+          "trusted_body_analysis_3"
+        ]
+      }
+    }
+  ]
+}
