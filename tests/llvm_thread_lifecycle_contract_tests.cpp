@@ -242,7 +242,8 @@ void checkManagedThreads(const std::filesystem::path &root) {
                       FailurePropagationKind::None;
                 },
                 "join re-raises through its verified TaskJoin edge");
-          if (instruction.intrinsic == IntrinsicKind::ThreadScope)
+          if (instruction.intrinsic == IntrinsicKind::ThreadScope &&
+              !instruction.scopedThreadTasks.empty())
             reject([](auto &call) { call.scopedThreadTasks.pop_back(); },
                    "every scoped operand needs its adapter");
           if (instruction.intrinsic == IntrinsicKind::ThreadHandleEmpty)

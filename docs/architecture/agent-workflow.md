@@ -614,6 +614,21 @@ exactly once. Missing, stale, failed or timed-out case evidence fails the gate.
 Compiler sanitizer jobs build only the targets of `compiler_pipeline`; library
 jobs retain the library subset targets. This avoids filling runner disks with
 unexecuted sanitizer library binaries in compiler jobs.
+The LLVM backend sanitizer job runs the backend's test binaries and its cheap
+control harnesses (`GTI_LLVM_SANITIZER_TESTS` in `full-validation.yml`) in the
+same sanitized tree under the LLVM-only backend policy. The `llvm_*` execution
+harnesses compile and run dozens of programs each; under ASan they cost 20-30
+hours of test time in total (measured 2026-11-03: the thread, placement and
+memory execution harnesses alone took 41-68 minutes each on six cores), and
+several bound their compiler subprocesses at a fixed 90 seconds that no timeout
+scale reaches, so they remain native integration gates. Any archive that `gti`
+links into a generated program is built uninstrumented in a sanitized tree
+(`gti_program_component` in CMake: the runtime archive and the cleanup oracle
+component): such archives are linked by the host toolchain, and runtime code
+inside a generated program is sanitized through the driver's instrumentation
+plan, which recompiles the runtime units with matching flags. Building `gti`
+also builds the Tree-sitter grammar module, so a tree that built only its
+tests' targets can still stage the `gti_toolchain` install component.
 This avoids assigning the entire lifecycle suite to one library shard without
 removing sanitizer coverage or increasing timeouts. Runner termination still
 fails full validation; this scheduling change does not claim to repair host loss.
