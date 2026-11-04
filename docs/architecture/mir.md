@@ -501,7 +501,10 @@ including dependencies transported through generic parameters and fields.
 No native address or public library spelling replaces those checked facts.
 
 A cleanup-owning borrowed result uses the same success-only call publication
-protocol whether its source type is a class or payload enum. A failure-capable
+protocol whether its source type is a class or payload enum, and whether or
+not that type is movable: an immovable object with a stored reference is
+constructed in its final storage, which does not make its construction
+infallible or its obligation active before success. A failure-capable
 producer initializes its result obligation only on the Invoke success edge;
 the failed call publishes neither the result nor its dependent reference.
 Borrow metadata does not turn an owning result into a reference-only call or
