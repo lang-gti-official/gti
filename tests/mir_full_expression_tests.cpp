@@ -477,6 +477,133 @@ int main() { auto item = std::make_unique<Item>(3, 4); return 0; }
     std::cerr << "pack/default fixture lost its selected allocation\n";
     return 1;
   }
+  const auto discardedConditional = lang::Frontend().analyze(
+      "/tmp/gti-discarded-conditional.gti", R"(
+import std.utility;
+mut int drops = 0;
+class Item {
+public:
+  int value;
+  Item(int value) : value(value) {}
+  ~Item() { drops++; }
+};
+int select(bool choice, mut Item target, Item first, Item second) {
+  choice ? (target = std::move(first)) : (target = std::move(second));
+  return target.value;
+}
+int main() { return select(true, Item(1), Item(2), Item(3)); }
+)",
+      {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
+  if (!discardedConditional.canGenerateCode() ||
+      !lang::verifyMirProgram(discardedConditional.mir).valid()) {
+    for (const auto &diagnostic : discardedConditional.diagnostics)
+      std::cerr << diagnostic.message << '\n';
+    return 1;
+  }
+  bool checkedDiscard = false;
+  for (const auto &function : discardedConditional.hir.functionInstances()) {
+    const auto *mir =
+        discardedConditional.mir.findFunctionInstance(function.id);
+    for (const auto &value : function.body.values) {
+      if (value.kind != lang::HirValueKind::Conditional ||
+          value.info.type.kind != lang::SemanticType::Class)
+        continue;
+      checkedDiscard = true;
+      if (!mir ||
+          std::any_of(mir->body.values.begin(), mir->body.values.end(),
+                      [&](const auto &result) {
+                        return result.sourceValue == value.id;
+                      }) ||
+          std::any_of(mir->body.dropObligations.begin(),
+                      mir->body.dropObligations.end(), [&](const auto &drop) {
+                        return drop.value == value.id;
+                      })) {
+        std::cerr << "discarded assignment conditional manufactured an owner\n";
+        return 1;
+      }
+    }
+  }
+  if (!checkedDiscard) {
+    std::cerr << "missing discarded owned conditional in fixture\n";
+    return 1;
+  }
+  const auto constructedPack = lang::Frontend().analyze(
+      "/tmp/gti-constructed-pack-input.gti", R"(
+import std.memory;
+int consume<T>(T value) { return 0; }
+int relay<T, Args...>(Args... args) { return consume(T(args...)); }
+int main() { return relay<std::unique_ptr<int>>(std::make_unique<int>(7)); }
+)",
+      {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
+  if (!constructedPack.canGenerateCode() ||
+      !lang::verifyMirProgram(constructedPack.mir).valid()) {
+    for (const auto &diagnostic : constructedPack.diagnostics)
+      std::cerr << diagnostic.message << '\n';
+    return 1;
+  }
+  bool checkedPackResult = false;
+  for (const auto &function : constructedPack.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &input : block.instructions) {
+        if (input.kind != lang::MirInstructionKind::CallInput ||
+            input.callInputKind != lang::HirCallInputKind::MoveValue ||
+            !input.preparedParameterDrop || input.lifecycle.size() != 1 ||
+            input.lifecycle.front().kind !=
+                lang::MirLifecycleEventKind::Reparent)
+          continue;
+        const auto *source =
+            function.body.findDropObligation(input.lifecycle.front().source);
+        if (!source || source->kind != lang::MirDropObligationKind::Value)
+          continue;
+        const lang::MirInstruction *producer = nullptr;
+        for (const auto &candidateBlock : function.body.blocks)
+          for (const auto &candidate : candidateBlock.instructions)
+            if (candidate.hirValue == input.hirValue &&
+                candidate.kind == lang::MirInstructionKind::Move &&
+                candidate.lifecycle.size() == 1 &&
+                candidate.lifecycle.front().target == source->id)
+              producer = &candidate;
+        if (!producer || producer->operands.size() != 1)
+          continue;
+        const auto *place =
+            function.body.findPlace(producer->operands.front().place);
+        if (!place || place->projections.size() != 1 ||
+            place->projections.front().kind !=
+                lang::MirProjectionKind::PackElement)
+          continue;
+        checkedPackResult = true;
+        for (int mutation = 0; mutation < 3; ++mutation) {
+          auto forged = constructedPack.mir;
+          auto *changed = const_cast<lang::MirFunctionInstance *>(
+              forged.findFunctionInstance(function.id));
+          for (auto &changedBlock : changed->body.blocks)
+            for (auto &instruction : changedBlock.instructions) {
+              if (instruction.id == input.id) {
+                if (mutation == 0) {
+                  instruction.lifecycle.front().kind =
+                      lang::MirLifecycleEventKind::Move;
+                  instruction.lifecycle.front().source =
+                      producer->lifecycle.front().source;
+                } else if (mutation == 1) {
+                  instruction.lifecycle.front().source =
+                      *input.preparedParameterDrop;
+                }
+              }
+              if (mutation == 2 && instruction.id == producer->id)
+                instruction.lifecycle.clear();
+            }
+          if (lang::verifyMirProgram(forged).valid()) {
+            std::cerr << "constructed pack result lost its unique transfer "
+                         "authority\n";
+            return 1;
+          }
+        }
+      }
+  if (!checkedPackResult) {
+    std::cerr
+        << "constructed pack fixture did not exercise result reparenting\n";
+    return 1;
+  }
   const auto declarationDefaults =
       lang::Frontend().analyze("/tmp/gti-declaration-default.gti", R"(
 class Runner {

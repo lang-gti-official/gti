@@ -5176,7 +5176,7 @@ private:
     // Sequenced evaluations, such as a comma's left operand, complete before
     // the value they precede on every path that reads it.
     for (const HirValueId input : value->sequencedInputs) {
-      emitValue(input);
+      emitValue(input, true);
       if (terminated()) {
         return {};
       }
@@ -5586,7 +5586,7 @@ private:
       return;
     }
     for (const HirValueId input : value->sequencedInputs) {
-      emitValue(input);
+      emitValue(input, true);
       if (terminated()) {
         return;
       }
@@ -5872,6 +5872,18 @@ private:
       if (binding == nullptr)
         return std::nullopt;
       type = binding->info.type;
+    } else if (place.root == MirPlaceRootKind::This) {
+      // The unprojected receiver records the concrete owner type. Field
+      // traversal below then checks the same stored-reference boundary as
+      // for a named carrier, including nested owned fields of the receiver.
+      const auto receiver = std::find_if(
+          output.places.begin(), output.places.end(), [](const MirPlace &root) {
+            return root.root == MirPlaceRootKind::This &&
+                   root.projections.empty();
+          });
+      if (receiver == output.places.end())
+        return std::nullopt;
+      type = receiver->type;
     } else if (place.root == MirPlaceRootKind::Loan) {
       const MirLoan *loan = output.findLoan(place.loan);
       const HirValue *referent =
@@ -6228,6 +6240,26 @@ private:
     if (receiver == nullptr) {
       valid = false;
       return {};
+    }
+    // Transparent place wrappers still denote the substituted value. Keep
+    // their sequenced effects, but do not turn the SSA value into storage
+    // merely to observe it through a receiver.
+    const HirValue *substituted = receiver;
+    while (substituted != nullptr &&
+           !substituted->programConstantSubstitution &&
+           !substituted->operands.empty() &&
+           (substituted->kind == HirValueKind::Grouping ||
+            (substituted->kind == HirValueKind::Binary &&
+             substituted->operation == TokenKind::COMMA))) {
+      substituted = findValue(substituted->operands.back());
+    }
+    if (substituted != nullptr && substituted->programConstantSubstitution) {
+      if (access != AccessMode::ReadOnly) {
+        valid = false;
+        return {};
+      }
+      emitPlaceDependencies(id);
+      return terminated() ? MirOperand{} : valueOperand(substituted->id);
     }
     // A raw-pointer method receiver (`pointer->method()`) is the pointee
     // itself. A field reached through the pointer (`pointer->field.method()`)
@@ -7364,16 +7396,19 @@ private:
     return id;
   }
 
-  [[nodiscard]] bool exactReadonlyCleanupParent(const HirValue &value,
-                                                MirLoanId origin) const {
+  [[nodiscard]] bool exactReadonlyRetainedParent(const HirValue &value,
+                                                 MirLoanId origin) const {
     const auto contract = retainedInitializerLoans.find(value.id);
     const auto *retained =
         contract == retainedInitializerLoans.end() || contract->second == 0
             ? nullptr
             : source.findLoan(contract->second);
     const auto *selected = output.findLoan(origin);
-    if (!retained || !retained->lifecycleBound || retained->parent == 0 ||
-        retained->access != AccessMode::ReadOnly ||
+    // HIR gives every retained carrier its exact readonly parent, including
+    // a plain carrier constructed from a local reference. Cleanup-bearing
+    // carriers use this same relationship; cleanup is not its source.
+    if (!retained || retained->kind != SemanticLoanKind::StoredValue ||
+        retained->parent == 0 || retained->access != AccessMode::ReadOnly ||
         value.borrowAccess != AccessMode::ReadOnly || !selected ||
         selected->access != AccessMode::ReadOnly)
       return false;
@@ -7684,6 +7719,10 @@ private:
         .hirValue = value.id,
         .callSite = value.callPlan ? value.id : 0,
         .intrinsic = value.intrinsic,
+        .intrinsicCallContract =
+            value.intrinsicCallContractProof
+                ? std::optional(value.intrinsicCallContractProof->contract())
+                : std::nullopt,
         .objectLayoutType = value.objectLayoutType,
         .neverReturns = value.neverReturns,
         .noNormalBorrowResult = value.noNormalBorrowResultProof.has_value(),
@@ -8289,6 +8328,21 @@ private:
     }
     MirPlaceId origin =
         call.noNormalBorrowResult ? 0 : borrowOriginPlace(value, originCall);
+    // A mapped reborrow through a receiver's stored reference has no local
+    // binding loan. Its abstract entry still supplies the selected external
+    // permission, including a shared child of an exclusive nested field.
+    if (originLoan == 0 && value.borrowOrigin == BorrowOriginKind::Receiver &&
+        value.info.category == ValueCategory::Value &&
+        value.info.traits.containsBorrowedState &&
+        !value.borrowFields.empty()) {
+      const auto *selected = output.findPlace(origin);
+      const auto *dependency =
+          output.findLoan(storedDependencyForPlace(origin));
+      if (selected && selected->root == MirPlaceRootKind::This &&
+          storedReferenceAccessFor(*selected) && dependency &&
+          dependency->entry && dependency->kind == MirLoanKind::Stored)
+        originLoan = dependency->id;
+    }
     // A reference field of `this` has an abstract entry Stored authority,
     // even though its receiver is not a local reference binding. Preserve
     // that authority when a checked accessor transforms the referent type.
@@ -8439,7 +8493,14 @@ private:
         const bool derivedOriginCarrier =
             kind == MirLoanKind::Stored &&
             (parentAccess == AccessMode::Mutable ||
-             exactReadonlyCleanupParent(value, originLoan) ||
+             exactReadonlyRetainedParent(value, originLoan) ||
+             // A shared view derived from an existing child retains that
+             // checked ancestry during its own value publication, including
+             // a transient result that will be folded into a retained alias.
+             (output.loans[originLoan - 1].kind == MirLoanKind::Stored &&
+              output.loans[originLoan - 1].parent != 0 &&
+              parentAccess == AccessMode::ReadOnly &&
+              value.borrowAccess == AccessMode::ReadOnly) ||
              (output.loans[originLoan - 1].kind == MirLoanKind::Stored &&
               isLifecycleBoundBorrowCarrier(value.info.type)) ||
              (output.loans[originLoan - 1].kind == MirLoanKind::Stored &&
@@ -8456,6 +8517,13 @@ private:
              (output.loans[originLoan - 1].kind == MirLoanKind::Parameter &&
               isLifecycleBoundBorrowCarrier(value.info.type) &&
               value.borrowArguments.empty() && value.borrowFields.size() <= 1 &&
+              value.borrowAccess == AccessMode::ReadOnly) ||
+             // A checked text result tied to a reference-formal carrier
+             // retains that physical borrow as well as its external owners.
+             (output.loans[originLoan - 1].kind == MirLoanKind::Parameter &&
+              output.loans[originLoan - 1].storedDependency != 0 &&
+              (value.info.type.kind == SemanticType::StringView ||
+               value.info.type.kind == SemanticType::CString) &&
               value.borrowAccess == AccessMode::ReadOnly) ||
              (output.loans[originLoan - 1].kind == MirLoanKind::CallResult &&
               value.borrowAccess == AccessMode::ReadOnly));
@@ -8496,16 +8564,26 @@ private:
                   retainedContract->second == 0
               ? nullptr
               : source.findLoan(retainedContract->second);
+      const bool textShellContract =
+          shellContract &&
+          shellContract->kind == SemanticLoanKind::StoredValue &&
+          shellContract->designatedFields.empty() &&
+          shellContract->additionalDependencies.empty() &&
+          shellContract->storedDependency != 0 && value.borrowFields.empty() &&
+          value.borrowArguments.empty() &&
+          (value.info.type.kind == SemanticType::StringView ||
+           value.info.type.kind == SemanticType::CString);
       const HirValue *shellArgument =
           (value.constructorTarget || value.functionTarget) &&
                   value.borrowOrigin == BorrowOriginKind::Argument &&
                   value.borrowArgument < arguments.size()
               ? findValue(arguments[value.borrowArgument])
-          : storesCarrierReference(value) && receiverValue(value)
+          : (storesCarrierReference(value) || textShellContract) &&
+                  receiverValue(value)
               ? findValue(*receiverValue(value))
               : nullptr;
       const bool shellReferenceInput =
-          storesCarrierReference(value) ||
+          storesCarrierReference(value) || textShellContract ||
           (value.borrowOrigin == BorrowOriginKind::Argument &&
            value.borrowArgument < value.parameterTypes.size() &&
            value.parameterTypes[value.borrowArgument].kind ==
@@ -8601,6 +8679,20 @@ private:
         recordLoanIdentity(loan, *shellContract);
       } else if (textShellOwner != 0) {
         output.loans[loan - 1].storedDependency = textShellOwner;
+      } else if (kind == MirLoanKind::Stored &&
+                 (value.info.type.kind == SemanticType::StringView ||
+                  value.info.type.kind == SemanticType::CString) &&
+                 value.borrowOrigin == BorrowOriginKind::Argument &&
+                 value.borrowArgument < arguments.size() &&
+                 findValue(arguments[value.borrowArgument]) != nullptr &&
+                 findValue(arguments[value.borrowArgument])
+                     ->storedReferenceAccess) {
+        // A copied text value relayed from a stored reference field keeps
+        // that field as its exact call origin and its external entry owner
+        // as a separate dependency. Publishing a local must not flatten the
+        // selected field into the receiver's carrier shell.
+        output.loans[loan - 1].storedDependency =
+            storedDependencyForPlace(origin);
       } else if (kind == MirLoanKind::Stored && shellArgument != nullptr &&
                  (shellArgument->info.traits.containsBorrowedState ||
                   storesCarrierReference(value)) &&
@@ -8614,6 +8706,14 @@ private:
         // the physical field address stored by the adapter.
         output.loans[loan - 1].storedDependency =
             storedDependencyForPlace(origin);
+        // The result borrows the physical carrier shell. Its external
+        // authority is a separate dependency, not also a parent reborrow
+        // of that same authority. This applies to shared retained carriers
+        // as well as exclusive ones.
+        if (output.loans[loan - 1].parent != 0 &&
+            output.loans[loan - 1].parent ==
+                output.loans[loan - 1].storedDependency)
+          output.loans[loan - 1].parent = 0;
       } else if (shellReference) {
         output.loans[loan - 1].storedDependency =
             storedDependencyForPlace(origin);
@@ -8711,8 +8811,23 @@ private:
           const auto source = borrowOriginPlace(selected, originCall);
           if (source == 0)
             valid = false;
+          MirLoanId inputParent = 0;
+          if (mapping.origin == BorrowOriginKind::Argument &&
+              mapping.parameter < originCall.operands.size() &&
+              mapping.parameter < value.parameterTypes.size() &&
+              value.parameterTypes[mapping.parameter].kind ==
+                  SemanticType::Reference &&
+              mapping.sourceFields.empty()) {
+            const auto inherited =
+                operandLoan(originCall.operands[mapping.parameter]);
+            const auto *authority = output.findLoan(inherited);
+            if (authority && authority->kind == MirLoanKind::CallResult &&
+                sameBorrowSource(authority->source, source))
+              inputParent = inherited;
+          }
           published.additionalDependencies.push_back(
               {.source = source,
+               .parent = inputParent,
                .designatedFields = mapping.resultFields,
                .access = mapping.access});
         }
@@ -9487,7 +9602,7 @@ private:
       // from an overlapping source place (or from the constructor spelling).
       if (originLoan != 0 && originLoan <= output.loans.size() &&
           (output.loans[originLoan - 1].access == AccessMode::Mutable ||
-           exactReadonlyCleanupParent(value, originLoan) ||
+           exactReadonlyRetainedParent(value, originLoan) ||
            (output.loans[originLoan - 1].kind == MirLoanKind::Stored &&
             output.loans[originLoan - 1].entry &&
             isLifecycleBoundBorrowCarrier(value.info.type)))) {
@@ -10626,7 +10741,7 @@ private:
                                  clonePlace(placeForValue(source), value));
   }
 
-  void emitConditional(const HirValue &value) {
+  void emitConditional(const HirValue &value, bool discardResult = false) {
     if (value.operands.size() != 3) {
       valid = false;
       return;
@@ -10645,7 +10760,8 @@ private:
     const std::vector<Scope> incomingScopes = scopes;
     const std::vector<TemporaryDrop> incomingTemporaryDrops = temporaryDrops;
     const auto incomingTransferEndpoints = callTransferredLoanEndpoints;
-    const bool hasResult = value.info.type.kind != SemanticType::Void;
+    const bool hasResult =
+        !discardResult && value.info.type.kind != SemanticType::Void;
     const bool borrowedResult =
         hasResult && value.info.category == ValueCategory::Place;
     // A reference join currently has exactly one normally completing arm.
@@ -10721,7 +10837,7 @@ private:
         }
         (void)appendInstruction(std::move(initialize));
       } else {
-        emitValue(arm);
+        emitValue(arm, true);
       }
       completesNormally = !terminated();
       if (!completesNormally) {
@@ -11315,19 +11431,19 @@ private:
     terminate(endpoint);
   }
 
-  void emitValue(HirValueId id) {
+  void emitValue(HirValueId id, bool discardResult = false) {
     if (terminated()) {
       return;
     }
-    emitValueImpl(id);
+    emitValueImpl(id, discardResult);
     finishTerminalFullExpression(id);
   }
 
-  void emitValueImpl(HirValueId id) {
+  void emitValueImpl(HirValueId id, bool discardResult) {
     // HIR nests one result region per macro expansion; its depth is bounded
     // by CompileLimits::macroDepth rather than by written syntax.
     if (nativeStackNearlyExhausted())
-      return onFreshNativeStack([&] { emitValueImpl(id); });
+      return onFreshNativeStack([&] { emitValueImpl(id, discardResult); });
     if (id == 0 || emittedValues.contains(id)) {
       return;
     }
@@ -11350,11 +11466,28 @@ private:
     }
 
     for (const HirValueId input : value->sequencedInputs) {
-      emitValue(input);
+      emitValue(input, true);
       if (terminated()) {
         emittedValues.insert(id);
         return;
       }
+    }
+
+    // Discarding a grouping or comma also discards its yielded expression.
+    // Calls still create their ordinary result temporaries, but a discarded
+    // conditional must not manufacture an owning copy of an assignment result.
+    if (discardResult && value->kind == HirValueKind::Grouping &&
+        value->operands.size() == 1) {
+      emitValue(value->operands.front(), true);
+      emittedValues.insert(id);
+      return;
+    }
+    if (discardResult && value->kind == HirValueKind::Binary &&
+        value->operation == TokenKind::COMMA && value->operands.size() == 2) {
+      emitValue(value->operands.front(), true);
+      emitValue(value->operands.back(), true);
+      emittedValues.insert(id);
+      return;
     }
 
     if (value->kind == HirValueKind::Propagation) {
@@ -11672,7 +11805,7 @@ private:
       return;
     }
     if (value->kind == HirValueKind::Conditional) {
-      emitConditional(*value);
+      emitConditional(*value, discardResult);
       return;
     }
     if (value->kind == HirValueKind::ScopedResult) {
@@ -11701,7 +11834,7 @@ private:
             isPlaceExpression(left->kind))
           emitPlaceDependencies(left->id);
         else
-          emitValue(left->id);
+          emitValue(left->id, true);
         if (terminated()) {
           return;
         }
@@ -13707,7 +13840,7 @@ private:
         const std::vector<Scope> incomingScopes = scopes;
         const std::vector<TemporaryDrop> incomingTemporaryDrops =
             temporaryDrops;
-        emitValue(*statement->value);
+        emitValue(*statement->value, true);
         endFullExpressionLoans(incomingScopes);
         emitTemporaryDrops(incomingTemporaryDrops, *statement->value,
                            statement->id);
@@ -13928,6 +14061,17 @@ private:
         operands.push_back(std::move(initializer));
         if (binding != nullptr && binding->info.traits.containsBorrowedState) {
           retainedLoan = loanForValue(*statement.value);
+          const auto *value = findValue(*statement.value);
+          if (retainedLoan == 0 && value != nullptr &&
+              value->info.traits.copyable &&
+              (binding->info.type.kind == SemanticType::StringView ||
+               binding->info.type.kind == SemanticType::CString)) {
+            // A value read through a stored text reference retains that
+            // reference's external owner, just as a direct return does. The
+            // projected Load proves which entry supplied the local copy.
+            retainedLoan =
+                storedDependencyForPlace(placeForValue(*statement.value));
+          }
         }
       }
     }
@@ -14776,7 +14920,7 @@ private:
     if (statement.increment) {
       const std::vector<Scope> incrementScopes = scopes;
       const std::vector<TemporaryDrop> incrementTemporaryDrops = temporaryDrops;
-      emitValue(*statement.increment);
+      emitValue(*statement.increment, true);
       endFullExpressionLoans(incrementScopes);
       emitTemporaryDrops(incrementTemporaryDrops, *statement.increment,
                          statement.id);
@@ -16138,10 +16282,13 @@ private:
                 retainedLoan.entry && !retainedLoan.designatedFields.empty();
             const bool exactDynamicTextEntry =
                 retainedLoan.kind == MirLoanKind::Stored &&
-                retainedLoan.entry && retainedLoan.designatedFields.empty() &&
+                retainedLoan.designatedFields.empty() &&
                 (value->info.type.kind == SemanticType::StringView ||
                  value->info.type.kind == SemanticType::CString) &&
                 value->info.type.kind == output.returnType.kind;
+            // Text is the produced value, not the representation of its
+            // retained owner. Preserve that SSA value even when the owner is
+            // itself a carrier reached through a physical parameter loan.
             if ((exactStoredCarrierEntry || exactDynamicTextEntry) &&
                 returnedValue == 0) {
               valid = false;

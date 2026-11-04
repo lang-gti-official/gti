@@ -2040,6 +2040,48 @@ int main() { Active value{}; return 0; }
   session.verify();
 }
 
+void testBorrowedDispatchRegressions() {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+  for (const auto *fixture :
+       {"llvm_forwarded_base_views", "llvm_retained_readonly_receivers"}) {
+    const auto frontend =
+        Frontend({.requireEntryPoint = true,
+                  .lowerReachableOnly = true,
+                  .lowerLibraryReachableOnly = true,
+                  .trustedBodies = TrustedBodyAnalysis::Reachable})
+            .analyze(root / "tests/fixtures" / (std::string(fixture) + ".gti"),
+                     std::nullopt, {root / "stdlib/prelude.gti"}, {},
+                     {root / "stdlib"});
+    expect(frontend.canGenerateCode(),
+           std::string(fixture) + " keeps its valid source and MIR contract");
+    if (!frontend.canGenerateCode())
+      continue;
+    std::vector<LoweredProgramIssue> issues;
+    const auto input = verifiedLoweredProgram(
+        gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+    expect(input.has_value(),
+           std::string(fixture) + " seals its lowered program");
+    if (!input)
+      continue;
+    const auto admission = planLlvmAdmission(*input);
+    expect(admission.admitted(),
+           std::string(fixture) +
+               " admits exact borrowed dispatch: " + admission.limitation());
+    if (!admission.admitted())
+      continue;
+    Session session(*input, {});
+    if (std::string_view(fixture) == "llvm_forwarded_base_views") {
+      const auto &derived = named(session.program(), "Derived");
+      const auto &base = named(session.program(), "Base");
+      expect(session.layouts().baseSubobject(derived.type, base.type).offset !=
+                 0,
+             "plain base alias fixture requires a nonzero original adjustment");
+    }
+    lowerScalarProgram(session, admission);
+    session.verify();
+  }
+}
+
 void testReferencePublication() {
   const auto frontend = Frontend().analyze("llvm-reference-publication.gti", R"(
 interface Front { int front(); };
@@ -4946,6 +4988,7 @@ int main() { return 0; }
   testCleanupCompositionProofs();
   testDispatchAdmissionBinding();
   testReferencePublication();
+  testBorrowedDispatchRegressions();
   testOrdinaryTransferPlacement();
   testFreshConstructionPlanning();
   testFreshTransferPlanning();

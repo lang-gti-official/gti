@@ -636,15 +636,35 @@ public:
   DeclarationCollector(const SemanticModel &semantics, const TargetInfo &target,
                        const HirProgram &hir)
       : semantics_(semantics), target_(target), hir_(hir) {
+    // Intrinsics have no executable function instance. Their selected source
+    // declaration still belongs to the sealed inventory when a reachable HIR
+    // call carries its semantic control contract.
+    const auto retainContracts = [&](const HirBody &body) {
+      for (const auto &value : body.values)
+        if (value.intrinsicCallContractProof)
+          functions_.insert(
+              value.intrinsicCallContractProof->contract().declaration());
+    };
+    retainContracts(hir.module());
     for (const HirClassInstance &instance : hir.classInstances()) {
       classes_.insert(instance.declaration);
+      retainContracts(instance.fieldInitializers);
+      retainContracts(instance.staticFieldInitializers);
     }
     for (const HirFunctionInstance &instance : hir.functionInstances()) {
       functions_.insert(instance.declaration);
+      retainContracts(instance.body);
     }
     for (const HirConstructorInstance &instance : hir.constructorInstances()) {
       constructors_.insert(instance.declaration);
+      retainContracts(instance.body);
     }
+    for (const auto &instance : hir.destructorInstances())
+      retainContracts(instance.body);
+    for (const auto &instance : hir.lambdaInstances())
+      retainContracts(instance.body);
+    for (const auto &storage : hir.threadLocalStorage())
+      retainContracts(storage.initializer);
   }
 
   [[nodiscard]] std::vector<LoweredDeclaration>
@@ -968,6 +988,7 @@ private:
             .internalLinkage = info->internalLinkage,
             .constexprFunction = info->constexprFunction,
             .requiresUnsafe = info->requiresUnsafe,
+            .controlContract = semantics_.functionControlContract(info->id),
             .neverReturns = info->neverReturns,
             .tracksCaller = info->tracksCaller,
             .threadConfinedCallback = info->threadConfinedCallback,

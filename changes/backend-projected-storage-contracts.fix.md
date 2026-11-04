@@ -1,0 +1,1 @@
+Fix C++ move assignment into an owning field reached through an indexed mutable reference, LLVM vector storage of mutex-containing values, and caller-location propagation from explicitly tracked trusted intrinsics.

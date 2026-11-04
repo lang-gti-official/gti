@@ -1,0 +1,1 @@
+Check every formatting argument against `formattable` at the public formatting, printing, or panic call. Set swaps now state their relocatable comparator/hash/equality requirements at the API boundary, avoiding errors inside container implementation methods.

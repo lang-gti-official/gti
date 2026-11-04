@@ -547,6 +547,31 @@ class Queue(Repositories):
         self.assertEqual(report["rebased"], [stuck["number"]])
         self.assertEqual(self.api.labels(stuck["number"]), [rollup.NEVER])
 
+    def test_a_rollup_that_no_longer_merges_with_main_is_closed_for_recomposition(self):
+        first = self.member("first", files={"shared.txt": "first\n"})
+        second = self.member("second", ready="2026-10-29T02:00:00Z")
+        report, pr = self.composed()
+        self.assertEqual([m["pr"] for m in report["members"]], [first["number"], second["number"]])
+        # main moves under the rollup in a way that conflicts with its tree.
+        git(self.dev, "switch", "-q", "-C", "main", "origin/main")
+        (self.dev / "shared.txt").write_text("main\n")
+        git(self.dev, "add", "shared.txt")
+        git(self.dev, "commit", "-q", "-m", "main moves")
+        git(self.dev, "push", "-q", "origin", "HEAD:refs/heads/main")
+        report = self.bot().reconcile()
+        self.assertEqual(report["stale"], [pr["number"]])
+        self.assertEqual(self.api.prs[pr["number"]]["state"], "closed")
+        self.assertIn("no longer merges with `main`", self.api.prs[pr["number"]]["comments"][-1]["body"])
+        # The conflicting member is flagged; the clean one is free for the next rollup.
+        self.assertEqual(report["conflicting"], [first["number"]])
+        self.assertEqual(self.api.labels(first["number"]), [rollup.MAYBE, rollup.REBASE])
+        self.assertEqual(self.api.labels(second["number"]), [rollup.MAYBE])
+        # One clean member is left, so compose queues it alone rather than rolling it up.
+        recomposed = self.bot().compose()
+        self.assertEqual(recomposed["enqueued"], [second["number"]])
+        self.assertEqual({row["pr"]: row["reason"] for row in recomposed["skipped"]},
+                         {first["number"]: "conflicts with main"})
+
     def test_a_failed_rollup_is_closed_and_members_queue_alone(self):
         (first, second), pr = self.rollup()
         self.bot().enqueue()
@@ -665,6 +690,27 @@ class Trigger(unittest.TestCase):
                         unittest.mock.patch.dict(os.environ, {"GH_TOKEN": "read-only"}):
                     self.assertEqual(rollup.main(["authorize", "--event-name", name, "--event", str(path)]), 0)
                 self.assertEqual(output.getvalue().strip(), expected)
+
+    def test_authorize_command_reads_a_ci_completion_payload(self):
+        # Regression: the command once loaded the payload and an API client only
+        # for issue_comment, so every CI-completion wakeup was refused and the
+        # bot ran only on its sporadically delivered cron and on /rollup comments.
+        api = unittest.mock.Mock()
+        api.request.return_value = {"id": 12, "path": ".github/workflows/ci.yml"}
+        canonical = {"action": "completed", "repository": dict(REPO),
+                     "workflow_run": {"workflow_id": 12, "status": "completed", "conclusion": "failure"}}
+        foreign = dict(canonical, workflow_run={"workflow_id": 13, "status": "completed", "conclusion": "success"})
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "event.json"
+            for event, expected in ((canonical, "authorized=true"), (foreign, "authorized=false")):
+                path.write_text(json.dumps(event))
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output), \
+                        unittest.mock.patch.dict(os.environ, {"GH_TOKEN": "read-only"}), \
+                        unittest.mock.patch.object(rollup.workflow, "GitHub", return_value=api):
+                    self.assertEqual(rollup.main(["authorize", "--event-name", "workflow_run", "--event", str(path)]), 0)
+                self.assertEqual(output.getvalue().strip(), expected)
+        api.request.assert_called_with("GET", "/actions/workflows/ci.yml")
 
     def test_missing_app_token_fails_clearly_and_never_uses_github_token(self):
         for command in ("compose", "enqueue", "reconcile"):
