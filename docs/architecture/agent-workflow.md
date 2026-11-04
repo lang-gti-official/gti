@@ -614,6 +614,21 @@ exactly once. Missing, stale, failed or timed-out case evidence fails the gate.
 Compiler sanitizer jobs build only the targets of `compiler_pipeline`; library
 jobs retain the library subset targets. This avoids filling runner disks with
 unexecuted sanitizer library binaries in compiler jobs.
+The LLVM backend sanitizer job runs the backend's test binaries and its cheap
+control harnesses (`GTI_LLVM_SANITIZER_TESTS` in `full-validation.yml`) in the
+same sanitized tree under the LLVM-only backend policy. The `llvm_*` execution
+harnesses compile and run dozens of programs each; under ASan they cost 20-30
+hours of test time in total (measured 2026-11-03: the thread, placement and
+memory execution harnesses alone took 41-68 minutes each on six cores), and
+several bound their compiler subprocesses at a fixed 90 seconds that no timeout
+scale reaches, so they remain native integration gates. Any archive that `gti`
+links into a generated program is built uninstrumented in a sanitized tree
+(`gti_program_component` in CMake: the runtime archive and the cleanup oracle
+component): such archives are linked by the host toolchain, and runtime code
+inside a generated program is sanitized through the driver's instrumentation
+plan, which recompiles the runtime units with matching flags. Building `gti`
+also builds the Tree-sitter grammar module, so a tree that built only its
+tests' targets can still stage the `gti_toolchain` install component.
 This avoids assigning the entire lifecycle suite to one library shard without
 removing sanitizer coverage or increasing timeouts. Runner termination still
 fails full validation; this scheduling change does not claim to repair host loss.
@@ -1040,9 +1055,11 @@ PR that waited while `main` moved otherwise vanishes from every pipeline (on
 pool and the next `compose` rebuilds from current heads instead of leaving
 them "busy" behind a rollup the queue would drop without a verdict. The census baselines
 (`tests/mir_census_baseline.json`, `tests/lowered_program_census_baseline.json`)
-store per-example counts only, never totals, and the LLVM readiness provider
-inventories hash example and stdlib sources rather than those manifest files,
-so two PRs conflict there only when they change the same example. A single eligible member enters the
+store per-example counts only, never totals, so two PRs conflict there only
+when they change the same example. The LLVM readiness baseline pins no provider
+member count or inventory digest: the audit derives both from the tree on every
+run (a pinned copy went stale whenever two PRs that each added a stdlib-surface
+case or example merged in sequence, and the merge queue does not run the audit). A single eligible member enters the
 merge queue alone, so it cannot wait indefinitely for a second PR. With no
 eligible members it does nothing. Otherwise it commits `.gti-validation/batches/rollup-<date>-<n>.json`
 (the batch manifest schema that `validation_checks.py full` checks) and opens
@@ -1077,7 +1094,10 @@ and cancelled CI runs also wake reconciliation; they do not qualify a PR for
 integration. Admission requires the latest CI run for that exact head to finish
 successfully and its own matching check suite's gate to pass; an older green
 draft gate cannot substitute for pending ready-for-review validation. The
-scheduled trigger remains a recovery fallback.
+scheduled trigger remains a recovery fallback only: GitHub delivers a
+half-hourly schedule sporadically (on 2026-11-03 it fired twice in a day), so
+CI completion is the bot's working cadence and a dispatch is the way to force a
+tick.
 
 Automation-only and source-only GTI stdlib local owning checks may use
 `verify --focused`, which checks the actual diff and does not reserve a
@@ -1178,6 +1198,19 @@ its unchanged, clean checkout, retaining checkpoint refs and evidence. Modified
 or ignored files are preserved. An exited worker is reported as interrupted;
 inspect its retained log and any remote run before resubmitting rather than
 automatically launching a duplicate uncertain run.
+
+Failures are reported, because submission success means only queued. A
+worker that ends `failed` or `stale` posts one comment on the original PR with
+the reason, any unresolved candidate paths, its log path and the resubmit
+command; a hidden marker keeps it to one comment per submission. The comment
+changes no label, review or check, and a comment API failure is recorded as
+`report_error` without changing the outcome. A worker that died cannot report
+itself, so `status` attaches `preview_attention` to every task whose latest
+submission is failed, stale or interrupted, and every helper command prints a
+one-line stderr notice naming them. A later submission, delivery of the task
+(merged, synced, completed or abandoned) or a fetched `origin/preview` that
+contains the submitted head resolves the entry. Agents relay that notice to
+the user rather than treating a queued submission as admitted.
 
 The lower-level `prepare`, `verify`, `publish`, `seed`, `resume` and `revert`
 commands remain for maintainer recovery, not mandatory feature-delivery steps.

@@ -153,6 +153,8 @@ if(Python3_Interpreter_FOUND)
     mixed_constructor_parameter_runtime
     moved_passive_constructor_field_runtime
     deferred_bound_field_runtime
+    borrowed_field_publication_runtime owning_expression_transfers
+    llvm_borrowed_dispatch_regressions
     passive_text_view_class_runtime
     passive_function_item_class_runtime
     passive_class_move_and_copy_runtime

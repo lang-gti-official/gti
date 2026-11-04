@@ -1288,7 +1288,14 @@ public streaming or socket abstraction.
 `std.json` needs no runtime or compiler-private capability. Its strict
 scanner, reflection-driven encoding and decoding, exact number handling,
 deterministic serializer, limits, structured errors and explicit `codec<T>`
-customization are all GTI source over `std.meta`. This is an intentional
+customization are all GTI source over `std.meta`. Dynamic `json::value` uses
+an ordinary owning payload enum, vectors and sorted object members; parsing
+selects alternatives at runtime and does not need reflection. Compile-time
+reflection still maps typed structs, including fields containing dynamic
+subtrees. The source generic dispatch selects these library types without any
+compiler recognition. The dynamic scanner shares the existing grammar helpers,
+preserves numeric range checks and limits, and avoids copying or rescanning each
+complete subtree at every level. This is an intentional
 proof that a format library can remain portable policy once compile-time
 reflection, `std::meta::construct` and the ordinary string and vector
 ownership primitives are sufficient. String-owning errors are ordinary source

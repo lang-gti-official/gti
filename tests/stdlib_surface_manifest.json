@@ -37,7 +37,7 @@
     "stdlib/std/http.gti": "7810cf7acaee803670f346e0103fa6c0cdfca62aca8edda538cfa880e8ae3521",
     "stdlib/std/io.gti": "8c28bff6f539a82e47f507db2cff429e74307b0dbe6128de48c0b47fd329c0b3",
     "stdlib/std/iterator.gti": "586855579c50031612b0136d001e21dd31c4387dcf115c9fe4485bd12d2577e3",
-    "stdlib/std/json.gti": "5ad218e3421387cdd597ae1b7110256cbc37485ee3e4ecbbc2bec5d3b6cf6607",
+    "stdlib/std/json.gti": "4a5f04c2245c0b2fc24428eeeccb03a54a503693ebabe5a489dee1845ab4c38f",
     "stdlib/std/list.gti": "d8c0a951c3ef5a9fefb8fd69882c8d2b313c9b502d32df906e8e38da809f7923",
     "stdlib/std/map.gti": "73bbf9e8c529c923f3391b94b83e330b90c02b933a7b2cfd9f3c171ee01a6955",
     "stdlib/std/memory.gti": "cf4a99569c5e3d3ddd352ae4a6019586a64ff5fe27e2d637a6bf1c91e4bd62c1",
@@ -1502,6 +1502,21 @@
       "id": "json-config",
       "mode": "run",
       "source": "tests/fixtures/json_config.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "json-dynamic",
+      "mode": "run",
+      "source": "tests/fixtures/json_dynamic.gti",
+      "backend": "llvm",
       "optimizations": [
         "O0",
         "O3"
@@ -4562,14 +4577,19 @@
         "std::json::error::prepend_index",
         "std::json::error::prepend_key",
         "std::json::ignore",
+        "std::json::member",
         "std::json::name",
+        "std::json::object",
         "std::json::read_file",
+        "std::json::value",
+        "std::json::value_kind",
         "std::json::write_file",
         "std::json::write_file_pretty"
       ],
       "case_ids": [
         "json",
         "json-config",
+        "json-dynamic",
         "json-owning-error-backend",
         "json-parity",
         "owned-error-pipelines"
@@ -4579,16 +4599,20 @@
         "name and ignore attributes",
         "every errc through decode failures with offsets, JSON Pointer paths and line/column",
         "strict strings: UTF-8 validation, escapes, surrogate pairs, control characters",
-        "pretty printing and decode limits"
+        "pretty printing and decode limits",
+        "owned dynamic scalar, array and object values, cloning, mutation, direct object codecs and dynamic fields in reflected structs"
       ],
       "evidence": [
         "docs/language/json.md",
         "examples/141-reflected-json.gti",
+        "examples/186-dynamic-json.gti",
         "stdlib/std/json.gti",
         "tests/fixtures/json_config.gti",
+        "tests/fixtures/json_dynamic.gti",
         "tests/fixtures/json_parity.gti",
         "tests/fixtures/stdlib_owned_error_pipelines.gti",
         "tests/fixtures/stdlib_surface_json.gti",
+        "tests/json_dynamic_runtime_test.py",
         "tests/reflection_runtime_test.py"
       ]
     },

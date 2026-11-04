@@ -1,12 +1,13 @@
 export module json;
 
-// <std/json> -- JSON text for application types, through reflection.
+// <std/json> -- JSON text for typed application data and owned dynamic trees.
 //
-// Every encoding and decoding rule is ordinary GTI written over <std/meta>;
-// no JSON type or operation has compiler recognition. `encode` walks a
+// Every encoding and decoding rule is ordinary GTI; typed data uses <std/meta>.
+// No JSON type or operation has compiler recognition. For typed data, `encode` walks a
 // value's fields and writes text; `decode` scans text into per-member byte
 // ranges and builds the value with `std::meta::construct`, so no object exists
-// before every field has a value and constructors are never bypassed.
+// before every field has a value and constructors are never bypassed. Dynamic
+// `value` trees use runtime tagged values; `object` owns mixed-value members.
 //
 // Field keys are the declared names unless `[[std::json::name("key")]]`
 // renames one; `[[std::json::ignore]]` leaves a field out of the
@@ -22,7 +23,7 @@ export module json;
 // (encoding only), integral enums (by enumerator name), std::optional<T>
 // (`null` or an absent member), std::vector<E>, std::map and
 // std::unordered_map with std::string keys (objects with dynamic keys),
-// nested reflectable structs, and any type with a
+// std::json::value and std::json::object, nested reflectable structs, and any type with a
 // `std::json::codec<T>` specialization. Anything else is
 // rejected where it is used.
 //
@@ -37,6 +38,7 @@ import std.format;
 import std.map;
 import std.meta;
 import std.optional;
+import std.panic;
 import std.string;
 import std.unordered_map;
 import std.vector;
@@ -172,6 +174,251 @@ export [[attribute]] struct defaulted {};
 /// methods, the primary has none.
 export class codec<T> {
 public:
+};
+
+/// The active alternative of an owned dynamic JSON value.
+export enum class value_kind {
+  null_value, boolean, signed_integer, unsigned_integer, floating, string, array, object
+};
+
+/// One object member. Keys are read-only through object iteration.
+export struct member {
+  std::string first;
+  mut value second;
+  member(std::string key, value item) : first(std::move(key)), second(std::move(item)) {}
+  member(member& other) = delete;
+  member(member&& other) = default;
+  void replace(value item) mut { this.second = std::move(item); }
+};
+
+/// Sorted, contiguous object members. Lookup is logarithmic; insertion and
+/// erasure move the suffix. No separate node allocation is required.
+export class object {
+  mut std::vector<member> members{};
+  std::size_t position(std::string_view key) {
+    mut std::size_t low = 0;
+    mut std::size_t high = this.members.size();
+    while (low < high) {
+      std::size_t middle = low + (high - low) / std::size_t(2);
+      if (this.members[middle].first.compare(key) < 0) { low = middle + std::size_t(1); }
+      else { high = middle; }
+    }
+    return low;
+  }
+public:
+  object() = default;
+  object(object& other) = delete;
+  object(object&& other) = default;
+  std::size_t size() { return this.members.size(); }
+  bool empty() { return this.members.empty(); }
+  void reserve(std::size_t capacity) mut { this.members.reserve(capacity); }
+  std::vector<member>::const_iterator begin() { return this.members.begin(); }
+  std::vector<member>::sentinel end() { return this.members.end(); }
+  bool contains(std::string_view key) {
+    std::size_t index = this.position(key);
+    return index < this.members.size() && this.members[index].first == key;
+  }
+  value& at(std::string_view key) {
+    std::size_t index = this.position(key);
+    if (index >= this.members.size() || this.members[index].first != key) {
+      std::panic("JSON object key was not found");
+    }
+    return this.members[index].second;
+  }
+  mut value& at_mut(std::string_view key) mut {
+    std::size_t index = this.position(key);
+    if (index >= this.members.size() || this.members[index].first != key) {
+      std::panic("JSON object key was not found");
+    }
+    return this.members[index].second;
+  }
+  void set(std::string key, value item) mut {
+    std::size_t index = this.position(key.view());
+    if (index < this.members.size() && this.members[index].first == key) {
+      this.members[index].replace(std::move(item));
+    } else {
+      this.members.insert(index, member(std::move(key), std::move(item)));
+    }
+  }
+  void set(std::string_view key, value item) mut { this.set(std::string(key), std::move(item)); }
+  [[discardable]] bool erase(std::string_view key) mut {
+    std::size_t index = this.position(key);
+    if (index >= this.members.size() || this.members[index].first != key) { return false; }
+    this.members.erase(index);
+    return true;
+  }
+};
+
+namespace detail {
+enum class dynamic_payload {
+  null_value,
+  boolean(bool data),
+  signed_integer(int64_t data),
+  unsigned_integer(uint64_t data),
+  floating(double data),
+  string(std::string data),
+  array(std::vector<value> data),
+  object(std::json::object data)
+};
+}
+
+/// An owned JSON tree. Moving transfers ownership; clone() copies the tree.
+/// Accessors require the matching kind. Wrong-kind access is a checked panic;
+/// container indexing retains the container's checked bounds/key contract.
+export class value {
+  mut detail::dynamic_payload data;
+  value(detail::dynamic_payload data) : data(std::move(data)) {}
+public:
+  value() : data(detail::dynamic_payload::null_value) {}
+  value(bool data) : data(detail::dynamic_payload::boolean(data)) {}
+  value(int32_t data) : data(detail::dynamic_payload::signed_integer(int64_t(data))) {}
+  value(int64_t data) : data(detail::dynamic_payload::signed_integer(data)) {}
+  value(uint32_t data) : data(detail::dynamic_payload::unsigned_integer(uint64_t(data))) {}
+  value(uint64_t data) : data(detail::dynamic_payload::unsigned_integer(data)) {}
+  value(float data) : data(detail::dynamic_payload::floating(double(data))) {}
+  value(double data) : data(detail::dynamic_payload::floating(data)) {}
+  value(std::string_view data) : data(detail::dynamic_payload::string(std::string(data))) {}
+  value(std::string data) : data(detail::dynamic_payload::string(std::move(data))) {}
+  value(std::vector<value> data) : data(detail::dynamic_payload::array(std::move(data))) {}
+  value(std::json::object data) : data(detail::dynamic_payload::object(std::move(data))) {}
+  value(value& other) = delete;
+  value(value&& other) = default;
+
+  static value array() { return value(std::vector<value>()); }
+  static value object() { return value(std::json::object()); }
+
+  value_kind type() {
+    switch (this.data) {
+    case detail::dynamic_payload::null_value: return value_kind::null_value;
+    case detail::dynamic_payload::boolean: return value_kind::boolean;
+    case detail::dynamic_payload::signed_integer: return value_kind::signed_integer;
+    case detail::dynamic_payload::unsigned_integer: return value_kind::unsigned_integer;
+    case detail::dynamic_payload::floating: return value_kind::floating;
+    case detail::dynamic_payload::string: return value_kind::string;
+    case detail::dynamic_payload::array: return value_kind::array;
+    case detail::dynamic_payload::object: return value_kind::object;
+    }
+  }
+  bool is_null() { return this.type() == value_kind::null_value; }
+  bool is_bool() { return this.type() == value_kind::boolean; }
+  bool is_number() {
+    return this.type() == value_kind::signed_integer ||
+           this.type() == value_kind::unsigned_integer || this.type() == value_kind::floating;
+  }
+  bool is_string() { return this.type() == value_kind::string; }
+  bool is_array() { return this.type() == value_kind::array; }
+  bool is_object() { return this.type() == value_kind::object; }
+  bool as_bool() {
+    switch (this.data) {
+    case detail::dynamic_payload::boolean(auto& stored): return stored;
+    default: std::panic("JSON value has the wrong kind");
+    }
+  }
+  int64_t as_int64() {
+    switch (this.data) {
+    case detail::dynamic_payload::signed_integer(auto& stored): return stored;
+    default: std::panic("JSON value has the wrong kind");
+    }
+  }
+  uint64_t as_uint64() {
+    switch (this.data) {
+    case detail::dynamic_payload::unsigned_integer(auto& stored): return stored;
+    default: std::panic("JSON value has the wrong kind");
+    }
+  }
+  double as_double() {
+    switch (this.data) {
+    case detail::dynamic_payload::floating(auto& stored): return stored;
+    default: std::panic("JSON value has the wrong kind");
+    }
+  }
+  std::string& as_string() {
+    switch (this.data) {
+    case detail::dynamic_payload::string(auto& stored): return stored;
+    default: std::panic("JSON value has the wrong kind");
+    }
+  }
+  mut std::string& as_string_mut() mut {
+    switch (this.data) {
+    case detail::dynamic_payload::string(mut auto& stored): return stored;
+    default: std::panic("JSON value has the wrong kind");
+    }
+  }
+  std::vector<value>& as_array() {
+    switch (this.data) {
+    case detail::dynamic_payload::array(auto& stored): return stored;
+    default: std::panic("JSON value has the wrong kind");
+    }
+  }
+  mut std::vector<value>& as_array_mut() mut {
+    switch (this.data) {
+    case detail::dynamic_payload::array(mut auto& stored): return stored;
+    default: std::panic("JSON value has the wrong kind");
+    }
+  }
+  std::json::object& as_object() {
+    switch (this.data) {
+    case detail::dynamic_payload::object(auto& stored): return stored;
+    default: std::panic("JSON value has the wrong kind");
+    }
+  }
+  mut std::json::object& as_object_mut() mut {
+    switch (this.data) {
+    case detail::dynamic_payload::object(mut auto& stored): return stored;
+    default: std::panic("JSON value has the wrong kind");
+    }
+  }
+
+  /// Appends an owned element; requires an array.
+  void push_back(value element) mut {
+    this.as_array_mut().push_back(std::move(element));
+  }
+  /// Inserts or replaces a member; requires an object. The key is owned.
+  void set(std::string key, value element) mut {
+    this.as_object_mut().set(std::move(key), std::move(element));
+  }
+  /// Copies a borrowed key into the object; the value is still moved.
+  void set(std::string_view key, value element) mut {
+    this.set(std::string(key), std::move(element));
+  }
+  value& at(std::size_t index) { return this.as_array()[index]; }
+  mut value& at_mut(std::size_t index) mut { return this.as_array_mut()[index]; }
+  value& at(std::string& key) { return this.as_object().at(key.view()); }
+  mut value& at_mut(std::string& key) mut { return this.as_object_mut().at_mut(key.view()); }
+  bool contains(std::string& key) { return this.as_object().contains(key.view()); }
+  value& at(std::string_view key) { return this.as_object().at(key); }
+  mut value& at_mut(std::string_view key) mut { return this.as_object_mut().at_mut(key); }
+  bool contains(std::string_view key) { return this.as_object().contains(key); }
+
+  /// Consumes this value and transfers its object storage without cloning.
+  std::json::object take_object() && {
+    switch (std::move(this.data)) {
+    case detail::dynamic_payload::object(stored): return std::move(stored);
+    default: std::panic("JSON value has the wrong kind");
+    }
+  }
+
+  /// Recursively copies owned text and children; no subtree is shared.
+  value clone() {
+    switch (this.data) {
+    case detail::dynamic_payload::null_value: return value();
+    case detail::dynamic_payload::boolean(auto& stored): return value(stored);
+    case detail::dynamic_payload::signed_integer(auto& stored): return value(stored);
+    case detail::dynamic_payload::unsigned_integer(auto& stored): return value(stored);
+    case detail::dynamic_payload::floating(auto& stored): return value(stored);
+    case detail::dynamic_payload::string(auto& stored): return value(stored.clone());
+    case detail::dynamic_payload::array(auto& stored):
+      mut std::vector<value> copied{};
+      copied.reserve(stored.size());
+      for (auto& element : stored) { copied.push_back(element.clone()); }
+      return value(std::move(copied));
+    case detail::dynamic_payload::object(auto& stored):
+      mut std::json::object copied{};
+      copied.reserve(stored.size());
+      for (auto& entry : stored) { copied.set(entry.first.clone(), entry.second.clone()); }
+      return value(std::move(copied));
+    }
+  }
 };
 
 namespace detail {
@@ -446,8 +693,51 @@ expected<void, error> append_floating(mut std::string& out, double value) {
   return;
 }
 
+expected<void, error> encode_dynamic_object(mut std::string& out, std::json::object& item, layout& style, std::size_t depth) {
+  if (depth >= std::size_t(128)) {
+    return unexpected(error(errc::nesting_limit, std::size_t(0), std::size_t(0), std::size_t(0)));
+  }
+  out.push_back('{');
+  mut bool first = true;
+  for (auto& entry : item) {
+    if (!first) { out.push_back(','); }
+    first = false;
+    if (style.pretty) { append_indentation(out, style, depth + std::size_t(1)); }
+    ?append_escaped(out, entry.first.view());
+    out.push_back(':');
+    if (style.pretty) { out.push_back(' '); }
+    ?encode_dynamic(out, entry.second, style, depth + std::size_t(1));
+  }
+  if (!first && style.pretty) { append_indentation(out, style, depth); }
+  out.push_back('}');
+  return;
+}
+
+// Runtime dispatch for the dynamic tree; typed values keep their existing
+// compile-time reflection path. Arrays and objects reuse its pretty layout.
+expected<void, error> encode_dynamic(mut std::string& out, value& item, layout& style, std::size_t depth) {
+  if ((item.is_array() || item.is_object()) && depth >= std::size_t(128)) {
+    return unexpected(error(errc::nesting_limit, std::size_t(0), std::size_t(0), std::size_t(0)));
+  }
+  switch (item.type()) {
+  case value_kind::null_value: out.append("null"); return;
+  case value_kind::boolean: out.append(item.as_bool() ? "true" : "false"); return;
+  case value_kind::signed_integer: append_signed(out, item.as_int64()); return;
+  case value_kind::unsigned_integer: append_unsigned(out, item.as_uint64()); return;
+  case value_kind::floating: return append_floating(out, item.as_double());
+  case value_kind::string: return append_escaped(out, item.as_string().view());
+  case value_kind::array: return encode_value(out, item.as_array(), style, depth);
+  case value_kind::object: return encode_dynamic_object(out, item.as_object(), style, depth);
+  }
+  std::panic("Invalid JSON value kind");
+}
+
 expected<void, error> encode_value<F>(mut std::string& out, F& item, layout& style, std::size_t depth) {
-  if constexpr (has_codec<F>()) {
+  if constexpr (std::meta::is_same<F, value>()) {
+    return encode_dynamic(out, item, style, depth);
+  } else if constexpr (std::meta::is_same<F, std::json::object>()) {
+    return encode_dynamic_object(out, item, style, depth);
+  } else if constexpr (has_codec<F>()) {
     codec<F> mapping{};
     return mapping.encode(item, out);
   } else if constexpr (std::meta::is_bool<F>()) {
@@ -1118,6 +1408,84 @@ expected<E, error> decode_enum<E>(std::string_view text, std::size_t begin, std:
   return unexpected(located(errc::invalid_enumerator, text, begin));
 }
 
+// Build dynamic children directly from one scanner. No per-level text copy
+// or repeated traversal of the complete subtree is needed.
+expected<value, error> read_dynamic(mut scanner& cursor, std::size_t depth) {
+  cursor.skip_space();
+  std::size_t begin = cursor.offset;
+  char head = ?cursor.peek();
+  if (head == '"') {
+    mut std::string text{};
+    ?cursor.read_string(text);
+    return value(std::move(text));
+  }
+  if (head == '[' || head == '{') {
+    if (depth >= cursor.max_depth) {
+      return unexpected(cursor.fail(errc::nesting_limit, begin));
+    }
+    bool object = head == '{';
+    mut value result = object ? value::object() : value::array();
+    char closing = object ? '}' : ']';
+    cursor.offset++;
+    cursor.skip_space();
+    if (?cursor.peek() == closing) { cursor.offset++; return std::move(result); }
+    mut std::size_t index = 0;
+    while (true) {
+      mut std::string key{};
+      if (object) {
+        cursor.skip_space();
+        std::size_t key_offset = cursor.offset;
+        ?cursor.read_string(key);
+        if (result.contains(key)) {
+          mut error failure = cursor.fail(errc::duplicate_key, key_offset);
+          failure.prepend_key(key.view());
+          return unexpected(std::move(failure));
+        }
+        cursor.skip_space();
+        ?cursor.expect(':');
+      }
+      mut auto child = read_dynamic(cursor, depth + std::size_t(1));
+      if (!child) {
+        mut error failure = std::move(child).error();
+        if (object) { failure.prepend_key(key.view()); }
+        else { failure.prepend_index(index); }
+        return unexpected(std::move(failure));
+      }
+      if (object) { result.set(std::move(key), std::move(child).value()); }
+      else { result.push_back(std::move(child).value()); }
+      index++;
+      cursor.skip_space();
+      char next = ?cursor.peek();
+      cursor.offset++;
+      if (next == closing) { return std::move(result); }
+      if (next != ',') {
+        return unexpected(cursor.fail(errc::unexpected_character, cursor.offset - std::size_t(1)));
+      }
+    }
+  }
+  ?cursor.skip_any(depth, true);
+  std::size_t end = cursor.offset;
+  if (range_is(cursor.text, begin, end, "null")) { return value(); }
+  if (range_is(cursor.text, begin, end, "true")) { return value(true); }
+  if (range_is(cursor.text, begin, end, "false")) { return value(false); }
+  mut bool integral = true;
+  if (!valid_number(cursor.text, begin, end, integral)) {
+    return unexpected(cursor.fail(errc::invalid_number, begin));
+  }
+  if (!integral) { return value(?decode_floating<double>(cursor.text, begin, end)); }
+  if (head == '-') { return value(?decode_signed<int64_t>(cursor.text, begin, end)); }
+  uint64_t number = ?decode_unsigned<uint64_t>(cursor.text, begin, end);
+  if (number <= uint64_t(9223372036854775807)) { return value(int64_t(number)); }
+  return value(number);
+}
+
+expected<value, error> decode_dynamic(std::string_view text, std::size_t begin, std::size_t end, decode_options& options) {
+  mut scanner cursor{text, begin, end, options.max_depth};
+  value result = ?read_dynamic(cursor, std::size_t(0));
+  ?cursor.finish();
+  return std::move(result);
+}
+
 /// Decodes a value of the type a `type` metaobject names; used for the
 /// argument of a generic container.
 expected<E, error> decode_as<E>(std::meta::type<E> element, std::string_view text, std::size_t begin, std::size_t end, decode_options& options) {
@@ -1176,7 +1544,13 @@ expected<F, error> decode_value<F>(std::string_view text, std::size_t begin, std
   mut std::size_t start = begin;
   mut std::size_t stop = end;
   trim(text, start, stop);
-  if constexpr (has_codec<F>()) {
+  if constexpr (std::meta::is_same<F, value>()) {
+    return decode_dynamic(text, start, stop, options);
+  } else if constexpr (std::meta::is_same<F, std::json::object>()) {
+    value decoded = ?decode_dynamic(text, start, stop, options);
+    if (!decoded.is_object()) { return unexpected(located(errc::type_mismatch, text, start)); }
+    return std::move(decoded).take_object();
+  } else if constexpr (has_codec<F>()) {
     return decode_with_codec<F>(text, start, stop);
   } else if constexpr (std::meta::is_bool<F>()) {
     if (range_is(text, start, stop, "true")) {
@@ -1335,8 +1709,9 @@ expected<T, error> decode_object<T>(std::string_view text, std::size_t begin, st
 
 /// The compact JSON text of `value`. Structs become objects with one member
 /// per field that is not `[[ignore]]`d, keyed by `[[name]]` or the declared
-/// name; see the file comment for every supported type. Fails only for
-/// invalid UTF-8 text and non-finite floating values.
+/// name. Dynamic values preserve their JSON kinds, with object keys in lexical
+/// order. Reports invalid UTF-8, non-finite numbers, or dynamic nesting over
+/// 128 containers; custom codecs can report their own errors.
 export expected<std::string, error> encode<T>(T& value) {
   mut std::string out = std::string("");
   mut detail::layout style{};
@@ -1359,10 +1734,14 @@ export expected<T, error> decode<T>(std::string_view text, decode_options& optio
   if (text.size() > options.max_document_bytes) {
     return unexpected(detail::located(errc::document_too_large, text, std::size_t(0)));
   }
-  mut detail::scanner cursor{text, std::size_t(0), text.size(), options.max_depth};
-  detail::member root = ?cursor.skip_value(std::string(""), std::size_t(0), false);
-  ?cursor.finish();
-  return detail::decode_value<T>(text, root.begin, root.end, options);
+  if constexpr (std::meta::is_same<T, value>()) {
+    return detail::decode_dynamic(text, std::size_t(0), text.size(), options);
+  } else {
+    mut detail::scanner cursor{text, std::size_t(0), text.size(), options.max_depth};
+    detail::member root = ?cursor.skip_value(std::string(""), std::size_t(0), false);
+    ?cursor.finish();
+    return detail::decode_value<T>(text, root.begin, root.end, options);
+  }
 }
 
 export expected<T, error> decode<T>(std::string_view text) {
