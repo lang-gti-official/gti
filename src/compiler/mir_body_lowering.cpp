@@ -186,7 +186,8 @@ public:
     for (const HirStatement &statement : source.statements) {
       if (statement.value && statement.binding) {
         const auto *binding = findBinding(*statement.binding);
-        if (binding != nullptr && binding->info.retainedLoan != 0)
+        if (binding != nullptr && (binding->info.retainedLoan != 0 ||
+                                   binding->info.traits.containsBorrowedState))
           retainedInitializerLoans.emplace(*statement.value,
                                            binding->info.retainedLoan);
       }
@@ -7404,9 +7405,10 @@ private:
   [[nodiscard]] bool exactReadonlyRetainedParent(const HirValue &value,
                                                  MirLoanId origin) const {
     const auto contract = retainedInitializerLoans.find(value.id);
-    const auto *retained = contract == retainedInitializerLoans.end()
-                               ? nullptr
-                               : source.findLoan(contract->second);
+    const auto *retained =
+        contract == retainedInitializerLoans.end() || contract->second == 0
+            ? nullptr
+            : source.findLoan(contract->second);
     const auto *selected = output.findLoan(origin);
     // HIR gives every retained carrier its exact readonly parent, including
     // a plain carrier constructed from a local reference. Cleanup-bearing
@@ -8564,7 +8566,8 @@ private:
       }
       const auto retainedContract = retainedInitializerLoans.find(value.id);
       const HirLoan *shellContract =
-          retainedContract == retainedInitializerLoans.end()
+          retainedContract == retainedInitializerLoans.end() ||
+                  retainedContract->second == 0
               ? nullptr
               : source.findLoan(retainedContract->second);
       const bool textShellContract =
@@ -9230,10 +9233,18 @@ private:
         // later resurrecting an already retired formal's runtime capability.
         // A distinct retained result has its own semantic endpoint: redirecting
         // the input identity would let the input's last use retire that result.
+        // An initializer entry with zero identity still retains the carrier
+        // in a named binding and must continue the input identity. Absence of
+        // an entry instead identifies an unretained temporary, with its own
+        // full-expression endpoint, even when relayed through another call.
+        // Its physical dependencies still travel with the value; the input's
+        // semantic acknowledgement stays
+        // on the consumed loan instead of following that temporary.
         bool transported = false;
         for (auto &[semantic, currentLoan] : semanticLoans) {
           if (currentLoan == loan &&
-              (resultIdentity == retainedInitializerLoans.end() ||
+              resultIdentity != retainedInitializerLoans.end() &&
+              (resultIdentity->second == 0 ||
                resultIdentity->second == semantic)) {
             currentLoan = publishedLoan;
             transported = true;
@@ -16463,6 +16474,8 @@ private:
   MirLoanId pendingReturnLoan = 0;
   MirDropObligationId pendingReturnDrop = 0;
   std::vector<MirLoanId> constructorPublishedLoans;
+  // A zero identity records a retained borrowed binding without a distinct
+  // semantic endpoint annotation; an absent entry is not a retained binding.
   std::unordered_map<HirValueId, SemanticLoanId> retainedInitializerLoans;
   const MirDefinedFailureEffects &definedFailureEffects;
   bool implicitZeroReturn = false;

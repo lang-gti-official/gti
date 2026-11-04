@@ -3,7 +3,7 @@
   "source_fingerprints": {
     "stdlib/prelude.gti": "ff426a31d12405cd7a6f09ad46cf76c14f7d3b0a1fadef595c6ad7a4d4d3f831",
     "stdlib/std.gti": "6bf76540ce1d32024871a3fce4b9512fd6fd494511f919db63450e2b4796a0f7",
-    "stdlib/std/algorithm.gti": "0b11f6332b1aa9cb3f0b5be90680a81e5f5e7fcd6cc38322f65263e87d6f7f2b",
+    "stdlib/std/algorithm.gti": "54fd1253b56bf208f0ddc019b15a29516d9a0420876113cf4e833be16dbf7df5",
     "stdlib/std/array.gti": "affed4f1d587a71a098ef7c9b381e6c255d8b639492abbe9a46b31e00115adde",
     "stdlib/std/assert.gti": "c34ddabb3ce77983232aa13452cf036dba6202cdbd8d2bb7e1c0d9f0a8b6d78d",
     "stdlib/std/atomic.gti": "d51045256225848941363200bff10a2fe1bf30b66915a06b89e1fce546d1aed1",
@@ -95,6 +95,21 @@
         "stdout": "",
         "stderr": ""
       }
+    },
+    {
+      "id": "algorithm-copy-return",
+      "mode": "run",
+      "source": "tests/fixtures/generic_algorithm_copy_return.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "backend": "llvm"
     },
     {
       "id": "algorithm-mutation",
@@ -201,6 +216,62 @@
       "id": "algorithm-search",
       "mode": "run",
       "source": "tests/fixtures/algorithm_search.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "algorithm-search-array",
+      "mode": "run",
+      "source": "tests/fixtures/algorithm_search_array.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "algorithm-search-deque",
+      "mode": "run",
+      "source": "tests/fixtures/algorithm_search_deque.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "algorithm-search-list",
+      "mode": "run",
+      "source": "tests/fixtures/algorithm_search_list.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "algorithm-search-vector",
+      "mode": "run",
+      "source": "tests/fixtures/algorithm_search_vector.gti",
       "optimizations": [
         "O0",
         "O3"
@@ -2989,6 +3060,10 @@
         "algorithm-boundaries",
         "algorithm-mutation",
         "algorithm-search",
+        "algorithm-search-vector",
+        "algorithm-search-list",
+        "algorithm-search-deque",
+        "algorithm-search-array",
         "algorithm-user-types",
         "constexpr-library",
         "algorithm-ordered-search",
@@ -2999,7 +3074,8 @@
         "algorithm-owned-example",
         "restoring-indexed",
         "restoring-order",
-        "restoring-order-example"
+        "restoring-order-example",
+        "algorithm-copy-return"
       ],
       "required_instantiations": [
         "audit_iterator/audit_iterator/int32_t predicates and exact value",
@@ -3007,7 +3083,8 @@
         "std::vector<int32_t>::iterator/sentinel/int32_t",
         "read- and mut-callable for_each clients",
         "application-defined and fixed-array predicate/operation/mutable complete-range clients",
-        "forward cursors with owning unordered records and move-only mutable query callbacks"
+        "forward cursors with owning unordered records and move-only mutable query callbacks",
+        "advanced exclusive output cursor returned from copy, chained copies and discarded returned carriers"
       ],
       "evidence": [
         "tests/fixtures/stdlib_surface_algorithm.gti",
@@ -3023,7 +3100,8 @@
         "tests/fixtures/ordered_search.gti",
         "tests/fixtures/ordered_search_user_types.gti",
         "examples/139-ordered-search.gti",
-        "stdlib/std/algorithm.gti"
+        "stdlib/std/algorithm.gti",
+        "tests/fixtures/generic_algorithm_copy_return.gti"
       ]
     },
     {
@@ -3085,6 +3163,10 @@
       "case_ids": [
         "array",
         "algorithm-search",
+        "algorithm-search-vector",
+        "algorithm-search-list",
+        "algorithm-search-deque",
+        "algorithm-search-array",
         "algorithm-mutation",
         "algorithm-user-types",
         "constexpr-operators",
@@ -3102,7 +3184,12 @@
         "tests/fixtures/algorithm_mutation.gti",
         "tests/fixtures/algorithm_user_types.gti",
         "stdlib/std/array.gti",
-        "tests/fixtures/stdlib_surface_container_aliases.gti"
+        "tests/fixtures/stdlib_surface_container_aliases.gti",
+        "tests/fixtures/algorithm_search_vector.gti",
+        "tests/fixtures/algorithm_search_list.gti",
+        "tests/fixtures/algorithm_search_deque.gti",
+        "tests/fixtures/algorithm_search_array.gti",
+        "tests/fixtures/algorithm_search_support.gti"
       ]
     },
     {
@@ -3573,6 +3660,10 @@
       ],
       "case_ids": [
         "algorithm-search",
+        "algorithm-search-vector",
+        "algorithm-search-list",
+        "algorithm-search-deque",
+        "algorithm-search-array",
         "algorithm-mutation",
         "algorithm-user-types",
         "complete-containers-collection",
@@ -4643,6 +4734,10 @@
       ],
       "case_ids": [
         "algorithm-search",
+        "algorithm-search-vector",
+        "algorithm-search-list",
+        "algorithm-search-deque",
+        "algorithm-search-array",
         "algorithm-mutation",
         "algorithm-user-types",
         "complete-containers-collection",
@@ -6302,6 +6397,10 @@
       ],
       "case_ids": [
         "algorithm-search",
+        "algorithm-search-vector",
+        "algorithm-search-list",
+        "algorithm-search-deque",
+        "algorithm-search-array",
         "complete-containers-collection",
         "complete-sets",
         "complete-containers-ownership",
@@ -7045,6 +7144,10 @@
       ],
       "case_ids": [
         "algorithm-search",
+        "algorithm-search-vector",
+        "algorithm-search-list",
+        "algorithm-search-deque",
+        "algorithm-search-array",
         "complete-containers-collection",
         "complete-sets",
         "complete-containers-ownership",
