@@ -1,0 +1,21 @@
+import std.vector;
+import std.memory;
+import std.utility;
+import std.format;
+
+struct Payload {
+  int value;
+  Payload(int value) : value(value) {}
+  ~Payload() { std::println(this.value); }
+};
+struct Holder {
+  mut std::unique_ptr<Payload> value;
+  Holder(int value) : value(std::make_unique<Payload>(value)) {}
+};
+int main() {
+  mut std::vector<Holder> items{};
+  items.push_back(Holder(1));
+  std::unique_ptr<Payload> replacement = std::make_unique<Payload>(2);
+  items[std::size_t(1)].value = std::move(replacement);
+  return 0;
+}
