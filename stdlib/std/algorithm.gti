@@ -933,6 +933,40 @@ export Iterator max_element<Iterator, Sentinel>(mut Iterator first, Sentinel las
   return std::move(first);
 }
 
+/// Return the first greatest element under compare, or first when the range
+/// is empty. compare(left, right) means that left precedes right and must
+/// define a strict weak order. The callable can keep mutable state, must be
+/// repeatable, and must return exactly bool when reading dereferenced cursors.
+/// Makes max(N - 1, 0) comparisons, allocates no storage, and keeps the
+/// returned iterator's owner borrowed. No element ordering operator is needed.
+export Iterator max_element<Iterator, Sentinel, Compare>(
+    mut Iterator first, Sentinel last, mut Compare compare)
+  requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
+           requires(mut Compare& order, Iterator& left, Iterator& right) {
+             { order(*left, *right) } -> bool;
+           } {
+  if (!(first != last)) { return std::move(first); }
+  mut Iterator scan = first;
+  ++scan;
+  while (scan != last) {
+    mut bool replace = false;
+    {
+      // Read through shared cursor borrows even if Iterator also provides a
+      // mutable dereference overload. End those borrows before advancing.
+      Iterator& best = first;
+      Iterator& candidate = scan;
+      replace = compare(*best, *candidate);
+    }
+    if (replace) {
+      // Borrow-carrying cursors need not support assignment. These advances
+      // total at most N - 1 across the complete search.
+      while (first != scan) { ++first; }
+    }
+    ++scan;
+  }
+  return std::move(first);
+}
+
 export bool is_sorted<Iterator, Sentinel>(mut Iterator first, Sentinel last)
   requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> {
   if (!(first != last)) { return true; }

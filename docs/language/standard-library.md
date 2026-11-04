@@ -407,7 +407,8 @@ The current implemented foundation includes:
   `count_if`, exact-value `find` and `count`, and returned-callable `for_each`,
   plus `partition_point`, default/comparator `binary_search` and bounds,
   subsequence and repeated-value search,
-  adjacent search, extrema, sortedness, bounded sequence comparison, and
+  adjacent search, extrema (including comparator `max_element`), sortedness,
+  bounded sequence comparison, and
   prefix comparison. Structural whole-range predicates, `contains`, `count`,
   `fill`, `replace`, and `replace_if` accept nominal ranges and fixed arrays.
   Output `copy`, `copy_n`, `copy_if`, replacement-copy and removal-copy
@@ -421,8 +422,8 @@ The current implemented foundation includes:
   Iterator clients accept a distinct exact sentinel type. `find` returns its
   moved iterator while retaining the concrete borrowed-owner dependency, and
   both `for_each` forms return the exact moved callable after repeated confined
-  invocation. Predicate, operation, and comparator clients state public exact
-  concepts, accept read-callable or mut-callable targets, and reject consuming
+  invocation. Predicate, operation, and comparator clients state exact callable
+  requirements, accept read-callable or mut-callable targets, and reject consuming
   once-callables; and
 - `std.cmath` binary32 classification, absolute value, rounding, roots,
   powers, remainder, exponentials, logarithms, and trigonometry. Public
@@ -1071,6 +1072,20 @@ distinct and unborrowed. `std::array` and `std::vector` expose
 indices are checked against the initialized length before mutation. Equal
 **valid** indices are a no-op; equal invalid indices still fail. Bounds failure
 uses ordinary defined-failure cleanup and leaves the sequence unchanged.
+
+`std::max_element(first, last, compare)` accepts a forward iterator and its
+possibly distinct sentinel. The comparator receives the read-only dereference
+results and must be safely repeatable with an exact `bool` result; it may carry
+mutable state. `compare(a, b)` means that `a` precedes `b` in a strict weak order.
+The result is the first greatest element under that order, or an iterator equal
+to `last` for an empty range. Equivalent maxima keep traversal order (key order
+for `std::map`). Elements need no `operator<`, and borrowed elements are neither
+copied nor moved. The algorithm owns one comparator, makes exactly
+`max(N - 1, 0)` comparisons, uses constant auxiliary space without allocating,
+and preserves the returned iterator's owner dependency. It also accepts
+independent copyable values returned by application-defined cursors. See
+[`090-generic-algorithms.gti`](../../examples/090-generic-algorithms.gti) for
+selecting the greatest mapped profit without cloning organization names.
 
 Whole-vector `std::reverse` and both `std::sort` overloads accept relocatable
 move-only elements. Sort uses adaptive iterative introsort. Whole inputs longer

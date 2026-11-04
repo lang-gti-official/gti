@@ -1,0 +1,102 @@
+import std.algorithm;
+import std.map;
+import std.string;
+import std.vector;
+
+using Profit = std::map<std::string, float>;
+using Entry = Profit::value_type;
+mut int calls = 0;
+bool by_profit(Entry& left, Entry& right) {
+  calls++;
+  return left.second < right.second;
+}
+
+mut int record_drops = 0;
+mut int comparator_drops = 0;
+mut int observed_calls = 0;
+class Record {
+  std::string payload = std::string("owned");
+public:
+  int score;
+  int id;
+  Record(int score, int id) : score(score), id(id) {}
+  Record(Record& other) = delete;
+  Record(Record&& other) = default;
+  ~Record() { record_drops++; }
+};
+class Ordering {
+  std::string payload = std::string("comparator");
+  mut int count = 0;
+public:
+  Ordering() {}
+  Ordering(Ordering& other) = delete;
+  Ordering(Ordering&& other) = default;
+  ~Ordering() { comparator_drops++; observed_calls = this.count; }
+  bool operator()(Record& left, Record& right) mut {
+    this.count++;
+    return left.score < right.score;
+  }
+};
+
+// An unrelated application cursor with a distinct sentinel and by-value
+// dereference. Mutable dereference deliberately gives a different answer.
+mut int mutable_reads = 0;
+class Stop { public: Stop() = default; };
+class Cursor {
+  mut int position = 0;
+public:
+  Cursor() = default;
+  int operator*() { return 10 - this.position; }
+  mut int& operator*() mut { mutable_reads++; return this.position; }
+  void operator++() mut { this.position++; }
+  bool operator!=(Stop last) { return this.position != 3; }
+  bool operator!=(Cursor& other) { return this.position != other.position; }
+};
+
+int main() {
+  mut Profit profits{};
+  {
+    auto empty = std::max_element(profits.begin(), profits.end(), by_profit);
+    if (empty != profits.end() || calls != 0) { return 1; }
+  }
+  profits.insert(std::string("alpha"), float(-7));
+  {
+    auto single = std::max_element(profits.begin(), profits.end(), by_profit);
+    if ((*single).first != "alpha" || calls != 0) { return 2; }
+  }
+  profits.insert(std::string("beta"), float(-2));
+  profits.insert(std::string("gamma"), float(-2));
+  {
+    auto greatest = std::max_element(profits.begin(), profits.end(), by_profit);
+    if ((*greatest).first != "beta" || calls != 2) { return 3; }
+    auto least = std::max_element(profits.begin(), profits.end(),
+        [](Entry& left, Entry& right) -> bool { return left.second > right.second; });
+    if ((*least).first != "alpha") { return 4; }
+  }
+  {
+    std::vector<Record> records = {Record(2, 0), Record(9, 1), Record(9, 2), Record(-1, 3)};
+    auto greatest = std::max_element(records.begin(), records.end(), Ordering());
+    if ((*greatest).id != 1 || record_drops != 0 ||
+        comparator_drops != 1 || observed_calls != 3) { return 6; }
+  }
+  if (record_drops != 4) { return 7; }
+  {
+    auto greatest = std::max_element(Cursor(), Stop(),
+        [](int left, int right) -> bool { return left < right; });
+    if (*greatest != 10 || mutable_reads != 0) { return 8; }
+  }
+  {
+    mut Profit first{};
+    first.insert(std::string("profit"), float(4));
+    mut Profit second{};
+    second.insert(std::string("profit"), float(9));
+    std::vector<Profit> rows = {std::move(first), std::move(second)};
+    std::string key{"profit"};
+    auto order = [&key](Profit& left, Profit& right) -> bool {
+      return left.at(key) < right.at(key);
+    };
+    auto greatest = std::max_element(rows.begin(), rows.end(), order);
+    if ((*greatest).at(key) != float(9)) { return 9; }
+  }
+  return 0;
+}
