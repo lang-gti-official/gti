@@ -17,7 +17,15 @@ from backend_modes import is_cpp_mode, native_modes
 
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
+# Fixtures that also run with arguments selecting a defined failure: the
+# arguments, the exit status, stdout from cleanup, and the stderr prefix.
+FAILURES = {
+    "temporary_view_index_arguments.gti": (
+        ["fail"], 70, "1\n",
+        "temporary_view_index_arguments.gti:9: runtime error[GTI-R0002]"),
+}
 CASES = (
+    ("temporary_view_index_arguments.gti", [], "56\n1\n", True),
     ("stored_reference_receivers.gti", [], "12\n23\n22\n30\n62\n2\n70\n2\n41\n523\n", True),
     ("synchronized_reference_fields.gti", ["--execution-profile", "concurrent"],
      "3\n56\n2\n1\n1209\n222\n1\n122\n", True),
@@ -60,6 +68,14 @@ def main():
                 actual = (executed.returncode, executed.stdout, executed.stderr)
                 if actual != (0, expected, ""):
                     raise AssertionError(f"{mode}/{name}: {actual!r}")
+                if name in FAILURES:
+                    arguments, status, output, prefix = FAILURES[name]
+                    failed = run([str(binary), *arguments], environment)
+                    if (failed.returncode, failed.stdout) != (status, output) or \
+                            not failed.stderr.startswith(prefix):
+                        raise AssertionError(
+                            f"{mode}/{name} failure: "
+                            f"{(failed.returncode, failed.stdout, failed.stderr)!r}")
                 binary.unlink()
             print(f"borrow carrier receivers: {mode} passed "
                   f"({len(selected)} fixtures)", flush=True)
