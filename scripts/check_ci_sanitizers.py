@@ -7,8 +7,8 @@ import subprocess
 import tempfile
 
 
-def run(command):
-    result = subprocess.run(command, capture_output=True, text=True, timeout=60)
+def run(command, timeout=60):
+    result = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
     if result.returncode != 0:
         raise RuntimeError(
             f"{command!r}: exit {result.returncode}\n"
@@ -27,9 +27,12 @@ def main():
         with tempfile.TemporaryDirectory(prefix="gti-sanitizer-host-") as directory:
             for sanitizer in args.sanitizer:
                 binary = str(pathlib.Path(directory) / "probe")
+                # A contended hosted runner has taken over 60 seconds to compile
+                # this one file (full validation 41); the probe must fail fast on
+                # a broken runner, not on a slow one. Executions keep 60 seconds.
                 run([args.cxx, "-std=c++20", "-O1", "-pthread",
                      f"-fsanitize={sanitizer}", "-fno-omit-frame-pointer",
-                     str(source), "-o", binary])
+                     str(source), "-o", binary], timeout=600)
                 for _ in range(3):
                     run([binary])
                 print(f"Runner sanitizer execution passed: {sanitizer}", flush=True)
