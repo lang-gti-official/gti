@@ -1,0 +1,33 @@
+import std.json;
+import std.string;
+import std.utility;
+
+// CSV headers and cell kinds can be discovered at run time. Here the fields
+// are already parsed; a JSON value owns its strings and nested containers.
+int main() {
+  mut auto rows = std::json::value::array();
+  mut auto row = std::json::value::object();
+  row.set("country", std::json::value("Australia"));
+  row.set("population", std::json::value(uint64_t(27000000)));
+  row.set("active", std::json::value(true));
+  row.set("note", std::json::value());
+  rows.push_back(std::move(row));
+
+  auto encoded = std::json::encode(rows);
+  if (!encoded) { std::println(encoded.error().description()); return 1; }
+  std::println(encoded.value().view());
+
+  auto decoded = std::json::decode<std::json::value>(encoded.value().view());
+  if (!decoded) { std::println(decoded.error().description()); return 2; }
+  auto& first = decoded.value().at(std::size_t(0));
+  std::println(first.at("country").as_string().view());
+
+  // Cloning is explicit. Editing the clone leaves the parsed document intact.
+  mut auto copy = decoded.value().clone();
+  copy.at_mut(std::size_t(0)).set("country", std::json::value("France"));
+  if (first.at("country").as_string() != "Australia") { return 3; }
+  for (auto& field : first.as_object()) {
+    if (field.first == "note" && !field.second.is_null()) { return 4; }
+  }
+  return 0;
+}

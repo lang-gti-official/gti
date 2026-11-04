@@ -10,21 +10,21 @@
       "id": "shipped-examples",
       "kind": "source-census",
       "manifest": "tests/mir_census_baseline.json",
-      "member_count": 184,
-      "inventory_sha256": "ef27a369fd59ae4c26d48849483070299392527e2fecf86a9e9aedbb3979be35"
+      "member_count": 185,
+      "inventory_sha256": "641f36881ef77f82e9fa08d6aecaffbde161133dde4a08d75c367ac4698ced4b"
     },
     {
       "id": "registered-llvm-evidence",
       "kind": "registered-evidence-manifests",
-      "member_count": 457,
-      "inventory_sha256": "01e314f5609e63c11b5fc2708d683fa61da82eba70de015e7ebdef430fc05688"
+      "member_count": 458,
+      "inventory_sha256": "595ce576480f66737c0ce76b1b848d2ba0a0ec07ef9e4c907d7a2fe560e51023"
     },
     {
       "id": "stdlib-surface",
       "kind": "source-backed-surface-manifest",
       "manifest": "tests/stdlib_surface_manifest.json",
       "member_count": 199,
-      "inventory_sha256": "ed3b7c9c7b022d4f35de2729d6ef6952532730a8e5aba158019b309d58beb4a0"
+      "inventory_sha256": "68f13736847fdf1982a8d57596c2ed5acfa76e5cf9a6d6bf20994c2a9d09bff6"
     }
   ],
   "family_obligations": [

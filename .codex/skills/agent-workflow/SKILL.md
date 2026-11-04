@@ -142,7 +142,11 @@ integration is complete contributor work; report it as deferred, never as passed
    Explicit no-preview or no-publication instructions override it. Select this
    task only, never sweep other PRs. Submission is detached and combined preview
    admission remains mandatory; report a failure without blocking main delivery.
-   Continue normal integration without waiting for preview.
+   Continue normal integration without waiting for preview. A queued
+   submission is not an admission: say "submitted", never "in preview". A
+   failed or stale worker comments on the PR, and every helper command's
+   stderr names unresolved submissions (`status` gives each reason and log);
+   relay that notice to the user and resubmit once its cause is fixed.
 
    Write the final PR description to a temporary file: behaviour, exactly
    which checks ran, and "complete suite deferred to full validation". Unless

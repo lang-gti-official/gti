@@ -107,8 +107,8 @@ def discover(root: Path, baseline_path: Path, ctest: str,
             root, providers["stdlib-surface"]),
         "registered-llvm-evidence": audit.registered_provider_inventory(root, modules),
     }
-    for identity, provider in providers.items():
-        audit.validate_provider_inventory(identity, provider, inventories[identity])
+    for identity in providers:
+        audit.provider_identity(identity, inventories[identity])
     # This validates origins/profile membership against the runnable dictionaries.
     audit.profile_sources(root, modules)
     manifest = surface.load_manifest(root / providers["stdlib-surface"]["manifest"])

@@ -694,6 +694,10 @@
       "suite": "constexpr"
     },
     {
+      "name": "testStagedIntrinsicContracts",
+      "suite": "constexpr"
+    },
+    {
       "name": "testMirConstantRecords",
       "suite": "constexpr"
     },

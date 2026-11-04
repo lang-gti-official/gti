@@ -1310,6 +1310,98 @@ int main() {
          "the overlay-proven callable program should produce a complete plan");
 }
 
+void testEqualConcreteCallableTemplateAliases() {
+  for (const std::string &source : {std::string(R"(
+int invoke<Left, Right, Operation>(Left left, Right right, Operation operation) {
+  return operation(left, right);
+}
+int main() {
+  auto add = [](int left, int right) -> int { return left + right; };
+  return invoke(3, 4, add) - 7;
+}
+)"),
+                                    std::string(R"(
+int invoke<Left, Right, Operation>(Left left, Right right, Operation operation) {
+  return operation(left, right);
+}
+int main() {
+  auto add = [](int left, int64_t right) -> int { return left + int(right); };
+  return invoke(3, int64_t(4), add) - 7;
+}
+)"),
+                                    std::string(R"(
+struct Number { int value; Number(int value) : value(value) {} };
+int invoke<Left, Right, Operation>(Left left, Right right, Operation operation) {
+  return operation(left, right);
+}
+int main() {
+  auto add = [](Number& left, Number& right) -> int { return left.value + right.value; };
+  return invoke(Number(3), Number(4), add) - 7;
+}
+)"),
+                                    std::string(R"(
+int invoke<First, Second>(First first, Second second) {
+  int left = first(3);
+  int right = second(4);
+  return left + right;
+}
+int main() {
+  auto identity = [](int value) -> int { return value; };
+  return invoke(identity, identity) - 7;
+}
+)")}) {
+    const auto frontend =
+        lang::Frontend().analyze("equal-template-aliases.gti", source);
+    expect(frontend.canGenerateCode(),
+           "exact concrete template alias fixture reaches MIR");
+    if (!frontend.canGenerateCode())
+      continue;
+    const auto lowered =
+        gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
+    const auto found = std::find_if(
+        lowered.mir().functionInstances().begin(),
+        lowered.mir().functionInstances().end(), [](const auto &function) {
+          return !function.callableParameters.empty();
+        });
+    expect(found != lowered.mir().functionInstances().end(),
+           "fixture retains callable template");
+    if (found == lowered.mir().functionInstances().end())
+      continue;
+    const auto *declaration =
+        lowered.findFunctionDeclaration(found->declaration);
+    expect(declaration != nullptr, "callable has its exact declaration");
+    if (!declaration)
+      continue;
+    auto rows =
+        lang::buildCppMirBodyEmissionMapRows(lowered, lang::CppStandard::Cpp23);
+    const auto overlays = lang::cppMirApplyCallableTemplateTypeOverlays(
+        rows, lowered, lang::CppStandard::Cpp23, *declaration, *found);
+    expect(overlays.has_value(),
+           "equal concrete types share one canonical in-scope spelling");
+    const auto build = buildSnapshot(frontend);
+    expect(build.valid(),
+           "equal and distinct concrete aliases preserve complete C++ text");
+
+    auto forged = *found;
+    forged.parameterTypes[1] = lang::SemanticType::Double;
+    auto forgedRows =
+        lang::buildCppMirBodyEmissionMapRows(lowered, lang::CppStandard::Cpp23);
+    expect(!lang::cppMirApplyCallableTemplateTypeOverlays(
+               forgedRows, lowered, lang::CppStandard::Cpp23, *declaration,
+               forged),
+           "canonical alias reuse does not accept a mismatched concrete "
+           "parameter");
+    if (found->parameterTypes[0] != found->parameterTypes[1]) {
+      auto wrongAlias = *declaration;
+      wrongAlias.parameters[1].type = wrongAlias.parameters[0].type;
+      expect(
+          !lang::cppMirCallableTemplateSignature(lowered, wrongAlias, *found),
+          "distinct concrete types cannot be conflated by a forged declaration "
+          "alias");
+    }
+  }
+}
+
 void testGenericOwnerCallableTemplateProjection() {
   const lang::FrontendResult frontend =
       lang::Frontend().analyze("snapshot-owner-callable-overlay.gti", R"(
@@ -2865,6 +2957,7 @@ int main() {
   testMissingAndStaleFactsFailClosed();
   testRuntimeBindingRole();
   testDeducedCallableOverlayPreflight();
+  testEqualConcreteCallableTemplateAliases();
   testGenericOwnerCallableTemplateProjection();
   testAtomicBackendRouteAndIncoherentRejection();
   testRepresentationSpellingAuthorities();

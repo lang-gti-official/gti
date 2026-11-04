@@ -1,0 +1,30 @@
+import std.json;
+import std.string;
+import std.vector;
+import std.utility;
+
+int main() {
+  mut auto rows = std::json::value::array();
+  rows.as_array_mut().reserve(std::size_t(1000));
+  for (mut int index = 0; index < 1000; index++) {
+    mut auto row = std::json::value::object();
+    row.set("country", std::json::value("Australia"));
+    row.set("count", std::json::value(index));
+    row.set("active", std::json::value(true));
+    rows.push_back(std::move(row));
+  }
+  auto text = std::json::encode(rows);
+  if (!text) { return 1; }
+  mut uint64_t checksum = 0;
+  for (mut int pass = 0; pass < 20; pass++) {
+    auto parsed = std::json::decode<std::json::value>(text.value().view());
+    if (!parsed) { return 2; }
+    auto cloned = parsed.value().clone();
+    auto encoded = std::json::encode(cloned);
+    if (!encoded || encoded.value() != text.value()) { return 3; }
+    checksum += uint64_t(encoded.value().size());
+  }
+  std::println(sizeof(std::json::value));
+  std::println(checksum);
+  return 0;
+}
