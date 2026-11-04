@@ -8390,6 +8390,7 @@ verifyMirPayloadEnums(const MirProgram &program) {
     if (body == nullptr) {
       continue;
     }
+    const mir_detail::MirBodyReadScope readScope(*body);
     for (const MirBlock &block : body->blocks) {
       if (block.terminator.value && copiesMoveOnlyEnum(*block.terminator.value))
         result.errors.push_back({.bodyKind = address.kind,

@@ -3421,30 +3421,38 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
     if (handoffs[loan.id - 1])
       retiringHandoffs.emplace(handoffs[loan.id - 1]->retirement, loan.id);
   }
-  std::vector<std::optional<MirLoanState>> blockEntries(body.blocks.size());
-  MirLoanState entryState(body.loans.size(), MirLoanFlowState::Inactive);
+  // CFG snapshots contain only non-inactive loans. Inactive is an implicit
+  // state, not a missing proof: joins below still compare the complete union
+  // and apply the same conditional-state and reservation rules.
+  using LoanSnapshot = std::vector<std::pair<MirLoanId, MirLoanFlowState>>;
+  std::vector<std::optional<LoanSnapshot>> blockEntries(body.blocks.size());
+  LoanSnapshot entryState;
   for (const MirLoan &loan : body.loans) {
     if (loan.entry) {
-      entryState[loan.id - 1] = MirLoanFlowState::Active;
+      entryState.emplace_back(loan.id, MirLoanFlowState::Active);
     }
   }
   blockEntries[body.entry - 1] = std::move(entryState);
   std::queue<MirBlockId> pending;
   pending.push(body.entry);
+  MirLoanState active(body.loans.size(), MirLoanFlowState::Inactive);
+  std::set<MirLoanId> liveLoans;
 
   while (!pending.empty()) {
     const MirBlockId blockId = pending.front();
     pending.pop();
     const MirBlock &block = body.blocks[blockId - 1];
-    MirLoanState active = *blockEntries[blockId - 1];
+    for (const auto id : liveLoans)
+      active[id - 1] = MirLoanFlowState::Inactive;
+    liveLoans.clear();
+    for (const auto &[id, state] : *blockEntries[blockId - 1]) {
+      active[id - 1] = state;
+      liveLoans.insert(id);
+    }
     // Enumerate only non-inactive loans at access checks, in original ID order.
     // Mutations still go through the existing state vector; refresh exactly
     // the touched IDs before reading this derived membership index.
-    std::set<MirLoanId> liveLoans;
     std::set<MirLoanId> changedLoans;
-    for (const auto &loan : body.loans)
-      if (active[loan.id - 1] != MirLoanFlowState::Inactive)
-        liveLoans.insert(loan.id);
     const auto liveLoanIds = [&]() -> const std::set<MirLoanId> & {
       for (const auto id : changedLoans) {
         if (active[id - 1] == MirLoanFlowState::Inactive)
@@ -4292,9 +4300,8 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                      origin.capture == 0)
               ready.push_back(origin.symbol);
           };
-          for (const auto &loan : body.loans) {
-            if (active[loan.id - 1] == MirLoanFlowState::Inactive)
-              continue;
+          for (const auto id : liveLoanIds()) {
+            const auto &loan = body.loans[id - 1];
             retainOrigin(loan.source);
             for (const auto &dependency : loan.additionalDependencies)
               retainOrigin(dependency.source);
@@ -4710,7 +4717,8 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                              " has an ambiguous reserved place",
                          block.id, instruction.id);
         }
-        for (const MirLoan &other : body.loans) {
+        for (const auto id : liveLoanIds()) {
+          const auto &other = body.loans[id - 1];
           if (other.id == loan || other.id == parent ||
               active[other.id - 1] == MirLoanFlowState::Inactive ||
               isLoanAncestor(body, other.id, loan) ||
@@ -4882,7 +4890,8 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                              " cannot exclusively reborrow a read-only parent",
                          block.id, instruction.id);
         }
-        for (const MirLoan &other : body.loans) {
+        for (const auto id : liveLoanIds()) {
+          const auto &other = body.loans[id - 1];
           if (other.id == parent ||
               active[other.id - 1] == MirLoanFlowState::Inactive ||
               isLoanAncestor(body, other.id, parent) ||
@@ -5926,7 +5935,8 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                    loanPermitsPlace(body, *dependency, childPlace,
                                     AccessMode::ReadOnly, bindingLoans, active);
           };
-          for (const MirLoan &other : body.loans) {
+          for (const auto id : liveLoanIds()) {
+            const auto &other = body.loans[id - 1];
             if (other.id == parent ||
                 active[other.id - 1] == MirLoanFlowState::Inactive ||
                 isLoanAncestor(body, other.id, parent) ||
@@ -6154,39 +6164,52 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
       }
     }
 
+    LoanSnapshot outgoing;
+    for (const auto id : liveLoanIds())
+      outgoing.emplace_back(id, active[id - 1]);
     for (const MirBlockId successor : successors(block.terminator)) {
-      std::optional<MirLoanState> &entry = blockEntries[successor - 1];
+      auto &entry = blockEntries[successor - 1];
       if (!entry) {
-        entry = active;
+        entry = outgoing;
         pending.push(successor);
         continue;
       }
-      if (*entry == active) {
+      if (*entry == outgoing)
         continue;
-      }
-      bool changed = false;
-      for (std::size_t index = 0; index < active.size(); ++index) {
-        if ((*entry)[index] == active[index])
-          continue;
-        const MirLoanId loan = index + 1;
-        if (!conditionalDependencies.contains(loan) ||
-            isParkedLoan((*entry)[index]) || isParkedLoan(active[index]) ||
-            loanFlowContains((*entry)[index], MirLoanFlowState::Reserved) ||
-            loanFlowContains(active[index], MirLoanFlowState::Reserved)) {
+      LoanSnapshot joined;
+      auto left = entry->begin();
+      auto right = outgoing.begin();
+      while (left != entry->end() || right != outgoing.end()) {
+        const MirLoanId loan = left == entry->end() ? right->first
+                               : right == outgoing.end()
+                                   ? left->first
+                                   : std::min(left->first, right->first);
+        const auto before = left != entry->end() && left->first == loan
+                                ? (left++)->second
+                                : MirLoanFlowState::Inactive;
+        const auto incoming = right != outgoing.end() && right->first == loan
+                                  ? (right++)->second
+                                  : MirLoanFlowState::Inactive;
+        if (before != incoming &&
+            (!conditionalDependencies.contains(loan) || isParkedLoan(before) ||
+             isParkedLoan(incoming) ||
+             loanFlowContains(before, MirLoanFlowState::Reserved) ||
+             loanFlowContains(incoming, MirLoanFlowState::Reserved))) {
           return failure(
               body, owner,
               "loan " + std::to_string(loan) +
                   " has inconsistent active/suspended state at CFG join",
               successor);
         }
-        const auto joined = static_cast<MirLoanFlowState>(
-            static_cast<unsigned>((*entry)[index]) |
-            static_cast<unsigned>(active[index]));
-        changed = changed || joined != (*entry)[index];
-        (*entry)[index] = joined;
+        joined.emplace_hint(
+            joined.end(), loan,
+            static_cast<MirLoanFlowState>(static_cast<unsigned>(before) |
+                                          static_cast<unsigned>(incoming)));
       }
-      if (changed)
+      if (joined != *entry) {
+        entry = std::move(joined);
         pending.push(successor);
+      }
     }
   }
   return {};
