@@ -3860,6 +3860,11 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}"
   )
   set_tests_properties(stdlib_modules PROPERTIES TIMEOUT 600)
+  add_test(NAME removal_algorithms
+           COMMAND "${Python3_EXECUTABLE}"
+                   "${PROJECT_SOURCE_DIR}/tests/removal_algorithms_test.py"
+                   "$<TARGET_FILE:gti>")
+  set_tests_properties(removal_algorithms PROPERTIES TIMEOUT 900)
   # One entry: the harness runs the backends GTI_TEST_BACKENDS selects
   # (tests/backend_modes.py). The former c++20, no-elide and sanitized
   # variants were C++-backend-only configurations nothing ships.

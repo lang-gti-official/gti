@@ -1,0 +1,46 @@
+import std.algorithm;
+import std.vector;
+import std.array;
+import std.string;
+import std.deque;
+import std.list;
+import std.forward_list;
+import std.map;
+import std.set;
+import std.unordered_map;
+import std.unordered_set;
+int sequences() {
+ mut std::vector<int> values = {1, 2, 3, 2, 4};
+ auto end = std::remove_if(values, [](int& v) -> bool { return v == 2; });
+ if (end != 3 || values.size() != 5 || values[std::size_t(0)] != 1 || values[std::size_t(1)] != 3 || values[std::size_t(2)] != 4) { return 1; }
+ int x = 2;
+ if (std::erase(values, x) != 2 || values.size() != 3) { return 2; }
+ mut std::string text{"a b c"};
+ char blank = ' ';
+ if (std::erase(text, blank) != 2 || text != "abc") { return 3; }
+ mut std::deque<int> queue = {0, 1, 0, 2};
+ if (std::erase_if(queue, [](int& v) -> bool { return v == 0; }) != 2 || queue[std::size_t(0)] != 1 || queue[std::size_t(1)] != 2) { return 4; }
+ mut std::array<int, 4> fixed = std::array<int, 4>({1, 0, 2, 0});
+ if (std::remove(fixed, x) != 3) { return 5; }
+ return 0;
+}
+int nodes() {
+  mut std::list<int> a = {1, 2, 3};
+  if (std::erase_if(a, [](int& n) -> bool { return n == 2; }) != 1 || a.size() != 2) { return 1; }
+  mut std::forward_list<int> b{}; b.push_front(3); b.push_front(2); b.push_front(1);
+  if (std::erase_if(b, [](int& n) -> bool { return n == 2; }) != 1) { return 2; }
+  mut std::map<int, int> c{};
+  [[discard]] c.insert(1, 2); [[discard]] c.insert(2, 3); [[discard]] c.insert(3, 4);
+  if (std::erase_if(c, [](std::map<int, int>::value_type& e) -> bool { return e.second == 3; }) != 1 || c.size() != 2) { return 3; }
+  mut std::unordered_map<int, int> d{};
+  [[discard]] d.insert(1, 2); [[discard]] d.insert(2, 3); [[discard]] d.insert(3, 4);
+  if (std::erase_if(d, [](std::unordered_map<int, int>::value_type& e) -> bool { return e.second == 3; }) != 1 || d.size() != 2) { return 4; }
+  mut std::set<int> e{};
+  [[discard]] e.insert(1); [[discard]] e.insert(2); [[discard]] e.insert(3);
+  if (std::erase_if(e, [](int& n) -> bool { return n == 2; }) != 1 || e.size() != 2) { return 5; }
+  mut std::unordered_set<int> f{};
+  [[discard]] f.insert(1); [[discard]] f.insert(2); [[discard]] f.insert(3);
+  if (std::erase_if(f, [](int& n) -> bool { return n == 2; }) != 1 || f.size() != 2) { return 6; }
+  return 0;
+}
+int main() { int result = sequences(); return result != 0 ? result : nodes(); }

@@ -1668,3 +1668,46 @@ explicit cloning, structural lifecycle rules and reset/emplacement policy.
 Changing those choices requires its own general contract and acceptance evidence.
 The remaining families above are goals, not permanent restrictions or permission
 to substitute similarly named C++ facilities without a GTI contract.
+
+
+## Stable removal and erasure
+
+`import std.algorithm;` provides `std::remove(sequence, value)` and
+`std::remove_if(sequence, predicate)`. Both return the retained **length** as
+`std::size_t`, preserve kept-element order, and leave size/capacity unchanged.
+The suffix remains initialized with unspecified order; compaction does not
+run element destructors. These are whole-sequence operations, not C++
+iterator-pair/returned-cursor overloads.
+
+The contract is structural: read-only `size() -> std::size_t`, read-only
+checked subscript, and mutable `swap_elements(std::size_t, std::size_t) -> void`.
+Vector, array, deque, string, and unrelated user-defined sequences satisfy it.
+A raw fixed array lacks that member protocol. Predicates return exactly bool,
+receive read-only elements, and may be read- or mut-callable; consuming
+once-callables and mutable-element predicates are rejected. Value removal
+requires the exact element type and equality comparison. Aliasing the comparison
+value or a captured owner with the exclusive sequence borrow is rejected.
+
+Each container module exports its own `std::erase_if(container, predicate)`;
+vector, deque, string, list, and forward_list also export `std::erase(container,
+value)`. They return the number destroyed and shrink the owner. Fixed-size
+array supports compaction only. Map/unordered_map predicates receive read-only
+`value_type&` entries; set/unordered_set predicates receive read-only keys.
+Linked lists expose `remove_if` members; associative owners expose `erase_if`
+members. None copies keys or retained elements. Deque and linked containers
+can erase immovable elements by changing node ownership alone.
+
+Indexed compaction makes exactly n predicate/equality calls and at most n
+swaps, uses O(1) auxiliary space, and allocates no storage itself. Vector,
+deque, string, list, and forward_list erasure take O(n) time. String operations
+filter bytes, preserve embedded NULs unless selected, and maintain the separate
+terminator. Map/set erasure visits entries in key order and takes O(n log n)
+worst case. Hash erasure visits bucket chains in O(bucket_count + n); order is
+unspecified. Associative vacant-slot bookkeeping can allocate before unlinking.
+A callback/finalizer failure propagates through ordinary cleanup: completed
+changes are not rolled back, but slots remain initialized and ownership unique.
+
+Example `090-generic-algorithms.gti` demonstrates all four free operations.
+The `removal_algorithms` check covers stable prefixes, all keep/remove patterns,
+move-only and immovable cleanup, collisions, node reuse, exact predicate counts,
+allocation-free vector filtering, and invalid borrow/callback contracts.

@@ -1,0 +1,19 @@
+export module detail_key_removal_impl;
+import "map_entry.gti";
+import std.functional;
+export namespace std::detail {
+class key_removal_predicate<K, Predicate> {
+  mut Predicate predicate;
+public:
+  key_removal_predicate(Predicate predicate) requires std::predicate<Predicate, K>
+      : predicate(std::move(predicate)) {}
+  bool operator()(map_entry<K, bool>& entry) mut {
+    if constexpr (requires(mut Predicate& predicate, K& key) { { predicate(key) } -> bool; }) {
+      return this.predicate(entry.first);
+    } else {
+      static_assert(requires(mut Predicate& predicate, K& key) { { predicate(key) } -> bool; });
+      return false;
+    }
+  }
+};
+}
