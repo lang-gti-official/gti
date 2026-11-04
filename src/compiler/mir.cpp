@@ -8401,6 +8401,13 @@ bool mirBodyRoutesFailureEdges(const MirBody &body) {
   return true;
 }
 
+bool isStatePreservingOwnership(const std::optional<OwnershipEvent> &event) {
+  return !event ||
+         (event->kind == OwnershipEventKind::Read &&
+          event->before == OwnershipStateSet::Available &&
+          event->after == OwnershipStateSet::Available && event->reachable);
+}
+
 bool requiresMirFailureControlFlow(const MirInstruction &instruction) {
   // A terminal allocation detector either completes this instruction or
   // aborts the process. It has no record handoff, cleanup successor or Invoke.
@@ -8468,11 +8475,7 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction) {
   // reinitializes, or otherwise transitions ownership still does, because the
   // failure edge would have to restore the prior state.
   const bool statePreservingOwnership =
-      !instruction.ownership ||
-      (instruction.ownership->kind == OwnershipEventKind::Read &&
-       instruction.ownership->before == OwnershipStateSet::Available &&
-       instruction.ownership->after == OwnershipStateSet::Available &&
-       instruction.ownership->reachable);
+      isStatePreservingOwnership(instruction.ownership);
   // A checked assignment to a trivially destroyed place writes nothing when it
   // fails and runs no lifecycle event, so its failure edge needs only the
   // ordinary temporary and scope cleanup. This covers the narrowing compound

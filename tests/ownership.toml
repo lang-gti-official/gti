@@ -272,6 +272,8 @@ paths = [
   "tests/semantic_call_regression_tests.cpp",
   "tests/semantic_call_regressions*_test.py",
   "tests/fixtures/semantic_call_regressions.gti",
+  "tests/scalar_temporary_borrow*_test.py",
+  "tests/fixtures/call_operator_temporary_borrow.gti",
   "src/compiler/semantic_*",
   "include/gti/semantic_*",
   "include/gti/generic_constraint.h",

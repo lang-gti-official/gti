@@ -1,0 +1,49 @@
+import std.string;
+import std.vector;
+import std.algorithm;
+
+// A call operator's read-only reference parameter borrows a fresh scalar for
+// one call, exactly as an ordinary function or method parameter does.
+mut int sequence = 0;
+int produce() { sequence = sequence * 10 + 1; return 7; }
+int failing(int divisor) { return 7 / divisor; } // producer-failure
+class IntTally {
+  mut int total;
+public:
+  IntTally() : total(0) {}
+  void operator()(int& value) mut { this.total = this.total + value; }
+  int sum() { return this.total; }
+};
+class CharTally {
+  mut int total;
+public:
+  CharTally() : total(0) {}
+  void operator()(char& value) mut { this.total = this.total + int(uint8_t(value)); }
+  int sum() { return this.total; }
+};
+class Doubler {
+public:
+  Doubler() = default;
+  int operator()(int& value) { return value * 2; }
+};
+void feed<F>(mut F& sink) { sink(produce()); }
+int main(int argc, std::vector<std::string> argv) {
+  mut IntTally tally = IntTally();
+  tally(produce());
+  tally(3 + 4);
+  Doubler doubler = Doubler();
+  if (doubler(produce()) != 14) { return 1; }
+  feed(tally);
+  if (tally.sum() != 21 || sequence != 111) { return 2; }
+  // A text cursor yields each element by value from a checked dereference.
+  std::string_view view = "abc";
+  mut CharTally chars = CharTally();
+  auto cursor = view.begin();
+  chars(*cursor);
+  auto visited = std::for_each(view.begin(), view.end(), CharTally());
+  if (chars.sum() != 97 || visited.sum() != 294) { return 3; }
+  chars(*view.iterator_at(argc == 3 ? std::size_t(3) : std::size_t(1))); // cursor-failure
+  int divisor = argc == 2 ? 0 : 1;
+  tally(failing(divisor));
+  return tally.sum() + chars.sum() - 223;
+}
