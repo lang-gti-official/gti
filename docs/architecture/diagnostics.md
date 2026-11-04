@@ -896,6 +896,21 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   or move construction is unavailable, and suggest explicit ownership transfer
   when applicable. Do not attach a fix-it: moving the value versus preserving
   it with an explicit allocating copy requires programmer intent.
+  Function overload sets follow the same rule: when exactly one overload
+  accepts every argument type and is rejected only because a by-value
+  argument cannot be copied or moved, the first such argument reports the
+  call's one causal `GTI-S2018`, with that overload as the
+  `Exact-type candidate:` note, instead of `GTI-S2012` and the whole
+  candidate list. A set rejected for any other reason keeps that reason's
+  resolver diagnostic, and one with several such overloads keeps
+  `GTI-S2012`. Every by-value
+  copy report from a function call relates the declared parameter
+  (`Parameter 'name' takes its argument by value.`, or for a parameter pack
+  `Parameter pack 'name' takes each argument by value, ...`). When that
+  parameter's type is deduced and the argument's type has a public read-only
+  `view()` member, a hint names `'<value>.view()'` as the borrowing
+  alternative. Named move-only arguments to a by-value overload and to a
+  by-value parameter pack therefore report the same deleted copy.
   A destructor's attempted receiver-field move uses the same code at the
   field token and explains that field cleanup belongs to the enclosing object.
   Explicit and implicit `this` paths share this rule; separately owned locals
