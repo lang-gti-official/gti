@@ -4853,6 +4853,10 @@ the slot's exact value-drop obligation definitely live at the borrow on
 every incoming path; the non-escaping loan still ends before its later
 transfer or cleanup. This applies equally to ordinary conditional results
 and scoped macro results, without a library-type exception.
+A passive scalar or plain-enum value owns no storage another value could
+borrow, so any call that publishes one, including a closure invocation or an
+intrinsic, is an admissible producer; the other referent families keep their
+exact construction, callable or source-call producers.
 The loan is active while later arguments are prepared and ends in
 reverse temporary-argument order immediately after the call, or at the start
 of both normal and failure successors for an `Invoke`. The producer's one
@@ -4861,7 +4865,7 @@ branch-only value it is the conditional drop after the merge, and failure
 edges inside the arm drop the definitely active slot. Verification rejects a
 mutable/projected/wrong-type place, a hidden slot detached from the exact
 producer identity or naming another temporary's slot, a native or
-declaration-only producer/target, borrowed state, an escaping result,
+declaration-only target or non-scalar producer, borrowed state, an escaping result,
 producer/input reordering, premature or missing loan ending, and a missing,
 duplicate or unconditional post-merge drop. The backend therefore consumes a
 complete schedule rather than relying on C++ reference lifetime rules.

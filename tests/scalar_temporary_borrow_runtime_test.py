@@ -48,7 +48,7 @@ if __name__ == "__main__":
                     ((), (70, "2\n1\n9\n", primary)),
                     (("cleanup-fails",), (70, "2\n", cleanup))],
                 "temporary_borrow_symbolic_producers": [
-                    ((), (0, "value 7\nchoice yes\nowned yes\n", ""))],
+                    ((), (0, "value 7\nchoice yes\nowned yes\nclosure 3 intrinsic 4\n", ""))],
                 "borrowed_text_temporary_failure": [
                     ((), (0, "produce\nbranch\nowned\nyes\ncleanup\n", "")),
                     (("producer",), (70, "produce\ncleanup\n", text_failure_at("producer-failure"))),

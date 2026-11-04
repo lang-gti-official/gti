@@ -1884,15 +1884,32 @@ int& current(Cleanup& input) { return value; }
            "one full-expression cleanup rule protects conditions, loop "
            "steps, initializers, returned borrows and constructor fields");
   }
-  for (const std::string body :
-       {"int main() { int& borrowed = current(Cleanup()); return borrowed; }",
-        "int& get() { return current(Cleanup()); } int main() { return "
-        "get(); }"}) {
-    const auto result = analyze(prefix + body);
-    expect(!result.semanticValid && code(result, "GTI-S2017"),
-           "an escaping borrow cannot borrow a temporary input even when its "
-           "declared result names persistent storage");
+  // The result's complete origin is the thread-local, never the temporary
+  // parameter, so the call may borrow the temporary. The temporary's
+  // destructor then writes that storage at the full-expression boundary
+  // while the result is still borrowed.
+  {
+    const auto result =
+        analyze(prefix + "int main() { int& borrowed = current(Cleanup()); "
+                         "return borrowed; }");
+    expect(!result.semanticValid && code(result, "GTI-S2045") &&
+               !code(result, "GTI-S2017"),
+           "a result whose origin excludes the temporary parameter borrows "
+           "it; the cleanup's write to the result's storage is the conflict");
   }
+  {
+    const auto result = analyze(prefix + "int& get() { return "
+                                         "current(Cleanup()); } int main() { "
+                                         "return get(); }");
+    expect(!result.semanticValid && code(result, "GTI-S2017"),
+           "an escaping borrow through a temporary input is still rejected");
+  }
+  positive("thread_local mut int value = 1; struct Plain { int number = 0; "
+           "public: Plain() = default; }; int& current(Plain& input) { "
+           "return value; } int main() { int& borrowed = current(Plain()); "
+           "return borrowed - 1; }",
+           "a cleanup-free temporary may supply a call whose result names "
+           "only persistent storage");
   positive(prefix + "struct Wrapper { Cleanup item; Wrapper(Cleanup source) : "
                     "item(std::move(source)) {} }; int main() { int& "
                     "borrowed = value; Wrapper held{Cleanup()}; int copied = "

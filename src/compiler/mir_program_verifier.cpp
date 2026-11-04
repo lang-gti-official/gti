@@ -2374,7 +2374,17 @@ uniqueMirClassInstanceForType(const MirProgram &program,
           // body lives: a dispatched interface method, a foreign function and
           // a source function each publish a fresh value of their declared
           // return type.
+          // A passive scalar or plain-enum result is fresh whichever callable
+          // produced it: neither a closure invocation nor an intrinsic can
+          // leave it borrowing anything.
+          const bool scalarResult =
+              argumentPlace != nullptr &&
+              producer->info.type == argumentPlace->type &&
+              (isPassiveScalarValueType(argumentPlace->type) ||
+               (argumentPlace->type.kind == SemanticType::Enum &&
+                program.findPayloadEnum(argumentPlace->type) == nullptr));
           exactProducer =
+              scalarResult ||
               (target != nullptr && argumentPlace != nullptr &&
                target->returnType == argumentPlace->type &&
                (target->returnBorrowOrigin == BorrowOriginKind::None ||

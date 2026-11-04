@@ -592,7 +592,7 @@ int main() { change(Token::item(7)); return 0; }
 [[borrowed_from(token)]] Token& escape(Token& token) { return token; }
 int main() { Token& value = escape(Token::item(7)); return inspect(value); }
 )gti",
-           "GTI-S2017", "may return a reference");
+           "GTI-S2017", "may retain this argument");
   const auto localSets = analyze(passiveEnum + R"gti(
 Token select(bool flag) {
   mut auto value = Token::empty;
