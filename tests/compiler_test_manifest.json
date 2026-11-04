@@ -566,6 +566,10 @@
       "suite": "ownership"
     },
     {
+      "name": "testConstructorRollbackSpansLocalCleanup",
+      "suite": "ownership"
+    },
+    {
       "name": "testDefaultFieldRollbackEntersConstructor",
       "suite": "ownership"
     },

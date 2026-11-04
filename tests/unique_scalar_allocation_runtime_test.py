@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
 """Scalar make_unique initialization, ownership, and injected exhaustion."""
 
-import os
 import pathlib
 import subprocess
 import sys
 import tempfile
 
 from allocation_abort_runtime_test import ABORT_STATUS
-from backend_modes import cpp_only_case, is_cpp_mode, keep_cpp, native_modes
+from backend_modes import is_cpp_mode, keep_cpp, native_modes
 
 # The fault provider (tests/fixtures/unique_scalar_allocation_fault.cpp) replaces
-# the C++ text's nothrow operator new; LLVM-backed programs allocate through the
-# runtime, so only the C++ profile observes the injected failure.
-FAULT_INJECTION = "allocation fault injection replaces the C++ text's nothrow operator new; the LLVM backend allocates through the runtime"
+# the standard nothrow operator new. Generated C++ and the runtime owner pair
+# used by the LLVM backend both allocate owners through it, so every backend
+# observes the injected failure (lang-gti-official/gti#200).
 
 def expected_result(suffix, site):
     failure = (f"<std/detail/memory_core>:{site}: runtime error[GTI-R0011]: "
@@ -41,9 +40,6 @@ def main():
     with tempfile.TemporaryDirectory(prefix="gti-scalar-allocation-") as temporary:
         for mode, flags, native_flags in modes:
             suffixes = ("", "_failure", "_cleanup_failure")
-            if not is_cpp_mode(flags):
-                cpp_only_case(FAULT_INJECTION, "unique_scalar_allocation_failure, unique_scalar_allocation_cleanup_failure", mode)
-                suffixes = ("",)
             for suffix in suffixes:
                 name = "unique_scalar_allocation" + suffix
                 binary = pathlib.Path(temporary) / f"{name}-{mode}"
@@ -76,29 +72,21 @@ def main():
                 assert (result.returncode, result.stdout, result.stderr) == expected, (
                     name, mode, result, expected)
                 print(f"{name}: {mode} passed", flush=True)
-        # The native backend owns the same scalar pointees, including a null
-        # pointer, a native function pointer and an integral enum. Its owners
-        # allocate through the runtime's POSIX provider rather than C++ operator
-        # new. Its own companion fails that provider through the same switch,
-        # so exhaustion and failure during cleanup are checked on both
-        # backends. That provider is POSIX-only.
-        suffixes = ("",) if os.name == "nt" else ("", "_failure", "_cleanup_failure")
-        companion = "unique_scalar_allocation_fault.cpp" if os.name == "nt" else \
-            "unique_scalar_runtime_allocation_fault.cpp"
-        for suffix in suffixes:
+        # The LLVM backend also owns null pointers, native function pointers and
+        # integral enums; its O2 pipeline is checked here beside the O0/O3
+        # modes above, through the same operator-new fault seam.
+        for suffix in ("", "_failure", "_cleanup_failure"):
             name = "unique_scalar_allocation" + suffix
-            for level in ("O0", "O2"):
-                binary = pathlib.Path(temporary) / f"{name}-llvm-{level}"
-                command = [str(compiler), str(fixtures / f"{name}.gti"), "--backend", "llvm",
-                           f"-{level}", "-o", str(binary), "--",
-                           str(fixtures / companion)]
-                built = run(command)
-                assert built.returncode == 0, (command, built.stdout, built.stderr)
-                result = run([str(binary)])
-                assert (result.returncode, result.stdout, result.stderr) == expected_result(
-                    suffix, site), (name, level, result)
-                print(f"{name}: llvm-{level} passed", flush=True)
-
+            binary = pathlib.Path(temporary) / f"{name}-llvm-O2"
+            command = [str(compiler), str(fixtures / f"{name}.gti"), "--backend", "llvm",
+                       "-O2", "-o", str(binary), "--",
+                       str(fixtures / "unique_scalar_allocation_fault.cpp")]
+            built = run(command)
+            assert built.returncode == 0, (command, built.stdout, built.stderr)
+            result = run([str(binary)])
+            assert (result.returncode, result.stdout, result.stderr) == expected_result(
+                suffix, site), (name, "O2", result)
+            print(f"{name}: llvm-O2 passed", flush=True)
 
 if __name__ == "__main__":
     main()

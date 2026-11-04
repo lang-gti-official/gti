@@ -893,6 +893,7 @@ area = "runtime-memory"
 risk = "system"
 paths = [
   "runtime/src/memory.cpp",
+  "runtime/src/owner_memory.cpp",
   "runtime/include/gti/memory.h",
 ]
 owners = [
