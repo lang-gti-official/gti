@@ -879,7 +879,9 @@ target_include_directories(
 # through the imported GTI_LLVM::libclang defined by GTIConfig.cmake.
 target_link_libraries(
   "gti_bindgen"
-  PRIVATE "$<BUILD_INTERFACE:libclang>" "$<INSTALL_INTERFACE:GTI_LLVM::libclang>"
+  # NativeModel and the binding planner use the compiler-owned scalar-kind
+  # spelling contract. Declare that edge for order-sensitive static linkers.
+  PRIVATE gti_compiler "$<BUILD_INTERFACE:libclang>" "$<INSTALL_INTERFACE:GTI_LLVM::libclang>"
 )
 target_compile_features("gti_bindgen" PUBLIC cxx_std_20)
 
