@@ -3506,19 +3506,6 @@ int main() { return select(1, 2); }
   // An overload set whose only exact-type candidate takes a named move-only
   // argument by value reports that copy at the argument (GTI-S2018), as a
   // single-candidate call does, instead of the aggregate GTI-S2012 list.
-  const std::string printSource = R"(import std.string;
-import std.format;
-int main() {
-  mut std::string s = "hello";
-  std::println("{}", s);
-  return 0;
-}
-)";
-  const auto printed = lang::Frontend().analyze(
-      "println-move-only.gti", printSource, {standardLibraryPrelude()}, {},
-      {standardLibraryRoot()});
-  const auto *printCopy =
-      findDiagnosticByCode(printed.diagnostics, "GTI-S2018");
   const auto relatedWith = [](const lang::Diagnostic &diagnostic,
                               std::string_view fragment) {
     return std::any_of(diagnostic.related.begin(), diagnostic.related.end(),
@@ -3527,26 +3514,6 @@ int main() {
                                 std::string::npos;
                        });
   };
-  expect(!printed.canGenerateCode() && printCopy != nullptr &&
-             !hasDiagnosticCode(printed.diagnostics, "GTI-S2012") &&
-             printCopy->message ==
-                 "Argument 2 would call the deleted copy constructor of "
-                 "'std::string'." &&
-             printCopy->primary.start == printSource.find("s);") &&
-             printCopy->primary.end == printCopy->primary.start + 1 &&
-             relatedWith(*printCopy, "Parameter 'first' takes its argument "
-                                     "by value.") &&
-             relatedWith(*printCopy, "Exact-type candidate: println<") &&
-             !relatedWith(*printCopy, "Candidate: println(char)") &&
-             printCopy->hints ==
-                 std::vector<std::string>{
-                     "Pass the argument with std::move(...) when this call "
-                     "should transfer ownership.",
-                     "Pass 's.view()' to borrow the value instead when the "
-                     "callee accepts its view type."} &&
-             printCopy->fixes.empty(),
-         "a named move-only println argument names its deleted copy, not "
-         "every println overload");
 
   const std::string packDeclarations = R"(class Ticket {
   int id;
@@ -3565,6 +3532,8 @@ void sink(int value) {}
 void sink(char value) {}
 void sink<Args...>(std::string_view label, Args... args) {}
 void only<Args...>(Args... args) {}
+void show(int value) {}
+void show<T>(std::string_view label, T value) {}
 )";
   const auto analyzePack = [&](std::string_view name, std::string_view body) {
     return lang::Frontend().analyze(std::string(name),
@@ -3573,6 +3542,29 @@ void only<Args...>(Args... args) {}
                                     {standardLibraryPrelude()}, {},
                                     {standardLibraryRoot()});
   };
+  const std::string valueBody = "  Ticket t{1};\n  show(\"x\", t);\n";
+  const auto valued = analyzePack("user-value-move-only.gti", valueBody);
+  const auto *valueCopy = findDiagnosticByCode(valued.diagnostics, "GTI-S2018");
+  const std::string valueText = packDeclarations + "int main() {\n" + valueBody;
+  expect(!valued.canGenerateCode() && valueCopy != nullptr &&
+             !hasDiagnosticCode(valued.diagnostics, "GTI-S2012") &&
+             valueCopy->message == "Argument 2 would call the deleted copy "
+                                   "constructor of 'Ticket'." &&
+             valueCopy->primary.start == valueText.find("t);") &&
+             valueCopy->primary.end == valueCopy->primary.start + 1 &&
+             relatedWith(*valueCopy, "Parameter 'value' takes its argument "
+                                     "by value.") &&
+             relatedWith(*valueCopy, "Exact-type candidate: show<") &&
+             !relatedWith(*valueCopy, "Candidate: show(int)") &&
+             valueCopy->hints ==
+                 std::vector<std::string>{
+                     "Pass the argument with std::move(...) when this call "
+                     "should transfer ownership.",
+                     "Pass 't.view()' to borrow the value instead when the "
+                     "callee accepts its view type."} &&
+             valueCopy->fixes.empty(),
+         "a named move-only argument to a deduced by-value overload names "
+         "its deleted copy, not every overload");
   const std::string packBody = "  Ticket t{1};\n  sink(\"x\", t);\n";
   const auto packed = analyzePack("user-pack-move-only.gti", packBody);
   const auto *packCopy = findDiagnosticByCode(packed.diagnostics, "GTI-S2018");
@@ -3588,7 +3580,7 @@ void only<Args...>(Args... args) {}
              hasDiagnosticHint(packed.diagnostics, "std::move(...)") &&
              hasDiagnosticHint(packed.diagnostics, "'t.view()'"),
          "a user-defined overloaded pack and move-only class report the "
-         "same deleted copy as std::println");
+         "same deleted copy as a by-value overload");
   const auto single =
       analyzePack("user-single-pack.gti", "  Ticket t{1};\n  only(t);\n");
   const auto *singleCopy =

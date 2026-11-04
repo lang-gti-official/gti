@@ -886,8 +886,8 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   `Parameter pack 'name' takes each argument by value, ...`). When that
   parameter's type is deduced and the argument's type has a public read-only
   `view()` member, a hint names `'<value>.view()'` as the borrowing
-  alternative. Named move-only arguments to `std::println` and to a
-  user-defined variadic function therefore report the same deleted copy.
+  alternative. Named move-only arguments to a by-value overload and to a
+  by-value parameter pack therefore report the same deleted copy.
   A destructor's attempted receiver-field move uses the same code at the
   field token and explains that field cleanup belongs to the enclosing object.
   Explicit and implicit `this` paths share this rule; separately owned locals
