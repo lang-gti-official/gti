@@ -8312,10 +8312,14 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     CallReceiverMode receiverMode = CallReceiverMode::None;
   };
   std::vector<ViableOverload> viable;
-  // Retain a causal copy failure only for otherwise exact candidates. An
+  // Retain a causal copy failure only for otherwise exact candidates: the
+  // candidate accepts every argument type, and only the written value
+  // category (a named non-copyable value or a non-movable temporary) keeps a
+  // by-value argument from initializing its exact-type parameter. An
   // unrelated arity, type, constraint or receiver failure must not masquerade
   // as a request to transfer ownership.
   struct RejectedCopyOverload {
+    const CallableCandidate *source = nullptr;
     CallableCandidate function;
     std::size_t argument;
     SemanticType argumentType;
@@ -8358,13 +8362,12 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
           resolved, index, candidateArguments.types[index],
           expr.arguments()[index], candidateArguments.deferred[index]);
       if (match == CallArgumentMatchKind::Mismatch) {
-        const auto *info =
-            semanticModel.findExpression(*expr.arguments()[index]);
         const bool copyFailure =
+            !candidateArguments.deferred[index] &&
             index < resolved.parameterTypes.size() &&
-            resolved.parameterTypes[index] == candidateArguments.types[index] &&
-            info != nullptr && info->category == ValueCategory::Place &&
-            !typeTraits(candidateArguments.types[index]).copyable;
+            callArgumentRejectedByOwnership(resolved.parameterTypes[index],
+                                            candidateArguments.types[index],
+                                            expr.arguments()[index]);
         if (copyFailure) {
           if (!rejectedCopy)
             rejectedCopy = index;
@@ -8403,7 +8406,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       continue;
     }
     if (rejectedCopy) {
-      rejectedCopies.push_back({std::move(resolved), *rejectedCopy,
+      rejectedCopies.push_back({&candidate, std::move(resolved), *rejectedCopy,
                                 candidateArguments.types[*rejectedCopy]});
       continue;
     }
@@ -8541,12 +8544,24 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
         return;
       }
       if (viable.empty() && rejectedCopies.size() == 1) {
+        // Exactly one overload accepts every argument type and is rejected
+        // only because a by-value argument cannot be copied or moved. Report
+        // that first cause at the argument, as a single-candidate call does,
+        // rather than listing every overload of the set.
         const auto &rejected = rejectedCopies.front();
+        const std::size_t diagnosticCount = diagnostics.size();
         reportCallArgumentMismatch(
             rejected.argument,
             rejected.function.parameterTypes[rejected.argument],
             rejected.argumentType, expr.arguments()[rejected.argument],
             "Function", &rejected.function);
+        if (diagnostics.size() > diagnosticCount &&
+            rejected.source->declaration != nullptr) {
+          diagnostics.back().related.push_back(
+              {tokenSpan(rejected.source->declaration->name()),
+               "Exact-type candidate: " +
+                   functionSignatureSpelling(*rejected.source)});
+        }
         currentType = SemanticType::Unknown;
         return;
       }
