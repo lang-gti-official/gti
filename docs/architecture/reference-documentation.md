@@ -68,6 +68,13 @@ The compiler remains authoritative for:
 - semantic ownership, drop, copy/move, and transfer/share traits; and
 - stable standard-library unit names plus source line and byte offsets.
 
+Conformance-block operations are omitted from the namespace-member index:
+they are callable through their concept, and their synthetic carrier namespace
+is not public API. The projection excludes their exact authored declaration
+identities from `ConformanceDecl` members, including nested and generic blocks;
+it does not match generated name prefixes or change editor visibility. Concepts
+and unrelated namespace functions with the same operation names remain indexed.
+
 The index is a presentation boundary, not a cached semantic model. It contains
 no AST pointers, physical checkout paths, timestamps, or snapshot-local
 `SymbolId` values. Declaration keys are deterministic content keys used to

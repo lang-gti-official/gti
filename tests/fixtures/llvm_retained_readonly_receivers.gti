@@ -1,0 +1,94 @@
+import std.polymorphic;
+import std.memory;
+import std.vector;
+import std.string;
+
+mut int drops = 0;
+mut bool trace = false;
+interface Counter { int operator()(int step); };
+class Model : public Counter {
+  int id;
+  std::unique_ptr<int> value;
+public:
+  Model(int id) : id(id), value(std::make_unique<int>(40)) {}
+  Model(Model& other) = delete;
+  Model(Model&& other) = default;
+  int operator()(int step) override {
+    if (step < 0) { return 1 / (step + 1); } // invocation failure
+    return *this.value + step;
+  }
+  ~Model() {
+    drops++;
+    if (trace) { std::println(this.id); }
+  }
+};
+
+// An application-defined consuming wrapper retains its owned subobject for
+// a read-only virtual call. No standard-library identity grants admission.
+class Host {
+  mut std::unique_ptr<Counter> value;
+public:
+  Host() : value(std::upcast_unique<Counter, Model>(std::make_unique<Model>(70))) {}
+  int run(int step) && { return std::move(*this.value)(step); }
+};
+class InlineModel : public Counter {
+  int value = 40;
+public:
+  InlineModel() {}
+  int operator()(int step) override { return this.value + step; }
+};
+interface MutableCounter { int operator()(int step) mut; };
+class MutableModel : public MutableCounter {
+  mut int value = 40;
+public:
+  MutableModel() {}
+  int operator()(int step) mut override { this.value += step; return this.value; }
+};
+interface OnceCounter { int operator()(int step) &&; };
+class OnceModel : public OnceCounter {
+  int value = 40;
+public:
+  OnceModel() {}
+  int operator()(int step) && override { return this.value + step; }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  trace = argc > 1;
+  if (argc == 2) {
+    Host value{};
+    return std::move(value).run(-1);
+  }
+  if (argc == 3) {
+    std::inline_polymorphic<Counter, 1, 8> value{Model(72)};
+    return std::move(value).invoke_once<int>(-1);
+  }
+  {
+    Host value{};
+    if (std::move(value).run(2) != 42) { return 1; }
+  }
+  if (drops != 1) { return 2; }
+  {
+    std::inline_polymorphic<Counter, 64, 8> value{Model(71)};
+    if (std::move(value).invoke_once<int>(2) != 42) { return 3; }
+  }
+  if (drops != 2) { return 4; }
+  {
+    std::inline_polymorphic<Counter, 1, 8> value{Model(72)};
+    if (std::move(value).invoke_once<int>(2) != 42) { return 5; }
+  }
+  if (drops != 3) { return 6; }
+  {
+    std::inline_polymorphic<Counter, 64, 8> value{InlineModel()};
+    if (!value.is_inline()) { return 9; }
+    if (std::move(value).invoke_once<int>(2) != 42) { return 10; }
+  }
+  {
+    std::inline_polymorphic<MutableCounter, 32, 8> value{MutableModel()};
+    if (std::move(value).invoke_once<int>(2) != 42) { return 7; }
+  }
+  {
+    std::inline_polymorphic<OnceCounter, 32, 8> value{OnceModel()};
+    if (std::move(value).invoke_once<int>(2) != 42) { return 8; }
+  }
+  return 0;
+}

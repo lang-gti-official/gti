@@ -1617,6 +1617,12 @@ add_test(NAME deferred_bound_field_runtime
                  "${PROJECT_SOURCE_DIR}/tests/deferred_bound_field_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(deferred_bound_field_runtime PROPERTIES TIMEOUT 240)
+
+add_test(NAME borrowed_field_publication_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/borrowed_field_publication_runtime_test.py"
+                 "$<TARGET_FILE:gti>")
+set_tests_properties(borrowed_field_publication_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME passive_text_view_class_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/passive_text_view_class_runtime_test.py"
@@ -2608,6 +2614,14 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(stdlib_surface_context_controls PROPERTIES TIMEOUT 180)
 
+  add_test(NAME llvm_borrowed_dispatch_regressions
+           COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_borrowed_dispatch_regressions_test.py"
+                   "$<TARGET_FILE:gti>")
+  set_tests_properties(llvm_borrowed_dispatch_regressions PROPERTIES TIMEOUT 600)
+  add_test(NAME owning_expression_transfers
+           COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/owning_expression_transfers_test.py"
+                   "$<TARGET_FILE:gti>")
+  set_tests_properties(owning_expression_transfers PROPERTIES TIMEOUT 600)
   add_test(NAME llvm_dispatch_execution
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_dispatch_execution_test.py"
                    "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
@@ -4025,6 +4039,13 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/fixtures/json_config.gti"
   )
   set_tests_properties(json_runtime PROPERTIES TIMEOUT 1200)
+  add_test(
+    NAME json_dynamic_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/json_dynamic_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(json_dynamic_runtime PROPERTIES TIMEOUT 1200)
   add_test(
     NAME constexpr_text_runtime
     COMMAND "${Python3_EXECUTABLE}"

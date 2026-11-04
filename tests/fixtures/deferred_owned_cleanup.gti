@@ -1,0 +1,38 @@
+import std.utility;
+import std.vector;
+import std.memory;
+import std.string;
+class Tracked {
+  int id;
+public:
+  Tracked(int id) : id(id) {}
+  ~Tracked() { std::println(this.id); }
+};
+class Stage {
+  int id;
+public:
+  Stage(int id, int divisor) : id(id + 0 / divisor) {} // construction failure
+  ~Stage() { std::println(this.id); }
+};
+class Reader {
+public:
+  int& source;
+  mut std::vector<int> buffer;
+  std::unique_ptr<Tracked> token;
+  Reader(int& source) : source(source), buffer(std::vector<int>()), token(std::make_unique<Tracked>(2)) {
+    this.buffer.push_back(17);
+  }
+};
+class Outer {
+public:
+  Stage before;
+  Reader reader;
+  Stage after;
+  Outer(Reader reader, int before, int after) : before(Stage(1, before)), reader(std::move(reader)), after(Stage(3, after)) {}
+};
+int main(int argc, std::vector<std::string> argv) {
+  int number = 23;
+  Outer value = Outer(Reader(number), argc == 2 ? 0 : 1, argc == 3 ? 0 : 1);
+  Outer moved = std::move(value);
+  return moved.reader.source == 23 ? 0 : 1;
+}
