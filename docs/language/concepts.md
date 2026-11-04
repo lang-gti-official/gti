@@ -1008,9 +1008,11 @@ iterators nor the source loan after construction.
 `std::binary_search`. Its iterator must satisfy `std::forward_iterator`, its
 possibly distinct end value must satisfy `std::sentinel_for`, and dereference
 must produce the exact ordered value type. The implementation copies a cursor
-and advances that copy to each midpoint; it neither subtracts iterators nor
-mutates the end sentinel. This yields logarithmic comparisons and linear total
-iterator increments for forward iterators.
+and advances that copy to each midpoint, and never mutates the end sentinel.
+It subtracts or jumps only when the cursor provides those operations. This
+yields logarithmic comparisons for every forward iterator, linear total
+iterator increments for a step-only cursor, and logarithmic movement for a
+jumping cursor with a sized sentinel.
 
 The input-iterator client cluster also includes ordinary source-defined
 `std::find`, `std::count`, and `std::for_each` overloads. `find` and `count`

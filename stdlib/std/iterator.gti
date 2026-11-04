@@ -152,6 +152,22 @@ requires(mut I& position, std::ptrdiff_t distance) {
   { position += distance } -> void;
   { position -= distance } -> void;
 };
+// Boolean forms of the jump and sized-sentinel contracts select movement with
+// `if constexpr`. A concept-id is not an expression, and a concept defined
+// through a function call would no longer lend its member contracts to
+// generic bodies, so `cursor_jumps` and `std::sized_sentinel_for` restate
+// these requirements rather than calling them.
+constexpr bool cursor_jump_query<I>() {
+  return cursor_jump_declarations<I>() &&
+         requires(mut I& position, std::ptrdiff_t distance) {
+           { position += distance } -> void;
+           { position -= distance } -> void;
+         };
+}
+constexpr bool sentinel_distance_query<I, S>() {
+  return sentinel_distance_declaration<I, S>() &&
+         requires(I& position, S& end) { { position - end } -> std::ptrdiff_t; };
+}
 }
 export [[unsatisfied("Provide public, safe read-only operator*() yielding a checked cursor-borrowed reference or an independent copyable value, and public void operator++() mut.")]]
 concept input_iterator<I> = detail::readable_dereference_declaration<I>() &&
@@ -260,37 +276,57 @@ export struct contiguous_iterator_tag : public random_access_iterator_tag { cont
 
 // Forward-only utilities take an unsigned distance; the signed overload
 // requires bidirectional movement so a negative distance always has an exact
-// meaning. Movement steps rather than jumping so the reference receiver only
-// needs the increment/decrement contract.
+// meaning. A cursor that also satisfies the jump contract moves with one
+// checked `+=`/`-=`; any other cursor steps. Either way an out-of-range move
+// raises the cursor's own defined failure, and the jump validates before it
+// changes the position.
 export void advance<Iterator>(mut Iterator& iterator, mut ptrdiff_t distance)
   requires std::bidirectional_cursor<Iterator> {
-  while (distance > 0) {
-    ++iterator;
-    distance--;
-  }
-  while (distance < 0) {
-    --iterator;
-    distance++;
+  if constexpr (detail::cursor_jump_query<Iterator>()) {
+    iterator += distance;
+  } else {
+    while (distance > 0) {
+      ++iterator;
+      distance--;
+    }
+    while (distance < 0) {
+      --iterator;
+      distance++;
+    }
   }
 }
 
 export void advance<Iterator>(mut Iterator& iterator, mut size_t distance)
   requires std::input_iterator<Iterator> {
-  while (distance > 0) {
-    ++iterator;
-    distance--;
+  if constexpr (detail::cursor_jump_query<Iterator>()) {
+    iterator += ptrdiff_t(distance);
+  } else {
+    while (distance > 0) {
+      ++iterator;
+      distance--;
+    }
   }
 }
 
+// A sized sentinel answers in one subtraction; any other pair counts steps.
+// The difference is left-minus-right, so a reachable sentinel gives a
+// non-positive one. A start past the sentinel has no forward count and fails
+// as an invalid argument, as stepping past a checked end would.
 export ptrdiff_t distance<Iterator, Sentinel>(mut Iterator first, Sentinel last)
   requires std::input_iterator<Iterator> &&
            std::sentinel_for<Sentinel, Iterator> {
-  mut ptrdiff_t result = 0;
-  while (first != last) {
-    ++first;
-    result++;
+  if constexpr (detail::sentinel_distance_query<Iterator, Sentinel>()) {
+    ptrdiff_t difference = first - last;
+    gti_internal::require_container_argument(difference <= 0);
+    return -difference;
+  } else {
+    mut ptrdiff_t result = 0;
+    while (first != last) {
+      ++first;
+      result++;
+    }
+    return result;
   }
-  return result;
 }
 
 export Iterator next<Iterator>(mut Iterator iterator)
@@ -307,9 +343,13 @@ export Iterator next<Iterator>(mut Iterator iterator, ptrdiff_t distance)
 
 export Iterator next<Iterator>(mut Iterator iterator, mut size_t distance)
   requires std::input_iterator<Iterator> {
-  while (distance > 0) {
-    ++iterator;
-    distance--;
+  if constexpr (detail::cursor_jump_query<Iterator>()) {
+    iterator += ptrdiff_t(distance);
+  } else {
+    while (distance > 0) {
+      ++iterator;
+      distance--;
+    }
   }
   return std::move(iterator);
 }
@@ -322,9 +362,13 @@ export Iterator prev<Iterator>(mut Iterator iterator)
 
 export Iterator prev<Iterator>(mut Iterator iterator, mut size_t distance)
   requires std::bidirectional_cursor<Iterator> {
-  while (distance > 0) {
-    --iterator;
-    distance--;
+  if constexpr (detail::cursor_jump_query<Iterator>()) {
+    iterator -= ptrdiff_t(distance);
+  } else {
+    while (distance > 0) {
+      --iterator;
+      distance--;
+    }
   }
   return std::move(iterator);
 }

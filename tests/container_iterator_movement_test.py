@@ -124,6 +124,20 @@ def main():
             "resource-forward-end-step": "mut std::resource_vector<int, std::process_resource> values{resource}; values.push_back(1); mut auto cursor = values.end_mut();",
             "resource-reverse-end-step": "mut std::resource_vector<int, std::process_resource> values{resource}; values.push_back(1); mut auto cursor = values.rend_mut();",
             "resource-begin-backstep": "mut std::resource_vector<int, std::process_resource> values{resource}; values.push_back(1); mut auto cursor = values.begin_mut();",
+            "vector-advance-past-end": "mut std::vector<int> values = {1, 2}; mut auto cursor = values.begin_mut();",
+            "vector-advance-before-begin": "mut std::vector<int> values = {1, 2}; mut auto cursor = values.end_mut();",
+            "vector-next-past-end": "std::vector<int> values = {1, 2}; auto cursor = values.begin();",
+            "vector-prev-before-begin": "std::vector<int> values = {1, 2}; auto cursor = std::next(values.begin(), std::ptrdiff_t(2));",
+            "vector-distance-past-end": "std::vector<int> values = {1, 2}; auto cursor = std::next(values.begin(), std::ptrdiff_t(2));",
+        }
+        # Generic movement over a jumping cursor validates the whole move with
+        # one checked jump; a sized distance rejects a start past its end.
+        cursor_operations = {
+            "vector-advance-past-end": "std::advance(cursor, std::size_t(3));",
+            "vector-advance-before-begin": "std::advance(cursor, std::ptrdiff_t(-3));",
+            "vector-next-past-end": "auto moved = std::next(cursor, std::size_t(3));",
+            "vector-prev-before-begin": "auto moved = std::prev(cursor, std::size_t(3));",
+            "vector-distance-past-end": "auto counted = std::distance(cursor, values.begin());",
         }
         state_source = """import std.string;
 import std.detail_iterator;
@@ -154,12 +168,13 @@ public:
             expected_stdout = ""
             if name in cursor_sources:
                 setup = cursor_sources[name]
-                operation = "--cursor;" if name.endswith("backstep") else "++cursor;"
+                operation = cursor_operations.get(
+                    name, "--cursor;" if name.endswith("backstep") else "++cursor;")
                 if name.startswith("resource-"):
                     setup = ("std::process_resource process{}; unsafe {\n"
                              "auto resource = std::bind_resource(process);\n" + setup)
                     operation += "\n}"
-                fixture.write_text(state_source + "import std.vector;\n"
+                fixture.write_text(state_source + "import std.iterator;\nimport std.vector;\n"
                     "import std.resource_vector;\nimport std.resource;\n"
                     "int main() {\nStepDrop outer{10};\n" + setup +
                     "\nStepDrop inner{20};\n" + operation + "\nreturn 99;\n}\n")

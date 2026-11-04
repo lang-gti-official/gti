@@ -8998,7 +8998,6 @@ int main() {
 
   const lang::HirFunctionInstance *nextHir = nullptr;
   const lang::HirFunctionInstance *binarySearchHir = nullptr;
-  const lang::HirFunctionInstance *countedSearchHir = nullptr;
   for (const lang::HirFunctionInstance &instance :
        valid.hir.functionInstances()) {
     if (instance.source == nullptr) {
@@ -9010,8 +9009,6 @@ int main() {
       nextHir = &instance;
     } else if (instance.source->name().lexeme == "binary_search") {
       binarySearchHir = &instance;
-    } else if (instance.source->name().lexeme == "binary_search_counted") {
-      countedSearchHir = &instance;
     }
   }
   const bool hirEntryStored =
@@ -9022,8 +9019,7 @@ int main() {
                            loan.entry &&
                            loan.access == lang::AccessMode::ReadOnly;
                   });
-  expect(nextHir != nullptr && binarySearchHir != nullptr &&
-             countedSearchHir != nullptr && hirEntryStored &&
+  expect(nextHir != nullptr && binarySearchHir != nullptr && hirEntryStored &&
              nextHir->returnBorrowOrigin == lang::BorrowOriginKind::Argument &&
              nextHir->returnBorrowParameter == 0 &&
              nextHir->returnBorrowAccess == lang::AccessMode::ReadOnly,
