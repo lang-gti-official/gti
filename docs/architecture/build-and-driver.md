@@ -1066,6 +1066,44 @@ reused only when its state also records the content digest of the exact host
 executable that produced it; any other host program reruns. Command build
 programs retain their existing declared-input contract.
 
+### Local diagnostic evidence
+
+`gti build --record-diagnostics` and `gti run --record-diagnostics` opt into
+local recording of structured compilation errors. Recording is off by default;
+ordinary successful builds do not create evidence. Diagnostics and command exit
+status remain unchanged if the recorder cannot save a report.
+
+Reports live under `<workspace>/.gti/diagnostic-reports/`, with a directory-local
+Git ignore file. Each JSON record contains ordered diagnostics, primary/related
+spans with approximately 25 surrounding lines, hints and fix-its, compiler
+version/source identity, invocation arguments and resolved target/backend/profile.
+Captured source buffers are retained alongside snippets so later edits do not
+replace the original evidence. Reports do not read source files again after
+analysis. No data is uploaded and no command is executed by the recorder.
+
+Identical evidence updates an occurrence count. Changed inputs, diagnostics,
+compiler identity or invocation create a separate record. Storage retains the
+32 most recently observed records, with at most 8 MiB of source text and 16 MiB
+of encoded data per record. Exceeding a bound reports a recording failure without
+replacing the compilation error. A concurrent recorder holding the storage lock
+causes a best-effort recording failure, not a delayed or failed compilation.
+
+Export a selected observation with:
+
+```sh
+gti diagnostic-export .gti/diagnostic-reports/<id>.json ./diagnostic-export --note "What I expected"
+```
+
+The destination must be new. `report.json` preserves the captured source and
+adds the user note; `README.txt` describes its interpretation. Original paths
+remain JSON data, never extraction destinations. Review the source and command
+arguments before sharing. This is diagnostic evidence rather than a hermetic
+reproducer: native dependencies, environment variables and uncaptured project
+configuration still require the existing developer capture/replay workflow.
+Runtime errors from the executed application and unstructured native-tool
+output are outside this initial structured-diagnostic recorder.
+
+
 ### Raw pointer audit policy
 
 Direct compilation and project `build`, `check`, `run`, `test`, and `verify`

@@ -6535,6 +6535,14 @@ target_link_libraries(gti_reference_parameter_pack_mir_tests PRIVATE gti_compile
 add_test(NAME reference_parameter_pack_mir COMMAND gti_reference_parameter_pack_mir_tests)
 set_tests_properties(reference_parameter_pack_mir PROPERTIES TIMEOUT 120)
 
+
+add_executable(gti_diagnostic_record_tests diagnostic_record_tests.cpp)
+target_link_libraries(gti_diagnostic_record_tests PRIVATE gti_driver)
+add_test(NAME diagnostic_record COMMAND gti_diagnostic_record_tests)
+add_test(NAME diagnostic_record_cli COMMAND "${Python3_EXECUTABLE}"
+  "${PROJECT_SOURCE_DIR}/tests/diagnostic_record_cli_test.py" "$<TARGET_FILE:gti>")
+set_tests_properties(diagnostic_record diagnostic_record_cli PROPERTIES TIMEOUT 300)
+
 include("${PROJECT_SOURCE_DIR}/tests/TestThroughput.cmake")
 
 # Every build-tree test runs the compiler's self-checks, such as the

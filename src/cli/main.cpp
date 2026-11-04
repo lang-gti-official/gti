@@ -9,6 +9,7 @@
 #include "gti/driver/compilation.h"
 #include "gti/driver/compiled_scalar_library.h"
 #include "gti/driver/dependencies.h"
+#include "gti/driver/diagnostic_record.h"
 #include "gti/driver/install.h"
 #include "gti/driver/native_toolchain.h"
 #include "gti/driver/process.h"
@@ -50,6 +51,7 @@ namespace {
 #endif
 
 constexpr std::string_view version = GTI_VERSION;
+std::optional<lang::driver::DiagnosticRecordContext> diagnosticRecording;
 lang::cli::TerminalStyle terminalStyle;
 using lang::cli::Style;
 std::optional<std::string> runtimeColorOverride;
@@ -241,6 +243,7 @@ enum class ProjectCommand {
 };
 
 struct ProjectOptions {
+  bool recordDiagnostics = false;
   std::optional<lang::RawPointerAuditMode> rawPointerAudit;
   lang::CompileLimitOverrides compileLimits;
   std::optional<bool> rawPointerAuditLibraryFindings;
@@ -350,6 +353,10 @@ void printUsage(std::ostream &stream) {
          "       gti run [target] [options] [-- <program arguments>]\n"
          "       gti test [target] [options]\n"
          "       gti verify --build-report <path> [options]\n"
+         "       gti diagnostic-export <record.json> <new-directory> [--note "
+         "<text>]\n"
+         "       gti build|run --record-diagnostics (save local failure "
+         "evidence)\n"
          "       gti install [target] [--path <dir>] [--root <dir>] "
          "[--force] [options]\n"
          "       gti install --list [--root <dir>]\n"
@@ -1078,6 +1085,17 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
     if (limit == LimitArgument::Accepted)
       continue;
     const std::string argument = argv[index];
+    if (argument == "--record-diagnostics") {
+      if (options.command != ProjectCommand::Build &&
+          options.command != ProjectCommand::Run) {
+        std::cerr
+            << "gti: --record-diagnostics is supported by build and run\n";
+        return ArgumentResult::ExitFailure;
+      }
+      options.recordDiagnostics = true;
+      continue;
+    }
+
     if (argument == "-h" || argument == "--help") {
       printUsage(std::cout);
       return ArgumentResult::ExitSuccess;
@@ -2093,6 +2111,15 @@ void reportDiagnostics(const std::vector<lang::Diagnostic> &diagnostics,
   for (const lang::Diagnostic &diagnostic : diagnostics) {
     reportDiagnostic(diagnostic, sources);
   }
+  if (diagnosticRecording) {
+    const auto saved = lang::driver::recordDiagnostics(*diagnosticRecording,
+                                                       diagnostics, sources);
+    if (!saved.path.empty())
+      std::cerr << "gti: diagnostic evidence: " << saved.path << '\n';
+    else if (!saved.error.empty())
+      std::cerr << "gti: could not save diagnostic evidence: " << saved.error
+                << '\n';
+  }
 }
 
 int runRegistryAuthentication(const RegistryAuthenticationOptions &options) {
@@ -2895,6 +2922,13 @@ int buildProjectPlan(
     if (status != exitCode(ExitStatus::Success))
       return status;
   }
+  if (diagnosticRecording) {
+    diagnosticRecording->projectRoot = plan.workspaceRoot();
+    diagnosticRecording->target = lang::driver::targetTriple(plan.target());
+    diagnosticRecording->backend =
+        std::string(lang::backendKindName(plan.backend()));
+    diagnosticRecording->profile = plan.profileName();
+  }
   if (plan.compiledLibrary() &&
       (!plan.buildScripts().empty() || !plan.bindgenImports().empty())) {
     std::cerr << "gti: compiled library producers do not support native build "
@@ -3171,6 +3205,8 @@ int runProjectBuildAll(const ProjectOptions &options, const char *driver) {
     if (!options.useCache) {
       command.emplace_back("--no-cache");
     }
+    if (options.recordDiagnostics)
+      command.emplace_back("--record-diagnostics");
     if (options.verbose) {
       command.emplace_back("--verbose");
     }
@@ -4520,6 +4556,23 @@ int main(int argc, char *argv[]) {
   argv = arguments.data();
   const std::string_view command =
       argc > 1 ? std::string_view(argv[1]) : std::string_view{};
+  if (command == "diagnostic-export") {
+    if (argc != 4 && argc != 6) {
+      std::cerr << "usage: gti diagnostic-export <record.json> <new-directory> "
+                   "[--note <text>]\n";
+      return exitCode(ExitStatus::Usage);
+    }
+    if (argc == 6 && std::string_view(argv[4]) != "--note")
+      return exitCode(ExitStatus::Usage);
+    const auto result = lang::driver::exportDiagnosticRecord(
+        argv[2], argv[3], argc == 6 ? argv[5] : "");
+    if (!result.error.empty()) {
+      std::cerr << "gti: " << result.error << '\n';
+      return exitCode(ExitStatus::Io);
+    }
+    std::cout << "Exported diagnostic evidence to " << result.path << '\n';
+    return exitCode(ExitStatus::Success);
+  }
   if (command == "build" || command == "check" || command == "run" ||
       command == "test" || command == "verify" || command == "install") {
     ProjectOptions options;
@@ -4536,6 +4589,24 @@ int main(int argc, char *argv[]) {
     }
     if (argumentResult == ArgumentResult::ExitFailure) {
       return exitCode(ExitStatus::Usage);
+    }
+    if (options.recordDiagnostics) {
+      std::error_code error;
+      auto root = std::filesystem::current_path(error);
+      if (!error) {
+        for (auto path = root; !path.empty(); path = path.parent_path()) {
+          if (std::filesystem::is_regular_file(path / "gti.toml", error)) {
+            root = path;
+            break;
+          }
+          if (path == path.parent_path())
+            break;
+        }
+        diagnosticRecording = lang::driver::DiagnosticRecordContext{
+            .projectRoot = root, .compilerVersion = std::string(version)};
+        for (int i = 1; i < argc; ++i)
+          diagnosticRecording->arguments.emplace_back(argv[i]);
+      }
     }
     if (options.command == ProjectCommand::Verify) {
       return runProjectVerify(options, argv[0]);

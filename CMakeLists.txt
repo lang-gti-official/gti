@@ -818,6 +818,7 @@ add_library(
   "src/driver/build_script.cpp"
   "src/driver/build.cpp"
   "src/driver/build_report.cpp"
+  "src/driver/diagnostic_record.cpp"
   "src/driver/compilation.cpp"
   "src/driver/install.cpp"
   "src/driver/registry_commands.cpp"
