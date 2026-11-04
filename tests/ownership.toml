@@ -1677,6 +1677,7 @@ paths = [
   "cmake/ReuseToolchain.cmake",
   "scripts/configure_ci_*",
   "scripts/check_ci_sanitizers.py",
+  "scripts/free_ci_disk.sh",
   "scripts/named_test_shards.py",
   "tests/named_test_shards_test.py",
 ]
