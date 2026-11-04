@@ -7421,10 +7421,16 @@ private:
                          value.operands.end());
       }
       const ResolvedCallInfo *resolved = model.findCall(*call);
+      // A selected operator() records its call-scoped temporary arguments on
+      // the operator resolution, as every overloaded operator does.
+      const ResolvedOperatorInfo *selectedOperator = model.findOperator(*call);
       const std::span<const std::size_t> ephemeralBorrowArguments =
-          resolved == nullptr ? std::span<const std::size_t>{}
-                              : std::span<const std::size_t>{
-                                    resolved->ephemeralBorrowArguments};
+          selectedOperator != nullptr
+              ? std::span<const std::size_t>{selectedOperator
+                                                 ->ephemeralBorrowArguments}
+          : resolved == nullptr ? std::span<const std::size_t>{}
+                                : std::span<const std::size_t>{
+                                      resolved->ephemeralBorrowArguments};
       const std::optional<std::vector<HirCallArgument>> plannedArguments =
           exactOperands
               ? orderedArguments(arguments, value.parameterTypes, body,

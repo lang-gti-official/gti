@@ -1285,6 +1285,10 @@ findMirTemporaryCarrierDependency(const MirBody &body, const MirPlace &place);
 [[nodiscard]] bool mirBodyRoutesFailureEdges(const MirBody &body);
 [[nodiscard]] bool
 requiresMirFailureControlFlow(const MirInstruction &instruction);
+// A read that leaves its place available has nothing for a failure edge to
+// restore, so it never decides whether an operation can take an Invoke edge.
+[[nodiscard]] bool
+isStatePreservingOwnership(const std::optional<OwnershipEvent> &event);
 struct MirFieldDrop {
   HirBindingId field = 0;
   SymbolId symbol = 0;

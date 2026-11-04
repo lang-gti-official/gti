@@ -9234,13 +9234,15 @@ private:
     // its final storage, but its obligation still starts only on success.
     // Arm their value obligation on the Invoke
     // success edge; the normal successor then owns the temporary until a
-    // later CallInput reparents it or full-expression cleanup drops it.
+    // later CallInput reparents it or full-expression cleanup drops it. A
+    // receiver read that leaves its place available, such as dereferencing a
+    // cursor, does not change when the result exists.
     const bool successEdgeResult =
         resultDrop != 0 && routeFailureEdgesHere() &&
         call.definedFailure.mayUnwind() && !call.destination &&
         (!call.loan || borrowedValueResult ||
          borrowedTemporaryTransfers.contains(value.id)) &&
-        !value.ownership;
+        isStatePreservingOwnership(value.ownership);
     if (successEdgeResult) {
       call.successResultDrop = resultDrop;
     } else if (!detachedBorrowResult) {

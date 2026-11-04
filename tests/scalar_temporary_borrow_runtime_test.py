@@ -17,7 +17,8 @@ if __name__ == "__main__":
     names = ("scalar_temporary_borrow", "186-scalar-temporary-borrows",
              "187-operator-temporary-borrows", "temporary_borrow_library_clients",
              "temporary_borrow_cpp_supported", "noreturn_temporary_borrow",
-             "temporary_borrow_symbolic_producers", "borrowed_text_temporary_failure")
+             "temporary_borrow_symbolic_producers", "borrowed_text_temporary_failure",
+             "call_operator_temporary_borrow")
     terminal = root / "tests/fixtures/noreturn_temporary_borrow.gti"
     terminal_lines = terminal.read_text().splitlines()
     def terminal_site(marker):
@@ -35,6 +36,12 @@ if __name__ == "__main__":
                     if line.endswith('// ' + marker))
         return (f"{text_failure.name}:{line}: runtime error[GTI-R0002]: "
                 "division_by_zero in integer_division\n")
+    call_operator = root / "tests/fixtures/call_operator_temporary_borrow.gti"
+    producer_failure = next(i for i, line in enumerate(call_operator.read_text().splitlines(), 1)
+                            if line.endswith("// producer-failure"))
+    iterator_lines = (root / "stdlib/std/detail/iterator.gti").read_text().splitlines()
+    cursor_check = next(i for i, line in enumerate(iterator_lines, 1)
+                        if "index_bounds_check(selected - begin" in line)
     main(names=names, llvm_modes=True,
          cpp_unsupported={name: (None if name == "temporary_borrow_cpp_supported" else
                                 "scalar, plain-enum, and text temporary reference arguments")
@@ -49,6 +56,12 @@ if __name__ == "__main__":
                     (("cleanup-fails",), (70, "2\n", cleanup))],
                 "temporary_borrow_symbolic_producers": [
                     ((), (0, "value 7\nchoice yes\nowned yes\nclosure 3 intrinsic 4\n", ""))],
+                "call_operator_temporary_borrow": [
+                    ((), (0, "", "")),
+                    (("producer",), (70, "", f"{call_operator.name}:{producer_failure}: runtime error[GTI-R0002]: "
+                                             "division_by_zero in integer_division\n")),
+                    (("cursor", "fails"), (70, "", f"<std/detail/iterator>:{cursor_check}: runtime error[GTI-R0007]: "
+                                                   "index_out_of_bounds in private_storage\n"))],
                 "borrowed_text_temporary_failure": [
                     ((), (0, "produce\nbranch\nowned\nyes\ncleanup\n", "")),
                     (("producer",), (70, "produce\ncleanup\n", text_failure_at("producer-failure"))),
