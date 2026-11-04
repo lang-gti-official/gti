@@ -1815,9 +1815,17 @@ struct CompletionRequest {
   std::size_t byteOffset = 0;
   std::optional<std::string> projectProfile;
   std::unordered_map<std::string, std::string> sourceOverrides;
+  std::unordered_map<std::string, std::uint64_t> documentGenerations;
   lang::lsp::FrontendSourceSnapshot frontendSources;
   bool snippetSupport = false;
   bool markdownDocumentation = false;
+  std::shared_ptr<std::atomic<bool>> cancellation =
+      std::make_shared<std::atomic<bool>>(false);
+};
+
+struct ActiveCompletionRequest {
+  std::string uri;
+  std::shared_ptr<std::atomic<bool>> cancellation;
 };
 
 enum class SemanticRequestKind {
@@ -2106,14 +2114,25 @@ private:
     const JsonValue *id = member(message, "id");
     const JsonValue *params = member(message, "params");
 
+    if (shutdownRequested && method != "exit") {
+      if (id != nullptr && !method.empty())
+        sendJson(errorResponse(id, -32600, "Server has shut down"));
+      return false;
+    }
+
     if (method == "initialize") {
       sendJson(response(id, initializeResult(params)));
     } else if (method == "initialized") {
       registerWatchedFiles();
     } else if (method == "shutdown") {
-      flushAnalyses();
-      flushCompletions();
       shutdownRequested = true;
+      {
+        const std::lock_guard lock(stateMutex);
+        for (const auto &[uri, cancellation] : activeAnalysisCancellations)
+          cancellation->store(true, std::memory_order_relaxed);
+      }
+      stopCompletionWorker();
+      stopAnalysisWorker();
       sendJson(response(id, nullptr));
     } else if (method == "exit") {
       return true;
@@ -3227,6 +3246,9 @@ private:
           if (path) {
             request.sourceOverrides[canonicalPath(*path).string()] =
                 documentSource;
+            if (const auto current = contentGenerations.find(documentUri);
+                current != contentGenerations.end())
+              request.documentGenerations[documentUri] = current->second;
           }
         }
         validRequest = true;
@@ -3583,6 +3605,37 @@ private:
     return request;
   }
 
+  bool sourceInputsCurrentLocked(
+      const std::unordered_map<std::string, std::uint64_t> &dependencies,
+      const std::unordered_map<std::string, std::uint64_t> &documentGenerations,
+      const lang::lsp::FrontendSourceSnapshot &sources) const {
+    for (const auto &[dependency, digest] : dependencies) {
+      const auto overlay = documents.find(dependency);
+      const auto capturedDocument = documentGenerations.find(dependency);
+      // Opening exactly the bytes read from disk preserves this result.
+      if (overlay != documents.end() &&
+          capturedDocument == documentGenerations.end() && digest != 0 &&
+          digest == lang::sourceTextDigest(overlay->second))
+        continue;
+      if (const auto path = filePathFromUri(dependency)) {
+        const std::string canonical = canonicalPath(*path).string();
+        const auto captured = sources.generations.find(canonical);
+        const auto expected =
+            captured == sources.generations.end() ? 0 : captured->second;
+        if (frontendSnapshots.generation(canonical) != expected)
+          return false;
+      }
+      if (overlay == documents.end())
+        continue;
+      const auto current = contentGenerations.find(dependency);
+      if (capturedDocument == documentGenerations.end() ||
+          current == contentGenerations.end() ||
+          capturedDocument->second != current->second)
+        return false;
+    }
+    return true;
+  }
+
   // `openedDigest` is the digest of a newly opened overlay. A root whose
   // published analysis read exactly that text sees no change and keeps its
   // result; opening a file the editor merely navigated to is then free.
@@ -3757,7 +3810,9 @@ private:
         canceled.push_back(std::move(*request));
         request = completionRequests.erase(request);
       }
-      if (activeCompletionRequests.contains(idKey)) {
+      if (const auto active = activeCompletionRequests.find(idKey);
+          active != activeCompletionRequests.end()) {
+        active->second.cancellation->store(true, std::memory_order_relaxed);
         canceledRequests.insert(idKey);
       }
       for (auto request = pendingSemanticRequests.begin();
@@ -3785,6 +3840,10 @@ private:
       const std::lock_guard lock(stateMutex);
       if (stoppingCompletion) {
         return;
+      }
+      for (const auto &[id, active] : activeCompletionRequests) {
+        if (active.uri == request.uri)
+          active.cancellation->store(true, std::memory_order_relaxed);
       }
       for (auto queued = completionRequests.begin();
            queued != completionRequests.end();) {
@@ -3823,7 +3882,9 @@ private:
         request = std::move(completionRequests.front());
         completionRequests.pop_front();
         ++activeCompletions;
-        activeCompletionRequests.insert(request.idKey);
+        activeCompletionRequests.emplace(
+            request.idKey,
+            ActiveCompletionRequest{request.uri, request.cancellation});
       }
 
       lang::CompletionResult completion;
@@ -3837,8 +3898,12 @@ private:
                   generation->second == request.generation;
         canceled = canceledRequests.contains(request.idKey);
       }
-      if (current && !canceled) {
+      if (current && !canceled &&
+          !request.cancellation->load(std::memory_order_relaxed)) {
         lang::FrontendWorkMetrics workMetrics;
+        recordFrontendWork("completion-started", request.uri,
+                           request.generation, 0, workMetrics, std::nullopt,
+                           false, request.idKey);
         const SteadyClock::time_point frontendStart = SteadyClock::now();
         try {
           ProjectAnalysisInputs project = resolveProjectAnalysisInputs(
@@ -3866,6 +3931,9 @@ private:
                  .packageSourceRoots = project.packageSourceRoots,
                  .workMetrics = &workMetrics,
                  .cache = request.frontendSources.cache,
+                 .instanceCache = request.frontendSources.instanceCache,
+                 .preambleCache = request.frontendSources.preambleCache,
+                 .cancellation = request.cancellation.get(),
                  .sourceGenerations = request.frontendSources.generations,
                  .sourceDigests = request.frontendSources.digests});
           }
@@ -3876,15 +3944,26 @@ private:
             std::chrono::duration_cast<std::chrono::microseconds>(
                 SteadyClock::now() - frontendStart)
                 .count());
-        recordFrontendWork("completion", request.uri, request.generation,
-                           elapsedMicroseconds, workMetrics);
+        recordFrontendWork(request.cancellation->load(std::memory_order_relaxed)
+                               ? "completion-cancelled"
+                               : "completion",
+                           request.uri, request.generation, elapsedMicroseconds,
+                           workMetrics, std::nullopt, false, request.idKey);
       }
+      std::unordered_map<std::string, std::uint64_t> completionDependencies;
+      for (const auto &[path, digest] : completion.sourceDigests)
+        completionDependencies.emplace(fileUriFromPath(path), digest);
+      for (const auto &path : completion.sourceLookupPaths)
+        completionDependencies.try_emplace(authoredFileUriFromPath(path), 0);
       {
         const std::lock_guard lock(stateMutex);
         const auto generation = analysisGenerations.find(request.uri);
         current = current && documents.contains(request.uri) &&
                   generation != analysisGenerations.end() &&
-                  generation->second == request.generation;
+                  generation->second == request.generation &&
+                  sourceInputsCurrentLocked(completionDependencies,
+                                            request.documentGenerations,
+                                            request.frontendSources);
         canceled = canceled || canceledRequests.erase(request.idKey) > 0;
         activeCompletionRequests.erase(request.idKey);
       }
@@ -3892,6 +3971,9 @@ private:
         sendJson(errorResponse(request.id, -32800, "Request cancelled"));
       } else if (!current) {
         sendJson(errorResponse(request.id, -32801, "Content modified"));
+      } else if (request.cancellation->load(std::memory_order_relaxed)) {
+        sendJson(errorResponse(request.id, -32802,
+                               "Superseded by a newer completion request"));
       } else {
         sendJson(response(request.id,
                           completionListJson(completion, request.source,
@@ -3994,7 +4076,7 @@ private:
         ++entry;
         continue;
       }
-      if (!drainingAnalyses && pending->second.readyAt > now) {
+      if (pending->second.readyAt > now) {
         if (!wake || pending->second.readyAt < *wake) {
           wake = pending->second.readyAt;
         }
@@ -4160,8 +4242,7 @@ private:
       if (sendRefresh) {
         requestSemanticTokenRefresh();
       }
-      // Wakes idle workers for a newer request of this document and lets
-      // `flushAnalyses` observe the pool becoming idle.
+      // Wakes idle workers for a newer request of this document.
       analysisCondition.notify_all();
       // A waiting audit may start once nothing interactive is pending.
       auditCondition.notify_all();
@@ -4320,39 +4401,10 @@ private:
       bool dependencyChanged =
           analysis.frontend && analysis.frontend->includeSuggestionsRequested &&
           request.includeDiscoveryGeneration != includeDiscoveryGeneration;
-      for (const auto &[dependency, digest] : analysis.dependencies) {
-        const auto overlay = documents.find(dependency);
-        const auto snapshot = request.documentGenerations.find(dependency);
-        // Opening exactly the text read by this analysis preserves its facts.
-        if (overlay != documents.end() &&
-            snapshot == request.documentGenerations.end() && digest != 0 &&
-            digest == lang::sourceTextDigest(overlay->second)) {
-          continue;
-        }
-        if (const auto path = filePathFromUri(dependency)) {
-          const std::string canonical = canonicalPath(*path).string();
-          const auto captured =
-              request.frontendSources.generations.find(canonical);
-          const auto expected =
-              captured == request.frontendSources.generations.end()
-                  ? 0
-                  : captured->second;
-          if (frontendSnapshots.generation(canonical) != expected) {
-            dependencyChanged = true;
-            break;
-          }
-        }
-        if (overlay == documents.end()) {
-          continue;
-        }
-        const auto current = contentGenerations.find(dependency);
-        if (snapshot == request.documentGenerations.end() ||
-            current == contentGenerations.end() ||
-            snapshot->second != current->second) {
-          dependencyChanged = true;
-          break;
-        }
-      }
+      dependencyChanged = dependencyChanged || !sourceInputsCurrentLocked(
+                                                   analysis.dependencies,
+                                                   request.documentGenerations,
+                                                   request.frontendSources);
       if (dependencyChanged) {
         const auto version = documentVersions.find(request.uri);
         retry = makeAnalysisRequestLocked(
@@ -4679,6 +4731,10 @@ private:
   // than when the replacement publishes. A shared-dependency edit otherwise
   // holds a stale and a new whole-program result for every dependant at once.
   std::uint64_t advanceAnalysisGenerationLocked(const std::string &uri) {
+    for (const auto &[id, active] : activeCompletionRequests) {
+      if (active.uri == uri)
+        active.cancellation->store(true, std::memory_order_relaxed);
+    }
     // Includes close/reopen and project changes, not only ordinary edits.
     if (const auto running = activeAnalysisCancellations.find(uri);
         running != activeAnalysisCancellations.end())
@@ -4870,16 +4926,6 @@ private:
                         {"params", std::move(params)}});
   }
 
-  void flushAnalyses() {
-    std::unique_lock lock(stateMutex);
-    // Shutdown runs every pending analysis now rather than after its wait.
-    drainingAnalyses = true;
-    analysisCondition.notify_all();
-    analysisCondition.wait(lock, [this] {
-      return pendingAnalyses.empty() && activeAnalysisUris.empty();
-    });
-  }
-
   // `retainedFrontends` is the number of published snapshots still holding a
   // whole-program result when an analysis finished, before it publishes.
   void recordFrontendWork(
@@ -4887,7 +4933,8 @@ private:
       std::uint64_t elapsedMicroseconds,
       const lang::FrontendWorkMetrics &metrics,
       std::optional<std::size_t> retainedFrontends = std::nullopt,
-      bool includeSuggestionsRequested = false) const {
+      bool includeSuggestionsRequested = false,
+      std::string_view requestId = {}) const {
     if (!frontendTracePath) {
       return;
     }
@@ -5023,6 +5070,8 @@ private:
       record["retainedFrontends"] =
           static_cast<std::int64_t>(*retainedFrontends);
     }
+    if (!requestId.empty())
+      record["requestId"] = std::string(requestId);
     const std::string encoded =
         llvm::formatv("{0}", JsonValue(std::move(record))).str();
     const std::lock_guard lock(frontendTraceMutex);
@@ -5030,13 +5079,6 @@ private:
     if (output) {
       output << encoded << '\n';
     }
-  }
-
-  void flushCompletions() {
-    std::unique_lock lock(stateMutex);
-    completionCondition.wait(lock, [this] {
-      return completionRequests.empty() && activeCompletions == 0;
-    });
   }
 
   void stopCompletionWorker() {
@@ -5047,8 +5089,14 @@ private:
         return;
       }
       stoppingCompletion = true;
+      for (const auto &[id, active] : activeCompletionRequests) {
+        canceledRequests.insert(id);
+        active.cancellation->store(true, std::memory_order_relaxed);
+      }
       abandoned.swap(completionRequests);
     }
+    for (const CompletionRequest &request : abandoned)
+      sendJson(errorResponse(request.id, -32800, "Server shutting down"));
     completionCondition.notify_all();
     if (completionWorker.joinable()) {
       completionWorker.join();
@@ -5063,10 +5111,14 @@ private:
         return;
       }
       stoppingAnalysis = true;
+      for (const auto &[uri, cancellation] : activeAnalysisCancellations)
+        cancellation->store(true, std::memory_order_relaxed);
       pendingAnalyses.clear();
       analysisOrder.clear();
       abandoned.swap(pendingSemanticRequests);
     }
+    for (const PendingSemanticRequest &request : abandoned)
+      sendJson(errorResponse(request.id, -32800, "Server shutting down"));
     analysisCondition.notify_all();
     for (llvm::thread &worker : analysisWorkers) {
       if (worker.joinable()) {
@@ -5142,7 +5194,6 @@ private:
       analysisDurations;
   const std::optional<std::chrono::microseconds> fixedUpdateDebounce =
       fixedUpdateDebounceFromEnvironment();
-  bool drainingAnalyses = false;
   // Set when a dependency or project re-analysis changed tokens a client
   // holds; cleared when the one refresh for that wave is sent.
   bool semanticTokenRefreshPending = false;
@@ -5160,7 +5211,8 @@ private:
   bool auditRunning = false;
   std::deque<CompletionRequest> completionRequests;
   std::deque<PendingSemanticRequest> pendingSemanticRequests;
-  std::unordered_set<std::string> activeCompletionRequests;
+  std::unordered_map<std::string, ActiveCompletionRequest>
+      activeCompletionRequests;
   std::unordered_set<std::string> canceledRequests;
   // Documents whose analysis is running on a pool worker.
   std::unordered_set<std::string> activeAnalysisUris;

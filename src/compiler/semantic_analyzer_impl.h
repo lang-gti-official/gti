@@ -3594,6 +3594,13 @@ private:
       const MemberRequirement &query, std::span<const SemanticType> arguments,
       std::string *reason = nullptr,
       const std::vector<std::string> *lookupScope = nullptr) const;
+  // `{ e } -> C [[borrowed_from(x)]]` for a non-reference C: compares the
+  // dependencies a binding of e's value would retain against the origin x.
+  // `worker` is the query's isolated analyzer that has already analyzed e.
+  [[nodiscard]] static bool borrowedCarrierResultSatisfied(
+      Impl &worker, const MemberRequirement &query, const SemanticType &actual,
+      const SemanticType &required, const SemanticType &origin,
+      SymbolId originIdentity, std::string *reason);
   static void
   collectRequirementTypeArguments(const Expr *expression,
                                   std::vector<const TypeRef *> &types);
@@ -4175,7 +4182,34 @@ private:
     Mismatch,
     Exact,
     EphemeralReadBorrow,
+    // A written integer literal whose mathematical value fits an integer
+    // parameter of another type. The literal has no type of its own until
+    // selection; it adopts the parameter type of the unique candidate chosen
+    // in the fallback tier. A named value never qualifies.
+    ContextualIntegerLiteral,
   };
+
+  [[nodiscard]] bool
+  contextualIntegerLiteralArgumentFits(const SemanticType &parameter,
+                                       const SemanticType &argument,
+                                       const ExprPtr &expression) const;
+
+  SemanticType
+  adoptContextualIntegerLiteralArgument(const ExprPtr &expression,
+                                        const SemanticType &parameter);
+
+  void adoptContextualIntegerLiteralArguments(
+      std::span<const SemanticType> parameterTypes, const ExprList &arguments,
+      std::vector<SemanticType> &argumentTypes,
+      std::span<const std::size_t> indices);
+
+  void adoptFittingContextualIntegerLiteralArguments(
+      std::span<const SemanticType> parameterTypes, const ExprList &arguments,
+      std::vector<SemanticType> &argumentTypes,
+      const std::vector<bool> *deferred = nullptr);
+
+  void appendContextualIntegerLiteralAmbiguityHint(
+      std::span<const std::size_t> indices);
 
   [[nodiscard]] bool
   ephemeralBorrowResultSupported(const CallableCandidate &function) const;

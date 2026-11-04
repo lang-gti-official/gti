@@ -5,7 +5,7 @@ import sys
 import tempfile
 
 from atomic_runtime_test import build, execute
-from backend_modes import cpp_only_case, is_cpp_mode, native_modes
+from backend_modes import is_cpp_mode, native_modes
 
 
 def main() -> None:
@@ -22,21 +22,17 @@ def main() -> None:
                     assert result.stdout == expected and not result.stderr, (label, result)
         # Counts GTI's no-throw allocation seam, not all host/libc allocations.
         # The shared observer has a separate managed-task positive control.
-        # The provider replaces the C++ text's nothrow operator new, which the
-        # LLVM backend's runtime allocation entry never calls, so only the C++
-        # profile can observe it.
-        cpp_modes = [(label, flags) for label, flags, _native in modes if is_cpp_mode(flags)]
-        if cpp_modes:
-            label, flags = cpp_modes[-1]
+        # The provider replaces nothrow operator new, which the C++ text and
+        # the runtime's owner allocation entry (LLVM) both call, so the last
+        # mode of each selected backend proves that waiting allocates nothing.
+        last_modes = {is_cpp_mode(flags): flags for _label, flags, _native in modes}
+        for flags in last_modes.values():
             binary = Path(directory) / "allocations"
             execute([str(compiler), "--execution-profile", "concurrent", *flags,
                      str(fixture.with_name("atomic_wait_allocations.gti")),
                      "-o", str(binary), "--",
                      str(fixture.with_name("scoped_parallel_allocations.cpp"))])
             execute([str(binary)], timeout=30)
-        else:
-            cpp_only_case("transport-allocation oracle counts the C++ text's nothrow operator new",
-                          "atomic_wait_allocations", "cpp-c++23-O3")
     print("atomic waiting matrix passed")
 
 

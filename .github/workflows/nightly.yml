@@ -94,7 +94,7 @@ jobs:
           GTI_VALIDATION_MODE: ${{ needs.select.outputs.validation_mode }}
         run: |
           extra=()
-          if [[ "${GTI_VALIDATION_MODE}" == "source-stdlib" ]]; then
+          if [[ "${GTI_VALIDATION_MODE}" == "source-stdlib" || "${GTI_VALIDATION_MODE}" == "lsp" ]]; then
             extra=(--require-compiler-origin)
           fi
           python3 scripts/release_artifacts.py verify --directory dist \

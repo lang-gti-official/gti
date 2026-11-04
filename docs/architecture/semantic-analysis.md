@@ -1876,6 +1876,25 @@ the selected parameter types. `ResolvedCallInfo` and
 the concrete fixed-array parameter types. Braces never acquire an independent
 semantic type.
 
+A written integer literal argument is analyzed at its default type and may
+match a candidate's integer parameter of another type as a
+`CallArgumentMatchKind::ContextualIntegerLiteral` when its mathematical value
+fits. Function, constructor, base-initializer and operator selection keep such
+candidates in the same fallback tier as call-only temporary borrows: any
+exact candidate discards them, and the tier still requires one unique
+candidate. After selection, `adoptContextualIntegerLiteralArgument` re-runs
+the operand retyping that `value == 0` uses, so the recorded expression type
+and HIR literal carry the selected parameter type; MIR and the backends see an
+exactly typed literal and add no conversion. Single-signature callees
+(lambdas, function items, native function pointers) adopt every fitting
+literal directly. Ambiguity reports append a hint naming the literal
+positions; a literal outside the parameter range keeps the exact-type
+diagnostic with a value-specific hint. The later bounded raw-pointer/text
+compatibility ranking ignores argument positions admitted only by literal or
+temporary-borrow fallback. It cannot prefer a candidate merely because fewer
+literal positions require adaptation; this also holds for constructors and
+base initializers.
+
 An explicit ordinary function or method generic suffix is classified before
 candidate selection using its syntax, the target parameter kinds, and the
 lexical constant catalog. Closed `uint64_t` expression trees contain literals,
@@ -1952,6 +1971,13 @@ and an analysis with the raw-pointer audit enabled never uses it.
   preamble is built, every body that bounded analysis would have deferred is
   analysed in place but *held back*: its body diagnostics and the function
   records it consulted are kept beside the body instead of being reported.
+  Prefix construction receives the request's cancellation token and uses the
+  same cancellation checkpoints and catching boundary as ordinary `check`.
+  An invalid or interrupted prefix returns no preamble. Interrupted state is
+  never frozen or cached, and the frontend reports cancellation. A completed
+  preamble detaches caller-owned source, metrics and cancellation pointers
+  before caching. Cancelling a later resumed analysis preserves that complete
+  cached prefix.
 - **Resuming.** `SemanticVisitor::adoptPreamble` makes the next `check` copy
   the preamble's session state (the compiler-generated copy of
   `RequestSessionState`, with the catalog deep-copied and request-local

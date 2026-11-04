@@ -548,7 +548,30 @@ integer may widen to a strictly wider signed destination. An integer value is
 also assignment-compatible with `float` or `double`, and `float` may widen to
 `double`. `double` never implicitly narrows to `float`, including through a
 compound assignment. These assignment compatibilities do not participate in
-call or constructor overload selection.
+call or constructor overload selection, apart from the literal argument rule
+below.
+
+A written integer literal argument, optionally parenthesized and optionally
+preceded by one unary `+` or `-`, adopts the integer parameter type of the
+selected callable when no candidate matches the call exactly. Candidates whose
+parameters match exactly, with the literal at its default type, form the first
+tier and are always preferred; only when that tier is empty do candidates
+remain whose sole mismatches are call-only temporary borrows or literal
+arguments whose mathematical value, including its sign, is representable in
+the integer parameter type. Selection still requires one unique candidate, so
+a literal that fits several candidate parameter types is ambiguous and needs
+an explicit conversion. The rule applies to function, method, constructor,
+base-initializer, operator, lambda, function-item and native-function-pointer
+calls. It never retypes a named value or a named constant, never targets a
+floating-point parameter, never participates in generic inference, and never
+ranks candidates. `twice(4)`, `values[0]`, `values.push_back(1)` and
+`Counter{3}` therefore resolve against `uint64_t` parameters, while
+`narrow(300)` against `uint8_t` and `twice(-1)` against `uint64_t` remain
+errors that name the literal's value.
+See [example 186](../../examples/186-literal-call-arguments.gti) for a
+source-defined window API and exact-overload preference. Adding an exact
+overload later can redirect a literal call; callers needing a fixed signature
+can pass an explicitly typed argument.
 
 Integer-to-floating assignment conversion is a rounding conversion, not a
 value-preserving widening guarantee. It uses the destination's IEEE binary32
@@ -2035,6 +2058,40 @@ synthesized default array elements, and one call-depth limit (see
 conversions, non-constant references, unsupported operations, and resource
 exhaustion at source locations.
 
+Every compile-time context follows one lazy execution rule: constexpr
+bindings and fields, `static_assert`, `if constexpr` conditions and immediate
+invocations. Only the operations that actually execute must be compile-time
+capable. Staged verified MIR lowers a callee's body only when the callee is a
+completed constexpr definition. Any other callee keeps only its exact
+signature, and its body is never lowered or staged. A call to a function that
+is not `constexpr`, or whose constexpr definition is not yet available, rejects
+the request only when evaluation reaches it. On an unexecuted branch it has no
+effect. An executed call of that kind reports `GTI-S2057` at the call, names the
+callee, and includes the constant call trace. Typed macros, including
+`std::assert`, expand to ordinary verified MIR, so a macro inside a constexpr
+function follows the same rule in every context. Executed runtime-only calls
+and compile-time panics are authoritative verified-MIR results. They are never
+retried in the compatibility AST evaluator. That evaluator remains only for
+operations outside the MIR profile, which are the unmigrated profiles of
+`L-CONST-01`.
+
+A terminal failure operation that executes during evaluation fails the request
+as a compile error, not as a runtime failure. `std::panic(std::string_view)`
+and every constexpr function that reaches it report
+`Compile-time evaluation panicked: "<message>"`, with the message quoted and
+its control characters escaped. This includes library wrappers, `expected`
+accessors and user validators. The meaning belongs to the trusted
+runtime-terminal operation, bound by its declaration identity, not to any
+library spelling. The library's own empty-owner and inactive-`expected` failures
+report fixed messages the same way. A `[[track_caller]]` function anchors the
+failure at the call that reached it, so the reported panic location is the
+call the user wrote. The trace notes then show how evaluation reached it. The
+supported pattern for checking a parameter at each compile-time call is
+`if (!condition) { std::panic("message"); }`. A formatted message such as
+`std::panic("odd {}", v)` is not yet constant-eligible. Executing it fails the
+request as a runtime-only call, and it is never accepted. A compile-time panic
+cannot be caught or recovered.
+
 Constant string views retain their complete byte sequence, including embedded
 NULs. Indexing produces one unsigned `char` code unit, not a Unicode code point;
 negative indices and indices greater than or equal to `size()` fail constant
@@ -2265,14 +2322,15 @@ to them used only during constant evaluation.
 
 Execution uses staged, canonical verified MIR and the request's step and
 call-depth limits ([3.11.2](#3112-implementation-limits)). It never retries an
-immediate request through the compatibility AST function interpreter. Runtime-dependent arguments,
-unsupported executed operations, arithmetic failures and resource exhaustion
-produce `GTI-S2057`, with the invocation and failing operation retained.
-The staged call closure must be structurally available to the MIR evaluator;
-an unavailable runtime-only callee can therefore reject a request even in an
-unexecuted branch. Constant execution itself preserves ordinary lazy branch
-selection. Transient allocations
-and cleanup supported by that evaluator remain confined to the request.
+immediate request through the compatibility AST function interpreter.
+Runtime-dependent arguments, unsupported executed operations, executed
+runtime-only calls, compile-time panics, arithmetic failures and resource
+exhaustion produce `GTI-S2057`. The invocation is the primary location, and the
+failing operation, or the panic's message at its call, is retained. Staging is
+lazy, exactly as for constexpr bindings (see the one lazy execution rule in
+§3.11). An unexecuted runtime-only callee never rejects a request, and constant
+execution preserves ordinary lazy branch selection. Transient allocations and
+cleanup supported by that evaluator remain confined to the request.
 
 A successful ordinary invocation publishes an exact supported scalar, text,
 array, passive record or passive sum value. No constructor or immediate
@@ -2654,7 +2712,12 @@ depth-bounded constexpr evaluator used by constexpr bindings and
 `if constexpr`. A `true` result records a passed semantic fact. A `false`
 result emits `GTI-S2079` at the condition, with the optional decoded message.
 An unsupported constant operation or runtime dependency uses the existing
-constexpr-evaluation diagnostic family. Assertions in inactive configuration
+constexpr-evaluation diagnostic family; an executed compile-time panic reports
+its message (§3.11). A condition cannot read a function parameter, even in a
+`constexpr` or `consteval` body, because a function's validity cannot depend on
+each call's arguments. The rejection hints at the supported
+`if (!condition) { std::panic("message"); }` pattern, which checks the
+parameter at each compile-time call. Assertions in inactive configuration
 branches and discarded `if constexpr` branches are not evaluated; ordinary
 runtime reachability does not suppress them.
 

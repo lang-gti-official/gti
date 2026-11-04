@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT / 'scripts'))
 import source_stdlib_ci as source
 import release_artifacts as artifacts
 import validation_checks as validation
+import lsp_compatibility
 
 REPO = 'lang-gti-official/gti'
 ORIGIN = dict(sha='a' * 40, native_inputs='b' * 64, run_id=7, attempt=2,
@@ -268,14 +269,14 @@ class SourceStdlibCI(unittest.TestCase):
             (root / 'stdlib/std').mkdir(parents=True)
             (root / 'stdlib/std/new.gti').write_text('new source')
             plan = dict(head='c' * 40, base='d' * 40, compiler_origin=ORIGIN)
-            with patch.object(source, 'ensure_checkout'), \
+            with patch.object(lsp_compatibility, 'identity', return_value='e' * 64), patch.object(source, 'ensure_checkout'), \
                  patch.object(source, 'git', return_value=plan['head']), \
                  patch.object(source, 'changed', return_value=['stdlib/std/new.gti']), \
                  patch.object(source, 'native_identity', return_value=ORIGIN['native_inputs']), \
                  patch.object(source, 'request', api_fixture(ORIGIN['sha'])):
                 source.prepare(plan, 'darwin-arm64', artifact, root / 'stage', root)
             stage = root / 'stage'
-            with patch.object(source, 'ensure_checkout'), patch.object(source, 'git', return_value=plan['head']):
+            with patch.object(lsp_compatibility, 'identity', return_value='e' * 64), patch.object(source, 'ensure_checkout'), patch.object(source, 'git', return_value=plan['head']):
                 source.seal(plan, stage, 'darwin-arm64', root)
                 (stage / 'bin/gti').write_bytes(b'changed native binary')
                 with self.assertRaisesRegex(ValueError, 'native payload changed'):

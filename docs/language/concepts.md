@@ -271,8 +271,46 @@ be borrowed; a mutable result additionally needs a mutable input. Merely
 returning the correct reference type from a different input does not satisfy
 the contract. The annotation cannot authorize a temporary to escape, make an
 owned local a borrowed input, or turn read-only access into mutable access.
-Omitting the origin does not admit reference results. This slice describes
-checked references, not conditional reference-bearing wrapper results.
+Omitting the origin does not admit reference results.
+
+A value result that carries borrowed state — a view, cursor or other type whose
+storage holds checked references — names its origin the same way:
+
+```gti
+class Window {
+  int& first;
+public:
+  Window(int& first) : first(first) {}
+};
+concept windowed<S> = requires(S& source) {
+  { source.window() } -> Window [[borrowed_from(source)]];
+};
+concept buffered_source<S> = requires(S& source) {
+  { source.buffered() } -> std::span<uint8_t> [[borrowed_from(source)]];
+};
+```
+
+The result type must be exact and must carry borrowed state; an owned type is
+named without the annotation, and an unannotated borrow-carrying result is
+rejected exactly as an unannotated reference is. Satisfaction compares the
+dependencies that binding the result would retain — the same facts concrete
+initialization uses to protect its sources — with the named origin. Every
+dependency must be rooted in that one borrowed parameter, with no temporary
+owner, so a view of a different input, of a global, of a temporary or of two
+inputs does not satisfy it. Access is the carrier type's own: a carrier whose
+stored references are mutable needs a mutable borrowed input, and there is no
+separate access annotation. Whether a type carries borrowed state is the
+general type trait; no library type is named by the rule. Exactly one origin is
+supported: a carrier composed from several inputs, such as a pair of views
+over different owners, has no requirement form yet.
+
+In a generic body, a call proven by such a requirement has the declared carrier
+type, and binding it retains the named input as a concrete call would.
+Concrete instantiation checks the actual loans again before HIR/MIR, so using
+the input in a conflicting way while the carrier is live is rejected there.
+As with checked reference requirements, a later receiver use through another
+provisional member call is not yet checked against that loan in the open body
+itself; the concrete instance is the enforcement point.
 
 A simple requirement omits the result contract: `{ expression };` checks
 whether the expression is valid but promises no particular result type,
@@ -285,7 +323,12 @@ An inferred reference requirement instead spells
 the same exact access and input-origin rules as a typed borrowed requirement,
 while leaving the referent inferred. A value result cannot satisfy this check,
 and inference never changes a read-only input into a mutable borrowed origin.
-Use a simple requirement, not `-> auto`, when no result contract is wanted.
+`{ expression } -> auto [[borrowed_from(input)]];` likewise infers a
+borrow-carrying value's type and checks the same origin rules; a reference
+result cannot satisfy it. In an open generic body its result is deferred, like
+the inferred referent of `auto&`, until concrete instantiation supplies the
+carrier type. Use a simple requirement, not unannotated `-> auto`, when no
+result contract is wanted; `-> auto` without an origin is rejected.
 
 The same query is a Boolean expression usable in `static_assert` and
 `if constexpr`. Example [173](../../examples/173-general-requires.gti) demonstrates
@@ -1246,6 +1289,10 @@ native function pointers in these public callable relations remain outside the
 current bounded surface. Eligible namespace-scope GTI function items are
 supported; an unresolved overload set still needs one exact context, and
 unsafe/native/generic declarations do not automatically become stored items.
+A requirement result names exactly one borrowed origin. A borrow-carrying
+result composed from several inputs, such as a paired view
+(`[[borrowed_from(left, right)]]`), has no requirement form yet; it is a
+follow-up to the single-origin carrier contract rather than a separate rule.
 
 Add a new source concept when existing facts can express the contract. Add a
 new private compiler capability only when semantic analysis must answer a

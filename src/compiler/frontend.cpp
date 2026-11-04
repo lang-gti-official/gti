@@ -101,7 +101,7 @@ bool collectExportRequests(const StmtList &statements, SourceUnit &unit,
   return any;
 }
 
-std::string cacheContext(const FrontendOptions &options) {
+std::string syntaxCacheContext(const FrontendOptions &options) {
   ConfigurationFlags flags = options.configurationFlags;
   normalizeConfigurationFlags(flags);
   std::string result =
@@ -126,10 +126,6 @@ std::string cacheContext(const FrontendOptions &options) {
     result += "\ndeclared-flag:" + flag;
   }
   result += '\n';
-  result += options.requireEntryPoint ? "entry:required\n" : "entry:optional\n";
-  result += options.program.testSuite ? "tests:enabled\n" : "tests:disabled\n";
-  result += options.synthesizeTestEntry ? "test-entry:generated\n"
-                                        : "test-entry:source-only\n";
   result += options.target.dataLayout.supported() ? "layout:supported"
                                                   : "layout:unsupported";
   for (std::size_t index = 0; index < targetScalarKindCount; ++index) {
@@ -144,6 +140,18 @@ std::string cacheContext(const FrontendOptions &options) {
               std::to_string(layout->abiAlignmentBytes) + ':' +
               std::to_string(layout->preferredAlignmentBytes);
   }
+  return result;
+}
+
+std::string semanticCacheContext(const FrontendOptions &options) {
+  // These policies are applied after parsing. Keep them in semantic reuse
+  // identities without making identical imported syntax depend on whether an
+  // editor opened an executable root, library fragment or test target.
+  std::string result = syntaxCacheContext(options);
+  result += options.requireEntryPoint ? "\nentry:required" : "\nentry:optional";
+  result += options.program.testSuite ? "\ntests:enabled" : "\ntests:disabled";
+  result += options.synthesizeTestEntry ? "\ntest-entry:generated"
+                                        : "\ntest-entry:source-only";
   result += options.program.kind == ProgramKind::Library
                 ? "\nprogram:library"
                 : "\nprogram:executable";
@@ -283,7 +291,8 @@ std::size_t estimatedTokenBytes(const std::vector<Token> &tokens) {
 } // namespace
 
 std::string frontendCacheContext(const FrontendOptions &options) {
-  return cacheContext(options);
+  // Lexical and parsed cache rows are keyed by the syntax identity alone.
+  return syntaxCacheContext(options);
 }
 
 Frontend::Frontend(FrontendOptions options) : options(std::move(options)) {}
@@ -299,7 +308,7 @@ FrontendResult Frontend::analyze(
   if (options.workMetrics != nullptr) {
     options.workMetrics->clear();
   }
-  const std::string frontendCacheContext = cacheContext(options);
+  const std::string frontendCacheContext = syntaxCacheContext(options);
   SourceLoader sourceLoader(options.workMetrics, options.cache,
                             &options.sourceGenerations, &options.sourceDigests,
                             frontendCacheContext);
@@ -376,12 +385,13 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
 
   StmtList declarations;
   bool syntaxValid = true;
-  const std::string syntaxCacheContext = cacheContext(options);
+  const std::string syntaxContext = syntaxCacheContext(options);
   // Compile limits decide which constant, macro and expansion requests
   // succeed, so every semantic reuse (preamble, instance analysis) keys on
   // them; lexing and parsing do not depend on them.
   std::string frontendCacheContext =
-      syntaxCacheContext + "\nlimits:" + compileLimitsIdentity(options.limits) +
+      semanticCacheContext(options) +
+      "\nlimits:" + compileLimitsIdentity(options.limits) +
       (options.reuseConstantEvaluations ? "" : "\nconstant-reuse:off") +
       "\nsource-owners:" +
       (result.sourceGraph.sourceOwners()
@@ -425,7 +435,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
       StmtList unitDeclarations;
       const auto dependencyDigest = dependencyDigests.find(unitId);
       const FrontendUnitCacheKey key =
-          unitCacheKey(options, *unit, syntaxCacheContext,
+          unitCacheKey(options, *unit, syntaxContext,
                        dependencyDigest == dependencyDigests.end()
                            ? 0
                            : dependencyDigest->second);
@@ -573,7 +583,12 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
             requireDefinitions, TrustedBodyAnalysis::Complete,
             options.sourceDebugProfile, options.limits);
         builder.setConstantEvaluationReuse(options.reuseConstantEvaluations);
+        builder.setCancellation(options.cancellation);
         preamble = builder.buildPreamble(Program(std::move(prefix)));
+        if (builder.cancelled()) {
+          result.cancelled = true;
+          return result;
+        }
         options.preambleCache->store(std::move(key), preamble);
         if (options.workMetrics != nullptr) {
           ++options.workMetrics->semanticPreambleBuilds;

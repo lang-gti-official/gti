@@ -29,7 +29,12 @@ public:
     initializeConstant(semantics, provider, completedFunctions,
                        completedConstructors);
     const FunctionInfo *function = semantics.findFunction(root);
-    if (function == nullptr) {
+    // Only callees stage lazily: the requested root must itself be a
+    // completed constexpr definition.
+    if (function == nullptr || function->declaration == nullptr ||
+        !function->declaration->isConstexpr() ||
+        std::find(constantFunctions.begin(), constantFunctions.end(), root) ==
+            constantFunctions.end()) {
       output.program.valid_ = false;
       return std::move(output);
     }
@@ -225,6 +230,7 @@ private:
     constantClosure = false;
     constantFunctions.clear();
     constantConstructors.clear();
+    constantUnavailableFunctions.clear();
     instanceIndex = HirInstanceIndex();
     nextValueId = 1;
     nextBindingId = 1;
@@ -577,14 +583,16 @@ private:
                   std::optional<SourceSpan> site = std::nullopt) {
     if (declaration.macroExpansion)
       return 0;
-    if (constantClosure &&
+    // Constant staging is lazy: a callee outside the completed constexpr
+    // closure keeps its exact signature but no body, and the MIR evaluator
+    // rejects the request only if execution reaches the call. Its own body is
+    // never lowered, so nothing it would call is discovered either.
+    const bool constantUnavailable =
+        constantClosure &&
         (declaration.declaration == nullptr ||
          !declaration.declaration->isConstexpr() ||
          std::find(constantFunctions.begin(), constantFunctions.end(),
-                   declaration.id) == constantFunctions.end())) {
-      lifecycleValid = false;
-      return 0;
-    }
+                   declaration.id) == constantFunctions.end());
     // Calls can discover an instance through individual arguments or through
     // one forwarded pack. Virtual members are also seeded from declarations.
     // These paths must publish the same concrete signature; source pack
@@ -655,11 +663,14 @@ private:
           freeFunction ? std::vector<CompileTimeValue>{} : classValueArguments,
           functionTypeArguments, functionValueArguments, id);
     }
+    if (constantUnavailable)
+      constantUnavailableFunctions.push_back(id);
     output.program.functions.push_back(
         {.id = id,
          .sourceUnit = declaration.sourceUnit,
          .declaration = declaration.id,
-         .source = declaration.bodyDeclaration(),
+         .source =
+             constantUnavailable ? nullptr : declaration.bodyDeclaration(),
          .owner = owner,
          .typeArguments = std::move(functionTypeArguments),
          .valueArguments = std::move(functionValueArguments),
@@ -2295,8 +2306,62 @@ private:
     return false;
   }
 
+  // A callee outside the completed constant closure keeps a canonical
+  // declaration body: one binding per parameter, with the instance's exact
+  // concrete type, and no statements. Neither its semantic body facts nor a
+  // concrete reanalysis are needed, because evaluation never enters it.
+  void lowerSignatureOnlyFunction(std::size_t index,
+                                  const FunctionInfo &declaration) {
+    const FunctionDecl *source = declaration.bodyDeclaration() != nullptr
+                                     ? declaration.bodyDeclaration()
+                                     : declaration.declaration;
+    const std::vector<SemanticType> concrete =
+        output.program.functions[index].parameterTypes;
+    HirBody body;
+    std::vector<HirBindingId> parameterBindings;
+    std::size_t next = 0;
+    for (const Parameter &parameter : source->parameters()) {
+      const BindingInfo *info = baseModel->findBinding(parameter);
+      BindingInfo binding =
+          info == nullptr ? makeBindingInfo(SemanticType::Unknown) : *info;
+      if (parameter.pack) {
+        binding.type = SemanticType::concreteTypePack(
+            binding.type.genericParameterId,
+            std::vector<SemanticType>(concrete.begin() + next, concrete.end()));
+        next = concrete.size();
+      } else if (next < concrete.size()) {
+        binding.type = concrete[next++];
+      } else {
+        lifecycleValid = false;
+        return;
+      }
+      const HirBindingId id = nextBindingId++;
+      body.bindings.push_back(
+          {.id = id, .parameter = &parameter, .info = std::move(binding)});
+      parameterBindings.push_back(id);
+    }
+    if (next != concrete.size()) {
+      lifecycleValid = false;
+      return;
+    }
+    output.program.functions[index].body = std::move(body);
+    output.program.functions[index].parameterBindings =
+        std::move(parameterBindings);
+  }
+
   void processFunction(std::size_t index) {
     const HirFunctionInstance snapshot = output.program.functions[index];
+    if (std::find(constantUnavailableFunctions.begin(),
+                  constantUnavailableFunctions.end(),
+                  snapshot.id) != constantUnavailableFunctions.end()) {
+      if (const FunctionInfo *declaration =
+              baseModel->findFunction(snapshot.declaration);
+          declaration != nullptr && declaration->declaration != nullptr)
+        lowerSignatureOnlyFunction(index, *declaration);
+      else
+        lifecycleValid = false;
+      return;
+    }
     const FunctionInfo *declaration =
         baseModel->findFunction(snapshot.declaration);
     if (declaration == nullptr || declaration->declaration == nullptr) {
@@ -7700,6 +7765,9 @@ private:
   std::vector<InstanceDiscovery> destructorDiscoveryDepths;
   std::vector<FunctionId> constantFunctions;
   std::vector<ConstructorId> constantConstructors;
+  // Signature-only instances of callees outside the completed constant
+  // closure; see enqueueFunction.
+  std::vector<HirFunctionInstanceId> constantUnavailableFunctions;
   std::size_t processedClasses = 0;
   HirInstanceIndex instanceIndex;
   std::size_t processedFunctions = 0;

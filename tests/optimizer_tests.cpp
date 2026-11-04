@@ -9513,8 +9513,35 @@ int main() {
   }
 }
 
+void testContextualSignedMinimumIdentityChain() {
+  const auto frontend =
+      lang::Frontend().analyze("grouped-signed-minimum.gti", R"(
+int main() {
+  int8_t smallest = (-(128));
+  int16_t wider = (-((32768)));
+  int64_t widest = -((9223372036854775808));
+  if (smallest != -128 || wider != -32768 || widest != -9223372036854775808) { return 1; }
+  return 0;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "grouped signed minima produce valid source MIR");
+  if (!frontend.canGenerateCode())
+    return;
+  for (const auto level :
+       {lang::OptimizationLevel::O0, lang::OptimizationLevel::O1,
+        lang::OptimizationLevel::O2, lang::OptimizationLevel::O3}) {
+    const auto optimized =
+        lang::OptimizationPipeline().run(lang::OptimizationRequest{
+            .hir = frontend.hir, .mir = frontend.mir, .level = level});
+    expect(optimized.valid(), "identity folding and SCCP preserve contextual "
+                              "signed-minimum carrier proofs");
+  }
+}
+
 int main() {
   lang::installCrashHandlers("gti_optimizer_tests");
+  testContextualSignedMinimumIdentityChain();
   testRecordPublishedInitializerRetained();
   testRangePublicationPreserved();
   testComparisonComputeFold();

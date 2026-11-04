@@ -161,10 +161,10 @@ export ptrdiff_t count_if<Iterator, Sentinel, Predicate>(mut Iterator first,
 // Writable-output iteration: the destination cursor's mut dereference and
 // prefix increment come from std::output_iterator; every write stays checked
 // at the destination access itself, so an exhausted destination raises the
-// destination's own defined failure. Unlike the C++-familiar signature, the
-// advanced cursor is not returned: a mutable owner-tied cursor cannot escape
-// through a return value under the current ownership model.
-export void copy<Iterator, Sentinel, OutputIterator>(mut Iterator first,
+// destination's own defined failure. Returning the advanced cursor transfers
+// its existing owner dependencies to the caller, including exclusive access.
+export [[discardable]]
+OutputIterator copy<Iterator, Sentinel, OutputIterator>(mut Iterator first,
                                               Sentinel last,
                                               mut OutputIterator output)
   requires std::input_iterator<Iterator> &&
@@ -175,6 +175,7 @@ export void copy<Iterator, Sentinel, OutputIterator>(mut Iterator first,
     ++first;
     ++output;
   }
+  return std::move(output);
 }
 
 // Whole-range fill keeps one exclusive range loan and one iteration-bounded

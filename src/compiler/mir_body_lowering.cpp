@@ -186,7 +186,8 @@ public:
     for (const HirStatement &statement : source.statements) {
       if (statement.value && statement.binding) {
         const auto *binding = findBinding(*statement.binding);
-        if (binding != nullptr && binding->info.retainedLoan != 0)
+        if (binding != nullptr && (binding->info.retainedLoan != 0 ||
+                                   binding->info.traits.containsBorrowedState))
           retainedInitializerLoans.emplace(*statement.value,
                                            binding->info.retainedLoan);
       }
@@ -2188,7 +2189,8 @@ private:
   }
 
   [[nodiscard]] MirTemporaryCarrierDependency
-  temporaryReceiverCarrier(const MirPlace &place) const {
+  temporaryReceiverCarrier(const MirPlace &place,
+                           bool failureCleanup = false) const {
     const auto carrier = findMirTemporaryCarrierDependency(output, place);
     if (!carrier)
       return {};
@@ -2204,11 +2206,33 @@ private:
                  loan.source == place.id &&
                  loan.storedDependency == carrier.loan->id;
         });
-    return receiver ? carrier : MirTemporaryCarrierDependency{};
+    // A copied receiver input precedes its call's later arguments, but a
+    // result loan that borrows this shell is formed only at the call. Failure
+    // edges in those arguments keep the shell's dependency until its cleanup,
+    // as such a result loan will require; dropping first is valid either way.
+    // Normal schedules still wait for that loan, since an external-only
+    // operator result keeps its own schedule across conditional joins.
+    const auto copiedReceiver = [&] {
+      if (!failureCleanup || place.root != MirPlaceRootKind::Value ||
+          place.value == 0)
+        return false;
+      for (const MirBlock &block : output.blocks)
+        for (const MirInstruction &instruction : block.instructions)
+          if (instruction.kind == MirInstructionKind::CallInput &&
+              instruction.callInputRole == MirCallInputRole::Receiver &&
+              instruction.operands.size() == 1 &&
+              instruction.operands.front().kind == MirOperandKind::Value &&
+              instruction.operands.front().value == place.value)
+            return true;
+      return false;
+    };
+    return receiver || copiedReceiver() ? carrier
+                                        : MirTemporaryCarrierDependency{};
   }
 
-  [[nodiscard]] std::unordered_set<MirLoanId> temporaryCarrierLoans(
-      const std::vector<MirDropObligationId> &retired = {}) const {
+  [[nodiscard]] std::unordered_set<MirLoanId>
+  temporaryCarrierLoans(const std::vector<MirDropObligationId> &retired = {},
+                        bool failureCleanup = false) const {
     std::unordered_set<MirLoanId> retained;
     for (const TemporaryDrop &temporary : temporaryDrops) {
       if (containsDrop(retired, temporary.obligation))
@@ -2216,8 +2240,9 @@ private:
       const auto *drop = output.findDropObligation(temporary.obligation);
       const auto *place =
           drop == nullptr ? nullptr : output.findPlace(drop->place);
-      const auto carrier = place == nullptr ? MirTemporaryCarrierDependency{}
-                                            : temporaryReceiverCarrier(*place);
+      const auto carrier =
+          place == nullptr ? MirTemporaryCarrierDependency{}
+                           : temporaryReceiverCarrier(*place, failureCleanup);
       if (!carrier)
         continue;
       for (const MirLoan &loan : output.loans) {
@@ -2236,11 +2261,12 @@ private:
     const auto *drop = output.findDropObligation(obligation);
     const auto *place =
         drop == nullptr ? nullptr : output.findPlace(drop->place);
-    const auto carrier = place == nullptr ? MirTemporaryCarrierDependency{}
-                                          : temporaryReceiverCarrier(*place);
+    const auto carrier = place == nullptr
+                             ? MirTemporaryCarrierDependency{}
+                             : temporaryReceiverCarrier(*place, failureCleanup);
     if (!carrier)
       return {};
-    auto retained = failureCleanup ? temporaryCarrierLoans(retired)
+    auto retained = failureCleanup ? temporaryCarrierLoans(retired, true)
                                    : retainedReborrowAncestors(retired);
     // Retiring this temporary does not retire an independently owned carrier
     // whose cleanup still needs the same resource ancestry. Exclude only the
@@ -3078,7 +3104,7 @@ private:
   emitOrderedFailureDrain(const std::vector<MirDropObligationId> &consumedDrops,
                           const std::vector<MirLoanId> &endedLoans,
                           std::vector<MirLoanId> &deferredConstructorLoans) {
-    const auto retained = temporaryCarrierLoans(consumedDrops);
+    const auto retained = temporaryCarrierLoans(consumedDrops, true);
     auto allEnded = endedLoans;
     for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
       for (auto loan = scope->loans.rbegin(); loan != scope->loans.rend();
@@ -7404,9 +7430,10 @@ private:
   [[nodiscard]] bool exactReadonlyRetainedParent(const HirValue &value,
                                                  MirLoanId origin) const {
     const auto contract = retainedInitializerLoans.find(value.id);
-    const auto *retained = contract == retainedInitializerLoans.end()
-                               ? nullptr
-                               : source.findLoan(contract->second);
+    const auto *retained =
+        contract == retainedInitializerLoans.end() || contract->second == 0
+            ? nullptr
+            : source.findLoan(contract->second);
     const auto *selected = output.findLoan(origin);
     // HIR gives every retained carrier its exact readonly parent, including
     // a plain carrier constructed from a local reference. Cleanup-bearing
@@ -8564,7 +8591,8 @@ private:
       }
       const auto retainedContract = retainedInitializerLoans.find(value.id);
       const HirLoan *shellContract =
-          retainedContract == retainedInitializerLoans.end()
+          retainedContract == retainedInitializerLoans.end() ||
+                  retainedContract->second == 0
               ? nullptr
               : source.findLoan(retainedContract->second);
       const bool textShellContract =
@@ -9230,10 +9258,18 @@ private:
         // later resurrecting an already retired formal's runtime capability.
         // A distinct retained result has its own semantic endpoint: redirecting
         // the input identity would let the input's last use retire that result.
+        // An initializer entry with zero identity still retains the carrier
+        // in a named binding and must continue the input identity. Absence of
+        // an entry instead identifies an unretained temporary, with its own
+        // full-expression endpoint, even when relayed through another call.
+        // Its physical dependencies still travel with the value; the input's
+        // semantic acknowledgement stays
+        // on the consumed loan instead of following that temporary.
         bool transported = false;
         for (auto &[semantic, currentLoan] : semanticLoans) {
           if (currentLoan == loan &&
-              (resultIdentity == retainedInitializerLoans.end() ||
+              resultIdentity != retainedInitializerLoans.end() &&
+              (resultIdentity->second == 0 ||
                resultIdentity->second == semantic)) {
             currentLoan = publishedLoan;
             transported = true;
@@ -16463,6 +16499,8 @@ private:
   MirLoanId pendingReturnLoan = 0;
   MirDropObligationId pendingReturnDrop = 0;
   std::vector<MirLoanId> constructorPublishedLoans;
+  // A zero identity records a retained borrowed binding without a distinct
+  // semantic endpoint annotation; an absent entry is not a retained binding.
   std::unordered_map<HirValueId, SemanticLoanId> retainedInitializerLoans;
   const MirDefinedFailureEffects &definedFailureEffects;
   bool implicitZeroReturn = false;

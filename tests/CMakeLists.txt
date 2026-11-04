@@ -3676,6 +3676,14 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}"
             --cmake "${CMAKE_COMMAND}"
   )
+  if(TARGET gti_lsp AND NOT GTI_REUSE_TOOLCHAIN)
+    add_test(NAME lsp_sdk
+      COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lsp_sdk_test.py"
+              "$<TARGET_FILE:gti>" "$<TARGET_FILE:gti_tree_sitter>" "$<TARGET_FILE:gti_lsp>")
+    set_tests_properties(lsp_sdk PROPERTIES TIMEOUT 600)
+  endif()
+  add_test(NAME lsp_release
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lsp_release_test.py")
   add_test(NAME source_stdlib_ci
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_stdlib_ci_test.py")
   add_test(NAME preview_release
@@ -4841,6 +4849,13 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(contextual_numeric_literals_runtime PROPERTIES TIMEOUT 180)
+  add_test(
+    NAME literal_call_arguments_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/literal_call_arguments_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(literal_call_arguments_runtime PROPERTIES TIMEOUT 180)
   add_test(
     NAME implicit_return_move_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -6083,6 +6098,11 @@ if(Python3_Interpreter_FOUND)
       cthread_condition_runtime
       cthread_once_runtime
       cthread_create_join_runtime
+      PROPERTIES ENVIRONMENT "GTI_TSAN_SUPPORTED=${gti_tsan_supported}"
+    )
+    # A _tsan harness compiles, with the thread sanitizer, the members a
+    # static link of its fixture pulls from this archive.
+    set_tests_properties(
       managed_thread_tsan
       shared_mutex_threads_tsan
       transfer_function_threads_tsan
@@ -6093,7 +6113,8 @@ if(Python3_Interpreter_FOUND)
       scoped_parallel_cleanup_tsan
       atomic_tsan
       mutex_tsan
-      PROPERTIES ENVIRONMENT "GTI_TSAN_SUPPORTED=${gti_tsan_supported}"
+      PROPERTIES ENVIRONMENT
+        "GTI_TSAN_SUPPORTED=${gti_tsan_supported};GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>"
     )
     set_tests_properties(
       managed_thread_tsan shared_mutex_threads_tsan transfer_function_threads_tsan
@@ -6161,6 +6182,13 @@ if(Python3_Interpreter_FOUND)
               "$<TARGET_FILE:gti_lsp>"
     )
     set_tests_properties(lsp_test_target PROPERTIES TIMEOUT 90)
+    add_test(
+      NAME lsp_completion_work
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/lsp_completion_work_test.py"
+              "$<TARGET_FILE:gti_lsp>"
+    )
+    set_tests_properties(lsp_completion_work PROPERTIES TIMEOUT 180)
     find_program(GTI_NEOVIM_EXECUTABLE nvim)
     if(GTI_NEOVIM_EXECUTABLE)
       add_test(NAME neovim_gtiup
@@ -6168,6 +6196,18 @@ if(Python3_Interpreter_FOUND)
                 "GTI_TEST_REPOSITORY=${PROJECT_SOURCE_DIR}"
                 "${GTI_NEOVIM_EXECUTABLE}" --headless -u NONE -i NONE
                 -l "${PROJECT_SOURCE_DIR}/tests/nvim_gtiup_test.lua")
+      add_test(
+        NAME neovim_toolchain
+        COMMAND "${CMAKE_COMMAND}" -E env
+                "GTI_TEST_REPOSITORY=${PROJECT_SOURCE_DIR}"
+                "XDG_STATE_HOME=${PROJECT_BINARY_DIR}/nvim-test/state"
+                "XDG_CACHE_HOME=${PROJECT_BINARY_DIR}/nvim-test/cache"
+                "XDG_DATA_HOME=${PROJECT_BINARY_DIR}/nvim-test/data"
+                "NVIM_LOG_FILE=${PROJECT_BINARY_DIR}/nvim-test.log"
+                "${GTI_NEOVIM_EXECUTABLE}" --headless -u NONE -i NONE
+                -l "${PROJECT_SOURCE_DIR}/tests/nvim_toolchain_test.lua"
+      )
+      set_tests_properties(neovim_toolchain PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77)
       add_test(
         NAME neovim_lsp_configuration
         COMMAND "${CMAKE_COMMAND}" -E env

@@ -189,6 +189,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Use optional, one-step implicit returns, consuming access, move assignment and `?` | [166: source optional](166-source-optional.gti) |
 | Name a mapper's result in an ordinary source wrapper | [167: callable result types](167-callable-result-types.gti) |
 | Select an instance method from metadata and call it with runtime data | [182: reflected method dispatch](185-reflected-method-dispatch.gti) |
+| Pass fitting literals to integer parameters without casts | [186: literal call arguments](186-literal-call-arguments.gti) |
 | Give a source class owned, void and borrowed profiles | [168: source value profiles](168-source-value-profiles.gti) |
 | Use global source-defined results with constexpr, callbacks and checked borrows | [169: source expected](169-source-expected.gti) |
 | Keep independent per-thread state with lazy initialization and deterministic cleanup | [175: thread-local storage](175-thread-local-storage.gti) |
@@ -252,7 +253,7 @@ is a teaching helper, not a production server.
 | `035-conditional-expressions.gti` | lazy conditional values and explicit move selection |
 | `036-c-abi-sockets.gti` | bounded `extern "C"` interoperability with POSIX `socket` and `close` |
 | `037-tcp-socket-owner.gti` | a move-only `std::tcp::socket` owner over the POSIX C ABI |
-| `038-vector-emplace.gti` | move-aware dynamic storage, checked and unsafe unchecked access, read-only iteration, and in-place construction |
+| `038-vector-emplace.gti` | move-aware dynamic storage, checked and unsafe unchecked access, read-only iteration and membership search, and in-place construction |
 | `039-raw-pointers.gti` | one-level raw pointers, unsafe declaration/call contracts, lexical `unsafe`, and pointer arithmetic |
 | `040-loan-flow-edges.gti` | bounded switch-exit and immediate-`break` retained-loan endings |
 | `041-owner-dependencies.gti` | single-origin read-only and mutable owner dependencies through factories, generics, moves, and returns |
@@ -303,7 +304,7 @@ is a teaching helper, not a production server.
 | `087-associative-containers.gti` | ordered and hashed dictionaries, nested borrowed insertion results, moves, and owner reactivation |
 | `088-consuming-builders.gti` | consuming builder methods and explicit receiver movement |
 | `089-library-workflow.gti` | numeric option parsing, string editing, filesystem queries, owning work queues/history/sets, and emplacement with a move-only constructor argument |
-| `090-generic-algorithms.gti` | search, mutation, replacement, and filtered copying |
+| `090-generic-algorithms.gti` | search, mutation, replacement, filtered copying, and chaining returned output cursors |
 | `186-dynamic-json.gti` | owned dynamic objects and arrays, CSV-style construction, typed cells, checked access, explicit independent cloning, and parse/encode round trips |
 | `091-json-documents.gti` | decoding and encoding structs through reflection, optionals for `null` and absent members, pretty output, strict-grammar errors with paths and locations |
 | `092-json-codecs.gti` | a `std::json::codec` specialization for a class with an invariant, used automatically inside structs and vectors, and JSON Pointer errors through it |
@@ -376,7 +377,7 @@ is a teaching helper, not a production server.
 | `170-view-fields.gti` | a class and a struct whose text fields view a local string, a copy sharing that dependency, a field read yielding a view of the same owner, a temporary token read within its expression, a factory whose token views its argument's owner, reads through a returned text reference and a generic holder's accessor, an optional whose payload views the string through an implicit conversion and whose `->` calls that view's members, a parser whose failure views the string passed to it, a diagnostic nested in a returned result, and an ownerless token that keeps its method calls |
 | `171-recursive-text-relays.gti` | recursive and mutually recursive functions relaying a view parameter, a recursion relaying a value's text field, a recursive method relaying the receiver's field, and an ownerless result from a literal argument |
 | `172-deferred-assertions.gti` | source-defined always-on/debug assertions, lazy formatted messages, skipped owning moves, and an application-defined typed macro |
-| `173-general-requires.gti` | exact expression/construction and mutation requirements, constexpr reflection predicates, symbolic declaration proofs and source concept composition over unrelated domain types |
+| `173-general-requires.gti` | exact expression/construction and mutation requirements, checked reference and borrow-carrying view results, constexpr reflection predicates, symbolic declaration proofs and source concept composition over unrelated domain types |
 | `174-typed-macros.gti` | typed `#macro` calls, lazy scalar/owning results and initializer contexts, local returns and evaluate-once bindings, fresh lambda captures, written expression text, hygienic lookup, and skipped owner movement |
 | `175-thread-local-storage.gti` | namespace, static-field and block `thread_local` storage, independent worker values and owning class cleanup before join; requires `--execution-profile concurrent` |
 | `176-profile-independent-atomics.gti` | source-defined atomic ticket counter usable in either execution profile; scalar operations do not enable threads or blocking waits |
@@ -388,6 +389,7 @@ is a teaching helper, not a production server.
 | [183-immediate-functions.gti](183-immediate-functions.gti) | Immediate functions, standalone void validation, and implicit bare-return construction composed with runtime arguments (LLVM). |
 | [184-payload-borrow-chains.gti](184-payload-borrow-chains.gti) | Return nested payload references through a parameter and receiver, and copy a sibling before a mutable payload borrow. |
 | `185-reflected-method-dispatch.gti` | a generic compile-time metadata binder calling overload-selected methods on two unrelated runtime values; LLVM execution |
+| [186-literal-call-arguments.gti](186-literal-call-arguments.gti) | Fitting integer literal arguments in constructors, methods and lambdas, with exact-overload preference and documented rejection boundaries (LLVM). |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |
@@ -695,9 +697,10 @@ With the locally installed toolchain, run it from the repository root:
 
 [`090-generic-algorithms.gti`](090-generic-algorithms.gti) demonstrates sequence
 `contains`/`find`, adjacent search, associative member lookup, mutable array
-traversal, replacement predicates, and filtered copying into an existing
-destination. Search cursors retain a checked borrow of their owner; mutating
-that owner while the cursor is still used is rejected.
+traversal, replacement predicates, filtered copying, and chaining `copy` calls
+by moving the returned output cursor. Search cursors retain a checked borrow
+of their owner; returned output cursors retain exclusive access to their
+destination. Conflicting owner access while a cursor is still used is rejected.
 
 ## Programmable allocators
 
@@ -794,6 +797,9 @@ checked expression proofs while its payload type remains symbolic. The example
 also demonstrates multi-check queries and exact result
 rejection, inferred results, checked borrowed origins, ordinary range loops,
 and one sized-range function used with both a fixed array and a user range.
+A user-defined view result names its borrowed origin like a reference result
+does, and a generic function reads through that view before advancing its
+source once the view's borrow has ended.
 Independent object-layout and borrow-state predicates let its own
 storage policy use the same facts as `std/memory`; a signed-or-unsigned
 disjunction demonstrates common guarantees in generic arithmetic. Inline source

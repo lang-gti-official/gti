@@ -1,3 +1,5 @@
+import std.panic;
+
 constexpr int triangle(int count) {
   mut int total = 0;
   for (mut int next = 1; next <= count; next++) {
@@ -10,8 +12,12 @@ constexpr int triangle(int count) {
 consteval int immediate_triangle(int count) { return triangle(count); }
 
 // A standalone void call completes at compile time and leaves no runtime call.
+// A rejected port stops the build with this message; the panic on the branch
+// that is not taken costs nothing.
 consteval void require_application_port(int number) {
-  int valid = 1 / (number >= 1024 && number <= 49151 ? 1 : 0);
+  if (number < 1024 || number > 49151) {
+    std::panic("application ports are 1024 through 49151");
+  }
 }
 
 struct Port {
@@ -46,7 +52,8 @@ int main() {
 }
 
 // Port(-1), Port(65536), and Port(runtime_payload) fail during compilation.
-// require_application_port(443) and require_application_port(runtime_payload)
-// also fail during compilation.
+// require_application_port(443) fails during compilation with the panic's
+// message, and require_application_port(runtime_payload) fails because its
+// argument is not a constant.
 // Function arguments keep GTI's explicit conversion rule: write Port(80),
 // not transmit(80, runtime_payload). `implicit` applies to declarations.

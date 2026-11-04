@@ -50,3 +50,14 @@ After local validation, use `$agent-workflow` and `$finish-release` for PR
 integration, local-main sync and version policy. Respect required PR checks;
 post-merge release publication does not block completion. Explicit PR-only/local-only
 instructions override integration.
+
+## Independent adapter delivery
+
+Keep shared frontend semantics in compiler-owned code. Adapter-only changes can
+use the compatible SDK CI lane; shared frontend/cache/query or resource changes
+retain full integration. Never move semantic work into `src/lsp/` to obtain the
+cheaper lane. Follow the normal focused verification and PR lifecycle. The
+publisher extracts compatible LSP components from admitted integration packages;
+it does not rebuild. Users explicitly run `gtiup update lsp [channel]` and restart
+the editor client. Do not install or update their toolchains without a request.
+See the canonical build-and-driver independent-compatible-LSP section.

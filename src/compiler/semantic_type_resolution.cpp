@@ -983,6 +983,16 @@ auto SemanticVisitor::Impl::finishContextualCallArguments(
       analysis.types[index] = analyzeInitializer(
           arguments[index],
           freshFunctionItem ? parameter.arguments.front() : parameter);
+    } else if (const std::optional<IntegerConstant> literal =
+                   isInteger(parameter) &&
+                           isContextualIntegerLiteral(arguments[index].get())
+                       ? integerConstant(arguments[index].get())
+                       : std::nullopt;
+               literal && integerFits(parameter, *literal)) {
+      // A literal deferred behind a brace argument matched every candidate;
+      // it adopts the selected parameter type as a direct argument would.
+      analysis.types[index] =
+          analyzeContextualIntegerOperand(arguments[index], parameter);
     } else {
       analysis.types[index] =
           analyzeExpectedCallableResult(arguments[index], parameter);
@@ -1199,7 +1209,87 @@ auto SemanticVisitor::Impl::functionCallArgumentMatch(
                                         expression)) {
     return CallArgumentMatchKind::EphemeralReadBorrow;
   }
+  if (!deferred &&
+      contextualIntegerLiteralArgumentFits(parameter, argument, expression)) {
+    return CallArgumentMatchKind::ContextualIntegerLiteral;
+  }
   return CallArgumentMatchKind::Mismatch;
+}
+
+auto SemanticVisitor::Impl::contextualIntegerLiteralArgumentFits(
+    const SemanticType &parameter, const SemanticType &argument,
+    const ExprPtr &expression) const -> bool {
+  // Only a written literal, optionally parenthesized and optionally carrying
+  // one sign, may adopt a fitting parameter type after exact matching fails.
+  // A named constant or any other expression keeps its declared type.
+  if (!expression || parameter == argument || !isInteger(parameter) ||
+      !isInteger(argument) || !isContextualIntegerLiteral(expression.get())) {
+    return false;
+  }
+  const std::optional<IntegerConstant> value =
+      integerConstant(expression.get());
+  return value && integerFits(parameter, *value);
+}
+
+auto SemanticVisitor::Impl::adoptContextualIntegerLiteralArgument(
+    const ExprPtr &expression, const SemanticType &parameter) -> SemanticType {
+  // The selected candidate's parameter type is the literal's type. The same
+  // operand retyping that `value == 0` uses records it for HIR; the value was
+  // proved to fit when the candidate became viable.
+  return analyzeContextualIntegerOperand(expression, parameter);
+}
+
+auto SemanticVisitor::Impl::adoptContextualIntegerLiteralArguments(
+    std::span<const SemanticType> parameterTypes, const ExprList &arguments,
+    std::vector<SemanticType> &argumentTypes,
+    std::span<const std::size_t> indices) -> void {
+  for (const std::size_t index : indices) {
+    if (index >= parameterTypes.size() || index >= arguments.size() ||
+        index >= argumentTypes.size()) {
+      continue;
+    }
+    argumentTypes[index] = adoptContextualIntegerLiteralArgument(
+        arguments[index], parameterTypes[index]);
+  }
+}
+
+auto SemanticVisitor::Impl::adoptFittingContextualIntegerLiteralArguments(
+    std::span<const SemanticType> parameterTypes, const ExprList &arguments,
+    std::vector<SemanticType> &argumentTypes, const std::vector<bool> *deferred)
+    -> void {
+  // A callee with one signature has no candidate tiers: each literal argument
+  // that fits its parameter adopts that parameter type.
+  const std::size_t count =
+      std::min({parameterTypes.size(), arguments.size(), argumentTypes.size()});
+  for (std::size_t index = 0; index < count; ++index) {
+    if ((deferred != nullptr && index < deferred->size() &&
+         (*deferred)[index]) ||
+        !contextualIntegerLiteralArgumentFits(
+            parameterTypes[index], argumentTypes[index], arguments[index])) {
+      continue;
+    }
+    argumentTypes[index] = adoptContextualIntegerLiteralArgument(
+        arguments[index], parameterTypes[index]);
+  }
+}
+
+auto SemanticVisitor::Impl::appendContextualIntegerLiteralAmbiguityHint(
+    std::span<const std::size_t> indices) -> void {
+  if (diagnostics.empty() || indices.empty()) {
+    return;
+  }
+  std::string positions;
+  for (const std::size_t index : indices) {
+    if (!positions.empty()) {
+      positions += ", ";
+    }
+    positions += std::to_string(index + 1);
+  }
+  diagnostics.back().hints.emplace_back(
+      "Integer literal argument " + positions +
+      " fits more than one candidate parameter type; GTI does not rank "
+      "candidates, so convert the literal explicitly, such as "
+      "'uint64_t(value)'.");
 }
 
 auto SemanticVisitor::Impl::reportCallArgumentMismatch(
@@ -1384,13 +1474,27 @@ auto SemanticVisitor::Impl::reportCallArgumentMismatch(
                 ReceiverMutability::ReadOnly;
       }
     }
-    diagnostic.hints.emplace_back(
-        hasView
-            ? "Pass 'value.view()' to obtain the exact parameter type; keep "
-              "the "
-              "source value alive while the view is used."
-            : "Calls require exact argument types; pass the required type or "
-              "use a supported explicit conversion when intentional.");
+    const std::optional<IntegerConstant> literal =
+        isInteger(parameter) && isInteger(argument) &&
+                isContextualIntegerLiteral(expression.get())
+            ? integerConstant(expression.get())
+            : std::nullopt;
+    if (literal && !integerFits(parameter, *literal)) {
+      diagnostic.hints.emplace_back(
+          "Integer literal '" + std::string(literal->negative ? "-" : "") +
+          std::to_string(literal->magnitude) +
+          "' does not fit the parameter type '" + typeSpelling(parameter) +
+          "'; a literal adopts an integer parameter type only when its value "
+          "is representable.");
+    } else {
+      diagnostic.hints.emplace_back(
+          hasView
+              ? "Pass 'value.view()' to obtain the exact parameter type; keep "
+                "the "
+                "source value alive while the view is used."
+              : "Calls require exact argument types; pass the required type "
+                "or use a supported explicit conversion when intentional.");
+    }
   }
   diagnostics.emplace_back(std::move(diagnostic));
 }
@@ -1798,6 +1902,10 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
     bool generatedDefault = false;
     ConstructorKind kind = ConstructorKind::Ordinary;
     std::vector<AppliedConceptRequirement> requirements;
+    // Argument positions whose written integer literal adopts this
+    // candidate's parameter type. Non-empty places the candidate in the
+    // fallback tier behind every exact candidate.
+    std::vector<std::size_t> contextualIntegerLiteralArguments;
   };
   struct RejectedConstructorArgument {
     const ConstructorInfo *constructor = nullptr;
@@ -1954,6 +2062,7 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
     }
     bool exact = true;
     std::optional<std::size_t> rejectedArgument;
+    std::vector<std::size_t> literalArguments;
     for (std::size_t index = 0; index < parameterTypes.size(); ++index) {
       const SemanticType &parameterType = parameterTypes[index];
       if (index >= arguments.size()) {
@@ -1970,6 +2079,14 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
                     contextualCallArgumentPotentiallyMatches(
                         parameterType, argument.type, *argument.expression,
                         argument.deferred);
+      if (!matches && !requireExactNullParameter &&
+          !argument.forwardedPackElement && !argument.deferred &&
+          argument.expression != nullptr &&
+          contextualIntegerLiteralArgumentFits(parameterType, argument.type,
+                                               *argument.expression)) {
+        literalArguments.push_back(index);
+        continue;
+      }
       if (!matches) {
         if (argument.forwardedPackElement || argument.deferred ||
             argument.expression == nullptr ||
@@ -1999,7 +2116,8 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
                         std::move(constructorTypeArguments),
                         std::move(constructorValueArguments),
                         requestsStructuralDefaultConstruction(constructor),
-                        ConstructorKind::Ordinary, std::move(requirements)});
+                        ConstructorKind::Ordinary, std::move(requirements),
+                        std::move(literalArguments)});
     } else if (rejectedArgument &&
                (isCompilerTrustedRequester(paren) ||
                 !constructor.compilerPrivate) &&
@@ -2095,6 +2213,18 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
   argumentTypes.reserve(arguments.size());
   for (const AnalyzedCallArgument &argument : arguments) {
     argumentTypes.emplace_back(argument.type);
+  }
+  // Exact candidates form the first tier. Only when none exists do the
+  // candidates that a written literal fits remain, and they must still
+  // identify one unique constructor.
+  const auto literalFallback = [](const ViableConstructor &candidate) {
+    return !candidate.contextualIntegerLiteralArguments.empty();
+  };
+  if (std::any_of(viable.begin(), viable.end(),
+                  [&](const ViableConstructor &candidate) {
+                    return !literalFallback(candidate);
+                  })) {
+    std::erase_if(viable, literalFallback);
   }
   retainBestCallConversionMatches(viable, argumentTypes,
                                   [](const ViableConstructor &candidate)
@@ -2232,13 +2362,19 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
         }
         argumentsSpelling += typeSpelling(arguments[index].type);
       }
+      const bool literalAmbiguity =
+          !viable.empty() &&
+          std::all_of(viable.begin(), viable.end(), literalFallback);
       Diagnostic diagnostic = makeDiagnostic(
           viable.empty() ? "GTI-S2012" : "GTI-S2013",
           DiagnosticPhase::Semantics, paren,
-          viable.empty()
-              ? "No constructor of '" + owner.name.lexeme +
-                    "' exactly matches argument types (" + argumentsSpelling +
-                    ")."
+          viable.empty() ? "No constructor of '" + owner.name.lexeme +
+                               "' exactly matches argument types (" +
+                               argumentsSpelling + ")."
+          : literalAmbiguity
+              ? "Construction of '" + owner.name.lexeme +
+                    "' is ambiguous; multiple constructors accept the written "
+                    "integer literal."
               : "Construction of '" + owner.name.lexeme +
                     "' is ambiguous; multiple constructors exactly match.");
       if (viable.empty() && arguments.empty() &&
@@ -2278,13 +2414,60 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
                "Candidate: " + constructorSignatureSpelling(candidate)});
         }
       }
+      if (viable.empty()) {
+        // Name the literal value that no integer parameter can represent.
+        bool hinted = false;
+        for (const ConstructorInfo *candidatePointer : candidates) {
+          const ConstructorInfo &candidate = *candidatePointer;
+          if (hinted || arguments.size() < candidate.requiredParameterCount ||
+              arguments.size() > candidate.parameterTypes.size()) {
+            continue;
+          }
+          for (std::size_t index = 0; index < arguments.size(); ++index) {
+            const AnalyzedCallArgument &argument = arguments[index];
+            const SemanticType &parameter = candidate.parameterTypes[index];
+            const std::optional<IntegerConstant> literal =
+                !argument.forwardedPackElement && !argument.deferred &&
+                        argument.expression != nullptr &&
+                        isInteger(parameter) && isInteger(argument.type) &&
+                        isContextualIntegerLiteral(argument.expression->get())
+                    ? integerConstant(argument.expression->get())
+                    : std::nullopt;
+            if (!literal || integerFits(parameter, *literal)) {
+              continue;
+            }
+            diagnostic.hints.emplace_back(
+                "Integer literal '" +
+                std::string(literal->negative ? "-" : "") +
+                std::to_string(literal->magnitude) +
+                "' does not fit the parameter type '" +
+                typeSpelling(parameter) +
+                "'; a literal adopts an integer parameter type only when its "
+                "value is representable.");
+            hinted = true;
+            break;
+          }
+        }
+      }
       diagnostics.emplace_back(std::move(diagnostic));
+      if (literalAmbiguity) {
+        appendContextualIntegerLiteralAmbiguityHint(
+            viable.front().contextualIntegerLiteralArguments);
+      }
     }
     currentType = constructedType;
     return;
   }
 
   const ViableConstructor &selected = viable.front();
+  for (const std::size_t index : selected.contextualIntegerLiteralArguments) {
+    if (index >= arguments.size() || arguments[index].expression == nullptr) {
+      continue;
+    }
+    arguments[index].type = adoptContextualIntegerLiteralArgument(
+        *arguments[index].expression, selected.parameterTypes[index]);
+    argumentTypes[index] = arguments[index].type;
+  }
   if (hasDeferredArgument) {
     bool valid = true;
     for (std::size_t index = 0; index < arguments.size(); ++index) {

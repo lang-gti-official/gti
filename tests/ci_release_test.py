@@ -287,7 +287,9 @@ def nightly_contract(root):
         assert all(count == rows[0][0] for count, _ in rows)
     assert "validation_checks.py shard --build build" in suite
     gate = jobs(ci)["gate"]
-    assert "fast, source-stdlib]" in gate and "package" not in gate
+    assert "fast, source-stdlib, lsp]" in gate and "package" not in gate
+    assert "needs.plan.outputs.mode == 'lsp'" in jobs(ci)["lsp"], \
+        "the LSP lane is a mode-gated merge-gate job beside source-stdlib"
     assert "validation_checks.py ci-gate" in gate and "--shard-reports" not in gate
     verdict = integration["verdict"]
     assert "needs: [plan, package, integration, sanitizers, llvm-sanitizers, tsan]" in verdict
@@ -502,7 +504,7 @@ def workflow_contract(root):
     # release workflow stays as written.
     assert sorted(p.name for p in (root / ".github/workflows").glob("*.yml")) == [
         "backport.yml", "beta.yml", "cache.yml", "ci.yml", "cpp-backend.yml", "full-validation.yml",
-        "llvm-prebuilt.yml", "nightly.yml", "preview.yml", "rollback.yml", "rollup.yml", "train.yml"]
+        "llvm-prebuilt.yml", "lsp.yml", "nightly.yml", "preview.yml", "rollback.yml", "rollup.yml", "train.yml"]
     assert not (root / ".gitea/workflows/ci.yml").exists()
     for workflow in sorted((root / ".github/workflows").glob("*.yml")):
         duplicates = duplicate_mapping_keys(workflow.read_text())

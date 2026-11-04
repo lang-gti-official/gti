@@ -38,7 +38,22 @@ python3 scripts/agent_workflow.py protection
   reports and fails unless each platform ran its whole inventory exactly once.
 - Explicitly allowlisted orchestration-only PRs and merge groups run the
   inexpensive lint and workflow checks. They produce no release packages;
-  publication still requires full integration evidence for its exact source.
+  publication still requires admitted release-producing integration evidence for its exact source.
+
+The `source-stdlib` and `lsp` lanes reuse a full-CI-validated compiler SDK for
+strictly allowlisted source-library or LSP/editor changes. Shared native, build,
+validation-selection and unknown paths retain full CI; missing compatible SDK
+artifacts also fall back to full CI. Both platform jobs and their owning,
+installed and compiler smoke checks must pass. Reused compiler provenance is
+retained in complete toolchain artifacts. See the canonical
+[compatible LSP contract](../docs/architecture/build-and-driver.md#independent-compatible-lsp-updates).
+
+`workflows/lsp.yml` separately extracts already-tested adapters from successful
+integration packages that reached main, verifies exact source/run/attempt and
+compatibility, and publishes immutable checksummed and attested component
+prereleases. It neither rebuilds the compiler nor changes compiler channel tags.
+Users explicitly select updates through `gtiup update lsp [channel]`; editor
+startup does not install them.
 
 Sanitizer jobs run the compiler aggregate separately from the other library
 tests, allowing the long compiler and driver suites to overlap. Both jobs are

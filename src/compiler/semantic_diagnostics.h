@@ -134,6 +134,17 @@ struct SemanticConstantTrace {
   void appendTo(Diagnostic &diagnostic) const;
 };
 
+// The quoted message of a panic that executed during constant evaluation, as
+// every compile-time context reports it.
+[[nodiscard]] std::string compileTimePanicText(const std::string &message);
+
+// The shared hint for a call that execution reached but that cannot run
+// during compilation.
+inline constexpr const char *runtimeOnlyCallHint =
+    "Only operations that execute during compilation must be constexpr. "
+    "Declare the callee constexpr, or keep this call off the path that "
+    "compile-time evaluation takes.";
+
 class SemanticDiagnosticReporter {
 public:
   SemanticDiagnosticReporter(const SemanticModel &semantics,

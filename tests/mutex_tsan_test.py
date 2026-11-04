@@ -47,9 +47,9 @@ def main() -> int:
             return SKIP_RETURN_CODE
 
         binary = root / source.stem
-        runtime_objects = compile_instrumented_runtime(runtime_compiler, root)
+        runtime = compile_instrumented_runtime(runtime_compiler, root)
         build_instrumented_binary(emitter, native_compiler, source, binary,
-                                  runtime_objects, linker=runtime_compiler)
+                                  runtime, linker=runtime_compiler)
         run_under_thread_sanitizer(binary)
 
     print("mutex ThreadSanitizer check passed")
