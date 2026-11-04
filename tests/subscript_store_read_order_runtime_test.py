@@ -6,6 +6,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -236,24 +237,22 @@ def main() -> int:
         root = pathlib.Path(temporary)
         source = root / "positive.gti"
         source.write_text(POSITIVE_SOURCE, encoding="utf8")
-        for standard, optimization in (("c++20", "O0"), ("c++23", "O3")):
-            executable = root / f"positive-{standard}-{optimization}"
+        for mode, flags, native in native_modes():
+            executable = root / f"positive-{mode}"
             built = run(
                 [
                     str(compiler),
                     str(source),
-                    "--std",
-                    standard,
-                    f"-{optimization}",
+                    *flags,
                     "-o",
                     str(executable),
                 ]
             )
             if built.returncode != 0 or "Internal compiler error" in built.stderr:
-                return fail(f"build {standard}-{optimization}", built)
+                return fail(f"build {mode}", built)
             executed = run([str(executable)])
             if executed.returncode != 0:
-                return fail(f"run {standard}-{optimization}", executed)
+                return fail(f"run {mode}", executed)
 
         schedule_source = root / "schedule.gti"
         schedule_source.write_text(SCHEDULE_SOURCE, encoding="utf8")
@@ -275,9 +274,7 @@ def main() -> int:
             [
                 str(compiler),
                 str(failure_source),
-                "--std",
-                "c++23",
-                "-O0",
+                *native_modes(levels=("O0",))[0][1],
                 "-o",
                 str(failure_executable),
             ]

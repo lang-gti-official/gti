@@ -165,6 +165,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Reuse one parser with memory, files and buffered input | [107: composable I/O](107-composable-io.gti) |
 | Modify a checked contiguous subrange without copying | [108: mutable slices](108-mutable-slices.gti) |
 | Format my own application types | [106: custom formatters](106-custom-formatters.gti) |
+| Build and edit JSON with runtime keys and mixed value kinds | [186: dynamic JSON](186-dynamic-json.gti) |
 | Read and write JSON as plain structs | [91: JSON documents](091-json-documents.gti) |
 | Map JSON to a class with an invariant and report field errors | [92: JSON codecs](092-json-codecs.gti) |
 | Build URLs, GET JSON, or POST a JSON body | [93: HTTP/JSON client](093-http-json-client.gti), [local demo below](#http-and-json-without-an-external-service) |
@@ -303,6 +304,7 @@ is a teaching helper, not a production server.
 | `088-consuming-builders.gti` | consuming builder methods and explicit receiver movement |
 | `089-library-workflow.gti` | numeric option parsing, string editing, filesystem queries, owning work queues/history/sets, and emplacement with a move-only constructor argument |
 | `090-generic-algorithms.gti` | search, mutation, replacement, and filtered copying |
+| `186-dynamic-json.gti` | owned dynamic objects and arrays, CSV-style construction, typed cells, checked access, explicit independent cloning, and parse/encode round trips |
 | `091-json-documents.gti` | decoding and encoding structs through reflection, optionals for `null` and absent members, pretty output, strict-grammar errors with paths and locations |
 | `092-json-codecs.gti` | a `std::json::codec` specialization for a class with an invariant, used automatically inside structs and vectors, and JSON Pointer errors through it |
 | `093-http-json-client.gti` | encoded URLs, bounded GET/POST requests, transport/status/schema errors, and JSON responses |
@@ -356,7 +358,7 @@ is a teaching helper, not a production server.
 | `153-constexpr-allocation.gti` | transient exclusive allocation, source-defined destruction and a passive result that survives constant evaluation, with runtime parity |
 | `154-declaration-construction.gti` | `implicit` constructors letting declarations construct `std::string` from a literal and an application class from an `int`, a field default and constructor initializer doing the same, a constructor without `implicit` called explicitly, and `std::string` assignment from a view |
 | `155-conversion-operators.gti` | an explicit conversion operator to a strongly typed identifier, an `implicit` one that a declaration may use, and a consuming conversion from a temporary and an explicitly moved builder |
-| `156-borrowing-callbacks.gti` | shared/exclusive captures, call-scoped fresh callable borrows, direct signature-erased callable views, generic stored callbacks, and stateless GTI invocation pointers |
+| `156-borrowing-callbacks.gti` | shared/exclusive captures, mutable and read-only lambda parameter results through local aliases, call-scoped fresh callable borrows, direct signature-erased callable views, generic stored callbacks, and stateless GTI invocation pointers |
 | `157-protocol-concepts.gti` | a concept with an associated unit type and two operations, a conformance block for one class and a generic one for every instance of a class template, and a generic function that returns the associated type through `requires` |
 | `182-associated-type-families.gti` | constrained type families map a selected storage policy to vector or inline containers for integers and strings; generic consumers state separate size-operation contracts |
 | `158-multi-parameter-concepts.gti` | a two-parameter concept whose sum type depends on both operands, a block for one pair of unit types and a generic block whose repeated parameter requires matching kinds, and a generic function that requires the pair |

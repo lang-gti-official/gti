@@ -88,6 +88,35 @@ void internalTrialsDoNotReportProgress() {
          "only the original analysis reports loading, parsing and checking");
 }
 
+void immutableDiscoveryAndCancellation() {
+  Fixture f;
+  f.write("api.gti",
+          "export module api;\nexport int discovered() { return 7; }\n");
+  f.options.suggestIncludes = false;
+  const auto base = f.analyze("int main() { return discovered(); }\n");
+  expect(lang::canSuggestIncludes(base) && fixes(base).empty(),
+         "ordinary diagnostics are complete without speculative discovery");
+  auto advice = lang::discoverIncludeSuggestions(
+      base, f.options, f.root / "main.gti", {}, f.overlays, {}, {});
+  expect(!advice.cancelled &&
+             std::any_of(advice.diagnostics.begin(), advice.diagnostics.end(),
+                         [](const auto &diagnostic) {
+                           return !diagnostic.fixes.empty();
+                         }),
+         "immutable discovery retains compiler-validated fixes");
+  expect(fixes(base).empty() && !base.includeSuggestionsRequested &&
+             base.includeSuggestionInputs.empty(),
+         "discovery never mutates a snapshot already published to queries");
+  std::atomic<bool> cancellation{true};
+  f.options.cancellation = &cancellation;
+  advice = lang::discoverIncludeSuggestions(
+      base, f.options, f.root / "main.gti", {}, f.overlays, {}, {});
+  expect(advice.cancelled && advice.inputs.empty(),
+         "cancelled discovery stops before scanning any candidate");
+  expect(fixes(base).empty() && !base.cancelled,
+         "cancelled advice cannot invalidate the original semantic snapshot");
+}
+
 void projectDeclarations() {
   Fixture f;
   f.write("api.gti", R"(export module api;
@@ -406,10 +435,181 @@ void registeredPublicModules() {
          "split function definitions are suggested through their exported "
          "declaration");
 }
+// A shared discovery cache reuses candidate scans only while their source
+// text and resolution context are unchanged, so every suggestion matches an
+// uncached discovery. The standard library's public modules are candidates
+// here, as in an editor.
+void discoveryReusesCandidateScans() {
+  Fixture f;
+  const auto library =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto cache = std::make_shared<lang::IncludeDiscoveryCache>();
+  const auto analyze = [&](const std::string &source, bool cached = true) {
+    auto options = f.options;
+    if (cached)
+      options.includeDiscoveryCache = cache;
+    return lang::Frontend(options).analyze(f.root / "main.gti", source,
+                                           {library / "prelude.gti"},
+                                           f.overlays, {library});
+  };
+  const auto replacements = [&](const std::string &source) {
+    std::vector<std::string> cachedEdits;
+    for (const auto &fix : fixes(analyze(source)))
+      cachedEdits.push_back(fix.replacement);
+    std::vector<std::string> uncachedEdits;
+    for (const auto &fix : fixes(analyze(source, false)))
+      uncachedEdits.push_back(fix.replacement);
+    expect(cachedEdits == uncachedEdits,
+           "cached discovery matches an uncached discovery for: " + source);
+    return cachedEdits;
+  };
+  const std::vector<std::string> api{"import \"api.gti\";\n"};
+  f.write("api.gti", "export module api;\n"
+                     "namespace api { export int value() { return 7; } }\n");
+  const std::string source = "int main() { return api::value(); }\n";
+
+  auto before = cache->stats();
+  expect(replacements(source) == api, "the defining interface is offered");
+  auto after = cache->stats();
+  expect(after.scanMisses > before.scanMisses &&
+             after.trials == before.trials + 1 &&
+             after.qualifierSkips > before.qualifierSkips,
+         "library interfaces that declare `value` but never spell `api` are "
+         "not speculatively analysed for `api::value`");
+
+  before = after;
+  expect(replacements("// edited\n" + source) == api,
+         "an edited requester keeps its fix");
+  after = cache->stats();
+  expect(after.scanMisses == before.scanMisses &&
+             after.lexiconMisses == before.lexiconMisses &&
+             after.scanHits > before.scanHits,
+         "unchanged candidates are neither lexed nor loaded again");
+
+  // A candidate interface edited on disk is loaded again; its new export is
+  // offered and the next discovery reuses the new scan.
+  f.write("api.gti", "export module api;\n"
+                     "namespace api { export int value() { return 7; }\n"
+                     "  export int wobble() { return 8; } }\n");
+  const std::string added = "int main() { return api::wobble(); }\n";
+  before = cache->stats();
+  expect(replacements(added) == api, "an edited candidate's new export");
+  after = cache->stats();
+  expect(after.scanMisses > before.scanMisses,
+         "an edited candidate is not reused");
+  before = after;
+  expect(replacements(added) == api, "the edited candidate's scan is reused");
+  expect(cache->stats().scanMisses == before.scanMisses,
+         "the edited candidate's new scan is remembered");
+
+  // An unsaved buffer replaces the disk text in both directions.
+  f.overlays[(f.root / "api.gti").string()] =
+      "export module api;\nnamespace api { export int renamed() { return 7; } "
+      "}\n";
+  expect(replacements(source).empty(),
+         "an unsaved edit removing the export removes the fix");
+  f.overlays.clear();
+  expect(replacements(source) == api, "closing the buffer restores the fix");
+
+  // New and deleted candidate files.
+  f.write("other.gti", "export module other;\n"
+                       "export namespace api { int value() { return 9; } }\n");
+  expect(replacements(source) ==
+             std::vector<std::string>{"import \"api.gti\";\n",
+                                      "import \"other.gti\";\n"},
+         "a new candidate file is an alternative");
+  std::filesystem::remove(f.root / "other.gti");
+  expect(replacements(source) == api, "a deleted candidate is not remembered");
+
+  // A candidate's re-exported surface is part of its scan. The re-exported
+  // unit sits in an excluded directory, so only the facade is a candidate.
+  f.write("facade.gti",
+          "export module facade;\nexport import \"build/inner.gti\";\n");
+  f.write("build/inner.gti", "export module inner;\n"
+                             "export namespace inner_api { int depth() { "
+                             "return 1; } }\n");
+  const std::string nested = "int main() { return inner_api::depth(); }\n";
+  expect(replacements(nested) ==
+             std::vector<std::string>{"import \"facade.gti\";\n"},
+         "a facade offers its re-exported declaration");
+  f.write("build/inner.gti", "export module inner;\n"
+                             "export namespace inner_api { int width() { "
+                             "return 1; } }\n");
+  before = cache->stats();
+  expect(replacements(nested).empty(),
+         "editing a re-exported unit invalidates the facade's scan");
+  expect(cache->stats().scanMisses > before.scanMisses,
+         "the facade is loaded again after its re-exported unit changed");
+
+  // Qualifiers the program already spells do not restrict candidates: an
+  // alias or a local declaration may give the written name its meaning.
+  f.write("real.gti", "export module real_api;\n"
+                      "export namespace real { int reached() { return 6; } "
+                      "}\n");
+  expect(replacements("namespace real { int other() { return 0; } }\n"
+                      "namespace alias = real;\n"
+                      "int main() { return alias::reached(); }\n") ==
+             std::vector<std::string>{"import \"real.gti\";\n"},
+         "an alias qualifier reaches a reopened namespace's import");
+  expect(replacements("int main() { return wrong::value(); }\n").empty(),
+         "an unrelated qualifier still offers nothing");
+}
+
+// Source-owner registrations are part of every scan's identity: changing a
+// module map changes the suggested import.
+void moduleMapChangesInvalidateScans() {
+  Fixture f;
+  const auto cache = std::make_shared<lang::IncludeDiscoveryCache>();
+  f.options.includeDiscoveryCache = cache;
+  f.write("dep/gti.toml", "manifest-version = 1\n");
+  f.write("dep/api.gti",
+          "export module net.http;\nexport int remote() { return 7; }");
+  std::vector<lang::PackageSourceRoot> owners{
+      {.identity = "app",
+       .name = "app",
+       .packageRoot = f.root,
+       .sourceRoot = f.root,
+       .dependencies = {{"dep", "library"}}},
+      {.identity = "library",
+       .name = "library",
+       .packageRoot = f.root / "dep",
+       .sourceRoot = f.root / "dep",
+       .modules = {{"net.http", f.root / "dep/api.gti"}}}};
+  const std::string source = "int main() { return remote(); }";
+  const auto suggested = [&] {
+    std::vector<std::string> result;
+    for (const auto &fix : fixes(f.analyze(source, owners)))
+      result.push_back(fix.replacement);
+    return result;
+  };
+  expect(suggested() == std::vector<std::string>{"import dep.net.http;\n"},
+         "the registered module name is suggested");
+  owners[0].dependencies = {{"remote_dep", "library"}};
+  expect(suggested() ==
+             std::vector<std::string>{"import remote_dep.net.http;\n"},
+         "a renamed dependency alias replaces the remembered suggestion");
+  expect(cache->stats().scanHits == 0,
+         "no scan is reused across different source-owner registrations");
+  f.write("dep/v2.gti",
+          "export module net.http;\nexport int other() { return 8; }");
+  owners[1].modules = {{"net.http", f.root / "dep/v2.gti"}};
+  expect(suggested().empty(),
+         "a module mapped to another interface no longer offers the old one");
+  owners[1].modules = {{"net.http", f.root / "dep/api.gti"}};
+  const auto hits = cache->stats().scanHits;
+  expect(suggested() ==
+             std::vector<std::string>{"import remote_dep.net.http;\n"},
+         "restoring the registration restores the suggestion");
+  expect(cache->stats().scanHits > hits,
+         "an identical registration reuses the remembered scan");
+}
 } // namespace
 
 int main() {
+  discoveryReusesCandidateScans();
+  moduleMapChangesInvalidateScans();
   internalTrialsDoNotReportProgress();
+  immutableDiscoveryAndCancellation();
   projectDeclarations();
   missingOverloadDeclarations();
   snapshotsAndAlternatives();

@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from backend_modes import keep_cpp, native_modes
 
 
 def run(command):
@@ -21,34 +22,29 @@ def main():
     root = Path(__file__).resolve().parent.parent
     source = root / "tests/fixtures/native_indirect_calls.gti"
     example = root / "examples/122-native-function-invocation.gti"
-    modes = [(f"{standard}-{level}", standard, level, [])
-             for standard in ("c++20", "c++23") for level in ("O0", "O1", "O3")]
-    modes.append(("sanitized", "c++23", "O1",
-                  ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]))
+    modes = native_modes()
     with tempfile.TemporaryDirectory(prefix="gti-native-indirect-") as directory:
         work = Path(directory)
         header = work / "native_indirect_calls.h"
         run([compiler, source, "--emit-native-header", "-o", header])
-        for name, standard, level, sanitizers in modes:
+        for name, flags, native_flags in modes:
             native_object = work / f"native-{name}.o"
             run([os.environ.get("CC", "cc"), "-std=c17", "-I", work,
                  "-I", root / "runtime/include", "-c", source.with_suffix(".c"),
-                 "-o", native_object, *sanitizers])
+                 "-o", native_object, *native_flags])
             binary = work / name
-            run([compiler, source, "--std", standard, f"-{level}",
-                 "--keep-cpp", "-o", binary, "--", native_object,
-                 "-fno-elide-constructors", *sanitizers])
+            run([compiler, source, *flags,
+                 *keep_cpp(flags), "-o", binary, "--", native_object, *native_flags])
             executed = run([binary])
             assert executed.stdout == "" and executed.stderr == "", executed
             example_binary = work / f"example-{name}"
-            run([compiler, example, "--std", standard, f"-{level}",
-                 "-o", example_binary, "--", "-fno-elide-constructors",
-                 *sanitizers])
+            run([compiler, example, *flags,
+                 "-o", example_binary,
+                 *native_flags])
             run([example_binary])
             failure_binary = work / f"failure-{name}"
             run([compiler, source.with_name("native_indirect_failure.gti"),
-                 "--std", standard, f"-{level}", "-o", failure_binary,
-                 "--", "-fno-elide-constructors", *sanitizers])
+                 *flags, "-o", failure_binary, *native_flags])
             failure = subprocess.run([str(failure_binary)], capture_output=True,
                                      text=True, timeout=180)
             assert failure.returncode == 70, failure

@@ -13,7 +13,10 @@ Status: Current infrastructure and conventions.
 primary span; related information names the selected immediate declaration and
 the failing operation, with the staged call trace when available. Runtime-value
 inputs, checked arithmetic/conversion failure and evaluator resource limits
-retain distinct explanations. No automatic edit changes an ordinary API into
+retain distinct explanations. When evaluating an immediate argument fails,
+its explanation identifies the argument and immediate function, and a nested
+non-constexpr call names that inner function. This does not describe the
+selected immediate function itself as non-constexpr. No automatic edit changes an ordinary API into
 an immediate one or replaces a runtime argument. These records are shared by
 CLI and LSP publication, including unsaved-buffer recovery.
 The same diagnostic covers a failed standalone immediate `void` completion or
@@ -120,9 +123,9 @@ the exact source range and clearing after an initializer is supplied.
 
 `GTI-S2107` rejects a `constexpr for` whose sequence is not a value of a class
 with one type-pack argument list; the colon is primary and the message names
-the actual type. `GTI-S2108` reports an expansion over the compile-time budget
-(1024 elements per statement, 4096 expanded copies per declaration) at the
-`for` keyword. `GTI-S2109` rejects a function, class, enum, concept, alias or
+the actual type. `GTI-S2108` reports an expansion over the
+`constexpr-for-elements` (per statement) or `constexpr-for-copies` (per
+declaration) compile limit at the `for` keyword, with the configuration hint. `GTI-S2109` rejects a function, class, enum, concept, alias or
 namespace declaration inside a `constexpr for` body. `GTI-S2111` rejects a
 `std::meta::field<T, I>` whose index is out of range for `T`, naming the count.
 `GTI-S2112` rejects `get_mut` on a field that is not writable through the
@@ -336,7 +339,11 @@ diagnostic storage.
 Failed overload lookup distinguishes argument-count failures from exact-type
 and reference/ownership requirements. A count mismatch does not suggest a cast;
 defaults and parameter packs use the resolver's own argument-shape predicate.
-Named call failures highlight the callee. Missing overload declarations use
+Named call failures highlight the callee. If a unique otherwise matching
+overload is excluded by a deleted copy, `GTI-S2018` instead identifies the
+actual argument and explains explicit ownership transfer, including elements
+of a by-value pack. Other type, constraint and ambiguous-candidate failures
+retain their own resolver diagnostics. Missing overload declarations use
 the existing include discovery and frontend reanalysis, offering an include
 only when it resolves to that file without introducing errors. No standard
 library name determines this advice. Operator reference mismatches relate the
@@ -868,10 +875,12 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   it with an explicit allocating copy requires programmer intent.
   Function overload sets follow the same rule: when exactly one overload
   accepts every argument type and is rejected only because a by-value
-  argument cannot be copied or moved, each such argument reports
-  `GTI-S2018` with that overload as the `Exact-type candidate:` note, instead
-  of `GTI-S2012` and the whole candidate list. A set rejected for any other
-  reason, or with several such overloads, keeps `GTI-S2012`. Every by-value
+  argument cannot be copied or moved, the first such argument reports the
+  call's one causal `GTI-S2018`, with that overload as the
+  `Exact-type candidate:` note, instead of `GTI-S2012` and the whole
+  candidate list. A set rejected for any other reason keeps that reason's
+  resolver diagnostic, and one with several such overloads keeps
+  `GTI-S2012`. Every by-value
   copy report from a function call relates the declared parameter
   (`Parameter 'name' takes its argument by value.`, or for a parameter pack
   `Parameter pack 'name' takes each argument by value, ...`). When that

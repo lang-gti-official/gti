@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from backend_modes import is_cpp_mode, native_modes
 
 
 GTI = """TYPE Ops {
@@ -80,11 +81,12 @@ def main(gti_variants=None):
         for kind in kinds:
             source = directory / (kind + (".cpp" if kind == "cpp" else ".gti"))
             text = CPP if kind == "cpp" else gti_variants[kind]
+            production_flags = native_modes(levels=("O3",))[0][1]
             source.write_text(text)
             binary = directory / kind
             argv = ([native, "-std=c++23", "-O3", str(source), "-o", str(binary)]
                     if kind == "cpp" else
-                    [str(compiler), str(source), "--std", "c++23", "-O3", "-o", str(binary)])
+                    [str(compiler), str(source), *production_flags, "-o", str(binary)])
             before = time.perf_counter()
             built = checked((["/usr/bin/time", "-l"] if sys.platform == "darwin" else []) + argv)
             data = {"source_sha256": hashlib.sha256(text.encode()).hexdigest(),
@@ -94,9 +96,9 @@ def main(gti_variants=None):
                 data["build_peak_rss_bytes"] = next(
                     int(line.split()[0]) for line in built.stderr.splitlines()
                     if "maximum resident set size" in line)
-            if kind != "cpp":
+            if kind != "cpp" and is_cpp_mode(production_flags):
                 emitted = evidence / f"{kind}.gti.cpp"
-                checked([str(compiler), str(source), "--std", "c++23", "-O3", "--emit-cpp", "-o", str(emitted)])
+                checked([str(compiler), str(source), *production_flags, "--emit-cpp", "-o", str(emitted)])
                 data["emitted_cpp_bytes"] = emitted.stat().st_size
             if shutil.which("otool"):
                 disassembly = checked(["otool", "-tvV", str(binary)]).stdout

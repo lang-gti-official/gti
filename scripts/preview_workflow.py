@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import copy
+import importlib.util
 import json
 import platform
 import re
@@ -17,6 +19,13 @@ from agent_workflow import WorkflowError, clean, git, load_remote_runner
 
 BRANCH = "preview"
 MANIFEST = ".gti-preview.json"
+
+
+def load_preview_examples():
+    spec = importlib.util.spec_from_file_location("preview_examples", Path(__file__).with_name("preview_examples.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def tests(value):
@@ -48,7 +57,7 @@ class Preview:
             raise WorkflowError("Use the candidate ID returned by preview prepare")
         return json.loads((self.directory / (identity + ".json")).read_text())
 
-    def prepare(self, task, worktree, checks=None, remove=False, selection=None):
+    def prepare(self, task, worktree, checks=None, remove=False, selection=None, refresh=None):
         with self.flow.lock():
             main = self.flow.fetch()
             previous = self.remote()
@@ -70,7 +79,39 @@ class Preview:
                     for commit in reversed(removed["reverts"]):
                         operations.append({"kind": "restore", "sha": commit})
                     removed.update(restored=True, accepted_in_main=main)
-            if remove:
+            refreshed = None
+            if refresh is not None:
+                if not isinstance(refresh, str) or not refresh.strip():
+                    raise WorkflowError("Refreshing accepted checks requires an explicit reason")
+                checks = tests(checks)
+                record = self.flow.load(task)
+                pr = self.flow.pull(record)
+                head = pr["head"]["sha"]
+                if not pr.get("merged") or not self.flow.ancestor(head, main):
+                    raise WorkflowError("Refresh requires the task's merged head in current main")
+                if record.get("verified", {}).get("head") != head:
+                    raise WorkflowError("Refresh requires focused verification of the merged head")
+                if selection and head != selection["head"]:
+                    raise WorkflowError("Submitted refresh head changed")
+                rows = [row for row in manifest["features"] if row["task"] == task]
+                if len(rows) != 1 or rows[0]["pr"] != pr["number"]:
+                    raise WorkflowError("Refresh requires one existing inclusion for the same task PR")
+                row = rows[0]
+                if not self.flow.ancestor(row["head"], head):
+                    raise WorkflowError("Merged head must retain the previously admitted feature history")
+                if row["head"] == head:
+                    if row["tests"] != checks:
+                        raise WorkflowError("Cannot replace checks without a new accepted feature head")
+                else:
+                    historical = copy.deepcopy({k: v for k, v in row.items() if k != "history"})
+                    row.setdefault("history", []).append(historical)
+                    row.update(head=head, tests=checks, accepted_in_main=main,
+                               refresh_reason=refresh.strip())
+                    # The accepted head enters preview through this candidate's
+                    # main merge, so the feature is admitted again: its merge
+                    # identity moves and its replacement checks are proven once.
+                    refreshed = task
+            elif remove:
                 rows = [row for row in manifest["features"] if row["task"] == task]
                 if not rows:
                     raise WorkflowError("Task is not included in preview")
@@ -114,7 +155,7 @@ class Preview:
                             operations.append({"kind": "restore", "sha": commit, "feature": feature})
                         removed["restored"] = True
                 operations.append({"kind": "merge", "sha": head, "feature": feature})
-            operations.append({"kind": "merge", "sha": main})
+            operations.append({"kind": "merge", "sha": main, **({"refresh": refreshed} if refreshed else {})})
             state = {"id": uuid.uuid4().hex, "main": main, "previous": previous,
                      "worktree": str(root), "phase": "preparing", "manifest": manifest,
                      "operations": operations}
@@ -170,6 +211,9 @@ class Preview:
                     row["contributions"].append(after)
                 if operation["kind"] == "merge":
                     row["merge"] = after
+            if operation.get("refresh"):
+                row = next(row for row in manifest["features"] if row["task"] == operation["refresh"])
+                row["merge"] = after
             if "removal" in operation:
                 manifest["removed"][operation["removal"]]["reverts"].append(after)
             state["operations"].pop(0)
@@ -212,7 +256,11 @@ class Preview:
                 "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_TESTING=ON", "-DGTI_BUILD_LSP=ON"]},
             {"kind": "build", "argv": ["cmake", "--build", build, "--parallel", str(jobs)]},
         ]
-        focused = sorted({name for feature in state["manifest"]["features"] for name in tests(feature["tests"])})
+        # Preview admits a feature once: its own focused checks plus the fixed
+        # example gate. Earlier features are already in the published preview
+        # and are not re-proven on every admission (preview_examples.pending_features).
+        focused = sorted({name for feature in load_preview_examples().pending_features(state["manifest"], root)
+                          for name in tests(feature["tests"])})
         if not focused:
             # The fixed example harnesses need the CLI/runtime, not C++ unit
             # binaries. Arbitrary focused CTest names still require all targets.
@@ -284,6 +332,10 @@ def main(workflow, arguments):
     submit = sub.add_parser("submit", help="queue optional preview admission and return immediately")
     submit.add_argument("task")
     submit.add_argument("--tests", nargs="+", help="exact focused CTest names; remembered on resubmission")
+    refresh = sub.add_parser("refresh", help="queue revalidation of an included feature's newer accepted main head")
+    refresh.add_argument("task")
+    refresh.add_argument("--tests", nargs="+", required=True, help="replacement owning checks for the verified merged head")
+    refresh.add_argument("--reason", required=True, help="why the accepted feature's checks changed")
     sub.add_parser("seed", help="start or refresh preview from main without adding a PR").add_argument("--worktree", required=True)
     for name in ("prepare", "revert"):
         prepare = sub.add_parser(name)
@@ -301,11 +353,13 @@ def main(workflow, arguments):
     sub.add_parser("status").add_argument("candidate", nargs="?", help="submission or candidate ID; omitted lists submissions")
     args = parser.parse_args(arguments)
     preview = Preview(workflow)
-    if args.command in {"submit", "status"}:
+    if args.command in {"submit", "refresh", "status"}:
         from preview_submit import Submissions
         submissions = Submissions(workflow)
         if args.command == "submit":
             return submissions.submit(args.task, args.tests)
+        if args.command == "refresh":
+            return submissions.submit(args.task, args.tests, refresh=args.reason)
         if args.candidate is None or submissions.exists(args.candidate):
             return submissions.status(args.candidate)
     if args.command == "seed":

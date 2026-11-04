@@ -10,6 +10,7 @@ import time
 
 from allocation_abort_runtime_test import ABORT_STATUS
 from native_fixture_build import build_fixture
+from backend_modes import is_cpp_mode, native_modes, optimization_level
 
 
 def main():
@@ -17,29 +18,26 @@ def main():
     fixtures = Path(__file__).resolve().parent / "fixtures"
     native = [fixtures / "c_string_import.cpp",
               fixtures / "c_string_allocation_provider.cpp"]
-    modes = [(standard, level, []) for standard in ("c++20", "c++23")
-             for level in ("O0", "O1", "O3")]
-    modes.append(("c++23", "O1", ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]))
+    modes = native_modes()
     environment = os.environ.copy()
     for name in ("ASAN_OPTIONS", "UBSAN_OPTIONS"):
         environment[name] = environment.get(name, "") + ":halt_on_error=1"
     with tempfile.TemporaryDirectory(prefix="gti-c-string-import-") as directory:
         root = Path(directory)
-        for standard, level, extra in modes:
-            mode = f"{standard}-{level}" + ("-sanitized" if extra else "")
+        for mode, flags, extra in modes:
             for name in ("c_string_import", "c_string_import_null", "c_string_import_exhausted",
                          "unsafe_constructor_cleanup"):
                 binary = root / f"{name}-{mode}"
                 build_start = time.perf_counter()
                 built = build_fixture(
-                    [compiler, fixtures / f"{name}.gti", "--std", standard,
-                     f"-{level}", "--progress", "never"], binary,
+                    [compiler, fixtures / f"{name}.gti", *flags, "--progress", "never"], binary,
                     native_sources=native, native_arguments=extra,
-                    standard=standard, optimization=level,
+                    optimization=optimization_level(flags),
                     capture_output=True, text=True, timeout=180, env=environment)
                 assert built.returncode == 0, (name, mode, built.stdout, built.stderr)
-                generated = binary.with_suffix(".gti.cpp").read_text()
-                assert "// GTI verified-MIR body:" in generated
+                if is_cpp_mode(flags):
+                    generated = binary.with_suffix(".gti.cpp").read_text()
+                    assert "// GTI verified-MIR body:" in generated
                 build_seconds = time.perf_counter() - build_start
                 run_start = time.perf_counter()
                 ran = subprocess.run([binary], capture_output=True, text=True,

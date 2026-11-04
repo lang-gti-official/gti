@@ -17,6 +17,10 @@ from preview_workflow import Preview, tests
 
 
 ACTIVE = {"queued", "running"}
+# Outcomes the worker itself reports on the original PR. An interrupted worker
+# cannot; `status` and every helper command name it instead.
+REPORTED = {"failed", "stale"}
+REPORT_MARKER = "<!-- gti-preview-submission: {} -->"
 SCRIPTS = ("preview_submit.py", "preview_workflow.py", "agent_workflow.py",
            "build_window.py", "remote_runner.py")
 
@@ -56,13 +60,20 @@ class Submissions:
             state.update(phase="interrupted", note="Inspect the retained worker log/remote run before resubmitting")
         return state
 
-    def submit(self, task, checks):
+    def submit(self, task, checks, refresh=None):
         with self.flow.lock():
             record = self.flow.load(task)
             if not record.get("pr"):
                 raise WorkflowError("Checkpoint the completed task and open its PR before optional preview submission")
             pr = self.flow.pull(record)
-            if pr["state"] != "open":
+            if refresh is not None:
+                if not isinstance(refresh, str) or not refresh.strip():
+                    raise WorkflowError("Refreshing accepted checks requires an explicit reason")
+                if not pr.get("merged") or not self.flow.ancestor(pr["head"]["sha"], self.flow.fetch()):
+                    raise WorkflowError("Refresh requires the task's merged head in current main")
+                if record.get("verified", {}).get("head") != pr["head"]["sha"]:
+                    raise WorkflowError("Refresh requires focused verification of the merged head")
+            elif pr["state"] != "open":
                 raise WorkflowError("Only an open task PR can be submitted to preview")
             history = sorted((row for row in (json.loads(path.read_text())
                               for path in self.directory.glob("*/state.json")) if row["task"] == task),
@@ -73,7 +84,13 @@ class Submissions:
             for prior in history:
                 observed = self.status(prior["id"])
                 if observed["phase"] in ACTIVE:
-                    if prior["head"] == pr["head"]["sha"] and prior["tests"] == checks:
+                    # A pre-merge admission cannot run now: its detached worker
+                    # will mark it superseded when it reaches the queue. Retain
+                    # that record/process while allowing the explicit refresh.
+                    if refresh is not None and prior.get("refresh") is None:
+                        continue
+                    if (prior["head"] == pr["head"]["sha"] and prior["tests"] == checks
+                            and prior.get("refresh") == refresh):
                         return observed
                     raise WorkflowError("This task already has a preview submission running; its normal PR can continue")
             identity = uuid.uuid4().hex
@@ -89,6 +106,8 @@ class Submissions:
                      "head": pr["head"]["sha"], "tests": checks, "created": self.flow.now(),
                      "phase": "queued", "attempts": [], "log": str(root / "worker.log"),
                      "note": "Optional preview only; continue the normal PR workflow without waiting"}
+            if refresh is not None:
+                state["refresh"] = refresh
             self.save(state)
             try:
                 with (root / "worker.log").open("a") as output:
@@ -134,7 +153,8 @@ class Submissions:
                 self.save(state)
                 for attempt in range(2):
                     pr = self.flow.pull(state["task_record"])
-                    if pr["state"] != "open" or pr["head"]["sha"] != state["head"]:
+                    accepted_refresh = state.get("refresh") is not None and pr.get("merged")
+                    if (not accepted_refresh and pr["state"] != "open") or pr["head"]["sha"] != state["head"]:
                         state.update(phase="superseded", note="Original PR closed or advanced; no different head was admitted")
                         break
                     # Sibling of the primary checkout, never inside its source
@@ -142,7 +162,10 @@ class Submissions:
                     root = self.flow.primary.parent / ("gti-preview-" + identity + "-" + str(attempt))
                     state["attempts"].append(str(root))
                     self.save(state)
-                    candidate = self.preview.prepare(state["task"], root, state["tests"], selection=state)
+                    options = {"selection": state}
+                    if state.get("refresh") is not None:
+                        options["refresh"] = state["refresh"]
+                    candidate = self.preview.prepare(state["task"], root, state["tests"], **options)
                     state["candidate"] = candidate["id"]
                     self.save(state)
                     try:
@@ -171,7 +194,50 @@ class Submissions:
         except Exception as error:
             state.update(phase="failed", error=str(error),
                          note="Preview only: normal task verification, merge and cleanup can continue")
-        return self.save(state)
+        self.save(state)
+        return self.save(self.report(state))
+
+    def conflicts(self, state):
+        """Unmerged paths left in the last attempt's candidate checkout."""
+        root = Path(state["attempts"][-1]) if state.get("attempts") else None
+        if root is None or not root.is_dir():
+            return []
+        result = git(root, "diff", "--name-only", "--diff-filter=U", check=False)
+        return result.stdout.split() if result.returncode == 0 else []
+
+    def report(self, state):
+        """Comment once on the original PR when its submission did not publish.
+
+        The comment is the only signal a detached failure gives the PR's
+        owner. It changes no label, review or check, so normal delivery is
+        untouched, and a comment API failure is recorded, never raised.
+        """
+        if state.get("phase") not in REPORTED or state.get("reported"):
+            return state
+        pr = state["task_record"]["pr"]
+        marker = REPORT_MARKER.format(json.dumps({"id": state["id"], "head": state["head"]}, sort_keys=True))
+        lines = [marker, f"**Preview admission {state['phase']}** for head `{state['head'][:12]}` "
+                         f"(submission `{state['id']}`).", ""]
+        reason = (state.get("error") or state.get("note") or "").strip()
+        if reason:
+            lines += ["```text", reason[:2000], "```", ""]
+        conflicts = self.conflicts(state)
+        if conflicts:
+            shown = ", ".join(f"`{path}`" for path in conflicts[:30])
+            lines += ["Unresolved paths in the candidate: " + shown
+                      + (f" and {len(conflicts) - 30} more" if len(conflicts) > 30 else ""), ""]
+        lines += [f"Worker log on the submitting host: `{state['log']}`.",
+                  "This does not block the PR. Fix the cause, then resubmit with "
+                  f"`python3 scripts/agent_workflow.py preview submit {state['task']}`."]
+        try:
+            existing = self.flow.api.request("GET", f"/issues/{pr}/comments?per_page=100") or []
+            if not any(marker in (comment.get("body") or "") for comment in existing):
+                self.flow.api.request("POST", f"/issues/{pr}/comments", {"body": "\n".join(lines)})
+            state["reported"] = self.flow.now()
+            state.pop("report_error", None)
+        except WorkflowError as error:
+            state["report_error"] = str(error)
+        return state
 
 
 if __name__ == "__main__":

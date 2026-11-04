@@ -166,9 +166,23 @@ Their ordinary capture initialization, moves, borrows and cleanup occur only
 at evaluated uses; a disabled use does not initialize a capture. Returns inside
 a caller-written lambda still exit that lambda, not a surrounding macro.
 Macro declarations themselves cannot be taken as function items or callbacks.
-Void calls remain complete expression statements. Expansion has deterministic limits of 64
-nested calls and 4096 expanded bodies in one analysis request; recursive
-macro cycles are rejected without expanding the cycle repeatedly.
+Void calls remain complete expression statements. Recursive macro cycles are
+rejected without expanding the cycle repeatedly.
+
+Expansion has two deterministic implementation limits, configured like the
+other compile-time limits (see
+[Implementation limits](static-semantics.md#3112-implementation-limits)):
+`macro-depth` bounds the nested expansions active at once (guaranteed at least
+1024; the default is 1024) and `macro-expansions` bounds the bodies one
+outermost written invocation expands, counting every nested expansion and
+forced argument expansion it causes (guaranteed at least 4096; the default is
+8192). Each outermost invocation has its own budget, so separate invocations
+never accumulate toward a limit, however many a program contains. Exceeding
+either limit rejects that invocation once with `GTI-S2124`, naming the limit,
+its value, and the `--macro-depth`/`--macro-expansions` option and `[limits]`
+key that raise it. Neither limit depends on the host's native stack: the
+compiler continues deep expansion, and the lowering of the expanded bodies, on
+fresh stack segments.
 
 Value results use a typed HIR result region and an ordinary MIR result place.
 The selected result is initialized before macro-local cleanup and remains
@@ -324,6 +338,12 @@ Using the result of an assignment of a move-only type, as in
 when the assignment is an expression statement, a for-loop increment, or a
 comma's left operand, or when it is what a discarded grouping, comma or
 conditional yields.
+
+Discarding a conditional result creates no additional owned result or copy of
+an assignment target. Actual temporary objects produced by its selected arm
+still live until the enclosing full-expression ends, including any following
+comma operands. A moved assignment staging object is retired at its recorded
+cleanup point without destroying the value now owned by the target.
 
 When a plain subscript or dereference assignment forms its target through a
 source-defined operator returning `mut T&`, the selected target call runs
@@ -857,6 +877,12 @@ Exact function items retain their identity, including inside source-defined
 owning callable wrappers. An ordinary wrapper or lambda establishes a new
 call site; it does not magically preserve its external caller. Explicit
 tracked wrappers forward the incoming location instead.
+
+A trusted intrinsic uses the attributes of its selected declaration, including
+when it checks a condition and can return normally. Its intrinsic identity does
+not replace that declaration's `track_caller` contract. An untracked source
+wrapper still anchors the location inside its own body; annotating the wrapper
+as well forwards its caller's location through the intrinsic.
 
 Terminal-flow checking retains the existing switch boundary: a `default`
 arm or a semantically exhaustive closed payload-enum switch covers every

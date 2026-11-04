@@ -193,10 +193,13 @@ private:
     constantFunctions = completedFunctions;
     constantConstructors = completedConstructors;
     constantClosure = true;
-    // Preserve source-unit/target identity for failure origins without
-    // claiming completed whole-program semantic analysis.
+    // Preserve source and declaration-proof identity without claiming completed
+    // whole-program semantic analysis. The absent active-statement inventory
+    // still prevents this partial closure from passing whole-program sealing.
     output.program.semanticAnalysisSeal = {
-        .target = target, .sourceGraph = semantics.analysisSeal().sourceGraph};
+        .programSnapshot = semantics.analysisSeal().programSnapshot,
+        .target = target,
+        .sourceGraph = semantics.analysisSeal().sourceGraph};
   }
 
   HirLoweringResult finishConstant() {
@@ -3854,6 +3857,13 @@ private:
                  const std::vector<SemanticType> &classArguments,
                  const std::vector<CompileTimeValue> &classValueArguments,
                  HirBody &body) {
+    // Macro expansions lower inline, so statement and expression nesting is
+    // bounded by CompileLimits::macroDepth rather than by written syntax.
+    if (nativeStackNearlyExhausted())
+      return onFreshNativeStack([&] {
+        return lowerStatement(statement, model, classArguments,
+                              classValueArguments, body);
+      });
     const std::optional<HirStatementId> lowered = lowerStatementImpl(
         statement, model, classArguments, classValueArguments, body);
     if (lowered && statement != nullptr && !body.statements.empty() &&
@@ -5762,6 +5772,11 @@ private:
                   const std::vector<SemanticType> &classArguments,
                   const std::vector<CompileTimeValue> &classValueArguments,
                   HirBody &body) {
+    if (nativeStackNearlyExhausted())
+      return onFreshNativeStack([&] {
+        return lowerExpression(expression, model, classArguments,
+                               classValueArguments, body);
+      });
     ensurePlaceDomain(body);
     if (const Token *caller = model.findMacroDefault(expression);
         caller && !activeDefaultArguments.contains(&expression))
@@ -6742,6 +6757,8 @@ private:
           (void)seedConcreteDeclarationType(*value.objectLayoutType);
         }
         value.neverReturns = resolved->neverReturns;
+        value.intrinsicCallContractProof =
+            model.intrinsicCallContractProof(*call);
         value.noNormalBorrowResultProof =
             model.noNormalBorrowResultProof(*call);
         value.tracksCaller = resolved->tracksCaller;

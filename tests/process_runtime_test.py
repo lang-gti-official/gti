@@ -10,6 +10,7 @@ import sys
 import tempfile
 
 from native_symbol_spelling import native_spelling
+from backend_modes import is_cpp_mode, keep_cpp, native_modes
 
 
 def run(command: list[str], environment: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
@@ -48,28 +49,26 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="gti-process-") as directory:
         output = pathlib.Path(directory)
-        for standard in ("c++20", "c++23"):
-            for optimization in ("O0", "O3"):
-                binary = output / f"process-{standard}-{optimization}"
-                run(
-                    [
-                        str(compiler),
-                        str(source),
-                        f"-{optimization}",
-                        "--std",
-                        standard,
-                        "--keep-cpp",
-                        "-o",
-                        str(binary),
-                    ],
-                    environment,
+        for mode, flags, native in native_modes():
+            binary = output / f"process-{mode}"
+            run(
+                [
+                    str(compiler),
+                    str(source),
+                    *flags,
+                    *keep_cpp(flags),
+                    "-o",
+                    str(binary),
+                ],
+                environment,
+            )
+            executed = run([str(binary)], environment)
+            if executed.stdout or executed.stderr:
+                raise AssertionError(
+                    "the process fixture unexpectedly wrote output: "
+                    f"{executed!r}"
                 )
-                executed = run([str(binary)], environment)
-                if executed.stdout or executed.stderr:
-                    raise AssertionError(
-                        "the process fixture unexpectedly wrote output: "
-                        f"{executed!r}"
-                    )
+            if is_cpp_mode(flags):
                 generated = binary.with_suffix(".gti.cpp").read_text(
                     encoding="utf-8"
                 )

@@ -1,0 +1,1 @@
+Lambdas can return a mutable reference to one explicit reference parameter, or a read-only reborrow of a mutable parameter. Local reference aliases preserve that caller-owned origin, including through generic callable relays. Returned references retain the usual lifetime and conflicting-access checks; captured state and local objects cannot supply an escaping reference.

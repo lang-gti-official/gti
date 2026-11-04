@@ -40,6 +40,11 @@ ROLLUP_FAILED, ROLLUP_REBASE = "rollup-failed", "needs-rebase"
 ROLLUP_BRANCH = re.compile(r"rollup/[0-9]{8}-[0-9]{1,4}\Z")
 # The bot's comment when it closes a member whose head a merged rollup carried.
 ROLLUP_MARKER = re.compile(r"<!-- gti-rollup-integrated: (\{[^\n]*?\}) -->")
+# Preview submission outcomes that need a person: the task's head did not
+# reach preview and no worker is still trying.
+PREVIEW_ACTIVE = {"queued", "running"}
+PREVIEW_ATTENTION = {"failed", "stale", "interrupted"}
+DELIVERED = {"merged", "synced", "completed", "abandoned"}
 
 
 def rollup_marker(record):
@@ -598,11 +603,15 @@ class Workflow:
                 {"type": "required_status_checks", "parameters": {
                     "strict_required_status_checks_policy": False, "do_not_enforce_on_create": False,
                     "required_status_checks": [{"context": GATE_CHECK}]}},
-                # Group size 1: rollups, not the queue, combine compatible work.
+                # The gate is build-and-fast-checks only, so the queue merges
+                # up to five all-green entries per build. One entry builds at a
+                # time until the gate is measured under an hour (macOS runners
+                # are the scarce resource); a hung check fails in two hours,
+                # not six.
                 {"type": "merge_queue", "parameters": {
                     "merge_method": "MERGE", "grouping_strategy": "ALLGREEN",
-                    "max_entries_to_build": 2, "min_entries_to_merge": 1, "max_entries_to_merge": 1,
-                    "min_entries_to_merge_wait_minutes": 0, "check_response_timeout_minutes": 360}},
+                    "max_entries_to_build": 1, "min_entries_to_merge": 1, "max_entries_to_merge": 5,
+                    "min_entries_to_merge_wait_minutes": 0, "check_response_timeout_minutes": 120}},
             ]}
 
     def protection(self, configure=False):
@@ -1032,7 +1041,48 @@ class Workflow:
                     state["remote_integration"] = self.integration_phase(remote)
                     if remote["headRefOid"] != state.get("verified", {}).get("head"):
                         state["remote_integration"] = "head-changed"
+        attention = {row["task"]: row for row in self.preview_attention()}
+        for state in records:
+            if state.get("task") in attention:
+                state["preview_attention"] = attention[state["task"]]
         return records
+
+    def preview_attention(self):
+        """Tasks whose latest preview submission ended without publication.
+
+        A detached submission writes its outcome only to its own state file,
+        so nothing else reports a failure. A later submission, a delivered or
+        unknown task, or a preview branch that already holds the submitted
+        head resolves it. This reads local records only and never raises.
+        """
+        latest = {}
+        for path in sorted((self.state_dir / "preview" / "submissions").glob("*/state.json")):
+            try:
+                row = json.loads(path.read_text())
+                task, created = row["task"], row["created"]
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+            if task not in latest or created >= latest[task]["created"]:
+                latest[task] = row
+        found = []
+        for task, row in sorted(latest.items()):
+            phase = row.get("phase")
+            if phase in PREVIEW_ACTIVE and not build_window.pid_alive(row.get("pid")):
+                phase = "interrupted"
+            if phase not in PREVIEW_ATTENTION:
+                continue
+            try:
+                record = json.loads(self.file(task).read_text())
+            except (OSError, ValueError, WorkflowError):
+                continue
+            if record.get("phase") in DELIVERED or (
+                    row.get("head") and self.ancestor(row["head"], "refs/remotes/origin/preview")):
+                continue
+            found.append({"task": task, "submission": row.get("id"), "phase": phase,
+                          "pr": (row.get("task_record") or {}).get("pr"), "head": row.get("head"),
+                          "reason": row.get("error") or row.get("note"), "log": row.get("log"),
+                          "created": row.get("created"), "reported": row.get("reported")})
+        return found
 
 
 def main():
@@ -1076,6 +1126,7 @@ def main():
     sub.add_parser("batch", help="admit focused fixes and validate an explicit combined batch").add_argument(
         "arguments", nargs=argparse.REMAINDER)
     args = parser.parse_args()
+    workflow = None
     try:
         workflow = Workflow(args.repo)
         if args.command == "batch":
@@ -1116,6 +1167,21 @@ def main():
     except (WorkflowError, OSError, ValueError) as error:
         print("agent-workflow: " + str(error), file=sys.stderr)
         return 1
+    finally:
+        if workflow is not None:
+            preview_notice(workflow)
+
+
+def preview_notice(workflow):
+    """Name unresolved preview submissions on every command; never fail one."""
+    try:
+        rows = workflow.preview_attention()
+    except Exception:  # noqa: BLE001 - a notice must not change any outcome
+        return
+    if rows:
+        print("agent-workflow: preview submissions need attention: "
+              + ", ".join(f"{row['task']} (PR {row['pr']}, {row['phase']})" for row in rows)
+              + "; `status` has each reason and log", file=sys.stderr)
 
 
 if __name__ == "__main__":

@@ -1657,14 +1657,21 @@ its argument's owner borrowed.
 
 #### Lambda Reference Results
 
-A lambda may return a read-only reference. Its origin is inferred by the same
-rule: exactly one read-only reference parameter owns the result, every
-`return` must derive from that parameter, and captures are never result
-origins. A result that derives from a mutable parameter, an ambiguous
-parameter list and a return that derives from a local, a copy or a capture are
-rejected; a lambda's explicit return type cannot spell a mutable reference. A direct
-invocation, a generic `F`/`F&` relay and a signature-erased view all give the
-result the borrow of that argument:
+A lambda may return a checked reference with `-> T&` or `-> mut T&`.
+Exactly one eligible parameter supplies the inferred result origin, and every
+`return` must derive from that parameter. A mutable result requires mutable
+input authority. A read-only result may borrow a read-only parameter or
+reborrow a mutable parameter with reduced access. Two eligible parameters are
+ambiguous; the return body does not silently choose between them.
+
+This extends the earlier read-only lambda result contract. Local reference
+aliases, nested reborrows and field projections may preserve the selected
+parameter's caller-owned referent. Local objects, by-value copies, temporaries
+and captures cannot supply an escaping reference. An alias cannot upgrade
+read-only access. A result remains attached to the caller's owner until its
+last use, preventing conflicting reads or writes according to its access.
+
+Direct invocation and generic `F`/`F&` relays preserve that origin and access:
 
 ```gti
 auto same = [](int& value) -> int& { return value; };
@@ -1672,7 +1679,32 @@ int& view = same(cell);              // borrows `cell`
 
 [[borrowed_from(value)]]
 int& relay<F>(F& callback, int& value) { return callback(value); }
+
+auto increment = [](mut int& value) -> mut int& {
+  value += 1;
+  return value;
+};
+auto increment_and_read = [](mut int& value) -> int& {
+  value += 1;
+  return value;
+};
+auto relay_alias = [](mut int& value) -> mut int& {
+  mut int& alias = value;
+  return alias;
+};
 ```
+
+The `mut` after `->` qualifies a checked-reference result; it cannot qualify
+an ordinary value or raw pointer. A captureless lambda does not require a
+mutable closure binding merely because it modifies an explicit argument.
+These contracts require no runtime borrow bookkeeping or heap allocation.
+
+Signature-erased `std::function_ref` and `std::function_ptr` retain their
+existing read-only result contract derived from a read-only signature
+parameter. The new mutable-result and read-only-from-mutable forms apply to
+direct and concrete generic invocation; unsupported erased conversions are
+diagnosed before code generation. Named functions retain their existing
+inference and explicit `borrowed_from` rules.
 
 A generic relay names the parameter its result borrows with `borrowed_from`;
 each concrete instance verifies that the selected callable's own origin
@@ -3307,6 +3339,13 @@ read-only reference parameter for a free relay); body analysis must validate
 that the selected call actually returns a borrow from that source. Merely
 calling a method on an owner does not prove this. Local owners, by-value owning
 parameters, and fresh temporary owners cannot supply an escaping view.
+
+Immutable local text aliases preserve the predeclared return dependency of
+their initializer, including alias chains and nested lexical scopes. Resolved
+body analysis still verifies the exact owner and rejects an escaping local
+owner. Shadowing does not borrow a parameter's identity. Mutable text locals
+are not inferred as return relays yet: they require a path-sensitive assignment
+summary that proves one owner across every return path.
 
 A relay may also return a string literal on another path, for example
 `if (empty) { return ""; }` before returning an owner's view. A `c_string`

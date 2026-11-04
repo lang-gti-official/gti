@@ -1,0 +1,46 @@
+import std.vector;
+import std.memory;
+import std.utility;
+
+mut int drops = 0;
+mut int evaluations = 0;
+struct Payload {
+  int value;
+  Payload(int v) : value(v) {}
+  ~Payload() { drops++; }
+};
+struct Holder {
+  mut std::unique_ptr<Payload> value;
+  Holder(int v) : value(std::make_unique<Payload>(v)) {}
+};
+struct Indexer {
+  mut Holder item;
+  Indexer() : item(Holder(4)) {}
+  mut Holder& operator[](std::size_t index) mut {
+    evaluations++;
+    return this.item;
+  }
+};
+int main() {
+  {
+    mut std::vector<Holder> items{};
+    items.push_back(Holder(1));
+    std::unique_ptr<Payload> replacement = std::make_unique<Payload>(2);
+    items[std::size_t(0)].value = std::move(replacement);
+    if (drops != 1 || items[std::size_t(0)].value->value != 2) { return 1; }
+    std::unique_ptr<Payload> next = std::make_unique<Payload>(3);
+    mut std::unique_ptr<Payload>& slot = items[std::size_t(0)].value;
+    slot = std::move(next);
+    if (drops != 2 || slot->value != 3) { return 2; }
+  }
+  if (drops != 3) { return 3; }
+  {
+    mut Indexer indexer{};
+    std::unique_ptr<Payload> replacement = std::make_unique<Payload>(5);
+    indexer[std::size_t(0)].value = std::move(replacement);
+    if (evaluations != 1 || drops != 4 || indexer.item.value->value != 5) {
+      return 4;
+    }
+  }
+  return drops == 5 ? 0 : 5;
+}

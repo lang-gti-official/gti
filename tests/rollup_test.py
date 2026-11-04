@@ -36,6 +36,7 @@ class GitHub:
         self.checks = {}
         self.queue = set()
         self.runs = []
+        self.head_runs = {}
         self.permissions = {}
         self.writes = []
         self.reject_enqueue = False
@@ -58,6 +59,7 @@ class GitHub:
     def set_gate(self, sha, conclusion="success", completed="2026-10-29T01:00:00Z", status="completed"):
         runs = self.checks.setdefault(sha, [])
         runs.append({"id": len(runs) + 1, "name": workflow.GATE_CHECK, "status": status,
+                     "check_suite": {"id": len(runs) + 1},
                      "conclusion": conclusion if status == "completed" else None, "completed_at": completed,
                      "html_url": f"https://example.invalid/checks/{sha[:7]}/{len(runs) + 1}"})
 
@@ -128,6 +130,12 @@ class GitHub:
                 raise workflow.WorkflowError("GitHub GET failed (404)")
             return dict(self.permissions[parts[2]])
         if url.path == "/actions/workflows/ci.yml/runs":
+            if "head_sha" in query:
+                sha = query["head_sha"][0]
+                if sha in self.head_runs:
+                    return {"workflow_runs": copy.deepcopy(self.head_runs[sha])}
+                return {"workflow_runs": [dict(run, check_suite_id=run["check_suite"]["id"])
+                                          for run in self.checks.get(sha, [])]}
             assert query["event"] == ["merge_group"]
             return {"workflow_runs": copy.deepcopy(self.runs)}
         raise AssertionError((method, path, payload))
@@ -298,6 +306,36 @@ class Selection(unittest.TestCase):
 
 
 class Compose(Repositories):
+    def test_old_draft_gate_cannot_admit_a_newer_pending_ready_run(self):
+        pr = self.member("ready")
+        sha = pr["head"]["sha"]
+        latest = {"id": 2, "check_suite_id": 2, "status": "in_progress", "conclusion": None}
+        self.api.head_runs[sha] = [latest]
+        self.assertIsNone(self.bot().gate(sha))
+        self.assertEqual(self.bot().compose()["members"], [])
+        latest.update(status="completed", conclusion="success")
+        self.assertIsNone(self.bot().gate(sha))  # Old suite still cannot qualify.
+        self.api.set_gate(sha)
+        self.assertTrue(rollup.green(self.bot().gate(sha)))
+        latest.update(conclusion="failure")
+        self.assertFalse(rollup.green(self.bot().gate(sha)))
+
+    def test_single_ready_member_enters_queue_without_waiting_for_another_pr(self):
+        member = self.member("only")
+        report = self.bot().compose()
+        self.assertIsNone(report["rollup"])
+        self.assertEqual(report["enqueued"], [member["number"]])
+        self.assertEqual(self.api.queue, {member["number"]})
+        self.assertEqual(len(self.api.prs), 1)
+        self.assertEqual(self.bot().compose()["members"], [])
+
+    def test_single_member_dry_run_does_not_enqueue(self):
+        member = self.member("only")
+        report = self.bot(dry_run=True).compose()
+        self.assertEqual(report["enqueued"], [member["number"]])
+        self.assertEqual(self.api.queue, set())
+        self.assertEqual(self.api.writes, [])
+
     def test_compose_merges_exact_heads_in_order_and_records_a_valid_manifest(self):
         low = self.member("low", ready="2026-10-29T02:00:00Z", body="Validation:\n- T0: low_regression\n- T1: shared_suite\n")
         high = self.member("high", labels=(rollup.MAYBE, "p=5"), ready="2026-10-29T04:00:00Z",
@@ -398,12 +436,13 @@ class Compose(Repositories):
         with self.assertRaises(rollup.RollupError):
             self.bot(max_members=9)
 
-    def test_fewer_than_two_members_is_a_no_op(self):
-        self.member("alone")
+    def test_no_eligible_members_is_a_no_op(self):
         self.member("red", gate="failure")
+        self.member("pending", gate=None)
+        self.member("draft", draft=True)
         report = self.bot().compose()
         self.assertIsNone(report["rollup"])
-        self.assertEqual(report["reason"], "fewer than two members")
+        self.assertEqual(report["reason"], "no eligible members")
         self.assertEqual(self.api.writes, [])
         self.assertEqual(git(self.remote, "for-each-ref", "refs/heads/rollup"), "")
 
@@ -481,6 +520,58 @@ class Queue(Repositories):
         self.bot().reconcile()
         self.assertEqual(len(self.api.writes), writes)
 
+    def test_reconcile_flags_any_open_pr_that_conflicts_with_main(self):
+        # A queue-only PR (never a rollup candidate) that main moved under.
+        stuck = self.member("stuck", files={"base.txt": "stuck\n"}, labels=(rollup.NEVER,))
+        fine = self.member("fine", labels=(rollup.NEVER,))
+        draft = self.member("draft", files={"base.txt": "draft\n"}, labels=(rollup.NEVER,), draft=True)
+        git(self.dev, "switch", "-q", "-C", "main", "origin/main")
+        (self.dev / "base.txt").write_text("main moved\n")
+        git(self.dev, "commit", "-q", "-am", "main moves")
+        git(self.dev, "push", "-q", "origin", "HEAD:refs/heads/main")
+        report = self.bot().reconcile()
+        self.assertEqual(report["conflicting"], [stuck["number"]])
+        self.assertEqual(self.api.labels(stuck["number"]), [rollup.NEVER, rollup.REBASE])
+        self.assertIn("never resolves conflicts", self.api.prs[stuck["number"]]["comments"][0]["body"])
+        self.assertEqual(self.api.labels(fine["number"]), [rollup.NEVER])
+        self.assertEqual(self.api.labels(draft["number"]), [rollup.NEVER], "drafts are left alone")
+        # Flagged once: a second pass adds nothing.
+        self.bot().reconcile()
+        self.assertEqual(len(self.api.prs[stuck["number"]]["comments"]), 1)
+        # Reconciled with main: the label clears.
+        git(self.dev, "switch", "-q", stuck["head"]["ref"])
+        git(self.dev, "merge", "-q", "-m", "merge main", "-X", "theirs", "origin/main")
+        git(self.dev, "push", "-q", "origin", "HEAD:refs/heads/" + stuck["head"]["ref"])
+        self.api.refresh(stuck["number"])
+        report = self.bot().reconcile()
+        self.assertEqual(report["rebased"], [stuck["number"]])
+        self.assertEqual(self.api.labels(stuck["number"]), [rollup.NEVER])
+
+    def test_a_rollup_that_no_longer_merges_with_main_is_closed_for_recomposition(self):
+        first = self.member("first", files={"shared.txt": "first\n"})
+        second = self.member("second", ready="2026-10-29T02:00:00Z")
+        report, pr = self.composed()
+        self.assertEqual([m["pr"] for m in report["members"]], [first["number"], second["number"]])
+        # main moves under the rollup in a way that conflicts with its tree.
+        git(self.dev, "switch", "-q", "-C", "main", "origin/main")
+        (self.dev / "shared.txt").write_text("main\n")
+        git(self.dev, "add", "shared.txt")
+        git(self.dev, "commit", "-q", "-m", "main moves")
+        git(self.dev, "push", "-q", "origin", "HEAD:refs/heads/main")
+        report = self.bot().reconcile()
+        self.assertEqual(report["stale"], [pr["number"]])
+        self.assertEqual(self.api.prs[pr["number"]]["state"], "closed")
+        self.assertIn("no longer merges with `main`", self.api.prs[pr["number"]]["comments"][-1]["body"])
+        # The conflicting member is flagged; the clean one is free for the next rollup.
+        self.assertEqual(report["conflicting"], [first["number"]])
+        self.assertEqual(self.api.labels(first["number"]), [rollup.MAYBE, rollup.REBASE])
+        self.assertEqual(self.api.labels(second["number"]), [rollup.MAYBE])
+        # One clean member is left, so compose queues it alone rather than rolling it up.
+        recomposed = self.bot().compose()
+        self.assertEqual(recomposed["enqueued"], [second["number"]])
+        self.assertEqual({row["pr"]: row["reason"] for row in recomposed["skipped"]},
+                         {first["number"]: "conflicts with main"})
+
     def test_a_failed_rollup_is_closed_and_members_queue_alone(self):
         (first, second), pr = self.rollup()
         self.bot().enqueue()
@@ -553,6 +644,21 @@ class Queue(Repositories):
 
 
 class Trigger(unittest.TestCase):
+    def test_completed_canonical_ci_wakes_reconciliation_on_success_or_failure(self):
+        api = unittest.mock.Mock()
+        api.request.return_value = {"id": 12, "path": ".github/workflows/ci.yml"}
+        event = {"action": "completed", "repository": dict(REPO),
+                 "workflow_run": {"workflow_id": 12, "status": "completed", "conclusion": "success"}}
+        for conclusion in ("success", "failure", "cancelled", "timed_out"):
+            event["workflow_run"]["conclusion"] = conclusion
+            self.assertTrue(rollup.authorize("workflow_run", event, api))
+        for replacement in ({"action": "requested"}, {"repository": {"full_name": "foreign/repo"}},
+                            {"workflow_run": {"workflow_id": 13, "status": "completed"}},
+                            {"workflow_run": {"workflow_id": 12, "status": "in_progress"}}):
+            self.assertFalse(rollup.authorize("workflow_run", dict(event, **replacement), api))
+        api.request.side_effect = workflow.WorkflowError("unavailable")
+        self.assertFalse(rollup.authorize("workflow_run", event, api))
+
     def test_only_an_exact_rollup_comment_from_a_writer_runs_the_bot(self):
         api = GitHub(None)
         api.permissions = {"writer": {"permission": "write", "role_name": "write"},
@@ -585,6 +691,27 @@ class Trigger(unittest.TestCase):
                     self.assertEqual(rollup.main(["authorize", "--event-name", name, "--event", str(path)]), 0)
                 self.assertEqual(output.getvalue().strip(), expected)
 
+    def test_authorize_command_reads_a_ci_completion_payload(self):
+        # Regression: the command once loaded the payload and an API client only
+        # for issue_comment, so every CI-completion wakeup was refused and the
+        # bot ran only on its sporadically delivered cron and on /rollup comments.
+        api = unittest.mock.Mock()
+        api.request.return_value = {"id": 12, "path": ".github/workflows/ci.yml"}
+        canonical = {"action": "completed", "repository": dict(REPO),
+                     "workflow_run": {"workflow_id": 12, "status": "completed", "conclusion": "failure"}}
+        foreign = dict(canonical, workflow_run={"workflow_id": 13, "status": "completed", "conclusion": "success"})
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "event.json"
+            for event, expected in ((canonical, "authorized=true"), (foreign, "authorized=false")):
+                path.write_text(json.dumps(event))
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output), \
+                        unittest.mock.patch.dict(os.environ, {"GH_TOKEN": "read-only"}), \
+                        unittest.mock.patch.object(rollup.workflow, "GitHub", return_value=api):
+                    self.assertEqual(rollup.main(["authorize", "--event-name", "workflow_run", "--event", str(path)]), 0)
+                self.assertEqual(output.getvalue().strip(), expected)
+        api.request.assert_called_with("GET", "/actions/workflows/ci.yml")
+
     def test_missing_app_token_fails_clearly_and_never_uses_github_token(self):
         for command in ("compose", "enqueue", "reconcile"):
             error = io.StringIO()
@@ -599,6 +726,11 @@ class Trigger(unittest.TestCase):
 
     def test_checkout_origin_is_normalized_before_rollup(self):
         text = (ROOT / ".github/workflows/rollup.yml").read_text()
+        self.assertRegex(text, r"workflow_run:\s+workflows: \[CI\]\s+types: \[completed\]")
+        self.assertIn("actions: read", text)
+        self.assertEqual(text.count("ref: main"), 2)
+        self.assertNotIn("workflow_run.head_sha", text)
+        self.assertNotIn("download-artifact", text)
         command = "git remote set-url origin " + workflow.CANONICAL
         self.assertIn(command, text)
         self.assertLess(text.index(command), text.index("python3 scripts/rollup.py reconcile"))

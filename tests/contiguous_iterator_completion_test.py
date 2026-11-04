@@ -9,13 +9,10 @@ import tempfile
 
 from case_jobs import configured_jobs, positive_jobs, run_cases
 from native_fixture_build import build_fixture
+from backend_modes import is_cpp_mode, keep_cpp, native_modes, optimization_level
 
 
-MODES = [(f"{standard}-{level}", ["--std", standard, f"-{level}"], [])
-         for standard in ("c++20", "c++23") for level in ("O0", "O1", "O3")]
-MODES += [("no-elide", ["--std", "c++23", "-O0"], ["-fno-elide-constructors"]),
-          ("sanitized", ["--std", "c++23", "-O1"],
-           ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])]
+MODES = native_modes()
 FIXTURES = ("contiguous_iterator_completion", "contiguous_iterator_bounds", "contiguous_iterator_cost", "contiguous_iterator_arrow")
 
 
@@ -197,14 +194,15 @@ def main():
             if fixture in ("contiguous_iterator_completion", "contiguous_iterator_cost"):
                 native_sources = [fixtures / "stdlib_adoption_allocation_counts.cpp"]
             else:
-                command.append("--keep-cpp")
+                command += keep_cpp(flags)
             result = build_fixture(
                 command, executable, native_sources=native_sources,
-                native_arguments=native, standard=flags[1],
-                optimization=flags[2].removeprefix("-"), env=environment,
+                native_arguments=native,
+                optimization=optimization_level(flags), env=environment,
                 capture_output=True, text=True, timeout=180)
             assert result.returncode == 0, (fixture, label, result.stdout, result.stderr)
-            assert "// GTI verified-MIR body:" in executable.with_suffix(".gti.cpp").read_text()
+            if is_cpp_mode(flags):
+                assert "// GTI verified-MIR body:" in executable.with_suffix(".gti.cpp").read_text()
             return fixture, f"{region}/{label}" if region else label, executable
 
         def observe(case):

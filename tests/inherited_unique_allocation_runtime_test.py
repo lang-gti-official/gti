@@ -7,6 +7,12 @@ import tempfile
 
 from unique_class_allocation_runtime_test import run
 from allocation_abort_runtime_test import ABORT_STATUS
+from backend_modes import cpp_only_case, is_cpp_mode, keep_cpp, native_modes
+
+# The fault provider (tests/fixtures/unique_scalar_allocation_fault.cpp) replaces
+# the C++ text's nothrow operator new; LLVM-backed programs allocate through the
+# runtime, so only the C++ profile observes the injected failure.
+FAULT_INJECTION = "allocation fault injection replaces the C++ text's nothrow operator new; the LLVM backend allocates through the runtime"
 
 
 def main():
@@ -21,28 +27,27 @@ def main():
     memory = fixtures.parent.parent / "stdlib/std/detail/memory_core.gti"
     allocation_site = next(i for i, line in enumerate(memory.read_text().splitlines(), 1)
                            if "return unique_ptr<T>(gti_internal::allocate_unique_owner" in line)
-    modes = [(f"{standard}-{level}", [f"-{level}", "--std", standard])
-             for standard in ("c++20", "c++23") for level in ("O0", "O1", "O3")]
-    modes.append(("sanitized", ["-O1", "--std", "c++23"]))
+    modes = native_modes()
     with tempfile.TemporaryDirectory(prefix="gti-inherited-allocation-") as directory:
         root = pathlib.Path(directory)
         mir = root / "inherited.mir"
         emitted = run([str(compiler), str(source), "--emit-mir", "-o", str(mir)])
         assert emitted.returncode == 0, emitted
         assert "initialize-base" in mir.read_text()
-        for mode, flags in modes:
+        for mode, flags, native_flags in modes:
             binary = root / mode
             native = [str(fixtures / "unique_scalar_allocation_fault.cpp")]
             if mode == "sanitized":
                 native += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
-            command = [str(compiler), str(source), *flags, "--keep-cpp",
+            command = [str(compiler), str(source), *flags, *keep_cpp(flags),
                        "-o", str(binary), "--", *native]
             built = run(command)
             assert built.returncode == 0, (command, built.stdout, built.stderr)
-            generated = binary.with_suffix(".gti.cpp").read_text()
-            assert "// GTI MIR base initialization " in generated
-            assert " = *__gti_mir_constructor_success;" in generated
-            assert "mir_object_allocation_v1<::__gti_program::Derived>" in generated
+            if is_cpp_mode(flags):
+                generated = binary.with_suffix(".gti.cpp").read_text()
+                assert "// GTI MIR base initialization " in generated
+                assert " = *__gti_mir_constructor_success;" in generated
+                assert "mir_object_allocation_v1<::__gti_program::Derived>" in generated
             cases = [([], (0, "10\n20\n1\n9\n", "")),
                      (["base"], (70, "10\n1\n9\n",
                       f"{source.name}:{base_site}: runtime error[GTI-R0002]: "
@@ -53,6 +58,9 @@ def main():
                      (["allocation", "before", "base"], (ABORT_STATUS, "",
                       f"<std/detail/memory_core>:{allocation_site}: runtime error[GTI-R0011]: "
                       "allocation_failure in unique_owner\n"))]
+            if not is_cpp_mode(flags):
+                cpp_only_case(FAULT_INJECTION, "allocation before base", mode)
+                cases = [case for case in cases if case[1][0] != ABORT_STATUS]
             for arguments, expected in cases:
                 result = run([str(binary), *arguments])
                 assert (result.returncode, result.stdout, result.stderr) == expected, (

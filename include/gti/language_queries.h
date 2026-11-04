@@ -213,6 +213,7 @@ struct CompletionInput {
   ConfigurationFlags declaredConfigurationFlags;
   RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off;
   TrustedBodyAnalysis trustedBodies = TrustedBodyAnalysis::Complete;
+  CompileLimits limits;
   std::vector<std::filesystem::path> preludePaths;
   std::unordered_map<std::string, std::string> sourceOverrides;
   std::vector<std::filesystem::path> standardLibraryRoots;

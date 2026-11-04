@@ -756,6 +756,12 @@ ProjectBuildPlan makeBuildPlan(
   modelIdentity += selectedProfile.dependencyWarnings
                        ? "\ndependency-warnings:true"
                        : "\ndependency-warnings:false";
+  // Like a C++ per-compilation flag, only the root (selected) package's
+  // [limits] table applies; dependency manifests never impose theirs.
+  const CompileLimits compileLimits =
+      resolveCompileLimits(workspace.selectedPackage().manifest.limits().values,
+                           overrides.compileLimits);
+  modelIdentity += "\ncompile-limits:" + compileLimitsIdentity(compileLimits);
   if (debugInfo)
     modelIdentity += "\ndebug-info:true";
   modelIdentity += "\ntarget:" + targetTriple(resolvedTarget);
@@ -863,18 +869,20 @@ ProjectBuildPlan makeBuildPlan(
   }
 
   return ProjectBuildPlan(
-      manifest.path(), manifest.packageRoot(), workspace.root(),
-      manifest.package().name, manifest.package().version, selectedTarget.name,
-      selectedTarget.kind, selectedProfile.name, selectedTarget.root, output,
-      generatedSource, resolvedTarget, optimization, cppStandard, keepCpp,
-      std::move(nativeInputs), std::move(packageSourceRoots),
-      configuration.configurationFlags(), std::move(warningPolicy),
-      std::move(modelIdentity), std::move(bindgenImports),
-      std::move(buildScripts), std::move(toolchain), debugInfo,
-      std::move(packageWarningPolicy), rawPointerAudit, selectedTarget.linkage,
-      selectedTarget.exports, configuration.declaredConfigurationFlags(),
-      rawPointerAuditLibraryFindings, backend, selectedTarget.compiledFunctions,
-      std::nullopt, compiledImports);
+             manifest.path(), manifest.packageRoot(), workspace.root(),
+             manifest.package().name, manifest.package().version,
+             selectedTarget.name, selectedTarget.kind, selectedProfile.name,
+             selectedTarget.root, output, generatedSource, resolvedTarget,
+             optimization, cppStandard, keepCpp, std::move(nativeInputs),
+             std::move(packageSourceRoots), configuration.configurationFlags(),
+             std::move(warningPolicy), std::move(modelIdentity),
+             std::move(bindgenImports), std::move(buildScripts),
+             std::move(toolchain), debugInfo, std::move(packageWarningPolicy),
+             rawPointerAudit, selectedTarget.linkage, selectedTarget.exports,
+             configuration.declaredConfigurationFlags(),
+             rawPointerAuditLibraryFindings, backend,
+             selectedTarget.compiledFunctions, std::nullopt, compiledImports)
+      .withCompileLimits(compileLimits);
 }
 
 std::optional<ProjectBuildPlan> makeCompiledBuildPlan(
@@ -1218,6 +1226,13 @@ ProjectBuildPlan ProjectBuildPlan::withCompiledBuildDependencies(
         "compiled dependency graph exceeds 64 libraries");
   auto result = *this;
   result.compiledBuildPlans = std::move(plans);
+  return result;
+}
+
+ProjectBuildPlan
+ProjectBuildPlan::withCompileLimits(CompileLimits limits) const {
+  auto result = *this;
+  result.resolvedCompileLimits = limits;
   return result;
 }
 
