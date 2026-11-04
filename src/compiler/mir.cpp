@@ -8537,7 +8537,6 @@ bool requiresMirFailureControlFlow(const MirInstruction &instruction) {
       instruction.borrowOrigin != BorrowOriginKind::None &&
       instruction.successResultDrop && instruction.result &&
       instruction.info.category == ValueCategory::Value &&
-      instruction.info.traits.movable &&
       (instruction.info.traits.containsBorrowedState ||
        instruction.info.traits.drop == DropKind::Trivial) &&
       (instruction.definedFailure.propagation != FailurePropagationKind::None ||
