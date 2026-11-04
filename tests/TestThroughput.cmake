@@ -220,6 +220,7 @@ if(Python3_Interpreter_FOUND)
     retained_owner_member_pack_runtime shared_accessor_range_runtime
     accessor_text_carrier_runtime
     shared_ownership_runtime shared_ownership_threads scoped_parallel_threads
+    scalar_temporary_borrow_runtime
     source_storage_drain_runtime
     source_prefix_owner_runtime source_resource_prefix_runtime
     source_text_address_runtime source_prefix_string_runtime

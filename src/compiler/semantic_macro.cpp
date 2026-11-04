@@ -243,6 +243,7 @@ auto SemanticVisitor::Impl::validMacroBody(const Stmt &statement,
       switch (node.exprKind()) {
       case ExprKind::Lambda:
       case ExprKind::MemberRequirement:
+      case ExprKind::ConceptTest:
       case ExprKind::PackFold:
         allowed = false;
         break;

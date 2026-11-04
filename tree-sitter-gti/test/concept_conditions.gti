@@ -1,0 +1,3 @@
+concept sized<T> = requires(T& value) { { value.size() } -> uint64_t; };
+bool test<T>() { return sized<T> && !std::integral<T>; }
+int forward<T>() { return invoke<T>(); }

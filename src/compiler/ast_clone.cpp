@@ -332,6 +332,13 @@ private:
           types(node.parameters()), toks(node.bindings()),
           toks(node.arguments()), tok(node.unsafeKeyword()));
     }
+    case ExprKind::ConceptTest: {
+      const auto &node = static_cast<const ConceptTest &>(expression);
+      return std::make_unique<ConceptTest>(
+          ConceptApplication{.name = path(node.application().name),
+                             .arguments = types(node.application().arguments)},
+          tok(node.close()));
+    }
     case ExprKind::LiteralExpr: {
       const auto &node = static_cast<const LiteralExpr &>(expression);
       return std::make_unique<LiteralExpr>(tok(node.token()), node.value());

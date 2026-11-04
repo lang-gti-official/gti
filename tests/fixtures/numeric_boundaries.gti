@@ -61,6 +61,19 @@ int32_t numeric_midpoint_double(double a, double b, double actual);
 constexpr int32_t negative_gcd = std::gcd(int32_t(-54), int32_t(-24));
 constexpr int32_t minimum_gcd = std::gcd(int32_t(-2147483648), int32_t(2));
 constexpr int32_t zero_gcd = std::gcd(int32_t(0), int32_t(0));
+// Constant evaluation runs the same midpoint body: extremes in both orders
+// round toward the first argument without leaving the type.
+constexpr int64_t minimum_int64 = int64_t(-9223372036854775807) - int64_t(1);
+constexpr int64_t maximum_int64 = int64_t(9223372036854775807);
+constexpr int64_t midpoint_low_high = std::midpoint(minimum_int64, maximum_int64);
+constexpr int64_t midpoint_high_low = std::midpoint(maximum_int64, minimum_int64);
+constexpr int64_t midpoint_low_low = std::midpoint(minimum_int64, minimum_int64);
+constexpr uint64_t midpoint_zero_max = std::midpoint(uint64_t(0), std::MAX_UINT64);
+constexpr uint64_t midpoint_max_zero = std::midpoint(std::MAX_UINT64, uint64_t(0));
+constexpr int8_t midpoint_int8_extremes = std::midpoint(int8_t(-128), int8_t(127));
+constexpr int8_t midpoint_int8_negative = std::midpoint(int8_t(-3), int8_t(-6));
+constexpr uint8_t midpoint_uint8_odd = std::midpoint(uint8_t(255), uint8_t(0));
+constexpr double midpoint_double = std::midpoint(1.0d, 4.0d);
 
 bool check_int8_t() {
   for (mut int32_t i = 0; i < 256; i++) {
@@ -185,6 +198,16 @@ bool check_uint64_t() {
 int main() {
   if (std::MAX_UINT64 != uint64_t(18446744073709551615)) { return 21; }
   if (negative_gcd != 6 || minimum_gcd != 2 || zero_gcd != 0) { return 20; }
+  if (midpoint_low_high != -1 || midpoint_high_low != 0 ||
+      midpoint_low_low != minimum_int64) { return 22; }
+  if (midpoint_zero_max != uint64_t(9223372036854775807) ||
+      midpoint_max_zero != uint64_t(9223372036854775808)) { return 23; }
+  if (midpoint_int8_extremes != -1 || midpoint_int8_negative != -4 ||
+      midpoint_uint8_odd != 128 || midpoint_double != 2.5d) { return 24; }
+  // The constant and runtime evaluations agree on the same operands.
+  if (std::midpoint(minimum_int64, maximum_int64) != midpoint_low_high ||
+      std::midpoint(maximum_int64, minimum_int64) != midpoint_high_low ||
+      std::midpoint(std::MAX_UINT64, uint64_t(0)) != midpoint_max_zero) { return 25; }
   if (!check_int8_t()) { return 1; }
   if (!check_uint8_t()) { return 2; }
   if (!check_int16_t()) { return 3; }

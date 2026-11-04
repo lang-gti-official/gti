@@ -1,0 +1,40 @@
+// One conditional conformance covers a whole generic family. Nested pairs
+// recursively format and hash their components, with no trait specialization.
+import std.format;
+import std.functional;
+import std.string;
+import std.utility;
+import std.unordered_map;
+
+struct Box<T> {
+  T value;
+  Box(T input) : value(std::move(input)) {}
+};
+
+for <T> concept std::formatting<Box<T>> requires std::formatting<T> {
+  expected<void, std::format_errc> format(Box<T>& box, mut std::string& output,
+                                         std::format_spec& spec) {
+    output.append("box(");
+    auto result = std::formatting<T>::format(box.value, output, spec);
+    if (!result) { return unexpected(result.error()); }
+    output.push_back(')');
+    return;
+  }
+};
+
+for <T> concept std::hashing<Box<T>> requires std::hashing<T> {
+  std::size_t hash(Box<T>& box) { return std::hashing<T>::hash(box.value); }
+};
+
+int main() {
+  auto pair = std::make_pair(1, true);
+  Box<int> box{7};
+  // This cross-backend example opts into runtime pattern validation; LLVM
+  // programs can use the checked std::println literal form directly.
+  std::runtime_println("{}", pair);
+  std::runtime_println("{}", box);
+  mut std::unordered_map<std::pair<int, bool>, int> values{};
+  values.insert(std::make_pair(1, true), 42);
+  std::default_hash<Box<int>> hasher{};
+  return values.at(pair) == 42 && hasher(box) == 7 ? 0 : 1;
+}

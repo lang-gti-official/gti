@@ -134,6 +134,9 @@ auto SemanticVisitor::Impl::collectRequirementTypeArguments(
     collectRequirementTypeArguments(group->expression().get(), types);
   } else if (const auto *get = exprAs<Get>(expression)) {
     collectRequirementTypeArguments(get->object().get(), types);
+  } else if (const auto *test = exprAs<ConceptTest>(expression)) {
+    for (const auto &argument : test->application().arguments)
+      types.push_back(&argument);
   } else if (const auto *query = exprAs<MemberRequirement>(expression)) {
     if (!query->isExpressionRequirement())
       types.push_back(&query->receiver());
@@ -250,6 +253,7 @@ auto SemanticVisitor::Impl::unevaluatedExpressionWorker() const
       cloneLoopUse(call.receiver->loopUse);
   }
   worker->expressionRequirementDepth = expressionRequirementDepth;
+  worker->requirementQueryWork = requirementQueryWork;
   worker->activeRequirementQueries = activeRequirementQueries;
   worker->requestSession.trackAssertionDiagnostics = false;
   worker->requestSession.trackedAssertionFailed = false;
@@ -453,6 +457,24 @@ auto SemanticVisitor::Impl::expressionRequirementFact(
   return fact;
 }
 
+auto SemanticVisitor::Impl::chargeRequirementQueryTypes(
+    std::span<const SemanticType> arguments) const -> bool {
+  // Depth alone does not bound queries whose argument doubles at each step.
+  // Unevaluated workers share this root query's monotonically charged budget.
+  if (expressionRequirementDepth == 0 || !requirementQueryWork)
+    requirementQueryWork = std::make_shared<std::size_t>(0);
+  const auto charge = [&](const auto &self, const SemanticType &type) -> bool {
+    if (++*requirementQueryWork > 16384)
+      return false;
+    for (const auto &argument : type.arguments)
+      if (!self(self, argument))
+        return false;
+    return true;
+  };
+  return std::all_of(arguments.begin(), arguments.end(),
+                     [&](const auto &type) { return charge(charge, type); });
+}
+
 auto SemanticVisitor::Impl::requirementQueryIdentity(
     const void *syntax, std::span<const SemanticType> arguments) const
     -> ActiveRequirementQuery {
@@ -467,7 +489,14 @@ auto SemanticVisitor::Impl::requirementQueryIdentity(
 auto SemanticVisitor::Impl::expressionRequirementSatisfied(
     const MemberRequirement &query,
     std::span<const SemanticType> inputArguments, std::string *reason,
-    const std::vector<std::string> *lookupScope) const -> bool {
+    const std::vector<std::string> *lookupScope,
+    SemanticConstraintGuidance *guidance) const -> bool {
+  if (!chargeRequirementQueryTypes(inputArguments)) {
+    if (reason)
+      *reason = "Expression requirements exceed the 16384-node type-expansion "
+                "budget.";
+    return false;
+  }
   // A constraint on a forwarded open pack is universally quantified over
   // its elements. Probe one symbolic element with that pack's identity and
   // established facts, not a runtime pack value. Ordinary expressions outside
@@ -627,8 +656,11 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfied(
     worker->functionDepth = std::max<std::size_t>(worker->functionDepth, 1);
     worker->analyze(query.iteration());
     for (const auto &diagnostic : worker->diagnostics)
-      if (diagnostic.severity == DiagnosticSeverity::Error)
+      if (diagnostic.severity == DiagnosticSeverity::Error) {
+        if (guidance)
+          guidance->retain(diagnostic.hints);
         return reject(diagnostic.message);
+      }
     const auto *iteration = worker->semanticModel.findRangeIteration(*loop);
     const auto &required = arguments[query.parameters().size()];
     if (!iteration || (required != SemanticType::Void &&
@@ -640,8 +672,11 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfied(
   if (worker->semanticModel.requiresNativeObjectLayout())
     semanticModel.requireNativeObjectLayout();
   for (const auto &diagnostic : worker->diagnostics)
-    if (diagnostic.severity == DiagnosticSeverity::Error)
+    if (diagnostic.severity == DiagnosticSeverity::Error) {
+      if (guidance)
+        guidance->retain(diagnostic.hints);
       return reject(diagnostic.message);
+    }
   if (query.inferredResult() && actual == SemanticType::Unknown)
     return reject("The expression's operation remains unresolved. An inferred "
                   "result does not prove an unresolved compound operation.");
@@ -787,7 +822,8 @@ auto SemanticVisitor::Impl::borrowedCarrierResultSatisfied(
 auto SemanticVisitor::Impl::constraintPredicateSatisfied(
     const ConceptApplication &application,
     const std::vector<SemanticType> &arguments, std::string *reason,
-    const std::vector<std::string> *lookupScope) const -> bool {
+    const std::vector<std::string> *lookupScope,
+    SemanticConstraintGuidance *guidance) const -> bool {
   const auto reject = [&](std::string message) {
     if (reason)
       *reason = std::move(message);
@@ -796,6 +832,9 @@ auto SemanticVisitor::Impl::constraintPredicateSatisfied(
   const auto *call = exprAs<Call>(application.predicate.get());
   if (!call)
     return reject("A constraint predicate must be a constexpr boolean call.");
+  if (!chargeRequirementQueryTypes(arguments))
+    return reject(
+        "Constraint predicates exceed the 16384-node type-expansion budget.");
   if (const auto capability =
           predicateCapabilityFor(application, arguments, lookupScope)) {
     if (capability->atomic != GenericConstraintKind::None)
@@ -852,8 +891,11 @@ auto SemanticVisitor::Impl::constraintPredicateSatisfied(
   worker->constantConditionGenericDependency = false;
   const auto type = worker->analyze(*application.predicate);
   for (const auto &diagnostic : worker->diagnostics)
-    if (diagnostic.severity == DiagnosticSeverity::Error)
+    if (diagnostic.severity == DiagnosticSeverity::Error) {
+      if (guidance)
+        guidance->retain(diagnostic.hints);
       return reject(diagnostic.message);
+    }
   if (type != SemanticType::Bool)
     return reject("A constraint predicate must have exact type 'bool'.");
   auto context = worker->makeConstexprInterpreter();
@@ -862,8 +904,11 @@ auto SemanticVisitor::Impl::constraintPredicateSatisfied(
   if (worker->semanticModel.requiresNativeObjectLayout())
     semanticModel.requireNativeObjectLayout();
   for (const auto &diagnostic : worker->diagnostics)
-    if (diagnostic.severity == DiagnosticSeverity::Error)
+    if (diagnostic.severity == DiagnosticSeverity::Error) {
+      if (guidance)
+        guidance->retain(diagnostic.hints);
       return reject(diagnostic.message);
+    }
   const bool *value =
       evaluated ? std::get_if<bool>(&*evaluated.value) : nullptr;
   if (!value)

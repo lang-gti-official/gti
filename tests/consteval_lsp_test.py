@@ -149,6 +149,50 @@ int main() { validate(2); return make().value - 42; }
             assert len(errors) == 1 and errors[0].get("code") == "GTI-S2124", diagnostics
             assert "macro nesting limit of 1024" in errors[0]["message"], errors
             assert "--macro-depth <n>" in errors[0]["message"], errors
+            checked = """struct Port {
+  int value;
+  implicit consteval Port(int number) : value(number) {}
+};
+int send(Port port, int payload) { return port.value + payload; }
+int run(int runtime) { /* 😀 */ return send(80, runtime); }
+int main() { return run(2) - 82; }
+"""
+            assert not publish(checked)
+            hover = request("textDocument/hover", at(checked, checked.index("send(80")))
+            assert "Argument 1" in str(hover) and "implicit consteval Port" in str(hover), hover
+            assert "checked at compile time" in str(hover), hover
+            runtime_checked = checked.replace("send(80,", "send(runtime,")
+            diagnostics = publish(runtime_checked)
+            error = next(item for item in diagnostics if item.get("code") == "GTI-S2057")
+            assert "parameter 'port' must be a compile-time constant" in error["message"], error
+            argument = runtime_checked.index("send(runtime,") + len("send(")
+            assert error["range"] == {"start": lsp_position(runtime_checked, argument),
+                                      "end": lsp_position(runtime_checked, argument + len("runtime"))}, error
+            assert not publish(checked)
+
+            message_source = """import std.panic;
+struct Pattern {
+  std::string_view text;
+  implicit consteval Pattern(std::string_view value) : text(value) {
+    if (value.empty()) { std::panic("Pattern must not be empty"); }
+  }
+};
+void report(Pattern pattern) {}
+int main() { /* 😀 */ report(""); return 0; }
+"""
+            diagnostics = publish(message_source)
+            error = next(item for item in diagnostics if item.get("code") == "GTI-S2057")
+            # The shared compile-time panic rule keeps the invocation primary
+            # and carries the library's message on the failing-operation note.
+            assert "Consteval invocation" in error["message"], error
+            assert any('Compile-time evaluation panicked: "Pattern must not be empty"'
+                       in item["message"] for item in error["relatedInformation"]), error
+            argument = message_source.index('report("")') + len("report(")
+            assert error["range"] == {"start": lsp_position(message_source, argument),
+                                      "end": lsp_position(message_source, argument + 2)}, error
+            assert any("Constant evaluation requested" in item["message"]
+                       for item in error["relatedInformation"]), error
+            assert not publish(message_source.replace('report("")', 'report("ok")'))
 
             # A panic executed during compile-time evaluation publishes its
             # message at the user's panic call, with the request trace; an

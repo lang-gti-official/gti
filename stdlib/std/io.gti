@@ -4,6 +4,45 @@ import std.cstdio;
 import std.span;
 import std.vector;
 import std.string;
+namespace std::detail {
+// Copies count initialized bytes after validating both ranges once. The
+// element loop is unchecked, so LLVM can lower it to a block copy. Source is
+// span<uint8_t> or mutable_span<uint8_t>, read through get_unchecked.
+// The ranges never overlap: output is an exclusive borrow, so safe code cannot
+// hold a read-only view of the same bytes as input. The forward loop depends
+// on that; it would corrupt an overlapping input that starts before output.
+void copy_span_bytes<Source>(mut mutable_span<uint8_t>& output, size_t output_first,
+                             Source& input, size_t input_first, size_t count)
+    requires requires(Source& bytes, size_t index) {
+      { bytes.size() } -> size_t;
+      unsafe { bytes.get_unchecked(index) } -> uint8_t& [[borrowed_from(bytes)]];
+    } {
+  if (count == size_t(0)) { return; }
+  gti_internal::require_container_argument(
+      output_first <= output.size() && count <= output.size() - output_first &&
+      input_first <= input.size() && count <= input.size() - input_first);
+  unsafe {
+    uint8_t* destination = &output.get_unchecked_mut(output_first);
+    const uint8_t* source = &input.get_unchecked(input_first);
+    for (mut size_t i = 0; i < count; i = gti_internal::integer_wrapping_add(i, size_t(1))) {
+      destination[i] = source[i];
+    }
+  }
+}
+
+// Appends the first count bytes of input to text as code units. Each byte
+// goes through push_back, whose growth is geometric; reserving the exact sum
+// per window would reallocate the whole line once per window.
+// (A string_view over the span would be cheaper, but a span owner for
+// assume_string_view currently stops MIR construction with GTI-B0001.)
+void append_span_text(mut string& text, span<uint8_t>& input, size_t count) {
+  gti_internal::require_container_argument(count <= input.size());
+  for (mut size_t i = 0; i < count; i = gti_internal::integer_wrapping_add(i, size_t(1))) {
+    unsafe { text.push_back(char(input.get_unchecked(i))); }
+  }
+}
+}
+
 export namespace std {
 /// Reusable, initialized binary storage. Capacity beyond size is never exposed.
 using byte_buffer = vector<uint8_t>;
@@ -17,6 +56,18 @@ concept writer<W> = requires(mut W& stream, span<uint8_t>& input) {
   { stream.write_some(input) } -> expected<std::size_t, std::io_errc>;
 } && requires(mut W& stream) {
   { stream.flush() } -> expected<void, std::io_errc>;
+};
+
+/// A reader that exposes its read-ahead window. `fill_buffer` refills only an
+/// empty window and returns the pending count, which is zero only at EOF;
+/// `buffered` views exactly those pending bytes; `consume` discards a prefix
+/// of them. A borrowed view cannot be named as an exact result type, so the
+/// `buffered` requirement only checks that the call is well formed.
+concept buffered_source<R> = reader<R> && requires(mut R& stream, size_t count) {
+  { stream.fill_buffer() } -> expected<std::size_t, std::io_errc>;
+  { stream.consume(count) } -> void;
+} && requires(R& stream) {
+  { stream.buffered() };
 };
 
 /// Failure of a multi-transfer operation, including its committed prefix.
@@ -71,9 +122,7 @@ public:
   expected<size_t, io_errc> read_some(mut mutable_span<uint8_t>& output) mut {
     mut size_t count = this.bytes.size() - this.position;
     if (count > output.size()) { count = output.size(); }
-    for (mut size_t i = 0; i < count; i++) {
-      output[i] = this.bytes[this.position + i];
-    }
+    std::detail::copy_span_bytes(output, size_t(0), this.bytes, this.position, count);
     this.position += count;
     return count;
   }
@@ -94,9 +143,9 @@ public:
   expected<size_t, io_errc> read_some(mut mutable_span<uint8_t>& output) mut {
     mut size_t count = this.bytes.size() - this.position;
     if (count > output.size()) { count = output.size(); }
-    for (mut size_t i = 0; i < count; i++) {
-      output[i] = this.bytes[this.position + i];
-    }
+    // The mutable_span field is read directly: reborrowing it with as_span()
+    // here stops MIR construction with GTI-B0001.
+    std::detail::copy_span_bytes(output, size_t(0), this.bytes, this.position, count);
     this.position += count;
     return count;
   }
@@ -104,9 +153,7 @@ public:
     mut size_t count = this.bytes.size() - this.position;
     if (count > input.size()) { count = input.size(); }
     if (count == 0 && !input.empty()) { return unexpected(io_errc::write_failed); }
-    for (mut size_t i = 0; i < count; i++) {
-      this.bytes[this.position + i] = input[i];
-    }
+    std::detail::copy_span_bytes(this.bytes, this.position, input, size_t(0), count);
     this.position += count;
     return count;
   }
@@ -174,24 +221,36 @@ public:
   buffered_reader(mut R& source, size_t capacity = size_t(4096))
       requires reader<R> : source(source), storage(byte_buffer(capacity)) {}
   size_t available() { return this.finish - this.start; }
+  /// Refills an empty window from the source and returns the pending count;
+  /// a nonempty window is returned as is. Zero means the source is at EOF.
+  expected<size_t, io_errc> fill_buffer() mut requires reader<R> {
+    if (this.start != this.finish) { return this.finish - this.start; }
+    if (this.storage.empty()) { return unexpected(io_errc::invalid_stream); }
+    size_t capacity = this.storage.size();
+    mut auto buffer = this.storage.as_mutable_span();
+    size_t count = ?this.source.read_some(buffer);
+    if (count > capacity) { return unexpected(io_errc::read_failed); }
+    this.start = 0;
+    this.finish = count;
+    return count;
+  }
+  /// Views the pending read-ahead bytes without consuming them.
+  span<uint8_t> buffered() {
+    auto all = this.storage.as_span();
+    return all.subspan(this.start, this.finish - this.start);
+  }
+  /// Discards `count` pending bytes; `count` must not exceed available().
+  void consume(size_t count) mut {
+    gti_internal::require_container_argument(count <= this.finish - this.start);
+    this.start += count;
+  }
   expected<size_t, io_errc> read_some(mut mutable_span<uint8_t>& output) mut
       requires reader<R> {
     if (output.empty()) { return size_t(0); }
-    if (this.storage.empty()) { return unexpected(io_errc::invalid_stream); }
-    if (this.start == this.finish) {
-      size_t capacity = this.storage.size();
-      mut auto buffer = this.storage.as_mutable_span();
-      auto result = this.source.read_some(buffer);
-      if (!result) { return unexpected(result.error()); }
-      if (result.value() > capacity) { return unexpected(io_errc::read_failed); }
-      this.start = 0;
-      this.finish = result.value();
-    }
-    mut size_t count = this.finish - this.start;
+    mut size_t count = ?this.fill_buffer();
     if (count > output.size()) { count = output.size(); }
-    for (mut size_t i = 0; i < count; i++) {
-      output[i] = this.storage[this.start + i];
-    }
+    auto window = this.storage.as_span();
+    std::detail::copy_span_bytes(output, size_t(0), window, this.start, count);
     this.start += count;
     return count;
   }
@@ -212,9 +271,7 @@ public:
     while (this.start < this.finish) {
       auto buffer = this.storage.as_span();
       auto suffix = buffer.subspan(this.start, this.finish - this.start);
-      auto result = this.destination.write_some(suffix);
-      if (!result) { return unexpected(result.error()); }
-      size_t count = result.value();
+      size_t count = ?this.destination.write_some(suffix);
       if (count == 0 || count > this.finish - this.start) {
         return unexpected(io_errc::write_failed);
       }
@@ -228,40 +285,79 @@ public:
     if (input.empty()) { return size_t(0); }
     if (this.storage.empty()) { return unexpected(io_errc::invalid_stream); }
     if (this.finish == this.storage.size()) {
-      auto flushed = this.flush();
-      if (!flushed) { return unexpected(flushed.error()); }
+      ?this.flush();
     }
     mut size_t count = this.storage.size() - this.finish;
     if (count > input.size()) { count = input.size(); }
-    for (mut size_t i = 0; i < count; i++) {
-      this.storage[this.finish + i] = input[i];
-    }
+    mut auto free = this.storage.as_mutable_span();
+    std::detail::copy_span_bytes(free, this.finish, input, size_t(0), count);
     this.finish += count;
     return count;
   }
 };
 
 /// Read a byte-delimited line, clearing the destination first. The delimiter
-/// is consumed but not stored; a final unterminated line succeeds.
+/// is consumed but not stored; a final unterminated line succeeds. A
+/// buffered_source is scanned in its read-ahead window; any other reader is
+/// read one byte at a time, so no byte past the delimiter is taken from it.
 expected<size_t, error> getline<R>(mut R& source, mut string& text, uint8_t delimiter = uint8_t(10))
     requires reader<R> {
   text.clear();
-  mut byte_buffer storage{size_t(1)};
-  mut auto byte = storage.as_mutable_span();
-  mut size_t done = 0;
-  while (true) {
-    auto read = source.read_some(byte);
-    if (!read) { return unexpected(error(read.error(), done)); }
-    size_t count = read.value();
-    if (count == 0) {
-      if (done == 0) { return unexpected(error(io_errc::end_of_file, done)); }
-      return done;
+  // A concept application is not a Boolean expression, so the buffered_source
+  // requirements beyond reader<R> are restated here.
+  if constexpr (requires(mut R& stream, size_t count) {
+    { stream.fill_buffer() } -> expected<std::size_t, std::io_errc>;
+    { stream.consume(count) } -> void;
+    { stream.buffered() };
+  }) {
+    mut size_t done = 0;
+    while (true) {
+      auto filled = source.fill_buffer();
+      if (!filled) { return unexpected(error(filled.error(), done)); }
+      size_t pending = filled.value();
+      if (pending == size_t(0)) {
+        if (done == 0) { return unexpected(error(io_errc::end_of_file, done)); }
+        return done;
+      }
+      mut size_t taken = 0;
+      mut bool found = false;
+      {
+        span<uint8_t> window = source.buffered();
+        size_t length = window.size();
+        // A window that disagrees with the reported count would stall or
+        // skip bytes; reject it like any other invalid transport count.
+        if (length != pending) { return unexpected(error(io_errc::read_failed, done)); }
+        while (taken < length) {
+          unsafe { if (window.get_unchecked(taken) == delimiter) { found = true; break; } }
+          taken++;
+        }
+        std::detail::append_span_text(text, window, taken);
+      }
+      done += taken;
+      if (found) {
+        source.consume(taken + size_t(1));
+        return done;
+      }
+      source.consume(taken);
     }
-    if (count != 1) { return unexpected(error(io_errc::read_failed, done)); }
-    uint8_t value = byte[size_t(0)];
-    if (value == delimiter) { return done; }
-    text.push_back(char(value));
-    done++;
+  } else {
+    mut byte_buffer storage{size_t(1)};
+    mut auto byte = storage.as_mutable_span();
+    mut size_t done = 0;
+    while (true) {
+      auto read = source.read_some(byte);
+      if (!read) { return unexpected(error(read.error(), done)); }
+      size_t count = read.value();
+      if (count == 0) {
+        if (done == 0) { return unexpected(error(io_errc::end_of_file, done)); }
+        return done;
+      }
+      if (count != 1) { return unexpected(error(io_errc::read_failed, done)); }
+      uint8_t value = byte[size_t(0)];
+      if (value == delimiter) { return done; }
+      text.push_back(char(value));
+      done++;
+    }
   }
 }
 

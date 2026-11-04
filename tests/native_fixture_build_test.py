@@ -78,6 +78,15 @@ class NativeFixtureBuildTests(unittest.TestCase):
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (9, "emit\nnative\n", "warning\nlink failure\n"))
 
+    def test_explicit_cpp_provider_uses_one_emission_selector(self):
+        result = subprocess.CompletedProcess([], 0, "", "")
+        with patch("native_fixture_build.subprocess.run", return_value=result) as run:
+            build_fixture(["gti", "fixture.gti", "--backend", "cpp", "-O3"],
+                          "program", native_sources=["provider.cpp"])
+        self.assertEqual(run.call_args_list[0].args[0],
+                         ["gti", "fixture.gti", "-O3", "--emit-cpp", "-o", "program.gti.cpp"])
+        self.assertEqual(run.call_count, 2)
+
     def test_frontend_failure_never_invokes_native_compiler(self):
         failed = subprocess.CompletedProcess([], 65, "", "source error")
         with patch("native_fixture_build.subprocess.run", return_value=failed) as run:

@@ -1,11 +1,11 @@
-// A53: an operator with a T& parameter given a temporary reports a generic
-// no-exact-overload error whose help talks about conversions and ADL.
+// A53: a temporary cannot satisfy a mutable operator reference parameter.
+// Explain the operand's value category, without conversion or ADL advice.
 class V {
 public:
   int32_t x;
   V(int32_t x) : x(x) {}
   V operator+(V& o) { return V(this.x + o.x); }
-  bool operator==(V& o) { return this.x == o.x; }
+  bool operator==(mut V& o) { return this.x == o.x; }
 };
 int main() {
   V a = V(1);

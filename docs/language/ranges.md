@@ -467,9 +467,21 @@ public library name:
   copyable `S`. Subtraction follows conventional left-minus-right traversal
   coordinates: a forward iterator before its end has a negative difference;
   reverse coordinates count in the reverse direction. `std::distance(first,
-  last)` separately counts forward increments and remains positive for a
-  reachable later sentinel. A difference outside `ptrdiff_t` raises defined
-  invalid-container-argument failure rather than narrowing or overflowing.
+  last)` instead reports the number of forward increments to a reachable
+  later sentinel, which is never negative. A difference outside `ptrdiff_t`
+  raises defined invalid-container-argument failure rather than narrowing or
+  overflowing.
+
+`std::advance`, `std::next(it, n)` and `std::prev(it, n)` make one checked
+`+=` or `-=` when the cursor declares the jump operations of
+`std::random_access_cursor`, and otherwise step one `++`/`--` at a time.
+`std::distance` likewise answers with one subtraction when the sentinel
+satisfies `std::sized_sentinel_for`, and otherwise counts. The selection is
+structural, so an unrelated user cursor that declares these operators takes
+the same path as a standard container cursor. The results are the same
+either way; a jump validates the whole move before changing the position,
+where stepping fails at the first invalid step. A start past a sized sentinel
+has no forward count and raises defined invalid-container-argument failure.
 
 `std.numeric` additionally defines `std::accumulates_into<I, T>`, proving
 that read-only dereferencing `I` has exactly the readable element `T`.
@@ -646,11 +658,13 @@ same shared owner loan. They remain non-assignable, and the exclusive
 mutable vector iterator remains non-copyable.
 
 `std::binary_search(first, last, value)` is the first forward-iterator client.
-It makes one counting pass, then copies and advances cursors to select
-midpoints. A possibly distinct `last` remains an immutable sentinel; no
-iterator subtraction or numeric iterator operation is required. The algorithm
-performs logarithmic comparisons and linear iterator increments, and requires
-the input to already be sorted according to `operator<`. Whole-range `all_of`,
+It measures the range with `std::distance`, then copies and advances cursors
+to select midpoints. A possibly distinct `last` remains an immutable sentinel.
+Iterator subtraction and jumps are used when the cursor provides them but are
+not required. The algorithm performs logarithmic comparisons; cursor movement
+is logarithmic for a jumping cursor with a sized sentinel and linear
+increments otherwise. It requires the input to already be sorted according
+to `operator<`. Whole-range `all_of`,
 `any_of`, `none_of`, `count_if`, `for_each`, and `fill` use the structural
 complete-range concepts above. `transform`, `reverse`, and comparator `sort`
 remain bounded to `std::vector` while their additional output, movement, and
@@ -676,8 +690,9 @@ Iterator/sentinel algorithms include `contains`, `is_partitioned`,
 four endpoints, checking both sequence boundaries. Empty patterns match at
 the start; missing searches return the exhausted first cursor; empty extrema
 return that same cursor without dereferencing it. Extrema keep the first
-equivalent element. Bounds require an already sorted sequence, use logarithmic
-comparisons and linear cursor increments. Subsequence search is the ordinary
+equivalent element. Bounds require an already sorted sequence and use
+logarithmic comparisons, with movement costed as for `binary_search` above.
+Subsequence search is the ordinary
 quadratic worst-case algorithm, not an allocation-backed optimized search.
 
 `partition_point(first, last, predicate)` returns the first false element in a
@@ -702,9 +717,12 @@ These queries retain one owned predicate/comparator, accepting read-callable
 or mutable-callable targets but not consuming once-callables. A named move-only
 target must be explicitly moved; it is not copied or recursively re-created.
 The implementation uses O(log n) predicate/comparator calls (binary search
-adds one final equivalence check), O(n) forward increments and constant
-auxiliary cursor storage, with no query-owned allocations or element copies.
-It currently uses that forward strategy even for random-access cursors.
+adds one final equivalence check) and constant auxiliary cursor storage, with
+no query-owned allocations or element copies. A cursor with checked
+`+=`/`-=` jumps over a sized sentinel measures the range with one subtraction
+and moves with O(log n) jumps and no increments; a jumping cursor over an
+unsized end counts the range once, then jumps. Any other forward cursor makes
+O(n) forward increments, at most three passes over the range.
 Bounds and partition point advance and return the original first cursor,
 preserving its owner dependency. Defined failure in a callback or iterator
 operation performs ordinary deterministic cleanup, including the retained

@@ -1,0 +1,33 @@
+import std.string;
+import std.vector;
+import std.panic;
+
+class Guard {
+public:
+  Guard() = default;
+  ~Guard() { std::println("cleanup"); }
+};
+
+std::string_view produce(std::string& owner, int divisor) {
+  std::println("produce");
+  int checked = 1 / divisor; // producer-failure
+  if (checked != 1) { std::panic("unexpected quotient"); }
+  return owner.view();
+}
+bool choose(int divisor) {
+  std::println("branch");
+  return 1 / divisor == 1; // branch-failure
+}
+int observe(std::string_view& first, std::string_view& second, int divisor) {
+  std::println(first);
+  std::println(second);
+  return 1 / divisor; // body-failure
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Guard guard{};
+  std::string owner = "owned";
+  return observe(produce(owner, argc == 2 ? 0 : 1),
+                 choose(argc == 3 ? 0 : 1) ? "yes" : "no",
+                 argc == 4 ? 0 : 1) - 1;
+}

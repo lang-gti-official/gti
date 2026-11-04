@@ -34,6 +34,8 @@ class ProfileControls(unittest.TestCase):
             "087-associative-containers.gti": 1,
             "089-library-workflow.gti": 1,
             "186-consuming-ranges.gti": 1,
+            "189-protocol-format-hash.gti": 1,
+            "190-conditional-member-operators.gti": 1,
         }
         self.assertEqual({name: mac[name] - linux[name] for name in names
                           if mac[name] != linux[name]},

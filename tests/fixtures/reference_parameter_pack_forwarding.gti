@@ -1,0 +1,25 @@
+// Reference packs forward generic class elements and persistent storage
+// through another reference pack and a pack fold.
+struct Box<T> {
+  T value;
+};
+
+mut int counter = 3;
+
+void touch<T>(mut int& count, T& value) { count++; }
+
+int total<Args...>(Args&... args) {
+  mut int count = 0;
+  (touch(count, args), ...);
+  return count;
+}
+
+int relay<Args...>(Args&... args) { return total(args...); }
+
+int main() {
+  Box<int> box = {.value = 1};
+  Box<Box<int>> nested = {.value = box};
+  if (relay(box, nested, counter) != 3) { return 1; }
+  if (total(counter) != 1) { return 2; }
+  return nested.value.value + counter == 4 ? 0 : 3;
+}

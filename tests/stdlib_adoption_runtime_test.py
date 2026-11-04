@@ -100,8 +100,8 @@ def main():
                 f"<std/vector>:{vector_bounds_line}: runtime error[GTI-R0007]: index_out_of_bounds in vector\n")),
         ]),
         "url": (fixtures / "http_url_storage_counts.gti", [((), (0,
-            "9\n141\n9\n141\n6\n132\n20\n454\n"
-            "7\n8268\n7\n8268\n5\n12351\n16\n24803\n", ""))]),
+            "8\n111\n8\n111\n5\n90\n18\n373\n"
+            "7\n8271\n7\n8271\n5\n12354\n16\n24812\n", ""))]),
         "pipeline": (fixtures / "stdlib_owned_error_pipelines.gti", [((), (0, "", ""))]),
         "example": (repository / "examples/100-owned-error-pipelines.gti",
                     [((), (0, "tea\nobject is missing a required field at /name\n", ""))]),

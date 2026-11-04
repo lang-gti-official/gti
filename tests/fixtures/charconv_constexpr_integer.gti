@@ -1,0 +1,49 @@
+import std.charconv;
+import std.string;
+
+// The string_view integer parsers are constant-evaluable: the same source
+// bodies answer static_assert and constexpr initializers at compile time and
+// ordinary calls at run time.
+constexpr int32_t port = std::stoi("8080").value();
+constexpr int64_t smallest = std::stol("-9223372036854775808").value();
+
+constexpr std::size_t consumed_by_stoi(std::string_view input) {
+  mut std::size_t position = 0;
+  auto parsed = std::stoi(input, position);
+  if (!parsed.has_value()) { return std::size_t(99); }
+  return position;
+}
+
+static_assert(port == 8080);
+static_assert(std::stoi("-42").value() == -42);
+static_assert(std::stoi(" \t+17").value() == 17);
+static_assert(std::stoi("-2147483648").value() == int32_t(-2147483648));
+static_assert(std::stoi("2147483647").value() == int32_t(2147483647));
+static_assert(!std::stoi("x1").has_value());
+static_assert(std::stoi("x1").error() == std::parse_errc::invalid_argument);
+static_assert(std::stoi("").error() == std::parse_errc::invalid_argument);
+static_assert(std::stoi("2147483648").error() == std::parse_errc::result_out_of_range);
+static_assert(std::stoi("99999999999").error() == std::parse_errc::result_out_of_range);
+static_assert(std::stoi("ff", 16).value() == 255);
+static_assert(std::stoi("017", 0).value() == 15);
+static_assert(consumed_by_stoi("123abc") == std::size_t(3));
+static_assert(smallest == int64_t(-9223372036854775807) - int64_t(1));
+static_assert(std::stoll("9223372036854775807").value() == int64_t(9223372036854775807));
+static_assert(std::stoll("9223372036854775808").error() == std::parse_errc::result_out_of_range);
+static_assert(std::stoull("0xff", 0).value() == uint64_t(255));
+static_assert(std::stoull("0XFF", 0).value() == uint64_t(255));
+static_assert(std::stoull("18446744073709551615").value() == uint64_t(18446744073709551615));
+static_assert(std::stoull("18446744073709551616").error() == std::parse_errc::result_out_of_range);
+static_assert(std::stoul("z", 36).value() == uint64_t(35));
+
+int main() {
+  // Run-time calls of the same overloads agree with the constant results.
+  std::string_view digits = "8080";
+  if (std::stoi(digits).value() != port) { return 1; }
+  if (std::stol("-9223372036854775808").value() != smallest) { return 2; }
+  if (consumed_by_stoi("123abc") != std::size_t(3)) { return 3; }
+  if (std::stoi("x1").error() != std::parse_errc::invalid_argument) { return 4; }
+  if (std::stoi("2147483648").error() != std::parse_errc::result_out_of_range) { return 5; }
+  if (std::stoull("0xff", 0).value() != uint64_t(255)) { return 6; }
+  return 0;
+}

@@ -1,0 +1,250 @@
+import std.io;
+import std.cstdio;
+import std.span;
+import std.string;
+import std.vector;
+
+// A user-defined buffered source whose read_some always fails, so getline can
+// only succeed through the fill_buffer/buffered/consume protocol.
+class Window {
+  mut std::byte_buffer bytes{};
+  mut std::size_t start = 0;
+public:
+  Window() { this.bytes = {uint8_t(104), uint8_t(105), uint8_t(10), uint8_t(120)}; }
+  expected<std::size_t, std::io_errc> read_some(mut std::mutable_span<uint8_t>& output) mut {
+    return unexpected(std::io_errc::read_failed);
+  }
+  expected<std::size_t, std::io_errc> fill_buffer() mut { return this.bytes.size() - this.start; }
+  std::span<uint8_t> buffered() {
+    auto all = this.bytes.as_span();
+    return all.subspan(this.start, this.bytes.size() - this.start);
+  }
+  void consume(std::size_t count) mut { this.start += count; }
+};
+
+// Reports pending bytes that its window does not hold.
+class LyingWindow {
+  mut std::byte_buffer bytes{};
+public:
+  LyingWindow() = default;
+  expected<std::size_t, std::io_errc> read_some(mut std::mutable_span<uint8_t>& output) mut {
+    return std::size_t(0);
+  }
+  expected<std::size_t, std::io_errc> fill_buffer() mut { return std::size_t(3); }
+  std::span<uint8_t> buffered() { return this.bytes.as_span(); }
+  void consume(std::size_t count) mut {}
+};
+
+// A plain reader that records the largest request it was given.
+class CountingReader {
+  std::span<uint8_t> bytes;
+  mut std::size_t position = 0;
+  mut std::size_t widest = 0;
+public:
+  CountingReader(std::span<uint8_t> source) : bytes(source) {}
+  std::size_t tell() { return this.position; }
+  std::size_t widest_request() { return this.widest; }
+  expected<std::size_t, std::io_errc> read_some(mut std::mutable_span<uint8_t>& output) mut {
+    if (output.size() > this.widest) { this.widest = output.size(); }
+    if (output.empty() || this.position == this.bytes.size()) { return std::size_t(0); }
+    output[std::size_t(0)] = this.bytes[this.position];
+    this.position++;
+    return std::size_t(1);
+  }
+};
+
+class FailingReader {
+  mut int calls = 0;
+public:
+  expected<std::size_t, std::io_errc> read_some(mut std::mutable_span<uint8_t>& output) mut {
+    if (output.empty()) { return std::size_t(0); }
+    this.calls++;
+    if (this.calls > 1) { return unexpected(std::io_errc::read_failed); }
+    output[std::size_t(0)] = uint8_t(97);
+    return std::size_t(1);
+  }
+public:
+  FailingReader() = default;
+};
+
+// The exported concept constrains ordinary user code.
+std::size_t peek_pending<R>(mut R& source) requires std::io::buffered_source<R> {
+  auto filled = source.fill_buffer();
+  if (!filled) { return std::size_t(0); }
+  return filled.value();
+}
+
+std::byte_buffer pattern(std::size_t length) {
+  mut std::byte_buffer bytes{};
+  for (mut std::size_t i = 0; i < length; i++) { bytes.push_back(uint8_t((i * 7 + 3) % 251)); }
+  return bytes;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  {
+    mut Window window{};
+    if (peek_pending(window) != 4) { return 1; }
+    mut std::string line{};
+    auto first = std::io::getline(window, line);
+    if (!first || first.value() != 2 || line != "hi") { return 2; }
+    auto second = std::io::getline(window, line);
+    if (!second || second.value() != 1 || line != "x") { return 3; }
+    auto third = std::io::getline(window, line);
+    if (third || third.error().code != std::io_errc::end_of_file || !line.empty()) { return 4; }
+  }
+  {
+    mut LyingWindow window{};
+    mut std::string line{};
+    auto read = std::io::getline(window, line);
+    if (read || read.error().code != std::io_errc::read_failed ||
+        read.error().transferred != 0) { return 5; }
+  }
+  {
+    // The window protocol on buffered_reader: refill only when empty.
+    std::byte_buffer bytes = {uint8_t(1), uint8_t(2), uint8_t(3), uint8_t(4), uint8_t(5)};
+    auto view = bytes.as_span();
+    mut std::io::memory_reader source{view};
+    mut std::io::buffered_reader<std::io::memory_reader> reader{source, std::size_t(3)};
+    if (peek_pending(reader) != 3 || reader.available() != 3) { return 6; }
+    {
+      std::span<uint8_t> window = reader.buffered();
+      if (window.size() != 3 || window[std::size_t(0)] != uint8_t(1) ||
+          window[std::size_t(2)] != uint8_t(3)) { return 7; }
+    }
+    reader.consume(std::size_t(2));
+    auto kept = reader.fill_buffer();
+    if (!kept || kept.value() != 1 || reader.available() != 1) { return 8; }
+    {
+      std::span<uint8_t> window = reader.buffered();
+      if (window.size() != 1 || window[std::size_t(0)] != uint8_t(3)) { return 9; }
+    }
+    reader.consume(std::size_t(1));
+    {
+      std::span<uint8_t> window = reader.buffered();
+      if (!window.empty() || reader.available() != 0) { return 10; }
+    }
+    auto refilled = reader.fill_buffer();
+    if (!refilled || refilled.value() != 2 || reader.available() != 2) { return 11; }
+    mut std::byte_buffer one{std::size_t(1)};
+    mut auto slot = one.as_mutable_span();
+    auto single = reader.read_some(slot);
+    if (!single || single.value() != 1 || one[std::size_t(0)] != uint8_t(4)) { return 12; }
+    reader.consume(std::size_t(1));
+    auto eof = reader.fill_buffer();
+    if (!eof || eof.value() != 0) { return 13; }
+    if (argc == 2) { reader.consume(std::size_t(1)); }
+  }
+  {
+    // A plain reader keeps the byte-at-a-time path and is never read past the delimiter.
+    std::byte_buffer bytes = {uint8_t(97), uint8_t(98), uint8_t(10), uint8_t(99)};
+    auto view = bytes.as_span();
+    mut CountingReader reader{view};
+    mut std::string line{};
+    auto first = std::io::getline(reader, line);
+    if (!first || line != "ab" || reader.tell() != 3 || reader.widest_request() != 1) { return 14; }
+  }
+  {
+    // Error after a partial line through the buffered path keeps the prefix.
+    mut FailingReader inner{};
+    mut std::io::buffered_reader<FailingReader> reader{inner, std::size_t(4)};
+    mut std::string line{"old"};
+    auto read = std::io::getline(reader, line);
+    if (read || read.error().transferred != 1 || line != "a" ||
+        read.error().code != std::io_errc::read_failed) { return 15; }
+  }
+  {
+    std::byte_buffer bytes = {uint8_t(97)};
+    auto view = bytes.as_span();
+    mut std::io::memory_reader source{view};
+    mut std::io::buffered_reader<std::io::memory_reader> reader{source, std::size_t(0)};
+    mut std::string line{};
+    auto read = std::io::getline(reader, line);
+    if (read || read.error().code != std::io_errc::invalid_stream) { return 16; }
+  }
+  {
+    // Lines spanning several refills, an empty line, a custom delimiter, and
+    // read_some interleaved with getline on the same buffered reader.
+    std::byte_buffer bytes = {uint8_t(97), uint8_t(98), uint8_t(99), uint8_t(100), uint8_t(101),
+                              uint8_t(59), uint8_t(59), uint8_t(102), uint8_t(103), uint8_t(59),
+                              uint8_t(104)};
+    auto view = bytes.as_span();
+    mut std::io::memory_reader source{view};
+    mut std::io::buffered_reader<std::io::memory_reader> reader{source, std::size_t(2)};
+    mut std::string line{};
+    auto first = std::io::getline(reader, line, uint8_t(59));
+    if (!first || first.value() != 5 || line != "abcde") { return 17; }
+    auto empty = std::io::getline(reader, line, uint8_t(59));
+    if (!empty || empty.value() != 0 || !line.empty()) { return 18; }
+    mut std::byte_buffer one{std::size_t(1)};
+    mut auto slot = one.as_mutable_span();
+    auto single = reader.read_some(slot);
+    if (!single || single.value() != 1 || one[std::size_t(0)] != uint8_t(102)) { return 19; }
+    auto rest = std::io::getline(reader, line, uint8_t(59));
+    if (!rest || line != "g") { return 20; }
+    auto last = std::io::getline(reader, line, uint8_t(59));
+    if (!last || line != "h") { return 21; }
+    auto eof = std::io::getline(reader, line, uint8_t(59));
+    if (eof || eof.error().code != std::io_errc::end_of_file) { return 22; }
+  }
+  {
+    // A long line across many small windows keeps every byte in order.
+    std::byte_buffer bytes = pattern(std::size_t(5003));
+    auto view = bytes.as_span();
+    mut std::io::memory_reader source{view};
+    mut std::io::buffered_reader<std::io::memory_reader> reader{source, std::size_t(7)};
+    mut std::string line{};
+    auto read = std::io::getline(reader, line, uint8_t(250));
+    if (!read || read.value() != line.size()) { return 23; }
+    for (mut std::size_t i = 0; i < line.size(); i++) {
+      if (uint8_t(line[i]) != bytes[i]) { return 24; }
+    }
+    if (bytes[line.size()] != uint8_t(250)) { return 25; }
+  }
+  {
+    // Bulk copies through every adapter preserve bytes at odd offsets and sizes.
+    std::byte_buffer bytes = pattern(std::size_t(10007));
+    mut std::byte_buffer copied{std::size_t(10010)};
+    mut std::byte_buffer scratch{std::size_t(13)};
+    {
+      auto input = bytes.as_span();
+      mut std::io::memory_reader source{input};
+      auto output = copied.as_mutable_span();
+      mut std::io::memory_stream sink{std::move(output)};
+      auto skipped = sink.seek(std::size_t(3));
+      if (!skipped) { return 26; }
+      mut std::io::buffered_reader<std::io::memory_reader> reader{source, std::size_t(29)};
+      mut std::io::buffered_writer<std::io::memory_stream> writer{sink, std::size_t(31)};
+      mut auto buffer = scratch.as_mutable_span();
+      auto moved = std::io::copy(reader, writer, buffer);
+      if (!moved || moved.value() != 10007) { return 27; }
+      auto flushed = writer.flush();
+      if (!flushed) { return 28; }
+    }
+    for (mut std::size_t i = 0; i < bytes.size(); i++) {
+      if (copied[i + std::size_t(3)] != bytes[i]) { return 29; }
+    }
+    {
+      // memory_stream reads its own field back, and a write at the end is short.
+      auto output = copied.as_mutable_span();
+      mut std::io::memory_stream stream{std::move(output)};
+      auto moved = stream.seek(std::size_t(1000));
+      if (!moved) { return 30; }
+      mut auto buffer = scratch.as_mutable_span();
+      auto read = stream.read_some(buffer);
+      if (!read || read.value() != 13 || buffer[std::size_t(0)] != bytes[std::size_t(997)] ||
+          buffer[std::size_t(12)] != bytes[std::size_t(1009)]) { return 31; }
+      auto tail = stream.seek(std::size_t(10005));
+      if (!tail) { return 32; }
+      auto input = bytes.as_span();
+      auto prefix = input.first(std::size_t(8));
+      auto written = stream.write_some(prefix);
+      if (!written || written.value() != 5 || stream.tell() != 10010) { return 33; }
+      auto full = stream.write_some(prefix);
+      if (full || full.error() != std::io_errc::write_failed) { return 34; }
+    }
+    for (mut std::size_t i = 0; i < 5; i++) {
+      if (copied[std::size_t(10005) + i] != bytes[i]) { return 35; }
+    }
+  }
+  return 0;
+}

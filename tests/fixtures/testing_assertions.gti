@@ -16,8 +16,8 @@ std::string_view message() { message_calls++; return "custom message"; }
 struct Guard {
   ~Guard() {
     if (report_counts) {
-      std::println("comparisons: {}", equality_calls);
-      std::println("formats: {}", format_calls);
+      std::runtime_println("comparisons: {}", equality_calls);
+      std::runtime_println("formats: {}", format_calls);
     }
     std::println("guard-cleaned");
   }

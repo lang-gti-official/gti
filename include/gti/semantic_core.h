@@ -822,6 +822,17 @@ isImplicitScalarInitializationConversion(const SemanticType &target,
          type == SemanticType::Char;
 }
 
+// Eligible representation families only: semantics separately proves the
+// producer, dependency origins and escape boundary for each temporary borrow.
+[[nodiscard]] inline bool
+isTemporaryBorrowReferentType(const SemanticType &type) {
+  return isPassiveScalarValueType(type) || type.kind == SemanticType::Enum ||
+         type.kind == SemanticType::Class ||
+         type.kind == SemanticType::Lambda ||
+         type.kind == SemanticType::FunctionItem ||
+         type.kind == SemanticType::StringView;
+}
+
 [[nodiscard]] SemanticType semanticIntegerType(CheckedIntegerDomain domain);
 
 // Apply a resolved binder projection; this does not perform name lookup,

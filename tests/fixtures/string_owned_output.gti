@@ -14,5 +14,18 @@ int main() {
   std::println(path.string());
 
   std::println(named);
+
+  // Embedded NULs are written, not treated as terminators; empty strings
+  // write nothing.
+  mut std::string with_nul = std::string("a");
+  with_nul.push_back('\0');
+  with_nul.append("b");
+  std::print(with_nul);
+  std::println(with_nul);
+  mut std::string empty{};
+  std::print(empty);
+  std::print(std::string());
+  std::println(empty);
+  std::println(std::string());
   return 0;
 }

@@ -189,6 +189,8 @@ You do not need to read the entire sequence to find an API pattern:
 | Consume a fallible view while retaining its external success borrow | [165: borrowed payload results](165-borrowed-payload-results.gti) |
 | Use optional, one-step implicit returns, consuming access, move assignment and `?` | [166: source optional](166-source-optional.gti) |
 | Name a mapper's result in an ordinary source wrapper | [167: callable result types](167-callable-result-types.gti) |
+| Observe scalar expressions through one readonly reference API | [186: scalar temporary borrows](186-scalar-temporary-borrows.gti) |
+| Compare fresh cursors and pass scalar expressions to operators | [187: operator temporary borrows](187-operator-temporary-borrows.gti) |
 | Select an instance method from metadata and call it with runtime data | [182: reflected method dispatch](185-reflected-method-dispatch.gti) |
 | Pass fitting literals to integer parameters without casts | [186: literal call arguments](186-literal-call-arguments.gti) |
 | Give a source class owned, void and borrowed profiles | [168: source value profiles](168-source-value-profiles.gti) |
@@ -387,10 +389,16 @@ is a teaching helper, not a production server.
 | `179-weak-ownership.gti` | source-defined weak observation, checked promotion, expiry, and local owning callbacks with thread-affine payloads |
 | `180-compact-source-owners.gti` | general null-guarded pointer owners, compact shared/weak handles and exactly-once moved cleanup; LLVM only |
 | [181-general-object-layout.gti](181-general-object-layout.gti) | General `sizeof(T)` and `alignof(T)` constants, generic storage extents, and native runtime layout agreement (LLVM). |
-| [183-immediate-functions.gti](183-immediate-functions.gti) | Immediate functions, standalone void validation, and implicit bare-return construction composed with runtime arguments (LLVM). |
+| [183-immediate-functions.gti](183-immediate-functions.gti) | Immediate functions, checked literal arguments, standalone void validation, and implicit bare-return construction composed with runtime arguments (LLVM). |
 | [184-payload-borrow-chains.gti](184-payload-borrow-chains.gti) | Return nested payload references through a parameter and receiver, and copy a sibling before a mutable payload borrow. |
 | `185-reflected-method-dispatch.gti` | a generic compile-time metadata binder calling overload-selected methods on two unrelated runtime values; LLVM execution |
 | [186-literal-call-arguments.gti](186-literal-call-arguments.gti) | Fitting integer literal arguments in constructors, methods and lambdas, with exact-overload preference and documented rejection boundaries (LLVM). |
+| `186-scalar-temporary-borrows.gti` | Scalar and plain-enum temporary arguments, explicit move and lazy evaluation (LLVM). |
+| `187-operator-temporary-borrows.gti` | Read-only operator arguments and stable external cursor dependencies (LLVM). |
+| `188-concept-conditions.gti` | Named structural and protocol concept conditions, constexpr selection and Boolean composition. |
+| `189-protocol-format-hash.gti` | Conditional conformance formats and hashes a generic user family and uses a pair as a hash-table key (LLVM). |
+| `190-conditional-member-operators.gti` | Conditional user operators, inserting map indexing, exclusive result loans and pair equality (LLVM). |
+| `191-reference-parameter-packs.gti` | Variadic move-only observers, temporary lifetime, constrained mutable packs and per-element exclusive access (LLVM). |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |
@@ -869,3 +877,15 @@ namespace-qualified types, overloads and borrowed APIs from two compiled librari
 
 The [compiled type forwarding example](compiled-type-forwarding/README.md) shares
 dependency-owned records and enums through a chain and diamond of compiled libraries.
+
+[`186-scalar-temporary-borrows.gti`](186-scalar-temporary-borrows.gti) shows
+scalar and plain-enum temporary arguments, explicit move and lazy evaluation.
+[`187-operator-temporary-borrows.gti`](187-operator-temporary-borrows.gti) shows
+read-only operator arguments and stable external cursor dependencies.
+
+[`188-concept-conditions.gti`](188-concept-conditions.gti) tests a named structural
+concept and a protocol concept in `if constexpr`, then invokes the selected
+contract. `static_assert` and a Boolean binding demonstrate conjunction,
+disjunction and negation. Build and run with `gti examples/188-concept-conditions.gti
+--backend llvm -O2 -o /tmp/concept-conditions` and `/tmp/concept-conditions`;
+success exits with 0 and prints nothing.

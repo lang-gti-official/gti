@@ -9,7 +9,7 @@ import tempfile
 from backend_modes import native_modes
 
 
-EXPECTED = "named 42 7\n/hello/world.txt\nnamed\n"
+EXPECTED = "named 42 7\n/hello/world.txt\nnamed\na\0ba\0b\n\n\n"
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:

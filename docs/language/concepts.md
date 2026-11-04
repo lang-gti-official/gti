@@ -21,9 +21,59 @@ integer representation and excludes payload enums. `std::enum_underlying<T,U>`
 additionally requires `U` to be the exact declared representation, including
 signedness and width. They do not grant numeric operators or implicit integer
 conversion. The separate `std::to_underlying<U,T>(value)` function extracts that
-exact integer at runtime. Concept applications are constraint syntax, not
-boolean expressions; ordinary bounded member queries can inspect a constrained
-member in a constant condition.
+exact integer at runtime. Concept applications are also constant Boolean
+expressions, using the same satisfaction query as a constraint.
+
+## Concept tests in expressions
+
+A named application `C<T>` is a `bool`: it is true precisely when the visible
+concept is satisfied with those exact arguments. Source-defined structural
+concepts, compiler-bound primitive concepts, and protocol concepts follow the
+same rule. Unknown/non-concept names, inaccessible concepts, invalid type
+arguments and wrong arity remain source diagnostics; an ordinary unsatisfied
+application is simply false.
+
+```gti
+concept has_size<T> = requires(T& value) { { value.size() } -> uint64_t; };
+uint64_t measure<T>(T& value) {
+  if constexpr (has_size<T>) { return value.size(); }
+  else { return 0; }
+}
+static_assert(std::integral<int> && !has_size<int>);
+constexpr bool numeric = std::integral<int> || std::floating_point<int>;
+```
+
+Tests can appear in `if constexpr`, `static_assert`, Boolean initializers,
+returns and call arguments. Ordinary Boolean `&&`/`and`, `||`/`or`, `!`,
+equality and conditional expressions apply. A bare angle application is
+recognized when its closing `>` is followed by a Boolean operator or an
+expression delimiter; parentheses disambiguate other expression contexts.
+Ordinary comparisons retain their grammar. Concept tests are type queries,
+not overload-selection operations or runtime calls.
+
+A selected true `if constexpr (C<T>)` arm receives the same guaranteed facts
+as `requires C<T>`: structural members, operators, conversions, borrowing and
+protocol operation dispatch all use the shared constraint authority. Grouping
+preserves these facts and `&&` combines its operands' facts. `||` and `!`
+add no facts, and neither does `else`. Existing facts remain available. Facts
+from a test do not escape the selected arm or arise from an ordinary runtime
+`if`, a stored Boolean, or comparison with `true`.
+
+An unresolved dependent test uses the existing deferred `if constexpr`
+selection: concrete instantiation chooses and checks only its selected arm.
+Closed tests and already-proven dependent tests are frontend Boolean constants;
+HIR/MIR preserve the result as a literal and emit no runtime satisfaction query.
+This is a semantic query, not a second execution interpreter. Executing a
+constexpr function containing a test uses the existing staged MIR profile.
+
+Named tests do not inspect constexpr helper bodies for structural contracts.
+A concept defined by `query<T>()` retains only the facts its constraint already
+guarantees. Nested `requires C<T>;` inside a requires-expression remains outside
+this slice; compose concepts with ordinary constraint conjunction instead.
+Negation is supported as a Boolean expression here, while constraint-clause
+negation and constraint-only overload ranking remain unsupported.
+[Example 188](../../examples/188-concept-conditions.gti) demonstrates structural
+and protocol tests with both satisfied and unsatisfied types.
 
 ## Concept declarations
 
@@ -167,11 +217,30 @@ when no call is viable. Requirements do not:
 - select a specialization; or
 - delegate validity to native C++ constraint evaluation.
 
-The bounded first version does not permit a trailing clause on an operator or
-on a virtual, pure, overriding, or interface method. Conditional operators
-would require the backend protocol to encode the same condition, while a
-polymorphic contract cannot be strengthened safely by an override. Both need a
-separate design rather than silently weakening the declared requirement.
+Non-polymorphic member operators may carry the same trailing requirements as
+ordinary methods. Exact argument matching precedes requirement checking; a
+failed requirement removes the candidate without ranking the remaining ones.
+The requirement supplies facts while checking the generic operator body, and
+is checked again for the selected concrete owner. An unused unavailable
+operator does not constrain construction or other methods of that owner.
+The selected declaration and concrete owner arguments reach HIR and MIR through
+the ordinary function-instance path; no runtime condition or backend overload
+selection is involved. This includes `operator[]`, comparisons, and `operator()`.
+
+A trailing clause remains invalid on a virtual, pure, overriding, or interface
+method, including an operator: an override cannot strengthen its polymorphic
+contract. Conditional copy/move special members are a separate capability.
+
+For example, `mut T& operator[](int key) mut requires
+std::default_initializable<T>` is available only when that application holds.
+[`190-conditional-member-operators.gti`](../../examples/190-conditional-member-operators.gti)
+demonstrates the general rule before its map and pair clients.
+Conditional operators reuse resolved call identities in both backends. Fresh
+class-valued subscript arguments require LLVM; the frozen C++ backend
+reports `GTI-B0003` for that argument shape. Named keys and explicit moves
+retain existing C++ support.
+Recursive requirement expressions fail closed: exact cycles, more than 64
+active checks, or a root query exceeding 16,384 visited type nodes are rejected.
 
 GTI therefore retains the exact unique-match rule from
 [ADR 003](../decisions/003-exact-overload-resolution.md).
@@ -939,9 +1008,11 @@ iterators nor the source loan after construction.
 `std::binary_search`. Its iterator must satisfy `std::forward_iterator`, its
 possibly distinct end value must satisfy `std::sentinel_for`, and dereference
 must produce the exact ordered value type. The implementation copies a cursor
-and advances that copy to each midpoint; it neither subtracts iterators nor
-mutates the end sentinel. This yields logarithmic comparisons and linear total
-iterator increments for forward iterators.
+and advances that copy to each midpoint, and never mutates the end sentinel.
+It subtracts or jumps only when the cursor provides those operations. This
+yields logarithmic comparisons for every forward iterator, linear total
+iterator increments for a step-only cursor, and logarithmic movement for a
+jumping cursor with a sized sentinel.
 
 The input-iterator client cluster also includes ordinary source-defined
 `std::find`, `std::count`, and `std::for_each` overloads. `find` and `count`
@@ -1184,6 +1255,24 @@ operation with one function. Each function has exactly the concept's
 signature after substituting the patterns for the parameters and the block's
 types for the associated types. A block defines nothing else.
 
+A block may have a trailing requirement, using the same conjunction and
+disjunction syntax as a function:
+
+```gti
+for <T> concept measurable<Box<T>> requires measurable<T> {
+  using unit_type = measurable<T>::unit_type;
+  unit_type measure(Box<T>& item) {
+    return measurable<T>::measure(item.value);
+  }
+};
+```
+
+The requirement is checked after the one matching pattern binds its parameters.
+Its guaranteed conjuncts are available while checking the block's types and
+operation bodies. A disjunction grants neither alternative by itself. The
+existing restriction on inline protocol constraints such as `<measurable T>`
+remains; write protocol applications in the trailing clause.
+
 A block function is an ordinary function definition. The block's parameters
 apply to it, and it cannot declare its own generic parameters or a requires
 clause. Like the operation it defines, it declares no default arguments, so
@@ -1191,7 +1280,7 @@ a call accepts the same arguments whether it names a concrete type or goes
 through a requirement. Inside the block:
 - the block's associated types are transparent, whether written as
   `unit_type` or as `measurable<Crate<T>>::unit_type`;
-- each operation requires the block's own application;
+- each operation requires the block's own application and its trailing requirements;
 - the block's functions can call each other by name.
 
 ### Selection and coherence
@@ -1200,9 +1289,17 @@ Selection is exact:
 - concrete arguments match at most one block of a concept, and two blocks
   that some arguments could both match are rejected as overlapping;
 - there is no specialization or ranking between blocks;
-- the block's type-parameter constraints must hold for the bound types,
+- the block's type-parameter constraints and trailing requirements must hold for the bound types,
   for `requires C<X>` and equally for a concrete `C<X>::name` or
   `C<X>::operation(...)`.
+
+Recursive requirements may compose nested generic types. A failed requirement
+makes the selected application unsatisfied; it never falls back to another
+block. Requirements do not make overlapping patterns disjoint. Cyclic
+requirements and chains deeper than 64 active protocol applications, or queries exceeding 16,384
+visited argument-type nodes, fail with
+an attributable constraint diagnostic. Associated-type projections retain their
+independent cycle and depth checks.
 
 The declaring package must own the concept or the top-level nominal type of
 at least one pattern, as for
@@ -1280,10 +1377,10 @@ call closure. A runtime-only operation remains ineligible for constant execution
 ## Deliberate exclusions and extension rule
 
 The implemented language does not provide general C++ requires-expressions,
-arbitrary expression requirements, negation, associated types outside a concept
+arbitrary expression requirements, constraint-clause negation, associated types outside a concept
 with a body, value constraints, concept or partial specialization, constraint
-subsumption, constraint-based overload ordering, conditionally available
-operators, constrained polymorphic contracts, or unrestricted compile-time
+subsumption, constraint-based overload ordering,
+constrained polymorphic contracts, or unrestricted compile-time
 reflection. Variadic callable relations, generic `operator()` requirements and
 native function pointers in these public callable relations remain outside the
 current bounded surface. Eligible namespace-scope GTI function items are

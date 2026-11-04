@@ -366,6 +366,14 @@ guarantee.
 
 ## 6.3 Implementation Requirements
 
+LLVM supports scalar, plain-enum and text temporary reference arguments.
+The retained C++ backend reports `GTI-B0003` for those storage shapes and for
+freshly constructed class-valued subscript arguments. Named reference inputs,
+class/payload temporary inputs and conditionally available operators continue
+to use their existing C++ representations where supported. These are backend
+availability boundaries; the frontend owns the language's borrow and constraint
+rules.
+
 A conforming implementation may use C++, LLVM, another native backend, or an
 interpreter. Its representation may differ from the reference compiler if it
 preserves the specified observable behaviour.

@@ -7,7 +7,7 @@ class Probe {
 public:
   int identity;
   Probe(int id) : identity(id) {}
-  ~Probe() { std::println("{}", this.identity); }
+  ~Probe() { std::runtime_println("{}", this.identity); }
 };
 struct Item {
   mut std::unique_ptr<Probe> owner;

@@ -6389,7 +6389,17 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
                   })) {
     std::erase_if(viable, literalFallback);
   }
-  retainBestCallConversionMatches(viable, argumentTypes,
+  // A literal fallback position is a viability decision, never a ranking
+  // conversion.
+  std::vector<SemanticType> rankingArgumentTypes = argumentTypes;
+  for (const ViableConstructor &candidate : viable) {
+    for (const std::size_t index :
+         candidate.contextualIntegerLiteralArguments) {
+      if (index < rankingArgumentTypes.size())
+        rankingArgumentTypes[index] = SemanticType::Unknown;
+    }
+  }
+  retainBestCallConversionMatches(viable, rankingArgumentTypes,
                                   [](const ViableConstructor &candidate)
                                       -> const std::vector<SemanticType> & {
                                     return candidate.parameterTypes;

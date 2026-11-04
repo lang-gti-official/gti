@@ -13,12 +13,35 @@ export namespace std {
     detail::panic(message);
   }
 
+  /// With no formatting arguments, preserve the raw-message panic contract.
+  [[noreturn, track_caller]]
+  constexpr void runtime_panic(string_view message) {
+    panic(message);
+  }
+
   /// Formats a terminal message. A format error uses a bounded literal fallback
   /// rather than recursively attempting to format another panic message.
   [[noreturn, track_caller]]
-  void panic<formattable First, formattable Args...>(string_view pattern, First first, Args... args) {
+  void panic<formattable Args...>(format_pattern<Args...> pattern, Args&... args) {
     mut expected<std::string, std::format_errc> message =
-        std::try_format(pattern, std::move(first), args...);
+        std::try_format(pattern, args...);
+    if (message) {
+      panic(message.value().view());
+    }
+    switch (message.error()) {
+    case format_errc::invalid_format:
+      panic("Panic message formatting failed: invalid format");
+    case format_errc::argument_count_mismatch:
+      panic("Panic message formatting failed: argument count mismatch");
+    case format_errc::unsupported_argument:
+      panic("Panic message formatting failed: unsupported argument");
+    }
+    panic("Panic message formatting failed: unknown format error");
+  }
+  [[noreturn, track_caller]]
+  void runtime_panic<formattable First, formattable Args...>(string_view pattern, First& first, Args&... args) {
+    mut expected<std::string, std::format_errc> message =
+        std::try_runtime_format(pattern, first, args...);
     if (message) {
       panic(message.value().view());
     }

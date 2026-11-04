@@ -2927,6 +2927,10 @@ A `MirBody` owns:
   retains the source HIR identity, exact place, bounds origin and assigned
   failure site, and its successful `Invoke` edge precedes publication. Other
   origin and propagation families remain on the operation that owns them.
+  Temporary argument loans end in reverse staging order on both invocation
+  successors. A terminal call still publishes that epilogue before sealing its
+  normal successor as `Unreachable`; no-return control flow does not erase
+  full-expression borrow or failure-cleanup obligations.
   Scheduled ordinary constructors use this same path:
   written, defaulted, and pack-expanded inputs retain prepared-parameter
   places across later argument evaluation and transfer at `Construct`, not at
@@ -2982,7 +2986,9 @@ A `MirBody` owns:
   drop or borrowed-state traits. Pack and scoped-task
   verification consume those same published nominal facts;
 - ordinary staged calls for a concrete bounded call fold, with exact
-  read-only `PackElement` places. HIR retains the source fold and selected
+  `PackElement` places. Reference elements preserve their declared access;
+  mutable calls use the element's ordinary entry loan and read-only reborrows
+  cannot strengthen that capability. HIR retains the source fold and selected
   expansion; executable MIR contains no `MirOperation::PackFold`. Earlier
   expression-inventory descriptions of that operation are historical, not a
   second execution path. An empty expansion emits no input evaluation or call;

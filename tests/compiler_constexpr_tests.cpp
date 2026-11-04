@@ -831,8 +831,11 @@ int main() {
 import std.format;
 import std.string;
 int main() {
+  int8_t left = -8;
+  uint64_t right = 9;
+  int count = 3;
   mut auto formatted =
-      std::try_format("left={} right={} count={}", int8_t(-8), uint64_t(9), 3);
+      std::try_runtime_format("left={} right={} count={}", left, right, count);
   if (!formatted) { return 1; }
   if (formatted.value() != "left=-8 right=9 count=3") { return 2; }
   return 0;
@@ -860,10 +863,10 @@ int main() {
   }
   expect(formattedOutput.canGenerateCode() &&
              lang::verifyMirProgram(formattedOutput.mir).valid() &&
-             concreteFoldValues == 2 && concreteFoldElements == 4,
+             concreteFoldValues == 2 && concreteFoldElements == 6,
          "source-defined formatting should use two verified ordered folds for "
-         "counting and appending the concrete trailing integral pack after "
-         "handling the first argument directly");
+         "counting and appending all three arguments in the concrete integral "
+         "pack");
   const std::string formattedGenerated = gti_test::emitCppText(formattedOutput);
   expect(formattedGenerated.find("std::format(") == std::string::npos &&
              formattedGenerated.find("std::vformat") == std::string::npos &&
@@ -6892,6 +6895,161 @@ void testConstantEvaluationReuse() {
 }
 
 void testConsteval() {
+  const auto referenceInput =
+      lang::Frontend().analyze("checked-reference.gti", R"(
+struct Checked {
+  int value;
+  implicit consteval Checked(int& value, int extra = 2) : value(value + extra) {}
+};
+int use(Checked checked) { return checked.value; }
+int main() { return use(3) - 5; }
+)");
+  expect(referenceInput.canGenerateCode(),
+         "checked constructors observe exact constant references and trailing "
+         "defaults");
+
+  std::string repeated = R"(
+struct Checked {
+  int value;
+  implicit consteval Checked(int value) : value(value) {
+    mut int total = 0;
+    for (mut int index = 0; index < 1000; index++) { total += index; }
+  }
+};
+int consume(Checked checked) { return checked.value; }
+int main() { mut int total = 0;
+)";
+  for (int index = 0; index < 50; ++index)
+    repeated += "total += consume(7);\n";
+  repeated += "return total - 350; }";
+  lang::FrontendWorkMetrics checkedMetrics;
+  const auto cached = lang::Frontend({.workMetrics = &checkedMetrics})
+                          .analyze("checked-cache.gti", repeated);
+  expect(cached.canGenerateCode() &&
+             checkedMetrics.constexprStagedReuses >= 49 &&
+             checkedMetrics.constexprMirExecutions < 5,
+         "identical immediate constructions reuse request-local MIR results "
+         "with a realistic bounded budget");
+  const auto bounded = lang::Frontend().analyze("checked-limit.gti", R"(
+struct Checked {
+  int value;
+  implicit consteval Checked(int value) : value(value) { while (true) {} }
+};
+int consume(Checked checked) { return checked.value; }
+int main() { return consume(7); }
+)");
+  expect(!bounded.canGenerateCode() &&
+             hasDiagnosticHint(bounded.diagnostics,
+                               "execution-step limit while executing "
+                               "'Checked'"),
+         "immediate construction stays bounded by the request's step limit");
+
+  const std::string checked = R"(
+struct Checked {
+  int value;
+  implicit consteval Checked(int value) : value(value) { int proof = 1 / (value > 0 ? 1 : 0); }
+};
+int consume(Checked checked, int runtime) { return checked.value + runtime; }
+)";
+  const auto accepted =
+      lang::Frontend().analyze("checked-argument.gti", checked + R"(
+int forward(Checked checked, int runtime) { return consume(checked, runtime); }
+struct Tagged<Args...> {
+  int value;
+  implicit consteval Tagged(int value) : value(value) {}
+};
+int variadic<Args...>(Tagged<Args...> checked, Args... args) { return checked.value; }
+int run(int runtime) { auto callback = consume; return callback(7, runtime) + forward(7, runtime) + variadic(3, runtime, true); }
+int main() { return run(2) - 21; }
+)");
+  for (const auto &diagnostic : accepted.diagnostics)
+    if (diagnostic.severity == lang::DiagnosticSeverity::Error)
+      std::cerr << diagnostic.message << '\n';
+  expect(accepted.canGenerateCode() &&
+             lang::verifyMirProgram(accepted.mir).valid(),
+         "checked arguments publish values and generic packs are inferred from "
+         "other arguments");
+
+  const auto runtime = lang::Frontend().analyze(
+      "checked-runtime.gti",
+      checked + "int run(int runtime) { return consume(runtime, 0); }");
+  expect(
+      !runtime.canGenerateCode() &&
+          hasDiagnosticCode(runtime.diagnostics, "GTI-S2057") &&
+          hasDiagnostic(runtime.diagnostics,
+                        "parameter 'checked' must be a compile-time constant"),
+      "runtime checked arguments name the parameter and required constant");
+
+  for (const std::string &source : std::vector<std::string>{
+           checked + "int main(){return consume(0,0);}",
+           "struct P{int value; implicit P(int v):value(v){}}; void f(P p){} "
+           "int main(){f(1);return 0;}",
+           "struct P{int value; consteval P(int v):value(v){}}; void f(P p){} "
+           "int main(){f(1);return 0;}",
+           "struct P{int value; implicit consteval P(int64_t "
+           "v):value(int(v)){}}; void f(P p){} int main(){f(1);return 0;}",
+           "struct A{int value; implicit consteval A(int v):value(v){}}; "
+           "struct P{A value; implicit consteval P(A v):value(v){}}; void f(P "
+           "p){} int main(){f(1);return 0;}",
+           "struct A{implicit consteval operator int(){return 1;}}; void f(int "
+           "p){} int main(){A a{};f(a);return 0;}",
+           checked + "void f(Checked& p){} int main(){f(1);return 0;}",
+           checked + "struct Other{int value;implicit consteval Other(int "
+                     "v):value(v){}}; void f(Checked p){} void f(Other p){} "
+                     "int main(){f(1);return 0;}",
+           "struct P{int value;implicit consteval P(int v):value(v){} implicit "
+           "consteval P(int v,int extra=0):value(v+extra){}}; void f(P p){} "
+           "int main(){f(1);return 0;}",
+           "struct P<T>{int value;implicit consteval P(int v):value(v){}}; "
+           "void f<T>(P<T> p){} int main(){f(1);return 0;}",
+           checked + "struct F{F()=default; int operator()(Checked p){return "
+                     "p.value;}}; int main(){F f{}; return f(1);}",
+           checked + "struct F{F()=default; int operator[](Checked p){return "
+                     "p.value;}}; int main(){F f{}; return f[1];}",
+           checked + "struct F{F()=default; int operator+(Checked p){return "
+                     "p.value;}}; int main(){F f{}; return f + 1;}",
+           checked + "int main(){mut Checked p=1; p=2; return 0;}"}) {
+    const auto rejected = lang::Frontend().analyze("checked-fence.gti", source);
+    expect(!rejected.canGenerateCode() &&
+               std::none_of(rejected.diagnostics.begin(),
+                            rejected.diagnostics.end(),
+                            [](const auto &diagnostic) {
+                              return diagnostic.code.starts_with("GTI-B");
+                            }),
+           "checked argument fence rejects before backend: " + source);
+  }
+
+  const auto temporaryTier =
+      lang::Frontend().analyze("checked-temporary-tier.gti", R"(
+struct Value { int n; constexpr Value(int n):n(n){} };
+struct Checked { int n; implicit consteval Checked(Value value):n(1 / (value.n == 3 ? 0 : 1)){} };
+int choose(Value& value) { return value.n; }
+int choose(Checked value) { return value.n; }
+int main() { return choose(Value(3)) - 3; }
+)");
+  expect(temporaryTier.canGenerateCode(),
+         "temporary-borrow tier precedes checked construction");
+  const auto nestedReference =
+      lang::Frontend().analyze("checked-reference-frame.gti", R"(
+struct Checked { int value; implicit consteval Checked(int& value):value(value){} };
+constexpr int use(Checked value) { return value.value; }
+consteval int outer(int value) { return use(value); }
+int main() { return outer(3) - 3; }
+)");
+  expect(nestedReference.canGenerateCode(),
+         "checked readonly references use the enclosing immediate frame");
+
+  const auto shadow =
+      lang::Frontend().analyze("checked-shadow.gti", checked + R"(
+int choose(Checked p) { return p.value; }
+int choose(int p) { return p; }
+int main() { return choose(0); }
+)");
+  expect(shadow.canGenerateCode() &&
+             hasDiagnosticCode(shadow.diagnostics, "GTI-S2125"),
+         "exact overload wins but declaration warns that validation can be "
+         "bypassed");
+
   const auto valid = lang::Frontend().analyze("consteval.gti", R"(
 consteval int square(int x) { return x * x; }
 constexpr int twice(int x) { return x * 2; }

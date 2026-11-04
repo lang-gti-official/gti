@@ -194,3 +194,33 @@ The remaining structural boundaries are generic aliases outside conformances,
 first-class higher-kinded parameters, value/lifetime families, packs/defaults,
 per-family requires clauses, declared result bounds and generic operations.
 Those need their own binding/contract rules; this revision does not imply them.
+
+## Revision: conditional conformance and library protocols (2026-11-03)
+
+A conformance block may carry a trailing `requires` expression. The pattern
+still selects at most one block, then its bound parameters must satisfy the
+written constraints. Requirements never rank blocks, make overlapping heads
+disjoint, or enable fallback. Their guaranteed conjuncts are facts in associated
+type definitions and operation bodies, alongside the block's own application.
+Inline protocol constraints remain excluded. Recursive checks detect cycles
+and bound active protocol nesting to 64 applications and 16,384 visited type
+nodes per root query; failure reports the leaf
+requirement rather than synthesizing an absent-block explanation for a cycle.
+The existing ordinary-function lowering remains unchanged through HIR and MIR.
+
+Formatting and hashing adopt this mechanism with `std::formatting<T>` and
+`std::hashing<T>`. Generic pairs and unrelated user families conform once,
+conditioned on their components. Formatting retains a protocol-first bridge
+for exact `formatter<T>` specializations. Automatic hashing uses only the
+protocol: `hashable<T>` means `hashing<T>` and `default_hash<T>` calls it.
+Concrete standard-type blocks reuse their known stateless hashing policy.
+No blanket conformance or partial specialization is introduced.
+
+The compatibility audit rejected reconstructing a legacy exact `hash<T>` for
+every invocation: a valid constructor-selected seed must remain attached to
+its container's policy instance. Legacy specializations therefore remain
+available directly or as explicit `unordered_map` / `unordered_set` `Hash`
+arguments. An implicit legacy-only default receives a constraint diagnostic
+with that migration. Pair elements need hashing protocols, or callers provide
+an explicit composite policy that retains element hasher state. This preserves
+state and destruction without new conditional storage or compiler exceptions.

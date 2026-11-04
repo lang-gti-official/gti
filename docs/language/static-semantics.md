@@ -450,8 +450,9 @@ the GTI source graph does not.
 Initialization requires an exact type unless a specific rule permits a
 conversion. Numeric conversions use `Type(value)` and checked GTI semantics.
 Constructors are selected by one exact parameter list, and a class may declare
-conversion operators to other types (section 3.9.2). Neither defines an
-implicit conversion for calls or assignment. The initialization rule below
+conversion operators to other types (section 3.9.2). Neither defines a general
+implicit conversion for calls or assignment. Section 3.6 admits one bounded
+call exception through `implicit consteval` constructors. The initialization rule below
 selects one, declared `implicit`, for a declaration initializer or an explicitly
 declared value return type.
 
@@ -489,7 +490,8 @@ initialization error, with a hint naming the explicit form. The rule does not
 apply to `constexpr` bindings, range-`for` element bindings, reference fields,
 unions, abstract classes, a declared type that carries a borrow, or an
 initializer whose type comes from its destination: a brace list, a
-contextually typed call, or a function name. Function arguments and assignment never use it.
+contextually typed call, or a function name. Assignment never uses it. Function arguments use only the narrower checked
+immediate construction rule in section 3.6.
 
 The same one-step selection initializes an explicitly declared value return
 type from a return operand. For example, `Celsius read() { return 21; }` uses
@@ -758,7 +760,8 @@ not exempt it from alias checks. See the [thread-local contract](concurrency.md#
 
 An overload set is resolved to one unique candidate whose parameter types match
 exactly after generic substitution, apart from the bounded raw-pointer
-qualification and null compatibility defined above. Return types, parameter
+qualification and null compatibility defined above, the temporary-borrow tier
+below, and checked immediate argument construction. Return types, parameter
 names, and by-value parameter mutability do not distinguish overloads. GTI does
 not otherwise perform conversion ranking, return-type overloading, ADL, or a
 concrete-over-generic preference.
@@ -849,11 +852,13 @@ occurrences must infer one canonical type, and every local type parameter must
 occur in an inferable parameter position. A local parameter is visible only in
 that constructor's parameters, requirements, defaults, initializer list, and
 body and cannot shadow an owner parameter. A final constructor-local type pack
-and final by-value parameter-pack expansion are implemented within the ordinary
-owned pack/selected-constructor contract, including final-field construction.
+and final by-value, read-only-reference or mutable-reference parameter-pack
+expansion are implemented within the ordinary selected-constructor contract,
+including final-field construction for owned arguments.
 Concrete pack elements retain exact copy/move/borrow roles, source order and
 cleanup; this does not add explicit constructor-local arguments, local generic
-defaults, CTAD, parameter reference packs or native variadic forwarding.
+defaults, CTAD or native variadic forwarding. Reference packs require a result
+without borrowed state and retain the same call-confined access as function packs.
 
 The selected constructor declaration, concrete owner, and ordered local
 type/value arguments form one concrete constructor identity. Distinct local
@@ -1000,25 +1005,41 @@ local owner's text is not such a borrow: its result is a view of that owner
 (see [owner-tracked view fields](ownership-and-lifetimes.md#owner-tracked-view-fields)).
 Consuming members cannot return any reference or tracked borrowed state.
 
-For an ordinary GTI function or non-operator method call, a direct fresh
-construction, GTI function call, or GTI value-operator result may initialize an
-exact read-only `T&` parameter for that invocation
-only. An explicit `std::move(local)` of a whole local or parameter may do the
-same, as an explicitly moved receiver does: the move transfers the local into a
-temporary that the enclosing full expression owns and destroys, and the local
-is moved on every later path.
-Overload selection first considers every otherwise-exact candidate that needs
-no temporary argument borrow. Only when that tier is empty does it consider
-otherwise-exact candidates whose mismatch consists solely of one or more such
-fresh values targeting read-only references; selection still requires one
-unique candidate within the active tier. The selected callable must have a
-body, use GTI linkage, and return `void`, a scalar, or an owned value without
-tracked borrowed state. Mutable references, moves of a projection, native or
-callback targets, compound producers, borrowed-state values, and results that
-could retain the argument loan remain ill-formed. Transparent parentheses do
-not change eligibility. A temporary borrowed inside a conditionally evaluated
-operand, such as the right operand of `||`, lives to the end of the enclosing
-full expression only on the path that created it.
+For an ordinary GTI function, method, or member operator call, a supported
+fresh value may initialize an exact read-only `T&` parameter for that invocation
+only. This includes integer, floating, Boolean and character literals and
+built-in value expressions, scalar-backed enum results, direct record or
+payload-enum construction, and GTI function or value-operator results. A string
+literal or another semantically ownerless text-view value, including a checked
+conditional or factory result, may similarly supply a temporary. Unknown or
+transient text dependencies are not admitted by this ownerless-value rule. Built-in
+assignment values and conditional values retain their ordinary full-expression
+semantics. Transparent parentheses do not change eligibility.
+
+An explicit `std::move(local)` of a whole local or parameter may do the same:
+the move transfers the local into a temporary owned by the enclosing full
+expression, and the local is moved on every later path. A temporary carrier may
+contain borrowed state only when its ordinary construction or source factory
+proves stable external owner dependencies. Those dependencies stay live through
+the carrier's full-expression cleanup.
+
+Overload selection first considers every otherwise-exact candidate needing no
+temporary argument borrow. Only when that tier is empty does it consider
+candidates requiring such readonly borrows. Ordinary functions preserve their
+existing conversion ranking, including a same-type value overload's preference
+over a reference overload. Operators retain unique exact selection within each
+tier: same-type `T` and `T&` operators remain ambiguous for an existing place.
+One readonly-reference operator can observe both places and temporaries; no new
+operator preference or constraint ranking is introduced.
+
+The selected callable must have a body and GTI linkage. Its result must not
+retain the temporary parameter: a reference or borrowed value derived solely
+from other caller-owned arguments or the receiver is permitted when its exact
+origin summary proves that exclusion. Untracked raw/native addresses, unknown
+borrowed results, mutable reference parameters, moved projections, native and
+callback targets remain rejected. A temporary inside a conditionally evaluated
+operand lives until the enclosing full-expression boundary only on the path
+that created it.
 
 The same call-scoped read-only parameter boundary admits an exact fresh lambda,
 an explicitly moved lambda local, or a selected GTI function item. The selected
@@ -1052,6 +1073,44 @@ still requires an ownership contract beyond ordinary virtual dispatch.
 
 The selected callable, constructor, or operator identity is part of the
 program's semantics and must not be re-selected by a backend.
+
+### Checked immediate argument construction
+
+Only after the exact and temporary-borrow tiers are empty, a constant expression
+of type `T` may initialize a by-value class/struct parameter `P` through an
+accessible `implicit consteval` constructor. Its first explicit parameter must
+be exactly `T` or read-only `T&`; any trailing parameters need defaults. There
+is one construction, with no numeric conversion, chained constructor, conversion
+operator, ordinary implicit constructor, or reference destination. The existing
+construction ownership/access checks and immediate publication limits apply.
+Assignment and all operators, including `operator()` and `operator[]`, keep
+exact matching.
+
+The final tier requires one function and one constructor. It does not rank
+checked candidates by the number of conversions, receiver preference, generic
+specificity, or defaults. Generic inference does not use a class parameter
+satisfied by this conversion: infer its arguments elsewhere or supply them
+explicitly, then check the substituted class. For example:
+
+```gti
+std::string log<std::formattable Args...>(std::format_pattern<Args...> pattern, Args... args) {
+  return std::format(pattern, args...);
+}
+// Args comes from 42; the literal initializes format_pattern<int> afterward.
+auto text = log("value={}", 42);
+```
+
+An already constructed `P` passes exactly and forwards without revalidation.
+A nonconstant argument reports `GTI-S2057` at that argument, names the parameter,
+and requires a compile-time constant. A constructor documentation line
+`@runtime_escape <description>` adds library-authored runtime guidance. It has
+no effect on overloads or language semantics.
+
+An exact overload continues to win even for a literal. `GTI-S2125` warns when
+same-shaped overload declarations differ by an exact source parameter and a
+class parameter accepting that source through an implicit immediate constructor.
+API authors should separate runtime entry points by name or wrapper type. The
+warning is a declaration lint, not a change to exact-tier precedence.
 
 ### Namespace Function Items
 
@@ -1163,15 +1222,19 @@ type/value substitution as written or inferred arguments. Concrete generic
 bodies are rechecked after substitution; generic validity and default selection
 are not delegated to C++ template instantiation.
 
-A function or method may own one final type pack, bound either through a final
-named immutable by-value parameter pack or an explicit type-list expansion in
+A function, method or constructor may own one final type pack, bound either through a final
+named parameter pack or an explicit type-list expansion in
 a formal parameter's type metadata. A metadata-bound pack does not add runtime
 parameters and may also expand into returned nominal metadata. Bare pack types
 remain invalid as return values or object storage. A named value pack uses the
 same deduced list if both forms are present. Whole-pack forwarding remains available
 only as the final argument of another variadic call. The bounded comma-pack
 fold `(call(fixed, pack), ...)` additionally applies one call pattern to each
-concrete pack element. It is well-formed only when:
+concrete pack element. `Args... args` retains value transport; `Args&... args`
+borrows each argument read-only, and `mut Args&... args` borrows each argument
+mutably. Deduction binds `Args` to object types; explicitly supplying reference
+types to a reference-pack declarator is rejected rather than collapsed.
+The grouped pack is not an independently assignable object. It is well-formed only when:
 
 - the bare parameter-pack name occurs exactly once and is the pattern call's
   final argument;
@@ -1180,7 +1243,8 @@ concrete pack element. It is well-formed only when:
 - the target is one directly named, non-overloaded ordinary free function with
   `void` result;
 - that target has one generic type parameter supplied by the element and an
-  exact final read-only reference parameter to that element type; and
+  exact final reference parameter to that element type (mutable access requires
+  a mutable reference element); and
 - the source pack's constraint facts imply the target element parameter's
   constraints while the generic body is checked.
 
@@ -1189,8 +1253,8 @@ reanalysis then substitutes each source-pack element in order, validates its
 constraints and exact parameter types, and records one resolved call identity
 per element. It does not reopen an overload set for each type. The expression
 has type `void`, including for an empty pack. This rule adds neither a general
-fold-expression algebra nor pack indexing, multiple packs, mutable element
-iteration, partial movement, member-call patterns, or backend-selected
+fold-expression algebra nor pack indexing, multiple packs,
+partial movement, member-call patterns, or backend-selected
 template behavior.
 
 A class or struct may also declare one final type pack, for example
@@ -1217,8 +1281,22 @@ must be non-void object types or references; bare signatures are rejected even
 if the method is never called. Mutable reference elements require exact mutable
 reference forwarding and do not consume the referent, so sequential forwarding
 is allowed. The grouped pack binding itself remains immutable.
-This does not admit reference-pack declarators (`Args&...`) or forwarding
-references, nor implicit borrowing during unconstrained pack deduction.
+Reference-pack declarators can also bind a class's prescribed object-type pack.
+They use the same per-element references as explicit function-pack deduction.
+Read-only elements may alias; mutable elements require disjoint places, including
+against fixed reference parameters. Forwarding can reborrow mutable elements
+read-only but cannot strengthen read-only access. Reference packs admit only
+results without borrowed state, including for constructors: pack elements cannot
+escape through a returned reference, borrowed carrier, field, global, escaping
+closure or thread. Plain value packs and owned thread/task entry points retain
+their existing transport rules. Forwarding references and implicit borrowing
+during value-pack deduction remain unsupported.
+
+Fresh arguments admitted by the ordinary call-scoped temporary rule live until
+the caller's full-expression boundary. Conditional operands are materialized
+only on the executed path. An explicit `std::move` consumes its source and the
+callee borrows the resulting temporary. A named borrowed owner is destroyed by
+its caller, whereas a by-value argument is destroyed at the callee's exit.
 
 ## 3.8 Classes, Interfaces, And Lifecycle
 
@@ -2237,6 +2315,16 @@ before HIR lowering. Nested constexpr predicates may themselves require staged
 concrete analysis; their execution shares the enclosing constant request's
 step budget and call-depth limit ([3.11.2](#3112-implementation-limits)).
 
+A concept application `C<T>` is a semantic Boolean query using the existing
+constraint satisfaction service. In a selected true `if constexpr` arm it
+supplies that application's guaranteed constraint facts; grouping retains them
+and conjunction combines them. Disjunction, negation and the else arm supply no
+additional facts. A dependent test uses the same deferred selection described
+above. Closed query results are Boolean constants lowered to MIR literals;
+constexpr function execution remains in the staged MIR evaluator. See
+[concept tests](concepts.md#concept-tests-in-expressions) for expression positions
+and the distinction from constraint-clause negation.
+
 Concrete non-negative integer constexpr values may supply fixed-array extents
 and `uint64_t` value-generic arguments. These uses refer to the declaration's
 computed value rather than reinterpreting emitted C++.
@@ -2305,10 +2393,10 @@ cannot be immediate.
 An ordinary invocation of an immediate declaration must complete constant
 evaluation during semantic analysis, even when its surrounding expression or
 API also receives runtime arguments. Exact overload and constructor selection
-happens first; immediacy does not rank candidates or introduce conversions.
-An `implicit consteval` constructor participates in GTI's existing declaration
-initialization conversion. Ordinary function arguments still require exact
-types, such as `send(Port(443), runtime_payload)`.
+happens first; immediacy does not rank candidates. An `implicit consteval`
+constructor participates in declaration/return initialization and the final
+checked argument tier in section 3.6: `send(443, runtime_payload)` can initialize
+a by-value `Port` while the payload remains ordinary runtime data.
 
 Inside an immediate function or constructor body, parameters and local values
 may feed other constexpr or immediate calls: their enclosing immediate

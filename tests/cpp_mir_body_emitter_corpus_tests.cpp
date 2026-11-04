@@ -291,6 +291,17 @@ void testGeneralTextStepMatchesProductionEmission() {
         lang::OptimizationPipeline().run(frontend.hir,
                                          lang::OptimizationLevel::O0);
     progress.checkpoint("optimization");
+    const bool freshClassSubscript =
+        source.filename() == "190-conditional-member-operators.gti";
+    const bool temporaryReference =
+        source.filename() == "058-formatted-output.gti" ||
+        source.filename() == "134-standard-library-modules.gti" ||
+        source.filename() == "135-inline-polymorphic-values.gti" ||
+        source.filename() == "161-consuming-matches.gti" ||
+        source.filename() == "175-thread-local-storage.gti" ||
+        source.filename() == "186-scalar-temporary-borrows.gti" ||
+        source.filename() == "187-operator-temporary-borrows.gti" ||
+        source.filename() == "191-reference-parameter-packs.gti";
     // These source examples intentionally use LLVM-only operations. Keep a
     // positive unsupported-operation assertion rather than silently dropping
     // them; the native corpus oracle executes both LLVM endpoints.
@@ -305,14 +316,18 @@ void testGeneralTextStepMatchesProductionEmission() {
         source.filename() == "178-wrapping-atomic-counters.gti" ||
         source.filename() == "179-weak-ownership.gti" ||
         source.filename() == "180-compact-source-owners.gti" || generalLayout ||
-        boundedArray || aggregateConstant) {
+        boundedArray || aggregateConstant || temporaryReference ||
+        freshClassSubscript) {
       bool unsupported = false;
       try {
         static_cast<void>(gti_test::emitCpp(frontend, frontend.mir,
                                             frontend.mir, optimizations));
       } catch (const lang::BackendUnsupportedError &error) {
         const std::string limitation =
-            generalLayout       ? "general sizeof/alignof"
+            freshClassSubscript ? "fresh class-valued subscript arguments"
+            : temporaryReference
+                ? "scalar, plain-enum, and text temporary reference arguments"
+            : generalLayout     ? "general sizeof/alignof"
             : boundedArray      ? "generic fixed-array reference signatures"
             : aggregateConstant ? "aggregate constant publication"
                                 : "wrapping atomic read-modify-write";

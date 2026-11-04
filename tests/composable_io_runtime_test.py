@@ -26,8 +26,14 @@ if __name__ == "__main__":
         return (70, "", f"<std/span>:{line}: runtime error[GTI-R0007]: "
                 "index_out_of_bounds in private_storage\n")
     mutable_at = span_check("mutable_span", "mut T& at(size_t index) mut")
+    io = pathlib.Path(__file__).resolve().parents[1] / "stdlib/std/io.gti"
+    io_lines = io.read_text().splitlines()
+    consume = next(i for i, line in enumerate(io_lines) if "void consume(size_t count) mut" in line)
+    overrun = next(i + 1 for i in range(consume, len(io_lines))
+                   if "gti_internal::require_container_argument" in io_lines[i])
     with tempfile.TemporaryDirectory(prefix="gti-io-native-") as directory:
-        runtime_matrix(names=("mutable_span", "mutable_span_owned", "composable_io", fixture.stem,
+        runtime_matrix(names=("mutable_span", "mutable_span_owned", "composable_io",
+                              "composable_io_buffered_source", fixture.stem,
                               "composable_io_native", "mutable_span_bounds"), cases={
             fixture.stem: [
                 ((), (0, "1\n2\n3\n", "")),
@@ -35,6 +41,11 @@ if __name__ == "__main__":
                 (("cleanup", "fails"), (70, "1\n2\n", failure(cleanup))),
                 (("forward", "copied", "error"), (0, "1\n2\n2\n4\n", "")),
                 (("forward", "cleanup", "can", "fail"), (70, "1\n2\n2\n", failure(cleanup))),
+            ],
+            "composable_io_buffered_source": [
+                ((), (0, "", "")),
+                (("overrun",), (70, "", f"<std/io>:{overrun}: runtime error[GTI-R0016]: "
+                                "invalid_container_argument in container_argument\n")),
             ],
             "composable_io_native": [
                 ((str(pathlib.Path(directory) / "bytes.bin"),), (0, "a\0z\n", "ok")),
@@ -47,4 +58,4 @@ if __name__ == "__main__":
                 (("mutable", "cursor", "past", "end"), bounds(span_check("mutable_span_iterator", "mut T& operator*() mut"))),
                 (("valid", "end", "empty", "subspan", "now"), (0, "", "")),
             ],
-        }, stdin_by_name={"composable_io_native": "a\0z\n"})
+        }, stdin_by_name={"composable_io_native": "a\0z\n"}, llvm_modes=True)

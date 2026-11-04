@@ -483,8 +483,9 @@ own fields; it does not upgrade that shared dependency to exclusive access.
 
 This permission does not allow retaining a reference or address to the
 temporary, exporting a borrowed result from its method, moving its owner while
-active, or passing the carrier as a temporary reference argument. Temporary
-owners and unresolved/native/virtual producers
+active. The same stable-dependency proof also permits readonly temporary
+reference arguments to source calls and operators. Temporary owners and
+unresolved/native/virtual producers
 remain excluded. A named carrier continues to use the ordinary stored-borrow
 rules below. A factory called on a complete object protects that complete
 receiver under its existing borrow summary; this feature does not infer a
@@ -496,15 +497,18 @@ fields are destroyed before the carrier's external loans end.
 
 A direct ordinary constructor or by-value GTI call may also produce a fresh,
 self-contained class or struct value for one exact read-only `T&` argument of
-an ordinary GTI function or non-operator method. A built-in class assignment
+an ordinary GTI function, method, or member operator. A built-in class assignment
 returns a fresh copy of its committed destination, and a class conditional
 joins the selected arm into a fresh value; both can supply that same call-only
 borrow. Each assignment result captures its value before the next argument
 runs. A payload enum's alternative,
 with or without fields, such as `state::engaged(1)` or `state::empty`, and a
 by-value GTI call returning a payload enum produce such a value too, so
-`observe(make_state())` borrows the fresh enum for that call. A scalar-backed
-enum is not an aggregate value and stays excluded. The compiler materializes the
+`observe(make_state())` borrows the fresh enum for that call. Scalar-backed enum
+factories and built-in scalar value expressions use the same call-scoped
+temporary storage. Ownerless string literals and counted-text views whose
+source producer proves a stable external owner use this storage too. Unknown
+or transient text owners remain rejected. The compiler materializes the
 owned value at its written argument position, begins one read loan, evaluates
 later arguments, invokes the selected callable, ends the loan immediately
 afterward, and retains the value's drop obligation until the enclosing
@@ -513,15 +517,17 @@ this borrowed form is a fallback viability tier. An explicit
 `std::move(local)` of a whole local or parameter is admitted the same way: the
 moved value becomes a temporary owned by the enclosing full expression, and the
 local is moved on every later path. The permission does not apply to `mut T&`,
-local or stored bindings, moves of a projection, compound or native producers,
-borrowed-state values, or a callable result that can retain the loan.
+local or stored bindings, moves of a projection, native producers, unproven
+borrow dependencies, or a callable result that can retain this argument loan.
+A result whose complete origin excludes this temporary parameter may retain a
+different caller-owned argument.
 
 A concrete payload-enum construction with copyable, movable, trivial-drop
 value traits and no stored borrows supports the same ordinary call-only
 read borrow. Its selected alternative remains in the existing temporary
 value storage, and its exact full-expression lifetime is checked even though
-destruction does no runtime work. Enum factories, owning alternatives and
-borrowed alternatives do not yet use this temporary-argument family. This is
+destruction does no runtime work. Enum factories and owning alternatives use the same lifetime schedule; borrowed
+alternatives require separate dependency proofs and remain excluded. This is
 an ordinary argument rule; protocol-generated observations use it too.
 
 An unqualified non-static field denotes the same receiver-rooted place as an

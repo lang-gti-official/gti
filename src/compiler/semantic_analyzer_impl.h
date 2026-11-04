@@ -874,6 +874,9 @@ public:
 
   void visitLayoutQueryExpr(const LayoutQuery &expr) override;
   void visitMemberRequirementExpr(const MemberRequirement &expr) override;
+  void visitConceptTestExpr(const ConceptTest &expr) override;
+  [[nodiscard]] std::vector<AppliedConceptRequirement>
+  conceptConditionRequirements(const Expr &expr) const;
 
   void visitLiteralExpr(const LiteralExpr &expr) override;
 
@@ -1941,6 +1944,7 @@ private:
     // One pattern per concept parameter: a closed concrete type, or one class
     // or enum template applied to block parameters (an open pattern).
     std::vector<SemanticType> patterns;
+    std::vector<AppliedConceptRequirement> requirements;
     std::vector<SemanticType> associatedTypes;
     std::vector<std::vector<GenericParameterInfo>> associatedTypeParameters;
     std::vector<Symbol> operations;
@@ -3593,7 +3597,8 @@ private:
   [[nodiscard]] bool expressionRequirementSatisfied(
       const MemberRequirement &query, std::span<const SemanticType> arguments,
       std::string *reason = nullptr,
-      const std::vector<std::string> *lookupScope = nullptr) const;
+      const std::vector<std::string> *lookupScope = nullptr,
+      SemanticConstraintGuidance *guidance = nullptr) const;
   // `{ e } -> C [[borrowed_from(x)]]` for a non-reference C: compares the
   // dependencies a binding of e's value would retain against the origin x.
   // `worker` is the query's isolated analyzer that has already analyzed e.
@@ -3613,12 +3618,16 @@ private:
   [[nodiscard]] bool constraintPredicateSatisfied(
       const ConceptApplication &application,
       const std::vector<SemanticType> &arguments, std::string *reason,
-      const std::vector<std::string> *lookupScope = nullptr) const;
+      const std::vector<std::string> *lookupScope = nullptr,
+      SemanticConstraintGuidance *guidance = nullptr) const;
   [[nodiscard]] std::optional<PredicateCapability> predicateCapabilityFor(
       const ConceptApplication &application,
       const std::vector<SemanticType> &arguments,
       const std::vector<std::string> *lookupScope = nullptr) const;
   mutable std::size_t expressionRequirementDepth = 0;
+  mutable std::shared_ptr<std::size_t> requirementQueryWork;
+  [[nodiscard]] bool
+  chargeRequirementQueryTypes(std::span<const SemanticType> arguments) const;
   struct ActiveRequirementQuery {
     const void *syntax = nullptr;
     std::vector<SemanticType> arguments;
@@ -3705,12 +3714,23 @@ private:
                               const std::vector<SemanticType> &argumentTypes,
                               const ExprList &expressions) const;
 
+  void warnCheckedOverloadOverlap(const CallableCandidate &left,
+                                  const CallableCandidate &right);
+  [[nodiscard]] bool
+  checkedArgumentNonDeduced(const SemanticType &parameter,
+                            const SemanticType &argument) const;
+  [[nodiscard]] bool checkedArgumentPotential(const ExprPtr &argument,
+                                              const SemanticType &source,
+                                              const SemanticType &target);
+  bool applyCheckedArgument(const ExprPtr &argument, const SemanticType &source,
+                            const SemanticType &target, const Token &parameter);
+
   bool applyVariadicFunctionTypeArguments(
       CallableCandidate &function,
       const std::vector<SemanticType> &explicitTypeArguments,
       const std::vector<CompileTimeValue> &explicitValueArguments,
       const std::vector<SemanticType> &argumentTypes, const ExprList &arguments,
-      const Token &paren);
+      const Token &paren, bool checkedArguments = false);
 
   bool inferTypeArguments(const SemanticType &pattern,
                           const SemanticType &argument,
@@ -3724,7 +3744,7 @@ private:
       const std::vector<SemanticType> &explicitTypeArguments,
       const std::vector<CompileTimeValue> &explicitValueArguments,
       const std::vector<SemanticType> &argumentTypes, const ExprList &arguments,
-      const Token &paren);
+      const Token &paren, bool checkedArguments = false);
 
   [[nodiscard]] bool tryInferTypeArguments(
       const SemanticType &pattern, const SemanticType &argument,
@@ -3741,7 +3761,8 @@ private:
       const ExprList &expressions, CallableCandidate &resolved,
       std::vector<SemanticType> &resolvedTypeArguments,
       std::vector<CompileTimeValue> &resolvedValueArguments,
-      ConstraintFailure *constraintFailure = nullptr);
+      ConstraintFailure *constraintFailure = nullptr,
+      bool checkedArguments = false);
 
   [[nodiscard]] static bool containsLambdaType(const SemanticType &type);
 
@@ -4211,20 +4232,28 @@ private:
   void appendContextualIntegerLiteralAmbiguityHint(
       std::span<const std::size_t> indices);
 
-  [[nodiscard]] bool
-  ephemeralBorrowResultSupported(const CallableCandidate &function) const;
+  [[nodiscard]] bool ephemeralBorrowResultSupported(
+      const CallableCandidate &function,
+      std::optional<std::size_t> temporaryParameter = std::nullopt) const;
 
-  [[nodiscard]] bool
-  ephemeralBorrowTargetSupported(const CallableCandidate &function) const;
+  [[nodiscard]] bool ephemeralBorrowTargetSupported(
+      const CallableCandidate &function,
+      std::optional<std::size_t> temporaryParameter = std::nullopt) const;
 
   [[nodiscard]] bool ephemeralTemporaryArgumentMatches(
       const CallableCandidate &function, const SemanticType &parameter,
-      const SemanticType &argument, const ExprPtr &expression) const;
+      const SemanticType &argument, const ExprPtr &expression,
+      std::size_t parameterIndex);
+
+  [[nodiscard]] bool
+  temporaryReadBorrowArgumentMatches(const SemanticType &parameter,
+                                     const SemanticType &argument,
+                                     const ExprPtr &expression);
 
   [[nodiscard]] CallArgumentMatchKind
   functionCallArgumentMatch(const CallableCandidate &function,
                             std::size_t index, const SemanticType &argument,
-                            const ExprPtr &expression, bool deferred) const;
+                            const ExprPtr &expression, bool deferred);
 
   void reportCallArgumentMismatch(std::size_t index,
                                   const SemanticType &parameter,
@@ -4263,7 +4292,8 @@ private:
       std::vector<AnalyzedCallArgument> arguments, const Token &paren,
       bool requireExactNullParameter = false,
       bool contextualConstruction = false,
-      std::vector<const ConstructorInfo *> *candidateProbe = nullptr);
+      std::vector<const ConstructorInfo *> *candidateProbe = nullptr,
+      bool checkedArgument = false);
 
   void selectConstructorCallArguments(
       const Expr *construction, const ReturnStmt *emptyReturn, ClassId classId,
@@ -4271,7 +4301,8 @@ private:
       const std::vector<CompileTimeValue> &valueArguments,
       std::vector<AnalyzedCallArgument> arguments, const Token &paren,
       bool requireExactNullParameter, bool contextualConstruction,
-      std::vector<const ConstructorInfo *> *candidateProbe);
+      std::vector<const ConstructorInfo *> *candidateProbe,
+      bool checkedArgument = false);
 
   void analyzeArrayMemberCall(const Call &call, const Get &member,
                               const std::vector<SemanticType> &argumentTypes,
@@ -4543,7 +4574,8 @@ private:
 
   std::vector<AppliedConceptRequirement>
   resolveRequirements(const RequiresClause *clause,
-                      const std::vector<std::string> &scope);
+                      const std::vector<std::string> &scope,
+                      bool validateSyntax = true);
 
   void analyzeConcreteClassStaticAssertions(const StmtList &members);
 
@@ -4967,6 +4999,9 @@ private:
       const std::vector<SemanticType> &familyArguments = {}) const;
   [[nodiscard]] std::optional<ConstraintFailure> protocolConformanceFailure(
       const AppliedConceptRequirement &requirement) const;
+  mutable std::vector<std::pair<ConceptId, std::vector<SemanticType>>>
+      activeConformanceRequirements;
+  mutable std::size_t conformanceRequirementWork = 0;
   [[nodiscard]] std::optional<std::size_t>
   protocolBorrowContractFailure(const RegisteredConformance &conformance,
                                 const std::vector<SemanticType> &binding) const;
@@ -6320,8 +6355,11 @@ private:
   [[nodiscard]] FreshTemporaryValueAssessment
   freshTemporaryValue(const ExprPtr &expression) const;
 
-  // Receiver-only extension. Temporary reference arguments retain the stricter
-  // self-contained-value rule in freshTemporaryValue.
+  // A temporary carrier may retain only proven stable external dependencies.
+  // Shared by receivers and call-scoped reference arguments.
+  [[nodiscard]] FreshTemporaryValueAssessment
+  freshTemporaryBorrowValue(const ExprPtr &expression);
+
   [[nodiscard]] FreshTemporaryValueAssessment
   freshTemporaryReceiverValue(const ExprPtr &expression);
 
@@ -6802,6 +6840,8 @@ private:
          const std::vector<std::string> &fromScope) const;
 
   [[nodiscard]] SemanticType typeOf(const Parameter &parameter) const;
+  [[nodiscard]] SemanticType
+  parameterBindingType(const Parameter &parameter) const;
 
   [[nodiscard]] static SemanticType literalType(const Literal &literal);
 

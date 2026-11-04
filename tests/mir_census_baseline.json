@@ -169,7 +169,7 @@
     "169-source-expected.gti": 236,
     "170-view-fields.gti": 218,
     "171-recursive-text-relays.gti": 171,
-    "172-deferred-assertions.gti": 231,
+    "172-deferred-assertions.gti": 244,
     "173-general-requires.gti": 203,
     "174-typed-macros.gti": 240,
     "175-thread-local-storage.gti": 293,
@@ -184,14 +184,22 @@
     "183-immediate-functions.gti": 111,
     "184-payload-borrow-chains.gti": 11,
     "185-reflected-method-dispatch.gti": 47,
-    "186-dynamic-json.gti": 646
+    "186-dynamic-json.gti": 646,
+    "186-scalar-temporary-borrows.gti": 9,
+    "187-operator-temporary-borrows.gti": 14,
+    "188-concept-conditions.gti": 14,
+    "189-protocol-format-hash.gti": 509,
+    "190-conditional-member-operators.gti": 578,
+    "191-reference-parameter-packs.gti": 238
   },
   "target": "arm64-apple-macos",
   "variants": {
     "x86_64-unknown-linux": {
       "examples": {
         "087-associative-containers.gti": 507,
-        "089-library-workflow.gti": 970
+        "089-library-workflow.gti": 970,
+        "189-protocol-format-hash.gti": 508,
+        "190-conditional-member-operators.gti": 577
       }
     }
   }

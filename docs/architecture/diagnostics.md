@@ -24,6 +24,17 @@ immediate constructor selected by bare `return;`. A `void` call outside the
 standalone statement shape explains that structural limit at its call site.
 
 
+Checked argument construction reports nonconstant input at the original argument
+with the parameter name and the constructor's `@runtime_escape` documentation,
+when present. A terminal panic executed while checking the argument follows the
+compile-time panic rule below: the invocation stays primary and the library's
+message is carried on the failing-operation note. `GTI-S2125` warns at the later declaration of a same-shaped exact/checked
+overload pair, relates the earlier declaration, and recommends a distinct runtime
+name or wrapper. Exact overload selection remains unchanged. Neither diagnostic
+has an automatic fix because changing an API or its validation policy requires
+an author decision. Hover names the selected checked constructor independently
+of these diagnostics; source-token and rename identity remain unchanged.
+
 Staged MIR constant-evaluation failures retain executed caller identities,
 which semantic staging maps to source spans before its HIR/MIR snapshot expires.
 `GTI-S2057` in constexpr bindings, `if constexpr` and `static_assert` appends
@@ -95,6 +106,11 @@ does not replace ordinary diagnostic codes or infer origins from macro names.
 Editors may inspect a retained expansion through the read-only
 [`gti/inspectMacroExpansion` workflow](lsp.md#read-only-macro-expansion-inspection);
 that explanatory view has no authority to repair or execute an invalid body.
+
+Inline concept failures retain their concrete outer application and the
+uniquely attributable argument span even when every alternative in a
+disjunction fails. Related information preserves the separate failing branches;
+a failure inside a nested requirement does not become a different root contract.
 
 `GTI-S2029` retains the ordinary unsatisfied-requirement call span and related
 requirement detail when a general query re-enters an identical in-flight
@@ -896,6 +912,21 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   or move construction is unavailable, and suggest explicit ownership transfer
   when applicable. Do not attach a fix-it: moving the value versus preserving
   it with an explicit allocating copy requires programmer intent.
+  Function overload sets follow the same rule: when exactly one overload
+  accepts every argument type and is rejected only because a by-value
+  argument cannot be copied or moved, the first such argument reports the
+  call's one causal `GTI-S2018`, with that overload as the
+  `Exact-type candidate:` note, instead of `GTI-S2012` and the whole
+  candidate list. A set rejected for any other reason keeps that reason's
+  resolver diagnostic, and one with several such overloads keeps
+  `GTI-S2012`. Every by-value
+  copy report from a function call relates the declared parameter
+  (`Parameter 'name' takes its argument by value.`, or for a parameter pack
+  `Parameter pack 'name' takes each argument by value, ...`). When that
+  parameter's type is deduced and the argument's type has a public read-only
+  `view()` member, a hint names `'<value>.view()'` as the borrowing
+  alternative. Named move-only arguments to a by-value overload and to a
+  by-value parameter pack therefore report the same deleted copy.
   A destructor's attempted receiver-field move uses the same code at the
   field token and explains that field cleanup belongs to the enclosing object.
   Explicit and implicit `this` paths share this rule; separately owned locals
@@ -1448,6 +1479,11 @@ shared inference origins, and multi-cause disjunctions retain the call primary.
 Both concrete public applications and leaf locations are structured related
 information, including across source units. No public library spelling selects
 diagnostic behavior.
+Isolated expression and constexpr-predicate requirement workers retain the
+first failing diagnostic's guidance alongside its reason. Each query keeps
+at most eight distinct hints and reports an omitted count. Ordinary failures
+and failed disjunction alternatives publish that guidance without copying
+synthetic-source fix-its or changing the failure's argument provenance.
 When several overloads fail their requirements, the existing no-exact-overload
 diagnostic retains each candidate's constraint explanation and leaf notes as
 related information; it does not replace these causes with a conversion-only

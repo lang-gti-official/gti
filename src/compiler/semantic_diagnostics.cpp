@@ -194,6 +194,19 @@ void SemanticDiagnosticReporter::reportConstexprFailure(
   diagnostics.emplace_back(std::move(diagnostic));
 }
 
+void SemanticConstraintGuidance::retain(
+    const std::vector<std::string> &source) {
+  constexpr std::size_t limit = 8;
+  for (const auto &hint : source) {
+    if (std::find(hints.begin(), hints.end(), hint) != hints.end())
+      continue;
+    if (hints.size() < limit)
+      hints.push_back(hint);
+    else
+      ++omitted;
+  }
+}
+
 SemanticMemberConstraintCause
 SemanticMemberConstraintCause::retain(SemanticConstraintFailure failure) {
   SemanticMemberConstraintCause cause;
@@ -359,8 +372,20 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
                                    "from the member explanation.");
     }
   };
+  const auto appendExpressionGuidance =
+      [](Diagnostic &diagnostic, const SemanticConstraintFailure &cause) {
+        for (const auto &hint : cause.expressionGuidance.hints)
+          if (std::find(diagnostic.hints.begin(), diagnostic.hints.end(),
+                        hint) == diagnostic.hints.end())
+            diagnostic.hints.push_back(hint);
+        if (cause.expressionGuidance.omitted != 0)
+          diagnostic.hints.push_back(
+              std::to_string(cause.expressionGuidance.omitted) +
+              " additional nested requirement hints omitted.");
+      };
   const auto publish = [&](Diagnostic diagnostic) {
-    if (failure.expressionFailure && !failure.context.empty()) {
+    if (failure.expressionFailure && failure.alternatives.empty() &&
+        !failure.context.empty()) {
       diagnostic.message =
           (failure.applicationArgumentIndex
                ? "Type '" + typeSpelling(failure.argument) +
@@ -373,26 +398,37 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
       std::string prefix =
           "Argument " + std::to_string(*failure.callArgumentIndex + 1) +
           " has type '" + typeSpelling(failure.callArgumentType) + "'";
-      prefix +=
-          failure.callArgumentType == failure.argument
-              ? ", which "
-              : "; its inferred type '" + typeSpelling(failure.argument) + "' ";
-      if (!failure.context.empty()) {
-        diagnostic.message = prefix + "does not satisfy concept '" +
-                             applicationSpelling(failure.context.front()) +
-                             "'.";
-      } else if (failure.structural == StructuralConstraintKind::ReadMember) {
-        diagnostic.message = prefix + "does not satisfy required member '" +
-                             failure.memberName + "()'.";
+      if (!failure.alternatives.empty()) {
+        diagnostic.message += " " + prefix;
+        if (failure.callArgumentType != failure.argument)
+          diagnostic.message +=
+              "; its inferred type is '" + typeSpelling(failure.argument) + "'";
+        diagnostic.message += ".";
       } else {
-        diagnostic.message =
-            prefix + "does not satisfy generic constraint '" +
-            (failure.constraintName
-                 ? semantic_spelling::pathSpelling(*failure.constraintName)
-                 : "the declared constraint") +
-            "'.";
+        prefix += failure.callArgumentType == failure.argument
+                      ? ", which "
+                      : "; its inferred type '" +
+                            typeSpelling(failure.argument) + "' ";
+        if (!failure.context.empty()) {
+          diagnostic.message = prefix + "does not satisfy concept '" +
+                               applicationSpelling(failure.context.front()) +
+                               "'.";
+        } else if (failure.structural == StructuralConstraintKind::ReadMember) {
+          diagnostic.message = prefix + "does not satisfy required member '" +
+                               failure.memberName + "()'.";
+        } else {
+          diagnostic.message =
+              prefix + "does not satisfy generic constraint '" +
+              (failure.constraintName
+                   ? semantic_spelling::pathSpelling(*failure.constraintName)
+                   : "the declared constraint") +
+              "'.";
+        }
       }
     }
+    if (!failure.alternatives.empty() && !failure.context.empty())
+      diagnostic.message += " Required application '" +
+                            applicationSpelling(failure.context.front()) + "'.";
     for (const auto &context : failure.context) {
       diagnostic.related.push_back(
           {tokenSpan(context.location),
@@ -406,6 +442,7 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
           {tokenSpan(location), *failure.expressionFailure});
     }
     appendMemberReason(diagnostic, failure);
+    appendExpressionGuidance(diagnostic, failure);
     if (failure.conformanceBorrowOperation) {
       diagnostic.hints.push_back(
           "Operation '" + failure.conformanceBorrowOperation->lexeme +
@@ -496,6 +533,7 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
                                                   "'."});
           }
           appendMemberReason(diagnostic, alternative);
+          appendExpressionGuidance(diagnostic, alternative);
           if (alternative.expressionFailure &&
               !alternative.expressionFailure->empty())
             diagnostic.related.push_back(

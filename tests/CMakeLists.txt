@@ -1453,6 +1453,18 @@ target_link_libraries(gti_general_requires_tests PRIVATE gti_compiler)
 add_test(NAME general_requires_semantics
   COMMAND gti_general_requires_tests "${PROJECT_SOURCE_DIR}")
 set_tests_properties(general_requires_semantics PROPERTIES TIMEOUT 120)
+add_test(NAME conditional_member_operators
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/conditional_member_operators_test.py"
+          $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}")
+set_tests_properties(conditional_member_operators PROPERTIES TIMEOUT 900)
+if(TARGET gti_lsp)
+  add_test(NAME conditional_member_operators_lsp
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/conditional_member_operators_lsp_test.py"
+            $<TARGET_FILE:gti_lsp>)
+  set_tests_properties(conditional_member_operators_lsp PROPERTIES TIMEOUT 90)
+endif()
 add_test(NAME general_requires_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/generic_symbolic_auto_local_runtime_test.py"
           $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/examples/173-general-requires.gti" --include-o1)
@@ -3441,6 +3453,11 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(pack_parameter_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME reference_parameter_packs
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/reference_parameter_packs_test.py"
+            "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
+  set_tests_properties(reference_parameter_packs PROPERTIES TIMEOUT 300)
   add_test(
     NAME enum_pack_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -3561,6 +3578,21 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(conversion_operators_runtime PROPERTIES TIMEOUT 600)
+  add_test(NAME concept_conditions
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/concept_conditions_test.py"
+      "$<TARGET_FILE:gti>")
+  set_tests_properties(concept_conditions PROPERTIES TIMEOUT 300)
+  if(TARGET gti_lsp)
+    add_test(NAME concept_conditions_lsp
+      COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/concept_conditions_lsp_test.py"
+        "$<TARGET_FILE:gti_lsp>")
+    set_tests_properties(concept_conditions_lsp PROPERTIES TIMEOUT 120)
+    add_test(NAME reference_parameter_packs_lsp
+      COMMAND "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tests/reference_parameter_packs_lsp_test.py"
+        "$<TARGET_FILE:gti_lsp>")
+    set_tests_properties(reference_parameter_packs_lsp PROPERTIES TIMEOUT 120)
+  endif()
   add_test(
     NAME protocol_concepts_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -3568,6 +3600,20 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(protocol_concepts_runtime PROPERTIES TIMEOUT 900)
+  add_test(
+    NAME protocol_requirements_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/protocol_requirements_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(protocol_requirements_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME protocol_format_hash_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/protocol_format_hash_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(protocol_format_hash_runtime PROPERTIES TIMEOUT 900)
   add_test(
     NAME associated_type_families_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -6458,6 +6504,30 @@ add_test(NAME compiled_dependency_project
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/compiled_dependency_project_test.py"
   "$<TARGET_FILE:gti>" --output-dir "${CMAKE_BINARY_DIR}/compiled-dependency-project")
 set_tests_properties(compiled_dependency_project PROPERTIES TIMEOUT 600)
+
+
+add_executable(gti_scalar_temporary_borrow_tests scalar_temporary_borrow_tests.cpp)
+target_link_libraries(gti_scalar_temporary_borrow_tests PRIVATE gti_compiler)
+add_test(NAME scalar_temporary_borrow COMMAND gti_scalar_temporary_borrow_tests)
+
+if(Python3_Interpreter_FOUND)
+  add_test(NAME scalar_temporary_borrow_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/scalar_temporary_borrow_runtime_test.py"
+            "$<TARGET_FILE:gti>")
+  set_tests_properties(scalar_temporary_borrow_runtime PROPERTIES TIMEOUT 600)
+endif()
+
+if(Python3_Interpreter_FOUND AND TARGET gti_lsp)
+  add_test(NAME scalar_temporary_borrow_lsp
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/scalar_temporary_borrow_lsp_test.py"
+            "$<TARGET_FILE:gti_lsp>")
+  set_tests_properties(scalar_temporary_borrow_lsp PROPERTIES TIMEOUT 90)
+endif()
+
+add_executable(gti_reference_parameter_pack_mir_tests reference_parameter_pack_mir_tests.cpp)
+target_link_libraries(gti_reference_parameter_pack_mir_tests PRIVATE gti_compiler)
+add_test(NAME reference_parameter_pack_mir COMMAND gti_reference_parameter_pack_mir_tests)
+set_tests_properties(reference_parameter_pack_mir PROPERTIES TIMEOUT 120)
 
 include("${PROJECT_SOURCE_DIR}/tests/TestThroughput.cmake")
 

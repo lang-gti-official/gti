@@ -13,7 +13,7 @@ export enum class chars_format { general, fixed, scientific, hex };
 export struct from_chars_result {
   size_t position;
   parse_errc ec;
-  from_chars_result(size_t consumed, parse_errc error) : position(consumed), ec(error) {}
+  constexpr from_chars_result(size_t consumed, parse_errc error) : position(consumed), ec(error) {}
 };
 
 }

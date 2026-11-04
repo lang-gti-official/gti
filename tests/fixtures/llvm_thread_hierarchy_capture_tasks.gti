@@ -81,7 +81,7 @@ int main() {
   int32_t status = run();
   if (status != 0) return status;
   if (constructed.load() != 3 || destroyed.load() != 3) {
-    std::println("constructed {} destroyed {}", constructed.load(), destroyed.load());
+    std::runtime_println("constructed {} destroyed {}", constructed.load(), destroyed.load());
     return 9;
   }
   std::println("ok");

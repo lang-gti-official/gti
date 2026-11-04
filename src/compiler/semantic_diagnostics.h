@@ -88,6 +88,16 @@ struct SemanticConstraintContext {
   Token location;
 };
 
+// Unevaluated queries preserve guidance from their first failing diagnostic.
+// Keep this separate from the reason and origin: it is bounded presentation
+// evidence, not another proof tree or a synthetic query's fix-it payload.
+struct SemanticConstraintGuidance {
+  std::vector<std::string> hints;
+  std::size_t omitted = 0;
+
+  void retain(const std::vector<std::string> &source);
+};
+
 // The facts of one generic-constraint failure, assembled by overload and
 // requirement analysis and quoted verbatim by the reporter.
 struct SemanticConstraintFailure {
@@ -115,6 +125,7 @@ struct SemanticConstraintFailure {
   // A failed unevaluated expression or constexpr predicate, diagnosed by the
   // ordinary frontend in an isolated query rather than by native compilation.
   std::optional<std::string> expressionFailure;
+  SemanticConstraintGuidance expressionGuidance;
   // A concept with a body that no conformance block supplies for these
   // arguments.
   bool missingConformance = false;

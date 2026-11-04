@@ -104,6 +104,6 @@ int main() {
   default:
     return 3;
   }
-  std::println("{} lines, {} ignored", lines.size(), ignored);
+  std::runtime_println("{} lines, {} ignored", lines.size(), ignored);
   return 0;
 }
