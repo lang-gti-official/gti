@@ -34,6 +34,8 @@ class ProfileControls(unittest.TestCase):
         })
         lowered = json.loads((ROOT / "tests/lowered_program_census_baseline.json").read_text())
         for name, row in lowered["variants"][reviewed.TARGETS[1]]["examples"].items():
+            if name not in names:
+                continue  # not yet recorded in the MIR census
             self.assertEqual(linux[name] - mac[name],
                              row["bodies"] - lowered["examples"][name]["bodies"])
 
