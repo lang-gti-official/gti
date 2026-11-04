@@ -1628,7 +1628,13 @@ private:
       auto *allocation = load(address, recipe->type);
       store(llvm::ConstantPointerNull::get(session.layouts().pointer()),
             address, recipe->type);
-      objectMemory.releaseBytes(allocation);
+      if (recipe->type.kind != SemanticType::UniqueOwner ||
+          recipe->type.arguments.size() != 1)
+        throw std::logic_error(
+            "LLVM object allocation release lost its sealed pointee");
+      objectMemory.releaseBytes(
+          allocation,
+          session.layouts().get(recipe->type.arguments[0]).alignment);
       ir.CreateBr(done);
       ir.SetInsertPoint(done);
       return;

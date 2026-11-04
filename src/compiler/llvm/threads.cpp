@@ -507,8 +507,13 @@ void ThreadTasks::require(llvm::IRBuilder<> &ir, llvm::Value *condition) {
   ir.SetInsertPoint(valid);
 }
 
-void ThreadTasks::freeBox(llvm::IRBuilder<> &ir, llvm::Value *box) {
-  Memory(session, ir, {}, {}, {}).releaseBytes(box);
+void ThreadTasks::freeBox(llvm::IRBuilder<> &ir, llvm::Value *box,
+                          llvm::Type *boxType) {
+  // The same alignment the spawn allocation computed for this box.
+  Memory(session, ir, {}, {}, {})
+      .releaseBytes(
+          box, std::max<std::uint64_t>(
+                   session.dataLayout().getABITypeAlign(boxType).value(), 1));
 }
 
 void ThreadTasks::storeValue(llvm::IRBuilder<> &ir, llvm::Value *destination,
@@ -899,7 +904,7 @@ void ThreadTasks::emitDestroy(Adapter &adapter) {
   auto *release = llvm::BasicBlock::Create(context, "task.release", function);
   ir.CreateCondBr(abandoned, abandon, release);
   ir.SetInsertPoint(release);
-  freeBox(ir, box);
+  freeBox(ir, box, adapter.box);
   ir.CreateRetVoid();
 }
 
@@ -971,7 +976,7 @@ void ThreadTasks::emitValueCallbacks(Adapter &adapter) {
            cleanupTaskValue(ir, facts.taskType,
                             ir.CreateStructGEP(adapter.box, box, 0)),
            exit);
-    freeBox(ir, box);
+    freeBox(ir, box, adapter.box);
     ir.CreateRetVoid();
   }
   {
@@ -987,7 +992,7 @@ void ThreadTasks::emitValueCallbacks(Adapter &adapter) {
     ir.CreateStore(ir.getInt8(0), live);
     storeValue(ir, adapter.take->getArg(1),
                ir.CreateStructGEP(adapter.box, box, 1), facts.resultType);
-    freeBox(ir, box);
+    freeBox(ir, box, adapter.box);
     ir.CreateRetVoid();
   }
   {
@@ -1002,7 +1007,7 @@ void ThreadTasks::emitValueCallbacks(Adapter &adapter) {
                             ir.CreateStructGEP(adapter.box, box, 1),
                             ir.CreateStructGEP(adapter.box, box, 2)),
            exit);
-    freeBox(ir, box);
+    freeBox(ir, box, adapter.box);
     ir.CreateRetVoid();
   }
 }
