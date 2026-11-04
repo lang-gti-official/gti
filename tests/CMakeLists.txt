@@ -3724,6 +3724,12 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/scripts/check_release_version.py"
   )
   add_test(
+    NAME stdlib_surface_review_policy
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/stdlib_surface_review_test.py"
+            "${PROJECT_SOURCE_DIR}/scripts/check_stdlib_surface_review.py"
+  )
+  add_test(
     NAME cut_release_policy
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/cut_release_test.py"

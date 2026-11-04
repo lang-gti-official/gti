@@ -6834,8 +6834,8 @@ target/profile identities and complete O-LLVM-16 gate names without copying
 body/block/instruction inventories. Provider member counts and inventory
 digests, like exact required-use inventories, are run artifacts tied to the
 source, compiler, build and target that produced them: the audit derives them
-on every run, after resolving every member to a repository file and checking
-every stdlib source against its surface fingerprint. Receipts for a different,
+on every run, after resolving every member to a repository file and digesting
+every shipped stdlib source from the tree. Receipts for a different,
 truncated or stale artifact do not apply. The normal focused evidence gate
 emits `gti.llvm.readiness-run/v1` with an explicit
 `focused-schema-control` scope and therefore cannot make a candidate promotion

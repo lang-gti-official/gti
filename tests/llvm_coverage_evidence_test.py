@@ -312,16 +312,19 @@ def stdlib_provider_inventory(root: Path, provider: dict) -> dict:
     manifest_path = repository_path(root, provider["manifest"],
                                     "stdlib surface manifest")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    fingerprints = manifest.get("source_fingerprints")
     cases = manifest.get("cases")
-    require(isinstance(fingerprints, dict) and fingerprints,
-            "stdlib surface source inventory must be nonempty")
+    # The source census is the shipped tree, the same set the surface manifest
+    # must classify; digesting it here keeps the inventory tied to the exact
+    # sources without a stored copy of their hashes.
+    from stdlib_surface_test import stdlib_sources
+    source_digests = {}
+    for path in stdlib_sources(root.resolve()):
+        relative = path.relative_to(root.resolve()).as_posix()
+        source = repository_path(root, relative, f"stdlib source {relative}")
+        source_digests[relative] = file_digest(source)
+    require(source_digests, "stdlib surface source inventory must be nonempty")
     require(isinstance(cases, list) and cases,
             "stdlib surface case inventory must be nonempty")
-    for relative, expected in fingerprints.items():
-        source = repository_path(root, relative, f"stdlib source {relative}")
-        require(file_digest(source) == expected,
-                f"stdlib surface source identity drifted: {relative}")
     case_inventory = []
     for case in cases:
         case_id = case.get("id")
@@ -343,7 +346,7 @@ def stdlib_provider_inventory(root: Path, provider: dict) -> dict:
         })
     return {
         "manifest": manifest_path.relative_to(root).as_posix(),
-        "source_fingerprints": fingerprints,
+        "source_digests": source_digests,
         "cases": case_inventory,
     }
 
@@ -361,8 +364,8 @@ def provider_identity(provider_id: str, inventory: dict) -> dict:
     """The provider's member count and inventory digest, derived from the tree.
 
     The inventory functions already resolve every member to a repository file
-    and check each stdlib source against its surface fingerprint; the count
-    and digest are recorded in the run summary, never pinned in the baseline.
+    and digest each stdlib source from the tree; the count and digest are
+    recorded in the run summary, never pinned in the baseline.
     """
     if provider_id == "shipped-examples":
         count = len(inventory["members"])
@@ -391,6 +394,15 @@ def provider_mutation_controls(providers: dict[str, dict],
     require(provider_identity(identity, changed)["inventory_sha256"] !=
             provider_identity(identity, inventories[identity])["inventory_sha256"],
             "a changed provider member left the inventory digest unchanged")
+    # A stdlib source edit must move the surface provider's identity even
+    # though no stored source hash records it.
+    identity = "stdlib-surface"
+    changed = deepcopy(inventories[identity])
+    first = next(iter(changed["source_digests"]))
+    changed["source_digests"][first] = "0" * 64
+    require(provider_identity(identity, changed)["inventory_sha256"] !=
+            provider_identity(identity, inventories[identity])["inventory_sha256"],
+            "a changed stdlib source left the surface inventory digest unchanged")
 
 
 def profile_sources(root: Path, modules: dict) -> dict:

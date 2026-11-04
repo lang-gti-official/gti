@@ -1083,6 +1083,19 @@ owners = [
 consumers = []
 
 [[area]]
+area = "stdlib-surface-review"
+paths = [
+  "scripts/check_stdlib_surface_review.py",
+  "tests/stdlib_surface_review_test.py",
+]
+owners = [
+  "stdlib_surface_review_policy",
+]
+consumers = [
+  "stdlib_surface_manifest",
+]
+
+[[area]]
 area = "stdlib-algorithm-breadth-tests"
 paths = [
   "tests/generic_algorithm_breadth_test.py",

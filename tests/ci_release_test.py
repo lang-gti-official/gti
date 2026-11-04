@@ -551,6 +551,59 @@ def workflow_contract(root):
         assert "${{ github." not in contents and "GH_TOKEN" not in contents and "gh release" not in contents
 
 
+def change_review_contract(root):
+    """The release-version job judges the candidate's own range once, from where
+    it forked, and runs both diff-based reviews over it: the version decision
+    and the stdlib surface review. Pull requests and merge-queue candidates
+    reach it through the same base expression."""
+    ci = (root / ".github/workflows/ci.yml").read_text()
+    job = jobs(ci)["release-version"]
+    assert "fetch-depth: 0" in job, "diff-based reviews need the full history"
+    ordered(job, ["- name: Find where the candidate forked\n        id: range\n",
+                  'python3 scripts/check_release_version.py "${GTI_FORK_SHA}" "${GTI_HEAD_SHA}"',
+                  'python3 scripts/check_stdlib_surface_review.py "${GTI_FORK_SHA}" "${GTI_HEAD_SHA}"'],
+            "both reviews follow the one fork computation")
+    assert job.count("GTI_FORK_SHA: ${{ steps.range.outputs.base }}") == 2
+    assert job.count("GTI_HEAD_SHA: ${{ github.sha }}") == 3
+    assert ("GTI_BASE_SHA: ${{ github.event.pull_request.base.sha || "
+            "github.event.merge_group.base_sha }}") in job
+    assert "merge_group:" in ci.split("\njobs:\n", 1)[0]
+    automation = jobs(ci)["automation-tests"]
+    assert ("python3 tests/stdlib_surface_review_test.py "
+            "scripts/check_stdlib_surface_review.py") in automation
+    # Execute the fork step: a base that main advanced past still yields the
+    # candidate's fork point, and an absent base falls back to HEAD^.
+    step = job.split("      - name: Find where the candidate forked\n", 1)[1]
+    step = step.split("      - name:", 1)[0]
+    script = "\n".join(line[10:] for line in step.split("        run: |\n", 1)[1].splitlines()) + "\n"
+    with tempfile.TemporaryDirectory(prefix="gti-change-review-") as directory:
+        work = pathlib.Path(directory)
+        run(["git", "init", "--quiet", "-b", "main"], work)
+        run(["git", "config", "user.name", "GTI Test"], work)
+        run(["git", "config", "user.email", "test@example.invalid"], work)
+        def commit(name):
+            (work / name).write_text(name)
+            run(["git", "add", name], work)
+            run(["git", "commit", "--quiet", "-m", name], work)
+            return run(["git", "rev-parse", "HEAD"], work)
+        fork = commit("fork")
+        run(["git", "checkout", "--quiet", "-b", "candidate"], work)
+        parent = commit("candidate-1")
+        head = commit("candidate-2")
+        run(["git", "checkout", "--quiet", "main"], work)
+        advanced = commit("main-advanced")
+        run(["git", "checkout", "--quiet", "candidate"], work)
+        for base, expected in ((advanced, fork), (fork, fork), ("", parent), ("0" * 40, parent)):
+            output = work / "github-output"
+            output.write_text("")
+            result = subprocess.run(["bash", "-e", "-u", "-o", "pipefail"], input=script, cwd=work,
+                                    env=dict(os.environ, GTI_BASE_SHA=base, GTI_HEAD_SHA=head,
+                                             GITHUB_OUTPUT=str(output)),
+                                    text=True, capture_output=True, timeout=10)
+            assert result.returncode == 0, result.stderr
+            assert output.read_text() == f"base={expected}\n", (base, output.read_text())
+
+
 def installed_system_command_contract(root):
     """Parse and execute the actual Linux step with inert command stand-ins."""
     workflow = (root / ".github/workflows/ci.yml").read_text()
@@ -941,6 +994,7 @@ def main():
     root = args.root.resolve()
     workflow_contract(root)
     installed_system_command_contract(root)
+    change_review_contract(root)
     artifact_contract(root)
     editor_contract(root)
     nightly_contract(root)
