@@ -87,7 +87,7 @@ public:
 };
 
 std::string describe<T>(std::string_view name, T value) requires std::formattable<T> {
-  return std::format("{}={}", name, std::move(value));
+  return std::format("{}={}", name, value);
 }
 
 int main() {
@@ -114,7 +114,7 @@ int main() {
   // The string formatter rejects a numeric specifier; the error propagates.
   auto rejected = std::try_format("{:d}", geo::Label(std::string("x")));
   if (rejected || rejected.error() != std::format_errc::invalid_format) { return 5; }
-  auto missing = std::try_format("{} {}", origin);
+  auto missing = std::try_runtime_format("{} {}", origin);
   if (missing || missing.error() != std::format_errc::argument_count_mismatch) { return 6; }
 
   std::string e = describe("level", geo::Level::high);

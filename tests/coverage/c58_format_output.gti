@@ -12,7 +12,9 @@ int main() {
   std::print(std::move(one).value().view()); std::print(" ");
   std::print(std::move(many).value().view()); std::print(" ");
 
-  mut auto bad = std::try_format("missing {} {}", 1);
+  // Constant patterns are checked at compilation; the recoverable count
+  // mismatch goes through the explicit runtime entry point.
+  mut auto bad = std::try_runtime_format("missing {} {}", 1);
   std::println(bad.has_value() ? 1 : 0);
   return 0;
 }

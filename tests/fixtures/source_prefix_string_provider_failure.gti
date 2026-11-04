@@ -18,5 +18,8 @@ int main() {
   CheckCleanup cleanup{};
   adoption_fail_at(uint64_t(1));
   auto text = std::string("fail allocation before publishing any characters");
+  // Process allocations are not observable effects (ADR 022), so the text
+  // must be used for its allocation, and therefore its exhaustion, to remain.
+  std::println(text);
   return 1;
 }

@@ -5,7 +5,9 @@ int main() {
   mut auto text = std::try_format("a={} b={}", int32_t(1), int32_t(2));
   if (text.has_value()) { std::println(text.value()); } else { std::println("format failed"); }
   [[discard]] std::try_println("x={}", int32_t(42));
-  mut auto bad = std::try_format("only {}", int32_t(1), int32_t(2));
+  // A constant pattern is checked at compilation; a recoverable count
+  // mismatch needs the explicit runtime entry point.
+  mut auto bad = std::try_runtime_format("only {}", int32_t(1), int32_t(2));
   std::println(bad.has_value() ? "unexpected" : "count mismatch reported");
   return 0;
 }
