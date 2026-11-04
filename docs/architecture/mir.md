@@ -2284,6 +2284,15 @@ publishes a `Return` loan that reborrows the call's result loan.
 shell rule takes the expected stored dependency exactly from the forwarded
 result loan, which is none when the callee's receiver holds ownerless text.
 
+A local text value copied from a stored reference field retains the receiver's
+abstract external owner entry. The exact typed field-and-dereference `Load`
+proves its source. A by-value text relay preserves that projected call origin
+and records the entry as a separate stored dependency; local publication does
+not replace the call origin with the receiver shell. Program verification
+checks both the staged argument's load and its matching external entry, and
+rejects removing either identity. This changes neither permitted escapes nor
+the lifetime required of the backing text owner.
+
 A construction may instead publish dynamic text (`L-OWN-02`, phase 1). Its
 `dependentTextPublication` flag marks borrow facts that belong to the call: the
 target constructor's own summary stays empty, because its other call sites
@@ -3437,6 +3446,14 @@ later-storage proof inside the merged executable program-initialization body;
 the initializer consumes the materialized constant rather than loading
 not-yet-initialized program storage.
 
+Receiver lowering honors the same substitution before considering the source
+expression's place category. A direct read-only receiver consumes the constant
+value, including through transparent grouping and comma expressions. Their
+dependency schedule preserves sequenced effects and emits the constant exactly
+once. Actual storage borrows and projections retain the semantic boundary's
+storage access and do not acquire a substitution merely because the binding is
+constant.
+
 `MirProgramInitializationPlan` is the pointer-free authority for the merged
 `Module/0` schedule. Ordered unit rows retain even empty source units. Dense
 step rows copy the exact storage kind, role, symbol, concrete static owner,
@@ -4045,6 +4062,12 @@ The selected reference parameter and concrete element/result type must agree;
 the element's retained HIR copy/move role remains authoritative. An owning move
 transfers the entry element obligation into the result's value obligation;
 copying independently initializes the result and leaves the pack available.
+When a constructed owning result then enters another call, its `CallInput`
+reparents that value obligation into the prepared parameter. This differs
+from direct forwarding of a pack element: adjacency of `Move` and `CallInput`
+alone does not establish a direct binding transfer. Verification requires the
+exact intermediate value obligation and rejects moving the already-consumed
+pack binding a second time.
 Cleanup-free results retain the normal no-value-drop convention, while the
 moved-from cleanup-free parameter still has its harmless lexical lifetime.
 The original construction expression supplies result provenance and the

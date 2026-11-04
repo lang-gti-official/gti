@@ -11566,7 +11566,12 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                 adjacentPackMove = true;
         }
         const MirDropObligation *packDrop = nullptr;
-        if (adjacentPackMove)
+        // A special-member construction may also move a pack element, but
+        // first owns its result under a full-expression obligation. Its call
+        // stage reparents that result; only a direct pack argument moves the
+        // binding straight into the prepared parameter.
+        if (adjacentPackMove && obligations.empty() &&
+            definition->lifecycle.empty())
           for (const MirDropObligation &drop : body.dropObligations)
             if (drop.kind == MirDropObligationKind::Binding &&
                 drop.place == movedPack->id)
