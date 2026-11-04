@@ -468,7 +468,10 @@ The current implemented foundation includes:
   Source-defined owning callable classes provide
   `std::function<R(Args...)>` and `std::move_only_function<R(Args...)>` for
   repeatable read-only targets with value, read-only reference, or mutable
-  reference arguments (for example, `std::function<void(mut int&)>`).
+  reference arguments (for example, `std::function<void(mut int&)>`). A
+  target whose parameter is a read-only reference also serves a
+  mutable-reference argument: the wrapper forwards the caller's mutable
+  reference as a read-only one.
   The corresponding `R(Args...) mut` forms retain a mutable target and require
   a mutable wrapper binding for invocation. Read-callable targets can also be
   retained by a mutable wrapper; the signature itself does not implicitly
