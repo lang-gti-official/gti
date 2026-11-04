@@ -8,12 +8,10 @@ import tempfile
 from unique_class_allocation_runtime_test import run
 from backend_modes import is_cpp_mode, keep_cpp, native_modes, record_symptom, unsupported
 
-# The LLVM backend skips the "5" observation of the replacement cleanup
-# failure phase (the C++ profile prints 4, 5, 9); issue #198.
-LLVM_UNSUPPORTED = {
-    "phase 9": "LLVM bug lang-gti-official/gti#198: replacement "
-               "cleanup failure phase prints '4\\n9\\n' instead of '4\\n5\\n9\\n'",
-}
+# Every phase executes on both backends. A failing body-local destructor still
+# rolls back completed fields because MIR retires construction rollback only
+# after scope-exit cleanup (lang-gti-official/gti#198).
+LLVM_UNSUPPORTED = {}
 
 
 def main():
