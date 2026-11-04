@@ -296,6 +296,8 @@ jobs:
       GTI_SANITIZER_TESTS: 'compiler_library_boundary|driver_library_boundary|driver_pipeline|project_model|compiler_pipeline$|optimizer_foundation|raw_pointer_pipeline|mir_program_initialization|mir_hosted_startup|mir_backend_first_family$|mir_backend_scalar_cfg$|mir_backend_scalar_direct_call$|mir_backend_class_default_cleanup$|mir_backend_owned_lifecycle$|mir_backend_scalar_failure_callgraph$'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Free hosted runner disk for the sanitized tree
+        run: bash scripts/free_ci_disk.sh
       - name: Configure runner resources
         shell: bash
         env:
@@ -404,6 +406,8 @@ jobs:
       GTI_LLVM_SANITIZER_TESTS: '^llvm_(admission|atomic_contracts|atomic_wait_service|backend_dependency_controls|backend_foundation|backend_library_boundary|cache_component_mapping|case_context_controls|checked_offsets|checked_ranges|checked_reductions|clang_coexistence|cleanup_composition_execution|coverage_exhaustiveness|debug_info|dispatch_layout|dispatch_plans|embedding_execution|hosted_cleanup_source_contract|instrumentation|link_surface|link_surface_policy|memory_contracts|memory_mechanisms|mutex_contracts|mutex_hierarchy_contracts|native_c_abi|native_c_confined_execution|native_c_counted_input|native_c_outbound_boundary|native_runtime_identity|optimization_pipeline|payload_unique_owner|polymorphic_storage_layout|polymorphic_storage_mechanisms|private_atomics|scalar_context_controls|simd_execution|simd_lowering|target_layout_abi|thread_lifecycle_contracts|tls_contracts)$'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Free hosted runner disk for the sanitized tree
+        run: bash scripts/free_ci_disk.sh
       - name: Configure runner resources
         shell: bash
         env:
