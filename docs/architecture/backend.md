@@ -2975,9 +2975,32 @@ the bound references and scalars, so the enclosing class's special members
 copy and move the published field unchanged. Deferred storage is therefore
 restricted to shells whose every leaf is a reference, scalar, text view,
 pointer, function item, plain enum, fixed array of these, or another such
-shell; a payload enum leaf stays outside. A generic owner may share one native
-class template across instances, so deferred storage applies only to
-non-generic classes for now.
+shell; a payload enum leaf stays outside this trivial representation. A generic
+owner may share one native class template across instances, so every instance
+must prove the same deferred field policy. A mismatch rejects the shared
+representation rather than choosing one instance's layout. If a shared field
+has both owning and passive carrier instances, all use engaged storage and
+prove owned-formal publication; each retains its own MIR cleanup obligations.
+Private empty-state
+queries recurse through these inactive fields; containing classes reconstruct
+nonassignable shells when publishing their moved values instead of assigning
+through reference-bearing native members.
+
+An owning reference carrier with a generated destructor may also wait in
+deferred storage when every selected source constructor publishes that field
+from an owned formal. `mir_deferred_field<T>` keeps inactive union storage and
+one engagement flag, adding at most the flag plus alignment padding and no
+allocation. Unlike a passive shell, its Move and Initialize must retain their
+exact value and construction-rollback obligations. Publication constructs the
+value once and engages the field. Failure before publication leaves it inert;
+failure afterward follows MIR's cleanup recipe at the recorded point, leaving
+the bound references and a drained native shell. The wrapper's non-throwing
+move requires an exact generated move and the recursive MIR transfer proof.
+The wrapper eventually ends
+that shell once, in native member order. Whole-object moves transfer its value
+while preserving a harmless moved-from shell. Existing trivial deferred fields
+keep the union representation without an engagement flag. Direct producers
+and fields with their own source destructor remain outside this owning slice.
 
 This keeps GTI's construction order for every producer semantics admits for a
 carrier field: the move or copy of an exact carrier formal, or a construction
@@ -2987,9 +3010,8 @@ divisor)), cursor(Checked(value, divisor))`. If the ledger fails, the checking
 constructor never runs. A copy of a formal that nothing changes is still
 published by the native parameter-copy route, ahead of the earlier work, as
 for passive classes: the copy reads the formal's entry value, runs no source
-code and cannot fail, and the published shell needs no rollback. Remaining
-stages are a class containing a class with deferred fields (an empty state for
-the containing class), carriers with active cleanup, and generic owners.
+code and cannot fail, and the published shell needs no rollback. Broader owning
+producer forms require their own publication and partial-construction proofs.
 
 A borrowed payload enum, such as `enum Slot { ready(int32_t& value), empty }`,
 also retains its caller's dependency in the field, but its native value has a
@@ -3646,11 +3668,14 @@ the representation additionally requires the exact generated move constructor
 and assignment recorded by the concrete MIR class row. MIR stages the moved
 value in a value-rooted obligation, so the backend constructs that staging slot
 from the source binding, move-assigns the destination binding from the slot,
-and then drops only the moved-from staging shell. The route requires an
-adjacent `Move`/`Assign`/`Drop` triple in one block, a `Move` lifecycle event
+and then drops only the moved-from staging shell. Conditional evaluation may
+use an exact temporary-rooted slot instead of the value-rooted obligation.
+The route requires ordered `Move` and `Assign` instructions, a `Move` lifecycle event
 transferring the source binding obligation into the staging drop, an
 unconditional `Replace` from that drop into the destination binding's own
-obligation, and a single unconditional `Drop` of the slot. Aliased source and
+obligation, and a single normal `Drop` of the slot. The drop stays at its
+verified full-expression endpoint after comma evaluation or a control-flow
+merge; a conditional drop uses the slot's engagement guard. Aliased source and
 destination bindings, places outside the owned-field families above, failure
 sites on either instruction, extra uses, custom or incoherent immutable-source
 class rows, and any additional lifecycle event on the staging obligation fail
@@ -3665,8 +3690,10 @@ shell. A non-raising constructor arms the staging obligation with its own
 unconditional `Initialize` and sits immediately before the publication; a
 raising one arms it on its invoke success edge instead, so the `Construct`
 ends the invoking block and the `Assign` opens that edge's successor. Either
-way the route requires an unconditional `Replace` from the staging drop, an
-adjacent single unconditional `Drop` of the slot, and exactly one activation.
+way the route requires an unconditional `Replace` from the staging drop, a
+single unconditional normal `Drop` of the slot, and exactly one activation.
+That drop may follow later comma operands, including a loop increment; the
+native slot remains engaged until MIR retires its moved-from shell.
 Prepared constructor arguments may independently transfer their obligations
 at invocation. The backend matches every such unconditional `TransferOut` to
 its exact argument index, call site, type, prepared slot and obligation, once
@@ -5131,7 +5158,12 @@ or constructor-field final destinations, selected base initialization and static
 cleanup. "Static" describes the
 representation, not permission for global or thread-local storage.
 `NativeBorrowedDispatchView` describes checked selected class/base/interface
-addresses with preserved access; `NativeVirtualInvocation` requires the exact
+addresses with preserved access. A selected plain base alias is classified by its
+presented place, even when its provenance loan protects a larger derived object;
+forwarding that alias does not repeat the original base adjustment. A retained
+owned receiver may invoke a readonly or mutable member as well as a consuming
+member: the caller retains its existing cleanup obligation through the full
+expression, including failure. `NativeVirtualInvocation` requires the exact
 sealed root, one evaluated receiver and physical adjustment, through the
 root's shared ABI and MIR failure edge. Its signature is otherwise general:
 arguments, results and their loans keep their own proofs, a reference result
@@ -6722,11 +6754,14 @@ unsupported record retained as fallback. Malformed base rows, witnesses and
 location records reject before that selection is evaluated.
 
 `tests/llvm_readiness_baseline.json` is the versioned durable readiness
-contract. It pins the frozen-baseline provenance, canonical source providers,
-supported-family obligations, shipped target/profile identities and complete
-O-LLVM-16 gate names without copying body/block/instruction inventories. Exact
-required-use inventories, counts and digests are run artifacts tied to the
-source, compiler, build and target that produced them. Receipts for a different,
+contract. It pins the frozen-baseline provenance, the canonical source
+providers (identity, kind and manifest), supported-family obligations, shipped
+target/profile identities and complete O-LLVM-16 gate names without copying
+body/block/instruction inventories. Provider member counts and inventory
+digests, like exact required-use inventories, are run artifacts tied to the
+source, compiler, build and target that produced them: the audit derives them
+on every run, after resolving every member to a repository file and checking
+every stdlib source against its surface fingerprint. Receipts for a different,
 truncated or stale artifact do not apply. The normal focused evidence gate
 emits `gti.llvm.readiness-run/v1` with an explicit
 `focused-schema-control` scope and therefore cannot make a candidate promotion

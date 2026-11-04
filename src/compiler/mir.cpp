@@ -5588,14 +5588,20 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
               // A formal carrier's alias selects this referent through the
               // stored reference that the parent entry describes. Like a
               // mapped field alias, it authorizes the reborrow rather than
-              // competing with it as an overlapping sibling.
-              if (operandPlace.throughLoan != 0 &&
-                  body.loans[operandPlace.throughLoan - 1].entry &&
-                  body.loans[operandPlace.throughLoan - 1].storedDependency ==
-                      parent &&
-                  active[operandPlace.throughLoan - 1] ==
-                      MirLoanFlowState::Active)
-                selectedAlias = operandPlace.throughLoan;
+              // competing with it as an overlapping sibling. A local reborrow
+              // of that formal (a shared reference or range binding) retains
+              // the same stored dependency and selects it the same way, but
+              // only within its own permission: a shared alias exempts its
+              // suspended ancestors for a shared result, never an exclusive
+              // one. Unrelated overlapping loans still conflict below.
+              if (operandPlace.throughLoan != 0) {
+                const MirLoan &alias = body.loans[operandPlace.throughLoan - 1];
+                if (alias.storedDependency == parent &&
+                    active[alias.id - 1] == MirLoanFlowState::Active &&
+                    (alias.entry || alias.access == AccessMode::Mutable ||
+                     body.loans[loan - 1].access == AccessMode::ReadOnly))
+                  selectedAlias = alias.id;
+              }
               return true;
             }
             if (mappedAliasDependency(operandPlace.throughLoan))
@@ -11566,7 +11572,12 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                 adjacentPackMove = true;
         }
         const MirDropObligation *packDrop = nullptr;
-        if (adjacentPackMove)
+        // A special-member construction may also move a pack element, but
+        // first owns its result under a full-expression obligation. Its call
+        // stage reparents that result; only a direct pack argument moves the
+        // binding straight into the prepared parameter.
+        if (adjacentPackMove && obligations.empty() &&
+            definition->lifecycle.empty())
           for (const MirDropObligation &drop : body.dropObligations)
             if (drop.kind == MirDropObligationKind::Binding &&
                 drop.place == movedPack->id)

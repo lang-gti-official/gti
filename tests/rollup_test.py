@@ -691,6 +691,27 @@ class Trigger(unittest.TestCase):
                     self.assertEqual(rollup.main(["authorize", "--event-name", name, "--event", str(path)]), 0)
                 self.assertEqual(output.getvalue().strip(), expected)
 
+    def test_authorize_command_reads_a_ci_completion_payload(self):
+        # Regression: the command once loaded the payload and an API client only
+        # for issue_comment, so every CI-completion wakeup was refused and the
+        # bot ran only on its sporadically delivered cron and on /rollup comments.
+        api = unittest.mock.Mock()
+        api.request.return_value = {"id": 12, "path": ".github/workflows/ci.yml"}
+        canonical = {"action": "completed", "repository": dict(REPO),
+                     "workflow_run": {"workflow_id": 12, "status": "completed", "conclusion": "failure"}}
+        foreign = dict(canonical, workflow_run={"workflow_id": 13, "status": "completed", "conclusion": "success"})
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "event.json"
+            for event, expected in ((canonical, "authorized=true"), (foreign, "authorized=false")):
+                path.write_text(json.dumps(event))
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output), \
+                        unittest.mock.patch.dict(os.environ, {"GH_TOKEN": "read-only"}), \
+                        unittest.mock.patch.object(rollup.workflow, "GitHub", return_value=api):
+                    self.assertEqual(rollup.main(["authorize", "--event-name", "workflow_run", "--event", str(path)]), 0)
+                self.assertEqual(output.getvalue().strip(), expected)
+        api.request.assert_called_with("GET", "/actions/workflows/ci.yml")
+
     def test_missing_app_token_fails_clearly_and_never_uses_github_token(self):
         for command in ("compose", "enqueue", "reconcile"):
             error = io.StringIO()

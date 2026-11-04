@@ -435,10 +435,14 @@ from the bounded-case-workers list in `tests/TestThroughput.cmake`
 paused full-suite runs while on battery power, so this change merged after
 targeted validation only. The full suite was not rerun on the final head.
 
-Not covered: constructing a carrier class directly from a returned reference
-(`Cursor(box.get())`) still stops in MIR construction, with "carrier reference
-result requires one exact stored dependency" for literal text and "dependent
-text value is relayed where its text field may outlive" for owned text.
+The initial slice did not cover constructing a carrier class directly from a
+returned reference. That boundary is now supported: `Cursor(box.get())`, a
+constructor receiving the same returned reference through a named binding,
+and an unrelated carrier of `Counter&` preserve the referent and its external
+owner. `accessor_text_carriers.gti` covers the literal-backed, owned-text,
+named-reference and unrelated-referent forms. The issue-reconciliation audit
+also confirms on published preview that changing the text owner while the
+carrier is live remains `GTI-S2017`.
 
 ## Dependent reference results (0.468.1)
 
@@ -1206,6 +1210,21 @@ status: it now builds.
 Deferred field storage (backend: a passive bound shell after other fields
 lives in an anonymous union and is published at its MIR point) is covered at
 three layers.
+
+`borrowed_field_publication_runtime` additionally checks direct and relayed
+copies of a stored text reference, direct and nested writes through stored
+mutable references, two concrete generic holders, and a scalar assignment
+between staging a callable and invoking it. It runs C++ standard, optimization,
+no-elide and sanitizer modes plus LLVM O0–O3. `carrier_shell_references` rejects
+forged text-relay origins and missing external owner dependencies, while
+`testBorrowedFieldCompoundAssignment` rejects forged stored-field projections.
+
+`owning_expression_transfers` checks discarded conditional and comma
+assignments with exact destructor counts, both branches, loop increments,
+failure ordering, and genuine temporary arms that remain live until the full
+expression ends. `testDiscardedOwningAssignment` independently rejects forged
+temporary identities, unconditional drops of inactive conditional slots, and
+missing cleanup obligations.
 
 `cpp_mir_body_emitter_text`:
 - `testMovedPassiveFieldAfterFallibleSibling` now requires the moved `Cursor`
@@ -9438,7 +9457,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `backend_lowered_program_rejection` | C++, MIR, and native-header backends accept one valid lowered value and reject construction-seal and generated-inventory mutations before emission |
 | `backend_lowered_program_boundary` | structural prohibition on frontend includes/types, `BackendInput`, source-MIR/optimizer inputs, and builder leakage across production backend files and the standalone contract client |
 | `cpp_mir_control_flow` | deterministic backend-private direct-CFG plans; canonical block labels and edge slots; complete terminal vocabulary; repeated-target switch edges; and missing, duplicate, reordered, relabelled, retargeted, malformed-entry, and invalid-MIR rejection |
-| `lowered_program_corpus_census` | exact per-example declaration, body, generated-item, and generated-family counts recorded in `tests/lowered_program_census_baseline.json` across the complete shipped corpus for explicit macOS arm64 and Linux x86_64 targets, independently of the executing host; other inventory consumers default to the canonical macOS profile. Linux variants retain exact C ABI identity differences (four examples share one `layout_of<unsigned long>` instantiation there) rather than ignoring count drift |
+| `lowered_program_corpus_census` | per-example body, generated-item, and generated-family counts held within the census budget (`tests/census_budget.py`) of `tests/lowered_program_census_baseline.json` across the complete shipped corpus for explicit macOS arm64 and Linux x86_64 targets, independently of the executing host; other inventory consumers default to the canonical macOS profile. Linux variants retain exact C ABI identity differences (four examples share one `layout_of<unsigned long>` instantiation there) rather than ignoring count drift |
 | `mir_backend_first_family` | verified source/optimized MIR handoff, ordinary and failure-form general emission, optimized instruction control, and missing, stale, duplicated, or unauthorized snapshot rejection |
 | `mir_backend_first_family_runtime` | general verified-MIR execution at O0/O1/O3 under C++20/C++23, including body-identity markers and optimized-MIR artifact differences |
 | `mir_backend_scalar_cfg` | exact `scalar-cfg-v1` selection across scalar computations, places, assignment, branch, switch, short-circuit, and loop CFG; direct-label/goto spelling without mutable block dispatch; checked/call/reference near-miss fallback; optimized-literal control; and fail-closed same-domain operation and branch-routing mutations with unchanged source MIR |
@@ -9454,9 +9473,9 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `mir_backend_owned_lifecycle_runtime` | exact nested-scope construction, move-by-value, first-close ordering, and explicit cleanup at O0/O1/O3 under C++20/C++23, including emitted family markers and lifetime-slot schedule evidence |
 | `mir_backend_scalar_failure_callgraph` | atomic hosted `scalar-failure-callgraph-v1` selection; exact hidden bool/out-result/record ABI; local-site creation and unchanged call propagation; Return-only publication; reverse failure drops; unique terminal/firewall shape; complete HIR-body reverse-edge and selected-class representation closure; native/virtual/lambda/dynamic-initializer/checked-lifecycle/normal-ABI/cycle near misses; and fail-closed metadata, target, record, cleanup, and source-MIR mutations |
 | `mir_backend_scalar_failure_callgraph_runtime` | normal execution plus every admitted signed/unsigned fixed-integer detector outcome at O0/O1/O3 under C++20/C++23, with exact selected-body counts, reports, original source sites, status 70, stdout silence, one terminal call, and the immediate native-exception firewall |
-| `mir_census_regression` | exact reviewed per-example MIR body ownership recorded in `tests/mir_census_baseline.json` |
+| `mir_census_regression` | every example compiles and its MIR body count stays within the census budget (`tests/census_budget.py`) of `tests/mir_census_baseline.json` |
 | `compiler_debug_tooling` | portable failure capture/replay plus decline-census body segmentation, body-kind-local spellability, deterministic generation, backend-only classification, and argument validation |
-| `mir_cutover_corpus_oracle` | every example builds and runs at `-O0`/C++20 and `-O3`/C++23 with identical body ownership, exit status, stdout, and stderr |
+| `mir_cutover_corpus_oracle` | every example builds and runs at `-O0`/C++20 and `-O3`/C++23 with identical exit status, stdout, and stderr, and recorded examples keep their body count within the census budget |
 | `cpp_mir_body_emitter_preflight` / `cpp_mir_body_emitter_text` / `cpp_mir_body_emitter_lifecycle` / `cpp_mir_body_emitter_census` / `cpp_mir_body_emitter_corpus` / `cpp_mir_body_emitter_corpus_protocol` | Manifest-backed tests split into preflight/representation, ordinary text, lifecycle/failure, and corpus-protocol executables; classification, immutable-plan lifetime, typed-edge, initializer, ownership, array, virtual-family, inline-capture, Expected, and reference-transfer assertions remain owned by focused suites; the census rejects missing or duplicate registrations, while the four-processor coordinator runs both corpus sweeps once per exact lowered-program census source and re-aggregates readiness floors, feature witnesses, determinism, direct control flow, and byte agreement; protocol tests reject malformed or mismatched worker evidence |
 | `issue_144_class_array_field_runtime` | trivial, cleanup-owning, move-only, passive-polymorphic, and destructor-bearing polymorphic fixed-array fields at O0/O2 under C++20/C++23; concrete interface dispatch and constant element-field projections; exact construction and destruction totals; and move-only element-copy rejection with `GTI-S2003` |
 | `issue_146_class_value_positions_runtime` | generated-copy and explicit-move class parameter field initialization, passive and move-only lambda move-capture, and owning `Expected` payload return/extraction at O0/O3 under C++20/C++23, with no output and exact zero-status completion |
@@ -11042,10 +11061,19 @@ host target to the LoweredProgram helper. Refreshing one measured profile keeps
 the other profile's reviewed counts; incomplete observations cannot update it.
 `mir_census_profile_controls` checks target selection, both consumers, malformed
 profiles and update isolation without claiming native execution evidence.
-The C++ body-emitter corpus retains example 183, `immediate-functions.gti`,
-in its structural readiness sweep and asserts the explicit unsupported
-`aggregate constant publication` boundary in its emission sweep. The native
-corpus oracle independently executes that LLVM-only example at O0 and O3.
+The remaining Linux differences in examples 087 and 089 come from native C
+scalar identity: `c_size_t` aliases C `unsigned long` on both Unix targets,
+while `uint64_t` aliases `unsigned long` on Linux and `unsigned long long` on
+macOS. Linux therefore shares the `std::layout_of` specialization used by
+storage allocation and the process resource's C-size bound; macOS retains two.
+Explicit target selection reproduces this difference on the same host, so it
+is not host-container iteration drift.
+The C++ body-emitter corpus retains examples 182, `bounded-array-borrows.gti`,
+and 183, `immediate-functions.gti`, in its structural readiness sweep and
+asserts their explicit unsupported `generic fixed-array reference signatures`
+and `aggregate constant publication` boundaries in its emission sweep. The
+native corpus oracle independently executes both LLVM-only examples at O0
+and O3.
 
 The base-constructor stage gate retains the existing generated-base, owning
 payload-argument and field-after-base ordering mutations. Checked/effectful
@@ -11331,6 +11359,15 @@ Only those example entries and corresponding totals change; the complete
 corpus census/oracle must still be run by the combined acceptance campaign.
 
 ### Bounded case workers and development selections
+
+The C++ MIR corpus worker shares one immutable frontend result between its
+readiness and text-agreement sweeps when their source and target profile match.
+Both sweeps still build their own representation rows and plans and retain all
+body, rejection, deterministic-text and aggregate assertions. Concurrent-profile
+readiness cases keep a distinct default-profile analysis for agreement. This
+reuse is confined to a single-source worker; `GTI_CPP_MIR_CORPUS_NO_REUSE=1`
+retains the independent-analysis path for differential timing and evidence.
+
 
 `compiler_pipeline` validates the complete named-test manifest before execution.
 Configure `-DGTI_COMPILER_TEST_ISOLATE_CASES=ON` to run every listed compiler case
