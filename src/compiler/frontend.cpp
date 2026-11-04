@@ -291,7 +291,8 @@ std::size_t estimatedTokenBytes(const std::vector<Token> &tokens) {
 } // namespace
 
 std::string frontendCacheContext(const FrontendOptions &options) {
-  return cacheContext(options);
+  // Lexical and parsed cache rows are keyed by the syntax identity alone.
+  return syntaxCacheContext(options);
 }
 
 Frontend::Frontend(FrontendOptions options) : options(std::move(options)) {}
