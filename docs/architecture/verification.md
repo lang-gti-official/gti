@@ -10561,6 +10561,21 @@ grammar production, or formatting rule. The LSP receives their semantic
 diagnostics through the shared frontend and should not implement separate
 ownership or entry-signature inference.
 
+## Single-body MIR verification scaling
+
+`single_body_compile_scaling` retains the native LLVM O1 45/180-block bound
+and adds a 90/360-block `--emit-mir -O1` profile. Both warm the compiler and use
+three paired CPU-time samples with the one-block baseline subtracted. The
+MIR profile must grow by at most 6x for 4x statements, so fixed native codegen
+and linking costs cannot hide a quadratic verification scan. `--mir-only`
+selects that same regression for controlled parent/candidate comparisons.
+`mir_full_expression` checks indexed and scanned materialization equivalence,
+including duplicate sources, duplicate instruction IDs, wrong defining blocks,
+nested bodies and mutation between read scopes. The ownership compiler suite
+and MIR/optimizer consumers retain branch joins, reservation, parking, cleanup
+and forged-MIR rejection coverage. These acceleration indexes never replace
+those proofs or change the serialized MIR contract.
+
 ## Post-Cutover MIR Corpus Gates
 
 ### Native LLVM Admission Gates

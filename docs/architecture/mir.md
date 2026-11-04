@@ -3132,7 +3132,9 @@ IDs are body-local and start at one.
 ## Lowering And Verification
 
 Read-only body verification uses a scoped index of HIR source values and MIR
-instruction definitions. It retains every value for a source, so duplicate
+instruction definitions. Call-input validation also groups value drop obligations
+by HIR source identity once per body, retaining every duplicate for its existing
+uniqueness checks. It retains every value for a source, so duplicate
 materializations remain ambiguous, and checks the exact defining block and
 producer predicate. Duplicate instruction IDs fall back to the original scan.
 The index supplies lookup speed, never proof authority. Nested verification of

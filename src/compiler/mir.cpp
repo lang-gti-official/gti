@@ -10864,6 +10864,22 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
     }
   }
 
+  // Call-input validation needs every matching obligation, including
+  // duplicates. Group once; selecting one arbitrary owner would weaken the
+  // independent uniqueness checks below.
+  std::unordered_map<HirValueId, std::vector<const MirDropObligation *>>
+      valueDropObligations;
+  for (const auto &drop : body.dropObligations)
+    if (drop.kind == MirDropObligationKind::Value)
+      valueDropObligations[drop.value].push_back(&drop);
+  const auto dropsForValue =
+      [&](HirValueId value) -> std::span<const MirDropObligation *const> {
+    const auto found = valueDropObligations.find(value);
+    return found == valueDropObligations.end()
+               ? std::span<const MirDropObligation *const>{}
+               : std::span<const MirDropObligation *const>{found->second};
+  };
+
   const auto validPlace = [&](MirPlaceId id) {
     return body.findPlace(id) != nullptr;
   };
@@ -11748,11 +11764,9 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           return false;
       }
       std::vector<MirDropObligationId> obligations;
-      for (const MirDropObligation &obligation : body.dropObligations) {
-        if (obligation.kind == MirDropObligationKind::Value &&
-            obligation.value == source->sourceValue &&
-            obligation.dropType.type == input.info.type) {
-          obligations.push_back(obligation.id);
+      for (const auto *obligation : dropsForValue(source->sourceValue)) {
+        if (obligation->dropType.type == input.info.type) {
+          obligations.push_back(obligation->id);
         }
       }
       if (input.preparedParameterDrop) {
@@ -12031,13 +12045,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
         return false;
       }
 
-      std::vector<const MirDropObligation *> obligations;
-      for (const MirDropObligation &obligation : body.dropObligations) {
-        if (obligation.kind == MirDropObligationKind::Value &&
-            obligation.value == input.hirValue) {
-          obligations.push_back(&obligation);
-        }
-      }
+      const auto obligations = dropsForValue(input.hirValue);
       if (obligations.size() != 1 ||
           obligations.front()->place != operand.place ||
           obligations.front()->dropType.type != input.info.type ||
@@ -12183,13 +12191,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
         return false;
       }
 
-      std::vector<const MirDropObligation *> obligations;
-      for (const MirDropObligation &obligation : body.dropObligations) {
-        if (obligation.kind == MirDropObligationKind::Value &&
-            obligation.value == input.hirValue) {
-          obligations.push_back(&obligation);
-        }
-      }
+      const auto obligations = dropsForValue(input.hirValue);
       if (obligations.size() != 1 ||
           obligations.front()->place != operand.place ||
           obligations.front()->dropType.type != referent ||

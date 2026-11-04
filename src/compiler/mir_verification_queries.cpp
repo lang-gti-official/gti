@@ -12,18 +12,29 @@ namespace lang::mir_detail {
 
 struct MirBodyReadScope::Index {
   const MirBody *body;
-  std::unordered_map<HirValueId, std::vector<const MirValue *>> sources;
-  std::unordered_map<MirInstructionId,
-                     std::pair<const MirBlock *, const MirInstruction *>>
-      instructions;
+  std::vector<const MirValue *> sources;
+  std::vector<std::pair<const MirBlock *, const MirInstruction *>> instructions;
   bool uniqueInstructions = true;
   explicit Index(const MirBody &value) : body(&value) {
+    sources.reserve(value.values.size());
     for (const auto &item : value.values)
-      sources[item.sourceValue].push_back(&item);
+      sources.push_back(&item);
+    std::stable_sort(sources.begin(), sources.end(), [](auto left, auto right) {
+      return left->sourceValue < right->sourceValue;
+    });
+    instructions.reserve(value.instructionCount());
     for (const auto &block : value.blocks)
       for (const auto &item : block.instructions)
-        if (!instructions.emplace(item.id, std::pair{&block, &item}).second)
-          uniqueInstructions = false;
+        instructions.emplace_back(&block, &item);
+    std::sort(instructions.begin(), instructions.end(),
+              [](auto left, auto right) {
+                return left.second->id < right.second->id;
+              });
+    uniqueInstructions =
+        std::adjacent_find(instructions.begin(), instructions.end(),
+                           [](auto left, auto right) {
+                             return left.second->id == right.second->id;
+                           }) == instructions.end();
   }
 };
 thread_local const MirBodyReadScope::Index *MirBodyReadScope::current = nullptr;
@@ -39,10 +50,16 @@ indexedSourceValues(const MirBody &body, HirValueId source) {
   const auto *index = MirBodyReadScope::current;
   if (!index || index->body != &body)
     return std::nullopt;
-  const auto found = index->sources.find(source);
-  if (found == index->sources.end())
-    return std::span<const MirValue *const>{};
-  return std::span<const MirValue *const>(found->second);
+  const auto first =
+      std::lower_bound(index->sources.begin(), index->sources.end(), source,
+                       [](const MirValue *value, HirValueId id) {
+                         return value->sourceValue < id;
+                       });
+  const auto last = std::upper_bound(first, index->sources.end(), source,
+                                     [](HirValueId id, const MirValue *value) {
+                                       return id < value->sourceValue;
+                                     });
+  return std::span<const MirValue *const>(first, last);
 }
 std::optional<const MirInstruction *> indexedInstruction(const MirBody &body,
                                                          const MirBlock &block,
@@ -50,10 +67,15 @@ std::optional<const MirInstruction *> indexedInstruction(const MirBody &body,
   const auto *index = MirBodyReadScope::current;
   if (!index || index->body != &body || !index->uniqueInstructions)
     return std::nullopt;
-  const auto found = index->instructions.find(id);
-  return found == index->instructions.end() || found->second.first != &block
+  const auto found =
+      std::lower_bound(index->instructions.begin(), index->instructions.end(),
+                       id, [](const auto &entry, MirInstructionId value) {
+                         return entry.second->id < value;
+                       });
+  return found == index->instructions.end() || found->second->id != id ||
+                 found->first != &block
              ? nullptr
-             : found->second.second;
+             : found->second;
 }
 
 bool nullGuardedDestructor(const MirProgram &program,
