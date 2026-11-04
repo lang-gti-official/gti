@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Process-owner allocations can disappear; escaping owners still allocate."""
 
-import os
 from pathlib import Path
 import subprocess
 import sys
@@ -51,12 +50,10 @@ def main():
             assert (result.returncode, result.stderr) == (0, "") and result.stdout in accepted, (
                 mode, result)
             print(f"Process allocation elision: {mode} passed", flush=True)
-        if os.name == "nt":
-            return
-        # Native-backend owners allocate through the runtime's POSIX provider,
-        # which the companion counts with the same probe. Elision of the
-        # non-escaping owner is permitted but not required; the escaping owner
-        # must allocate and release exactly once.
+        # LLVM-backed owners allocate through the runtime owner pair, which
+        # reaches the same replaceable nothrow operator new the companion
+        # counts. Elision of the non-escaping owner is permitted but not
+        # required; the escaping owner must allocate and release exactly once.
         # O2 is where the shipped backend's owner elision is observed.
         for label, flags, _native in native_modes(levels=("O0", "O2")):
             if is_cpp_mode(flags):

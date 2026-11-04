@@ -55,3 +55,19 @@ extern "C" void gti_rt_posix_free_v1(void *address) {
   std::abort();
 }
 #endif
+
+// Generated owners allocate through the runtime owner pair rather than the
+// process provider; a null owner must reach neither.
+extern "C" void *gti_rt_owner_allocate_v1(std::uint64_t bytes,
+                                          std::uint64_t alignment) {
+  (void)bytes;
+  (void)alignment;
+  std::abort();
+}
+
+extern "C" void gti_rt_owner_release_v1(void *address,
+                                        std::uint64_t alignment) {
+  (void)address;
+  (void)alignment;
+  std::abort();
+}
