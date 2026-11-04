@@ -6754,11 +6754,14 @@ unsupported record retained as fallback. Malformed base rows, witnesses and
 location records reject before that selection is evaluated.
 
 `tests/llvm_readiness_baseline.json` is the versioned durable readiness
-contract. It pins the frozen-baseline provenance, canonical source providers,
-supported-family obligations, shipped target/profile identities and complete
-O-LLVM-16 gate names without copying body/block/instruction inventories. Exact
-required-use inventories, counts and digests are run artifacts tied to the
-source, compiler, build and target that produced them. Receipts for a different,
+contract. It pins the frozen-baseline provenance, the canonical source
+providers (identity, kind and manifest), supported-family obligations, shipped
+target/profile identities and complete O-LLVM-16 gate names without copying
+body/block/instruction inventories. Provider member counts and inventory
+digests, like exact required-use inventories, are run artifacts tied to the
+source, compiler, build and target that produced them: the audit derives them
+on every run, after resolving every member to a repository file and checking
+every stdlib source against its surface fingerprint. Receipts for a different,
 truncated or stale artifact do not apply. The normal focused evidence gate
 emits `gti.llvm.readiness-run/v1` with an explicit
 `focused-schema-control` scope and therefore cannot make a candidate promotion
