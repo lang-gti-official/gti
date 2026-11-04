@@ -1,0 +1,45 @@
+// Forward an already-selected plain base reference without applying the
+// complete object's base adjustment a second time. An interface precedes it.
+mut int drops = 0;
+interface Prefix { int prefix(); };
+class Base {
+public:
+  mut int value;
+  Base(int value) : value(value) {}
+};
+class Derived : public Prefix, public Base {
+public:
+  Derived(int value) : Base(value) {}
+  int prefix() override { return 99; }
+  ~Derived() { drops++; }
+};
+struct Empty { Empty() = default; };
+struct EmptyDerived : public Empty { EmptyDerived() = default; };
+
+int read(Base& value) { return value.value; }
+void write(mut Base& value, int number) { value.value = number; }
+Base& relay(Base& value) { return value; }
+int empty(Empty& value) { return 1; }
+
+int main() {
+  EmptyDerived empty_owner{};
+  Empty& empty_view = empty_owner;
+  if (empty(empty_view) != 1) { return 1; }
+  {
+    mut Derived owner{11};
+    {
+      Base& view = owner;
+      Base& again = view;
+      if (read(view) != 11 || read(again) != 11 || read(relay(again)) != 11) {
+        return 2;
+      }
+    }
+    {
+      mut Base& view = owner;
+      write(view, 23);
+      if (read(view) != 23) { return 3; }
+    }
+    if (owner.value != 23) { return 4; }
+  }
+  return drops == 1 ? 0 : 5;
+}

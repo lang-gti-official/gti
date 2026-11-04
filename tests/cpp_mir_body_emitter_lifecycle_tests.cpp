@@ -3251,7 +3251,9 @@ void testCopiedBorrowedArgumentAcrossInvoke() {
                 expect(!lang::CppMirBodyEmitter(malformed, map)
                             .supportsFailureBodyText(address),
                        "observer storage proof must reject missing publication "
-                       "or pre-live storage");
+                       "or pre-live storage " +
+                           std::to_string(mutation) + " for producer " +
+                           std::to_string(producer.id));
             }
           }
         }
@@ -11430,6 +11432,66 @@ void testFailureCapableClassReturnFieldRead() {
   checkFailureCapableClassReturnFieldRead(true);
 }
 
+void testDiscardedOwningAssignment() {
+  const auto frontend =
+      analyzeWithStandardLibrary("discarded-owning-assignment.gti", R"(
+import std.utility;
+class Ticket {
+public:
+  int value;
+  Ticket(int value) : value(value) {}
+  ~Ticket() {}
+};
+int choose(bool condition, mut Ticket target, Ticket first, Ticket second) {
+  condition ? (target = std::move(first)) : (target = std::move(second));
+  (condition ? Ticket(19) : Ticket(20)), 3;
+  return target.value;
+}
+int main() { return choose(true, Ticket(1), Ticket(5), Ticket(7)) - 5; }
+)");
+  expect(frontend.canGenerateCode(), "discarded owning assignments verify");
+  if (!frontend.canGenerateCode())
+    return;
+  expect(!gti_test::emitCpp(frontend).contents.empty(),
+         "conditional moved assignments and discarded real objects emit");
+  std::size_t checked = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Move ||
+            !instruction.destination || instruction.lifecycle.size() != 1)
+          continue;
+        const auto *slot = function.body.findPlace(*instruction.destination);
+        if (!slot || slot->root != lang::MirPlaceRootKind::Temporary)
+          continue;
+        ++checked;
+        for (int mutation = 0; mutation != 3; ++mutation) {
+          auto malformed = frontend.mir;
+          auto *body = lang::findMirBody(
+              malformed, {lang::MirBodyKind::Function, function.id});
+          if (mutation == 0) {
+            body->places[slot->id - 1].sourceValue = 0;
+          } else {
+            for (auto &changedBlock : body->blocks)
+              for (auto &changed : changedBlock.instructions)
+                if (changed.kind == lang::MirInstructionKind::Drop &&
+                    changed.destination == slot->id) {
+                  if (mutation == 1)
+                    changed.lifecycle.front().conditional = false;
+                  else
+                    changed.lifecycle.front().source = 0;
+                }
+          }
+          expect(!lang::verifyMirProgram(malformed).valid(),
+                 "conditional staging cannot forge its source, activation "
+                 "guard, or retirement obligation");
+        }
+      }
+    }
+  }
+  expect(checked == 2, "both conditional move staging slots are exercised");
+}
+
 void testDiscardedCleanupFreeClassResult() {
   const auto frontend = analyze("discarded-class-result.gti", R"(
 struct Packet {
@@ -12650,20 +12712,36 @@ void testPassiveBorrowedConstructedFieldPrefix() {
 
 void testNestedConstructorArgumentPublication() {
   // A forged native tree must be refused. When the owner declares the field
-  // in deferred storage, the verified body may publish it in MIR order
-  // instead; that route trusts verified MIR, so MIR verification must then
-  // reject the forgery before emission.
-  const auto refusedOrUnverified = [](const lang::MirProgram &malformed,
-                                      const lang::CppMirBodyEmissionMap &map,
-                                      lang::MirBodyAddress address,
-                                      lang::SymbolId field) {
-    const auto *constructor = malformed.findConstructorInstance(address.owner);
+  // in deferred storage, or its type has a proved private empty state (which
+  // may recursively contain deferred fields), the verified body may publish
+  // it in MIR order instead. Those routes trust verified MIR, so MIR
+  // verification must then reject the forgery before emission.
+  const auto bodyStagedField = [](const lang::MirProgram &program,
+                                  lang::MirBodyAddress address,
+                                  lang::SymbolId field) {
+    const auto *constructor = program.findConstructorInstance(address.owner);
+    const auto *owner = constructor == nullptr
+                            ? nullptr
+                            : program.findClassInstance(constructor->owner);
+    if (owner == nullptr)
+      return false;
+    const auto member = std::find_if(
+        owner->declaredFields.begin(), owner->declaredFields.end(),
+        [&](const auto &candidate) { return candidate.symbol == field; });
+    return member != owner->declaredFields.end() &&
+           (lang::cppMirDeferredFieldStorage(program, constructor->owner,
+                                             field) ||
+            lang::cppMirFailureConstructorEmptyStateTypeEligible(program,
+                                                                 member->type));
+  };
+  const auto refusedOrUnverified = [&](const lang::MirProgram &malformed,
+                                       const lang::CppMirBodyEmissionMap &map,
+                                       lang::MirBodyAddress address,
+                                       lang::SymbolId field) {
     if (!lang::CppMirBodyEmitter(malformed, map)
              .supportsFailureBodyText(address))
       return true;
-    return constructor != nullptr &&
-           lang::cppMirDeferredFieldStorage(malformed, constructor->owner,
-                                            field) &&
+    return bodyStagedField(malformed, address, field) &&
            !lang::verifyMirProgram(malformed).valid();
   };
   std::size_t checked = 0;
@@ -12781,14 +12859,40 @@ void testNestedConstructorArgumentPublication() {
                     *prepared->preparedParameterDrop));
             drop->initiallyActive = true;
           }
-          expect(lang::cppMirConstructedFieldInitializerBindings(malformed,
-                                                                 *changed)
-                         .empty() &&
-                     refusedOrUnverified(malformed, map, address, field.field),
+          const bool nativeRefused =
+              lang::cppMirConstructedFieldInitializerBindings(malformed,
+                                                              *changed)
+                  .empty();
+          const bool bodyRefused =
+              refusedOrUnverified(malformed, map, address, field.field);
+          if (lang::CppMirBodyEmitter(malformed, map)
+                  .supportsFailureBodyText(address)) {
+            expect(bodyStagedField(frontend.mir, address, field.field),
+                   "body fallback has the same proved storage route before "
+                   "mutation");
+            // The text vocabulary operates on verified MIR. Production goes
+            // through the immutable LoweredProgram seal, so this alternate
+            // representation must never turn a failed proof into emitted C++.
+            const auto lowered = lang::LoweredProgramBuilder().build(
+                frontend.program, frontend.semantics, frontend.hir, malformed,
+                malformed, {}, lang::TargetInfo::host());
+            expect(!lowered.valid() &&
+                       std::any_of(lowered.issues.begin(), lowered.issues.end(),
+                                   [](const auto &issue) {
+                                     return issue.kind ==
+                                            lang::LoweredProgramIssueKind::
+                                                InvalidSourceMir;
+                                   }),
+                   "production admission rejects the malformed body-staged "
+                   "constructor even when its storage is representable");
+          }
+          expect(nativeRefused && bodyRefused,
                  "nested tree rejects lost types, input order, transfer, "
                  "publication, "
                  "rollback and lifetime activation " +
-                     std::to_string(mutation) + " in " + name);
+                     std::to_string(mutation) + " in " + name +
+                     " (native=" + std::to_string(nativeRefused) +
+                     ", body=" + std::to_string(bodyRefused) + ")");
         }
         if (tree) {
           auto malformed = frontend.mir;
@@ -13464,6 +13568,35 @@ int main() {
   return entry.value - 31;
 }
 )"},
+      {"stored-reference-field-compound.gti", R"(
+class Writer {
+public:
+  mut int& target;
+  Writer(mut int& target) : target(target) {}
+};
+int main() {
+  mut int target = 30;
+  { mut Writer writer{target}; writer.target += 1; }
+  return target - 31;
+}
+)"},
+      {"nested-stored-reference-field-compound.gti", R"(
+class Writer {
+public:
+  mut int& target;
+  Writer(mut int& target) : target(target) {}
+};
+class Outer {
+public:
+  mut Writer writer;
+  Outer(mut int& target) : writer(Writer(target)) {}
+};
+int main() {
+  mut int target = 30;
+  { mut Outer outer{target}; outer.writer.target += 1; }
+  return target - 31;
+}
+)"},
   };
   for (const auto &[name, fixtureSource] : sources) {
     const auto frontend = analyzeWithStandardLibrary(name, fixtureSource);
@@ -13505,6 +13638,13 @@ int main() {
               place->projections.front().kind ==
                   lang::MirProjectionKind::Dereference &&
               place->projections.back().kind == lang::MirProjectionKind::Field;
+          const bool storedReferenceField =
+              place && place->root == lang::MirPlaceRootKind::Binding &&
+              place->projections.size() >= 2 &&
+              place->projections.front().kind ==
+                  lang::MirProjectionKind::Field &&
+              place->projections.back().kind ==
+                  lang::MirProjectionKind::Dereference;
           const auto *loan =
               place && place->root == lang::MirPlaceRootKind::Loan
                   ? function.body.findLoan(place->loan)
@@ -13513,7 +13653,7 @@ int main() {
               loan && place->projections.empty() &&
               loan->kind == lang::MirLoanKind::CallResult &&
               loan->access == lang::AccessMode::Mutable;
-          if (!projectedField && !accessorReferent)
+          if (!projectedField && !storedReferenceField && !accessorReferent)
             continue;
           const auto *sum =
               definition(function.body, instruction.operands.front().value);
@@ -13553,6 +13693,8 @@ int main() {
               malformed, {lang::MirBodyKind::Function, function.id});
           if (projectedField)
             body->places[place->id - 1].projections.back().field = 0;
+          else if (storedReferenceField)
+            body->places[place->id - 1].projections.front().field = 0;
           else
             body->loans[loan->id - 1].access = lang::AccessMode::ReadOnly;
           expect(!lang::verifyMirProgram(malformed).valid(),
@@ -16108,6 +16250,18 @@ void testClassStoresIntoNamedPlaces() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-class-store-named-places.gti", R"(
 import std.vector;
+import std.memory;
+struct Holder {
+  mut std::unique_ptr<int> value;
+  Holder(std::unique_ptr<int> input) : value(std::move(input)) {}
+};
+int32_t projected_move() {
+  mut std::vector<Holder> values{};
+  values.push_back(Holder(std::make_unique<int>(1)));
+  std::unique_ptr<int> replacement = std::make_unique<int>(2);
+  values[std::size_t(0)].value = std::move(replacement);
+  return *values[std::size_t(0)].value - 2;
+}
 struct Point {
   int32_t x;
   int32_t y;
@@ -16131,7 +16285,7 @@ int32_t subscript(Point q) {
 }
 int main() {
   return to_global(Point(5, 4)) + fresh_global(5) + from_global() +
-         captured(Point(5, 4)) + subscript(Point(5, 4)) - 28;
+         captured(Point(5, 4)) + subscript(Point(5, 4)) - 28 + projected_move();
 }
 )");
   expect(frontend.canGenerateCode(),
@@ -16149,7 +16303,8 @@ int main() {
           ? &frontend.mir.lambdaInstances().front()
           : nullptr;
   const std::vector<std::string> names{"to_global", "fresh_global",
-                                       "from_global", "subscript"};
+                                       "from_global", "subscript",
+                                       "projected_move"};
   const bool lowered =
       lambda != nullptr &&
       std::all_of(names.begin(), names.end(),
@@ -16229,6 +16384,31 @@ int main() {
         }
   expect(loanChanged && functionText(readOnlyLoan, "subscript").empty(),
          "a read-only loan is not a destination the copy may fuse into");
+  expect(!functionText(frontend.mir, "projected_move").empty(),
+         "an owning field of the checked referent accepts its exact moved RHS");
+  for (unsigned mutation = 0; mutation < 3; ++mutation) {
+    auto malformed = frontend.mir;
+    auto *function = const_cast<lang::MirFunctionInstance *>(
+        malformed.findFunctionInstance(idOf("projected_move")));
+    bool changed = false;
+    for (auto &loan : function->body.loans) {
+      if (loan.kind != lang::MirLoanKind::CallResult ||
+          loan.access != lang::AccessMode::Mutable || loan.escapes)
+        continue;
+      changed = true;
+      if (mutation == 0)
+        loan.access = lang::AccessMode::ReadOnly;
+      if (mutation == 1)
+        loan.twoPhase = true;
+      if (mutation == 2)
+        loan.producedBy = 0;
+    }
+    expect(changed && !lang::verifyMirProgram(malformed).valid(),
+           "projected owning replacement retains mutable, ordered, exact "
+           "producer authority");
+    expect(functionText(malformed, "projected_move").empty(),
+           "C++ replacement refuses malformed projected destination authority");
+  }
   lang::MirProgram readOnlyCapture = frontend.mir;
   bool captureChanged = false;
   for (auto &instance : const_cast<std::vector<lang::MirLambdaInstance> &>(
@@ -17067,6 +17247,7 @@ constexpr NamedTest kTests[] = {
     {"testCheckedArrayElementFieldAccess", testCheckedArrayElementFieldAccess},
     {"testAssignmentResultWholeValue", testAssignmentResultWholeValue},
     {"testNestedClassResultFieldView", testNestedClassResultFieldView},
+    {"testDiscardedOwningAssignment", testDiscardedOwningAssignment},
     {"testDiscardedCleanupFreeClassResult",
      testDiscardedCleanupFreeClassResult},
     {"testNestedCleanupFreeClassResult", testNestedCleanupFreeClassResult},

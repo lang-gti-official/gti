@@ -282,6 +282,10 @@ std::size_t estimatedTokenBytes(const std::vector<Token> &tokens) {
 
 } // namespace
 
+std::string frontendCacheContext(const FrontendOptions &options) {
+  return cacheContext(options);
+}
+
 Frontend::Frontend(FrontendOptions options) : options(std::move(options)) {}
 
 FrontendResult Frontend::analyze(

@@ -1,0 +1,40 @@
+import std.utility;
+import std.vector;
+class Cursor {
+public:
+  int& current;
+  Cursor(int& value) : current(value) {}
+};
+class Holder {
+public:
+  std::vector<int> buffer;
+  Cursor cursor;
+  Holder(Cursor cursor) : buffer(std::vector<int>()), cursor(std::move(cursor)) {}
+};
+class Outer {
+public:
+  std::vector<int> buffer;
+  Holder holder;
+  Outer(Holder holder) : buffer(std::vector<int>()), holder(std::move(holder)) {}
+};
+class Reader {
+public:
+  int& current;
+  std::vector<int> buffer;
+  Reader(int& value) : current(value), buffer(std::vector<int>()) {}
+};
+class Mixed<T> {
+public:
+  std::vector<int> prefix;
+  T value;
+  Mixed(T value) : prefix(std::vector<int>()), value(std::move(value)) {}
+};
+int main() {
+  int value = 3;
+  Outer first = Outer(Holder(Cursor(value)));
+  Outer second = std::move(first);
+  Mixed<Cursor> passive{Cursor(value)};
+  Mixed<Reader> owning{Reader(value)};
+  Mixed<Reader> moved = std::move(owning);
+  return second.holder.cursor.current + passive.value.current + moved.value.current - 9;
+}
