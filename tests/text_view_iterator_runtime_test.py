@@ -95,8 +95,10 @@ def main():
             "temporary-view-shell": ('import std.string_view;\nint main() { auto cursor = "abc".begin(); return int(*cursor); }', "GTI-S2017"),
             "ordinary-value-temporary-reference": ('import std.string_view;\nint main() { std::string_view view = "abc"; '
                 'auto cursor = view.begin(); char& character = *cursor; return int(character); }', "GTI-S2017"),
-            "value-iterator-reference-callback": ('import std.string;\nimport std.algorithm;\n'
-                'class RefCounter { public: void operator()(char& value) mut {}  public: RefCounter() = default; }; '
+            # A by-value element is a fresh call result: it may lend a read-only
+            # reference for one call (admitted below), never a mutable one.
+            "value-iterator-mutable-callback": ('import std.string;\nimport std.algorithm;\n'
+                'class RefCounter { public: void operator()(mut char& value) mut {}  public: RefCounter() = default; }; '
                 'int main() { std::string_view view = "abc"; '
                 'auto visits = std::for_each(view.begin(), view.end(), RefCounter()); return 0; }', "GTI-S2029"),
             "value-range-mutable-reference": ('import std.string_view;\nint main() { std::string_view view = "abc"; '
@@ -118,6 +120,21 @@ def main():
             assert result.returncode != 0 and code in result.stderr, (name, result.stdout, result.stderr)
             assert "GTI-B0001" not in result.stderr and not emitted.exists(), (name, result.stderr)
             print(f"{name}: rejected", flush=True)
+        # The call-scoped temporary borrow lets a read-only callback parameter
+        # observe each by-value element for the duration of its call.
+        admitted = {
+            "value-iterator-reference-callback": ('import std.string;\nimport std.algorithm;\n'
+                'class RefCounter { public: void operator()(char& value) mut {}  public: RefCounter() = default; }; '
+                'int main() { std::string_view view = "abc"; '
+                'auto visits = std::for_each(view.begin(), view.end(), RefCounter()); return 0; }'),
+        }
+        for name, source in admitted.items():
+            path = output / f"{name}.gti"
+            path.write_text(source)
+            emitted = output / f"{name}.mir"
+            result = run([compiler, path, "--emit-mir", "-o", emitted])
+            assert result.returncode == 0 and emitted.exists(), (name, result.stdout, result.stderr)
+            print(f"{name}: admitted", flush=True)
         if options.cost:
             executable = output / "text-view-cost"
             started = time.monotonic()
