@@ -321,8 +321,20 @@ public:
   Cursor() = default;
 };
 )";
-  checkNegative(sentinelDeclarations,
-                "mut Cursor cursor{}; bool compared = cursor != End(); "
+  // A member operator borrows a fresh read-only argument for the call, as an
+  // ordinary function does; a mutable reference still needs a place.
+  const auto readOnlySentinel = analyzeWithStandardLibrary(
+      "readonly-sentinel.gti",
+      sentinelDeclarations + "int main(){ Cursor cursor{}; bool compared = "
+                             "cursor != End(); return compared ? 0 : 1; }");
+  expect(readOnlySentinel.canGenerateCode() &&
+             lang::verifyMirProgram(readOnlySentinel.mir).valid(),
+         "a read-only operator parameter borrows a fresh sentinel temporary");
+  auto mutableSentinel = sentinelDeclarations;
+  mutableSentinel.replace(mutableSentinel.find("End& end"),
+                          std::string_view("End& end").size(), "mut End& end");
+  checkNegative(mutableSentinel,
+                "Cursor cursor{}; bool compared = cursor != End(); "
                 "return compared ? 1 : 0;",
                 "GTI-S2022", "No exact overload");
   auto ambiguousSentinel = sentinelDeclarations;

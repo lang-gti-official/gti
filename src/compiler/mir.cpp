@@ -12051,6 +12051,16 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
             producer->operation != MirOperation::PayloadConstruct) ||
            (referent.kind == SemanticType::StringView &&
             producer->operation == MirOperation::Literal));
+      // A passive scalar or plain-enum result owns no storage another value
+      // could borrow, so semantics admits every resolved producer of one. A
+      // closure invocation or an intrinsic publishes the same fresh value as
+      // a direct call; the exact materialization and drop obligation below
+      // are what this input borrows. Program verification separates plain
+      // from payload enumerations.
+      const bool scalarCallResult =
+          producer && producer->kind == MirInstructionKind::Call &&
+          (isPassiveScalarValueType(referent) ||
+           referent.kind == SemanticType::Enum);
       const bool ordinaryConstruction =
           producer != nullptr &&
           producer->kind == MirInstructionKind::Construct &&
@@ -12106,7 +12116,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
               bool(captureDependency) ||
           !sameCallInputTraits(producer->info.traits, source->info.traits) ||
           (!ordinaryConstruction && !generatedDefault && !ordinaryCall &&
-           !scalarComputation && !payloadConstruction &&
+           !scalarComputation && !scalarCallResult && !payloadConstruction &&
            !callableConstruction && !joinedTemporary &&
            producer->kind != MirInstructionKind::Move)) {
         return false;

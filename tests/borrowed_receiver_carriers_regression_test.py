@@ -6,14 +6,17 @@ a method of a by-reference capture's referent or of an accessor's result, a
 synchronized guard taken through a shared or mutable formal, a closure
 holding an owner with a destructor beside a by-reference capture, a local
 reference alias of a by-reference capture, and a closure that moves in a
-cleanup-bound carrier. The C++ oracle and native LLVM must both build it and
-agree on exit status, stdout and stderr at O0 and O2.
+cleanup-bound carrier. Every mode tests/backend_modes.py selects must build
+it and produce the expected exit status, stdout and stderr at O0 and O2.
 """
 
 import pathlib
 import subprocess
 import sys
 import tempfile
+
+from backend_modes import (check_unsupported, native_modes, record_symptom,
+                           unsupported)
 
 FIXTURES = {
     "borrowed_carrier_capture_receiver.gti":
@@ -29,6 +32,13 @@ FIXTURES = {
     "closure_bound_carrier_capture.gti":
         "closure still in scope\nwatcher 1 saw 4\nwatcher 2 saw 5\n"
         "watcher 3 saw 6\nafter consume\ntotal 157\n",
+}
+
+# The frozen C++ backend rejects a formatting call's scalar temporary
+# reference arguments; LLVM keeps this fixture's execution evidence.
+CPP_UNSUPPORTED = {
+    "capture_reference_aliases.gti":
+        "scalar, plain-enum, and text temporary reference arguments",
 }
 
 
@@ -48,22 +58,30 @@ def main() -> int:
         root = pathlib.Path(raw)
         for name, stdout in FIXTURES.items():
             source = fixtures / name
-            for backend in ("cpp", "llvm"):
-                for level in ("O0", "O2"):
-                    executable = root / f"{source.stem}-{backend}-{level}"
-                    built = run([str(compiler), str(source), "--backend", backend,
-                                 f"-{level}", "--execution-profile", "concurrent",
-                                 "-o", str(executable)])
-                    if built.returncode != 0:
-                        failures.append(f"build {name} {backend} {level}: "
-                                        f"{built.stderr[-1500:]}")
-                        continue
-                    ran = run([str(executable)])
-                    observed = (ran.returncode, ran.stdout, ran.stderr)
-                    if observed != (0, stdout, ""):
-                        failures.append(f"run {name} {backend} {level}: {observed!r}")
-                        continue
-                    print(f"{name} {backend} {level}: matched", flush=True)
+            for label, flags, _native in native_modes(("O0", "O2")):
+                executable = root / f"{source.stem}-{label}"
+                built = run([str(compiler), str(source), *flags,
+                             "--execution-profile", "concurrent",
+                             "-o", str(executable)])
+                limitation = unsupported(name, flags,
+                                         cpp_unsupported=CPP_UNSUPPORTED)
+                if limitation is not None:
+                    if not check_unsupported(built, limitation, name, label,
+                                             flags):
+                        record_symptom(limitation, name, label, flags,
+                                       built.returncode != 0 and
+                                       limitation in built.stderr)
+                    continue
+                if built.returncode != 0:
+                    failures.append(f"build {name} {label}: "
+                                    f"{built.stderr[-1500:]}")
+                    continue
+                ran = run([str(executable)])
+                observed = (ran.returncode, ran.stdout, ran.stderr)
+                if observed != (0, stdout, ""):
+                    failures.append(f"run {name} {label}: {observed!r}")
+                    continue
+                print(f"{name} {label}: matched", flush=True)
     if failures:
         sys.stderr.write("\n".join(failures) + "\n")
         return 1

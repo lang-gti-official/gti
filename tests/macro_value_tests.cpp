@@ -1180,7 +1180,7 @@ int main() { return change(fresh(1)); }
 Value& escape(Value& value) { return value; }
 int main() { Value& value = escape(fresh(1)); return value.number; }
 )gti",
-             "may return a reference");
+             "may retain this argument");
   diagnostic(prefix + R"gti(
 int observe(Value& value);
 int main() { return observe(fresh(1)); }

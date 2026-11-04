@@ -2370,7 +2370,17 @@ uniqueMirClassInstanceForType(const MirProgram &program,
               published->kind == MirLoanKind::Stored && !published->entry &&
               !published->escapes &&
               published->producedBy == producer->hirValue;
+          // A passive scalar or plain-enum result is fresh whichever callable
+          // produced it: neither a closure invocation nor an intrinsic can
+          // leave it borrowing anything.
+          const bool scalarResult =
+              argumentPlace != nullptr &&
+              producer->info.type == argumentPlace->type &&
+              (isPassiveScalarValueType(argumentPlace->type) ||
+               (argumentPlace->type.kind == SemanticType::Enum &&
+                program.findPayloadEnum(argumentPlace->type) == nullptr));
           exactProducer =
+              scalarResult ||
               (target != nullptr && argumentPlace != nullptr &&
                target->definitionKind == MirDefinitionKind::Source &&
                target->linkage == LanguageLinkage::Gti &&
