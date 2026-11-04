@@ -2046,3 +2046,9 @@ paths = [
 ]
 owners = ["lsp_release", "lsp_sdk"]
 consumers = ["source_stdlib_ci", "ci_release", "lsp_protocol", "neovim_lsp_configuration"]
+
+[[area]]
+area = "diagnostic-recording"
+paths = ["include/gti/driver/diagnostic_record.h", "src/driver/diagnostic_record.cpp", "tests/diagnostic_record_tests.cpp", "tests/diagnostic_record_cli_test.py"]
+owners = ["diagnostic_record", "diagnostic_record_cli"]
+consumers = ["project_cli_workflow", "driver_pipeline"]
