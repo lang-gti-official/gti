@@ -1,0 +1,1 @@
+Passing the result of an interface method call or a foreign (`extern "C"`) function call directly to a read-only scalar reference parameter, such as a `std::runtime_format` argument, no longer stops compilation with an internal compiler error. `gti test` with the C++ backend builds again: `std::testing` assertion messages format their operands through runtime formatting.

@@ -5,6 +5,11 @@ extern "C" {
 }
 int main() {
   adoption_fail_at(uint64_t(1));
-  unsafe { auto text = std::string(foreign_message()); }
+  // Process allocations are not observable effects (ADR 022), so the copy
+  // must be used for its allocation, and therefore its exhaustion, to remain.
+  unsafe {
+    auto text = std::string(foreign_message());
+    std::println(text);
+  }
   return 1;
 }
