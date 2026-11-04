@@ -376,7 +376,7 @@ The current implemented foundation includes:
   indexed access and read-only `contains(T& value)` membership search,
   reserve, resize, shrink-to-fit, clear, push/pop, indexed insertion/erasure,
   read-only traversal, in-place emplacement, explicit cloneable-element
-  cloning, and construction from one contextual fixed-array value such as
+  cloning, consuming `into_range() &&` traversal on LLVM, and construction from one contextual fixed-array value such as
   `std::vector<int>({1, 2, 3})`; this constructor copies elements from its
   owned array parameter and therefore requires copyable `T` when used.
   `contains` borrows a named `T` value, compares in order until the first match,

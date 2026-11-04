@@ -1,0 +1,47 @@
+// Build a record from owned fields without cloning the values.
+// This small comma splitter deliberately does not implement CSV quoting.
+// Run with: gti 186-consuming-ranges.gti --backend llvm -O3 -o record
+import std.string;
+import std.vector;
+import std.unordered_map;
+import std.panic;
+
+using Row = std::unordered_map<std::string, std::string>;
+
+std::vector<std::string> split(std::string& line) {
+  mut std::vector<std::string> fields{};
+  mut std::size_t start = 0;
+  for (mut std::size_t index = 0; index < line.size(); index++) {
+    if (line[index] == ',') {
+      fields.push_back(line.substr(start, index - start));
+      start = index + std::size_t(1);
+    }
+  }
+  fields.push_back(line.substr(start));
+  return std::move(fields);
+}
+
+Row make_row(std::vector<std::string>& headers, std::vector<std::string> values) {
+  if (headers.size() != values.size()) { std::panic("field count mismatch"); }
+  mut Row row{};
+  mut std::size_t index = 0;
+  for (auto value : std::move(values).into_range()) {
+    row.insert(headers[index].clone(), std::move(value));
+    index++;
+  }
+  // `values` is consumed. `row` owns every value; headers remain read-only.
+  return std::move(row);
+}
+
+int main() {
+  auto headers = split(std::string("name,city"));
+  auto row = make_row(headers, split(std::string("Alice,Perth")));
+  std::println(row.at(headers[std::size_t(0)]));
+  std::println(row.at(headers[std::size_t(1)]));
+  // A partial traversal destroys the unconsumed strings automatically.
+  for (auto field : split(std::string("first,unvisited,last")).into_range()) {
+    std::println(field);
+    break;
+  }
+  return 0;
+}

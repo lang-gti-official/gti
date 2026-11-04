@@ -31,6 +31,7 @@ class ProfileControls(unittest.TestCase):
                           if mac[name] != linux[name]}, {
             "087-associative-containers.gti": (452, 451),
             "089-library-workflow.gti": (918, 917),
+            "186-consuming-ranges.gti": (450, 449),
         })
         lowered = json.loads((ROOT / "tests/lowered_program_census_baseline.json").read_text())
         for name, row in lowered["variants"][reviewed.TARGETS[1]]["examples"].items():
