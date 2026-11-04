@@ -1,5 +1,16 @@
 {
  "schema": 1,
  "description": "Tests that already fail on main and that the merge queue's complete suite excludes, per platform, until the linked issue is fixed. Every entry names its issue; fixing the test removes the entry in the same change. Editing this file runs the complete suite.",
- "tests": []
+ "tests": [
+  {
+   "name": "function_signature_types",
+   "platforms": [
+    "darwin",
+    "linux"
+   ],
+   "issue": "https://github.com/lang-gti-official/gti/issues/234",
+   "reason": "#170's reference-pack forwarding accepts a read-only int& target for std::function<void(mut int&)>, which this test requires rejected; the language rule is undecided",
+   "since": "2026-11-04"
+  }
+ ]
 }
