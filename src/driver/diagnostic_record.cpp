@@ -4,9 +4,15 @@
 #include <algorithm>
 #include <chrono>
 #include <fstream>
+#include <llvm/Support/Base64.h>
 #include <llvm/Support/JSON.h>
 #include <llvm/Support/raw_ostream.h>
 #include <stdexcept>
+#if !defined(_WIN32)
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
+#endif
 
 namespace lang::driver {
 namespace {
@@ -83,7 +89,9 @@ llvm::json::Object location(const SourceSpan &span,
   result["line"] = at.line;
   result["column"] = at.column;
   result["first_line"] = first;
-  result["snippet"] = text->substr(begin, end - begin);
+  const auto snippet = text->substr(begin, end - begin);
+  result["snippet"] =
+      llvm::json::isUTF8(snippet) ? snippet : llvm::json::fixUTF8(snippet);
   return result;
 }
 llvm::json::Object message(const Diagnostic &d, const SourceManager &sources) {
@@ -113,9 +121,38 @@ llvm::json::Object message(const Diagnostic &d, const SourceManager &sources) {
 }
 struct Lock {
   fs::path path;
+#if !defined(_WIN32)
+  int descriptor = -1;
+#endif
+  void acquire(const fs::path &storage) {
+#if !defined(_WIN32)
+    descriptor = ::open((storage / ".lock").c_str(),
+                        O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
+    if (descriptor < 0 || ::flock(descriptor, LOCK_EX | LOCK_NB) != 0)
+      throw std::runtime_error(
+          "diagnostic recorder is busy or storage cannot be locked");
+    const auto temporary =
+        storage /
+        (".staging-" + std::to_string(::getpid()) + "-" +
+         std::to_string(
+             std::chrono::steady_clock::now().time_since_epoch().count()));
+    if (!fs::create_directory(temporary))
+      throw std::runtime_error("cannot stage diagnostic record");
+    path = temporary;
+#else
+    (void)storage;
+    throw std::runtime_error(
+        "diagnostic recording currently requires Linux or macOS");
+#endif
+  }
   ~Lock() {
     std::error_code error;
-    fs::remove_all(path, error);
+    if (!path.empty())
+      fs::remove_all(path, error);
+#if !defined(_WIN32)
+    if (descriptor >= 0)
+      ::close(descriptor);
+#endif
   }
 };
 } // namespace
@@ -138,7 +175,11 @@ recordDiagnostics(const DiagnosticRecordContext &context,
       if (bytes > limit / 2)
         throw std::runtime_error("source snapshot exceeds 8 MiB");
       inputs.push_back(llvm::json::Object{
-          {"path", name}, {"sha256", hash(text)}, {"text", text}});
+          {"path", name},
+          {"sha256", hash(text)},
+          {"encoding", llvm::json::isUTF8(text) ? "utf-8" : "base64"},
+          {"text",
+           llvm::json::isUTF8(text) ? text : llvm::encodeBase64(text)}});
     }
     for (const auto &arg : context.arguments)
       arguments.push_back(arg);
@@ -159,9 +200,8 @@ recordDiagnostics(const DiagnosticRecordContext &context,
     directory(root / ".gti");
     const auto storage = root / ".gti" / "diagnostic-reports";
     directory(storage);
-    if (!fs::create_directory(storage / ".lock"))
-      throw std::runtime_error("diagnostic recorder is busy");
-    Lock lock{storage / ".lock"};
+    Lock lock;
+    lock.acquire(storage);
     if (!fs::exists(fs::symlink_status(storage / ".gitignore")))
       write(storage / ".gitignore", "*\n");
     const auto path = storage / (id + ".json");
@@ -213,7 +253,8 @@ DiagnosticRecordResult exportDiagnosticRecord(const fs::path &record,
       throw std::runtime_error("invalid diagnostic JSON");
     }
     auto *object = parsed->getAsObject();
-    if (!object || object->getString("schema") != "gti-diagnostic-record-v1")
+    if (!object || object->getString("schema") != "gti-diagnostic-record-v1" ||
+        !object->getArray("diagnostics") || !object->getArray("sources"))
       throw std::runtime_error("unsupported diagnostic record");
     (*object)["user_note"] = std::string(note);
     const auto content = encode(*parsed) + "\n";
@@ -224,6 +265,40 @@ DiagnosticRecordResult exportDiagnosticRecord(const fs::path &record,
       throw std::runtime_error("export requires a new directory");
     fs::permissions(destination, fs::perms::owner_all);
     write(destination / "report.json", content);
+    std::string readable = "GTI diagnostic evidence\n\n";
+    if (!note.empty())
+      readable += "User note: " + std::string(note) + "\n\n";
+    const auto *diagnostics = object->getArray("diagnostics");
+    if (diagnostics)
+      for (const auto &entry : *diagnostics) {
+        const auto *d = entry.getAsObject();
+        if (!d)
+          continue;
+        readable += d->getString("code").value_or("").str() + ": " +
+                    d->getString("message").value_or("").str() + "\n";
+        const auto appendLocation = [&](const llvm::json::Object *span) {
+          if (!span)
+            return;
+          readable += span->getString("source").value_or("").str() + ":" +
+                      std::to_string(span->getInteger("line").value_or(0)) +
+                      "\n";
+          readable += span->getString("snippet")
+                          .value_or("[source unavailable]")
+                          .str() +
+                      "\n";
+        };
+        appendLocation(d->getObject("primary"));
+        if (const auto *related = d->getArray("related"))
+          for (const auto &item : *related) {
+            if (const auto *r = item.getAsObject()) {
+              readable +=
+                  "Note: " + r->getString("message").value_or("").str() + "\n";
+              appendLocation(r->getObject("span"));
+            }
+          }
+        readable += "\n";
+      }
+    write(destination / "report.txt", readable);
     write(destination / "README.txt",
           "GTI diagnostic evidence\n\nreport.json preserves ordered "
           "diagnostics, captured source buffers, and invocation metadata. "

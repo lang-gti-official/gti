@@ -39,6 +39,8 @@ int main() {
         first.path, root / "export", "expected a declaration");
     if (exported.path.empty())
       throw std::runtime_error(exported.error);
+    if (!fs::is_regular_file(root / "export/report.txt"))
+      throw std::runtime_error("missing readable report");
     std::ifstream input(root / "export/report.json");
     const std::string text((std::istreambuf_iterator<char>(input)), {});
     for (const auto *required :
@@ -57,6 +59,36 @@ int main() {
         lang::driver::recordDiagnostics(context, std::vector{d}, sources);
     if (changed.path.empty() || changed.path == first.path)
       throw std::runtime_error("lost changed source observation");
+    sources.set((root / "binary.gti").string(),
+                std::string(1, static_cast<char>(0xff)));
+    const auto binary =
+        lang::driver::recordDiagnostics(context, std::vector{d}, sources);
+    if (binary.path.empty())
+      throw std::runtime_error(binary.error);
+    std::ifstream binaryInput(binary.path);
+    const std::string binaryText((std::istreambuf_iterator<char>(binaryInput)),
+                                 {});
+    if (binaryText.find("base64") == binaryText.npos ||
+        binaryText.find("/w==") == binaryText.npos)
+      throw std::runtime_error("invalid UTF-8 snapshot was not preserved");
+    for (int i = 0; i < 34; ++i) {
+      d.message = "distinct observation " + std::to_string(i);
+      if (lang::driver::recordDiagnostics(context, std::vector{d}, sources)
+              .path.empty())
+        throw std::runtime_error("retention recording failed");
+    }
+    std::size_t retained = 0;
+    for (const auto &entry :
+         fs::directory_iterator(root / ".gti/diagnostic-reports"))
+      if (entry.path().extension() == ".json")
+        ++retained;
+    if (retained != 32)
+      throw std::runtime_error("retention bound failed");
+    sources.set("oversized.gti", std::string(8 * 1024 * 1024 + 1, 'x'));
+    if (lang::driver::recordDiagnostics(context, std::vector{d}, sources)
+            .error.empty())
+      throw std::runtime_error("source size limit failed");
+    sources.clear();
     d.severity = lang::DiagnosticSeverity::Warning;
     if (!lang::driver::recordDiagnostics(context, std::vector{d}, sources)
              .path.empty())

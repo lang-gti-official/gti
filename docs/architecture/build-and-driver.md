@@ -1069,7 +1069,7 @@ programs retain their existing declared-input contract.
 ### Local diagnostic evidence
 
 `gti build --record-diagnostics` and `gti run --record-diagnostics` opt into
-local recording of structured compilation errors. Recording is off by default;
+local recording of structured compilation errors on Linux and macOS. Recording is off by default;
 ordinary successful builds do not create evidence. Diagnostics and command exit
 status remain unchanged if the recorder cannot save a report.
 
@@ -1087,6 +1087,7 @@ compiler identity or invocation create a separate record. Storage retains the
 of encoded data per record. Exceeding a bound reports a recording failure without
 replacing the compilation error. A concurrent recorder holding the storage lock
 causes a best-effort recording failure, not a delayed or failed compilation.
+The operating system releases the lock if the recorder process exits.
 
 Export a selected observation with:
 
@@ -1095,7 +1096,9 @@ gti diagnostic-export .gti/diagnostic-reports/<id>.json ./diagnostic-export --no
 ```
 
 The destination must be new. `report.json` preserves the captured source and
-adds the user note; `README.txt` describes its interpretation. Original paths
+adds the user note; `report.txt` renders the diagnostic snippets for review and
+`README.txt` describes their interpretation. Non-UTF-8 source buffers use base64
+with an explicit encoding field, preserving their exact bytes. Original paths
 remain JSON data, never extraction destinations. Review the source and command
 arguments before sharing. This is diagnostic evidence rather than a hermetic
 reproducer: native dependencies, environment variables and uncaptured project

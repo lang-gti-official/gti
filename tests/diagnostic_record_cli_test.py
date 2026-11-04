@@ -31,6 +31,7 @@ with tempfile.TemporaryDirectory(prefix="gti-diagnostic-cli-") as tmp:
     assert run("diagnostic-export", str(records[0]), str(root / "export")).returncode != 0
     # Capture failure must not replace the original compilation error.
     source.write_text('int main() { return missing_name; }\n')
+    (root / ".gti/diagnostic-reports/.lock").unlink()
     (root / ".gti/diagnostic-reports/.lock").mkdir()
     blocked = run("run", "--record-diagnostics")
     assert blocked.returncode == original.returncode and "could not save diagnostic evidence" in blocked.stderr, blocked.stderr
