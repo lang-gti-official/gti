@@ -8463,13 +8463,12 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
                                   candidateArguments.types[*rejectedCopy]});
         continue;
       }
-      viable.push_back({&candidate, std::move(resolved),
-                        std::move(resolvedTypeArguments),
-                        std::move(resolvedValueArguments),
-                        std::move(resolvedEphemeralBorrowArguments),
-                        std::move(resolvedLiteralArguments),
-                        std::move(candidateArguments), receiverMode,
-                        std::move(checkedArguments)});
+      viable.push_back(
+          {&candidate, std::move(resolved), std::move(resolvedTypeArguments),
+           std::move(resolvedValueArguments),
+           std::move(resolvedEphemeralBorrowArguments),
+           std::move(resolvedLiteralArguments), std::move(candidateArguments),
+           receiverMode, std::move(checkedArguments)});
     }
 
     if (!viable.empty())
@@ -8495,11 +8494,10 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     return !candidate.ephemeralBorrowArguments.empty() ||
            !candidate.contextualIntegerLiteralArguments.empty();
   };
-  if (ordinaryTier &&
-      std::any_of(viable.begin(), viable.end(),
-                  [&](const ViableOverload &candidate) {
-                    return !fallbackCandidate(candidate);
-                  })) {
+  if (ordinaryTier && std::any_of(viable.begin(), viable.end(),
+                                  [&](const ViableOverload &candidate) {
+                                    return !fallbackCandidate(candidate);
+                                  })) {
     std::erase_if(viable, fallbackCandidate);
   }
 
@@ -8574,6 +8572,15 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       // overload-ranking conversion. Other written arguments may still rank
       // the enclosing call normally.
       rankingArgumentTypes[index] = SemanticType::Unknown;
+    }
+  }
+  for (const ViableOverload &row : viable) {
+    for (const auto *fallback : {&row.ephemeralBorrowArguments,
+                                 &row.contextualIntegerLiteralArguments}) {
+      for (const std::size_t index : *fallback) {
+        if (index < rankingArgumentTypes.size())
+          rankingArgumentTypes[index] = SemanticType::Unknown;
+      }
     }
   }
   if (ordinaryTier)

@@ -39,6 +39,13 @@ const ResolvedPackFoldInfo *programPackFoldExpansion(const SemanticModel &model,
   for (std::size_t index = 0; index < resolved->elements.size(); ++index) {
     const auto &element = resolved->elements[index];
     const auto &call = element.call;
+    // A reference-pack element is a reference; deduction binds the target's
+    // type parameter to its object type, which the target then borrows.
+    const SemanticType &objectType =
+        element.elementType.kind == SemanticType::Reference &&
+                element.elementType.arguments.size() == 1
+            ? element.elementType.arguments.front()
+            : element.elementType;
     if (element.elementType != info->type.arguments[index] ||
         call.function != resolved->function ||
         call.declaration != resolved->declaration ||
@@ -47,14 +54,14 @@ const ResolvedPackFoldInfo *programPackFoldExpansion(const SemanticModel &model,
         call.returnType != SemanticType::Void ||
         call.parameterTypes.size() != resolved->pattern->arguments().size() ||
         call.typeArguments.size() != 1 ||
-        call.typeArguments.front() != element.elementType ||
+        call.typeArguments.front() != objectType ||
         !call.valueArguments.empty())
       return nullptr;
     const auto &parameter = call.parameterTypes.back();
     if (parameter.kind != SemanticType::Reference ||
         parameter.referenceAccess != AccessMode::ReadOnly ||
         parameter.arguments.size() != 1 ||
-        parameter.arguments.front() != element.elementType)
+        parameter.arguments.front() != objectType)
       return nullptr;
   }
   return resolved;

@@ -2418,8 +2418,19 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
                   })) {
     std::erase_if(viable, fallbackCandidate);
   }
+  // A fallback position is a viability decision, never a ranking conversion.
+  std::vector<SemanticType> rankingArgumentTypes = argumentTypes;
+  for (const ViableConstructor &candidate : viable) {
+    for (const auto *fallback : {&candidate.contextualIntegerLiteralArguments,
+                                 &candidate.ephemeralBorrowArguments}) {
+      for (const std::size_t index : *fallback) {
+        if (index < rankingArgumentTypes.size())
+          rankingArgumentTypes[index] = SemanticType::Unknown;
+      }
+    }
+  }
   if (!checkedArgument)
-    retainBestCallConversionMatches(viable, argumentTypes,
+    retainBestCallConversionMatches(viable, rankingArgumentTypes,
                                     [](const ViableConstructor &candidate)
                                         -> const std::vector<SemanticType> & {
                                       return candidate.parameterTypes;
@@ -2557,11 +2568,11 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
       }
       const bool literalAmbiguity =
           !viable.empty() &&
-          std::all_of(viable.begin(), viable.end(),
-                      [](const ViableConstructor &candidate) {
-                        return !candidate.contextualIntegerLiteralArguments
-                                    .empty();
-                      });
+          std::all_of(
+              viable.begin(), viable.end(),
+              [](const ViableConstructor &candidate) {
+                return !candidate.contextualIntegerLiteralArguments.empty();
+              });
       Diagnostic diagnostic = makeDiagnostic(
           viable.empty() ? "GTI-S2012" : "GTI-S2013",
           DiagnosticPhase::Semantics, paren,

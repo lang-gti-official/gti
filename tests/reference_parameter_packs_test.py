@@ -100,6 +100,12 @@ import std.utility;
 void observe<Args...>(Args&... args) {}
 int main() { Ticket value{}; observe(std::move(value)); observe(value); return 0; }
 """, "GTI-S2018"),
+        "fold_persistent_conflict": ("""
+mut int counter = 3;
+void touch<T>(T& value) { counter++; }
+int total<Args...>(Args&... args) { (touch(args), ...); return 0; }
+int main() { return total(counter); }
+""", "GTI-S2045"),
         "thread_escape": ("""
 import std.thread;
 void schedule<T>(T& value) {
@@ -134,6 +140,15 @@ int main() { Ticket value{}; escape(value); return 0; }
             result = run([str(executable)])
             assert (result.returncode, result.stdout, result.stderr) == (0, "", ""), result
             print(f"reference packs: {backend} {level} passed", flush=True)
+        fixture = root / "tests/fixtures/reference_parameter_pack_forwarding.gti"
+        for level in ("O0", "O3"):
+            executable = scratch / f"forwarding-{level}"
+            result = run([str(compiler), str(fixture), "--backend", "llvm", f"-{level}",
+                          "--progress", "never", "-o", str(executable)])
+            assert not result.returncode, result.stdout + result.stderr
+            result = run([str(executable)])
+            assert (result.returncode, result.stdout, result.stderr) == (0, "", ""), result
+            print(f"reference-pack generic and persistent forwarding: LLVM {level} passed", flush=True)
         fixture = root / "tests/fixtures/reference_parameter_pack_temporaries.gti"
         for level in ("O0", "O3"):
             executable = scratch / f"temporaries-{level}"

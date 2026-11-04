@@ -3354,11 +3354,13 @@ auto SemanticVisitor::Impl::tryInstantiateFunction(
                        argumentTypes.end());
       resolvedPackParameters = packTypes;
     }
+    // Copy the referent before assigning: it is owned by the element being
+    // replaced, so assigning it in place reads a destroyed argument vector.
     if (referencePack)
       for (auto &element : packTypes)
         if (element.kind == SemanticType::Reference &&
             element.arguments.size() == 1)
-          element = element.arguments.front();
+          element = SemanticType(element.arguments.front());
     const auto inferred = substitution.types.find(pack->id);
     if (inferred != substitution.types.end()) {
       std::vector<SemanticType> prescribed;
@@ -3382,20 +3384,20 @@ auto SemanticVisitor::Impl::tryInstantiateFunction(
     for (auto &element : packTypes)
       if (element.kind == SemanticType::Reference &&
           element.arguments.size() == 1)
-        element = element.arguments.front();
+        element = SemanticType(element.arguments.front());
     for (auto &parameter : resolvedPackParameters) {
       if (parameter.kind == SemanticType::TypePack) {
         if (parameter.concretePack)
           for (auto &element : parameter.arguments) {
             if (element.kind == SemanticType::Reference &&
                 element.arguments.size() == 1)
-              element = element.arguments.front();
+              element = SemanticType(element.arguments.front());
             element = SemanticType::referenceTo(std::move(element), access);
           }
       } else {
         if (parameter.kind == SemanticType::Reference &&
             parameter.arguments.size() == 1)
-          parameter = parameter.arguments.front();
+          parameter = SemanticType(parameter.arguments.front());
         parameter = SemanticType::referenceTo(std::move(parameter), access);
       }
     }
@@ -6671,13 +6673,13 @@ auto SemanticVisitor::Impl::resolveOperator(
               *argument.expression, index)) {
         ephemeralBorrowArguments.push_back(index);
         continue;
-        }
-        if (!argument.forwardedPackElement && argument.expression != nullptr &&
-            contextualIntegerLiteralArgumentFits(
-                candidate.parameterTypes[index], argument.type,
-                *argument.expression)) {
-          literalArguments.push_back(index);
-          continue;
+      }
+      if (!argument.forwardedPackElement && argument.expression != nullptr &&
+          contextualIntegerLiteralArgumentFits(candidate.parameterTypes[index],
+                                               argument.type,
+                                               *argument.expression)) {
+        literalArguments.push_back(index);
+        continue;
       }
       matches = false;
       break;
@@ -6921,11 +6923,11 @@ auto SemanticVisitor::Impl::resolveOperator(
           "temporaries; adding a same-type value overload makes named-place "
           "calls ambiguous.");
       diagnostics.emplace_back(std::move(diagnostic));
-      if (std::all_of(viable.begin(), viable.end(),
-                      [](const ViableOperator &candidate) {
-                        return !candidate.contextualIntegerLiteralArguments
-                                    .empty();
-                      })) {
+      if (std::all_of(
+              viable.begin(), viable.end(),
+              [](const ViableOperator &candidate) {
+                return !candidate.contextualIntegerLiteralArguments.empty();
+              })) {
         appendContextualIntegerLiteralAmbiguityHint(
             viable.front().contextualIntegerLiteralArguments);
       }
@@ -8327,13 +8329,11 @@ auto SemanticVisitor::Impl::callConversionIsBetter(
         callConversionRank(leftParameters[index], arguments[index]);
     const int right =
         callConversionRank(rightParameters[index], arguments[index]);
-    // This ranking belongs only to the bounded raw-pointer/text
-    // compatibilities above. Literal adaptation and ephemeral read borrows
-    // have already selected their unranked fallback tier; an exact argument
-    // at one position must not outrank another candidate's fallback there.
-    if (left == 1000 || right == 1000) {
-      continue;
-    }
+    // Literal adaptation and ephemeral read borrows have already selected
+    // their unranked fallback tier. Callers pass Unknown at those positions,
+    // which ranks every candidate equally there, so an exact argument at one
+    // position never outranks another candidate's fallback; exact positions
+    // keep their established ranking.
     if (left > right) {
       return false;
     }
