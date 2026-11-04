@@ -48,11 +48,11 @@ def main() -> int:
             )
             return SKIP_RETURN_CODE
 
-        runtime_objects = compile_instrumented_runtime(runtime_compiler, root)
+        runtime = compile_instrumented_runtime(runtime_compiler, root)
         for source in sources:
             binary = root / source.stem
             build_instrumented_binary(emitter, native_compiler, source, binary,
-                                      runtime_objects, markers=ATOMIC_MARKERS,
+                                      runtime, markers=ATOMIC_MARKERS,
                                       linker=runtime_compiler)
             run_under_thread_sanitizer(binary)
             print(f"atomic ThreadSanitizer fixture {source.stem} passed")

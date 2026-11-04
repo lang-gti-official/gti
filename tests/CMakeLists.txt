@@ -6098,6 +6098,11 @@ if(Python3_Interpreter_FOUND)
       cthread_condition_runtime
       cthread_once_runtime
       cthread_create_join_runtime
+      PROPERTIES ENVIRONMENT "GTI_TSAN_SUPPORTED=${gti_tsan_supported}"
+    )
+    # A _tsan harness compiles, with the thread sanitizer, the members a
+    # static link of its fixture pulls from this archive.
+    set_tests_properties(
       managed_thread_tsan
       shared_mutex_threads_tsan
       transfer_function_threads_tsan
@@ -6108,7 +6113,8 @@ if(Python3_Interpreter_FOUND)
       scoped_parallel_cleanup_tsan
       atomic_tsan
       mutex_tsan
-      PROPERTIES ENVIRONMENT "GTI_TSAN_SUPPORTED=${gti_tsan_supported}"
+      PROPERTIES ENVIRONMENT
+        "GTI_TSAN_SUPPORTED=${gti_tsan_supported};GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>"
     )
     set_tests_properties(
       managed_thread_tsan shared_mutex_threads_tsan transfer_function_threads_tsan

@@ -12336,10 +12336,9 @@ entry/cleanup/order and foreign-boundary obligations below.
   private runtime contracts (a foreign exception
   at a callback boundary, a wrong-thread confined-callback binding, malformed
   thread or mutex state) end through `std::terminate` as in C++, so a host
-  terminate handler observes both backends alike. Known non-semantic
-  divergence: the C++-only nothrow-`operator new` allocation oracle
-  (`scoped_parallel_allocations`) does not observe native task boxes, which
-  use the process memory provider. Remaining:
+  terminate handler observes both backends alike. The nothrow-`operator new`
+  allocation oracle (`scoped_parallel_allocations`) observes native task
+  boxes through the runtime's owner allocation entry. Remaining:
   hierarchy-bearing thread results (O-LLVM-10 payload enums), Linux execution
   evidence,
   generated-code TSan, the terminal containment of a defined failure inside an
@@ -12536,8 +12535,6 @@ artifacts name `--backend cpp` explicitly.
   on LLVM, the owner's lifecycle-dispatch rule. The C++ backend reaches the
   destroyed derived override; this is a recorded C++ bug and the one corpus
   mismatch (`llvm_dispatch_lifecycle_phases`).
-- `scoped_parallel_allocations` counts the C++ backend's nothrow `operator new`,
-  which native task boxes do not use.
 - A derived constructor that passes an owned value, or forwards a class or
   enum reference, to its base initializer now runs on LLVM; MIR stages the
   argument as a prepared parameter or a borrow input. C++ still fails on it.
@@ -12639,7 +12636,7 @@ LLVM gap the audit found, runs on LLVM since PR 421.
   `unique_scalar_allocation_cleanup_failure` and `inline_polymorphic_lifecycle`
   now observe the same allocations, exhaustion and cleanup failure on both
   backends, including Windows. The runtime-provider fault companion is retired.
-  `scoped_parallel_allocations` still runs only in its C++ modes.
+  `scoped_parallel_allocations` therefore runs in every LLVM mode as well.
 - **Recorded C++ lifecycle bug.** In `llvm_dispatch_lifecycle_phases`, a base
   destructor's virtual call on `this` runs the destructor's own class on LLVM,
   the owner's lifecycle-dispatch rule. The C++ backend reaches the destroyed
