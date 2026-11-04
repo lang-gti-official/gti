@@ -898,7 +898,10 @@ fields for implicit receiver spellings as well as explicit `this` paths.
 Parameter names take precedence; static fields/methods do not nominate a
 receiver. Text read through a raw pointer's index or `->` nominates nothing,
 as a raw dereference does: it is raw memory, not storage of the pointer's
-formal or field. This is a candidate contract, not a body-local lifetime proof:
+formal, field or local binding. A lexical binding of the predeclaration walk
+records its declared type (an `auto` binding the type of the place it copies),
+so a local alias of a pointer formal is still recognized as a raw pointer
+rather than relaying the formal it was initialized from. This is a candidate contract, not a body-local lifetime proof:
 ordinary body lookup and return-borrow validation must confirm the actual
 origin, rejecting local shadowing and unrelated borrowed call results. HIR/MIR
 and the LSP consume the same validated receiver/argument summary.

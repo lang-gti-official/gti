@@ -5211,14 +5211,16 @@ private:
 
   // The declared type of a pure place path over a formal, the receiver, their
   // fields and array elements, and whether its last step selects stored
-  // state (a field or an element).
+  // state (a field or an element). With `lexicalLocals`, a lexical binding
+  // of the predeclared relay walk shadows formals and fields and roots the
+  // path at its own declared type.
   struct PredeclaredPlace {
     SemanticType type = SemanticType::Unknown;
     bool stored = false;
   };
   [[nodiscard]] std::optional<PredeclaredPlace>
   predeclaredPlace(const Expr *expression, const FunctionInfo &function,
-                   SemanticType ownerType);
+                   SemanticType ownerType, bool lexicalLocals = false);
 
   [[nodiscard]] bool storedTextViewRead(const ExprPtr &expression,
                                         const FunctionInfo &function,
@@ -5242,11 +5244,17 @@ private:
   [[nodiscard]] static std::optional<FunctionReturnBorrowSummary>
   textRelaySummary(const TextRelaySources &sources);
 
-  // Lexical, immutable aliases while predeclaring one text relay. These are
-  // prospective contracts; resolved body analysis still proves exact owners.
+  // Lexical bindings while predeclaring one text relay: an immutable alias
+  // retains its initializer's prospective owner, and every binding keeps its
+  // declared type (Unknown when that cannot be named without body analysis).
+  // These are prospective contracts; resolved body analysis still proves
+  // exact owners.
+  struct TextBorrowAlias {
+    PredeclaredTextBorrowSource source;
+    SemanticType type = SemanticType::Unknown;
+  };
   const FunctionDecl *textBorrowAliasFunction = nullptr;
-  std::unordered_map<std::string, PredeclaredTextBorrowSource>
-      textBorrowAliases;
+  std::unordered_map<std::string, TextBorrowAlias> textBorrowAliases;
 
   // The text summaries of the outermost dynamicTextReturnBorrowSummary query,
   // per declaration. A summary whose evaluation read one lower on the stack
