@@ -66,6 +66,12 @@ SignaturePrinter::function(const FunctionInfo &info,
   const std::vector<SemanticType> &parameterTypes =
       selected == nullptr ? info.parameterTypes : selected->parameterTypes;
   std::string result;
+  if (info.codegenAttributes.cold)
+    result += "[[cold]] ";
+  if (info.codegenAttributes.inlining == FunctionInlining::Hint)
+    result += "[[inline]] ";
+  else if (info.codegenAttributes.inlining == FunctionInlining::Never)
+    result += "[[noinline]] ";
   if (info.neverReturns) {
     result += "[[noreturn]] ";
   }

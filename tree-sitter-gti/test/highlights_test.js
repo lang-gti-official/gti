@@ -808,3 +808,8 @@ for (const [text, name] of [["sized", "type"], ["integral", "type"], ["invoke", 
     throw new Error(`Missing concept-condition @${name} capture for ${text}`);
   }
 }
+
+const codegenRow = fixtureLines.findIndex((line) => line.includes("int hinted_highlight"));
+requireCapture(codegenRow, "inline", "attribute");
+requireCapture(codegenRow, "cold", "attribute");
+requireCapture(fixtureLines.findIndex((line) => line.includes("int boundary_highlight")), "noinline", "attribute");

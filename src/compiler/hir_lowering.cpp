@@ -718,6 +718,7 @@ private:
          .requiresUnsafe = declaration.requiresUnsafe,
          .neverReturns = declaration.neverReturns,
          .tracksCaller = declaration.tracksCaller,
+         .codegenAttributes = declaration.codegenAttributes,
          .cThreadOperation = declaration.cThreadOperation,
          .threadConfinedCallback = declaration.threadConfinedCallback,
          .processMemoryOperation = declaration.processMemoryOperation,

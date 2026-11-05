@@ -371,3 +371,6 @@ struct ImmediatePortHighlight {
   implicit consteval ImmediatePortHighlight(int input) : value(input) {}
   consteval operator int() { return this.value; }
 };
+
+[[inline, cold]] int hinted_highlight() { return 1; }
+[[noinline]] int boundary_highlight() { return hinted_highlight(); }

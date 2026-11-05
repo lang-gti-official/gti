@@ -1285,6 +1285,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         instance.requiresUnsafe != declaration->requiresUnsafe ||
         instance.neverReturns != declaration->neverReturns ||
         instance.tracksCaller != declaration->tracksCaller ||
+        instance.codegenAttributes != declaration->codegenAttributes ||
         instance.cThreadOperation != declaration->cThreadOperation ||
         instance.processMemoryOperation !=
             declaration->processMemoryOperation) {

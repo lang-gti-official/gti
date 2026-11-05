@@ -424,6 +424,7 @@ struct LoweredFunctionDeclaration {
   std::optional<FunctionControlContract> controlContract;
   bool neverReturns = false;
   bool tracksCaller = false;
+  FunctionCodegenAttributes codegenAttributes;
   bool threadConfinedCallback = false;
   CThreadRuntimeOperation cThreadOperation = CThreadRuntimeOperation::None;
   ProcessMemoryRuntimeOperation processMemoryOperation =

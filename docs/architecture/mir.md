@@ -437,8 +437,10 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The combined deterministic serialization is currently `mir-v119`/`mir-body-v93`,
-with `lowered-program-v29` declaration metadata. These distinct combined
+The combined deterministic serialization is currently `mir-v120`/`mir-body-v93`,
+with `lowered-program-v32` declaration metadata. Function instances and sealed
+declarations retain the resolved cold hint and default/hint/never inlining policy;
+verification rejects a mismatching or non-source policy. These distinct combined
 identities retain both macro result-region/local-initializer authority and
 thread-local initialization, cleanup and reference-pack proof facts.
 Compiled scalar linkage records also seal each callable's result type and

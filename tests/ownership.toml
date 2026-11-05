@@ -2042,3 +2042,10 @@ paths = [
 ]
 owners = ["lsp_release", "lsp_sdk"]
 consumers = ["source_stdlib_ci", "ci_release", "lsp_protocol", "neovim_lsp_configuration"]
+
+[[area]]
+area = "function-codegen-attributes"
+paths = ["tests/codegen_attribute_tests.cpp", "examples/llvm/codegen-attributes.gti"]
+owners = ["codegen_attribute_contract", "codegen_attribute_runtime"]
+consumers = ["codegen_attribute_lsp", "tree_sitter_queries"]
+risk = "shared"

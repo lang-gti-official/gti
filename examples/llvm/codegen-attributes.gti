@@ -1,0 +1,24 @@
+// inline is advice, noinline preserves a call boundary, and cold marks an
+// uncommon function. None changes return values, failure handling or cleanup.
+mut int destroyed = 0;
+class Guard {
+public:
+  Guard() = default;
+  ~Guard() { destroyed += 1; }
+};
+[[inline]] int increment(int value) { return value + 1; }
+[[noinline]] int recurse(int value) {
+  Guard guard{};
+  return value == 0 ? 0 : increment(recurse(value - 1));
+}
+[[cold, noinline]] int uncommon_result() { return 7; }
+[[inline]] T identity<T>(T value) { return value; }
+struct Reader {
+  Reader() = default;
+  [[inline]] int read() { return identity<int>(uncommon_result()); }
+};
+int main() {
+  Reader reader{};
+  if (recurse(8) != 8 || destroyed != 9) { return 1; }
+  return reader.read() == 7 ? 0 : 2;
+}
