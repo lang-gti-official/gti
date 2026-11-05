@@ -576,10 +576,34 @@
         "1a3353e4a934def6e66d0019af64cab2c6299357"
       ],
       "merge": "1a3353e4a934def6e66d0019af64cab2c6299357"
+    },
+    {
+      "task": "panic-temporary-loans",
+      "pr": 266,
+      "head": "ea499038dfbd68c6b5975c68a2d14319ea1436be",
+      "tests": [
+        "scalar_temporary_borrow",
+        "scalar_temporary_borrow_runtime",
+        "scalar_temporary_borrow_lsp",
+        "mir_full_expression",
+        "mir_shared_failure_cleanup",
+        "reference_parameter_pack_mir",
+        "ephemeral_carrier_mir",
+        "panic_contracts",
+        "panic_runtime",
+        "panic_adoption_runtime",
+        "optimizer_conformance",
+        "optimizer_safety",
+        "compiler_pipeline"
+      ],
+      "contributions": [
+        "40a7f6ad2c26070e3ed21f879362518e83669615"
+      ],
+      "merge": "40a7f6ad2c26070e3ed21f879362518e83669615"
     }
   ],
   "removed": [],
-  "main": "957323c2688e961df55cabc0fecbe2416a83557a",
-  "previous": "44aeee90c23b67fa1bf2ffb728127defc6e0c8e9",
-  "candidate": "2d369e26350c4727a002132f5fe6d4c0"
+  "main": "ade71dcff0d42a51f013ce48ea06f358e8cc62c9",
+  "previous": "14c5592b4d9f46af660ff6a943111c2798be29ed",
+  "candidate": "93509fbc9c054cd7912f02f5b3785ad4"
 }
