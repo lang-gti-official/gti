@@ -125,9 +125,9 @@ its unchanged status mapping. Both routes release through the same POSIX free
 adapter. Windows keeps its aligned CRT pair. Zero-size requests make no native
 allocation; null on the ordinary route maps to resource exhaustion. Descriptor
 contents, actual address checks, exact release and failed sparse-region rollback
-are unchanged. This witness is source policy only: LLVM's compiler-owned
-scalar/box storage does not use the provider and allocates through the runtime
-owner pair described under the remaining allocation families below.
+are unchanged. Compiler-created LLVM owner storage reuses this same target
+selection and sealed provider, while verified MIR retains its separate object
+construction, failure and cleanup schedules.
 
 The appended private operation has an exact fixed-width signature and target
 selection in `process_memory_runtime`; an application declaration with the same
@@ -856,18 +856,21 @@ prerequisites, rather than missing scalar/output-pointer support. Native target
 constants may still need a narrow host boundary. The independent libc-region
 example uses ordinary `malloc(c_size_t)` and `free`.
 
-Sparse object regions and live metadata now use this source-owned provider
-policy, including default typed factories. Prefix owners now use the same source
-provider. Other generated-program allocations remain in unique-owner
-construction and shared-owner/control-block representations in the generated
-support code. These retain their current allocation families until their own
-source/lifecycle migration is validated: replaceable nothrow `new`/`delete`,
-called directly by generated C++ and through the runtime's
-`gti_rt_owner_allocate_v1`/`gti_rt_owner_release_v1` pair on LLVM. Neither
-backend routes them through the injectable provider adapters. Native HTTP/filesystem/thread handles
-also allocate host implementation objects behind their existing C ABI. Compiler
-host allocations such as emission-plan `std::make_unique` are not GTI-program
-allocations and are outside this migration.
+Sparse object regions and live metadata use this source-owned provider policy.
+Compiler-created LLVM owners now acquire their bytes through the same sealed
+process-memory adapters. This includes unique pointees, private shared control
+blocks and task boxes; it does not move construction, destruction or checked
+ownership into a native allocator. Ordinary/aligned acquisition and matching
+release follow the target process contract. Allocation may fail, and existing
+terminal/recoverable failure policies remain intact.
+
+The owner-approved 2026-11-05 policy replaces the former requirement that LLVM
+owner allocation be observable through replacement C++ `new`/`delete`. GTI
+provider hooks own GTI allocation observation and fault injection. Explicit C++
+interop and native runtime implementation state keep their matching native
+allocation/deallocation families; the deprecated C++ backend retains its existing
+behavior. The private `gti_rt_owner_allocate_v1`/`gti_rt_owner_release_v1` pair
+is retired.
 
 `std::arena<T>`, `std::pool<T>`, `std::try_make_arena`, and
 `std::try_make_pool` are the first bounded allocation-policy clients. They are

@@ -1,0 +1,22 @@
+import std.memory;
+extern "C" {
+void owner_probe_begin();
+void owner_probe_observe(const uint64_t* value);
+void* owner_probe_cpp_create();
+int32_t owner_probe_cpp_value(void* value);
+void owner_probe_cpp_destroy(void* value);
+int32_t owner_probe_finish();
+}
+int main() {
+  owner_probe_begin();
+  {
+    auto owner = std::make_unique<uint64_t>(42);
+    unsafe {
+      owner_probe_observe(&*owner);
+      void* foreign = owner_probe_cpp_create();
+      if (owner_probe_cpp_value(foreign) != 73) { return 10; }
+      owner_probe_cpp_destroy(foreign);
+    }
+  }
+  return owner_probe_finish();
+}

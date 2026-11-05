@@ -1,3 +1,4 @@
+#include "process_allocation_test_provider.h"
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -37,3 +38,13 @@ extern "C" void gti_scoped_alloc_reset() {
 extern "C" std::uint64_t gti_scoped_allocations() {
   return allocations.load(std::memory_order_relaxed);
 }
+
+// LLVM task boxes use the GTI provider; native worker implementation state
+// still uses its native C++ allocation family. Observe both transport costs.
+namespace gti_test_process_provider {
+void *acquire(std::size_t bytes, std::size_t alignment) {
+  allocations.fetch_add(1, std::memory_order_relaxed);
+  return systemAllocate(bytes, alignment);
+}
+void release(void *address) { systemRelease(address); }
+} // namespace gti_test_process_provider

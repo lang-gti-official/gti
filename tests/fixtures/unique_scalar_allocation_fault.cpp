@@ -1,3 +1,4 @@
+#include "process_allocation_test_provider.h"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -50,3 +51,10 @@ void *operator new(std::size_t size, const std::nothrow_t &) noexcept {
     return nullptr;
   }
 }
+
+namespace gti_test_process_provider {
+void *acquire(std::size_t bytes, std::size_t alignment) {
+  return failScalarAllocation ? nullptr : systemAllocate(bytes, alignment);
+}
+void release(void *address) { systemRelease(address); }
+} // namespace gti_test_process_provider

@@ -8,12 +8,10 @@ import sys
 import tempfile
 
 from allocation_abort_runtime_test import ABORT_STATUS
-from backend_modes import cpp_only_case, is_cpp_mode, keep_cpp, native_modes
+from backend_modes import is_cpp_mode, keep_cpp, native_modes
 
-# The fault provider (tests/fixtures/unique_scalar_allocation_fault.cpp) replaces
-# the C++ text's nothrow operator new; LLVM-backed programs allocate through the
-# runtime, so only the C++ profile observes the injected failure.
-FAULT_INJECTION = "allocation fault injection replaces the C++ text's nothrow operator new; the LLVM backend allocates through the runtime"
+# The fault companion injects failures through the GTI process provider on
+# LLVM and through nothrow new on the legacy C++ comparison backend.
 
 def run(command):
     environment = os.environ.copy()
@@ -77,9 +75,6 @@ def main():
                       f"<std/detail/memory_core>:{allocation_site}: runtime error[GTI-R0011]: "
                       "allocation_failure in unique_owner\n")),
                      (["implicit"] * 6, (0, "88\n77\n", ""))]
-            if not is_cpp_mode(flags):
-                cpp_only_case(FAULT_INJECTION, "allocation failures", mode)
-                cases = [case for case in cases if case[1][0] != ABORT_STATUS]
             for arguments, expected in cases:
                 result = run([str(binary), *arguments])
                 assert (result.returncode, result.stdout, result.stderr) == expected, (

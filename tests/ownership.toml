@@ -899,8 +899,9 @@ area = "runtime-memory"
 risk = "system"
 paths = [
   "runtime/src/memory.cpp",
-  "runtime/src/owner_memory.cpp",
   "runtime/include/gti/memory.h",
+  "tests/fixtures/process_allocation_test_provider.h",
+  "tests/fixtures/owner_provider_interop.*",
 ]
 owners = [
   "resource_memory_runtime",

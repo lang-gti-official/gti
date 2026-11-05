@@ -9,10 +9,8 @@ import tempfile
 from allocation_abort_runtime_test import ABORT_STATUS
 from backend_modes import is_cpp_mode, keep_cpp, native_modes
 
-# The fault provider (tests/fixtures/unique_scalar_allocation_fault.cpp) replaces
-# the standard nothrow operator new. Generated C++ and the runtime owner pair
-# used by the LLVM backend both allocate owners through it, so every backend
-# observes the injected failure (lang-gti-official/gti#200).
+# The companion injects failures through GTI process allocation on LLVM and
+# through nothrow new for the legacy C++ comparison backend.
 
 def expected_result(suffix, site):
     failure = (f"<std/detail/memory_core>:{site}: runtime error[GTI-R0011]: "
@@ -74,7 +72,7 @@ def main():
                 print(f"{name}: {mode} passed", flush=True)
         # The LLVM backend also owns null pointers, native function pointers and
         # integral enums; its O2 pipeline is checked here beside the O0/O3
-        # modes above, through the same operator-new fault seam.
+        # modes above, through the same GTI process-provider fault seam.
         for suffix in ("", "_failure", "_cleanup_failure"):
             name = "unique_scalar_allocation" + suffix
             binary = pathlib.Path(temporary) / f"{name}-llvm-O2"
@@ -87,6 +85,16 @@ def main():
             assert (result.returncode, result.stdout, result.stderr) == expected_result(
                 suffix, site), (name, "O2", result)
             print(f"{name}: llvm-O2 passed", flush=True)
+        for level in ("O0", "O3"):
+            binary = pathlib.Path(temporary) / ("owner-interop-" + level)
+            command = [str(compiler), str(fixtures / "owner_provider_interop.gti"),
+                       "--backend", "llvm", "-" + level, "-o", str(binary), "--",
+                       str(fixtures / "owner_provider_interop.cpp")]
+            built = run(command)
+            assert built.returncode == 0, (command, built.stdout, built.stderr)
+            result = run([str(binary)])
+            assert (result.returncode, result.stdout, result.stderr) == (0, "", ""), result
+            print(f"GTI provider and explicit C++ ownership: llvm-{level} passed", flush=True)
 
 if __name__ == "__main__":
     main()

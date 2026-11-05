@@ -2050,8 +2050,7 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
     if (shared) {
       child(recipe.aggregate[0], sharedPointee);
       Memory memory(session, ir, {}, {}, {});
-      memory.releaseBytes(sharedBlock,
-                          session.layouts().sharedOwner().block.alignment);
+      memory.releaseBytes(sharedBlock);
     } else if (recipe.polymorphicCleanup) {
       // Capture the complete object and its selected cleanup from the live
       // descriptor before any lifecycle transition; that cleanup reinstalls
@@ -2286,9 +2285,7 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
     }
     if (unique) {
       Memory memory(session, ir, {}, {}, {});
-      memory.releaseBytes(
-          release,
-          session.layouts().get(recipe.type.arguments.at(0)).alignment);
+      memory.releaseBytes(release);
     }
     if (cleanupToken) {
       auto *failedResult = ir.CreateLoad(ir.getInt1Ty(), failed);

@@ -1661,9 +1661,7 @@ private:
           recipe->type.arguments.size() != 1)
         throw std::logic_error(
             "LLVM object allocation release lost its sealed pointee");
-      objectMemory.releaseBytes(
-          allocation,
-          session.layouts().get(recipe->type.arguments[0]).alignment);
+      objectMemory.releaseBytes(allocation);
       ir.CreateBr(done);
       ir.SetInsertPoint(done);
       return;

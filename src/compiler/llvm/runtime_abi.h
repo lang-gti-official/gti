@@ -35,8 +35,6 @@ enum class RuntimeService {
   QuarantineThread,
   ProgramStorageRetirementReady,
   AtomicNotifyRegistered,
-  OwnerAllocate,
-  OwnerRelease,
 };
 
 // Only real C symbols with explicitly modeled signatures enter the module.
