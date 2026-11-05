@@ -19,6 +19,7 @@
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/Transforms/Utils/ModuleUtils.h>
 
+#include <filesystem>
 #include <initializer_list>
 #include <iostream>
 #include <optional>
@@ -1005,6 +1006,87 @@ int main() {
 }
 } // namespace
 
+void verifyColdTerminalFailures() {
+  const auto repository =
+      std::filesystem::path(__FILE__).parent_path().parent_path();
+  FrontendOptions frontendOptions;
+  frontendOptions.lowerReachableOnly = true;
+  frontendOptions.lowerLibraryReachableOnly = true;
+  const auto frontend =
+      Frontend(frontendOptions)
+          .analyze(repository / "tests/fixtures/llvm_cold_terminal_failure.gti",
+                   std::nullopt, {repository / "stdlib/prelude.gti"}, {},
+                   {repository / "stdlib"});
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.message << '\n';
+    throw std::runtime_error("invalid cold terminal failure fixture");
+  }
+  const auto optimized = OptimizationPipeline().run(
+      {frontend.hir, frontend.mir, OptimizationLevel::O3});
+  auto lowered = LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, optimized.sourceMir,
+      optimized.mir, optimized.report.transformations, TargetInfo::host());
+  if (!optimized.valid() || !lowered.valid())
+    throw std::runtime_error("invalid cold terminal failure MIR");
+  std::vector<LoweredProgramIssue> issues;
+  const auto input = verifiedLoweredProgram(*lowered.program, issues);
+  if (!input)
+    throw std::runtime_error("unverified cold terminal failure program");
+  HierarchyStorageScope hierarchy(input->program().mir());
+  const LlvmBackendOptions options{.optimization =
+                                       LlvmCodegenOptimization::Aggressive};
+  const auto admission = planLlvmAdmission(*input, options);
+  if (!admission.admitted())
+    throw std::runtime_error(admission.limitation());
+  Session session(*input, options);
+  lowerScalarProgram(session, admission);
+  unsigned observed = 0;
+  std::string scanName;
+  for (const auto &instance : input->program().mir().functionInstances()) {
+    const auto *declaration =
+        input->program().findFunctionDeclaration(instance.declaration);
+    if (!declaration)
+      continue;
+    const auto &name = declaration->qualifiedName;
+    auto *function = session.abi().declareFunction(instance.id);
+    if (name == "report_invalid_coordinate") {
+      if (!function->hasFnAttribute(llvm::Attribute::Cold) ||
+          !function->hasFnAttribute(llvm::Attribute::NoInline) ||
+          function->hasFnAttribute(llvm::Attribute::NoReturn))
+        throw std::runtime_error(
+            "source terminal failure lost its cold status-ABI boundary");
+      ++observed;
+    } else if (name == "ordinary_check" || name == "worker_loop" ||
+               name == "recursive_worker") {
+      if (function->hasFnAttribute(llvm::Attribute::Cold) ||
+          function->hasFnAttribute(llvm::Attribute::NoInline))
+        throw std::runtime_error(
+            "ordinary/looping body acquired terminal failure policy");
+      ++observed;
+    } else if (name == "scan") {
+      scanName = function->getName().str();
+      llvm::appendToCompilerUsed(session.module(), {function});
+    }
+  }
+  if (observed != 4 || scanName.empty())
+    throw std::runtime_error(
+        "cold terminal fixture lost its observation roots");
+  static_cast<void>(session.emitObject());
+  const auto *scan = session.module().getFunction(scanName);
+  if (!scan)
+    throw std::runtime_error("optimized scan observation root disappeared");
+  // The checked constructor must not survive as a hot per-element call.
+  // Failure-only calls remain allowed; no check or cleanup is removed here.
+  for (const auto &block : *scan)
+    for (const auto &instruction : block)
+      if (const auto *call = llvm::dyn_cast<llvm::CallBase>(&instruction))
+        if (const auto *callee = call->getCalledFunction();
+            callee && callee->getName().starts_with("__gti_native_v1_body_4_"))
+          throw std::runtime_error(
+              "formatted failure kept checked constructor out of line");
+}
+
 void verifyLateInductiveDispatch() {
   const auto frontend = Frontend().analyze("inductive-dispatch.gti", R"(
 extern "C" { uint64_t input(); void observe(uint64_t result); }
@@ -1070,6 +1152,7 @@ int main() {
 }
 
 int main() {
+  verifyColdTerminalFailures();
   verifyLateInductiveDispatch();
   verifyCheckedArithmeticReuse();
   verifyRecoveredRangeChecks();

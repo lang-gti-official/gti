@@ -46,6 +46,8 @@ struct Case {
 };
 
 constexpr std::array cases{
+    Case{"llvm_hosted_cold_terminal_failure.gti", 54321,
+         "Invalid coordinate: row=9, column=2", 14},
     Case{"llvm_hosted_scalar_return.gti", 321, "", 0},
     Case{"llvm_hosted_scalar_return_failure.gti", 321, "scalar return failure",
          13},

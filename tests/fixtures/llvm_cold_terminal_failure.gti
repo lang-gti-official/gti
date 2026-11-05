@@ -1,0 +1,51 @@
+import std.panic;
+
+extern "C" { int select_path(); void observe(int value); }
+
+[[noreturn]] void report_invalid_coordinate(uint8_t row, uint8_t column) {
+  std::panic("Invalid coordinate: row={}, column={}", row, column);
+}
+
+struct Coordinate {
+  uint8_t row;
+  uint8_t column;
+  Coordinate(uint8_t r, uint8_t c) : row(r), column(c) {
+    if (r >= 9 || c >= 9) {
+      report_invalid_coordinate(r, c);
+    }
+  }
+};
+
+int scan(int seed) {
+  mut int total = seed;
+  for (mut uint8_t row = 0; row < 9; row++) {
+    for (mut uint8_t column = 0; column < 9; column++) {
+      Coordinate position{row, column};
+      total += int(position.row) * 9 + int(position.column);
+    }
+  }
+  return total;
+}
+
+void ordinary_check(int value) {
+  if (value < 0) { report_invalid_coordinate(9, 0); }
+}
+
+[[noreturn]] void worker_loop(int value) {
+  while (value > 0) { observe(value); }
+  report_invalid_coordinate(9, 0);
+}
+
+[[noreturn]] void recursive_worker(int value) {
+  observe(value);
+  recursive_worker(value);
+}
+
+int main() {
+  int path = select_path();
+  if (path == 1) { report_invalid_coordinate(9, 0); }
+  if (path == 2) { worker_loop(path); }
+  if (path == 3) { recursive_worker(path); }
+  ordinary_check(path);
+  return scan(path);
+}

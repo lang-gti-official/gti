@@ -29,6 +29,8 @@
 
 #include <algorithm>
 #include <array>
+#include <llvm/ADT/SCCIterator.h>
+#include <llvm/IR/CFG.h>
 #include <llvm/IR/Intrinsics.h>
 #include <map>
 #include <set>
@@ -41,6 +43,41 @@ struct BodyParameterPlan final {
   ConcreteParameterPlan concrete;
   std::span<const HirBindingId> sourceBindings;
 };
+
+// Source-terminal helpers return through the private failure-status ABI: they
+// are not LLVM noreturn functions. Keep their diagnostic/cleanup work out of
+// hot callers before LLVM's inliner makes a small checked caller too large.
+// This is only a cost policy for an acyclic, failure-only native body. An
+// ordinary fallible function or a non-returning event loop does not qualify.
+bool coldTerminalFailureBody(const MirFunctionInstance &source,
+                             const FunctionAbi &abi, llvm::Function &function) {
+  if (!source.neverReturns || !source.mayRaiseDefinedFailure ||
+      !abi.statusResult || source.returnType != SemanticType::Void ||
+      !function.getReturnType()->isIntegerTy(1) ||
+      function.hasFnAttribute(llvm::Attribute::InlineHint) ||
+      function.hasFnAttribute(llvm::Attribute::AlwaysInline))
+    return false;
+  bool propagates = false;
+  for (auto scc = llvm::scc_begin(&function); !scc.isAtEnd(); ++scc) {
+    if (scc.hasCycle())
+      return false;
+    for (auto *block : *scc) {
+      if (auto *returned =
+              llvm::dyn_cast<llvm::ReturnInst>(block->getTerminator())) {
+        const auto *status = llvm::dyn_cast_or_null<llvm::ConstantInt>(
+            returned->getReturnValue());
+        if (!status || !status->isZero())
+          return false;
+        propagates = true;
+      }
+      for (const auto &instruction : *block)
+        if (const auto *call = llvm::dyn_cast<llvm::CallBase>(&instruction);
+            call && call->getCalledFunction() == &function)
+          return false;
+    }
+  }
+  return propagates;
+}
 
 BodyParameterPlan parameterPlan(const MirProgram &program,
                                 MirBodyAddress address, const MirBody &body) {
@@ -3032,6 +3069,13 @@ void Bodies::body(MirBodyAddress address) {
           ? session.program().mir().findConstructorInstance(address.owner)
           : nullptr,
       lambda, std::move(receiverType));
+  if (address.kind == MirBodyKind::Function &&
+      coldTerminalFailureBody(
+          *session.program().mir().findFunctionInstance(address.owner), plan,
+          *output)) {
+    output->addFnAttr(llvm::Attribute::Cold);
+    output->addFnAttr(llvm::Attribute::NoInline);
+  }
 }
 void Bodies::lower(const LlvmAdmissionPlan &admission) {
   threadLocals.allocate(globals);
