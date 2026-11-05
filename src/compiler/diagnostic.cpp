@@ -36,7 +36,9 @@ bool isKnownWarningGroup(std::string_view group) {
 }
 
 SourceSpan tokenSpan(const Token &token) {
-  const std::size_t length = token.generated ? 1 : token.lexeme.size();
+  const std::size_t length = token.sourceLength ? token.sourceLength
+                             : token.generated  ? 1
+                                                : token.lexeme.size();
   return {token.source, token.position, token.position + length, token.line};
 }
 

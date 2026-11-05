@@ -125,6 +125,7 @@ owners = [
   "macro_result_parser",
   "procedural_syntax",
   "procedural_declaration_example",
+  "procedural_execution_example",
   "sum_type_pipeline",
   "generic_enum_declaration",
   "scoped_configuration_defines",
@@ -368,6 +369,10 @@ owners = [
   "shared_ownership_pipeline",
 ]
 consumers = [
+  "procedural_syntax",
+  "procedural_execution_example",
+  "procedural_html_semantics",
+  "procedural_html_lsp",
   "mir_cutover_corpus_oracle",
   "language_coverage_corpus",
   "lowered_program_corpus_census",

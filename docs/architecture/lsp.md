@@ -79,11 +79,20 @@ Incomplete signatures, legacy-attribute migration and mixed macro/function
 overloads publish ordinary compiler diagnostics through current snapshot and
 UTF-16 conversion rules.
 
+Procedural interpolation queries use the retained caller spans in the checked
+expansion: hover, definition, rename and incomplete member completion share the
+ordinary language-query path. Markup failures retain library-authored primary
+and related locations with the same codes/messages as CLI diagnostics. A
+`didChange` version that is not newer than the open document's accepted version
+is ignored before mutating text or invalidating its snapshot. Cancellation and
+generation checks still protect in-flight work.
+
 ### Read-only macro expansion inspection
 
 `LanguageQueries::macroExpansion` selects a retained checked macro invocation
 by its parser-owned source range and reads `SemanticModel::macroExpansionSites`.
-It renders substituted argument expressions, nested expansions, hygienic local
+It also exposes retained procedural expression aliases without executing a macro
+inside an editor query. It renders substituted argument expressions, nested expansions, hygienic local
 bindings and control flow as explanatory GTI. Display-only local labels
 `name__macro_local_N` follow checked binding identities, not equal identifier
 text. The display is not executable source, an ownership proof or a backend

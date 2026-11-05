@@ -896,6 +896,17 @@ public:
     return std::move(output);
   }
 
+  std::string print(const Expr &value) {
+    append("// Explanatory procedural expansion; read-only, not executable "
+           "source.\n"
+           "// Caller splices and definition/fresh bindings retain distinct "
+           "contexts.\n");
+    expression(&value, 0);
+    if (truncated_)
+      output += "\n// Expansion display truncated.\n";
+    return std::move(output);
+  }
+
   bool truncated() const { return truncated_; }
 
 private:
@@ -960,6 +971,11 @@ private:
   void expression(const Expr *value, std::size_t depth) {
     if (!value || !enter(depth))
       return;
+    if (const auto *alias = semantics.findExpressionAlias(*value);
+        alias && alias != value) {
+      expression(alias, depth + 1);
+      return;
+    }
     if (const auto *node = exprAs<Variable>(value)) {
       const PlaceKey *place = semantics.findPlace(*node);
       const auto local =
@@ -1080,6 +1096,33 @@ private:
       append("{");
       arguments(node->elements(), depth);
       append("}");
+    } else if (const auto *node = exprAs<Lambda>(value);
+               node && node->captures().empty()) {
+      append("[](");
+      for (std::size_t i = 0; i < node->parameters().size(); ++i) {
+        if (i)
+          append(", ");
+        const auto &parameter = node->parameters()[i];
+        if (parameter.mutability == Mutability::Mutable)
+          append("mut ");
+        append(semantic_spelling::typeRefSpelling(parameter.type));
+        append(" ");
+        std::string name = parameter.name.lexeme;
+        if (const auto *binding = semantics.findBinding(parameter);
+            binding && binding->symbol) {
+          name += "__macro_local_" + std::to_string(localNames.size() + 1);
+          localNames.insert_or_assign(binding->symbol, name);
+        }
+        append(name);
+      }
+      append(") -> ");
+      append(semantic_spelling::typeRefSpelling(node->returnType()));
+      append(" {\n");
+      for (const auto &child : node->body())
+        if (child && !truncated_)
+          statement(*child, depth + 1);
+      indentation(depth);
+      append("}");
     } else if (const auto *node = exprAs<LayoutQuery>(value)) {
       append(node->keyword().lexeme);
       append("(");
@@ -1180,6 +1223,14 @@ private:
       append("while (");
       expression(node->condition().get(), depth + 1);
       append(");\n");
+    } else if (const auto *node = stmtAs<ReturnStmt>(&value)) {
+      indentation(depth);
+      append("return");
+      if (node->value()) {
+        append(" ");
+        expression(node->value().get(), depth + 1);
+      }
+      append(";\n");
     } else if (const auto *node = stmtAs<LoopControlStmt>(&value)) {
       indentation(depth);
       append(node->keyword().lexeme);
@@ -2819,7 +2870,8 @@ LanguageQueries::macroExpansion(const FrontendResult &snapshot,
   SourceSpan selectedSpan;
   bool ambiguous = false;
   for (const auto &site : snapshot.semantics.macroExpansionSites()) {
-    if ((!site.invocation && !site.call) || !site.body || !site.declaration)
+    if ((!site.invocation && !site.call) || (!site.body && !site.expression) ||
+        !site.declaration)
       continue;
     const auto *call = site.call
                            ? site.call
@@ -2840,7 +2892,9 @@ LanguageQueries::macroExpansion(const FrontendResult &snapshot,
       selected = site;
       selectedSpan = std::move(span);
       ambiguous = false;
-    } else if (span == selectedSpan && site.body != selected->body) {
+    } else if (span == selectedSpan &&
+               (site.body != selected->body ||
+                site.expression != selected->expression)) {
       // A written call instantiated with several concrete meanings has no
       // single honest expansion to display. Never select by map/pointer order.
       ambiguous = true;
@@ -2849,7 +2903,8 @@ LanguageQueries::macroExpansion(const FrontendResult &snapshot,
   if (!selected || ambiguous)
     return std::nullopt;
   MacroExpansionDisplay display(snapshot.semantics);
-  std::string text = display.print(*selected->body);
+  std::string text = selected->expression ? display.print(*selected->expression)
+                                          : display.print(*selected->body);
   return MacroExpansionInfo{.invocation = std::move(selectedSpan),
                             .declaration =
                                 tokenSpan(selected->declaration->name()),

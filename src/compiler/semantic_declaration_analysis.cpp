@@ -11263,7 +11263,14 @@ auto SemanticVisitor::Impl::recordClassTypeIdentities() -> void {
                 owner.compilerType == CompilerTypeKind::MetaCallableReturnType
                     ? ComputedTypeProjectionKind::CallableReturn
                     : ComputedTypeProjectionKind::None,
-            .compilerCapability = owner.compilerCapability});
+            .compilerCapability = owner.compilerCapability,
+            .syntaxKind = owner.compilerType >= CompilerTypeKind::SyntaxTokens
+                              ? static_cast<CompileTimeSyntaxKind>(
+                                    static_cast<unsigned>(owner.compilerType) -
+                                    static_cast<unsigned>(
+                                        CompilerTypeKind::SyntaxTokens) +
+                                    1)
+                              : CompileTimeSyntaxKind::None});
   }
 }
 
@@ -11403,7 +11410,14 @@ auto SemanticVisitor::Impl::recordClassTypes() -> void {
                 owner.compilerType == CompilerTypeKind::MetaCallableReturnType
                     ? ComputedTypeProjectionKind::CallableReturn
                     : ComputedTypeProjectionKind::None,
-            .compilerCapability = owner.compilerCapability});
+            .compilerCapability = owner.compilerCapability,
+            .syntaxKind = owner.compilerType >= CompilerTypeKind::SyntaxTokens
+                              ? static_cast<CompileTimeSyntaxKind>(
+                                    static_cast<unsigned>(owner.compilerType) -
+                                    static_cast<unsigned>(
+                                        CompilerTypeKind::SyntaxTokens) +
+                                    1)
+                              : CompileTimeSyntaxKind::None});
   }
   for (const ExactClassSpecialization &specialization :
        exactClassSpecializations) {

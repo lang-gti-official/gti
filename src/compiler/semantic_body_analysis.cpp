@@ -12,6 +12,11 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   macroExpandedBodies = 0;
   macroActiveBodies.clear();
   proceduralNameKinds.clear();
+  proceduralExpansions.clear();
+  proceduralCacheBytes = 0;
+  proceduralActive.clear();
+  proceduralWork.reset();
+  proceduralSyntaxBudget.reset();
   diagnostics.clear();
   catalog.clear();
   valueFlow.clear();
@@ -3647,7 +3652,9 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   validateRuntimeBinding(stmt);
   const bool enclosingPackTypeReference = allowPackTypeReference;
   allowPackTypeReference = true;
-  allowProceduralSyntaxType = stmt.isProceduralMacro();
+  allowProceduralSyntaxType =
+      stmt.isProceduralMacro() || stmt.isConstexpr() ||
+      (functionInfo && syntaxIntrinsic(functionInfo->intrinsic));
   validateType(stmt.returnType());
   allowProceduralSyntaxType = false;
   allowPackTypeReference = enclosingPackTypeReference;
@@ -3755,7 +3762,9 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   for (const Parameter &parameter : stmt.parameters()) {
     const bool enclosingParameterPackTypeReference = allowPackTypeReference;
     allowPackTypeReference = true;
-    allowProceduralSyntaxType = stmt.isProceduralMacro();
+    allowProceduralSyntaxType =
+        stmt.isProceduralMacro() || stmt.isConstexpr() ||
+        (functionInfo && syntaxIntrinsic(functionInfo->intrinsic));
     validateType(parameter.type);
     allowProceduralSyntaxType = false;
     allowPackTypeReference = enclosingParameterPackTypeReference;
@@ -3890,7 +3899,8 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
              "GTI-S2022");
     }
   }
-  if (!stmt.body() || !requirementsValid || stmt.isMacro()) {
+  if (!stmt.body() || !requirementsValid ||
+      (stmt.isMacro() && !stmt.isProceduralMacro())) {
     // A typed macro is a statement template, not a callable value.
     // Its signature and body shape are checked here; actual substituted
     // expressions are checked in caller flow at each concrete invocation.
@@ -3938,6 +3948,12 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
 auto SemanticVisitor::Impl::analyzeFunctionBody(
     const FunctionDecl &stmt, const FunctionInfo *functionInfo,
     bool declarationErrors, bool constexprDeclarationValid) -> void {
+  struct SyntaxTypeScope {
+    bool &flag;
+    bool saved;
+    ~SyntaxTypeScope() { flag = saved; }
+  } syntaxScope{allowProceduralSyntaxType, allowProceduralSyntaxType};
+  allowProceduralSyntaxType = stmt.isProceduralMacro() || stmt.isConstexpr();
   // While a preamble is built, a body that bounded analysis would defer is
   // analysed now but reported only once an analysis resumed from the
   // preamble reaches it: its diagnostics and the functions it consulted are
@@ -4096,7 +4112,8 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
     }
   }
   endScope();
-  if (stmt.isConstexpr() && constexprDeclarationValid && !functionErrors()) {
+  if ((stmt.isConstexpr() || stmt.isProceduralMacro()) &&
+      constexprDeclarationValid && !functionErrors()) {
     constexprDefinitionsAnalyzed.insert(&stmt);
   }
   --functionDepth;
@@ -7687,8 +7704,11 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     analyzePayloadConstruction(expr, *enumerator);
     return;
   }
+  // Syntax capabilities use ordinary exact signature/argument checking. Only
+  // their execution is intrinsic, under the explicit procedural MIR profile.
   if (const std::optional<CallableCandidate> intrinsic =
-          intrinsicCandidate(expr.callee())) {
+          intrinsicCandidate(expr.callee());
+      intrinsic && !syntaxIntrinsic(intrinsic->record().intrinsic)) {
     if (intrinsic->record().intrinsic == IntrinsicKind::Move) {
       analyzeMoveCall(expr, &*intrinsic, immediateReceiver);
     } else {
@@ -14282,6 +14302,12 @@ auto SemanticVisitor::Impl::evaluateConstexprNode(const Expr &source,
   if (&source != context.immediateRoot)
     if (const auto *immediate = semanticModel.findImmediateInvocation(source))
       return {.value = immediate->value};
+
+  // Generated expressions use the same constant rules as their handwritten
+  // form. The procedural body has already executed through verified MIR.
+  if (const auto *alias = semanticModel.findExpressionAlias(source);
+      alias && !semanticModel.findExpressionAliasPrelude(source))
+    return evaluateConstexprExpression(*alias, context);
 
   const SemanticType sourceType =
       constexprType(semanticModel.typeOf(source), context);

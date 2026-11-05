@@ -1,4 +1,5 @@
 #include "gti/mir_constant_evaluator.h"
+#include "gti/mir_procedural.h"
 #include "gti/mir_verifier.h"
 #include "gti/support.h"
 #include "mir_verification_queries.h"
@@ -74,8 +75,65 @@ std::optional<TokenKind> operatorToken(MirOperation operation) {
 
 class Evaluation {
 public:
-  Evaluation(const MirProgram &program, MirConstantLimits limits)
-      : program(program), limits(limits) {}
+  Evaluation(const MirProgram &program, MirConstantLimits limits,
+             MirProceduralRequest *procedural = nullptr)
+      : program(program), limits(limits), procedural(procedural) {}
+
+  MirProceduralEvaluation runProcedural(HirFunctionInstanceId root) {
+    MirProceduralEvaluation output;
+    struct WorkChargeScope {
+      SyntaxArena &arena;
+      std::function<void(std::size_t)> previous;
+      ~WorkChargeScope() { arena.exchangeWorkCharge(std::move(previous)); }
+    } account{procedural->arena,
+              procedural->arena.exchangeWorkCharge([&](std::size_t work) {
+                if (!charge(work))
+                  throw SyntaxLimitError(
+                      &CompileLimits::constexprSteps,
+                      "Procedural constexpr-steps limit exceeded.");
+              })};
+    try {
+      for (std::size_t i = 0; i < procedural->types.size(); ++i) {
+        const auto *type = record(procedural->types[i]);
+        if (procedural->types[i].kind != SemanticType::Class ||
+            (type &&
+             type->syntaxKind != static_cast<CompileTimeSyntaxKind>(i + 1)))
+          throw SyntaxError("Procedural execution requires exact trusted "
+                            "syntax type identities.");
+      }
+      const auto *entry = program.findFunctionInstance(root);
+      if (!entry || !entry->proceduralFunction ||
+          entry->parameterTypes !=
+              std::vector<SemanticType>{procedural->types[0]} ||
+          entry->returnType != procedural->types[1])
+        throw SyntaxError(
+            "Procedural MIR requires a tokens-to-expression root.");
+      const auto input = syntaxValue(procedural->input);
+      const std::array<ConstantValue, 1> arguments{input};
+      output.execution = run({MirBodyKind::Function, root}, arguments, {});
+      if (output.execution && output.execution.value) {
+        output.expression = procedural->arena.seal(
+            syntaxHandle<SyntaxExpression>(*output.execution.value));
+        output.execution.value.reset();
+        output.execution.voidResult = true;
+      }
+    } catch (const SyntaxLimitError &error) {
+      output.execution.value.reset();
+      output.execution.voidResult = false;
+      output.execution.failure = ConstantEvaluationFailure::ResourceLimit;
+      output.execution.exhaustedLimit = error.limit;
+      output.execution.detail = error.what();
+      output.execution.steps = steps;
+    } catch (const SyntaxError &error) {
+      output.execution.value.reset();
+      output.execution.voidResult = false;
+      output.execution.failure = ConstantEvaluationFailure::InvalidOperands;
+      output.execution.detail = error.what();
+      output.execution.steps = steps;
+    }
+    output.diagnostic = std::move(syntaxDiagnostic);
+    return output;
+  }
 
   MirConstantEvaluation run(MirBodyAddress root,
                             std::span<const ConstantValue> arguments,
@@ -89,7 +147,8 @@ public:
                         verification.errors.front().message};
     }
     for (const auto &argument : arguments) {
-      if (const auto failure = persistentValue(argument);
+      if (const auto failure = procedural ? ConstantEvaluationFailure::None
+                                          : persistentValue(argument);
           failure != ConstantEvaluationFailure::None)
         return {.failure = failure,
                 .body = root,
@@ -115,13 +174,14 @@ public:
     const auto type = function ? observedType(function->returnType)
                       : owner  ? owner->type
                                : SemanticType::Unknown;
-    if (result && type != SemanticType::Void && !persistentType(type)) {
+    if (result && !procedural && type != SemanticType::Void &&
+        !persistentType(type)) {
       result.value.reset();
       result.failure = ConstantEvaluationFailure::UnsupportedType;
       result.detail = "An object requiring cleanup cannot escape constant "
                       "execution; return a passive value instead.";
     }
-    if (result && result.value) {
+    if (result && result.value && !procedural) {
       const auto failure = persistentValue(*result.value);
       if (failure != ConstantEvaluationFailure::None) {
         result.value.reset();
@@ -159,7 +219,8 @@ private:
     if (depth >= limits.callDepth || !charge(1))
       return ConstantEvaluationFailure::ResourceLimit;
     if (!node->value ||
-        node->value->kind == ConstantAggregateKind::TransientOwner)
+        (node->value->kind == ConstantAggregateKind::TransientOwner ||
+         node->value->kind == ConstantAggregateKind::TransientSyntax))
       return ConstantEvaluationFailure::InvalidOperands;
     for (const auto &item : node->value->elements)
       if (const auto failure = persistentValue(item, depth + 1);
@@ -178,7 +239,8 @@ private:
       return false;
     if (type.kind == SemanticType::Class) {
       const auto *instance = record(type);
-      if (!instance || instance->requiresActiveCleanup || instance->destructor)
+      if (!instance || instance->syntaxKind != CompileTimeSyntaxKind::None ||
+          instance->requiresActiveCleanup || instance->destructor)
         return false;
       return std::all_of(instance->declaredFields.begin(),
                          instance->declaredFields.end(),
@@ -221,6 +283,9 @@ private:
   }
 
   bool storageType(const SemanticType &type, std::size_t depth = 0) const {
+    if (const auto *instance = record(type);
+        instance && instance->syntaxKind != CompileTimeSyntaxKind::None)
+      return syntaxType(type);
     if (scalarType(type))
       return true;
     if (type.kind == SemanticType::Enum) {
@@ -326,6 +391,10 @@ private:
   MirConstantEvaluation fail(const Frame &frame,
                              ConstantEvaluationFailure failure,
                              std::string detail = {}) const {
+    if (procedural && detail.empty() &&
+        failure == ConstantEvaluationFailure::UnsupportedExpression)
+      detail = "This operation is outside the procedural constant-execution "
+               "profile.";
     return {.failure = failure,
             .function = frame.address.kind == MirBodyKind::Function
                             ? frame.address.owner
@@ -673,6 +742,18 @@ private:
 
   ConstantEvaluation convertValue(const ConstantValue &value,
                                   const SemanticType &type) {
+    if (syntaxType(type)) {
+      const auto *node = std::get_if<ConstantAggregateValue>(&value);
+      if (!node || !node->value || !node->value->exactType ||
+          *node->value->exactType != type ||
+          !syntaxValues.contains(node->value.get()))
+        return {.failure = ConstantEvaluationFailure::InvalidOperands};
+      return {.value = value};
+    }
+    if (const auto *node = std::get_if<ConstantAggregateValue>(&value);
+        node && node->value &&
+        node->value->kind == ConstantAggregateKind::TransientSyntax)
+      return {.failure = ConstantEvaluationFailure::InvalidOperands};
     if (type.kind == SemanticType::TypePack) {
       const auto *node = std::get_if<ConstantAggregateValue>(&value);
       if (!node || !node->value || !node->value->exactType ||
@@ -804,7 +885,7 @@ private:
     const auto *aggregate = std::get_if<ConstantAggregateValue>(&value);
     if (!aggregate)
       return converted;
-    if (type.kind == SemanticType::UniqueOwner)
+    if (type.kind == SemanticType::UniqueOwner || syntaxType(type))
       return converted;
     if (type.kind == SemanticType::TypePack) {
       for (std::size_t index = 0; index < type.arguments.size(); ++index) {
@@ -1733,7 +1814,22 @@ private:
     }
     if (instruction.kind == MirInstructionKind::Call &&
         !instruction.objectAllocation) {
-      if (instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner) {
+      if (syntaxIntrinsic(instruction.intrinsic)) {
+        if (!procedural)
+          return fail(frame, ConstantEvaluationFailure::UnsupportedExpression,
+                      "Syntax operations require procedural execution.");
+        try {
+          evaluated = executeSyntax(instruction, arguments);
+        } catch (const SyntaxLimitError &error) {
+          auto result = fail(frame, ConstantEvaluationFailure::ResourceLimit,
+                             error.what());
+          result.exhaustedLimit = error.limit;
+          return result;
+        } catch (const SyntaxError &error) {
+          return fail(frame, ConstantEvaluationFailure::InvalidOperands,
+                      error.what());
+        }
+      } else if (instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner) {
         const auto &type = instruction.info.type;
         if (type.kind != SemanticType::UniqueOwner ||
             type.arguments.size() != 1 || arguments.size() > 1 ||
@@ -1832,7 +1928,8 @@ private:
         // Staging keeps only the signature of a callee that cannot run during
         // compilation. Reaching its call, not merely containing it, fails.
         if (callee->definitionKind != MirDefinitionKind::Source ||
-            !callee->constexprFunction ||
+            (!callee->constexprFunction &&
+             !(procedural && callee->proceduralFunction)) ||
             callee->linkage != LanguageLinkage::Gti) {
           auto failed = fail(frame, ConstantEvaluationFailure::RuntimeOnlyCall);
           failed.runtimeCallee = callee->id;
@@ -1981,7 +2078,9 @@ private:
     // A constant view holds its own text, so a by-value view's runtime
     // borrow summary, such as a relayed text field (L-OWN-02), does not
     // constrain its evaluation.
-    if (function == nullptr || !function->constexprFunction ||
+    if (function == nullptr ||
+        (!function->constexprFunction &&
+         !(procedural && function->proceduralFunction)) ||
         function->requiresUnsafe || function->virtualMethod ||
         function->definitionKind != MirDefinitionKind::Source ||
         (function->returnBorrowOrigin != BorrowOriginKind::None &&
@@ -2309,6 +2408,8 @@ private:
     while (const auto *block = body.findBlock(frame.block)) {
       for (const auto &instruction : block->instructions) {
         frame.instruction = instruction.id;
+        if (procedural && procedural->cancelled && procedural->cancelled())
+          throw SyntaxError("Syntax request cancelled.");
         if (steps++ >= limits.steps)
           return stepLimitFailure(frame);
         auto result = execute(frame, instruction, depth);
@@ -2502,8 +2603,212 @@ private:
     return found == slots->second.end() ? 0 : found->second;
   }
 
+  using SyntaxValue =
+      std::variant<SyntaxTokens, SyntaxExpression, SyntaxSpan, SyntaxBinding>;
+  bool syntaxType(const SemanticType &type) const {
+    return procedural &&
+           std::find(procedural->types.begin(), procedural->types.end(),
+                     type) != procedural->types.end();
+  }
+  template <typename T> ConstantValue syntaxValue(T value) {
+    SyntaxValue capability = value;
+    auto node = std::make_shared<const ConstantAggregate>(
+        ConstantAggregate{.kind = ConstantAggregateKind::TransientSyntax,
+                          .exactType = std::make_shared<const SemanticType>(
+                              procedural->types[capability.index()])});
+    syntaxValues.emplace(node.get(), std::move(capability));
+    syntaxNodes.push_back(node); // Keep identities unique for this request.
+    return ConstantAggregateValue{std::move(node)};
+  }
+  template <typename T> T syntaxHandle(const ConstantValue &value) const {
+    const auto *node = std::get_if<ConstantAggregateValue>(&value);
+    if (!node || !node->value)
+      throw SyntaxError("Invalid procedural capability value.");
+    const auto found = syntaxValues.find(node->value.get());
+    if (found == syntaxValues.end() ||
+        !std::holds_alternative<T>(found->second))
+      throw SyntaxError("Foreign or mistyped procedural capability value.");
+    return std::get<T>(found->second);
+  }
+  ConstantEvaluation executeSyntax(const MirInstruction &instruction,
+                                   const std::vector<ConstantValue> &args) {
+    auto &arena = procedural->arena;
+    const auto &types = procedural->types;
+    const SemanticType tokensType = types[0], exprType = types[1],
+                       spanType = types[2], bindingType = types[3];
+    const SemanticType indexType = SemanticType::UInt64;
+    std::vector<SemanticType> parameters;
+    SemanticType resultType = SemanticType::Unknown;
+    switch (instruction.intrinsic) {
+    case IntrinsicKind::SyntaxSize:
+      parameters = {tokensType};
+      resultType = indexType;
+      break;
+    case IntrinsicKind::SyntaxText:
+      parameters = {tokensType};
+      resultType = SemanticType::StringView;
+      break;
+    case IntrinsicKind::SyntaxKind:
+      parameters = {tokensType, indexType};
+      resultType = SemanticType::StringView;
+      break;
+    case IntrinsicKind::SyntaxAdjacent:
+      parameters = {tokensType, indexType};
+      resultType = SemanticType::Bool;
+      break;
+    case IntrinsicKind::SyntaxSlice:
+      parameters = {tokensType, indexType, indexType};
+      resultType = tokensType;
+      break;
+    case IntrinsicKind::SyntaxGroup:
+      parameters = {tokensType, indexType};
+      resultType = tokensType;
+      break;
+    case IntrinsicKind::SyntaxSpan:
+      parameters = {tokensType, indexType, indexType};
+      resultType = spanType;
+      break;
+    case IntrinsicKind::SyntaxLiteral:
+    case IntrinsicKind::SyntaxStringLiteral:
+    case IntrinsicKind::SyntaxPunctuation:
+    case IntrinsicKind::SyntaxIdentifier:
+    case IntrinsicKind::SyntaxKeyword:
+      parameters = {SemanticType::StringView, spanType};
+      resultType = tokensType;
+      break;
+    case IntrinsicKind::SyntaxFresh:
+      parameters = {SemanticType::StringView, spanType};
+      resultType = bindingType;
+      break;
+    case IntrinsicKind::SyntaxReference:
+      parameters = {bindingType};
+      resultType = tokensType;
+      break;
+    case IntrinsicKind::SyntaxJoin:
+      parameters = {tokensType, tokensType};
+      resultType = tokensType;
+      break;
+    case IntrinsicKind::SyntaxParse:
+      parameters = {tokensType};
+      resultType = exprType;
+      break;
+    case IntrinsicKind::SyntaxSplice:
+      parameters = {exprType};
+      resultType = tokensType;
+      break;
+    case IntrinsicKind::SyntaxFail:
+      parameters = {spanType, SemanticType::StringView};
+      resultType = exprType;
+      break;
+    case IntrinsicKind::SyntaxFailRelated:
+      parameters = {spanType, SemanticType::StringView, spanType};
+      resultType = exprType;
+      break;
+    default:
+      throw SyntaxError("Unknown procedural operation.");
+    }
+    if (parameters.size() != args.size() ||
+        instruction.operands.size() != args.size() ||
+        instruction.info.type != resultType)
+      throw SyntaxError("Invalid procedural intrinsic signature.");
+    for (std::size_t i = 0; i < args.size(); ++i)
+      if (instruction.operands[i].type != parameters[i] ||
+          !exactValue(args[i], parameters[i]))
+        throw SyntaxError("Invalid procedural intrinsic argument type.");
+    const auto argument = [&](std::size_t i) -> const ConstantValue & {
+      if (i >= args.size())
+        throw SyntaxError("Missing syntax argument.");
+      return args[i];
+    };
+    const auto tokens = [&](std::size_t i) {
+      return syntaxHandle<SyntaxTokens>(argument(i));
+    };
+    const auto span = [&](std::size_t i) {
+      return syntaxHandle<SyntaxSpan>(argument(i));
+    };
+    const auto text = [&](std::size_t i) -> const std::string & {
+      const auto *value = std::get_if<std::string>(&argument(i));
+      if (!value)
+        throw SyntaxError("Syntax spelling requires compile-time text.");
+      if (!charge(value->size()))
+        throw SyntaxLimitError(&CompileLimits::constexprSteps,
+                               "Procedural constexpr-steps limit exceeded.");
+      return *value;
+    };
+    const auto index = [&](std::size_t i) -> std::size_t {
+      const auto *value = std::get_if<ConstantInteger>(&argument(i));
+      if (!value || value->negative)
+        throw SyntaxError("Syntax index must be nonnegative.");
+      return value->magnitude;
+    };
+    const auto integer = [&](std::size_t value) -> ConstantEvaluation {
+      const auto domain = constantIntegerDomain(instruction.info.type);
+      if (!domain)
+        return {.failure = ConstantEvaluationFailure::InvalidOperands};
+      return {.value = makeConstantInteger({.magnitude = value}, *domain)};
+    };
+    switch (instruction.intrinsic) {
+    case IntrinsicKind::SyntaxSize:
+      return integer(arena.size(tokens(0)));
+    case IntrinsicKind::SyntaxText: {
+      auto value = arena.text(tokens(0));
+      if (!charge(value.size()))
+        return {.failure = ConstantEvaluationFailure::ResourceLimit};
+      return {.value = std::move(value)};
+    }
+    case IntrinsicKind::SyntaxKind:
+      return {.value = std::string(
+                  to_string(arena.token(tokens(0), index(1)).kind))};
+    case IntrinsicKind::SyntaxAdjacent:
+      return {.value = arena.adjacent(tokens(0), index(1))};
+    case IntrinsicKind::SyntaxSlice:
+      return {.value = syntaxValue(arena.slice(tokens(0), index(1), index(2)))};
+    case IntrinsicKind::SyntaxGroup:
+      return {.value = syntaxValue(arena.group(tokens(0), index(1)))};
+    case IntrinsicKind::SyntaxSpan:
+      return {.value = syntaxValue(arena.span(tokens(0), index(1), index(2)))};
+    case IntrinsicKind::SyntaxLiteral:
+      return {.value = syntaxValue(arena.literal(text(0), span(1)))};
+    case IntrinsicKind::SyntaxStringLiteral:
+      return {.value = syntaxValue(arena.stringLiteral(text(0), span(1)))};
+    case IntrinsicKind::SyntaxPunctuation:
+      return {.value = syntaxValue(arena.punctuation(text(0), span(1)))};
+    case IntrinsicKind::SyntaxKeyword:
+      return {.value = syntaxValue(arena.keyword(text(0), span(1)))};
+    case IntrinsicKind::SyntaxIdentifier:
+      return {.value = syntaxValue(arena.identifier(text(0), span(1)))};
+    case IntrinsicKind::SyntaxFresh:
+      return {.value = syntaxValue(arena.freshBinding(text(0), span(1)))};
+    case IntrinsicKind::SyntaxReference:
+      return {.value = syntaxValue(
+                  arena.reference(syntaxHandle<SyntaxBinding>(argument(0))))};
+    case IntrinsicKind::SyntaxJoin: {
+      const std::array<SyntaxTokens, 2> parts{tokens(0), tokens(1)};
+      return {.value = syntaxValue(arena.join(parts))};
+    }
+    case IntrinsicKind::SyntaxParse:
+      return {.value = syntaxValue(arena.parse(tokens(0)))};
+    case IntrinsicKind::SyntaxSplice:
+      return {.value = syntaxValue(
+                  arena.splice(syntaxHandle<SyntaxExpression>(argument(0))))};
+    case IntrinsicKind::SyntaxFail:
+      syntaxDiagnostic = arena.failure(span(0), text(1));
+      throw SyntaxError(syntaxDiagnostic->message);
+    case IntrinsicKind::SyntaxFailRelated: {
+      const std::array<SyntaxSpan, 1> related{span(2)};
+      syntaxDiagnostic = arena.failure(span(0), text(1), related);
+      throw SyntaxError(syntaxDiagnostic->message);
+    }
+    default:
+      return {.failure = ConstantEvaluationFailure::UnsupportedExpression};
+    }
+  }
   const MirProgram &program;
   MirConstantLimits limits;
+  MirProceduralRequest *procedural = nullptr;
+  std::unordered_map<const ConstantAggregate *, SyntaxValue> syntaxValues;
+  std::vector<std::shared_ptr<const ConstantAggregate>> syntaxNodes;
+  std::optional<Diagnostic> syntaxDiagnostic;
   std::size_t steps = 0;
   bool stepLimitReached = false;
   std::vector<std::unique_ptr<Allocation>> heap;
@@ -2536,6 +2841,12 @@ MirConstantEvaluation evaluateMirConstantConstructor(
     std::span<const ConstantValue> arguments, MirConstantLimits limits) {
   return Evaluation(program, limits)
       .run({MirBodyKind::Constructor, constructor}, arguments, {});
+}
+
+MirProceduralEvaluation evaluateMirProceduralFunction(
+    const MirProgram &program, HirFunctionInstanceId function,
+    MirProceduralRequest &request, MirConstantLimits limits) {
+  return Evaluation(program, limits, &request).runProcedural(function);
 }
 
 } // namespace lang

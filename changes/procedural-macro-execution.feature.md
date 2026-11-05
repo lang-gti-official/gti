@@ -1,0 +1,1 @@
+Execute imported `#macro(proc)` bodies and constexpr helpers through verified MIR. The `std::syntax` API constructs one hygienic, checked expression for `name!({...})`, with shared work/storage limits and source diagnostics.

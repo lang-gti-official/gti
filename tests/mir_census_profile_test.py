@@ -120,9 +120,39 @@ class ProfileControls(unittest.TestCase):
             return census.subprocess.CompletedProcess(command, 0,
                 "generated_kinds\n" + name + "\t10\t7\t0\n", "")
         with patch.object(reviewed, "host_target", return_value=reviewed.TARGETS[1]), patch.object(census.examples, "cases", return_value=[case]), patch.object(census.examples, "require_cpp_limitation") as rejection, patch.object(census.subprocess, "run", side_effect=inventory):
-            self.assertEqual(census.census(Path("/unused/gti"), ROOT), {name: 7})
+            self.assertEqual(census.census(Path("/unused/gti"), ROOT, backend="cpp"), {name: 7})
             rejection.assert_called_once()
             self.assertEqual(len(observed), 1)
+
+    def test_primary_inventory_never_requires_cpp_emission(self):
+        # Both legacy examples and new LLVM features use the same sealed MIR
+        # inventory. A C++ emitter failure cannot reject a valid LLVM example.
+        cases = census.examples.cases(ROOT)
+        selected = [cases[0], next(case for case in cases
+                    if Path(case.source).name == "procedural-html.gti")]
+        def inventory(command, **options):
+            self.assertEqual(command[0], "/unused/gti_lowered_program_census")
+            name = command[-1]
+            return census.subprocess.CompletedProcess(command, 0,
+                "generated_kinds\n" + name + "\t10\t7\t0\n", "")
+        with patch.object(census.examples, "cases", return_value=selected), \
+                patch.object(census, "selected_backends", return_value="llvm"), \
+                patch.object(census.examples, "require_cpp_limitation") as rejection, \
+                patch.object(census.subprocess, "run", side_effect=inventory) as run:
+            self.assertEqual(census.census(Path("/unused/gti"), ROOT),
+                             {Path(case.source).name: 7 for case in selected})
+            rejection.assert_not_called()
+            self.assertEqual(run.call_count, 2)
+
+    def test_corpus_endpoints_follow_shared_backend_policy(self):
+        for selected, expected in {
+            "llvm": [("O0", "native", "llvm"), ("O3", "native", "llvm")],
+            "cpp": [("O3", "c++23", "cpp")],
+            "both": [("O0", "native", "llvm"), ("O3", "native", "llvm"),
+                     ("O3", "c++23", "cpp")],
+        }.items():
+            with patch.dict(os.environ, {"GTI_TEST_BACKENDS": selected}):
+                self.assertEqual(oracle.configurations(), expected)
 
     def test_cli_rejects_invalid_or_nonhost_targets_before_observation(self):
         for module, extra in [(census, []), (oracle, ["/unused/runtime"])]:
@@ -149,10 +179,10 @@ class ProfileControls(unittest.TestCase):
             with patch.object(reviewed, "host_target", return_value=reviewed.TARGETS[1]), redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
                 with patch.object(sys, "argv", ["census", "/unused/gti", str(ROOT), str(baseline)]), patch.object(census, "census", return_value=linux):
                     self.assertEqual(census.main(), 0)
-                argv = ["oracle", "/unused/gti", str(ROOT), str(baseline), "/unused/runtime", "--case", "087-associative-containers.gti", "--case", "089-library-workflow.gti"]
+                argv = ["oracle", "/unused/gti", str(ROOT), str(baseline), "/unused/runtime", "--backend", "cpp", "--case", "087-associative-containers.gti", "--case", "089-library-workflow.gti"]
                 with patch.object(sys, "argv", argv), patch.object(oracle, "build_and_run", side_effect=emitted) as run:
                     self.assertEqual(oracle.main(), 0)
-                    self.assertEqual(run.call_count, 4)  # Both endpoints for each selected example.
+                    self.assertEqual(run.call_count, 2)  # One scheduled C++ profile per example.
                 # A body-identity count outside the budget is advisory; a
                 # program that exits nonzero still fails.
                 def drifted(*arguments):

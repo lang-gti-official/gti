@@ -1322,6 +1322,17 @@ std::vector<MacroExpansionSite> SemanticModel::macroExpansionSites() const {
                            : declaration->second,
                        call});
     }
+  for (const SemanticModel *model = this; model != nullptr; model = model->base)
+    for (const auto &[call, declaration] : model->macroValueDeclarations) {
+      if (!declaration || !declaration->isProceduralMacro() ||
+          calls.contains(call))
+        continue;
+      const auto *alias = model->findExpressionAlias(*call);
+      if (!alias)
+        continue;
+      calls.insert(call);
+      sites.push_back({nullptr, nullptr, declaration, call, alias});
+    }
   return sites;
 }
 
@@ -3115,6 +3126,8 @@ void SemanticModel::record(const FunctionDecl &declaration, FunctionInfo info) {
   // also covers instance overlays whose alias map lives in the base model.
   const FunctionDecl *canonical =
       info.declaration != nullptr ? info.declaration : &declaration;
+  if (const auto *previous = findFunction(*canonical))
+    info.proceduralOnly = info.proceduralOnly || previous->proceduralOnly;
   const auto [found, _] =
       functions.insert_or_assign(canonical, std::move(info));
   functionsById.insert_or_assign(found->second.id, canonical);
