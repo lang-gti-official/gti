@@ -25,6 +25,11 @@ GATE_WORKFLOW = ".github/workflows/ci.yml"
 GATE_JOB = "CI gate"
 QUEUE_BRANCH = "gh-readonly-queue/main/"
 NIGHTLY_TAG = "refs/tags/nightly"
+# How far back along main's first-parent history a scheduled selection looks
+# for the newest commit with full-validation evidence. Full validation keeps
+# one run going plus the newest waiting push, so the newest validated commit
+# is normally within a few merges of main's head.
+NIGHTLY_SEARCH_DEPTH = 50
 
 ApiRequest = Callable[[str], Any]
 
@@ -126,18 +131,26 @@ def nightly_relation(sha: str, published: str) -> str:
 
 
 def admit_nightly(sha: str) -> dict[str, str]:
+    """Admit a validated main commit that is not older than the published nightly.
+
+    The source need not be main's head: nightly publishes the newest commit
+    whose full validation passed, which may trail main by one validation
+    cycle. Newer wins, so a slower publication never moves the tag backwards,
+    and the tag lease refuses a concurrent move.
+    """
     sha = checked_sha(sha)
     current = remote_main()
-    if current != sha:
-        print(f"Nightly source {sha}: superseded by {current}")
+    if git("cat-file", "-t", sha, optional=True) != "commit" or not is_ancestor(sha, current):
+        print(f"Nightly source {sha}: not a commit on main {current}")
         return {"publish": "false", "lease": ""}
     lease, published = published_nightly()
     relation = nightly_relation(sha, published)
     # The tag moves before uploads finish. A failed publication must be
-    # resumable at the same current-main commit; scheduled selection still
-    # skips unchanged main, while a failed-job retry or dispatch can repair it.
+    # resumable at the same commit; scheduled selection still skips an
+    # unchanged nightly, while a failed-job retry or dispatch can repair it.
     admitted = relation in ("first", "newer", "same")
-    print(f"Nightly source {sha}: current main; published nightly "
+    where = "current main" if sha == current else f"on main behind {current}"
+    print(f"Nightly source {sha}: {where}; published nightly "
           f"{published or 'none'} ({relation})")
     return {"publish": str(admitted).lower(), "lease": lease if admitted else ""}
 
@@ -214,9 +227,39 @@ def github_request(token: str) -> ApiRequest:
     return request
 
 
+def newest_validated(repository: str, head: str, published: str,
+                     evidence: Callable[[str, str], int | dict[str, str]]
+                     ) -> tuple[str, int | dict[str, str] | None]:
+    """The newest first-parent main commit with release evidence.
+
+    Reaching the published nightly without a newer validated commit returns
+    it with its evidence, or with None when its packages are no longer
+    retained: nothing newer exists to publish either way.
+    """
+    candidates = git("rev-list", "--first-parent", f"--max-count={NIGHTLY_SEARCH_DEPTH}",
+                     head).split()
+    last_error: ValueError | None = None
+    for candidate in candidates:
+        try:
+            return candidate, evidence(repository, candidate)
+        except ValueError as error:
+            last_error = error
+        if candidate == published:
+            return published, None
+    raise ValueError(f"no main commit from {head} back to "
+                     f"{published or f'{NIGHTLY_SEARCH_DEPTH} commits'} has full "
+                     f"validation evidence ({last_error})")
+
+
 def select_nightly(repository: str, event: str, ref: str, requested: str,
                    evidence: Callable[[str, str], int | dict[str, str]]) -> dict[str, str]:
-    """Choose retained packages for main head, or a dispatched main commit."""
+    """Choose the newest validated main commit, or a dispatched main commit.
+
+    Without a requested commit, walk main's first-parent history from its head
+    and take the first commit whose full validation passed with retained
+    packages. The walk stops at the published nightly: nothing older can
+    publish.
+    """
     if ref != "refs/heads/main":
         raise ValueError("the nightly workflow runs only from main's own definition")
     head = remote_main()
@@ -230,13 +273,16 @@ def select_nightly(repository: str, event: str, ref: str, requested: str,
         if git("cat-file", "-t", requested, optional=True) != "commit" or \
                 not is_ancestor(requested, head):
             raise ValueError(f"{requested} is not a commit on main")
-    sha = requested or head
-    run = evidence(repository, sha)
     _, published = published_nightly()
+    if requested:
+        sha, run = requested, evidence(repository, requested)
+    else:
+        sha, run = newest_validated(repository, head, published, evidence)
     relation = nightly_relation(sha, published)
     # A scheduled run retrieves only what would publish. A dispatch retries
-    # retrieval; publication still requires current main.
-    build = event == "workflow_dispatch" or (sha == head and relation in ("first", "newer"))
+    # retrieval when the packages are still retained; admission still refuses
+    # anything older than the published nightly.
+    build = run is not None and (event == "workflow_dispatch" or relation in ("first", "newer"))
     version = git("show", f"{sha}:VERSION")
     if VERSION.fullmatch(version) is None:
         raise ValueError("VERSION must contain a semantic version")
