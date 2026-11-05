@@ -7481,7 +7481,7 @@
         "move-only destructor-bearing expression"
       ],
       "evidence": [
-        "examples/procedural-macro-library.gti",
+        "examples/procedural-macros/library.gti",
         "examples/procedural-macros.gti",
         "tests/procedural_syntax_tests.cpp",
         "examples/procedural-html.gti",

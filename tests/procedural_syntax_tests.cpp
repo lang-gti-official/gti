@@ -422,7 +422,7 @@ void sharedSyntaxConstruction() {
 void execution() {
   const auto libraryPath =
       std::filesystem::path(__FILE__).parent_path().parent_path() /
-      "examples/procedural-macro-library.gti";
+      "examples/procedural-macros/library.gti";
   std::ifstream file(libraryPath);
   std::ostringstream source;
   source << file.rdbuf();

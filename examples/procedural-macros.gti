@@ -1,4 +1,4 @@
-import "procedural-macro-library.gti";
+import "procedural-macros/library.gti";
 
 mut int evaluations = 0;
 int next() { evaluations += 1; return 21; }

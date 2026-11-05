@@ -10,7 +10,7 @@ or compile the standalone example with `gti procedural-html.gti`. This is a
 small token-based markup grammar, not a browser DOM or a sanitizer.
 
 [`procedural-macros.gti`](procedural-macros.gti) imports
-[`procedural-macro-library.gti`](procedural-macro-library.gti) and demonstrates
+[`procedural-macros/library.gti`](procedural-macros/library.gti) and demonstrates
 identity, nested expansion, hygienic generated bindings and evaluating an input
 once. `procedural_execution_example` runs it through LLVM O0/O3.
 [`procedural-macro-declaration.gti`](procedural-macro-declaration.gti) also keeps
