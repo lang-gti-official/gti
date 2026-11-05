@@ -76,8 +76,9 @@ queue failure belongs to the change that introduced it.
 ## Nightly toolchain
 
 `workflows/nightly.yml` runs daily at 02:00 UTC and on manual dispatch (an
-optional exact main commit; only main head publishes). It downloads the
-production archives from that commit's successful full CI run and attempt,
+optional exact main commit; by default the newest main commit whose full
+validation passed). It downloads the production archives from that commit's
+successful full CI run and attempt,
 checks their source/platform/configuration manifest and file hashes, and
 republishes the rolling `nightly` prerelease without rebuilding or repeating
 the complete suite. Full CI builds `GTI_RELEASE_BUILD=ON` bundled-LLVM packages
@@ -85,9 +86,10 @@ for `linux-x64` (`ubuntu-24.04`) and `darwin-arm64` (`macos-26`), validates thei
 installed consumers, runs the full release suite and separate sanitizer gates,
 and retains the archives for 30 days. Nightly publishes one archive and
 `.sha256` per platform plus
-`BUILD_ID`. A commit that is no longer main head does not publish. Scheduled
-runs skip unchanged main; rerunning a failed publish job or dispatching the
-same current-main commit can finish an interrupted upload. Missing, expired,
+`BUILD_ID`. A commit older than the published nightly does not publish; one
+that main has moved past still does. Scheduled runs skip when nothing newer is
+validated; rerunning a failed publish job or dispatching the same commit can
+finish an interrupted upload. Missing, expired,
 mixed or mismatched artifacts stop publication; they never cause an older
 compiler to be stamped with a new commit. Dispatch `ci.yml` on main to obtain
 fresh full evidence when commissioning after an approved merge exception or

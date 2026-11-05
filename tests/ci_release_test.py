@@ -720,8 +720,9 @@ def source_contract(root):
         invalid = commit("1.2.0\nBAD=value", "invalid version")
         query(invalid, before=downgraded, success=False)
 
-        # Nightly admission is read-only, latest-main-only, and a stale source is
-        # an ordinary skip rather than a false release failure.
+        # Nightly admission is read-only and newer-wins. A validated commit that
+        # main has moved past still publishes; one older than the published
+        # nightly is an ordinary skip rather than a false release failure.
         latest = commit("1.2.0", "latest")
         remote = work / "remote.git"
         run(["git", "init", "--bare", "--quiet", str(remote)], work)
@@ -731,7 +732,8 @@ def source_contract(root):
         assert query(latest, event="nightly")["stable"] == "false", "nightly never cuts stable"
         run(["git", "checkout", "--quiet", "--detach", advanced], work)
         tags = run(["git", "show-ref", "--tags"], work)
-        assert query(advanced, mode="admit-nightly") == {"publish": "false", "lease": ""}
+        assert query(advanced, mode="admit-nightly") == {"publish": "true", "lease": ""}, \
+            "a validated commit behind main's head is admitted"
         assert run(["git", "show-ref", "--tags"], work) == tags
 
         # A current-main retry may finish uploads after the tag already moved.
@@ -739,6 +741,10 @@ def source_contract(root):
         run(["git", "checkout", "--quiet", "main"], work)
         run(["git", "push", "--quiet", "origin", f"{latest}:refs/tags/nightly"], work)
         assert query(latest, mode="admit-nightly") == {"publish": "true", "lease": latest}
+        run(["git", "checkout", "--quiet", "--detach", advanced], work)
+        assert query(advanced, mode="admit-nightly") == {"publish": "false", "lease": ""}, \
+            "a commit older than the published nightly never moves the tag back"
+        run(["git", "checkout", "--quiet", "main"], work)
         newest = commit("1.2.0", "newest")
         run(["git", "push", "--quiet", "origin", "main"], work)
         assert query(newest, mode="admit-nightly") == {"publish": "true", "lease": latest}
@@ -871,8 +877,16 @@ def selection_contract(script, work, head, published, older, stray):
         raise AssertionError(("selection accepted", arguments))
 
     run(["git", "push", "--quiet", "--force", "origin", f"{published}:refs/tags/nightly"], work)
-    refused()  # head has no merge-queue evidence
-    verified.update({head, published, older})
+    # Nothing newer than the published nightly is validated, and its own
+    # packages are not retained: the walk stops there and builds nothing.
+    assert select() == {"sha": published, "version": "1.2.0", "build": "false", "head": "false"}
+    # The newest validated commit publishes even after main has moved past it.
+    run(["git", "push", "--quiet", "--force", "origin", f"{older}:refs/tags/nightly"], work)
+    verified.add(published)
+    assert select() == {"sha": published, "version": "1.2.0", "build": "true", "head": "false"}
+    run(["git", "push", "--quiet", "--force", "origin", f"{published}:refs/tags/nightly"], work)
+    assert select()["build"] == "false", "an already-published newest validated commit does not rebuild"
+    verified.update({head, older})
     assert select() == {"sha": head, "version": "1.2.0", "build": "true", "head": "true"}
     refused(ref="refs/heads/feature")
     refused(requested=published)  # only a dispatch selects a commit
