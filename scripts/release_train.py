@@ -39,9 +39,11 @@ CANONICAL = "https://github.com/" + REPOSITORY + ".git"
 # linux-aarch64 compiler profile (see build-and-driver.md).
 PLATFORMS = ("linux-x64", "darwin-arm64")
 SOAK_HOURS = 48
-NIGHTLY_AGE_HOURS = 24
+# A cut takes the newest sanitized nightly as it is, like Rust's beta or
+# Firefox's merge day: the beta soak, not the nightly's age, is the safety
+# margin. A dispatch may still require a minimum age.
+NIGHTLY_AGE_HOURS = 0
 MAX_OVERRIDE_HOURS = 720
-CADENCE_DAYS = 2
 STAGES = ("both", "cut", "promote")
 BLOCKER_LABEL = "release-blocker"
 BACKPORT_LABEL = "backport"
@@ -107,11 +109,21 @@ def line_branch(version: str) -> str:
     return f"beta/{major}.{minor}"
 
 
-def train_day(event: str, now: datetime) -> bool:
-    """Schedules run daily; the train runs on every other UTC day (a 48 h cadence)."""
-    if event == "workflow_dispatch":
-        return True
-    return int(now.timestamp()) // 86400 % CADENCE_DAYS == 0
+def week_start(now: datetime) -> datetime:
+    """Monday 00:00 UTC of now's ISO week: the weekly cut is due from then."""
+    monday = now.astimezone(timezone.utc) - timedelta(days=now.astimezone(timezone.utc).weekday())
+    return monday.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def cut_this_week(head: str, now: datetime) -> bool:
+    """Whether a release cut already landed on main this ISO week.
+
+    Only a release cut changes VERSION, so main's VERSION at the start of the
+    week differing from its head means this week's cut has landed."""
+    before = git("rev-list", "-1", "--first-parent",
+                 f"--before={week_start(now).strftime('%Y-%m-%dT%H:%M:%S+00:00')}", head,
+                 optional=True)
+    return bool(before) and version_at(before) != version_at(head)
 
 
 def hours_input(value: str, event: str, default: int, name: str) -> tuple[int, bool]:
@@ -400,21 +412,28 @@ def train_plan(event: str, ref: str, stage: str, now: datetime) -> dict[str, str
         raise TrainError(f"stage must be one of {', '.join(STAGES)}")
     if event != "workflow_dispatch" and stage != "both":
         raise TrainError("only a manual dispatch selects a stage")
-    day = train_day(event, now)
-    if not day:
-        print("Not a train day: the scheduled train runs every other UTC day")
-    return {"cut": str(day and stage in ("both", "cut")).lower(),
-            "promote": str(day and stage in ("both", "promote")).lower()}
+    # The schedule runs daily: promotion checks every day, and the cut is due
+    # from Monday until one lands that week (select_cut enforces the week).
+    return {"cut": str(stage in ("both", "cut")).lower(),
+            "promote": str(stage in ("both", "promote")).lower()}
 
 
 def select_cut(repository: str, ref: str, min_age: int, now: datetime,
-               evidence: Evidence, request: Request, sanitized: Evidence) -> dict[str, str]:
-    """The completely published nightly, full-CI-verified, sanitized and old enough to cut."""
+               evidence: Evidence, request: Request, sanitized: Evidence,
+               weekly: bool = True) -> dict[str, str]:
+    """The completely published nightly, full-CI-verified and sanitized, once a week.
+
+    A scheduled cut is due from Monday 00:00 UTC until one lands that ISO
+    week, so a day without a sanitizer verdict retries the next day instead
+    of losing the week. A dispatch (weekly=False) may cut again."""
     if ref != "refs/heads/main":
         raise TrainError("a release cut runs only from main's own definition")
     head = source.remote_main()
     if git("rev-parse", "HEAD") != head:
         raise TrainError("the cut must run on a checkout of current main")
+    if weekly and cut_this_week(head, now):
+        return skip(f"this week's release cut already landed on main (since "
+                    f"{week_start(now):%Y-%m-%d} 00:00 UTC); the next is due next Monday")
     _, nightly = source.published_nightly()
     if not nightly:
         return skip("no nightly has been published yet")
@@ -594,7 +613,8 @@ def run_cut(repository: str, event: str, ref: str, min_age: str, title: str, wor
             state = delivery.enqueue(pending[0])
             return skip(f"release cut PR #{pending[0]['number']} is open ({state}); "
                         "no new cut until it merges or is closed")
-    selected = select_cut(repository, ref, hours, now, evidence, request, sanitized)
+    selected = select_cut(repository, ref, hours, now, evidence, request, sanitized,
+                          weekly=event != "workflow_dispatch")
     if selected["cut"] != "true":
         return selected
     cut = prepare_cut(selected["sha"], title, worktree)

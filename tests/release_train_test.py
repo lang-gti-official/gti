@@ -134,10 +134,12 @@ def cut_and_land(repo, nightly, base):
 
 
 def inputs_contract():
-    assert train.train_day("workflow_dispatch", NOW + timedelta(days=1))
-    even = datetime(2026, 10, 30, 4, tzinfo=timezone.utc)
-    assert train.train_day("schedule", even) != train.train_day("schedule", even + timedelta(days=1))
-    assert train.train_day("schedule", even) == train.train_day("schedule", even + timedelta(days=2))
+    # The weekly cut is due from Monday 00:00 UTC of the ISO week.
+    assert train.week_start(NOW) == datetime(2026, 10, 26, tzinfo=timezone.utc)
+    assert train.week_start(datetime(2026, 10, 26, 0, 0, tzinfo=timezone.utc)) == \
+        datetime(2026, 10, 26, tzinfo=timezone.utc)
+    assert train.week_start(datetime(2026, 11, 1, 23, 59, tzinfo=timezone.utc)) == \
+        datetime(2026, 10, 26, tzinfo=timezone.utc)
     assert train.hours_input("", "schedule", 24, "x") == (24, False)
     assert train.hours_input("0", "workflow_dispatch", 48, "x") == (0, True)
     assert train.hours_input("48", "workflow_dispatch", 48, "x") == (48, False)
@@ -156,9 +158,10 @@ def inputs_contract():
     assert plan == {"cut": "false", "promote": "true"}
     assert quiet(train.train_plan, "workflow_dispatch", "refs/heads/main", "", NOW) == \
         {"cut": "true", "promote": "true"}
-    off = even + timedelta(days=1) if train.train_day("schedule", even) else even
-    assert quiet(train.train_plan, "schedule", "refs/heads/main", "", off) == \
-        {"cut": "false", "promote": "false"}
+    # The schedule runs every day; the week is enforced by the cut itself.
+    for day in range(7):
+        assert quiet(train.train_plan, "schedule", "refs/heads/main", "", NOW + timedelta(days=day)) == \
+            {"cut": "true", "promote": "true"}
     refused(train.train_plan, "push", "refs/heads/main", "", NOW)
     refused(train.train_plan, "schedule", "refs/heads/main", "cut", NOW)
     refused(train.train_plan, "workflow_dispatch", "refs/heads/feature", "", NOW)
@@ -256,6 +259,8 @@ def cut_contract(base):
         assert quiet(select, train.REPOSITORY, "refs/heads/main", 24, NOW, verified)["cut"] == "true"
         assert quiet(select, train.REPOSITORY, "refs/heads/main", 48, NOW,
                      verified)["cut"] == "false", "younger than the requested age"
+        assert quiet(select, train.REPOSITORY, "refs/heads/main", train.NIGHTLY_AGE_HOURS, NOW,
+                     verified)["cut"] == "true", "a scheduled cut needs no nightly age"
         refused(select, train.REPOSITORY, "refs/heads/main", 24, NOW, evidence_for(set()),
                 contains="merge-queue")
         refused(select, train.REPOSITORY, "refs/heads/other", 24, NOW, verified)
@@ -273,6 +278,26 @@ def cut_contract(base):
         repo.push("main")
         assert quiet(select, train.REPOSITORY, "refs/heads/main", 24, NOW,
                      verified)["cut"] == "false"
+        repo.git("reset", "--quiet", "--hard", head)
+        repo.push("main")
+        assert not quiet(train.cut_this_week, head, NOW), "no cut has landed this week"
+        # Once this week's cut has landed, the schedule waits for next Monday,
+        # even when the nightly already carries the new VERSION; a dispatch may
+        # cut again. The cut lands Tuesday 2026-11-03 (week of 11-02).
+        landed = repo.commit({"VERSION": "0.11.0\n"}, "Release-Cut this week", NOW + timedelta(days=4))
+        repo.push("main", f"{landed}:refs/tags/nightly")
+        wednesday, next_week = NOW + timedelta(days=5), NOW + timedelta(days=11)
+        assert quiet(train.cut_this_week, landed, wednesday)
+        assert not quiet(train.cut_this_week, landed, next_week), "last week's cut does not count"
+        passed.add(landed)
+        weekly = quiet(select, train.REPOSITORY, "refs/heads/main", 0, wednesday, evidence_for({landed}))
+        assert weekly["cut"] == "false" and "this week" in weekly["reason"], weekly
+        dispatch = partial(train.select_cut, request=lambda path: nightly_record(landed),
+                           sanitized=sanitized_for(passed), weekly=False)
+        assert quiet(dispatch, train.REPOSITORY, "refs/heads/main", 0, wednesday,
+                     evidence_for({landed}))["cut"] == "true", "a dispatch may cut again"
+        passed.discard(landed)
+        repo.push(f"{nightly}:refs/tags/nightly")
         repo.git("reset", "--quiet", "--hard", head)
         repo.push("main")
         assert bumped
