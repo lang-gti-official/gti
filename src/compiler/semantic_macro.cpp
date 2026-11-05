@@ -38,7 +38,10 @@ auto SemanticVisitor::Impl::analyzeCapturedCall(const Call &call) -> bool {
                  return syntaxDirective(token.kind);
                }))
         message = "Directives are forbidden in procedural macro input.";
-      else if (sourceUnitFor(procedural->name()) == currentSourceUnit)
+      // Generated calls retain the original invocation's source attribution.
+      // Definition lookup must not turn an imported nested invocation into a
+      // same-module call merely because it resolves a definition-owned name.
+      else if (sourceUnitFor(procedural->name()) == sourceUnitFor(call.paren()))
         message = "The initial procedural macro profile requires an imported "
                   "definition.";
       else
@@ -95,8 +98,13 @@ auto SemanticVisitor::Impl::executeProceduralMacro(
            "macro-expansions limit.");
     return true;
   }
+  const auto &capture = *call.capturedArguments();
+  // Only the braced group is observable by the macro. Spacing introduced
+  // around its enclosing invocation parentheses cannot defeat cycle identity.
+  const auto begin = capture.textRanges[1].first;
+  const auto end = capture.textRanges[capture.tokens.size() - 2].second;
   const auto activeRequest =
-      std::pair{function->id, call.capturedArguments()->text};
+      std::pair{function->id, capture.text.substr(begin, end - begin)};
   if (std::find(proceduralActive.begin(), proceduralActive.end(),
                 activeRequest) != proceduralActive.end()) {
     reject(
@@ -149,6 +157,7 @@ auto SemanticVisitor::Impl::executeProceduralMacro(
         [&] {
           const auto fresh = ++nextExpansion;
           macroLookup.emplace(fresh, macroLookup.at(definitionContext));
+          macroLookup.at(fresh).localBindingIdentity = fresh;
           freshContexts.push_back(fresh);
           return fresh;
         },
@@ -269,6 +278,7 @@ auto SemanticVisitor::Impl::executeProceduralMacro(
       for (const auto old : reused->fresh) {
         const auto fresh = ++nextExpansion;
         macroLookup.emplace(fresh, macroLookup.at(definitionContext));
+        macroLookup.at(fresh).localBindingIdentity = fresh;
         contexts.emplace(old, fresh);
       }
       const auto remap = [&](const Token &original) {
@@ -561,6 +571,15 @@ auto SemanticVisitor::Impl::macroContext(const Token &token) const
   if (found != macroLookup.end())
     return &found->second;
   return macroLookupBase ? macroLookupBase->macroContext(token) : nullptr;
+}
+
+auto SemanticVisitor::Impl::localSymbolKey(const Token &token) const
+    -> std::string {
+  if (const auto *context = macroContext(token);
+      context && context->localBindingIdentity)
+    return token.lexeme + "$fresh$" +
+           std::to_string(context->localBindingIdentity);
+  return token.lexeme;
 }
 
 auto SemanticVisitor::Impl::macroLocalScopeRange(const Token &token) const

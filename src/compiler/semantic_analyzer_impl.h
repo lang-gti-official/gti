@@ -5928,6 +5928,8 @@ private:
     std::optional<ClassId> ownerClass;
     bool staticMember = false;
     bool definition = false;
+    // Opaque identity of a syntax::fresh binder, independent of its spelling.
+    std::uint32_t localBindingIdentity = 0;
     // A definition may see only lexical frames created within its expansion.
     // Captured argument syntax is capped at the invocation's lexical depth so
     // later macro-local binders cannot capture same-spelled caller names.
@@ -5978,6 +5980,7 @@ private:
   std::vector<std::pair<const FunctionDecl *, std::size_t>> macroActiveBodies;
   [[nodiscard]] const MacroLookupContext *
   macroContext(const Token &token) const;
+  [[nodiscard]] std::string localSymbolKey(const Token &token) const;
   struct MacroLocalScopeRange {
     std::size_t begin = 0;
     std::size_t end = 0;

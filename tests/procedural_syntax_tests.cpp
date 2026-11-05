@@ -1,8 +1,12 @@
 #include "gti/ast_clone.h"
 #include "gti/formatter.h"
 #include "gti/frontend.h"
+#include "gti/frontend_work.h"
 #include "gti/language_queries.h"
 #include "gti/lexer.h"
+#include "gti/mir_constant_evaluator.h"
+#include "gti/mir_procedural.h"
+#include "gti/mir_verifier.h"
 #include "gti/parser.h"
 #include "gti/procedural_syntax.h"
 
@@ -286,8 +290,8 @@ void semantics() {
   check(ordinary.canGenerateCode(),
         "ordinary braced calls keep configuration directive behavior");
   const std::string selectedSource =
-      "import \"library.gti\"; int main() { html!({ "
-      "<h1>{unknown}</h1> }); return 0; }";
+      "import \"library.gti\"; int main() { return html!({ "
+      "<h1>{unknown}</h1> }) - 42; }";
   auto selected = analyze(selectedSource);
   check(selected.sourceValid && selected.syntaxValid,
         "opaque markup reaches semantic name selection");
@@ -399,7 +403,7 @@ void execution() {
       analyze(
           "import \"library.gti\"; int main(){return identity!({missing});}",
           library),
-      "Unknown");
+      "Undefined name");
   diagnostic(
       analyze("import \"library.gti\"; int main(){return identity!({1;});}",
               library),
@@ -414,10 +418,11 @@ void execution() {
                      "int main(){Hidden h; return identity!({h.value});}",
                      library),
              "private");
-  diagnostic(analyze("import \"library.gti\"; int& bad(){int local=7; "
-                     "return identity!({local});} int main(){return 0;}",
-                     library),
-             "local");
+  diagnostic(
+      analyze("import \"library.gti\"; int& bad(int& input){int local=7; "
+              "return identity!({local});} int main(){return 0;}",
+              library),
+      "must derive from read-only parameter");
   const std::string effectful =
       "export module library; import std.syntax; mut int state=0; "
       "export #macro(proc) std::syntax::expr effect(std::syntax::tokens input) "
@@ -427,6 +432,216 @@ void execution() {
   diagnostic(analyze("import \"library.gti\"; int main(){return effect!({1});}",
                      effectful),
              "constant");
+
+  const std::string cycle = R"gti(
+export module library;
+import std.syntax;
+export #macro(proc) std::syntax::expr cycle(std::syntax::tokens input) {
+  auto origin = std::syntax::location(input, uint64_t(0), uint64_t(1));
+  auto name = std::syntax::identifier("cycle", origin);
+  mut auto output = std::syntax::join(name, std::syntax::punctuation("!", origin));
+  output = std::syntax::join(output, std::syntax::punctuation("(", origin));
+  output = std::syntax::join(output, input);
+  output = std::syntax::join(output, std::syntax::punctuation(")", origin));
+  return std::syntax::parse(output);
+})gti";
+  diagnostic(
+      analyze("import \"library.gti\"; int main(){return cycle!({1});}", cycle),
+      "recursive procedural");
+  const std::string targetMacro = R"gti(
+export module library;
+import std.syntax;
+export #macro(proc) std::syntax::expr target_value(std::syntax::tokens input) {
+  auto origin = std::syntax::location(input, uint64_t(0), uint64_t(1));
+#if target.arch == "arm64"
+  return std::syntax::parse(std::syntax::literal("42", origin));
+#else
+  return std::syntax::parse(std::syntax::literal("7", origin));
+#endif
+})gti";
+  const std::string targetConsumer =
+      "import \"library.gti\"; int main(){return target_value!({});}";
+  for (const auto &[triple, value] :
+       std::array{std::pair{"arm64-apple-macos", "42"},
+                  std::pair{"x86_64-unknown-linux-gnu", "7"}}) {
+    lang::FrontendOptions options;
+    options.target = *lang::parseTargetTriple(triple);
+    auto result = analyze(targetConsumer, targetMacro, options);
+    check(result.canGenerateCode(),
+          "procedural target selection is independent of host");
+    auto view = lang::LanguageQueries().macroExpansion(
+        result, result.sourceGraph.entryUnit(),
+        targetConsumer.find("target_value!") + 2);
+    check(view && view->text.find(value) != std::string::npos,
+          "retained procedural inspection reflects selected target");
+  }
+  const std::string viewConsumer =
+      "import \"library.gti\"; int main(){return twice_once!({21});}";
+  auto viewResult = accepted(viewConsumer);
+  auto view = lang::LanguageQueries().macroExpansion(
+      viewResult, viewResult.sourceGraph.entryUnit(),
+      viewConsumer.find("twice_once!") + 2);
+  if (!view || view->text.find("__macro_local_") == std::string::npos ||
+      view->text.find("omitted") != std::string::npos)
+    std::cerr << "Inspection: " << (view ? view->text : "<no result>") << '\n';
+  check(view && view->text.find("__macro_local_") != std::string::npos &&
+            view->text.find("21") != std::string::npos &&
+            view->text.find("omitted") == std::string::npos,
+        "inspection renders generated lambda and hygienic parameter labels");
+  for (const auto member :
+       {&lang::CompileLimits::syntaxBytes, &lang::CompileLimits::syntaxTokens,
+        &lang::CompileLimits::syntaxDepth}) {
+    lang::FrontendOptions options;
+    options.limits.*member = 1;
+    auto result =
+        analyze("import \"library.gti\"; int main(){return identity!({42});}",
+                library, options);
+    diagnostic(result, "limit exceeded");
+    check(std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                      [](const auto &d) { return !d.hints.empty(); }),
+          "syntax resource diagnostics include configuration guidance");
+  }
+  auto ordinary = analyze("constexpr int same(int value){return value;} "
+                          "int main(){return same(1);}",
+                          "export module library;");
+  check(ordinary.canGenerateCode(), "ordinary constant profile fixture lowers");
+  for (const auto &function : ordinary.hir.functionInstances()) {
+    if (!function.source || function.source->name().lexeme != "same")
+      continue;
+    const auto forged = lang::makeConstantAggregate(
+        {.kind = lang::ConstantAggregateKind::TransientSyntax, .identity = 1});
+    const std::array<lang::ConstantValue, 1> direct{forged};
+    const auto rejected =
+        lang::evaluateMirConstantFunction(ordinary.mir, function.id, direct);
+    check(!rejected && rejected.failure ==
+                           lang::ConstantEvaluationFailure::InvalidOperands,
+          "ordinary constant requests reject forged syntax handles");
+    const std::array<lang::ConstantValue, 1> nested{lang::makeConstantAggregate(
+        {.kind = lang::ConstantAggregateKind::Object,
+         .fields = {{1, forged}}})};
+    check(!lang::evaluateMirConstantFunction(ordinary.mir, function.id, nested),
+          "aggregate nesting cannot publish a syntax handle");
+  }
+
+  const std::string reusedSource = R"gti(
+import "library.gti";
+#macro int double_value(int value) { return value + value; }
+int main(){ return double_value(identity!({21})) - 42; }
+)gti";
+  for (bool reuse : {true, false}) {
+    lang::FrontendWorkMetrics metrics;
+    lang::FrontendOptions options;
+    options.reuseConstantEvaluations = reuse;
+    options.workMetrics = &metrics;
+    auto result = analyze(reusedSource, library, options);
+    if (!result.canGenerateCode())
+      for (const auto &d : result.diagnostics)
+        std::cerr << "Reuse: " << d.code << ": " << d.message << '\n';
+    check(result.canGenerateCode(),
+          "typed/procedural nesting works with reuse on and off");
+    std::cerr << "Procedural reuse=" << reuse
+              << " executions=" << metrics.proceduralExecutions
+              << " hits=" << metrics.proceduralExpansionReuses << '\n';
+  }
+  auto constant = accepted(
+      "import \"library.gti\"; constexpr int answer = identity!({42}); "
+      "static_assert(answer == 42); int main(){return answer-42;}");
+  (void)constant;
+  {
+    lang::FrontendWorkMetrics metrics;
+    lang::FrontendOptions options;
+    options.workMetrics = &metrics;
+    auto repeated = analyze("import \"library.gti\"; int take(int "
+                            "value=identity!({42})){return value;} "
+                            "int main(){return take()+take()-84;}",
+                            library, options);
+    check(repeated.canGenerateCode(),
+          "procedural default arguments preserve caller checking");
+    std::cerr << "Default argument executions=" << metrics.proceduralExecutions
+              << " hits=" << metrics.proceduralExpansionReuses << '\n';
+  }
+  const std::string inspectionLibrary = R"gti(
+export module library;
+import std.syntax;
+export #macro(proc) std::syntax::expr inspect(std::syntax::tokens input){
+  auto whole=std::syntax::group(input,uint64_t(0));
+  auto origin=std::syntax::location(whole,uint64_t(0),uint64_t(1));
+  if(std::syntax::text(whole)!="{42}" ||
+     std::syntax::kind(whole,uint64_t(0))==std::syntax::kind(whole,uint64_t(1)) ||
+     !std::syntax::adjacent(whole,uint64_t(0))) {
+    return std::syntax::fail_related(origin,"unexpected input",origin);
+  }
+  return std::syntax::parse(std::syntax::slice(whole,uint64_t(1),uint64_t(2)));
+}
+export #macro(proc) std::syntax::expr unbound(std::syntax::tokens input){
+  auto origin=std::syntax::location(input,uint64_t(0),uint64_t(1));
+  return std::syntax::parse(std::syntax::reference(std::syntax::fresh("outside",origin)));
+}
+export constexpr int outside=42;
+)gti";
+  auto inspected =
+      analyze("import \"library.gti\"; int main(){return inspect!({42})-42;}",
+              inspectionLibrary);
+  check(inspected.canGenerateCode(),
+        "source token inspection executes through the syntax API");
+  diagnostic(
+      analyze("import \"library.gti\"; int main(){return inspect!({ 42});}",
+              inspectionLibrary),
+      "unexpected input");
+  diagnostic(analyze("import \"library.gti\"; int main(){return unbound!({});}",
+                     inspectionLibrary),
+             "Undefined name");
+  std::string freshLibrary = R"gti(
+export module library;
+import std.syntax;
+export #macro(proc) std::syntax::expr fresh_pair(std::syntax::tokens input){
+  auto origin=std::syntax::location(input,uint64_t(0),uint64_t(1));
+  auto first=std::syntax::reference(std::syntax::fresh("value",origin));
+  auto second=std::syntax::reference(std::syntax::fresh("value",origin));
+  mut auto result=std::syntax::punctuation("[",origin);
+)gti";
+  const auto append = [&](std::string part) {
+    freshLibrary += "result=std::syntax::join(result," + part + ");\n";
+  };
+  const auto punctuation = [&](std::string text) {
+    append("std::syntax::punctuation(\"" + text + "\",origin)");
+  };
+  const auto keyword = [&](std::string text) {
+    append("std::syntax::keyword(\"" + text + "\",origin)");
+  };
+  punctuation("]");
+  punctuation("(");
+  keyword("int");
+  append("first");
+  punctuation(",");
+  keyword("int");
+  append("second");
+  punctuation(")");
+  punctuation("->");
+  keyword("int");
+  punctuation("{");
+  keyword("return");
+  append("first");
+  punctuation("+");
+  append("second");
+  punctuation(";");
+  punctuation("}");
+  punctuation("(");
+  append("std::syntax::literal(\"1\",origin)");
+  punctuation(",");
+  append("std::syntax::literal(\"2\",origin)");
+  punctuation(")");
+  freshLibrary += "return std::syntax::parse(result);}";
+  auto distinct =
+      accepted("import \"library.gti\"; int main(){return fresh_pair!({})-3;}",
+               freshLibrary);
+  bool distinctParameters = false;
+  for (const auto &lambda : distinct.mir.lambdaInstances())
+    if (lambda.parameterBindings.size() == 2)
+      distinctParameters |=
+          lambda.parameterBindings[0] != lambda.parameterBindings[1];
+  check(distinctParameters,
+        "same-spelled fresh parameters retain distinct MIR identities");
   auto limited = lang::FrontendOptions{};
   limited.limits.syntaxNodes = 1;
   diagnostic(
@@ -458,11 +673,69 @@ void execution() {
         "library failure retains definition and invocation traces");
 }
 
+void executionCancellation() {
+  // Build a verified body independently of frontend cancellation, then stop
+  // the procedural profile after execution has begun. The patched descriptors
+  // model the trusted identities normally supplied by semantic staging.
+  auto frontend = analyze(R"gti(
+struct Tokens {}; struct Expression {}; struct Span {}; struct Binding {};
+int anchor(Tokens t, Expression e, Span s, Binding b){return 0;}
+Expression spinning(Tokens input){while(true){} return Expression();}
+int main(){return 0;}
+)gti",
+                          "export module library;");
+  check(frontend.canGenerateCode(),
+        "cancellation fixture lowers to verified MIR");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &d : frontend.diagnostics)
+      std::cerr << "Cancellation fixture: " << d.code << ": " << d.message
+                << '\n';
+    return;
+  }
+  std::array<lang::SemanticType, 4> types;
+  lang::HirFunctionInstanceId root = 0;
+  for (const auto &function : frontend.hir.functionInstances()) {
+    if (function.source && function.source->name().lexeme == "anchor")
+      std::copy_n(function.parameterTypes.begin(), 4, types.begin());
+    if (function.source && function.source->name().lexeme == "spinning")
+      root = function.id;
+  }
+  auto program = frontend.mir;
+  for (auto &record : const_cast<std::vector<lang::MirClassInstance> &>(
+           program.classInstances()))
+    for (std::size_t i = 0; i < types.size(); ++i)
+      if (record.type == types[i])
+        record.syntaxKind = static_cast<lang::CompileTimeSyntaxKind>(i + 1);
+  for (auto &function : const_cast<std::vector<lang::MirFunctionInstance> &>(
+           program.functionInstances()))
+    if (function.id == root) {
+      function.proceduralFunction = true;
+      function.constexprFunction = true;
+    }
+  check(root && lang::verifyMirProgram(program).valid(),
+        "procedural cancellation starts with verified MIR");
+  std::uint32_t next = 20;
+  lang::SyntaxArena arena(10, 11, [&] { return ++next; });
+  std::size_t polls = 0;
+  lang::MirProceduralRequest request{.arena = arena,
+                                     .input = arena.capture(capture("{}")),
+                                     .types = types,
+                                     .cancelled = [&] { return ++polls >= 8; }};
+  const auto result =
+      lang::evaluateMirProceduralFunction(program, root, request);
+  if (result.execution.detail.find("cancelled") == std::string::npos)
+    std::cerr << "Cancellation: " << result.execution.detail << '\n';
+  check(polls == 8 && !result.execution && !result.expression &&
+            !result.execution.value &&
+            result.execution.detail.find("cancelled") != std::string::npos,
+        "in-flight cancellation publishes neither syntax nor constants");
+}
 } // namespace
 int main() {
   parserAndFormatter();
   arena();
   semantics();
   execution();
+  executionCancellation();
   return failures ? 1 : 0;
 }

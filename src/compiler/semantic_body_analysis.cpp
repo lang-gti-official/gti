@@ -14303,6 +14303,12 @@ auto SemanticVisitor::Impl::evaluateConstexprNode(const Expr &source,
     if (const auto *immediate = semanticModel.findImmediateInvocation(source))
       return {.value = immediate->value};
 
+  // Generated expressions use the same constant rules as their handwritten
+  // form. The procedural body has already executed through verified MIR.
+  if (const auto *alias = semanticModel.findExpressionAlias(source);
+      alias && !semanticModel.findExpressionAliasPrelude(source))
+    return evaluateConstexprExpression(*alias, context);
+
   const SemanticType sourceType =
       constexprType(semanticModel.typeOf(source), context);
   if (const ResolvedOperatorInfo *operation =

@@ -1223,6 +1223,14 @@ private:
       append("while (");
       expression(node->condition().get(), depth + 1);
       append(");\n");
+    } else if (const auto *node = stmtAs<ReturnStmt>(&value)) {
+      indentation(depth);
+      append("return");
+      if (node->value()) {
+        append(" ");
+        expression(node->value().get(), depth + 1);
+      }
+      append(";\n");
     } else if (const auto *node = stmtAs<LoopControlStmt>(&value)) {
       indentation(depth);
       append(node->keyword().lexeme);

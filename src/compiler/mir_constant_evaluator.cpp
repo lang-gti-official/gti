@@ -391,6 +391,10 @@ private:
   MirConstantEvaluation fail(const Frame &frame,
                              ConstantEvaluationFailure failure,
                              std::string detail = {}) const {
+    if (procedural && detail.empty() &&
+        failure == ConstantEvaluationFailure::UnsupportedExpression)
+      detail = "This operation is outside the procedural constant-execution "
+               "profile.";
     return {.failure = failure,
             .function = frame.address.kind == MirBodyKind::Function
                             ? frame.address.owner
