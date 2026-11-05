@@ -17,7 +17,7 @@ struct Coordinate {
   Marker field;
   uint8_t row;
   uint8_t column;
-  Coordinate(uint8_t row, uint8_t column) : field(4), row(row), column(column) {
+  Coordinate(uint8_t row, uint8_t column) : field(Marker(4)), row(row), column(column) {
     if (row >= 9 || column >= 9) { report_invalid_coordinate(row, column); }
   }
 };
