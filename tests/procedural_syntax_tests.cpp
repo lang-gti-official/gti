@@ -254,7 +254,8 @@ void semantics() {
              "immutable value parameters");
   const std::string hoverSource =
       "import std.syntax; #macro(proc) std::syntax::expr "
-      "inspect(std::syntax::tokens input) {} int main(){return 0;}";
+      "inspect(std::syntax::tokens input) { return std::syntax::parse(input); "
+      "} int main(){return 0;}";
   const auto hoverSnapshot = analyze(hoverSource);
   if (!hoverSnapshot.canGenerateCode())
     for (const auto &d : hoverSnapshot.diagnostics)
@@ -409,6 +410,23 @@ void execution() {
              "type");
   accepted("import \"library.gti\"; int main(){return "
            "identity!({identity!({1})}) - 1;}");
+  diagnostic(analyze("import \"library.gti\"; class Hidden { int value=7; }; "
+                     "int main(){Hidden h; return identity!({h.value});}",
+                     library),
+             "private");
+  diagnostic(analyze("import \"library.gti\"; int& bad(){int local=7; "
+                     "return identity!({local});} int main(){return 0;}",
+                     library),
+             "local");
+  const std::string effectful =
+      "export module library; import std.syntax; mut int state=0; "
+      "export #macro(proc) std::syntax::expr effect(std::syntax::tokens input) "
+      "{"
+      "state += 1; return std::syntax::parse(std::syntax::slice(input, "
+      "uint64_t(1), std::syntax::size(input)-uint64_t(1))); }";
+  diagnostic(analyze("import \"library.gti\"; int main(){return effect!({1});}",
+                     effectful),
+             "constant");
   auto limited = lang::FrontendOptions{};
   limited.limits.syntaxNodes = 1;
   diagnostic(

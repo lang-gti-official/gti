@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gti/ast.h"
+#include "gti/compile_limits.h"
 #include "gti/diagnostic.h"
 #include "gti/syntax_capture.h"
 
@@ -12,7 +13,7 @@
 
 namespace lang {
 
-// Compiler-side capability boundary for the future verified-MIR procedural
+// Compiler-side capability boundary for the verified-MIR procedural
 // profile. These are NOT ordinary ConstantValue payloads or runtime objects.
 class SyntaxArena;
 enum class SyntaxCategory { Tokens, Expression, Span, Binding };
@@ -47,6 +48,13 @@ struct SyntaxBudget {
 class SyntaxError : public std::runtime_error {
 public:
   using std::runtime_error::runtime_error;
+};
+
+class SyntaxLimitError : public SyntaxError {
+public:
+  SyntaxLimitError(std::size_t CompileLimits::*limit, std::string message)
+      : SyntaxError(std::move(message)), limit(limit) {}
+  std::size_t CompileLimits::*limit;
 };
 
 // Owns both syntax and source provenance after its arena is gone. A sealed

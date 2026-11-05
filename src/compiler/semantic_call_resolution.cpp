@@ -8110,6 +8110,8 @@ auto SemanticVisitor::Impl::recordResolvedCall(
       .ephemeralBorrowArguments = std::move(ephemeralBorrowArguments),
       .callableArguments = std::move(callableArguments),
       .argumentReceiver = argumentReceiver};
+  if (syntaxIntrinsic(function.record().intrinsic))
+    resolved.intrinsic = function.record().intrinsic;
   for (std::size_t index = 0; index < call.arguments().size(); ++index) {
     const auto *construction =
         semanticModel.findContextualConstruction(*call.arguments()[index]);

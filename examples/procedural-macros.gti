@@ -3,6 +3,16 @@ import "procedural-macro-library.gti";
 mut int evaluations = 0;
 int next() { evaluations += 1; return 21; }
 
+mut int drops = 0;
+class Owner {
+  int value;
+public:
+  Owner(int value) : value(value) {}
+  Owner(Owner& other) = delete;
+  Owner(Owner&& other) = default;
+  ~Owner() { drops += 1; }
+  int read() { return this.value; }
+};
 int main() {
   int saved = 99;
   if (twice_once!({next()}) != 42 || evaluations != 1) { return 1; }
@@ -11,5 +21,10 @@ int main() {
   if (identity!({twice_once!({next()})}) != 42 || evaluations != 2) {
     return 4;
   }
+  {
+    Owner owner = identity!({Owner(7)});
+    if (owner.read() != 7 || drops != 0) { return 5; }
+  }
+  if (drops != 1) { return 6; }
   return 0;
 }

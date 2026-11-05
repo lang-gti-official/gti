@@ -161,6 +161,26 @@ constexpr auto operationEffects = std::to_array<MirEffectTraits>({
 
 constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     harmless(), // None is neutral outside an ordinary call.
+    // Request-local syntax operations can fail and consume logical work.
+    // They are never runtime-pure/removable operations.
+    MirEffectTraits{.mayTrap = true}, // SyntaxSize
+    MirEffectTraits{.mayTrap = true}, // SyntaxText
+    MirEffectTraits{.mayTrap = true}, // SyntaxKind
+    MirEffectTraits{.mayTrap = true}, // SyntaxAdjacent
+    MirEffectTraits{.mayTrap = true}, // SyntaxSlice
+    MirEffectTraits{.mayTrap = true}, // SyntaxGroup
+    MirEffectTraits{.mayTrap = true}, // SyntaxSpan
+    MirEffectTraits{.mayTrap = true}, // SyntaxLiteral
+    MirEffectTraits{.mayTrap = true}, // SyntaxPunctuation
+    MirEffectTraits{.mayTrap = true}, // SyntaxIdentifier
+    MirEffectTraits{.mayTrap = true}, // SyntaxKeyword
+    MirEffectTraits{.mayTrap = true}, // SyntaxFresh
+    MirEffectTraits{.mayTrap = true}, // SyntaxReference
+    MirEffectTraits{.mayTrap = true}, // SyntaxJoin
+    MirEffectTraits{.mayTrap = true}, // SyntaxParse
+    MirEffectTraits{.mayTrap = true}, // SyntaxSplice
+    MirEffectTraits{.mayTrap = true}, // SyntaxFail
+    MirEffectTraits{.mayTrap = true}, // SyntaxFailRelated
     MirEffectTraits{.mayTrap = true, .targetDependent = true},
     MirEffectTraits{.mayTrap = true, .targetDependent = true},
     MirEffectTraits{
@@ -595,6 +615,24 @@ constexpr auto operationNames = std::to_array<std::string_view>({
 
 constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "none",
+    "syntax-size",
+    "syntax-text",
+    "syntax-kind",
+    "syntax-adjacent",
+    "syntax-slice",
+    "syntax-group",
+    "syntax-span",
+    "syntax-literal",
+    "syntax-punctuation",
+    "syntax-identifier",
+    "syntax-keyword",
+    "syntax-fresh",
+    "syntax-reference",
+    "syntax-join",
+    "syntax-parse",
+    "syntax-splice",
+    "syntax-fail",
+    "syntax-fail-related",
     "numeric-type-parameter-conversion",
     "numeric-alias-conversion",
     "default-type-parameter-construction",

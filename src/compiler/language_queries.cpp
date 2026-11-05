@@ -971,6 +971,11 @@ private:
   void expression(const Expr *value, std::size_t depth) {
     if (!value || !enter(depth))
       return;
+    if (const auto *alias = semantics.findExpressionAlias(*value);
+        alias && alias != value) {
+      expression(alias, depth + 1);
+      return;
+    }
     if (const auto *node = exprAs<Variable>(value)) {
       const PlaceKey *place = semantics.findPlace(*node);
       const auto local =
@@ -1090,6 +1095,33 @@ private:
     } else if (const auto *node = exprAs<ArrayInitializer>(value)) {
       append("{");
       arguments(node->elements(), depth);
+      append("}");
+    } else if (const auto *node = exprAs<Lambda>(value);
+               node && node->captures().empty()) {
+      append("[](");
+      for (std::size_t i = 0; i < node->parameters().size(); ++i) {
+        if (i)
+          append(", ");
+        const auto &parameter = node->parameters()[i];
+        if (parameter.mutability == Mutability::Mutable)
+          append("mut ");
+        append(semantic_spelling::typeRefSpelling(parameter.type));
+        append(" ");
+        std::string name = parameter.name.lexeme;
+        if (const auto *binding = semantics.findBinding(parameter);
+            binding && binding->symbol) {
+          name += "__macro_local_" + std::to_string(localNames.size() + 1);
+          localNames.insert_or_assign(binding->symbol, name);
+        }
+        append(name);
+      }
+      append(") -> ");
+      append(semantic_spelling::typeRefSpelling(node->returnType()));
+      append(" {\n");
+      for (const auto &child : node->body())
+        if (child && !truncated_)
+          statement(*child, depth + 1);
+      indentation(depth);
       append("}");
     } else if (const auto *node = exprAs<LayoutQuery>(value)) {
       append(node->keyword().lexeme);

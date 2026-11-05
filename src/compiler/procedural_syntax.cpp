@@ -70,11 +70,14 @@ std::size_t SyntaxArena::put(Node node) {
   const auto bytes = node.syntax ? node.syntax->text.size() : 0;
   const auto tokens = node.syntax ? node.syntax->tokens.size() : 0;
   if (budget_->nodes >= limits_.nodes)
-    throw SyntaxError("Procedural syntax-nodes limit exceeded.");
+    throw SyntaxLimitError(&CompileLimits::syntaxNodes,
+                           "Procedural syntax-nodes limit exceeded.");
   if (bytes > limits_.bytes - budget_->bytes)
-    throw SyntaxError("Procedural syntax-bytes limit exceeded.");
+    throw SyntaxLimitError(&CompileLimits::syntaxBytes,
+                           "Procedural syntax-bytes limit exceeded.");
   if (tokens > limits_.tokens - budget_->tokens)
-    throw SyntaxError("Procedural syntax-tokens limit exceeded.");
+    throw SyntaxLimitError(&CompileLimits::syntaxTokens,
+                           "Procedural syntax-tokens limit exceeded.");
   // Every construction path, including joins of individually shallow pieces,
   // must enforce the output nesting bound before publishing a handle.
   std::size_t depth = 0;
@@ -85,7 +88,8 @@ std::size_t SyntaxArena::put(Node node) {
           token.kind == TokenKind::LEFT_PAREN ||
           token.kind == TokenKind::LEFT_BRACKET) {
         if (++depth > limits_.depth)
-          throw SyntaxError("Procedural syntax-depth limit exceeded.");
+          throw SyntaxLimitError(&CompileLimits::syntaxDepth,
+                                 "Procedural syntax-depth limit exceeded.");
       } else if (token.kind == TokenKind::RIGHT_BRACE ||
                  token.kind == TokenKind::RIGHT_PAREN ||
                  token.kind == TokenKind::RIGHT_BRACKET) {
@@ -185,7 +189,8 @@ SyntaxTokens SyntaxArena::constructed(std::string spelling, SyntaxSpan origin,
                                       std::uint32_t context) {
   const SourceSpan where = get(origin).sourceSpan;
   if (spelling.size() > limits_.bytes - budget_->bytes)
-    throw SyntaxError("Procedural syntax-bytes limit exceeded.");
+    throw SyntaxLimitError(&CompileLimits::syntaxBytes,
+                           "Procedural syntax-bytes limit exceeded.");
   Lexer lexer;
   auto tokens = lexer.scan(spelling, where.source);
   if (tokens.size() != 2 || lexer.hadError())
@@ -266,10 +271,13 @@ SyntaxTokens SyntaxArena::join(std::span<const SyntaxTokens> parts) {
     const auto &syntax = *get(part).syntax;
     // Check before allocation, including discarded construction in the total.
     if (syntax.tokens.size() >
-            limits_.tokens - budget_->tokens - result->tokens.size() ||
-        syntax.text.size() + 1 >
-            limits_.bytes - budget_->bytes - result->text.size())
-      throw SyntaxError("Syntax construction limit exceeded.");
+        limits_.tokens - budget_->tokens - result->tokens.size())
+      throw SyntaxLimitError(&CompileLimits::syntaxTokens,
+                             "Procedural syntax-tokens limit exceeded.");
+    if (syntax.text.size() + 1 >
+        limits_.bytes - budget_->bytes - result->text.size())
+      throw SyntaxLimitError(&CompileLimits::syntaxBytes,
+                             "Procedural syntax-bytes limit exceeded.");
     result->tokens.insert(result->tokens.end(), syntax.tokens.begin(),
                           syntax.tokens.end());
     result->origins.insert(result->origins.end(), syntax.origins.begin(),

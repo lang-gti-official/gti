@@ -83,7 +83,8 @@ UTF-16 conversion rules.
 
 `LanguageQueries::macroExpansion` selects a retained checked macro invocation
 by its parser-owned source range and reads `SemanticModel::macroExpansionSites`.
-It renders substituted argument expressions, nested expansions, hygienic local
+It also exposes retained procedural expression aliases without executing a macro
+inside an editor query. It renders substituted argument expressions, nested expansions, hygienic local
 bindings and control flow as explanatory GTI. Display-only local labels
 `name__macro_local_N` follow checked binding identities, not equal identifier
 text. The display is not executable source, an ownership proof or a backend

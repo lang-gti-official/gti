@@ -12,6 +12,11 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   macroExpandedBodies = 0;
   macroActiveBodies.clear();
   proceduralNameKinds.clear();
+  proceduralExpansions.clear();
+  proceduralCacheBytes = 0;
+  proceduralActive.clear();
+  proceduralWork.reset();
+  proceduralSyntaxBudget.reset();
   diagnostics.clear();
   catalog.clear();
   valueFlow.clear();
@@ -7699,8 +7704,11 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     analyzePayloadConstruction(expr, *enumerator);
     return;
   }
+  // Syntax capabilities use ordinary exact signature/argument checking. Only
+  // their execution is intrinsic, under the explicit procedural MIR profile.
   if (const std::optional<CallableCandidate> intrinsic =
-          intrinsicCandidate(expr.callee())) {
+          intrinsicCandidate(expr.callee());
+      intrinsic && !syntaxIntrinsic(intrinsic->record().intrinsic)) {
     if (intrinsic->record().intrinsic == IntrinsicKind::Move) {
       analyzeMoveCall(expr, &*intrinsic, immediateReceiver);
     } else {

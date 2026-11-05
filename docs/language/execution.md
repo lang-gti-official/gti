@@ -74,28 +74,42 @@ and cannot be delegated to a backend language's default-argument mechanism.
 
 #### Typed statement macros
 
-Procedural macro syntax is available as an incomplete, separate phase-1
-foundation:
+Procedural macros are a separate expression-producing facility. A library can
+export a non-generic macro whose input is an opaque braced token group:
 
 ```gti
+export module expression_macros;
 import std.syntax;
-#macro(proc) std::syntax::expr html(std::syntax::tokens input) {
-  // Construction/execution of this body is introduced in phase 2.
+export #macro(proc) std::syntax::expr identity(std::syntax::tokens input) {
+  return std::syntax::parse(std::syntax::slice(
+      input, uint64_t(1), std::syntax::size(input) - uint64_t(1)));
 }
-// An imported consumer writes: html!({ <h1>"Hello"</h1> })
+// An importing consumer writes: identity!({value + 1})
 ```
 
 The `!` marks opaque input; it is required for procedural calls and does not
-change existing typed macro calls. The first profile accepts a non-generic,
-namespace-scope declaration with one `tokens` parameter and one `expr` result.
-It does not support overloads, defaults, packs or member/operator forms.
-Syntax capabilities cannot be stored or constructed at runtime. Directives and
+change existing typed macro calls. Input includes the outer braces; the example
+slices those off before parsing an expression. Parsing does not evaluate the
+input. The initial profile accepts one imported namespace-scope declaration,
+exactly one `tokens` parameter and an `expr` result. Overloads, defaults, packs,
+generics, member/operator forms and same-module invocation are not supported.
+
+The completed body and constexpr helpers execute through the bounded MIR
+constant engine. `std::syntax` provides inspection, token construction,
+parse/splice, source locations and diagnostics. Generated identifiers resolve in
+the definition context; spliced caller tokens preserve caller lookup. `fresh`
+and `reference` create a binding independent of similarly spelled caller names.
+Syntax capabilities cannot be constructed or stored at runtime. Directives and
 imports inside procedural input are rejected before source loading can act on
 them. Ordinary braced arguments retain their existing behavior.
 
-An invocation currently reports that phase 2 is required. The HTML demo and
-end-to-end feature acceptance remain after phase 3 of
-[RFC 0001](https://github.com/lang-gti-official/rfcs/pull/1).
+The sealed result must be one expression. It undergoes ordinary caller type,
+access, ownership and borrowing checks and lowers normally to LLVM; macro bodies
+and syntax operations do not execute at runtime. Nested expansion shares the
+outer request's work and storage limits. See the runnable
+[`procedural-macros.gti`](../../examples/procedural-macros.gti) identity and
+evaluate-once examples. The HTML demonstration and final feature acceptance
+remain after phase 3 of [RFC 0001](https://github.com/lang-gti-official/rfcs/pull/1).
 
 `#macro` declares a source-defined namespace-scope macro with typed
 **expression parameters**, instead of ordinary eager parameter initialization.

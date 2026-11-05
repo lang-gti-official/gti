@@ -2,7 +2,7 @@
 
 Status: Current implementation.
 
-The phase-1 procedural macro frontend recognizes `#macro(proc)` and the explicit
+The procedural macro frontend recognizes `#macro(proc)` and the explicit
 `name!({...})` invocation. This spelling was selected by the owner during RFC
 0001 implementation; ordinary calls and typed macros keep their grammar.
 `SyntaxCapture` retains immutable tokens, exact input text, source spans and
@@ -15,8 +15,10 @@ rejected unit publishes no directive effects or dependency edges. Ordinary
 braced calls and ordinary configuration directives keep their existing behavior.
 The parser retains capture ownership in `Call`, and AST cloning remaps token
 expansion identities without losing source/trivia. The formatter preserves
-opaque groups, including incomplete editor input. Execution is not implemented
-in phase 1; see [RFC 0001](https://github.com/lang-gti-official/rfcs/pull/1).
+opaque groups, including incomplete editor input. Semantics executes completed
+imported bodies through verified MIR and checks their sealed expression output.
+See [RFC 0001](https://github.com/lang-gti-official/rfcs/pull/1) for the remaining
+phase-3 acceptance gate.
 
 The frontend converts one entry source and its dependency graph into a
 syntax-preserving `Program`, then hands that owned tree to semantic analysis.

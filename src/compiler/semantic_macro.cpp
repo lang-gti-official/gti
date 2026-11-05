@@ -87,6 +87,8 @@ auto SemanticVisitor::Impl::executeProceduralMacro(
   }
   if (!proceduralWork)
     proceduralWork = std::make_shared<ConstexprWorkBudget>();
+  if (!proceduralSyntaxBudget)
+    proceduralSyntaxBudget = std::make_shared<SyntaxBudget>();
   if (macroExpansionDepth >= compileLimits.macroDepth ||
       macroExpandedBodies >= compileLimits.macroExpansions) {
     reject("Procedural expansion exceeds the configured macro-depth or "
@@ -166,7 +168,9 @@ auto SemanticVisitor::Impl::executeProceduralMacro(
           if (work >
               compileLimits.constexprSteps -
                   std::min(proceduralWork->steps, compileLimits.constexprSteps))
-            throw SyntaxError("Procedural constexpr-steps limit exceeded.");
+            throw SyntaxLimitError(
+                &CompileLimits::constexprSteps,
+                "Procedural constexpr-steps limit exceeded.");
           proceduralWork->steps += work;
         });
     const auto captured = arena.capture(*call.capturedArguments());
@@ -240,21 +244,25 @@ auto SemanticVisitor::Impl::executeProceduralMacro(
     std::optional<ProceduralCachedExpansion> pendingCache;
     std::optional<SealedSyntaxExpression> sealed;
     if (reused != proceduralExpansions.end()) {
+      if (workMetrics)
+        ++workMetrics->proceduralExpansionReuses;
       const auto replay = [&](std::size_t cost, std::size_t &used,
-                              std::size_t limit, std::string_view name) {
+                              std::size_t CompileLimits::*member) {
+        const auto limit = compileLimits.*member;
         if (cost > limit - std::min(used, limit))
-          throw SyntaxError("Procedural " + std::string(name) +
-                            " limit exceeded during cache replay.");
+          throw SyntaxLimitError(
+              member,
+              "Procedural resource limit exceeded during cache replay.");
         used += cost;
       };
-      replay(reused->steps, proceduralWork->steps, compileLimits.constexprSteps,
-             "constexpr-steps");
+      replay(reused->steps, proceduralWork->steps,
+             &CompileLimits::constexprSteps);
       replay(reused->storage.nodes, proceduralSyntaxBudget->nodes,
-             compileLimits.syntaxNodes, "syntax-nodes");
+             &CompileLimits::syntaxNodes);
       replay(reused->storage.bytes, proceduralSyntaxBudget->bytes,
-             compileLimits.syntaxBytes, "syntax-bytes");
+             &CompileLimits::syntaxBytes);
       replay(reused->storage.tokens, proceduralSyntaxBudget->tokens,
-             compileLimits.syntaxTokens, "syntax-tokens");
+             &CompileLimits::syntaxTokens);
       std::unordered_map<std::uint32_t, std::uint32_t> contexts{
           {reused->caller, callerContext},
           {reused->definition, definitionContext}};
@@ -288,6 +296,8 @@ auto SemanticVisitor::Impl::executeProceduralMacro(
       context.requireMir = true;
       context.allowVoidCompletion = true;
       context.procedural = &request;
+      if (workMetrics)
+        ++workMetrics->proceduralExecutions;
       const auto result = executeStagedConstexpr(&definition, {}, {}, {},
                                                  call.paren(), context);
       if (!result || !context.proceduralResult) {
@@ -297,6 +307,13 @@ auto SemanticVisitor::Impl::executeProceduralMacro(
           reject(result ? result->detail
                         : "The procedural closure could not be staged as "
                           "verified MIR.");
+        if (result && !diagnostics.empty()) {
+          if (!result->limitHint.empty())
+            diagnostics.back().hints.push_back(result->limitHint);
+          if (!result->location.lexeme.empty())
+            diagnostics.back().related.push_back(
+                {tokenSpan(result->location), "Evaluation stopped here."});
+        }
         currentType = SemanticType::Unknown;
         return true;
       }
@@ -349,6 +366,10 @@ auto SemanticVisitor::Impl::executeProceduralMacro(
     if (const auto *info = semanticModel.findExpression(*expression))
       semanticModel.record(call, *info);
     currentType = resultType;
+  } catch (const SyntaxLimitError &error) {
+    reject(error.what());
+    diagnostics.back().hints.push_back(compileLimitHint(
+        compileLimitInfo(error.limit), compileLimits.*error.limit));
   } catch (const SyntaxError &error) {
     reject(error.what());
   }
@@ -825,6 +846,9 @@ auto SemanticVisitor::Impl::makeMacroProbe(const Call &call)
   probe.macroOutermostInvocation = macroOutermostInvocation;
   probe.macroLimitReported = macroLimitReported;
   probe.macroActiveBodies = macroActiveBodies;
+  probe.proceduralWork = proceduralWork;
+  probe.proceduralSyntaxBudget = proceduralSyntaxBudget;
+  probe.proceduralActive = proceduralActive;
   probe.instanceAnalysisActive = instanceAnalysisActive;
   probe.instanceBaseModel = instanceBaseModel;
   probe.instanceTypeSubstitution = instanceTypeSubstitution;
@@ -887,6 +911,10 @@ auto SemanticVisitor::Impl::analyzeMacroCall(const Call &writtenCall,
     macroExpandedBodies = 0;
     macroOutermostInvocation = tokenSpan(callableToken(call->callee()));
     macroLimitReported = false;
+    proceduralSyntaxBudget = std::make_shared<SyntaxBudget>();
+    proceduralWork = requestSession.constexprWork
+                         ? requestSession.constexprWork
+                         : std::make_shared<ConstexprWorkBudget>();
   }
   const bool tooDeep = macroExpansionDepth >= compileLimits.macroDepth;
   if (tooDeep || macroExpandedBodies >= compileLimits.macroExpansions) {

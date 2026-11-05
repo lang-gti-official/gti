@@ -88,7 +88,8 @@ public:
     } account{procedural->arena,
               procedural->arena.exchangeWorkCharge([&](std::size_t work) {
                 if (!charge(work))
-                  throw SyntaxError(
+                  throw SyntaxLimitError(
+                      &CompileLimits::constexprSteps,
                       "Procedural constexpr-steps limit exceeded.");
               })};
     try {
@@ -116,6 +117,13 @@ public:
         output.execution.value.reset();
         output.execution.voidResult = true;
       }
+    } catch (const SyntaxLimitError &error) {
+      output.execution.value.reset();
+      output.execution.voidResult = false;
+      output.execution.failure = ConstantEvaluationFailure::ResourceLimit;
+      output.execution.exhaustedLimit = error.limit;
+      output.execution.detail = error.what();
+      output.execution.steps = steps;
     } catch (const SyntaxError &error) {
       output.execution.value.reset();
       output.execution.voidResult = false;
@@ -1808,6 +1816,11 @@ private:
                       "Syntax operations require procedural execution.");
         try {
           evaluated = executeSyntax(instruction, arguments);
+        } catch (const SyntaxLimitError &error) {
+          auto result = fail(frame, ConstantEvaluationFailure::ResourceLimit,
+                             error.what());
+          result.exhaustedLimit = error.limit;
+          return result;
         } catch (const SyntaxError &error) {
           return fail(frame, ConstantEvaluationFailure::InvalidOperands,
                       error.what());
@@ -2690,11 +2703,11 @@ private:
       throw SyntaxError("Unknown procedural operation.");
     }
     if (parameters.size() != args.size() ||
-        instruction.arguments.size() != args.size() ||
+        instruction.operands.size() != args.size() ||
         instruction.info.type != resultType)
       throw SyntaxError("Invalid procedural intrinsic signature.");
     for (std::size_t i = 0; i < args.size(); ++i)
-      if (instruction.arguments[i].type != parameters[i] ||
+      if (instruction.operands[i].type != parameters[i] ||
           !exactValue(args[i], parameters[i]))
         throw SyntaxError("Invalid procedural intrinsic argument type.");
     const auto argument = [&](std::size_t i) -> const ConstantValue & {
@@ -2713,7 +2726,8 @@ private:
       if (!value)
         throw SyntaxError("Syntax spelling requires compile-time text.");
       if (!charge(value->size()))
-        throw SyntaxError("Syntax work limit exceeded.");
+        throw SyntaxLimitError(&CompileLimits::constexprSteps,
+                               "Procedural constexpr-steps limit exceeded.");
       return *value;
     };
     const auto index = [&](std::size_t i) -> std::size_t {

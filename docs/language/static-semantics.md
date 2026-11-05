@@ -2469,6 +2469,16 @@ invocation its expansion produces. `constexpr for` limits apply per statement
 | `macro-expansions` | Macro bodies expanded by one outermost invocation | 4096 | 8192 | 32768 |
 | `constexpr-for-elements` | Elements of one `constexpr for` statement | 1024 | 1024 | 16384 |
 | `constexpr-for-copies` | `constexpr for` body copies per declaration | 4096 | 4096 | 16384 |
+| `syntax-nodes` | Syntax arena nodes per outer procedural request | 65536 | 65536 | 1048576 |
+| `syntax-bytes` | Cumulative syntax spelling bytes per outer request | 1048576 | 1048576 | 16777216 |
+| `syntax-tokens` | Cumulative syntax tokens per outer request | 65536 | 65536 | 1048576 |
+| `syntax-depth` | Balanced syntax group nesting | 256 | 256 | 1024 |
+
+Procedural syntax allocation counts include intermediate copies, even if their
+handles are later discarded. Parsing and bulk construction also charge the
+shared `constexpr-steps` budget. Nested expansions and successful cache replay
+consume the same logical limits; a cache hit cannot make an over-budget program
+acceptable. No syntax capacity is refunded during an outer expansion.
 
 The defaults of the two constant-evaluation limits are Clang's
 `-fconstexpr-steps` and `-fconstexpr-depth` defaults. A step is one unit of

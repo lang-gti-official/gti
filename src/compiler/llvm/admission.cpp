@@ -5985,6 +5985,10 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
     inventory.required = closure.conservative;
     const auto *row = input.findClassInstance(instance.id);
     inventory.source = row == nullptr ? SourceSpan{} : row->source;
+    if (instance.syntaxKind != CompileTimeSyntaxKind::None) {
+      inventory.required = true;
+      inventory.add(IntrinsicKind::SyntaxSize);
+    }
     inventory.type(instance.type);
     inventory.traits(instance.traits, instance.type);
     // This use describes ordinary storage, not the whole ClassKind family.
@@ -6036,6 +6040,10 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
   for (const auto &function : mir.functionInstances()) {
     inventory.body = MirBodyAddress{MirBodyKind::Function, function.id};
     inventory.required = closure.contains(*inventory.body);
+    if (function.proceduralFunction) {
+      inventory.required = true;
+      inventory.add(IntrinsicKind::SyntaxSize);
+    }
     if (const auto *row = input.findBody(*inventory.body))
       inventory.source = row->identity.source;
     const auto nativeBinding =

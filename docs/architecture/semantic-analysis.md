@@ -12,43 +12,56 @@ consumption and cleanup in HIR/MIR; no backend ownership-name rule is added.
 
 ## Typed statement macro expansion
 
-Procedural declarations are a distinct `FunctionDecl` mode. The phase-1
-`name!({...})` path resolves the name without probing captured expressions.
-It requires one imported, non-overloaded namespace-scope procedural declaration
-and one braced group. Local shadowing applies normally; an ordinary callable
-never gains procedural behavior from its spelling. A selected declaration is
-recorded in the existing macro-declaration table for shared tooling queries.
-Invocations currently diagnose the missing phase-2 execution engine and never
-reach HIR/MIR as runtime calls. Bodies are retained syntax, not yet executable
-or advertised as type-checked procedural implementations.
+Procedural declarations are a distinct `FunctionDecl` mode. `name!({...})`
+resolves the name without probing captured expressions. It requires one imported,
+non-overloaded namespace-scope declaration and one braced group. Local shadowing
+applies normally; an ordinary callable never gains procedural behavior from its
+spelling. The signature is exactly `std::syntax::expr name(std::syntax::tokens
+input)`, without generics, defaults, packs, member/operator forms or constraints.
 
-`std.syntax` declares `tokens`, `expr`, `span`, and `binding` via trusted
-`@compiler_type` identities. Application spelling cannot manufacture these
-capabilities. Type aliases may name them, but values are allowed only in the
-initial procedural signature; ordinary runtime storage and construction are
-rejected, including through aliases. The required signature
-is exactly `std::syntax::expr name(std::syntax::tokens input)` without generics,
-defaults, packs, member/operator forms or constraints.
+Completed procedural bodies and their constexpr helpers are type-checked and
+lazily staged through the existing constant HIR/MIR closure service. An explicit
+procedural request enables syntax intrinsics in the same MIR interpreter; there
+is no AST fallback or host plugin. The ordinary constant profile still rejects
+syntax capabilities, including capabilities nested inside persistent aggregates.
+Procedural bodies and syntax-dependent helpers are omitted from runtime HIR/MIR.
 
-`SyntaxArena` is the compiler-side typed capability foundation. It provides
-immutable token/group inspection, text/adjacency and bounded slices; validated
-span handles; literal/punctuation/definition-context identifier builders;
-fresh binding/reference pairs; token joining; expression parse/splice; located
-failure; and `seal`. Handles carry session, generation, node and category
-identity. Stale/foreign handles fail deterministically. Builders retain source
-attribution separately from `Token::expansion` lookup authority. Context IDs and
-fresh IDs must come from the existing `MacroLookupContext` registry, never from
-generated identifier spelling. Phase 2 binds these operations to verified-MIR
-syntax intrinsics; there is no source-callable executor or AST evaluator here.
+`std.syntax` declares `tokens`, `expr`, `span`, and `binding` through trusted
+`@compiler_type` identities. Its intrinsic declarations are recognized only in
+the trusted `std/syntax` unit and namespace, never by application spelling. The
+syntax API supplies token count, text, kind and adjacency inspection; slices and
+groups; validated locations; literal, punctuation, keyword and definition-context
+identifier builders; fresh binding/reference pairs; joining; expression
+parse/splice; and located failures. Syntax values are available in procedural
+bodies and constexpr helpers, but cannot be constructed or stored at runtime.
+A helper that uses syntax is callable only in this compile-time closure.
 
-Sealing retains an immutable AST and its token/text/origin graph independently
-of the arena. It proves expression syntax only, not semantic legality. The
-frontend must retain the sealed result before executor teardown in phase 2 and
-apply normal semantic checking. Ordinary `ConstantValue` escape fences are
-unchanged. Node, retained spelling, token and depth bounds, cancellation,
-validated diagnostic ranges and generation reset are covered by
-`procedural_syntax`; phase 2 still owns shared interpreter-cost accounting and
-measured public limit defaults.
+`SyntaxArena` owns immutable request-local capabilities. Handles carry session,
+generation, node and category identities; stale/foreign handles fail
+predictably. Executor carriers are private transient values, checked against the
+request's exact syntax types and handle table. Builders retain diagnostic spans
+separately from lookup authority. Call-site tokens keep caller lookup, generated
+identifiers use definition lookup, and fresh binding/reference pairs receive
+unique contexts from the existing `MacroLookupContext` registry.
+
+Sealing retains the expression AST and its token/text/origin graph before
+executor teardown. It proves syntax only. The expression then enters ordinary
+caller semantics, including type, access, ownership, borrowing and cleanup; only
+successful analysis publishes an expression alias. Nested procedural and typed
+expansions share the outer macro limits. Procedural MIR work and syntax copying
+share the request's `constexpr-steps`; syntax nodes, bytes, tokens and nesting
+have separate configurable bounds. Cancellation is checked at instruction and
+syntax traversal boundaries. A library failure retains invocation and definition
+traces, and a resource failure identifies its configurable limit.
+
+Successful expansions may be reused only inside the same immutable semantic
+snapshot. The key includes declaration, exact input and origins, caller lookup,
+generic substitutions and limits; module/configuration/target identities belong
+to that snapshot. Reuse replays logical work/storage charges and clones the
+retained syntax with fresh expansion/binding identities. The bounded cache stores
+sealed syntax, never raw arena handles; it is cleared on a new analysis. Failed
+expansions are not cached. See [RFC 0001](https://github.com/lang-gti-official/rfcs/pull/1)
+for the remaining phase-3 library/editor acceptance gate.
 
 `semantic_macro.cpp` owns typed `#macro` expansion independently of public
 library names. The declaration's macro identity, not an attribute or public
