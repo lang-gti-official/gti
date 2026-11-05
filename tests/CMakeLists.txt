@@ -161,6 +161,8 @@ add_test(NAME procedural_html_example
 add_test(NAME procedural_html_workflow
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/procedural_html_workflow_test.py"
     $<TARGET_FILE:gti>)
+set_tests_properties(procedural_html_workflow PROPERTIES
+  ENVIRONMENT "GTI_STDLIB_PATH=${PROJECT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${PROJECT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>")
 add_test(NAME procedural_html_installed
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/procedural_html_workflow_test.py"
     $<TARGET_FILE:gti> --install-build "${PROJECT_BINARY_DIR}")
