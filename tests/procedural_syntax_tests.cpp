@@ -16,7 +16,9 @@ namespace {
 int failures = 0;
 constexpr std::string_view proceduralDeclaration =
     "export module library; import std.syntax; export #macro(proc) "
-    "std::syntax::expr html(std::syntax::tokens input) {}";
+    "std::syntax::expr html(std::syntax::tokens input) { "
+    "return std::syntax::parse(std::syntax::literal(\"42\", "
+    "std::syntax::location(input, uint64_t(0), uint64_t(1)))); }";
 void check(bool value, const char *message) {
   if (!value) {
     std::cerr << "FAIL: " << message << '\n';
@@ -222,7 +224,8 @@ void semantics() {
   const auto aliased =
       analyze("import std.syntax; using Input = std::syntax::tokens; "
               "using Output = std::syntax::expr; #macro(proc) Output "
-              "chosen(Input input) {} int main(){return 0;}");
+              "chosen(Input input) { return std::syntax::parse(input); } int "
+              "main(){return 0;}");
   if (!aliased.canGenerateCode())
     for (const auto &d : aliased.diagnostics)
       std::cerr << d.code << ": " << d.message << '\n';
@@ -231,7 +234,8 @@ void semantics() {
   const auto memberAliased = analyze(
       "import std.syntax; struct Names { using Input = std::syntax::tokens; "
       "using Output = std::syntax::expr; }; #macro(proc) Names::Output "
-      "chosen(Names::Input input) {} int main(){return 0;}");
+      "chosen(Names::Input input) { return std::syntax::parse(input); } int "
+      "main(){return 0;}");
   if (!memberAliased.canGenerateCode())
     for (const auto &d : memberAliased.diagnostics)
       std::cerr << d.code << ": " << d.message << '\n';
@@ -282,24 +286,11 @@ void semantics() {
   auto selected = analyze(selectedSource);
   check(selected.sourceValid && selected.syntaxValid,
         "opaque markup reaches semantic name selection");
-  diagnostic(selected, "execution requires phase 2");
-  const auto close = selectedSource.find("});") + 1;
-  if (const auto *selectedDiagnostic = locatedDiagnostic(
-          selected, "GTI-S2124", lang::DiagnosticPhase::Semantics, close,
-          close + 1)) {
-    const auto definition = proceduralDeclaration.find("html");
-    check(selectedDiagnostic->related.size() == 1 &&
-              selectedDiagnostic->related[0].span.source ==
-                  (std::filesystem::current_path() / "proc-fixtures" /
-                   "library.gti")
-                      .string() &&
-              selectedDiagnostic->related[0].span.start == definition &&
-              selectedDiagnostic->related[0].span.end == definition + 4 &&
-              selectedDiagnostic->related[0].span.line == 1 &&
-              selectedDiagnostic->related[0].message.find("declared here") !=
-                  std::string::npos,
-          "procedural rejection points to the selected imported declaration");
-  }
+  if (!selected.canGenerateCode())
+    for (const auto &d : selected.diagnostics)
+      std::cerr << d.code << ": " << d.message << '\n';
+  check(selected.canGenerateCode(),
+        "source-defined procedural construction executes through MIR");
   check(std::none_of(selected.diagnostics.begin(), selected.diagnostics.end(),
                      [](const auto &d) {
                        return d.message.find("Unknown variable") !=

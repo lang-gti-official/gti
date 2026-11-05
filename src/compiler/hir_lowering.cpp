@@ -32,7 +32,8 @@ public:
     // Only callees stage lazily: the requested root must itself be a
     // completed constexpr definition.
     if (function == nullptr || function->declaration == nullptr ||
-        !function->declaration->isConstexpr() ||
+        (!function->declaration->isConstexpr() &&
+         !function->declaration->isProceduralMacro()) ||
         std::find(constantFunctions.begin(), constantFunctions.end(), root) ==
             constantFunctions.end()) {
       output.program.valid_ = false;
@@ -581,7 +582,9 @@ private:
                   SemanticType returnType,
                   std::vector<SemanticType> parameterTypes,
                   std::optional<SourceSpan> site = std::nullopt) {
-    if (declaration.macroExpansion)
+    if (declaration.macroExpansion &&
+        !(constantClosure && declaration.declaration &&
+          declaration.declaration->isProceduralMacro()))
       return 0;
     // Constant staging is lazy: a callee outside the completed constexpr
     // closure keeps its exact signature but no body, and the MIR evaluator
@@ -590,7 +593,8 @@ private:
     const bool constantUnavailable =
         constantClosure &&
         (declaration.declaration == nullptr ||
-         !declaration.declaration->isConstexpr() ||
+         (!declaration.declaration->isConstexpr() &&
+          !declaration.declaration->isProceduralMacro()) ||
          std::find(constantFunctions.begin(), constantFunctions.end(),
                    declaration.id) == constantFunctions.end());
     // Calls can discover an instance through individual arguments or through

@@ -4222,10 +4222,12 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
             CompilerTypeKind::SyntaxTokens &&
         (!allowProceduralSyntaxType || type.reference ||
          !type.pointers.empty() || !type.arrayExtents.empty())) {
-      report(type.name.last(),
-             "Syntax capabilities are compile-time-only; phase 1 permits "
-             "them only in procedural macro signatures.",
-             "GTI-S2124");
+      report(
+          type.name.last(),
+          "Syntax capabilities are compile-time-only; use them in procedural "
+          "macros or constexpr helpers, without pointers, references or "
+          "arrays.",
+          "GTI-S2124");
       return;
     }
   }

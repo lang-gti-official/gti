@@ -7234,6 +7234,34 @@ auto SemanticVisitor::Impl::trustedSynchronizationOperation(
 auto SemanticVisitor::Impl::trustedIntrinsicKind(
     SourceUnitId sourceUnit, const std::vector<std::string> &scope,
     std::string_view name) const -> IntrinsicKind {
+  const auto *unit = sourceGraph ? sourceGraph->findUnit(sourceUnit) : nullptr;
+  if (unit && unit->role == SourceUnitRole::StandardLibrary &&
+      unit->standardLibraryName == "std/syntax" &&
+      scope == std::vector<std::string>{"std", "syntax"}) {
+    static constexpr std::pair<std::string_view, IntrinsicKind> operations[] = {
+        {"size", IntrinsicKind::SyntaxSize},
+        {"text", IntrinsicKind::SyntaxText},
+        {"kind", IntrinsicKind::SyntaxKind},
+        {"adjacent", IntrinsicKind::SyntaxAdjacent},
+        {"slice", IntrinsicKind::SyntaxSlice},
+        {"group", IntrinsicKind::SyntaxGroup},
+        {"location", IntrinsicKind::SyntaxSpan},
+        {"literal", IntrinsicKind::SyntaxLiteral},
+        {"punctuation", IntrinsicKind::SyntaxPunctuation},
+        {"identifier", IntrinsicKind::SyntaxIdentifier},
+        {"fresh", IntrinsicKind::SyntaxFresh},
+        {"reference", IntrinsicKind::SyntaxReference},
+        {"join", IntrinsicKind::SyntaxJoin},
+        {"parse", IntrinsicKind::SyntaxParse},
+        {"splice", IntrinsicKind::SyntaxSplice},
+        {"fail", IntrinsicKind::SyntaxFail},
+        {"fail_related", IntrinsicKind::SyntaxFailRelated},
+    };
+    for (const auto &[spelling, intrinsic] : operations)
+      if (name == spelling)
+        return intrinsic;
+    return IntrinsicKind::None;
+  }
   if (scope.size() != 1) {
     return IntrinsicKind::None;
   }

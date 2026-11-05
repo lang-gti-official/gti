@@ -1,3 +1,4 @@
+#include "gti/mir_procedural.h"
 #pragma once
 
 #include "gti/semantic_analyzer.h"
@@ -2125,6 +2126,9 @@ private:
     bool requireMir = false;
     bool recordValues = true;
     bool allowVoidCompletion = false;
+    MirProceduralRequest *procedural = nullptr;
+    std::optional<SealedSyntaxExpression> proceduralResult;
+    std::optional<Diagnostic> proceduralDiagnostic;
     const Expr *immediateRoot = nullptr;
     // The function or constructor the compatibility interpreter is executing,
     // named in a resource-limit diagnostic; null at expression level. Stable
@@ -5994,6 +5998,9 @@ private:
   [[nodiscard]] bool
   analyzeMacroCall(const Call &call, const ExpressionStmt *statement = nullptr);
   bool analyzeCapturedCall(const Call &call);
+  bool executeProceduralMacro(const Call &call, const FunctionDecl &definition);
+  std::shared_ptr<ConstexprWorkBudget> proceduralWork;
+  std::vector<FunctionId> proceduralActive;
   bool allowProceduralSyntaxType = false;
   std::unordered_map<std::string, bool> proceduralNameKinds;
   [[nodiscard]] std::unique_ptr<Impl> makeMacroProbe(const Call &call);

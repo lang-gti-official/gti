@@ -363,6 +363,24 @@ struct CallableParameterContract {
 
 enum class IntrinsicKind {
   None,
+  SyntaxSize,
+  SyntaxText,
+  SyntaxKind,
+  SyntaxAdjacent,
+  SyntaxSlice,
+  SyntaxGroup,
+  SyntaxSpan,
+  SyntaxLiteral,
+  SyntaxPunctuation,
+  SyntaxIdentifier,
+  SyntaxFresh,
+  SyntaxReference,
+  SyntaxJoin,
+  SyntaxParse,
+  SyntaxSplice,
+  SyntaxFail,
+  SyntaxFailRelated,
+
   NumericTypeParameterConversion,
   NumericAliasConversion,
   DefaultTypeParameterConstruction,
@@ -539,6 +557,11 @@ enum class IntrinsicKind {
 };
 
 // Terminal failure identity is separate from message capture and owner policy.
+[[nodiscard]] constexpr bool syntaxIntrinsic(IntrinsicKind kind) {
+  return kind >= IntrinsicKind::SyntaxSize &&
+         kind <= IntrinsicKind::SyntaxFailRelated;
+}
+
 [[nodiscard]] inline bool intrinsicTracksCaller(IntrinsicKind intrinsic) {
   return intrinsic == IntrinsicKind::Panic ||
          intrinsic == IntrinsicKind::FailInactiveValue ||

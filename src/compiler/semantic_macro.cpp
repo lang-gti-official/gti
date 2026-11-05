@@ -42,8 +42,7 @@ auto SemanticVisitor::Impl::analyzeCapturedCall(const Call &call) -> bool {
         message = "The initial procedural macro profile requires an imported "
                   "definition.";
       else
-        message = "Procedural macro syntax is available, but execution "
-                  "requires phase 2.";
+        return executeProceduralMacro(call, *procedural);
     }
     diagnostics.push_back(
         makeDiagnostic(DiagnosticId::MacroExpansion, call.paren(), {message}));
@@ -58,6 +57,158 @@ auto SemanticVisitor::Impl::analyzeCapturedCall(const Call &call) -> bool {
   diagnostics.push_back(makeDiagnostic(
       DiagnosticId::MacroExpansion, call.paren(),
       {"The name before '!' must resolve to one imported procedural macro."}));
+  return true;
+}
+
+// Execute only the selected imported declaration. Generated expressions then
+// re-enter the caller's ordinary semantic and ownership flow through an alias.
+auto SemanticVisitor::Impl::executeProceduralMacro(
+    const Call &call, const FunctionDecl &definition) -> bool {
+  const auto *function = semanticModel.findFunction(definition);
+  const auto reject = [&](std::string message) {
+    diagnostics.push_back(makeDiagnostic(DiagnosticId::MacroExpansion,
+                                         call.paren(), {std::move(message)}));
+    diagnostics.back().related.push_back(
+        {tokenSpan(definition.name()),
+         "The procedural macro is declared here."});
+    currentType = SemanticType::Unknown;
+  };
+  if (!function || !constexprDefinitionsAnalyzed.contains(&definition)) {
+    reject("The procedural definition must complete semantic analysis before "
+           "expansion.");
+    return true;
+  }
+  if (macroExpansionDepth == 0) {
+    macroExpandedBodies = 0;
+    proceduralWork = requestSession.constexprWork
+                         ? requestSession.constexprWork
+                         : std::make_shared<ConstexprWorkBudget>();
+  }
+  if (!proceduralWork)
+    proceduralWork = std::make_shared<ConstexprWorkBudget>();
+  if (macroExpansionDepth >= compileLimits.macroDepth ||
+      macroExpandedBodies >= compileLimits.macroExpansions) {
+    reject("Procedural expansion exceeds the configured macro-depth or "
+           "macro-expansions limit.");
+    return true;
+  }
+  if (std::find(proceduralActive.begin(), proceduralActive.end(),
+                function->id) != proceduralActive.end()) {
+    reject(
+        "A recursive procedural expansion requires its own unfinished result.");
+    return true;
+  }
+  struct ExpansionScope {
+    Impl &owner;
+    ~ExpansionScope() {
+      --owner.macroExpansionDepth;
+      owner.proceduralActive.pop_back();
+    }
+  } expansionScope{*this};
+  ++macroExpansionDepth;
+  ++macroExpandedBodies;
+  proceduralActive.push_back(function->id);
+  MacroLookupContext caller{.namespaceScope = currentNamespace,
+                            .sourceUnit = currentSourceUnit,
+                            .ownerClass = currentClass,
+                            .staticMember = currentStaticMemberFunction,
+                            .declarationOrder = currentDeclarationOrder};
+  if (const auto *parent = macroContext(expressionToken(call)))
+    caller = *parent;
+  if (caller.lexicalLambdaDepth != lambdaDepth) {
+    caller.localScopeBegin = 0;
+    caller.localScopeEnd.reset();
+  }
+  caller.lexicalLambdaDepth = lambdaDepth;
+  caller.localScopeEnd =
+      std::min(caller.localScopeEnd.value_or(scopes.size()), scopes.size());
+  const auto callerContext = ++nextExpansion;
+  macroLookup.emplace(callerContext, std::move(caller));
+  const auto definitionContext = ++nextExpansion;
+  macroLookup.emplace(
+      definitionContext,
+      MacroLookupContext{.namespaceScope = function->namespaceScope,
+                         .sourceUnit = function->sourceUnit,
+                         .definition = true,
+                         .localScopeBegin = scopes.size(),
+                         .lexicalLambdaDepth = lambdaDepth,
+                         .declarationOrder =
+                             declarationOrders.contains(&definition)
+                                 ? declarationOrders.at(&definition)
+                                 : currentDeclarationOrder,
+                         .invocation = expressionToken(call)});
+  try {
+    SyntaxArena arena(
+        definitionContext, callerContext,
+        [&] {
+          const auto fresh = ++nextExpansion;
+          macroLookup.emplace(fresh, macroLookup.at(definitionContext));
+          return fresh;
+        },
+        {},
+        [&] {
+          throwIfCancelled();
+          return false;
+        },
+        {{tokenSpan(call.paren()),
+          "While expanding this procedural invocation."},
+         {tokenSpan(definition.name()), "The procedural definition is here."}});
+    const auto captured = arena.capture(*call.capturedArguments());
+    const auto input = arena.group(captured, 1);
+    MirProceduralRequest request{
+        .arena = arena, .input = input, .cancelled = [&] {
+          throwIfCancelled();
+          return false;
+        }};
+    for (std::size_t i = 0; i < request.types.size(); ++i) {
+      const auto kind = static_cast<CompilerTypeKind>(
+          static_cast<std::size_t>(CompilerTypeKind::SyntaxTokens) + i);
+      const auto found = compilerTypeClasses.find(kind);
+      if (found == compilerTypeClasses.end()) {
+        reject("The trusted syntax capability declarations are unavailable.");
+        return true;
+      }
+      request.types[i] = openClassType(found->second);
+    }
+    auto context = makeConstexprInterpreter();
+    context.work = proceduralWork;
+    context.requireMir = true;
+    context.allowVoidCompletion = true;
+    context.procedural = &request;
+    const auto result =
+        executeStagedConstexpr(&definition, {}, {}, {}, call.paren(), context);
+    if (!result || !context.proceduralResult) {
+      if (context.proceduralDiagnostic)
+        diagnostics.push_back(std::move(*context.proceduralDiagnostic));
+      else
+        reject(result ? result->detail
+                      : "The procedural closure could not be staged as "
+                        "verified MIR.");
+      currentType = SemanticType::Unknown;
+      return true;
+    }
+    const auto expression = context.proceduralResult->expression;
+    const auto diagnosticStart = diagnostics.size();
+    const auto resultType = analyze(*expression);
+    if (hasErrorDiagnostics(std::span(diagnostics).subspan(diagnosticStart))) {
+      for (std::size_t i = diagnosticStart; i < diagnostics.size(); ++i) {
+        diagnostics[i].related.push_back(
+            {tokenSpan(call.paren()), "In this procedural expansion."});
+        diagnostics[i].related.push_back(
+            {tokenSpan(definition.name()),
+             "The procedural macro is declared here."});
+      }
+      synthesizedExpressions.push_back(expression);
+      currentType = SemanticType::Unknown;
+      return true;
+    }
+    semanticModel.recordExpressionAlias(call, expression);
+    if (const auto *info = semanticModel.findExpression(*expression))
+      semanticModel.record(call, *info);
+    currentType = resultType;
+  } catch (const SyntaxError &error) {
+    reject(error.what());
+  }
   return true;
 }
 
