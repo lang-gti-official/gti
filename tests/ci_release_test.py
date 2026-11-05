@@ -225,6 +225,27 @@ def editor_contract(root):
                 pass
             else:
                 raise AssertionError("a persistent network failure must still fail")
+        # A server error is retried with doubling waits; a client error is not.
+        def error(code):
+            return editor.urllib.error.HTTPError("https://example.invalid/a", code, "status", {}, None)
+        calls, naps = [], []
+        def gateway(url, timeout):
+            calls.append(url)
+            if len(calls) < 4:
+                raise error(504)
+            return io.BytesIO(b"bytes")
+        with patch.object(editor.urllib.request, "urlopen", side_effect=gateway):
+            editor.download("https://example.invalid/a", archive, sleep=naps.append)
+        assert len(calls) == 4 and naps == [5.0, 10.0, 20.0], naps
+        calls.clear()
+        with patch.object(editor.urllib.request, "urlopen", side_effect=lambda url, timeout: calls.append(url) or (_ for _ in ()).throw(error(404))):
+            try:
+                editor.download("https://example.invalid/a", archive, sleep=naps.append)
+            except editor.urllib.error.HTTPError:
+                pass
+            else:
+                raise AssertionError("a missing editor release must fail at once")
+        assert len(calls) == 1, "a 404 is not retried"
     toolchain = (root / "scripts/configure_ci_toolchain.sh").read_text()
     assert 'python3 "${repository}/scripts/configure_ci_editor.py"' in toolchain
 

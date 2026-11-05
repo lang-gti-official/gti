@@ -18,23 +18,30 @@ ASSETS = {
 }
 
 
-def download(url, archive, attempts=5, delay=5.0, sleep=time.sleep):
-    """Fetch url into archive, retrying transient network failures.
+def download(url, archive, attempts=6, delay=5.0, sleep=time.sleep):
+    """Fetch url into archive, retrying transient network and server failures.
 
     A hosted runner's DNS lookup or connection occasionally fails for a few
-    seconds (full validation 71 lost a whole macOS shard that way); the
-    checksum below still rejects any wrong bytes.
+    seconds (full validation 71 lost a whole macOS shard that way), and
+    GitHub's release CDN returns bursts of 5xx (run 41995172449). Waits double
+    from delay up to a minute, about two minutes in all; a client error such
+    as 404 fails at once. The checksum below still rejects any wrong bytes.
     """
     for attempt in range(1, attempts + 1):
         try:
             with urllib.request.urlopen(url, timeout=60) as source, archive.open("wb") as target:
                 shutil.copyfileobj(source, target)
             return
+        except urllib.error.HTTPError as error:
+            if error.code < 500 and error.code != 429 or attempt == attempts:
+                raise
+            failure = error
         except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
             if attempt == attempts:
                 raise
-            print(f"editor download attempt {attempt} failed ({error}); retrying", flush=True)
-            sleep(delay * attempt)
+            failure = error
+        print(f"editor download attempt {attempt} failed ({failure}); retrying", flush=True)
+        sleep(min(delay * 2 ** (attempt - 1), 60.0))
 
 
 def stage(root, env_path, system=None, machine=None):

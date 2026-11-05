@@ -183,7 +183,11 @@ measure is what ships. `GTI_PINNED_LLVM_VERSION` in `CMakeLists.txt` (LLVM
 
 - Release, nightly and beta packages bundle exactly that version
   (`-DGTI_BUNDLE_LLVM=ON`, forced by `GTI_RELEASE_BUILD`), built from the
-  hash-verified tarball and cached by `llvm-prebuilt.yml`.
+  hash-verified tarball and cached by `llvm-prebuilt.yml`. CMake downloads the
+  tarball itself, with up to six attempts and growing waits, because GitHub's
+  release CDN returns transient 5xx responses. It verifies the pinned hash
+  before FetchContent sees the file. Setting `GTI_LLVM_SOURCE_CACHE` to a
+  directory keeps the verified archive across build trees.
 - Every other build uses an installed LLVM of the same major. CMake refuses any
   other major at configure time, and without `LLVM_DIR` it looks first in
   Homebrew's `llvm@23` and Ubuntu's `/usr/lib/llvm-23`. Distribution packages
