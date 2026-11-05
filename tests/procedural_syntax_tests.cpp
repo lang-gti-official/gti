@@ -557,6 +557,10 @@ int main(){ return double_value(identity!({21})) - 42; }
                             library, options);
     check(repeated.canGenerateCode(),
           "procedural default arguments preserve caller checking");
+    if (!repeated.canGenerateCode())
+      for (const auto &d : repeated.diagnostics)
+        std::cerr << "Default argument: " << d.code << ": " << d.message
+                  << '\n';
     std::cerr << "Default argument executions=" << metrics.proceduralExecutions
               << " hits=" << metrics.proceduralExpansionReuses << '\n';
   }
@@ -678,9 +682,9 @@ void executionCancellation() {
   // the procedural profile after execution has begun. The patched descriptors
   // model the trusted identities normally supplied by semantic staging.
   auto frontend = analyze(R"gti(
-struct Tokens {}; struct Expression {}; struct Span {}; struct Binding {};
+struct Tokens {}; struct Expression { Expression(){} }; struct Span {}; struct Binding {};
 int anchor(Tokens t, Expression e, Span s, Binding b){return 0;}
-Expression spinning(Tokens input){while(true){} return Expression();}
+Expression spinning(Tokens input){mut bool running=true; while(running){} return Expression();}
 int main(){return 0;}
 )gti",
                           "export module library;");
