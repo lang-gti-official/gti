@@ -7425,6 +7425,22 @@
       ]
     },
     {
+      "id": "syntax.declarations",
+      "source": "stdlib/std/syntax.gti",
+      "status": "scaffold",
+      "operations": [
+        "std::syntax::binding compiler type identity",
+        "std::syntax::expr compiler type identity",
+        "std::syntax::span compiler type identity",
+        "std::syntax::tokens compiler type identity"
+      ],
+      "reason": "Phase 1 of procedural macros (RFC 0001) declares these compiler-provided syntax types for macro signatures only. They have no runtime storage or executable source API until the verified-MIR bridge in phase 2, so no program can run them yet.",
+      "evidence": [
+        "examples/procedural-macro-declaration.gti",
+        "tests/procedural_syntax_tests.cpp"
+      ]
+    },
+    {
       "id": "tcp.executable",
       "source": "stdlib/std/tcp.gti",
       "status": "executable",
