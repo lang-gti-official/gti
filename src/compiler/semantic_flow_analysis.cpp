@@ -4089,6 +4089,24 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::ObjectRelocate:
         case IntrinsicKind::ObjectRelocateRange:
         case IntrinsicKind::ObjectTake:
+        case IntrinsicKind::SyntaxSize:
+        case IntrinsicKind::SyntaxText:
+        case IntrinsicKind::SyntaxKind:
+        case IntrinsicKind::SyntaxAdjacent:
+        case IntrinsicKind::SyntaxSlice:
+        case IntrinsicKind::SyntaxGroup:
+        case IntrinsicKind::SyntaxSpan:
+        case IntrinsicKind::SyntaxLiteral:
+        case IntrinsicKind::SyntaxPunctuation:
+        case IntrinsicKind::SyntaxKeyword:
+        case IntrinsicKind::SyntaxIdentifier:
+        case IntrinsicKind::SyntaxFresh:
+        case IntrinsicKind::SyntaxReference:
+        case IntrinsicKind::SyntaxJoin:
+        case IntrinsicKind::SyntaxParse:
+        case IntrinsicKind::SyntaxSplice:
+        case IntrinsicKind::SyntaxFail:
+        case IntrinsicKind::SyntaxFailRelated:
         case IntrinsicKind::StringViewSize:
         case IntrinsicKind::StringViewEmpty:
         case IntrinsicKind::ArrayRangeBegin:
@@ -6420,7 +6438,8 @@ auto SemanticVisitor::Impl::declare(const Token &name, SemanticType type,
 }
 
 auto SemanticVisitor::Impl::declare(const Token &name, Symbol symbol) -> bool {
-  const auto existing = scopes.back().find(name.lexeme);
+  const auto key = localSymbolKey(name);
+  const auto existing = scopes.back().find(key);
   if (existing != scopes.back().end()) {
     if (appendFunctionOverload(existing->second, std::move(symbol), name)) {
       return true;
@@ -6451,7 +6470,7 @@ auto SemanticVisitor::Impl::declare(const Token &name, Symbol symbol) -> bool {
       }
     }
   }
-  scopes.back().emplace(name.lexeme, std::move(symbol));
+  scopes.back().emplace(key, std::move(symbol));
   return true;
 }
 
@@ -7252,11 +7271,15 @@ auto SemanticVisitor::Impl::resolve(const Token &name) const -> const Symbol * {
     const auto &scope = scopes[index - 1];
     if (!localScopes.contains(index - 1, scope))
       continue;
-    if (const auto found = scope.find(name.lexeme); found != scope.end()) {
+    if (const auto found = scope.find(localSymbolKey(name));
+        found != scope.end()) {
       return &found->second;
     }
   }
 
+  // A fresh binding is never a fallback spelling for a namespace symbol.
+  if (context && context->localBindingIdentity)
+    return nullptr;
   const auto &lookup = context ? context->namespaceScope : currentNamespace;
   const auto &visible = activeVisibleNamespaceSymbols();
   const auto unit = context ? context->sourceUnit : currentSourceUnit;
@@ -7293,7 +7316,8 @@ auto SemanticVisitor::Impl::resolveMutable(const Token &name) -> Symbol * {
     auto &scope = scopes[index - 1];
     if (!localScopes.contains(index - 1, scope))
       continue;
-    if (const auto found = scope.find(name.lexeme); found != scope.end()) {
+    if (const auto found = scope.find(localSymbolKey(name));
+        found != scope.end()) {
       return &found->second;
     }
   }

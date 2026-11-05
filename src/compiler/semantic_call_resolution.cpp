@@ -7663,6 +7663,30 @@ auto SemanticVisitor::Impl::recordSelectedCallOccurrence(
   // A statement template has a source-level selection for editor queries,
   // not an executable call/parameter boundary. Its expanded calls own effects.
   const FunctionInfo *target = semanticModel.findFunction(resolved.function);
+  const auto syntaxType = [&](const SemanticType &type) {
+    const auto *owner = classInfo(type);
+    return owner && owner->compilerType >= CompilerTypeKind::SyntaxTokens;
+  };
+  const bool syntaxUse =
+      syntaxIntrinsic(resolved.intrinsic) ||
+      (target && (target->proceduralOnly || syntaxType(target->returnType) ||
+                  std::any_of(target->parameterTypes.begin(),
+                              target->parameterTypes.end(), syntaxType)));
+  if (syntaxUse) {
+    if (!currentFunctionDeclaration ||
+        (!currentFunctionDeclaration->isConstexpr() &&
+         !currentFunctionDeclaration->isProceduralMacro())) {
+      report(
+          call.paren(),
+          "Syntax operations require a procedural macro or constexpr helper.",
+          "GTI-S2124");
+    } else if (const auto *owner =
+                   semanticModel.findFunction(*currentFunctionDeclaration)) {
+      auto updated = *owner;
+      updated.proceduralOnly = true;
+      semanticModel.record(*currentFunctionDeclaration, std::move(updated));
+    }
+  }
   if (target == nullptr || !target->macroExpansion)
     recordRawBorrowCall(call, resolved);
   const Token token =
@@ -8086,6 +8110,8 @@ auto SemanticVisitor::Impl::recordResolvedCall(
       .ephemeralBorrowArguments = std::move(ephemeralBorrowArguments),
       .callableArguments = std::move(callableArguments),
       .argumentReceiver = argumentReceiver};
+  if (syntaxIntrinsic(function.record().intrinsic))
+    resolved.intrinsic = function.record().intrinsic;
   for (std::size_t index = 0; index < call.arguments().size(); ++index) {
     const auto *construction =
         semanticModel.findContextualConstruction(*call.arguments()[index]);

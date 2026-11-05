@@ -143,6 +143,15 @@ set_tests_properties(macro_result_failures PROPERTIES TIMEOUT 1200)
 add_executable(gti_macro_result_parser_tests macro_result_parser_tests.cpp)
 target_link_libraries(gti_macro_result_parser_tests PRIVATE gti_compiler)
 add_test(NAME macro_result_parser COMMAND gti_macro_result_parser_tests)
+add_executable(gti_procedural_syntax_tests procedural_syntax_tests.cpp)
+target_link_libraries(gti_procedural_syntax_tests PRIVATE gti_compiler)
+add_test(NAME procedural_syntax COMMAND gti_procedural_syntax_tests)
+add_test(NAME procedural_declaration_example
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+    $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/examples/procedural-macro-declaration.gti")
+add_test(NAME procedural_execution_example
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+    $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/examples/procedural-macros.gti")
 find_program(GTI_MACRO_SYNTAX_NEOVIM_EXECUTABLE nvim)
 if(GTI_MACRO_SYNTAX_NEOVIM_EXECUTABLE)
   add_test(NAME macro_neovim_syntax

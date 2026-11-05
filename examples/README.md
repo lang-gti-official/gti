@@ -1,5 +1,15 @@
 # GTI examples
 
+[`procedural-macros.gti`](procedural-macros.gti) imports
+[`procedural-macro-library.gti`](procedural-macro-library.gti) and demonstrates
+identity, nested expansion, hygienic generated bindings and evaluating an input
+once. `procedural_execution_example` runs it through LLVM O0/O3.
+[`procedural-macro-declaration.gti`](procedural-macro-declaration.gti) also keeps
+an ordinary typed macro alongside a procedural declaration. These focused
+examples are outside the numbered full-language census. The HTML demonstration
+and final feature acceptance remain in phase 3 of
+[RFC 0001](https://github.com/lang-gti-official/rfcs/pull/1).
+
 [`llvm/native-c-storage.gti`](llvm/native-c-storage.gti) reads and updates
 native library globals, then shows that a loaded native function pointer stays
 selected while argument evaluation replaces the library's next function.

@@ -2255,6 +2255,21 @@
       }
     },
     {
+      "id": "procedural-syntax",
+      "mode": "run",
+      "source": "examples/procedural-macros.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "backend": "llvm"
+    },
+    {
       "id": "process",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_process.gti",
@@ -7422,6 +7437,36 @@
       "evidence": [
         "tests/fixtures/container_swap.gti",
         "tests/container_swap_runtime_test.py"
+      ]
+    },
+    {
+      "id": "syntax",
+      "source": "stdlib/std/syntax.gti",
+      "status": "executable",
+      "operations": [
+        "std::syntax::fresh",
+        "std::syntax::join",
+        "std::syntax::keyword",
+        "std::syntax::location",
+        "std::syntax::parse",
+        "std::syntax::punctuation",
+        "std::syntax::reference",
+        "std::syntax::size",
+        "std::syntax::slice",
+        "std::syntax::splice"
+      ],
+      "case_ids": [
+        "procedural-syntax"
+      ],
+      "required_instantiations": [
+        "caller expression",
+        "fresh generated local",
+        "move-only destructor-bearing expression"
+      ],
+      "evidence": [
+        "examples/procedural-macro-library.gti",
+        "examples/procedural-macros.gti",
+        "tests/procedural_syntax_tests.cpp"
       ]
     },
     {

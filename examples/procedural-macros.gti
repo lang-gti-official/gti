@@ -1,0 +1,34 @@
+import "procedural-macro-library.gti";
+
+mut int evaluations = 0;
+int next() { evaluations += 1; return 21; }
+constexpr int compile_time_answer = identity!({42});
+static_assert(compile_time_answer == 42);
+int defaulted(int value = identity!({42})) { return value; }
+
+mut int drops = 0;
+class Owner {
+  int value;
+public:
+  Owner(int value) : value(value) {}
+  Owner(Owner& other) = delete;
+  Owner(Owner&& other) = default;
+  ~Owner() { drops += 1; }
+  int read() { return this.value; }
+};
+int main() {
+  int saved = 99;
+  if (twice_once!({next()}) != 42 || evaluations != 1) { return 1; }
+  if (saved != 99) { return 2; }
+  if (identity!({saved + 1}) != 100) { return 3; }
+  if (identity!({twice_once!({next()})}) != 42 || evaluations != 2) {
+    return 4;
+  }
+  {
+    Owner owner = identity!({Owner(7)});
+    if (owner.read() != 7 || drops != 0) { return 5; }
+  }
+  if (drops != 1) { return 6; }
+  if (defaulted() + defaulted() != 84) { return 7; }
+  return 0;
+}

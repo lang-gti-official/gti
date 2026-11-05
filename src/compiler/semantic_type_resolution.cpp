@@ -1855,6 +1855,14 @@ auto SemanticVisitor::Impl::analyzeConstructorCall(
     const std::vector<CompileTimeValue> &valueArguments,
     const std::vector<SemanticType> &argumentTypes, const ExprList &arguments,
     const Token &paren) -> void {
+  if (classId &&
+      classInfo(classId).compilerType >= CompilerTypeKind::SyntaxTokens) {
+    report(paren,
+           "Syntax capabilities cannot be constructed as runtime values.",
+           "GTI-S2124");
+    currentType = SemanticType::Unknown;
+    return;
+  }
   std::vector<AnalyzedCallArgument> analyzedArguments;
   analyzedArguments.reserve(argumentTypes.size());
   bool deferred = false;
@@ -4209,6 +4217,22 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
                  : "A raw pointer requires a concrete object type or void "
                    "pointee.",
              "GTI-S2056");
+    }
+  }
+  if (compilerTypeClasses.contains(CompilerTypeKind::SyntaxTokens)) {
+    const SemanticType syntaxType = baseTypeOf(type, currentNamespace);
+    if (syntaxType.kind == SemanticType::Class && syntaxType.classId &&
+        classInfo(syntaxType.classId).compilerType >=
+            CompilerTypeKind::SyntaxTokens &&
+        (!allowProceduralSyntaxType || type.reference ||
+         !type.pointers.empty() || !type.arrayExtents.empty())) {
+      report(
+          type.name.last(),
+          "Syntax capabilities are compile-time-only; use them in procedural "
+          "macros or constexpr helpers, without pointers, references or "
+          "arrays.",
+          "GTI-S2124");
+      return;
     }
   }
   if (type.pointers.empty()) {

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "gti/syntax_capture.h"
+
 #include "gti/diagnostic.h"
 #include "gti/target.h"
 #include "gti/token.h"
@@ -1109,6 +1111,16 @@ public:
   [[nodiscard]] const Token &paren() const { return paren_; }
   [[nodiscard]] const ExprList &arguments() const { return arguments_; }
 
+  // Present only on an explicit name!({...}) invocation. Includes the outer
+  // parentheses; ordinary calls keep their existing expression arguments.
+  [[nodiscard]] const std::shared_ptr<const SyntaxCapture> &
+  capturedArguments() const {
+    return capturedArguments_;
+  }
+  void setCapturedArguments(std::shared_ptr<const SyntaxCapture> input) {
+    capturedArguments_ = std::move(input);
+  }
+
   // Argument-list geometry recorded by the parser for editor tooling: the
   // opening parenthesis and each argument-separating comma, alongside the
   // closing paren(). Synthesized calls leave the geometry unset.
@@ -1130,6 +1142,7 @@ private:
   ExprList arguments_;
   std::optional<Token> leftParen_;
   std::vector<Token> argumentCommas_;
+  std::shared_ptr<const SyntaxCapture> capturedArguments_;
 };
 
 class Conversion final : public ExprOfKind<ExprKind::Conversion> {
@@ -2513,6 +2526,13 @@ public:
     return macroKeyword_;
   }
   [[nodiscard]] bool isMacro() const { return macroKeyword_.has_value(); }
+  void setProceduralMacro(Token mode) { proceduralMacro_ = std::move(mode); }
+  [[nodiscard]] bool isProceduralMacro() const {
+    return proceduralMacro_.has_value();
+  }
+  [[nodiscard]] const std::optional<Token> &proceduralMacro() const {
+    return proceduralMacro_;
+  }
   // Set only by the compiler after validating the selected test catalog.
   void markGeneratedTestEntry() { generatedTestEntry_ = true; }
   [[nodiscard]] bool generatedTestEntry() const { return generatedTestEntry_; }
@@ -2542,6 +2562,7 @@ private:
   bool generatedTestEntry_ = false;
   std::optional<Token> implicitKeyword_;
   std::optional<Token> macroKeyword_;
+  std::optional<Token> proceduralMacro_;
 };
 
 class IfStmt final : public StmtOfKind<StmtKind::IfStmt> {

@@ -1,3 +1,4 @@
+#include "gti/mir_procedural.h"
 #pragma once
 
 #include "gti/semantic_analyzer.h"
@@ -1677,6 +1678,10 @@ private:
     // `list<First, Rest...>` -> First / `list<Rest...>`.
     MetaListFirst,
     MetaListRest,
+    SyntaxTokens,
+    SyntaxExpression,
+    SyntaxSpan,
+    SyntaxBinding,
   };
 
   struct ClassInfo {
@@ -2121,6 +2126,9 @@ private:
     bool requireMir = false;
     bool recordValues = true;
     bool allowVoidCompletion = false;
+    MirProceduralRequest *procedural = nullptr;
+    std::optional<SealedSyntaxExpression> proceduralResult;
+    std::optional<Diagnostic> proceduralDiagnostic;
     const Expr *immediateRoot = nullptr;
     // The function or constructor the compatibility interpreter is executing,
     // named in a resource-limit diagnostic; null at expression level. Stable
@@ -4371,6 +4379,8 @@ private:
   void validateArrayExtent(const ArrayExtentExprPtr &extent);
 
   void validateType(const TypeRef &type, bool allowNativeFunctionType = false);
+  void validateTypeAliasTarget(const TypeRef &type,
+                               bool allowNativeFunctionType = false);
 
   [[nodiscard]] CompilerCapabilityTypeKind
   compilerCapabilityType(const TypeRef &type,
@@ -5918,6 +5928,8 @@ private:
     std::optional<ClassId> ownerClass;
     bool staticMember = false;
     bool definition = false;
+    // Opaque identity of a syntax::fresh binder, independent of its spelling.
+    std::uint32_t localBindingIdentity = 0;
     // A definition may see only lexical frames created within its expansion.
     // Captured argument syntax is capped at the invocation's lexical depth so
     // later macro-local binders cannot capture same-spelled caller names.
@@ -5968,6 +5980,7 @@ private:
   std::vector<std::pair<const FunctionDecl *, std::size_t>> macroActiveBodies;
   [[nodiscard]] const MacroLookupContext *
   macroContext(const Token &token) const;
+  [[nodiscard]] std::string localSymbolKey(const Token &token) const;
   struct MacroLocalScopeRange {
     std::size_t begin = 0;
     std::size_t end = 0;
@@ -5987,6 +6000,29 @@ private:
   void copyRequestSessionForSpeculativeModel(Impl &probe);
   [[nodiscard]] bool
   analyzeMacroCall(const Call &call, const ExpressionStmt *statement = nullptr);
+  bool analyzeCapturedCall(const Call &call);
+  bool executeProceduralMacro(const Call &call, const FunctionDecl &definition);
+  std::shared_ptr<ConstexprWorkBudget> proceduralWork;
+  std::shared_ptr<SyntaxBudget> proceduralSyntaxBudget;
+  struct ProceduralCachedExpansion {
+    std::string key;
+    GenericSubstitution genericContext;
+    SealedSyntaxExpression sealed;
+    std::uint32_t caller = 0, definition = 0;
+    std::vector<std::uint32_t> fresh;
+    SyntaxBudget storage;
+    std::size_t retainedBytes = 0;
+    std::size_t steps = 0;
+    std::vector<Diagnostic> warnings;
+  };
+  // Exact-source/context reuse within this analysis only; no editor-preamble or
+  // process cache retains these frontend contexts. Bound retained cache memory.
+  std::vector<ProceduralCachedExpansion> proceduralExpansions;
+  std::size_t proceduralCacheBytes = 0;
+
+  std::vector<std::pair<FunctionId, std::string>> proceduralActive;
+  bool allowProceduralSyntaxType = false;
+  std::unordered_map<std::string, bool> proceduralNameKinds;
   [[nodiscard]] std::unique_ptr<Impl> makeMacroProbe(const Call &call);
   struct MacroResultRegion {
     const FunctionDecl *function = nullptr;
