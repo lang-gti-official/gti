@@ -42,6 +42,38 @@ jobs:
         run: |
           [[ "${GITHUB_REF}" == "refs/heads/main" ]] || exit 1
           echo 'mode=full' >> "${GITHUB_OUTPUT}"
+      - name: Select the shard duration table
+        # Every shard of this run balances from one table: the newest table an
+        # earlier full validation refreshed (its `ci-test-durations` artifact),
+        # or the committed one. Committing each refresh is unnecessary, and a
+        # stale committed table left 151 tests at the 30-second default (run
+        # 41910246551: 99-182 summed minutes across six shards). The table only
+        # orders and partitions tests; it never changes what runs.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          fetched="${RUNNER_TEMP}/fetched-durations"
+          runs="$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow full-validation.yml \
+            --branch main --status completed --limit 10 --json databaseId --jq '.[].databaseId' || true)"
+          for run in ${runs}; do
+            [[ "${run}" == "${GITHUB_RUN_ID}" ]] && continue
+            rm -rf "${fetched}"
+            if gh run download "${run}" --repo "${GITHUB_REPOSITORY}" --name ci-test-durations \
+                 --dir "${fetched}" 2>/dev/null &&
+               python3 scripts/validation_checks.py check-durations "${fetched}/ci_test_durations.json"; then
+              cp "${fetched}/ci_test_durations.json" tests/ci_test_durations.json
+              echo "Shard durations from full validation run ${run}"
+              exit 0
+            fi
+          done
+          echo "::notice::No earlier refreshed duration table; using the committed one"
+          python3 scripts/validation_checks.py check-durations tests/ci_test_durations.json
+      - name: Share the duration table with every shard
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: shard-durations
+          path: tests/ci_test_durations.json
+          retention-days: 7
   package:
     name: Release package (${{ matrix.platform }})
     needs: [plan]
@@ -199,6 +231,12 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Use this run's shard duration table
+        # Before configure: TestThroughput.cmake reads it for CTest COST hints.
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: shard-durations
+          path: tests
       - name: Configure runner resources
         shell: bash
         env:
@@ -574,6 +612,11 @@ jobs:
         with:
           pattern: shard-*
           path: ${{ runner.temp }}/shards
+      - name: Start from this run's shard duration table
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: shard-durations
+          path: tests
       - name: Refresh the shard duration table from this run
         run: >-
           python3 scripts/validation_checks.py durations

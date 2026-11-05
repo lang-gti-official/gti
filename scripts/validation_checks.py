@@ -357,16 +357,19 @@ def quarantined_on(table, platform):
 
 
 def update_durations(table_path, reports):
-    """Fold CTest JUnit durations into the shard-balancing table, keeping the max.
+    """Fold CTest JUnit durations into the shard-balancing table.
 
-    Durations only grow through this path (one fast run must not undo a slow
-    contended one) and names absent from the reports keep their entries. The
-    table is a scheduling hint, never an assertion.
+    Each refresh averages a test's stored duration with this run's
+    observation, so the table follows real cost within a few runs without
+    one contended or unusually fast run swinging it. A test seen in several
+    reports of one run (both platforms, for instance) counts its largest
+    time. New names take their observed time; names absent from the reports
+    keep their entries. The table is a scheduling hint, never an assertion.
     """
     import xml.etree.ElementTree as ElementTree
     table = json.loads(Path(table_path).read_text())
     seconds = table.setdefault("seconds", {})
-    updated = 0
+    observed = {}
     for report in sorted(Path(reports).rglob("*.xml")):
         try:
             tree = ElementTree.parse(report)
@@ -376,13 +379,30 @@ def update_durations(table_path, reports):
             name, duration = case.get("name"), case.get("time")
             if not name or duration is None or not re.fullmatch(r"[A-Za-z0-9_.-]+", name):
                 continue
-            value = round(float(duration), 1)
-            if value > float(seconds.get(name, 0)):
-                seconds[name] = value
-                updated += 1
+            observed[name] = max(observed.get(name, 0.0), float(duration))
+    for name, value in observed.items():
+        seconds[name] = round((float(seconds[name]) + value) / 2 if name in seconds else value, 1)
     table["seconds"] = dict(sorted(seconds.items()))
     Path(table_path).write_text(json.dumps(table, indent=1) + "\n")
-    print(f"durations: {updated} entries raised, {len(seconds)} total")
+    print(f"durations: {len(observed)} entries refreshed, {len(seconds)} total")
+
+
+def check_durations(table_path):
+    """Refuse a duration table that cannot balance shards (a fetched copy)."""
+    try:
+        table = json.loads(Path(table_path).read_text())
+    except (OSError, ValueError) as error:
+        raise ValueError(f"unreadable duration table {table_path}: {error}") from error
+    seconds = table.get("seconds") if isinstance(table, dict) else None
+    if not isinstance(seconds, dict) or not seconds or not all(
+            isinstance(name, str) and re.fullmatch(r"[A-Za-z0-9_.-]+", name)
+            and isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0
+            for name, value in seconds.items()):
+        raise ValueError(f"malformed duration table {table_path}")
+    default = table.get("default_seconds", 30)
+    if not isinstance(default, (int, float)) or isinstance(default, bool) or default <= 0:
+        raise ValueError(f"malformed default duration in {table_path}")
+    print(f"durations: {len(seconds)} entries in {table_path}")
 
 
 def shard_assignment(names, durations, shards, default=30.0):
@@ -812,6 +832,8 @@ def main(argv=None):
     refresh = sub.add_parser("durations", help="refresh the shard-balancing table from CTest JUnit reports")
     refresh.add_argument("--reports", required=True, help="directory of ctest --output-junit XML files")
     refresh.add_argument("--durations", default="tests/ci_test_durations.json")
+    checked = sub.add_parser("check-durations", help="validate a shard-balancing duration table")
+    checked.add_argument("table")
     shard.add_argument("--jobs", type=int, default=4)
     shard.add_argument("--report", required=True)
     shard.add_argument("--log")
@@ -855,6 +877,9 @@ def main(argv=None):
         return
     if args.command == "durations":
         update_durations(root / args.durations, Path(args.reports))
+        return
+    if args.command == "check-durations":
+        check_durations(Path(args.table))
         return
     if args.command == "declared":
         pr = json.loads(Path(args.event).read_text()).get("pull_request") or {}
