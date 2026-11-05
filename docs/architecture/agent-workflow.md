@@ -952,8 +952,14 @@ objects: they never relax validation or artifact admission.
 
 `validation_checks.py shard` builds the optimized tree, takes the
 complete CTest inventory, and runs its share of a deterministic partition:
-longest first onto the lightest shard, weighted by `tests/ci_test_durations.json`
-(slowest observed seconds; unknown tests take the default). The first shard on
+longest first onto the lightest shard, weighted by a duration table (unknown
+tests take the default). Each full validation starts from the newest table an
+earlier run refreshed, its `ci-test-durations` artifact, falling back to the
+committed `tests/ci_test_durations.json`; its plan job shares that one table
+with every shard, so all shards of a run compute the same partition. The
+verdict job averages each test's stored seconds with this run's observation
+and uploads the result for the next run, so the table tracks real cost
+without anyone committing it. The first shard on
 each platform also runs the native smoke, and the first Linux shard checks
 deterministic docgen. The system-LLVM `fast` checks also run in full
 integration; their Linux job retains the installed-library and process-resource
@@ -962,8 +968,8 @@ their installed-consumer checks against bundled LLVM. Each shard uploads a repor
 of its head, tree, inventory and executed tests. The gate merges them and fails
 unless, for each required platform, the shards are complete, disjoint, agree
 on source and inventory, ran every registered test exactly once and include the
-smoke, and both platforms validated the same source. Refresh the duration table
-from queue JUnit reports when shard wall times drift apart.
+smoke, and both platforms validated the same source. Commit a refreshed table
+only to improve the fallback, for example after adding many long tests.
 
 Nightly consumes these CI-produced archives; it does not repeat compilation or
 the full suite. Publication binds the complete artifact set to the successful
