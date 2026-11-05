@@ -1222,7 +1222,7 @@ int select(uint8_t value) { return 2; }
 #macro int64_t wide_min(int64_t value) { return value; }
 #macro unused(uint8_t value) {}
 #macro int defaulted(uint8_t value = 33) { return select(value); }
-int instantiate<T>(T value) { return nested(33) + int(value); }
+int instantiate<T>(T value) { return nested(33); }
 int main() {
   unused(33);
   auto a = narrow((+(255)));

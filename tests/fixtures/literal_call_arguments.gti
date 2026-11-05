@@ -74,7 +74,7 @@ int macro_selected(uint8_t value) { return 2; }
 #macro T macro_generic<T>(T value) { return value; }
 #macro macro_unused(uint8_t value) {}
 #macro int macro_default(uint8_t value = 33) { return macro_selected(value); }
-int macro_instance<T>(T value) { return macro_nested(33) + int(value); }
+int macro_instance<T>(T value) { return macro_nested(33); }
 mut int macro_reads = 0;
 uint8_t macro_next() { macro_reads += 1; return 3; }
 #macro int macro_twice(uint8_t value) { return int(value) + int(value); }
