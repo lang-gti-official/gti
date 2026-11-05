@@ -7606,26 +7606,12 @@ holds exactly one build-window `suite` slot for them, reclaims a slot whose
 owner exited, reports a live holder when the window is full, and lets a peer
 task checkpoint while validation is in progress.
 
-`preview_workflow` uses disposable Git repositories to exercise combined
-candidate admission, focused-check replay, mandatory example-gate dispatch,
-failed/dirty/stale publication refusal, append-only removal, and original-PR
-preservation. It also checks preview installer pinning, dirty-checkout
-preservation, unavailable-source failure and read-only source selection.
-Detached submission coverage checks copied worker tooling, duplicate submission,
-remembered focused tests, exact-head pinning, stale retry bounds, interrupted
-status, default remote-runner dispatch, successful checkout cleanup, and normal
-PR integration after failed preview admission. Installer coverage checks default
-preview selection without activation on dry run; `neovim_local_installer` retains
-explicit `--local` installation and activation behavior. These orchestration tests fake compiler builds; actual
-preview admission separately requires its optimized build and automated
-example gates on the combined source. Workflow changes do not themselves
-claim that a preview candidate or installed toolchain has been validated.
-`preview_release` also configures a small real CMake project, builds the exact
-installed/test target closure, installs its component, and confirms unrelated
-test binaries stay unbuilt. A nested CTest rendezvous verifies that the bounded
-parallel budget reaches the inner tests even when the aggregate is RUN_SERIAL.
-The production preview still runs every included feature and example gate;
-these orchestration fixtures do not replace candidate validation.
+`neovim_local_installer` covers the installer's default nightly source
+selection (only the canonical `nightly` tag is read, and a dry run fetches
+nothing), refusal of a missing nightly, rejection of the retired `--preview`
+flag, and explicit `--local` installation and activation behavior. The former
+`preview_workflow` and `preview_release` orchestration tests were removed with
+the preview channel.
 
 `build_window` exercises `scripts/build_window.py` in a temporary directory:
 slot files record owner pid, time, kind and command and disappear on release;

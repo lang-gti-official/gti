@@ -135,20 +135,7 @@ integration is complete contributor work; report it as deferred, never as passed
    new CMake registrations, routing/native/build changes or unknown paths use
    full CI. Register new source cases in an existing owning harness or surface
    manifest where appropriate; never omit required tests to get the cheaper lane.
-   Combined preview still uses its separate mandatory admission/build policy.
-3. After focused validation passes and the PR is published, submit every completed
-   task with `preview submit <task> --tests <exact-owning-ctest-names>`. This is
-   the standing default, including fixes and automation work; do not ask again.
-   Explicit no-preview or no-publication instructions override it. Select this
-   task only, never sweep other PRs. Submission is detached and combined preview
-   admission remains mandatory; report a failure without blocking main delivery.
-   Continue normal integration without waiting for preview. A queued
-   submission is not an admission: say "submitted", never "in preview". A
-   failed or stale worker comments on the PR, and every helper command's
-   stderr names unresolved submissions (`status` gives each reason and log);
-   relay that notice to the user and resubmit once its cause is fixed.
-
-   Write the final PR description to a temporary file: behaviour, exactly
+3. Write the final PR description to a temporary file: behaviour, exactly
    which checks ran, and "complete suite deferred to full validation". Unless
    the change is automation-only, end it with a `Validation:` block whose `T0`
    and `T1` items list the CTest names you ran, comma-separated; other items
@@ -208,7 +195,7 @@ purpose: when GitHub Actions has been unavailable for more than four hours, a
 designated integrator may combine admitted tasks into one candidate, validate
 it on a remote runner with `batch verify`, and record that evidence on the PR.
 Components never merge directly; `sync` closes them as integrated via the
-combined PR with exact membership proof. Never merge `preview`.
+combined PR with exact membership proof.
 
 ## Sync, cleanup and recovery
 

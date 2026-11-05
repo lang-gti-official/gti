@@ -150,23 +150,10 @@ wrapper, and neither backend defines its semantics.
   designated integrator may validate one combined candidate with `batch` on a
   remote runner and record that evidence on the PR. Agents never fall back to
   per-PR local full suites.
-- Every completed implementation task must be submitted to the `preview` source branch through
-  `python3 scripts/agent_workflow.py preview submit <task> --tests <focused-ctest-names>`
-  after focused validation passes and its PR is published, unless the user explicitly
-  requests no preview or no publication. No additional permission is needed.
-  Original PRs continue full validation and review. Submission is
-  detached: do not wait for it before normal integration, merge,
-  or task cleanup. Preview failure/conflict/staleness is not a main-PR blocker.
-  The helper owns the preview queue, candidate checkout, validation and publication;
-  use `preview status` only when its outcome is relevant. Select tasks explicitly; never sweep unrelated open
-  PRs into preview. Admission rebuilds the combined source and requires every
-  included feature's registered focused tests plus the automated example gate.
-  Follow [the preview contract](docs/architecture/agent-workflow.md#early-combined-preview),
-  including its platform/interactive coverage, exact inclusion records and
-  append-only removal. Preview is never merged wholesale into main and never
-  weakens the original PR's acceptance.
-  `install_neovim_local.py` defaults to preview; `--local` selects the calling
-  checkout. Running the installer still requires an installation request.
+- `install_neovim_local.py` builds the commit published as `nightly` by
+  default; `--local` selects the calling checkout. The preview channel is
+  retired, so `--preview` fails with that explanation. Running the installer
+  still requires an installation request.
 - GitHub at `https://github.com/lang-gti-official/gti.git` (remote `origin`)
   is canonical for branches, PRs, issues and CI. The helper authenticates
   through the GitHub CLI (`gh auth login`) or `GH_TOKEN`, never a stored
@@ -346,16 +333,12 @@ publish toolchain releases to Gitea. The `gti add` package registry stays
 on Gitea and is unaffected. See "Published Toolchain Channels" in
 `docs/architecture/build-and-driver.md`.
 
-- **Preview** distributes the separately admitted combined `preview` source through
-  `preview.yml`, which builds the admitted source, proves the compiler runs,
-  smoke-tests the installed toolchain and packages it with source and
-  inclusion identity on both platforms; focused admission of each submitted
-  feature happens once, on the submitting host, before the source reaches
-  the branch. Preview is an early snapshot that builds and runs, not full-main
-  CI or nightly evidence, and never promotes into main. `gtiup` manages preview,
-  nightly, beta and stable toolchains; Neovim managed mode uses the selected
-  matching compiler/LSP/parser without downloading its own tools. Installation
-  remains opt-in. Never move the rolling preview tag by hand.
+- **Preview is retired.** Nothing builds, admits or publishes it, and agents no
+  longer submit tasks to it. The frozen `preview` branch and GitHub release stay
+  only until the owner deletes them. `gtiup` manages nightly, beta and stable
+  toolchains plus linked local builds (`gtiup link`); Neovim managed mode uses
+  the selected matching compiler/LSP/parser without downloading its own tools.
+  Installation remains opt-in.
 - **Nightly** republishes one rolling `nightly` prerelease, daily, from the
   selected `main` commit with successful release-producing integration CI and retained production
   artifacts. It verifies exact source/run/attempt, platform, configuration and

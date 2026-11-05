@@ -931,9 +931,7 @@ input digest). Their provenance repeats that origin. A successful source-library
 integration can supply nightly artifacts; it is not described as a new full
 compiler build. Compiler sanitizer binaries are not rebuilt: their native inputs
 are unchanged, while generated-program sanitizer checks selected by the library
-ownership map still run. The separate combined preview admission/publication
-continues its existing build-and-test policy; this lane does not waive preview
-checks or publish a PR as nightly.
+ownership map still run. This lane does not publish a PR as nightly.
 
 In full integration, production packaging builds the pinned bundled LLVM/Clang
 release configuration on both platforms and validates the staged toolchain
@@ -1028,7 +1026,7 @@ Python LSP/Neovim harnesses and documentation/fragments may use the `lsp` lane.
 build, CI, test-registration or unknown path retains full integration. A missing
 full-CI ancestor SDK or unequal shared-input identity also selects full CI.
 Contributors still record focused owning evidence and submit through the normal
-preview/PR lifecycle; this lane is not a local-validation exemption. Both platform
+PR lifecycle; this lane is not a local-validation exemption. Both platform
 LSP jobs must pass the CI gate: like `source-stdlib`, the lane is a mode-gated
 `ci.yml` job that runs on pull requests and merge groups, never a
 post-integration job. The full-CI SDK it reuses comes from `full-validation.yml`
@@ -1153,184 +1151,23 @@ on a remote runner and record that evidence on the PR. Agents never fall back
 to per-PR local full suites. Do not reintroduce advisory CI or administratively
 bypass a server rejection.
 
-## Early combined preview
+## Retired combined preview
 
-`origin/preview` is the default early source branch for completed agent work while
-their original PRs continue full validation and review. Preview admission is
-separate from `verify`/`finish`: it never writes task validation records, marks
-original PRs ready, or grants permission to merge them. Every original PR still
-satisfies the existing main gates. Never merge the preview branch wholesale
-into main; `finish` and the CI release-version gate reject its `.gti-preview.json`
-marker and marker history, including candidates that later remove it. Stable/nightly source
-resolution rejects that marker too. Preview publication creates no release,
-tag, package, or local installation.
+The early combined `preview` channel is retired. Agents no longer submit
+completed tasks to it, and the helper has no `preview` command, attention
+notice or `preview_attention` status field. `preview.yml`, the admission,
+submission, packaging and remote-publication scripts, and the
+`preview_workflow`, `preview_release` and `preview_admission` CTests were
+removed. The example-gate inventory that source-library and LSP CI share moved
+to `scripts/example_gates.py`. Nightly, which publishes the newest commit that
+passed full validation, is the early channel.
 
-The candidate combines the currently published preview, exact selected PR
-head, and current main in a new external worktree. Its committed
-`.gti-preview.json` records all included task/PR/head identities, their merge
-commits, exact focused CTest names, main and previous-preview identities. Admission
-requires explicit task selection; it does not sweep open PRs. Each agent must submit its own completed task after focused validation passes
-and its PR is published, unless the user requests no preview or no publication.
-This includes fixes and automation tasks, not only new language features.
-No per-task permission is needed. The caller must select appropriate focused checks. Draft PRs are allowed
-because their full acceptance may still be running.
-
-```sh
-# Select the owning regression tests by their exact CTest names.
-python3 scripts/agent_workflow.py preview submit my-task --tests cpp_mir_body_emitter_lifecycle
-```
-
-This is the only normal agent-facing preview action. It returns a submission
-ID and log path after launching a detached worker; it does **not** wait for
-builds, tests or publication. Continue ordinary `verify`, `finish` and cleanup
-without waiting for preview. A failed, conflicting, stale or interrupted
-preview job never changes the original task's acceptance records or PR state.
-Omitting `--tests` on resubmission reuses that task's last explicit selection;
-the first submission requires focused names. An identical live submission is
-deduplicated. A different live submission for the same task is refused, not
-silently replaced. `preview status [SUBMISSION]` reports progress, or lists
-submissions without contacting the remote build host. Submission success means
-queued, not preview-validated or published.
-
-When an already included feature has a newer, focused-verified head accepted
-into main and its owning test names changed, use `preview refresh my-task
---tests replacement_check --reason 'Explain the accepted migration'`. This is
-an explicit detached refresh of that same task PR, not admission of a closed,
-unmerged PR. It requires the merged head in current main, retains the previous
-head/tests/contributions in the feature's append-only `history`, and records
-the replacement checks, accepted main identity and reason. The old source must
-be an ancestor of the accepted head. Checks cannot be changed again without a
-new accepted head. The accepted head enters preview through the candidate's
-main merge, so the feature counts as admitted again: the combined source
-still rebuilds and passes the replacement checks (`preview_examples.py
---pending` selects them until that preview is published) and example admission
-before publication; neither test failures nor missing registration are
-ignored. A pre-merge submission waiting in the
-queue retains its record and becomes superseded; it does not prevent this
-explicit accepted-head refresh. Other features' records are unchanged.
-
-The worker copies its small tooling closure outside the task worktree so normal
-task cleanup is safe. A separate single-slot preview semaphore serializes
-admissions; it consumes no ordinary build slot while waiting. Once selected,
-the existing remote runner uses the configured/default host (or
-`GTI_REMOTE_RUNNER`) and its LLVM/compiler/job defaults, an optimized Release
-build, and `preview_admission`. That aggregate CTest is registered **only** in
-combined candidates carrying `.gti-preview.json`; it invokes the existing
-example gate with every manifest feature's exact focused checks. No aggregate
-gate is registered in ordinary main/PR suites. Source compiler and project
-CLI behavior are unchanged.
-
-The submitted PR head is pinned: a closed/advanced PR becomes superseded, never
-an implicit request to admit a different commit. Main/preview advancement gets
-one fresh preparation and revalidation attempt, then a separate stale result.
-Re-submit later if preview is still useful. Conflicts and failed candidates
-retain their checkout and log for optional recovery; they require no action
-to finish the original PR. On successful publication the worker removes only
-its unchanged, clean checkout, retaining checkpoint refs and evidence. Modified
-or ignored files are preserved. An exited worker is reported as interrupted;
-inspect its retained log and any remote run before resubmitting rather than
-automatically launching a duplicate uncertain run.
-
-Failures are reported, because submission success means only queued. A
-worker that ends `failed` or `stale` posts one comment on the original PR with
-the reason, any unresolved candidate paths, its log path and the resubmit
-command; a hidden marker keeps it to one comment per submission. The comment
-changes no label, review or check, and a comment API failure is recorded as
-`report_error` without changing the outcome. A worker that died cannot report
-itself, so `status` attaches `preview_attention` to every task whose latest
-submission is failed, stale or interrupted, and every helper command prints a
-one-line stderr notice naming them. A later submission, delivery of the task
-(merged, synced, completed or abandoned) or a fetched `origin/preview` that
-contains the submitted head resolves the entry. Agents relay that notice to
-the user rather than treating a queued submission as admitted.
-
-The lower-level `prepare`, `verify`, `publish`, `seed`, `resume` and `revert`
-commands remain for maintainer recovery, not mandatory feature-delivery steps.
-For an explicitly requested combined downloadable release, the production
-remote plan and exact-package admission in `scripts/preview_remote.py` can
-supply both-platform evidence to this same candidate lifecycle. See
-[remote preview distribution](build-and-driver.md#managed-toolchains-and-preview-distribution).
-For example, `preview prepare my-task --worktree /absolute/new-candidate
---tests owning_test`, followed by `preview verify CANDIDATE` and
-`preview publish CANDIDATE`, still supports explicit local validation settings.
-
-`verify` configures and builds an optimized compiler from the combined source,
-runs the focused checks of the features **this candidate admits** (those whose
-merge is not yet in the published preview; `preview_examples.py --pending`,
-which the registered `preview_admission` gate also uses), and runs the fixed
-`preview_examples.py` gate. Preview promises that each admitted feature
-compiled and passed its own focused checks once; it does not re-prove every
-earlier feature on every admission. The fixed gate covers the numbered corpus,
-practical HTTP examples and established automated project/native harnesses
-under the tree's backend policy (`GTI_TEST_BACKENDS`, LLVM by default).
-Missing, disabled or skipped required tests fail admission, including focused
-tests. `--manifest` replays every included feature for maintainer recovery. One-off checks must be registered with
-CTest first; focused names are deduplicated for execution while their owning
-PR identities remain in the manifest. New nested example directories require an explicit coverage update;
-the allocator helper is exercised by its numbered client. Objective-C++ execution is required on macOS and explicitly reported
-as inapplicable elsewhere. Interactive `toy-3d-engine` needs its native
-dependencies and a graphics session; this automated gate does not certify GUI
-execution. Preview is therefore evidence for the automated runnable examples
-on the recorded host, not a claim that every interactive program or every
-platform has run. No main validation requirement is reduced by this scope.
-With no pending feature checks, the build targets are `gti`, `gti_runtime`
-and `gti_lsp`, which cover the fixed example harness dependencies. Candidates
-with focused checks build all targets because arbitrary registered CTest names
-can require additional test executables; neither path reduces gate coverage.
-
-Use `GTI_REMOTE_RUNNER=mini ... preview verify CANDIDATE --remote` (or a named
-Linux host) to run the same generated argv plan through the remote runner.
-Additional CMake settings use repeated `--cmake-arg=...`; `--jobs N` controls
-the build. Local and remote execution both use the shared build windows. Logs
-and exact-head evidence live under the common Git directory's
-`gti-agent-workflow/preview/<candidate>-results-<attempt>` (a fresh destination
-for every attempt, preserving earlier evidence); `preview status CANDIDATE`
-reports the token-free recovery record. Candidate branches are published as
-`codex/preview-<candidate>` and retained for recovery. No candidate PR is opened.
-
-Publication accepts only the unchanged, clean, tested candidate, and refuses
-an advanced main or preview. An ancestry check plus an exact remote
-lease makes preview updates append-only and detects concurrent publishers.
-The lease is also compare-and-create for the first publication; it never
-authorizes replacing published history. Lost push responses can be retried.
-If either input advances, prepare a fresh candidate and repeat its checks.
-
-`preview seed --worktree /absolute/new-candidate` starts preview from main
-without adding a PR, or refreshes an existing preview with main. It requires
-the same `verify` and `publish` steps; an absent preview branch remains absent
-until these pass. `preview revert my-task --worktree /absolute/new-candidate`
-constructs ordinary revert commits, retains the original PR, and requires the
-same combined checks before publication. Re-admitting a removed task restores
-its prior revert before merging the newly selected head. Merge/revert conflicts
-remain in the candidate worktree: resolve and commit them, then run
-`preview resume CANDIDATE` to finish preparation before verification. The
-manifest and evidence always describe the resulting combined source.
-Admission refuses an already-reachable PR head (except explicitly restoring a
-removed task). Removal refuses a feature already integrated into main; changes
-to accepted main behavior require their own normal PR.
-If a previously removed feature later merges into main, the next seed,
-admission or removal restores its recorded contributions before merging main.
-This matters because Git otherwise retains the preview revert even though the
-original feature head is now an ancestor of main. The inclusion record marks
-the restoration as accepted by that exact main commit; it does not reclassify
-accepted work as a pending preview feature. Conflicts still require explicit
-resolution and the combined candidate must pass the normal preview gates.
-
-Low-level/failed preview candidates and source installations are retained intentionally; do not
-delete them while another user may rely on their commits or installed paths.
-No automatic pruning/resetting of modified worktrees is performed.
-
-`preview.yml` (push to `preview`, or dispatch) publishes what admission
-accepted and repeats no focused checks: on each packaged platform it restores
-the release object cache `llvm-prebuilt.yml` warms, builds only the installed
-toolchain products (`preview_build.py --products-only`), proves the compiler
-executes native programs at O0 and O3 with the candidate's own stdlib and
-runtime (`validation_checks.py smoke --root .`), stages, runs the installed
-CLI/LSP/project and consumer-library smoke, packages, records identity and
-checksums, then attests and publishes. A warm run takes about twenty minutes
-per platform; the previous design re-ran every admitted feature's focused
-checks and the example gate on both platforms (50–90 minutes) on top of a
-cold compiler build, for three- to four-hour walls.
+Existing task records may still carry preview fields and the metadata
+directory may still hold `preview/` submission state; the helper ignores both.
+The frozen `preview` branch and its GitHub release are left untouched for the
+owner to delete. The CI release-version gate, the release train and release
+source resolution still reject `.gti-preview.json` history, so that frozen
+branch cannot reach main or a published channel by accident.
 
 ## Preservation and cleanup
 

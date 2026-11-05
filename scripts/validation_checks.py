@@ -34,22 +34,22 @@ AUTOMATION_WORKFLOWS = {".github/workflows/rollup.yml", ".github/workflows/train
                         ".github/workflows/backport.yml", ".github/workflows/rollback.yml"}
 FULL_VALIDATION_FILES = {"scripts/validation_checks.py", "scripts/validation_batch.py",
                          "scripts/named_test_shards.py", "tests/ci_release_test.py",
-                         "tests/preview_release_test.py", "scripts/source_stdlib_ci.py", "tests/source_stdlib_ci_test.py", "tests/lsp_release_test.py", "tests/lsp_sdk_test.py",
+                         "scripts/source_stdlib_ci.py", "tests/source_stdlib_ci_test.py", "tests/lsp_release_test.py", "tests/lsp_sdk_test.py",
                          "scripts/lsp_ci.py", "scripts/lsp_component.py", "scripts/lsp_compatibility.py"}
 AUTOMATION_FILES = {"AGENTS.md", "CLAUDE.md", "README.md"}
 AUTOMATION_SCRIPTS = {"agent_workflow.py", "validation_batch.py", "validation_checks.py",
-                      "preview_workflow.py", "preview_submit.py", "build_window.py", "bounded_log.py",
+                      "build_window.py", "bounded_log.py",
                       "cut_release.py", "check_release_version.py", "check_stdlib_surface_review.py",
                       "rollup.py", "release_train.py", "full_validation_report.py"}
 # Exactly the existing harnesses that CI's workflow-regression job runs. The
-# batch, validation and preview-submit scripts are covered by agent_workflow_test.
-AUTOMATION_TESTS = {"agent_workflow_test.py", "preview_workflow_test.py", "build_window_test.py",
+# batch and validation scripts are covered by agent_workflow_test.
+AUTOMATION_TESTS = {"agent_workflow_test.py", "build_window_test.py",
                     "bounded_log_test.py", "release_version_test.py", "stdlib_surface_review_test.py",
                     "ci_resources_test.py",
                     "repository_hosting_test.py", "cut_release_test.py",
                     "ownership_map_test.py", "plan_checks_test.py", "rollup_test.py",
                     "release_train_test.py", "named_test_shards_test.py", "ci_release_test.py",
-                    "preview_release_test.py", "source_stdlib_ci_test.py", "lsp_release_test.py"}
+                    "source_stdlib_ci_test.py", "lsp_release_test.py"}
 # A rollup's membership record lists queue-validated members; unlike a degraded-
 # mode batch manifest it adds no admission obligation, so it leaves the
 # classification of the members' own paths unchanged.

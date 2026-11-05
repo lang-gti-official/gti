@@ -716,6 +716,23 @@ class Lifecycle(unittest.TestCase):
         self.assertEqual(state["phase"], "synced")
         self.assertNotIn("mirror", state)
 
+    def test_records_from_the_retired_preview_lifecycle_still_work(self):
+        self.ready()
+        state = self.flow.load("task")
+        state.update(preview_attention={"task": "task", "phase": "failed"}, preview={"submission": "old"})
+        self.flow.save(state)
+        submission = self.flow.state_dir / "preview/submissions/old"
+        submission.mkdir(parents=True)
+        (submission / "state.json").write_text(json.dumps(
+            {"task": "task", "created": "2026-11-01T00:00:00+00:00", "phase": "failed"}))
+        self.assertEqual(self.flow.status("task")[0]["preview"], {"submission": "old"})
+        self.assertEqual(self.flow.finish("task", "description", rollup=False)["phase"], "synced")
+        stderr = io.StringIO()
+        with unittest.mock.patch.object(sys, "argv", ["agent_workflow.py", "preview", "status"]), \
+                contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit):
+            module.main()
+        self.assertIn("invalid choice: 'preview'", stderr.getvalue())
+
     def test_legacy_record_steps_aside_for_adoption(self):
         old = self.root / "old"
         git(self.primary, "worktree", "add", "-b", "codex/old", str(old), "main")
@@ -1780,7 +1797,7 @@ class CIEnvironment(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="gti-ci-context-") as temporary:
             root = Path(temporary) / "runner workspace"
             (root / "scripts").mkdir(parents=True)
-            for name in ("validation_checks.py", "source_stdlib_ci.py", "release_artifacts.py", "preview_examples.py"):
+            for name in ("validation_checks.py", "source_stdlib_ci.py", "release_artifacts.py", "example_gates.py"):
                 shutil.copy2(ROOT / "scripts" / name, root / "scripts" / name)
             git(root, "init", "-b", "main")
             git(root, "config", "user.name", "CI Test")

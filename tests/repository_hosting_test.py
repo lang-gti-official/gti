@@ -30,7 +30,6 @@ SANITIZERS = ".github/workflows/sanitizers.yml"
 LLVM_PREBUILT = ".github/workflows/llvm-prebuilt.yml"
 CPP_BACKEND = ".github/workflows/cpp-backend.yml"
 NIGHTLY = ".github/workflows/nightly.yml"
-PREVIEW = ".github/workflows/preview.yml"
 ROLLUP = ".github/workflows/rollup.yml"
 CACHE = ".github/workflows/cache.yml"
 LSP = ".github/workflows/lsp.yml"
@@ -69,10 +68,10 @@ def main():
     workflows = sorted(p for p in tracked if p.startswith((".github/workflows/", ".gitea/workflows/")))
     # CI, nightly toolchain releases and the rollup bot run on GitHub. The frozen
     # Gitea release workflow stays as the record of the contract it replaces.
-    expect(set(workflows) == {CI, FULL_VALIDATION, SANITIZERS, LLVM_PREBUILT, CPP_BACKEND, LSP, NIGHTLY, PREVIEW, RELEASE,
+    expect(set(workflows) == {CI, FULL_VALIDATION, SANITIZERS, LLVM_PREBUILT, CPP_BACKEND, LSP, NIGHTLY, RELEASE,
                               ROLLUP, CACHE, *RELEASE_TRAIN},
            f"unexpected live workflows: {workflows}")
-    for relative in (CI, NIGHTLY, PREVIEW, RELEASE, ROLLUP, CACHE, *RELEASE_TRAIN, ".github/README.md", ".gitea/README.md",
+    for relative in (CI, NIGHTLY, RELEASE, ROLLUP, CACHE, *RELEASE_TRAIN, ".github/README.md", ".gitea/README.md",
                      ".gitea/ISSUE_TEMPLATE/bug_report.md",
                      "docs/plans/archive/github-actions-20261024/README.md"):
         text(root, relative)
@@ -96,7 +95,7 @@ def main():
     expect(f'"{CANONICAL_ROOT}.git"' in readme and f'"{CANONICAL_ROOT}.git"' in lazy,
            "Lazy installation must use the complete canonical Git URL")
     expect(f'CANONICAL = "{CANONICAL_ROOT}.git"' in text(root, "scripts/install_neovim_local.py"),
-           "the local installer must resolve preview source from canonical GitHub")
+           "the local installer must resolve nightly source from canonical GitHub")
     installer = text(root, "lua/gti/installer.lua")
     expect('local release_server = "https://github.com"' in installer
            and 'local repository = "lang-gti-official/gti"' in installer
@@ -116,11 +115,6 @@ def main():
            and "GITEA_TOKEN" not in helper and "MIRROR_REMOTE" not in helper,
            "lifecycle must use GitHub, the merge queue and explicit rehosting, never Gitea credentials")
 
-    preview = text(root, PREVIEW)
-    expect("branches: [preview]" in preview and "preview_release.py check" in preview
-           and "validation_checks.py smoke --root . --build build" in preview and "needs: [select, package]" in preview
-           and preview.count("contents: write") == 1,
-           "preview must retain combined admission, exact package checks and isolated publication")
     ci, nightly, release = text(root, CI), text(root, NIGHTLY), text(root, RELEASE)
     full, sanitizers = text(root, FULL_VALIDATION), text(root, SANITIZERS)
     expect("merge_group:" in ci and "ready_for_review" in ci and "name: CI gate" in ci
