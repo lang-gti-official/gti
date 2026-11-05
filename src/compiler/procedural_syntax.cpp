@@ -62,6 +62,24 @@ std::size_t SyntaxArena::put(Node node) {
     throw SyntaxError("Syntax byte limit exceeded.");
   if (tokens > limits_.tokens - tokens_)
     throw SyntaxError("Syntax token limit exceeded.");
+  // Every construction path, including joins of individually shallow pieces,
+  // must enforce the output nesting bound before publishing a handle.
+  std::size_t depth = 0;
+  if (node.syntax)
+    for (const auto &token : node.syntax->tokens) {
+      check();
+      if (token.kind == TokenKind::LEFT_BRACE ||
+          token.kind == TokenKind::LEFT_PAREN ||
+          token.kind == TokenKind::LEFT_BRACKET) {
+        if (++depth > limits_.depth)
+          throw SyntaxError("Syntax group depth limit exceeded.");
+      } else if (token.kind == TokenKind::RIGHT_BRACE ||
+                 token.kind == TokenKind::RIGHT_PAREN ||
+                 token.kind == TokenKind::RIGHT_BRACKET) {
+        if (depth)
+          --depth;
+      }
+    }
   bytes_ += bytes;
   tokens_ += tokens;
   nodes_.push_back(std::move(node));
@@ -74,24 +92,12 @@ SyntaxTokens SyntaxArena::capture(SyntaxCapture input) {
   if (input.origins.size() != input.tokens.size() ||
       input.textRanges.size() != input.tokens.size())
     throw SyntaxError("Invalid syntax origin table.");
-  std::size_t depth = 0;
   for (auto &token : input.tokens) {
     check();
     if (syntaxDirective(token.kind))
       throw SyntaxError("Directives are forbidden in syntax input.");
     if (token.kind == TokenKind::END_OF_FILE)
       throw SyntaxError("Unexpected end token in syntax input.");
-    if (token.kind == TokenKind::LEFT_BRACE ||
-        token.kind == TokenKind::LEFT_PAREN ||
-        token.kind == TokenKind::LEFT_BRACKET) {
-      if (++depth > limits_.depth)
-        throw SyntaxError("Syntax group depth limit exceeded.");
-    } else if (token.kind == TokenKind::RIGHT_BRACE ||
-               token.kind == TokenKind::RIGHT_PAREN ||
-               token.kind == TokenKind::RIGHT_BRACKET) {
-      if (depth)
-        --depth;
-    }
     if (!token.expansion)
       token.expansion = callerContext_;
   }

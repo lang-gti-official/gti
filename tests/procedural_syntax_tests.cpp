@@ -145,6 +145,14 @@ void arena() {
   (void)limited.capture(capture("1"));
   rejects([&] { (void)limited.capture(capture("2")); },
           "discarded nodes still consume budget");
+  lang::SyntaxArena shallow(10, 20, [&] { return ++identity; }, {.depth = 2});
+  const auto opening = shallow.capture(capture("("));
+  const lang::SyntaxTokens nested[] = {opening, opening, opening};
+  rejects([&] { (void)shallow.join(nested); },
+          "joining shallow fragments cannot bypass the nesting limit");
+  (void)shallow.parse(shallow.capture(capture("((1))")));
+  rejects([&] { (void)shallow.capture(capture("(((1)))")); },
+          "captured nesting uses the same output limit");
   lang::SyntaxArena cancelled(
       10, 20, [&] { return ++identity; }, {}, [] { return true; });
   rejects([&] { (void)cancelled.capture(capture("1")); },
@@ -184,12 +192,18 @@ void semantics() {
       analyze("import std.syntax; using Input = std::syntax::tokens; "
               "using Output = std::syntax::expr; #macro(proc) Output "
               "chosen(Input input) {} int main(){return 0;}");
+  if (!aliased.canGenerateCode())
+    for (const auto &d : aliased.diagnostics)
+      std::cerr << d.code << ": " << d.message << '\n';
   check(aliased.canGenerateCode(),
         "signature checks trusted type identity through aliases");
   const std::string hoverSource =
       "import std.syntax; #macro(proc) std::syntax::expr "
       "inspect(std::syntax::tokens input) {} int main(){return 0;}";
   const auto hoverSnapshot = analyze(hoverSource);
+  if (!hoverSnapshot.canGenerateCode())
+    for (const auto &d : hoverSnapshot.diagnostics)
+      std::cerr << d.code << ": " << d.message << '\n';
   const auto hover = lang::LanguageQueries().hover(
       hoverSnapshot, hoverSnapshot.sourceGraph.entryUnit(),
       hoverSource.find("inspect") + 2);
@@ -210,6 +224,9 @@ void semantics() {
       "import std.array; int main(){ auto values = std::array<int, 2>({\n"
       "#define ORDINARY_FLAG\n1,2});\n#ifdef ORDINARY_FLAG\nreturn values[0] - "
       "1;\n#else\n#error flag lost\n#endif\n}");
+  if (!ordinary.canGenerateCode())
+    for (const auto &d : ordinary.diagnostics)
+      std::cerr << d.code << ": " << d.message << '\n';
   check(ordinary.canGenerateCode(),
         "ordinary braced calls keep configuration directive behavior");
   auto selected = analyze("import \"library.gti\"; int main() { html!({ "
