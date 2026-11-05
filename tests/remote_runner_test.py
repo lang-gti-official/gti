@@ -588,12 +588,19 @@ class RunnerConnections(unittest.TestCase):
         llvm = self.local / "llvm"
         llvm.mkdir()
         (llvm / "LLVMConfig.cmake").write_text("fixture")
-        with mock.patch.object(runner.platform, "system", return_value="Linux"), \
-                mock.patch.object(runner.shutil, "which", return_value="/usr/bin/llvm-config"), \
-                mock.patch.object(runner.subprocess, "run",
-                                  return_value=subprocess.CompletedProcess([], 0, str(llvm) + "\n")) as run:
-            self.assertEqual(runner.llvm_directory(), str(llvm))
-            self.assertEqual(run.call_args.args[0], ["/usr/bin/llvm-config", "--cmakedir"])
+        sys.path.insert(0, str(Path(runner.__file__).resolve().parent))
+        import llvm_pin as pin
+        sys.path.pop(0)
+        major = pin.pinned_major()
+        configs = {f"llvm-config-{major}": f"/usr/bin/llvm-config-{major}"}
+        for found, expected in ((f"{major}.1.0", str(llvm.resolve())), (f"{major - 1}.1.8", None)):
+            (llvm / "LLVMConfigVersion.cmake").write_text(f'set(PACKAGE_VERSION "{found}")')
+            with mock.patch.object(pin.shutil, "which", side_effect=configs.get), \
+                    mock.patch.object(pin, "standard_paths", return_value=[]), \
+                    mock.patch.object(pin.subprocess, "run",
+                                      return_value=subprocess.CompletedProcess([], 0, str(llvm) + "\n")) as run:
+                self.assertEqual(runner.llvm_directory(), expected, found)
+                self.assertEqual(run.call_args.args[0], [f"/usr/bin/llvm-config-{major}", "--cmakedir"])
         request = {"build_type": "Release", "cmake_args": [], "targets": ["gti"],
                    "full_suite": True, "ctest_regex": None, "jobs": 3, "test_jobs": 6}
         with mock.patch.object(runner.platform, "system", return_value="Linux"), \

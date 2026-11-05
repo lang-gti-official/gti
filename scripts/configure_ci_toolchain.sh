@@ -4,8 +4,14 @@ set -euo pipefail
 # Install and export one reviewed native toolchain for a hosted CI job. The
 # runtime's raw atomic lanes admit only reviewed compiler profiles
 # (runtime/src/atomic_lane.h), and the driver compiles test programs with the
-# exported CC/CXX, so CMake and every test use the same compiler. The LLVM
-# support libraries need the DbgRecord API (LLVM 19 or newer).
+# exported CC/CXX, so CMake and every test use the same compiler. LLVM is
+# the pinned major (CMakeLists.txt GTI_PINNED_LLVM_VERSION): CMake refuses any
+# other, so CI tests the LLVM that releases bundle and developers build with.
+llvm_major="$(sed -n 's/^set(GTI_PINNED_LLVM_VERSION "\([0-9]*\)\..*/\1/p' "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/CMakeLists.txt")"
+: "${llvm_major:?CMakeLists.txt must set GTI_PINNED_LLVM_VERSION}"
+# The apt.llvm.org signing key; the download is trusted only with this
+# fingerprint.
+llvm_apt_key_fingerprint=6084F3CF814B57C1CF12EFD515CF4D18AF4F7421
 GTI_CI_ENV_FILE="${GITHUB_ENV:-}"
 : "${GTI_CI_ENV_FILE:?GITHUB_ENV must name the runner environment file}"
 repository="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -19,31 +25,48 @@ case "$(uname -s)" in
         /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/share/swift
       df -h / | tail -n 1
     fi
-    # GCC 14 is the reviewed Linux x86_64 profile; LLVM 20 matches the pinned
-    # release LLVM and ships in noble-updates. Ubuntu packages the Clang CMake
-    # package (and the clang the LLVM tests run) in clang-20, not libclang-20-dev,
-    # and clang's sanitizer runtimes (compiler-rt, which the ThreadSanitizer
-    # harnesses need for `clang++-20 -fsanitize=thread`) in libclang-rt-20-dev,
-    # which --no-install-recommends leaves out.
+    # GCC 14 is the reviewed Linux x86_64 profile. Ubuntu does not package
+    # LLVM ${llvm_major}, so it comes from LLVM's own apt repository for this
+    # release (its LLVM ${llvm_major} release branch). The Clang CMake package
+    # (and the clang the LLVM tests run) is in clang-${llvm_major}, not
+    # libclang-${llvm_major}-dev, and clang's sanitizer runtimes (compiler-rt,
+    # which the ThreadSanitizer harnesses need) are in
+    # libclang-rt-${llvm_major}-dev, which --no-install-recommends leaves out.
+    # shellcheck disable=SC1091
+    codename="$(. /etc/os-release && echo "${VERSION_CODENAME}")"
+    key="$(mktemp)"
+    curl --proto '=https' --tlsv1.2 -fsSL --retry 5 --retry-all-errors \
+      https://apt.llvm.org/llvm-snapshot.gpg.key -o "${key}"
+    fingerprint="$(gpg --show-keys --with-colons "${key}" | awk -F: '/^fpr/ {print $10; exit}')"
+    if [[ "${fingerprint}" != "${llvm_apt_key_fingerprint}" ]]; then
+      echo "apt.llvm.org key fingerprint ${fingerprint:-missing} is not ${llvm_apt_key_fingerprint}" >&2
+      exit 1
+    fi
+    sudo install -d -m 0755 /etc/apt/keyrings
+    sudo gpg --batch --yes --dearmor -o /etc/apt/keyrings/apt.llvm.org.gpg "${key}"
+    rm -f "${key}"
+    echo "deb [signed-by=/etc/apt/keyrings/apt.llvm.org.gpg] https://apt.llvm.org/${codename}/ llvm-toolchain-${codename}-${llvm_major} main" |
+      sudo tee /etc/apt/sources.list.d/apt.llvm.org.list >/dev/null
     sudo apt-get update
     sudo apt-get install -y --no-install-recommends \
-      build-essential ccache clang-20 cmake g++-14 gcc-14 ninja-build \
-      libcurl4-openssl-dev llvm-20-dev libclang-20-dev libclang-rt-20-dev
+      build-essential ccache "clang-${llvm_major}" cmake g++-14 gcc-14 ninja-build \
+      libcurl4-openssl-dev "llvm-${llvm_major}-dev" "libclang-${llvm_major}-dev" \
+      "libclang-rt-${llvm_major}-dev"
     cc=gcc-14
     cxx=g++-14
-    llvm_dir=/usr/lib/llvm-20/lib/cmake/llvm
+    llvm_dir="/usr/lib/llvm-${llvm_major}/lib/cmake/llvm"
     ;;
   Darwin)
     # Command Line Tools 27 carry Apple clang 21, the reviewed macOS profile;
     # an older selected Xcode does not.
-    brew install ccache ninja llvm@22
+    brew install ccache ninja "llvm@${llvm_major}"
     if [[ "$(/usr/bin/c++ -dM -E -x c++ /dev/null | sed -n 's/^#define __clang_major__ //p')" != 21 &&
           -d /Library/Developer/CommandLineTools ]]; then
       sudo xcode-select --switch /Library/Developer/CommandLineTools
     fi
     cc=/usr/bin/cc
     cxx=/usr/bin/c++
-    llvm_dir="$(brew --prefix llvm@22)/lib/cmake/llvm"
+    llvm_dir="$(brew --prefix "llvm@${llvm_major}")/lib/cmake/llvm"
     ;;
   *)
     echo "No reviewed CI toolchain for $(uname -s)" >&2

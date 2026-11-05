@@ -362,6 +362,39 @@ def nightly_contract(root):
     assert "upload_url" not in nightly and "GITEA" not in nightly and "gitea." not in nightly
 
 
+def llvm_pin_contract(root):
+    """One LLVM for releases, CI and local builds (CMakeLists.txt's pin)."""
+    pin = load_module(root / "scripts/llvm_pin.py", "llvm_pin")
+    version, major = pin.pinned_version(root), pin.pinned_major(root)
+    assert re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version) and version.startswith(f"{major}."), version
+    cmake = (root / "CMakeLists.txt").read_text()
+    assert cmake.count('set(GTI_PINNED_LLVM_VERSION "') == 1, "exactly one LLVM pin"
+    assert re.search(r'set\(GTI_PINNED_LLVM_SHA256\s+"[0-9a-f]{64}"\)', cmake), "the bundled source is hash-pinned"
+    assert cmake.count("SHA256=${GTI_PINNED_LLVM_SHA256}") == 2, "both fetch paths verify the pinned hash"
+    assert "llvmorg-${GTI_PINNED_LLVM_VERSION}/llvm-project-${GTI_PINNED_LLVM_VERSION}.src.tar.xz" in cmake
+    assert "if(NOT LLVM_VERSION_MAJOR EQUAL GTI_PINNED_LLVM_MAJOR)" in cmake, \
+        "a system LLVM of another major is refused"
+    refusal = cmake.split("if(NOT LLVM_VERSION_MAJOR EQUAL GTI_PINNED_LLVM_MAJOR)", 1)[1].split("endif()\n  endif()", 1)[0]
+    assert "FATAL_ERROR" in refusal and "GTI_ALLOW_UNPINNED_LLVM" in refusal
+    toolchain = (root / "scripts/configure_ci_toolchain.sh").read_text()
+    assert 'sed -n \'s/^set(GTI_PINNED_LLVM_VERSION' in toolchain, "CI reads the pin, not its own version"
+    assert not re.search(r"llvm-[0-9]{2}-dev|llvm@[0-9]{2}|clang-[0-9]{2}\b|llvm-[0-9]{2}/", toolchain), \
+        "CI names LLVM only through the pinned major"
+    assert "llvm_apt_key_fingerprint=6084F3CF814B57C1CF12EFD515CF4D18AF4F7421" in toolchain and \
+        '"${fingerprint}" != "${llvm_apt_key_fingerprint}"' in toolchain and "signed-by=" in toolchain, \
+        "the apt.llvm.org key is trusted only by fingerprint, and only for its repository"
+    assert '"llvm@${llvm_major}"' in toolchain, "macOS CI installs the pinned major's formula"
+    for workflow in sorted((root / ".github/workflows").glob("*.yml")):
+        assert "GTI_ALLOW_UNPINNED_LLVM" not in workflow.read_text(), f"{workflow.name} must not unpin LLVM"
+    with tempfile.TemporaryDirectory() as temporary:
+        directory = pathlib.Path(temporary)
+        assert pin.package_major(directory) is None
+        (directory / "LLVMConfig.cmake").write_text("")
+        for found, expected in ((f"{major}.1.0", True), (f"{major - 1}.1.8", False), (f"{major + 1}.0.0", False)):
+            (directory / "LLVMConfigVersion.cmake").write_text(f'set(PACKAGE_VERSION "{found}")\n')
+            assert pin.matches_pin(directory, root) is expected, found
+
+
 def sanitizer_contract(root):
     """The sanitizers run daily on the nightly commit, keep their job definitions,
     report to the broken-main issue and name the commit their verdict covers."""
@@ -409,7 +442,7 @@ def sanitizer_contract(root):
     assert "GTI_TEST_BACKENDS: llvm" in llvm and "GTI_TEST_BACKENDS: llvm" in tsan
     assert "GTI_ENABLE_THREAD_SANITIZER_TESTS=ON" in tsan, "TSan is real in the sanitizer run"
     assert 'suite.get("skipped"' in tsan, "a skipped _tsan test is a missing runtime, never evidence"
-    assert "libclang-rt-20-dev" in (root / "scripts/configure_ci_toolchain.sh").read_text(), \
+    assert '"libclang-rt-${llvm_major}-dev"' in (root / "scripts/configure_ci_toolchain.sh").read_text(), \
         "clang's TSan runtime is installed on Linux"
     verdict = sections["verdict"]
     assert "name: Sanitizer verdict (${{ needs.source.outputs.sha }})" in verdict, \
@@ -1102,6 +1135,7 @@ def main():
     artifact_contract(root)
     editor_contract(root)
     nightly_contract(root)
+    llvm_pin_contract(root)
     sanitizer_contract(root)
     train_contract(root)
     source_contract(root)

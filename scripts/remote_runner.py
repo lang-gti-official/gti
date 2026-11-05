@@ -207,10 +207,20 @@ def window_slots():
 
 
 def llvm_directory():
-    if platform.system() == "Darwin":
-        homebrew = Path("/opt/homebrew/opt/llvm/lib/cmake/llvm")
-        if homebrew.is_dir():
-            return str(homebrew)
+    """An installed LLVM of GTI's pinned major (scripts/llvm_pin.py).
+
+    A deployed worker carries only this file; without its sibling it falls
+    back to the host's default LLVM, and CMake still refuses another major."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import llvm_pin
+    except ImportError:
+        llvm_pin = None
+    finally:
+        sys.path.pop(0)
+    if llvm_pin is not None:
+        found = llvm_pin.discover()
+        return str(found) if found else None
     executable = shutil.which("llvm-config")
     if executable:
         result = subprocess.run([executable, "--cmakedir"], capture_output=True, text=True)
