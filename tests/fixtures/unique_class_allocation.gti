@@ -2,7 +2,10 @@ import std.memory;
 import std.string;
 import std.vector;
 
-extern "C" { void gti_test_fail_scalar_allocation(int32_t enabled); }
+extern "C" {
+  void gti_test_fail_scalar_allocation(int32_t enabled);
+  void gti_test_observe_owner(const void* value);
+}
 
 class Marker {
   int32_t identity;
@@ -55,18 +58,22 @@ int main(int argc, std::vector<std::string> argv) {
     Marker outer = Marker(77);
     if (argc == 6) { unsafe { gti_test_fail_scalar_allocation(1); } }
     auto implicit = std::make_unique<Implicit>();
+    unsafe { gti_test_observe_owner(std::erase_address(&*implicit)); }
     return 0;
   }
   if (argc == 4) { return fail_cleanup(0); }
   Marker outer = Marker(1);
   auto previously = std::make_unique<Marker>(3);
+  // Prepare allocating arguments before arming owner-allocation exhaustion.
+  std::string input("value");
   if (argc == 2) {
     unsafe { gti_test_fail_scalar_allocation(1); }
   }
   int32_t divisor = argc == 3 ? 0 : 3;
   int32_t field_divisor = argc == 5 ? 0 : 1;
   Copyable copied = Copyable();
-  auto owner = std::make_unique<Value>(std::string("value"), Marker(2), copied,
+  auto owner = std::make_unique<Value>(std::move(input), Marker(2), copied,
                                        divisor, field_divisor);
+  unsafe { gti_test_observe_owner(std::erase_address(&*owner)); }
   return copied.number == 12 && owner->read() == 15 ? 0 : 1;
 }

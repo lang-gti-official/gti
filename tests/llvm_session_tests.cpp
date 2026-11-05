@@ -1555,6 +1555,7 @@ void testPayloadUniqueOwner(const std::filesystem::path &repository,
 namespace payload_owner_probe {
 mut int32_t allocated = 0;
 mut int32_t released = 0;
+extern "C" { void payload_owner_observe_v1(const int32_t* value); }
 enum Packet { owned(gti_internal::unique_owner<int32_t> value) };
 gti_internal::unique_owner<int32_t> extract() {
   mut Packet source = Packet::owned(gti_internal::allocate_unique_owner<int32_t>(42));
@@ -1566,9 +1567,13 @@ export int run() {
   {
     gti_internal::unique_owner<int32_t> selected = extract();
     // The source payload is already dead, while its extracted owner is live.
+    unsafe { payload_owner_observe_v1(&gti_internal::unique_owner_borrow(selected)); }
     if (allocated != 1 || released != 0) { return 1; }
     if (gti_internal::unique_owner_borrow(selected) != 42) { return 2; }
   }
+  // Counter writes belong to the instrumented provider. Observe them through
+  // an ordinary foreign edge, preserving production allocation effect facts.
+  unsafe { payload_owner_observe_v1(nullptr); }
   return allocated == 1 && released == 1 ? 0 : 3;
 }
 }
@@ -1670,6 +1675,12 @@ export int run() {
 #include <stdlib.h>
 static void *active;
 extern int32_t payload_owner_allocated_v1, payload_owner_released_v1;
+void payload_owner_observe_v1(const int32_t *value) {
+  if (payload_owner_allocated_v1 != 1 ||
+      payload_owner_released_v1 != (value ? 0 : 1)) abort();
+  if (value ? ((const void *)value != active || *value != 42) : active != NULL)
+    abort();
+}
 static void *allocate(uint64_t bytes, uint64_t alignment) {
   if (payload_owner_allocated_v1 || !bytes || !alignment) abort();
   if (alignment < sizeof(void *)) alignment = sizeof(void *);

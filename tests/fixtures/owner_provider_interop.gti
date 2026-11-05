@@ -10,7 +10,7 @@ int32_t owner_probe_finish();
 int main() {
   owner_probe_begin();
   {
-    auto owner = std::make_unique<uint64_t>(42);
+    auto owner = std::make_unique<uint64_t>(uint64_t(42));
     unsafe {
       owner_probe_observe(&*owner);
       void* foreign = owner_probe_cpp_create();
