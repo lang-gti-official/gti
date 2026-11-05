@@ -1,22 +1,20 @@
 #!/usr/bin/env python3
 
-"""Post-cutover native oracle for verified-MIR C++ emission.
+"""Execute the shipped example corpus through the selected production profiles.
 
 The former differential oracle compared the production backend with the
 retired AST/HIR executable emitter. Keeping that emitter callable would defeat
 the hard cutover, so this oracle checks the contracts that remain meaningful:
 
 * every shipped example passes the sealed whole-program MIR plan;
-* every reviewed body identity is present in generated C++ (its count
+* in the scheduled C++ profile, reviewed body identities appear in generated C++ (their count
   against the census budget is advisory, tests/advisory_checks.py: the
   reviewed number moves with ordinary changes, and mir_census_regression
   reports the same budget);
-* ownership is unchanged between O0/C++20 and O3/C++23; and
-* both native programs succeed with identical observable behavior.
+* LLVM O0 and O3 succeed with identical observable behavior.
 
-The endpoint matrix covers the compiler's unoptimized and optimized MIR forms
-and both supported C++ standards without restoring eight duplicate corpus
-jobs. Focused runtime tests retain the wider native optimization matrix.
+The endpoint matrix comes from backend_modes: LLVM O0/O3 by default, the single
+C++23/O3 profile on its own schedule, or both only when explicitly requested.
 """
 
 from __future__ import annotations
@@ -37,9 +35,15 @@ import census_budget as budget
 import census_store as store
 import mir_census_baseline as reviewed
 from example_case_context import LLVM_ONLY_EXAMPLES, require_cpp_limitation
+from backend_modes import native_modes, is_cpp_mode, cpp_standard, optimization_level
 
 
-CONFIGURATIONS = (("O0", "c++20"), ("O3", "c++23"))
+def configurations(backends=None):
+    return [(optimization_level(flags), cpp_standard(flags) if is_cpp_mode(flags)
+             else "native", "cpp" if is_cpp_mode(flags) else "llvm")
+            for _name, flags, _native in native_modes(backends=backends)]
+
+
 MARKER_PATTERN = re.compile(
     r"GTI verified-MIR body: ([a-z0-9-]+) "
     r"(module-instance|field-initializers-instance|"
@@ -129,7 +133,8 @@ def main() -> int:
                         help="assert the native host target; cross-target execution is not supported")
     parser.add_argument("runtime_library")
     parser.add_argument("--jobs", type=int, default=min(4, os.cpu_count() or 1))
-    parser.add_argument("--backend", choices=("cpp", "llvm"), default="cpp")
+    parser.add_argument("--backend", choices=("cpp", "llvm", "both"),
+                        help="override GTI_TEST_BACKENDS (default: LLVM O0/O3)")
     parser.add_argument("--case", action="append", dest="selected_cases",
                         help="run named examples after validating the complete census inventory")
     arguments = parser.parse_args()
@@ -166,7 +171,7 @@ def main() -> int:
         if unknown:
             parser.error(f"unknown corpus examples: {sorted(unknown)}")
         sources = [source for source in sources if source.name in arguments.selected_cases]
-    configurations = CONFIGURATIONS if arguments.backend == "cpp" else (("O0", "native"), ("O3", "native"))
+    endpoints = configurations(arguments.backend)
 
     env = dict(os.environ)
     env["GTI_STDLIB_PATH"] = str(root / "stdlib")
@@ -187,10 +192,10 @@ def main() -> int:
                     optimization,
                     standard,
                     env,
-                    arguments.backend,
+                    backend,
                 ): (source.name, optimization, standard)
                 for source in sources
-                for optimization, standard in configurations
+                for optimization, standard, backend in endpoints
             }
             for future in as_completed(futures):
                 key = futures[future]
@@ -208,7 +213,7 @@ def main() -> int:
     for source in sources:
         cases = [
             results[(source.name, optimization, standard)]
-            for optimization, standard in configurations
+            for optimization, standard, backend in endpoints
         ]
         for case in cases:
             label = f"{case.source} {case.optimization}/{case.standard}"
@@ -220,7 +225,7 @@ def main() -> int:
                     f"{label}: exited {case.returncode}; stdout={case.stdout!r}; "
                     f"stderr={case.stderr!r}"
                 )
-            if (arguments.backend == "cpp" and source.name not in LLVM_ONLY_EXAMPLES
+            if (case.standard != "native" and source.name not in LLVM_ONLY_EXAMPLES
                     and source.name in expected
                     and not budget.within(expected[source.name], len(case.markers))):
                 drift.append(
@@ -239,25 +244,25 @@ def main() -> int:
 
         if any(case.error for case in cases):
             continue
-        first, second = cases
-        if arguments.backend == "cpp" and source.name not in LLVM_ONLY_EXAMPLES and first.markers != second.markers:
-            failures.append(
-                f"{source.name}: body ownership differs between endpoint "
-                "configurations"
-            )
-        if (first.returncode, first.stdout, first.stderr) != (
-            second.returncode, second.stdout, second.stderr
-        ):
-            failures.append(
-                f"{source.name}: observable behavior differs between "
-                f"{first.optimization}/{first.standard} and "
-                f"{second.optimization}/{second.standard}"
-            )
+        first = cases[0]
+        for second in cases[1:]:
+            if (first.standard != "native" and second.standard != "native"
+                    and source.name not in LLVM_ONLY_EXAMPLES
+                    and first.markers != second.markers):
+                failures.append(f"{source.name}: body ownership differs between endpoints")
+            if (first.returncode, first.stdout, first.stderr) != (
+                second.returncode, second.stdout, second.stderr
+            ):
+                failures.append(
+                    f"{source.name}: observable behavior differs between "
+                    f"{first.optimization}/{first.standard} and "
+                    f"{second.optimization}/{second.standard}"
+                )
 
     print(
-        f"MIR corpus oracle ({arguments.backend}, {target}): {len(sources)} examples, "
+        f"MIR corpus oracle ({endpoints}, {target}): {len(sources)} examples, "
         f"{sum(expected.get(source.name, 0) for source in sources)} reviewed body identities, "
-        f"{len(configurations)} endpoint configurations"
+        f"{len(endpoints)} endpoint configurations"
     )
     drifted = advisory.report("mir_cutover_corpus_oracle", drift)
     if failures:

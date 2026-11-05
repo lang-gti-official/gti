@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gti/ast.h"
+#include "gti/compile_limits.h"
 #include "gti/diagnostic.h"
 #include "gti/syntax_capture.h"
 
@@ -12,7 +13,7 @@
 
 namespace lang {
 
-// Compiler-side capability boundary for the future verified-MIR procedural
+// Compiler-side capability boundary for the verified-MIR procedural
 // profile. These are NOT ordinary ConstantValue payloads or runtime objects.
 class SyntaxArena;
 enum class SyntaxCategory { Tokens, Expression, Span, Binding };
@@ -40,9 +41,20 @@ struct SyntaxLimits {
   std::size_t depth = 256;
 };
 
+struct SyntaxBudget {
+  std::size_t nodes = 0, bytes = 0, tokens = 0;
+};
+
 class SyntaxError : public std::runtime_error {
 public:
   using std::runtime_error::runtime_error;
+};
+
+class SyntaxLimitError : public SyntaxError {
+public:
+  SyntaxLimitError(std::size_t CompileLimits::*limit, std::string message)
+      : SyntaxError(std::move(message)), limit(limit) {}
+  std::size_t CompileLimits::*limit;
 };
 
 // Owns both syntax and source provenance after its arena is gone. A sealed
@@ -61,7 +73,9 @@ public:
   SyntaxArena(std::uint32_t definitionContext, std::uint32_t callerContext,
               std::function<std::uint32_t()> freshContext,
               SyntaxLimits limits = {}, std::function<bool()> cancelled = {},
-              std::vector<RelatedDiagnostic> expansionTrace = {});
+              std::vector<RelatedDiagnostic> expansionTrace = {},
+              std::shared_ptr<SyntaxBudget> budget = {},
+              std::function<void(std::size_t)> charge = {});
   ~SyntaxArena();
   SyntaxArena(const SyntaxArena &) = delete;
   SyntaxArena &operator=(const SyntaxArena &) = delete;
@@ -74,8 +88,10 @@ public:
   [[nodiscard]] bool adjacent(SyntaxTokens input, std::size_t left) const;
   SyntaxSpan span(SyntaxTokens input, std::size_t begin, std::size_t end);
   SyntaxTokens literal(std::string spelling, SyntaxSpan origin);
+  SyntaxTokens stringLiteral(std::string_view value, SyntaxSpan origin);
   SyntaxTokens punctuation(std::string spelling, SyntaxSpan origin);
   SyntaxTokens identifier(std::string spelling, SyntaxSpan origin);
+  SyntaxTokens keyword(std::string spelling, SyntaxSpan origin);
   SyntaxBinding freshBinding(std::string spelling, SyntaxSpan origin);
   SyntaxTokens reference(SyntaxBinding binding);
   SyntaxTokens join(std::span<const SyntaxTokens> parts);
@@ -88,6 +104,9 @@ public:
   // Cancellation/error teardown invalidates every outstanding handle. Sealed
   // output has independent ownership; aborted, unsealed nodes publish nothing.
   void reset();
+  // The MIR executor temporarily installs its own shared logical-work account.
+  std::function<void(std::size_t)>
+  exchangeWorkCharge(std::function<void(std::size_t)> charge);
 
 private:
   struct Node;
@@ -97,6 +116,7 @@ private:
     return get(handle.session_, handle.generation_, handle.node_, C);
   }
   std::size_t put(Node node);
+  std::shared_ptr<const SyntaxCapture> materialize(const Node &node) const;
   void check() const;
   SyntaxTokens constructed(std::string spelling, SyntaxSpan origin,
                            SyntaxCategory category, std::uint32_t context);
@@ -106,7 +126,10 @@ private:
   std::function<std::uint32_t()> freshContext_;
   SyntaxLimits limits_;
   std::function<bool()> cancelled_;
-  std::size_t bytes_ = 0, tokens_ = 0;
+  std::shared_ptr<SyntaxBudget> budget_;
+  std::function<void(std::size_t)> charge_;
+  void charge(std::size_t work) const;
+
   std::vector<Node> nodes_;
   std::unordered_set<std::uint32_t> freshIdentities_;
   std::vector<RelatedDiagnostic> expansionTrace_;

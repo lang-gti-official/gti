@@ -9,8 +9,15 @@ Revision 2026-11-05: the owner authorized phase 1 of
 [RFC 0001](https://github.com/lang-gti-official/rfcs/pull/1), then selected the
 explicit `name!({...})` invocation spelling for new `#macro(proc)` declarations.
 This adds a separate typed-syntax mode; it does not revise the existing typed
-template expansion/evaluation rules below. Procedural execution and final
-feature acceptance are not claimed by the phase-1 frontend foundation.
+template expansion/evaluation rules below. The owner subsequently authorized
+phase 2: imported bodies and constexpr helpers execute under an explicit syntax
+profile of the existing MIR constant evaluator, and sealed expression output
+undergoes ordinary caller checking. The owner then authorized phase 3 and its
+imported HTML demonstration. The source library, module/editor/cache tests and
+bounded syntax construction complete that implementation slice; G1's joint
+cross-platform and cost evidence is recorded on
+[GTI PR #270](https://github.com/lang-gti-official/gti/pull/270), separately from
+queue integration and release availability.
 
 An ordinary `void debug_assert(bool, ...)` still evaluates and transfers its
 arguments before entering its body. Neither an empty body nor optional native

@@ -1,0 +1,148 @@
+export module html;
+import std.string;
+import std.vector;
+import std.syntax;
+import "detail/markup.gti";
+
+// A deliberately small owned tree, not a browser DOM. Every text/attribute
+// value is copied or moved into the tree; no view into an interpolation escapes.
+namespace demo {
+export struct attribute {
+  std::string name;
+  std::string value;
+  attribute(std::string_view key, std::string_view text) : name(key), value(text) {}
+};
+export struct node {
+  std::string name;
+  std::string text;
+  mut std::vector<attribute> attributes;
+  mut std::vector<node> children;
+  mut bool self_closing;
+  node(std::string_view tag, bool empty) : name(tag), self_closing(empty) {}
+  node(std::string_view content) : text(content), self_closing(false) {}
+  node(std::string content) : text(std::move(content)), self_closing(false) {}
+};
+
+namespace detail {
+node element(std::string_view tag) { return node(tag, false); }
+node close_empty(mut node value) { value.self_closing = true; return std::move(value); }
+node with_attribute(mut node parent, std::string_view key, std::string_view value) {
+  parent.attributes.push_back(attribute(key, value));
+  return std::move(parent);
+}
+node child(node value) { return std::move(value); }
+node child(std::string_view text) { return node(text); }
+node child(std::string text) { return node(std::move(text)); }
+node reserve_children(mut node parent, uint64_t count) {
+  parent.children.reserve(count);
+  return std::move(parent);
+}
+// Bounded append overloads keep generated ownership graphs small. They do not
+// interpret markup or perform allocation once the parent has reserved capacity.
+node append(mut node parent, node child0) {
+  parent.children.push_back(std::move(child0));
+  return std::move(parent);
+}
+node append(mut node parent, node child0, node child1) {
+  parent.children.push_back(std::move(child0));
+  parent.children.push_back(std::move(child1));
+  return std::move(parent);
+}
+node append(mut node parent, node child0, node child1, node child2) {
+  parent.children.push_back(std::move(child0));
+  parent.children.push_back(std::move(child1));
+  parent.children.push_back(std::move(child2));
+  return std::move(parent);
+}
+node append(mut node parent, node child0, node child1, node child2, node child3) {
+  parent.children.push_back(std::move(child0));
+  parent.children.push_back(std::move(child1));
+  parent.children.push_back(std::move(child2));
+  parent.children.push_back(std::move(child3));
+  return std::move(parent);
+}
+node append(mut node parent, node child0, node child1, node child2, node child3, node child4) {
+  parent.children.push_back(std::move(child0));
+  parent.children.push_back(std::move(child1));
+  parent.children.push_back(std::move(child2));
+  parent.children.push_back(std::move(child3));
+  parent.children.push_back(std::move(child4));
+  return std::move(parent);
+}
+node append(mut node parent, node child0, node child1, node child2, node child3, node child4, node child5) {
+  parent.children.push_back(std::move(child0));
+  parent.children.push_back(std::move(child1));
+  parent.children.push_back(std::move(child2));
+  parent.children.push_back(std::move(child3));
+  parent.children.push_back(std::move(child4));
+  parent.children.push_back(std::move(child5));
+  return std::move(parent);
+}
+node append(mut node parent, node child0, node child1, node child2, node child3, node child4, node child5, node child6) {
+  parent.children.push_back(std::move(child0));
+  parent.children.push_back(std::move(child1));
+  parent.children.push_back(std::move(child2));
+  parent.children.push_back(std::move(child3));
+  parent.children.push_back(std::move(child4));
+  parent.children.push_back(std::move(child5));
+  parent.children.push_back(std::move(child6));
+  return std::move(parent);
+}
+node append(mut node parent, node child0, node child1, node child2, node child3, node child4, node child5, node child6, node child7) {
+  parent.children.push_back(std::move(child0));
+  parent.children.push_back(std::move(child1));
+  parent.children.push_back(std::move(child2));
+  parent.children.push_back(std::move(child3));
+  parent.children.push_back(std::move(child4));
+  parent.children.push_back(std::move(child5));
+  parent.children.push_back(std::move(child6));
+  parent.children.push_back(std::move(child7));
+  return std::move(parent);
+}
+void escaped(mut std::string& output, std::string_view text, bool attribute_value) {
+  for (mut uint64_t index = 0; index < text.size(); index++) {
+    char ch = text[index];
+    if (ch == '&') { output.append("&amp;"); }
+    else if (ch == '<') { output.append("&lt;"); }
+    else if (ch == '>') { output.append("&gt;"); }
+    else if (attribute_value && ch == '"') { output.append("&quot;"); }
+    else if (attribute_value && ch == '\'') { output.append("&#39;"); }
+    else { output.push_back(ch); }
+  }
+}
+void render_into(mut std::string& output, node& value) {
+  if (value.name.empty()) {
+    escaped(output, value.text.view(), false);
+    return;
+  }
+  output.push_back('<');
+  output.append(value.name.view());
+  for (auto& item : value.attributes) {
+    output.push_back(' ');
+    output.append(item.name.view());
+    output.append("=\"");
+    escaped(output, item.value.view(), true);
+    output.push_back('"');
+  }
+  if (value.self_closing) { output.append("/>"); return; }
+  output.push_back('>');
+  for (auto& child : value.children) { render_into(output, child); }
+  output.append("</");
+  output.append(value.name.view());
+  output.push_back('>');
+}
+}
+export std::string render(node& value) {
+  mut std::string output{};
+  detail::render_into(output, value);
+  return std::move(output);
+}
+export #macro(proc) std::syntax::expr html(std::syntax::tokens input) {
+  return detail::page(input);
+}
+}
+// The unqualified form is useful for a single imported DSL; the namespaced form
+// above demonstrates normal qualified macro lookup without compiler policy.
+export #macro(proc) std::syntax::expr html(std::syntax::tokens input) {
+  return demo::detail::page(input);
+}
