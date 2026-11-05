@@ -6521,8 +6521,9 @@ Semantics resolves function attributes to `FunctionCodegenAttributes`, containin
 an independent cold hint and a default/hint/never inlining policy. HIR concrete
 instances, MIR instances and sealed lowered declarations retain the same record;
 phase-boundary verification rejects divergence, invalid policy values, or policy
-on a non-source/native declaration. AST cloning keeps the original attributes;
-instantiation therefore neither drops policy nor re-derives it from a name.
+on a non-source/native declaration. Body cloning and concrete instantiation keep
+the source declaration identity; policy is copied from that semantic declaration,
+not re-derived from a function name.
 The deterministic MIR and lowered-program formats include the record.
 
 LLVM ABI declaration emits `cold`, `inlinehint` and `noinline` directly from

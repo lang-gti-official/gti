@@ -12762,8 +12762,10 @@ checks remain mandatory and the scalar/string comparator is retained.
 
 `codegen_attribute_contract` checks source acceptance and rejection, formatter
 round trips, declaration/method/generic instance preservation, MIR mutation
-rejection, sealed lowering, editor hover signatures and exact LLVM
-`inlinehint`/`noinline`/`cold` attributes (never `alwaysinline`).
+rejection, sealed lowering, editor hover signatures, constexpr/defined-virtual compatibility and exact LLVM
+`inlinehint`/`noinline`/`cold` attributes (never `alwaysinline`). A body-lowered
+`[[noreturn, inline]]` panic wrapper retains its explicit hint without conflicting
+`noinline` or an invalid LLVM `noreturn` on the failure-status ABI.
 `codegen_attribute_runtime` runs `examples/llvm/codegen-attributes.gti` on LLVM
 O0 and O3, including recursive call boundaries, normal return from a cold
 function, generic/member calls and exactly-once destructor cleanup.

@@ -1,4 +1,5 @@
 #include "../src/compiler/llvm/abi.h"
+#include "../src/compiler/llvm/body.h"
 #include "../src/compiler/llvm/session.h"
 #include "cpp_backend_test_support.h"
 #include "gti/formatter.h"
@@ -7,6 +8,7 @@
 #include "gti/mir_verifier.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <iostream>
 #include <llvm/IR/Function.h>
 #include <string_view>
@@ -39,9 +41,19 @@ struct Reader {
   [[inline]] int read();
 };
 int Reader::read() { return 4; }
+interface Operation { int call(); };
+class Implementation : public Operation {
+public:
+  Implementation() = default;
+  [[cold]] int call() override { return 3; }
+};
+[[inline]] constexpr int compile_time() { return 5; }
+static_assert(compile_time() == 5);
 int main() {
   Reader reader{};
-  return hinted(uncommon(rare_hint(identity<int>(reader.read())))) - 4;
+  Implementation implementation{};
+  return hinted(uncommon(rare_hint(identity<int>(reader.read())))) - 4 +
+         implementation.call() - 3 + compile_time() - 5;
 }
 )";
   const auto frontend = Frontend().analyze("codegen-attributes.gti", source);
@@ -112,10 +124,13 @@ int main() {
     ++annotated;
     const auto signature =
         SignaturePrinter(frontend.semantics).function(*declaration);
-    expect(signature.find(policy.inlining == FunctionInlining::Never
-                              ? "[[noinline]]"
-                              : "[[inline]]") != std::string::npos,
-           "editor signatures preserve resolved annotation intent");
+    expect(policy.inlining == FunctionInlining::Default ||
+               signature.find(policy.inlining == FunctionInlining::Never
+                                  ? "[[noinline]]"
+                                  : "[[inline]]") != std::string::npos,
+           "editor signatures preserve resolved inlining intent");
+    expect(!policy.cold || signature.find("[[cold]]") != std::string::npos,
+           "editor signatures preserve cold intent");
     auto malformed = frontend.mir;
     auto &changed = MirProgramTestAccess::functions(
         malformed)[&instance - frontend.mir.functionInstances().data()];
@@ -145,13 +160,55 @@ int main() {
     expect(!verifyMirProgram(malformed).valid(),
            "MIR rejects attributes on non-source declarations");
   }
-  expect(annotated == 5, "ordinary, generic, rare and separately defined "
+  expect(annotated == 7, "ordinary, generic, rare and separately defined "
                          "method instances retain annotations");
   const auto hover =
       LanguageQueries().hover(frontend, frontend.sourceGraph.entryUnit(),
                               source.find("hinted(uncommon"));
   expect(hover && hover->signature.find("[[inline]]") != std::string::npos,
          "LSP hover exposes inline advice at a call site");
+}
+void testTerminalInlinePrecedence() {
+  const auto library =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto frontend =
+      Frontend().analyze("terminal-inline.gti", R"(
+import std.panic;
+[[noreturn, inline]] void terminal_hint() { std::panic("terminal hint"); }
+int main() { terminal_hint(); }
+)",
+                         {library / "prelude.gti"}, {}, {library});
+  expect(frontend.canGenerateCode(),
+         "terminal inline hint has valid source semantics");
+  if (!frontend.canGenerateCode())
+    return;
+  std::vector<LoweredProgramIssue> issues;
+  const auto verified = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+  expect(verified.has_value(), "terminal inline hint has verified lowering");
+  if (!verified)
+    return;
+  native_llvm::Session session(*verified, {});
+  const auto admission = planLlvmAdmission(*verified, session.options());
+  expect(admission.admitted(), "terminal inline hint is admitted");
+  if (!admission.admitted())
+    return;
+  native_llvm::lowerScalarProgram(session, admission);
+  unsigned found = 0;
+  for (const auto &instance : frontend.mir.functionInstances()) {
+    if (instance.codegenAttributes.inlining != FunctionInlining::Hint)
+      continue;
+    ++found;
+    const auto *function = session.abi().declareFunction(instance.id);
+    expect(
+        function->hasFnAttribute(llvm::Attribute::InlineHint) &&
+            !function->hasFnAttribute(llvm::Attribute::NoInline),
+        "lowering respects explicit inline advice on a failure-only wrapper");
+    expect(!function->hasFnAttribute(llvm::Attribute::NoReturn),
+           "source noreturn preserves the GTI failure-status return ABI");
+  }
+  expect(found == 1, "terminal inline wrapper is represented");
+  session.verify();
 }
 void testRejections() {
   for (const auto source : {
@@ -185,6 +242,7 @@ void testRejections() {
            "[[inline]] struct S {};",
            "int main() { [[cold]] int value = 0; return value; }",
            "int inline() { return 0; }",
+           "[[cold]] #macro ignored(int value) {} int main() { return 0; }",
            "struct S { [[inline]] S() {} }; int main() { return 0; }",
            "struct S { [[cold]] ~S() {} }; int main() { return 0; }",
        }) {
@@ -196,6 +254,7 @@ void testRejections() {
 } // namespace
 int main() {
   testPropagation();
+  testTerminalInlinePrecedence();
   testRejections();
   return failures == 0 ? 0 : 1;
 }
