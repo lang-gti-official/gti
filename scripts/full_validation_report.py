@@ -2,7 +2,10 @@
 """Keep one open `main-broken` issue current when full validation of main fails.
 
 Full validation runs after integration (.github/workflows/full-validation.yml),
-so a red result reaches nobody's pull request. This script turns it into one
+and the sanitizers run daily on the nightly commit (.github/workflows/
+sanitizers.yml), so a red result reaches nobody's pull request. Each source
+keeps its own issue under the `main-broken` label, told apart by title, so one
+workflow's green run never closes the other's finding. This script turns it into one
 issue that names the commit range and the run, updating that issue on every
 later failure and closing it when main is green again, so a broken main is
 never left unnoticed. Everything it writes is derived from GitHub's own event
@@ -19,6 +22,7 @@ import sys
 
 DEFAULT_LABEL = "main-broken"
 DEFAULT_TITLE = "Full validation of main is failing"
+SANITIZER_TITLE = "Sanitizers on the nightly commit are failing"
 SHA = re.compile(r"[0-9a-f]{40}")
 
 
@@ -36,16 +40,28 @@ def open_issue(label: str, title: str) -> dict | None:
     return next((row for row in rows if row.get("title") == title), None)
 
 
-def body(run_url: str, before: str, sha: str, status: str, label: str) -> str:
+def body(run_url: str, before: str, sha: str, status: str, label: str,
+         title: str = DEFAULT_TITLE) -> str:
     compare = f"{before[:12]}...{sha[:12]}" if SHA.fullmatch(before) and not set(before) == {"0"} else sha[:12]
+    if label == DEFAULT_LABEL and title == SANITIZER_TITLE:
+        return (
+            f"The daily sanitizers **{status}** on the nightly commit `{sha}`.\n\n"
+            f"- Run: {run_url}\n\n"
+            "The compiler (ASan/UBSan), LLVM-backend (ASan/UBSan) and thread sanitizers run once a day "
+            "on the commit the `nightly` tag names, not on every main push. Until they pass, the release "
+            "train cuts no beta from this nightly and promotes no beta built on it.\n\n"
+            "To resolve: fix forward through an ordinary PR; the next nightly is sanitized the following "
+            "day, or dispatch sanitizers.yml with the fixed commit. This issue is updated on each later "
+            "failure and closed automatically when the sanitizers pass.\n"
+        )
     if label == DEFAULT_LABEL:
         return (
             f"Full validation of `main` **{status}** at `{sha}`.\n\n"
             f"- Run: {run_url}\n"
             f"- Commits since the last run: `{compare}`\n\n"
             "The merge queue proves only build and fast checks, so this run is the first time the "
-            "complete suite (packaging, every integration shard, the compiler sanitizers) saw these "
-            "commits. Until it is green, no channel (nightly, beta, stable) selects this head.\n\n"
+            "complete suite (packaging and every integration shard) saw these commits. Until it is "
+            "green, no channel (nightly, beta, stable) selects this head.\n\n"
             "To resolve: fix forward through an ordinary PR, or revert the offending merge. "
             "This issue is updated on each later failure and closed automatically when main passes.\n"
         )
@@ -77,7 +93,8 @@ def main() -> int:
     if not re.fullmatch(r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/actions/runs/[0-9]+", arguments.run_url):
         print("the run URL must be a GitHub Actions run", file=sys.stderr)
         return 1
-    text = body(arguments.run_url, arguments.before, arguments.sha, arguments.status, arguments.label)
+    text = body(arguments.run_url, arguments.before, arguments.sha, arguments.status, arguments.label,
+                arguments.title)
     existing = open_issue(arguments.label, arguments.title)
     if arguments.status == "passed":
         if existing:

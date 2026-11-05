@@ -76,8 +76,9 @@ queue failure belongs to the change that introduced it.
 ## Nightly toolchain
 
 `workflows/nightly.yml` runs daily at 02:00 UTC and on manual dispatch (an
-optional exact main commit; only main head publishes). It downloads the
-production archives from that commit's successful full CI run and attempt,
+optional exact main commit; by default the newest main commit whose full
+validation passed). It downloads the production archives from that commit's
+successful full CI run and attempt,
 checks their source/platform/configuration manifest and file hashes, and
 republishes the rolling `nightly` prerelease without rebuilding or repeating
 the complete suite. Full CI builds `GTI_RELEASE_BUILD=ON` bundled-LLVM packages
@@ -85,9 +86,10 @@ for `linux-x64` (`ubuntu-24.04`) and `darwin-arm64` (`macos-26`), validates thei
 installed consumers, runs the full release suite and separate sanitizer gates,
 and retains the archives for 30 days. Nightly publishes one archive and
 `.sha256` per platform plus
-`BUILD_ID`. A commit that is no longer main head does not publish. Scheduled
-runs skip unchanged main; rerunning a failed publish job or dispatching the
-same current-main commit can finish an interrupted upload. Missing, expired,
+`BUILD_ID`. A commit older than the published nightly does not publish; one
+that main has moved past still does. Scheduled runs skip when nothing newer is
+validated; rerunning a failed publish job or dispatching the same commit can
+finish an interrupted upload. Missing, expired,
 mixed or mismatched artifacts stop publication; they never cause an older
 compiler to be stamped with a new commit. Dispatch `ci.yml` on main to obtain
 fresh full evidence when commissioning after an approved merge exception or
@@ -108,7 +110,7 @@ for the full contract.
 
 | Workflow | Trigger | Does |
 | --- | --- | --- |
-| `workflows/train.yml` job `cut` | 04:00 UTC every other day (the daily schedule admits every second UTC day), dispatch | cuts the published nightly once it has been on `main` 24 h and passed full CI with retained release artifacts; opens and queues a `rollup=never` `Release-Cut:` PR with the App token |
+| `workflows/train.yml` job `cut` | 09:00 UTC daily, after the daily sanitizer run; cuts once per ISO week, from Monday until one lands; dispatch | cuts the published nightly once it has passed full CI with retained release artifacts and the daily sanitizers; opens and queues a `rollup=never` `Release-Cut:` PR with the App token |
 | `workflows/beta.yml` | `push` to `main` (the queue's merge) or `beta/**` (a merged backport), daily 05:30 fallback, dispatch | builds the release cut (or the line's new tip) with its own bundled build, installed checks and full release-suite shards; publishes prerelease `v<VERSION>-beta.<K>` with provenance; creates `beta/<major>.<minor>` |
 | `workflows/backport.yml` | pull requests into `beta/**` | `Backport provenance` (each commit a `cherry-pick -x` of a `main` commit; an optional final patch release cut), the release suite, `Backport gate` |
 | `workflows/train.yml` job `promote` | with the train, dispatch | behind the `stable` environment: republishes the newest beta that soaked 48 h with no open `release-blocker` issue naming its version as `v<VERSION>`, byte for byte, and marks it latest |
@@ -166,8 +168,7 @@ One-time owner setup, in this order:
    the `beta` ruleset, create the branch from the published tag
    (`git push origin v0.N.0-beta.1^{commit}:refs/heads/beta/0.N`) with the
    ruleset briefly disabled, then re-enable it.
-6. Bootstrap: dispatch `train.yml` with `stage=cut` (and `min_age_hours=0` if
-   the nightly commit is younger than 24 h). After the cut PR merges and
+6. Bootstrap: dispatch `train.yml` with `stage=cut`. After the cut PR merges and
    `beta.yml` publishes beta 1, dispatch `stage=promote` (with `soak_hours=0`
    to skip the soak) and approve the `stable` deployment.
 
@@ -285,21 +286,13 @@ runner conditions. Every sample is logged; the fourfold workload increase and
 8x growth limit are unchanged. `single_body_scaling_measurement` checks transient
 baseline noise, persistent excessive growth, and quadratic/cubic rejection.
 
-## Preview toolchains and gtiup
+## Toolchain channels and gtiup
 
-`preview.yml` responds to the canonical preview source branch, with an explicit
-main dispatch for commissioning/recovery. It builds both supported production
-platforms, runs combined preview admission and installed consumers, and publishes
-only their matching source/run/attempt artifacts to the rolling `preview`
-prerelease. Both package jobs must run in the same workflow attempt. This
-channel does not satisfy nightly's full-main-CI gate or promote into main.
-Successful snapshots can publish after the source branch advances. The rolling
-release moves forward by preview source ancestry; older completed builds leave
-a newer release untouched, divergent histories fail, and explicit feature
-withdrawals remain enforced. Publishers are serialized and use an exact tag
-lease; retries of the same source may finish interrupted asset uploads.
+The preview channel and its `preview.yml` publisher are retired. Nothing builds
+or admits preview any longer; the frozen `preview` branch and release remain
+only until the owner deletes them.
 The standalone C++ manager [gtiup](https://github.com/lang-gti-official/gtiup)
 has separate CI and manager downloads; this repository builds only its compiler
-toolchain payloads and editor integration. It downloads and selects complete toolchains for preview, nightly, beta and
-stable; managed Neovim uses the selected LSP/parser. See the root README and
-[managed toolchains](../docs/architecture/build-and-driver.md#managed-toolchains-and-preview-distribution).
+toolchain payloads and editor integration. It downloads and selects complete toolchains for nightly, beta and
+stable, and selects linked local builds; managed Neovim uses the selected LSP/parser. See the root README and
+[managed toolchains](../docs/architecture/build-and-driver.md#managed-toolchains).

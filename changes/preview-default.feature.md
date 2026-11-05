@@ -1,1 +1,0 @@
-Local macOS installation now builds the combined preview by default. Use `--local` to build or activate the current checkout instead. Completed agent tasks are submitted to preview after focused validation.

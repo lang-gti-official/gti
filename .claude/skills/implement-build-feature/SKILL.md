@@ -8,6 +8,13 @@ description: Implement or modify GTI direct compilation, gti_driver, gti.toml ma
 Extend project orchestration without forking or weakening the permanent direct
 compiler path.
 
+For a planning-only request for a new build, package, or driver capability, use
+the [plan-feature skill](../plan-feature/SKILL.md) to create or update a draft RFC
+and publish a draft proposal PR in `lang-gti-official/rfcs`, subject to the user's
+publication restrictions. Do not start implementation from a planning request.
+Bug-fix plans and execution of accepted milestones keep their normal workflow;
+link any relevant RFC from the existing implementation plan.
+
 ## Workflow
 
 1. Run `git status --short`. Read

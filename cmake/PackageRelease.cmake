@@ -10,8 +10,8 @@ endforeach()
 if(NOT DEFINED GTI_CHANNEL OR "${GTI_CHANNEL}" STREQUAL "")
   set(GTI_CHANNEL "stable")
 endif()
-if(NOT GTI_CHANNEL STREQUAL "stable" AND NOT GTI_CHANNEL STREQUAL "nightly" AND NOT GTI_CHANNEL STREQUAL "preview")
-  message(FATAL_ERROR "GTI_CHANNEL must be stable, nightly or preview")
+if(NOT GTI_CHANNEL STREQUAL "stable" AND NOT GTI_CHANNEL STREQUAL "nightly")
+  message(FATAL_ERROR "GTI_CHANNEL must be stable or nightly")
 endif()
 
 file(STRINGS "${GTI_SOURCE_DIR}/VERSION" GTI_VERSION LIMIT_COUNT 1)
@@ -22,7 +22,7 @@ endif()
 # A nightly archive is named for its channel rather than its version: the
 # channel republishes one release per commit, so its tag never matches VERSION.
 # Consumers tell nightly builds apart by BUILD_ID, not by VERSION.
-if(GTI_CHANNEL STREQUAL "nightly" OR GTI_CHANNEL STREQUAL "preview")
+if(GTI_CHANNEL STREQUAL "nightly")
   if(NOT DEFINED GTI_BUILD_ID OR "${GTI_BUILD_ID}" STREQUAL "")
     message(FATAL_ERROR "GTI_BUILD_ID is required for the ${GTI_CHANNEL} channel")
   endif()
@@ -134,7 +134,7 @@ endif()
 # A stable archive is channel-neutral: the release train publishes it as a
 # beta and republishes the same bytes as stable, so a stage that a nightly
 # packaging already stamped is refused rather than archived with that stamp.
-if(GTI_CHANNEL STREQUAL "nightly" OR GTI_CHANNEL STREQUAL "preview")
+if(GTI_CHANNEL STREQUAL "nightly")
   file(WRITE "${GTI_STAGE_DIR}/share/gti/BUILD_ID" "${GTI_BUILD_ID}\n")
 elseif(EXISTS "${GTI_STAGE_DIR}/share/gti/BUILD_ID")
   message(FATAL_ERROR
@@ -142,7 +142,7 @@ elseif(EXISTS "${GTI_STAGE_DIR}/share/gti/BUILD_ID")
 endif()
 
 file(MAKE_DIRECTORY "${GTI_OUTPUT_DIR}")
-if(GTI_CHANNEL STREQUAL "nightly" OR GTI_CHANNEL STREQUAL "preview")
+if(GTI_CHANNEL STREQUAL "nightly")
   set(GTI_ARCHIVE_NAME "gti-${GTI_CHANNEL}-${GTI_PLATFORM}.tar.gz")
 else()
   set(GTI_ARCHIVE_NAME "gti-v${GTI_VERSION}-${GTI_PLATFORM}.tar.gz")

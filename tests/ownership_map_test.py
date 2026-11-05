@@ -6,6 +6,13 @@ every path pattern matches a tracked file, that every tracked file under the
 covered roots has an owning area or an explicit [[unowned]] reason, and that
 the SHARED validation floor is marked as shared or system risk.
 
+The two coverage rules (a stale path pattern, a file no area owns) are
+advisory: the map is bookkeeping for check selection, and a new or renamed
+file is not a defect in the change. They print warnings (`::warning::` under
+GitHub Actions) and pass unless GTI_ADVISORY_CHECKS=strict. Schema errors, a
+file both owned and unowned, and a SHARED-floor file without shared or system
+risk (which would under-select checks) still fail.
+
 With --ctest-inventory <json> (the output of `ctest --show-only=json-v1`), or
 with --ctest <ctest> --build <dir> to produce it, it also requires every owner
 and consumer to name at least one registered test. --inventory-only skips the
@@ -16,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -25,7 +33,7 @@ import tomllib
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / ".codex/skills/verify-change/scripts"))
 import plan_checks  # noqa: E402
-from validation_checks import SHARED  # noqa: E402
+from validation_checks import SHARED, advisory  # noqa: E402
 
 COVERED_ROOTS = ("src/", "include/", "runtime/", "stdlib/", "scripts/", "lua/")
 REGISTRATION_FILES = ("tests/CMakeLists.txt", "tests/TestThroughput.cmake")
@@ -47,32 +55,34 @@ def textual_registrations(root: Path) -> set[str]:
     return names
 
 
-def tracked_errors(ownership: plan_checks.OwnershipMap, files: list[str]) -> list[str]:
-    """Patterns must match tracked files; covered roots must be owned."""
-    errors = []
+def tracked_errors(ownership: plan_checks.OwnershipMap,
+                   files: list[str]) -> tuple[list[str], list[str]]:
+    """(errors, advisories): patterns should match tracked files and covered roots be owned."""
+    errors, findings = [], []
     for area in ownership.areas:
         for pattern in area.paths:
             regex = plan_checks.pattern_regex(pattern)
             if not any(regex.fullmatch(path) for path in files):
-                errors.append(f"area {area.area!r}: path {pattern!r} matches no tracked file")
+                findings.append(f"area {area.area!r}: path {pattern!r} matches no tracked file")
     for entry in ownership.unowned:
         for pattern in entry["paths"]:
             regex = plan_checks.pattern_regex(pattern)
             if not any(regex.fullmatch(path) for path in files):
-                errors.append(f"unowned path {pattern!r} matches no tracked file")
+                findings.append(f"unowned path {pattern!r} matches no tracked file")
     for path in files:
         if not path.startswith(COVERED_ROOTS):
             continue
         owned = plan_checks.areas_for(path, ownership)
         exempt = plan_checks.unowned_for(path, ownership)
         if not owned and exempt is None:
-            errors.append(f"{path} has no owning area and no [[unowned]] reason")
+            findings.append(f"{path} has no owning area and no [[unowned]] reason; "
+                            "extend tests/ownership.toml")
         if owned and exempt is not None:
             errors.append(f"{path} is both owned and listed as unowned")
         if path.startswith(SHARED) and not any(area.risk in {"shared", "system"} for area in owned):
             errors.append(f"{path} is in the SHARED validation floor but no matching area "
                           "has risk shared or system")
-    return errors
+    return errors, findings
 
 
 def registration_errors(ownership: plan_checks.OwnershipMap, registered: set[str]) -> list[str]:
@@ -145,8 +155,13 @@ def main(argv: list[str] | None = None) -> int:
     errors += registration_errors(ownership, registered)
     checked = ["schema"]
     if not args.inventory_only:
-        errors += tracked_errors(ownership, tracked_files(root))
-        checked.append("tracked-file coverage")
+        blocking, findings = tracked_errors(ownership, tracked_files(root))
+        errors += blocking
+        if findings and os.environ.get("GTI_ADVISORY_CHECKS", "").strip().lower() == "strict":
+            errors += findings
+        else:
+            advisory("Ownership map coverage", findings)
+        checked.append("tracked-file coverage" + (f", {len(findings)} advisory" if findings else ""))
     inventory = load_inventory(args)
     if inventory is not None:
         errors += inventory_errors(ownership, inventory, registered)

@@ -11,7 +11,7 @@ def identity(source, revision="HEAD"):
         ["git", "-C", str(source), "ls-tree", "-rz", revision])
     excluded = ("src/lsp/", "tests/", "examples/", "docs/", "changes/", ".codex/",
                 ".claude/", ".agents/", ".gti-validation/", "lua/", "lsp/", "plugin/")
-    names = {"AGENTS.md", "CLAUDE.md", "README.md", "CHANGELOG.md", ".gti-preview.json"}
+    names = {"AGENTS.md", "CLAUDE.md", "README.md", "CHANGELOG.md"}
     included = []
     for row in rows.split(b"\0"):
         if not row:

@@ -2,6 +2,7 @@
 """Local setup safely activates terminal commands and editor configuration."""
 
 import importlib.util
+import io
 import os
 import pathlib
 import subprocess
@@ -225,6 +226,36 @@ def main():
         assert not (project / "gti.lua").exists(), "dry run must not activate configuration"
         cache.write_text("CMAKE_HOME_DIRECTORY:INTERNAL=/different/source\n")
         rejected(lambda: installer.configure_command(build, None))
+        # The retired preview flag fails clearly rather than building another source.
+        with mock.patch.object(installer.platform, "system", return_value="Darwin"), \
+                mock.patch.object(installer, "run", side_effect=AssertionError("retired preview ran a command")), \
+                mock.patch.object(sys, "argv", ["installer", "--preview", "--dry-run"]), \
+                mock.patch.object(sys, "stderr", io.StringIO()) as stderr:
+            try:
+                installer.main()
+            except SystemExit as exit:
+                assert exit.code == 2, exit.code
+            else:
+                raise AssertionError("--preview was accepted")
+            assert "preview channel is retired" in stderr.getvalue(), stderr.getvalue()
+        # The default resolves only the canonical nightly tag; a dry run fetches nothing.
+        nightly = "c" * 40
+        calls = []
+        def canonical(command, **kwargs):
+            calls.append(command[3:])
+            if command[3] == "ls-remote":
+                return mock.Mock(stdout=f"{nightly}\trefs/tags/nightly\n")
+            if command[3] == "rev-parse":
+                return mock.Mock(stdout=str(root / ".git") + "\n")
+            raise AssertionError(command)
+        with mock.patch.object(installer.platform, "system", return_value="Darwin"), \
+                mock.patch.object(installer, "run", side_effect=canonical), \
+                mock.patch.object(sys, "argv", ["installer", "--dry-run"]):
+            installer.main()
+        assert calls[0] == ["ls-remote", "--exit-code", installer.CANONICAL, "refs/tags/nightly"], calls
+        assert all(call[0] in ("ls-remote", "rev-parse") for call in calls), calls
+        with mock.patch.object(installer, "run", return_value=mock.Mock(stdout="")):
+            rejected(lambda: installer.nightly_source(root))
     print("Local terminal activation, Neovim configuration and build safety passed")
     if len(sys.argv) > 2:
         real_toolchain_smoke(installer, pathlib.Path(sys.argv[2]).resolve())

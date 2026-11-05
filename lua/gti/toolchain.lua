@@ -196,6 +196,8 @@ function M.binary_info(executable)
   if path == "" then path = executable end
   local real = vim.uv.fs_realpath(path) or path
   local resources = vim.fs.joinpath(vim.fs.dirname(vim.fs.dirname(real)), "share", "gti")
+  -- The preview channel is retired; local installs made before then still
+  -- carry PREVIEW_SOURCE and keep reporting it until they are replaced.
   local preview = read_version(vim.fs.joinpath(resources, "PREVIEW_SOURCE"))
   local nightly = read_version(vim.fs.joinpath(resources, "BUILD_ID"))
   return {

@@ -19,9 +19,9 @@ import subprocess
 import sys
 import tarfile
 
+import example_gates
 import release_artifacts
 import validation_checks
-import preview_examples
 
 ROOT = Path(__file__).resolve().parents[1]
 SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -49,7 +49,7 @@ def native_identity(sha, root=ROOT):
     # Adding unknown native inputs therefore invalidates reuse automatically.
     ignored = ("stdlib/", "tests/", "examples/", "docs/", "changes/", ".codex/",
                ".claude/", ".agents/", ".gti-validation/")
-    names = {"AGENTS.md", "CLAUDE.md", "README.md", "CHANGELOG.md", ".gti-preview.json"}
+    names = {"AGENTS.md", "CLAUDE.md", "README.md", "CHANGELOG.md"}
     rows = git("ls-tree", "-rz", sha, root=root).split("\0")
     native = [row for row in rows if row and not (row.split("\t", 1)[1] in names or
               row.split("\t", 1)[1].startswith(ignored))]
@@ -97,7 +97,7 @@ def planner(root=ROOT):
 
 def test_entries(paths, root=ROOT):
     if any(p.startswith("examples/") and p.endswith(".gti") for p in paths):
-        preview_examples.validate_sources(git("ls-files", "-z", "--", "examples", root=root).split("\0"))
+        example_gates.validate_sources(git("ls-files", "-z", "--", "examples", root=root).split("\0"))
     policy = planner(root)
     # Library owners + all their consumers are mandatory, regardless of PR body.
     plan = policy.plan([p for p in paths if library(p)], policy.load_map(root / "tests/ownership.toml"), root)
@@ -297,7 +297,7 @@ def selected_tests(entries, inventory, paths, root=ROOT):
             raise ValueError(f"required source-library test is missing: {entry}")
         selected |= matches
     if any(path.startswith("examples/") and path.endswith(".gti") for path in paths):
-        selected |= preview_examples.required_tests(sys.platform)
+        selected |= example_gates.required_tests(sys.platform)
     # Any changed fixture/harness named by a configured test is automatically
     # included in addition to the ownership map. Untyped source fixtures are
     # also covered by the owning surface/corpus gates, not silently skipped.
@@ -305,7 +305,7 @@ def selected_tests(entries, inventory, paths, root=ROOT):
     for row in inventory["tests"]:
         if changed_files.intersection(row.get("command", [])):
             selected.add(row["name"])
-    preview_examples.validate_inventory(inventory, selected)
+    example_gates.validate_inventory(inventory, selected)
     return selected
 
 
@@ -374,7 +374,7 @@ def run_tests(plan_doc, build, stage, jobs, test_jobs):
     report = build / "source-stdlib.xml"
     subprocess.run(["ctest", "--test-dir", str(build), "--output-on-failure", "--no-tests=error",
                     "--parallel", str(test_jobs), "--output-junit", str(report), "-R", pattern], check=True)
-    preview_examples.validate_results(report, selected)
+    example_gates.validate_results(report, selected)
     # The existing native smoke expects these build-tree entry points. Symlinks
     # retain the real stage identity so installed resource lookup stays valid.
     for name, source in (("gti", stage / "bin/gti"), ("libgti_runtime.a", stage / "lib/libgti_runtime.a")):
