@@ -29,6 +29,16 @@ neither an old restriction nor a current backend limitation automatically define
 the future language. Plans name goals, prerequisites and acceptance evidence,
 while canonical language documents continue to describe actual support.
 
+## Feature Proposals
+
+- [GTI RFC repository](https://github.com/lang-gti-official/rfcs) — new feature
+  designs, proposal PRs, decision records, and a generated RFC catalog.
+- [Planning workflow](architecture/agent-workflow.md#feature-proposals-and-planning)
+  and [plan-feature skill](../.codex/skills/plan-feature/SKILL.md) — requests to
+  plan new features produce draft RFCs and draft proposal PRs by default;
+  discussion-only and local-only requests remain unpublished. Acceptance and
+  implementation are separate decisions.
+
 ## Compiler Architecture
 
 - [Overview](architecture/overview.md) — pipeline, ownership boundaries, and
@@ -250,9 +260,11 @@ than mixed into the active queue.
   migrations, and historical checkpoints retained without presenting them as
   active work
 
-Active plans are proposals or work ledgers, not evidence that behavior exists.
-Implemented behavior must be documented in `docs/architecture/` or
-`docs/language/` as it lands.
+These plans retain execution roadmaps, work ledgers, and historical proposals;
+new feature designs belong in the RFC repository. Link their RFCs when updating
+implementation plans, without migrating or erasing historical records. Neither
+plans nor accepted RFCs prove that behavior exists. Implemented behavior must be
+documented in `docs/architecture/` or `docs/language/` as it lands.
 
 ## Historical Audits
 
@@ -267,6 +279,7 @@ Repository implementation tasks use the maintained
 PR integration, local-main synchronization and recoverable cleanup.
 
 When behavior changes, update the existing owning document, its tests, and any
-affected plan status. Create an ADR only for rationale worth preserving. Remove
-or merge superseded proposals instead of keeping `v2`, `final`, or
-`implementation-notes` variants.
+affected plan status. Create an ADR only for rationale worth preserving and link
+its RFC where relevant. Consolidate duplicate execution notes instead of adding
+`v2`, `final`, or `implementation-notes` variants. Preserve proposal and decision
+history, recording supersession through links rather than deleting old designs.

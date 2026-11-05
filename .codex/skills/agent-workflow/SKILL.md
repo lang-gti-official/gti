@@ -12,7 +12,16 @@ brings the primary checkout to current `main` for the user's local installer.
 The repository owner's standing authorization is in `AGENTS.md`. Explicit
 instructions such as "PR only", "leave local", "do not merge", or a
 release/install request override the default. Never infer permission to change
-other repositories or services.
+other repositories or services outside that explicit authorization.
+
+For a request to plan a new feature, use
+[$plan-feature](../plan-feature/SKILL.md) before starting an implementation task.
+`AGENTS.md` explicitly authorizes a draft RFC and draft proposal PR in
+`lang-gti-official/rfcs`; use that repository's document workflow, not this
+compiler lifecycle. This does not authorize merging the proposal or implementing
+it. Read-only discussions, bug-fix planning, and execution plans for accepted
+designs do not automatically create new RFCs. Honor explicit local-only or
+no-publication instructions.
 
 Use `scripts/agent_workflow.py` for shared Git/API operations. GitHub
 (`lang-gti-official/gti`, remote `origin`) is the canonical host for branches,

@@ -21,6 +21,55 @@ instructions override the appropriate default.
 `AGENTS.md` provides standing authorization; the `agent-workflow` skill supplies
 agent procedure and `finish-release` supplies version/publication policy.
 
+## Feature proposals and planning
+
+New feature designs live in
+[lang-gti-official/rfcs](https://github.com/lang-gti-official/rfcs), separate from
+compiler implementation and release CI. A request to plan, design, or propose a
+new GTI capability uses the [plan-feature skill](../../.codex/skills/plan-feature/SKILL.md).
+The owner's standing instruction authorizes creating or updating a draft RFC
+and publishing a draft proposal PR there. This applies to language, standard
+library, compiler architecture, and tooling features. Do not leave the requested
+proposal only in the conversation or add a competing design under `docs/plans/`.
+Explicit discussion-only, local-only, no-publication, or destination instructions
+take precedence.
+
+Select the workflow by intent, not the word "plan" alone:
+
+| Request | Default outcome |
+| --- | --- |
+| Plan a new macros feature | Draft RFC and draft proposal PR in `rfcs` |
+| Revise an existing feature proposal | Update that RFC through its proposal PR or a new update PR |
+| Plan implementation of an accepted RFC | An execution plan in the implementation repository, linked to the RFC |
+| Plan a bug fix or review an existing design | Normal task planning or a read-only review; no automatic new RFC |
+| Brainstorm here, keep it local, or do not publish | Follow that restriction; no proposal publication |
+
+Search the RFC index and open proposal PRs before drafting. Read that
+repository's `AGENTS.md`, `CONTRIBUTING.md`, and template, then use its generator,
+metadata, numbering, and index checks. Verify statements about current GTI
+against source and tests. Link relevant specifications, ADRs, historical plans,
+and issues; keep proposed semantics, unresolved questions, and implementation
+evidence distinct. Designs retain GTI's ownership/safety, phase-authority,
+LLVM-first, and performance requirements.
+
+Publish the draft in the RFC repository, record the proposal PR backlink, and
+report its links, status, and unresolved decisions. Its document checks are
+independent of GTI's compiler build, merge queue, and release pipelines; do not
+register a compiler task merely to publish an RFC. A planning request alone
+does not authorize merging the proposal, accepting its design, or implementing
+it. Even a merged draft is only stored documentation. Acceptance requires an
+explicit owner/delegated-maintainer decision recorded under the RFC repository's
+rules, and implementation/release claims require their own evidence.
+
+Existing `docs/plans/` records remain valid historical context and execution
+ledgers. Update them for accepted implementation work and link the RFC instead
+of copying its design. Do not migrate or delete historical proposals merely to
+adopt this workflow. Implemented behavior stays in `docs/language/` and
+`docs/architecture/`; durable rationale stays in `docs/decisions/`, linked to the
+RFC where relevant. An explicit implementation request still follows the normal
+implementation lifecycle; this routing does not impose a new RFC gate on every
+bug fix or already authorized change.
+
 ## Bounded output, analysis and waiting
 
 Execution efficiency protects time and context without weakening design review,

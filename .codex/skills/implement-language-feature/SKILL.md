@@ -8,6 +8,13 @@ description: Implement or modify GTI source syntax or language semantics coheren
 Treat the compiler frontend as the language authority and touch only the stages
 the feature actually affects.
 
+If the request is to plan or design a new language or standard-library feature,
+use [$plan-feature](../plan-feature/SKILL.md) to publish a draft RFC and draft
+proposal PR in `lang-gti-official/rfcs`, unless the user restricts publication.
+Use the contracts below to inform the design, but do not implement merely
+because a plan was requested. Existing accepted designs and explicit
+implementation requests follow the implementation workflow below.
+
 ## Establish The Contract
 
 1. Run `git status --short`; preserve unrelated work.
@@ -21,8 +28,9 @@ the feature actually affects.
 5. Classify the slice as non-executable syntax/static-semantics/tooling,
    source-defined library code using existing executable semantics, or
    new/changed executable language behavior.
-6. Identify whether the request implements a current plan or changes an
-   accepted decision. Update status/rationale explicitly when required.
+6. Identify the relevant RFC, current implementation plan, and accepted
+   decisions. Link them and update status/rationale explicitly when required;
+   do not treat a draft RFC as an accepted or implemented feature.
 7. Name the user-facing program, standard-library operation, or workflow this
    slice enables. Prefer a bounded end-to-end capability over generalized
    restriction machinery that has no immediate client.
@@ -203,8 +211,9 @@ obligations; do not claim a source-defined replacement before it is implemented.
    examples only when the change crosses those surfaces. Use
    `$lsp-synchronization` for semantic editor changes.
 4. Update `docs/language/` for meaning, `docs/architecture/` for implemented
-   boundaries, and `docs/plans/` only for remaining work. Prefer updating an
-   existing canonical document.
+   boundaries, and existing `docs/plans/` for remaining implementation work,
+   linked to its RFC. New feature designs belong in the RFC repository, not a
+   new local proposal. Prefer updating an existing canonical document.
 5. Run focused CTest targets first, then the broad affected workflows described
    in [`docs/architecture/verification.md`](../../../docs/architecture/verification.md).
 6. Run `git diff --check`; inspect the full diff for accidental semantic or

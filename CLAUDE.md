@@ -19,7 +19,7 @@ does not restate it. Put durable rules in `AGENTS.md`, not here.
   complete, and its permanent rule remains: new executable features extend
   verified MIR rather than adding an AST/HIR-only backend path.
 - `AGENTS.md` sections that older Claude guidance did not reflect:
-  **Language Direction**, **Implementation Task Lifecycle**,
+  **Language Direction**, **Feature Proposals And Planning**, **Implementation Task Lifecycle**,
   **Release Channels And VERSION**,
   **General Semantics Before Client Exceptions**, and **Constexpr Evolution**.
 
@@ -66,6 +66,7 @@ the Skill tool, or `/<name>`:
 
 | Skill | Use for |
 | --- | --- |
+| `plan-feature` | new feature designs and draft proposal PRs in `lang-gti-official/rfcs` |
 | `agent-workflow` | task branch, checkpoints, PR merge, local-main sync, cleanup |
 | `implement-language-feature` | GTI syntax or language semantics |
 | `implement-build-feature` | driver, `gti.toml`, projects, packaging |

@@ -77,6 +77,27 @@ wrapper, and neither backend defines its semantics.
 - Use repository skills under [`.codex/skills/`](.codex/skills/) for repeatable
   workflows. Skills describe how to work; they do not replace canonical docs.
 
+## Feature Proposals And Planning
+
+- When the owner asks to plan, design, or propose a new GTI feature, use
+  [plan-feature](.codex/skills/plan-feature/SKILL.md) to create or update a draft
+  in [lang-gti-official/rfcs](https://github.com/lang-gti-official/rfcs).
+  This includes language, standard-library, compiler, and tooling features.
+- The owner's standing authorization covers saving the proposal and publishing
+  a draft proposal PR in that repository. Do not stop at a chat-only plan unless
+  requested. Discussion-only, local-only, no-publication, or another explicitly
+  requested destination overrides this default.
+- Search existing RFCs and open proposal PRs first. Link relevant GTI plans,
+  ADRs, source, and tests; preserve historical records rather than migrating or
+  duplicating them. Follow the RFC repository's own instructions and checks.
+- A planning request does not accept a design, authorize implementation, or
+  authorize merging its proposal PR. Keep draft, accepted, implemented, and
+  released status distinct. Report the proposal and PR links with open questions.
+- Bug-fix plans, implementation checklists for accepted designs, and read-only
+  reviews do not create new RFCs by default. Use the
+  [planning contract](docs/architecture/agent-workflow.md#feature-proposals-and-planning)
+  to select the right workflow; RFC documentation does not run compiler CI.
+
 ## Implementation Task Lifecycle
 
 - At the start of each new task, rename your own chat's sidebar title to a
@@ -281,8 +302,12 @@ Detailed procedures live in the
 - `docs/language/` describes implemented/current language semantics and the
   working specification.
 - `docs/decisions/` records significant architectural and language rationale.
-- `docs/plans/` describes proposed or incomplete work and is not evidence that
-  a feature is implemented.
+- [GTI RFCs](https://github.com/lang-gti-official/rfcs) stores new feature
+  proposals and their design decisions; it is not an implementation claim.
+- `docs/plans/` retains implementation roadmaps, work ledgers, and historical
+  proposals. Update existing execution plans and link their RFCs; new feature
+  designs belong in the RFC repository. Plans are not evidence that a feature
+  is implemented.
 
 Prefer updating an existing canonical document over creating a new architecture
 document. Before adding Markdown, decide whether the information belongs in an
