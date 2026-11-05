@@ -75,7 +75,7 @@ def main():
         (tests / "gti.toml").write_text('manifest-version = 1\n[package]\nname = "installed-tests"\n'
                                        'version = "0.1.0"\n[targets.suite]\nkind = "test"\nroot = "tests.gti"\n')
         (tests / "tests.gti").write_text('import std.testing;\n'
-            '[[test]] void first() { std::testing::check_eq(2, 2); std::testing::check_ne(2, 3); }\n'
+            '[[test]] void first() { std::testing::check_eq!(2, 2); std::testing::check_ne!(2, 3); }\n'
             '[[test]] void second() { std::testing::check_approx(1.0, 1.001, 0.01); '
             'std::testing::check_string_eq("yes", "yes"); }\n')
         events = [json.loads(line) for line in run(

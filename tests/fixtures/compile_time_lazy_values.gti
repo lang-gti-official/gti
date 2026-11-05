@@ -24,9 +24,9 @@ constexpr int checked_third(int v) {
 #macro guard_even(int v) { if (v % 2 != 0) { std::panic("odd {}", v); } }
 
 constexpr int asserted_quarter(int v) {
-  std::assert(v % 4 == 0);
-  guard_even(v);
-  std::assert(v >= 0, "asserted_quarter needs a non-negative value");
+  std::assert!(v % 4 == 0);
+  guard_even!(v);
+  std::assert!(v >= 0, "asserted_quarter needs a non-negative value");
   return v / 4;
 }
 

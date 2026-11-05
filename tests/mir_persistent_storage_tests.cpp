@@ -2088,7 +2088,7 @@ public:
 }
 int main() {
   int32_t& borrowed = first;
-  int32_t copied = with_cleanup(2);
+  int32_t copied = with_cleanup!(2);
   return borrowed + copied;
 }
 )");

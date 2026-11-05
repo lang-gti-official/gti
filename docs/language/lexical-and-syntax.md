@@ -47,8 +47,7 @@ are defined by the incorporated grammar and lexer contract.
 `#macro` is a declaration token followed by an optional result type, a name, typed parameter clause and
 braced GTI body; it is not a line-oriented C preprocessor replacement directive.
 An omitted result type is implicitly void; explicit types use `#macro T name(...)`.
-Calls keep ordinary `name(...)` or
-`namespace::name(...)` syntax. The bounded expansion and evaluation rules are
+Calls require `name!(...)`, `namespace::name!(...)`, or `name<T>!(...)`. The bounded expansion and evaluation rules are
 defined in [execution semantics](execution.md#typed-statement-macros).
 The old `[[deferred]]` attribute is rejected with migration guidance.
 

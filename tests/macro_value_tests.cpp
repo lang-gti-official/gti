@@ -142,7 +142,7 @@ void macroResourceLimits() {
         "300 separate invocations each own a one-body budget");
   check(rejectedAt(
             analyzeLimited("#macro int32_t inc(int32_t v) { return v + 1; }\n"
-                           "int main() { return inc(inc(0)) - 2; }\n",
+                           "int main() { return inc!(inc!(0)) - 2; }\n",
                            single),
             "exceeds the limit of 1 macro bodies", "macro-expansions", 1),
         "a forced written argument expansion shares its invocation's budget");
@@ -154,12 +154,12 @@ void positiveAndMutation() {
   return second;
 }
 #macro int once(int expression) { int saved = expression; return saved + saved; }
-#macro int nested(int expression) { return choose(true, once(expression), 0); }
+#macro int nested(int expression) { return choose!(true, once!(expression), 0); }
 #macro stop() { return; }
 int main() {
   mut int effects = 0;
-  int answer = choose(false, ++effects, nested(5));
-  stop();
+  int answer = choose!(false, ++effects, nested!(5));
+  stop!();
   return answer - 10 + effects;
 }
 )gti";
@@ -176,7 +176,7 @@ int main() {
   check(lang::verifyMirProgram(result.mir).valid(),
         "result-region MIR must verify independently");
   const auto inspected = lang::LanguageQueries().macroExpansion(
-      result, result.sourceGraph.entryUnit(), source.find("choose(false") + 2);
+      result, result.sourceGraph.entryUnit(), source.find("choose!(false") + 2);
   check(inspected.has_value(),
         "value calls must support read-only expansion inspection");
   bool mutated = false;
@@ -225,7 +225,7 @@ import std.string;
 }
 int main() {
   std::string untouched{"untouched"};
-  std::string selected = select(false, std::move(untouched), local(std::string("yes")));
+  std::string selected = select!(false, std::move(untouched), local!(std::string("yes")));
   return int32_t(untouched.size() + selected.size());
 }
 )gti");
@@ -265,17 +265,17 @@ int inspect_owner(Owner& owner) { return owner.read(); }
 int inspect_passive(Passive& value) { return value.read(); }
 int exercise_owned(bool enabled) {
   Owner sibling{91};
-  int observed = choose_owner(enabled, Owner(7), Owner(9)).read();
+  int observed = choose_owner!(enabled, Owner(7), Owner(9)).read();
   return observed + sibling.read();
 }
 int exercise_argument(bool enabled) {
   Owner sibling{91};
-  int observed = inspect_owner(choose_owner(enabled, Owner(7), Owner(9)));
+  int observed = inspect_owner(choose_owner!(enabled, Owner(7), Owner(9)));
   return observed + sibling.read();
 }
 int exercise_passive(bool enabled) {
-  int observed = choose_passive(enabled, Passive(3), Passive(5)).read();
-  return observed + inspect_passive(choose_passive(enabled, Passive(3), Passive(5)));
+  int observed = choose_passive!(enabled, Passive(3), Passive(5)).read();
+  return observed + inspect_passive(choose_passive!(enabled, Passive(3), Passive(5)));
 }
 int main() {
   return exercise_owned(true) + exercise_owned(false) +
@@ -524,8 +524,8 @@ struct Count {
   auto [unused_first, unused_second] = elements;
   return saved;
 }
-Count first = local_count(7);
-struct Registry { static Count second = local_count(9);  public: Registry() = default; };
+Count first = local_count!(7);
+struct Registry { static Count second = local_count!(9);  public: Registry() = default; };
 int main() { return first.number + Registry::second.number - 16; }
 )gti");
   if (!result.canGenerateCode())
@@ -893,28 +893,28 @@ struct InitPair {
   auto& alias = saved;
   InitPair pair{2, 3};
   auto [left, right] = pair;
-  return typed_relay(alias + T(left + right));
+  return typed_relay!(alias + T(left + right));
 }
 #macro int make_value(int expression) {
   int saved = expression;
-  if (saved > 0) { return relay(saved); }
+  if (saved > 0) { return relay!(saved); }
   return 0;
 }
 #macro InitOwner initial_owner() {
   InitOwner owner{};
   return InitOwner();
 }
-struct OwnedRecord { InitOwner field = initial_owner();  public: OwnedRecord() = default; };
+struct OwnedRecord { InitOwner field = initial_owner!();  public: OwnedRecord() = default; };
 struct Record {
-  int field = make_value(7);
-  static int shared = make_value(9);
-  uint64_t wide = initial_value(uint64_t(5));
-  static int generic_shared = initial_value(9);
+  int field = make_value!(7);
+  static int shared = make_value!(9);
+  uint64_t wide = initial_value!(uint64_t(5));
+  static int generic_shared = initial_value!(9);
 public:
   Record() = default;
 };
-int global = make_value(3);
-namespace setup { int namespaced = initial_value(4); }
+int global = make_value!(3);
+namespace setup { int namespaced = initial_value!(4); }
 int main() {
   Record record{};
   OwnedRecord owned{};
@@ -1200,7 +1200,7 @@ int inspect(Owner& value) { return value.read(); }
 int main() {
   Owner owner{};
   Owner& loan = owner;
-  int result = inspect(take(std::move(owner)));
+  int result = inspect(take!(std::move(owner)));
   return result + loan.read();
 }
 )gti",
@@ -1215,22 +1215,22 @@ int select(uint8_t value) { return 2; }
 #macro int choose(uint8_t value) { return 2; }
 #macro uint8_t narrow(uint8_t value) { return value; }
 #macro int selected(uint8_t value) { return select(value); }
-#macro int nested(uint8_t value) { return selected(value); }
-#macro int expression(uint8_t value) { return select(narrow(value)); }
+#macro int nested(uint8_t value) { return selected!(value); }
+#macro int expression(uint8_t value) { return select(narrow!(value)); }
 #macro T generic<T>(T value) { return value; }
 #macro int8_t signed_min(int8_t value) { return value; }
 #macro int64_t wide_min(int64_t value) { return value; }
 #macro unused(uint8_t value) {}
 #macro int defaulted(uint8_t value = 33) { return select(value); }
-int instantiate<T>(T value) { return nested(33); }
+int instantiate<T>(T value) { return nested!(33); }
 int main() {
-  unused(33);
-  auto a = narrow((+(255)));
-  auto b = signed_min((-(128)));
-  auto c = wide_min(-((9223372036854775808)));
-  auto d = generic<uint8_t>(33);
-  auto e = generic(33);
-  return selected(33) + nested(33) + expression(33) + choose(33) + defaulted() + instantiate(0) - 11;
+  unused!(33);
+  auto a = narrow!((+(255)));
+  auto b = signed_min!((-(128)));
+  auto c = wide_min!(-((9223372036854775808)));
+  auto d = generic<uint8_t>!(33);
+  auto e = generic!(33);
+  return selected!(33) + nested!(33) + expression!(33) + choose!(33) + defaulted!() + instantiate(0) - 11;
 }
 )gti");
   if (!result.canGenerateCode())
@@ -1239,30 +1239,30 @@ int main() {
   check(result.canGenerateCode(),
         "typed macro literals retain selected types through verified MIR");
   diagnostic(
-      "#macro accept(uint8_t value) {}\nint main() { accept(256); return 0; }",
+      "#macro accept(uint8_t value) {}\nint main() { accept!(256); return 0; }",
       "Argument 1");
   diagnostic(
-      "#macro accept(uint8_t value) {}\nint main() { accept(-1); return 0; }",
+      "#macro accept(uint8_t value) {}\nint main() { accept!(-1); return 0; }",
       "Argument 1");
   diagnostic("#macro accept(uint8_t value) {}\nint main() { int value = 33; "
-             "accept(value); return 0; }",
+             "accept!(value); return 0; }",
              "Argument 1");
   diagnostic("#macro accept(uint8_t value) {}\nint main() { constexpr int "
-             "value = 33; accept(value); return 0; }",
+             "value = 33; accept!(value); return 0; }",
              "Argument 1");
   diagnostic(
-      "#macro accept(float value) {}\nint main() { accept(33); return 0; }",
+      "#macro accept(float value) {}\nint main() { accept!(33); return 0; }",
       "Argument 1");
   diagnostic("#macro accept(uint8_t value) {}\n#macro accept(uint16_t value) "
-             "{}\nint main() { accept(33); return 0; }",
+             "{}\nint main() { accept!(33); return 0; }",
              "ambiguous");
   // A parameter has already fixed this literal's type: expansion must not
   // turn it back into an untyped literal for another call or macro.
   diagnostic("void sink(uint16_t value) {}\n#macro forward(uint8_t value) { "
-             "sink(value); }\nint main() { forward(33); return 0; }",
+             "sink(value); }\nint main() { forward!(33); return 0; }",
              "Argument 1");
   diagnostic("#macro sink(uint16_t value) {}\n#macro forward(uint8_t value) { "
-             "sink(value); }\nint main() { forward(33); return 0; }",
+             "sink!(value); }\nint main() { forward!(33); return 0; }",
              "Argument 1");
 }
 
@@ -1295,24 +1295,24 @@ expected<int, int> fallible(bool fail) {
 #macro expected<int, int> result(bool fail) { return fallible(fail); }
 expected<int, int> forwarded(bool fail) {
   Guard caller{};
-  return guarded(?result(fail));
+  return guarded!(?result!(fail));
 }
 expected<int, int> continued(bool fail) {
   Guard caller{};
-  int result = guarded(?fallible(fail));
+  int result = guarded!(?fallible(fail));
   return result + 1;
 }
-Box converted_return() { return scalar(17); }
+Box converted_return() { return scalar!(17); }
 int main() {
-  Box initialized = scalar(11);
+  Box initialized = scalar!(11);
   Box returned = converted_return();
-  mut int converted = flag();
-  if (flag()) { converted += 1; }
+  mut int converted = flag!();
+  if (flag!()) { converted += 1; }
   auto success = forwarded(false);
   auto failure = forwarded(true);
   auto continued_success = continued(false);
   auto continued_failure = continued(true);
-  std::source_location location = here();
+  std::source_location location = here!();
   return 0;
 }
 )gti");
@@ -1367,19 +1367,19 @@ int main(int argc, char **argv) {
   callerConversionsAndPropagation();
   macroResourceLimits();
   diagnostic("#macro int bad(bool flag) { if (flag) { return 1; } }\n"
-             "int main() { return bad(false); }",
+             "int main() { return bad!(false); }",
              "every normally completing path");
-  diagnostic("#macro int bad() { return; }\nint main() { return bad(); }",
+  diagnostic("#macro int bad() { return; }\nint main() { return bad!(); }",
              "requires a value");
-  diagnostic("#macro int bad() { return true; }\nint main() { return bad(); }",
+  diagnostic("#macro int bad() { return true; }\nint main() { return bad!(); }",
              "macro result");
-  diagnostic("#macro stop() { return 1; }\nint main() { stop(); return 0; }",
+  diagnostic("#macro stop() { return 1; }\nint main() { stop!(); return 0; }",
              "void macro cannot return");
   diagnostic("#macro int bad(expected<int, int> value) { return ?value; }\n"
              "int main() { return 0; }",
              "Propagation");
   diagnostic("#macro int& bad() { int saved = 1; return saved; }\n"
-             "int main() { int& value = bad(); return value; }",
+             "int main() { int& value = bad!(); return value; }",
              "cannot export a reference");
   diagnostic("import std.string;\n#macro std::string identity(std::string "
              "value) { return value; }\n"
@@ -1389,8 +1389,8 @@ int main(int argc, char **argv) {
   diagnostic(R"gti(
 import std.string;
 #macro std::string inner(std::string argument) { return argument; }
-#macro std::string outer() { std::string saved{"owned"}; return inner(saved); }
-int main() { std::string value = outer(); return 0; }
+#macro std::string outer() { std::string saved{"owned"}; return inner!(saved); }
+int main() { std::string value = outer!(); return 0; }
 )gti",
              "macro result");
   diagnostic(R"gti(
@@ -1401,7 +1401,7 @@ public:
   Pinned(Pinned&& other) = delete;
 };
 #macro Pinned pinned() { return Pinned(); }
-int main() { Pinned value = pinned(); return 0; }
+int main() { Pinned value = pinned!(); return 0; }
 )gti",
              "movable or copyable");
   return failures == 0 ? 0 : 1;

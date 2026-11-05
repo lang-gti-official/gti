@@ -18,12 +18,12 @@ def main():
         "  if (condition) { return value; } return 0;\n"
         "}\n"
         "#macro std::string_view quoted<T>(T expression) {\n"
-        "  return std::expression_text(expression);\n"
+        "  return std::expression_text!(expression);\n"
         "}\n"
         "int main() {\n"
-        "  mut int counter = 0; int answer = choose(true, 7);\n"
-        "  /*😀*/ std::string_view text = std::expression_text(++counter);\n"
-        "  std::string_view forwarded = quoted(answer /* λ */ + 1);\n"
+        "  mut int counter = 0; int answer = choose!(true, 7);\n"
+        "  /*😀*/ std::string_view text = std::expression_text!(++counter);\n"
+        "  std::string_view forwarded = quoted!(answer /* λ */ + 1);\n"
         "  return answer + counter;\n"
         "}\n"
     )
@@ -75,7 +75,7 @@ def main():
             diagnostics = published(1)
             assert not diagnostics, diagnostics
 
-            choose_call = source.index("choose(true")
+            choose_call = source.index("choose!(true")
             hover = request("textDocument/hover", source, choose_call + 1)
             signature = hover["contents"]["value"]
             assert "#macro int32_t choose(bool condition, int32_t value)" in signature, hover
@@ -84,7 +84,7 @@ def main():
                        lsp_position(source, source.index("choose(bool"))
                        for item in definitions), definitions
 
-            text_call = source.index("expression_text(++counter)")
+            text_call = source.index("expression_text!(++counter)")
             hover = request("textDocument/hover", source, text_call + 1)
             signature = hover["contents"]["value"]
             assert "#macro" in signature and "string_view" in signature and "expression_text" in signature, hover
@@ -96,25 +96,25 @@ def main():
                        item["range"]["start"] == lsp_position(declaration, declaration_offset)
                        for item in definitions), definitions
 
-            missing = source.replace("expression_text(++counter)",
-                                     "expression_text(missing_expression)")
+            missing = source.replace("expression_text!(++counter)",
+                                     "expression_text!(missing_expression)")
             diagnostics = change(2, missing)
             expected = lsp_position(missing, missing.index("missing_expression"))
             assert any(item["range"]["start"] == expected for item in diagnostics), diagnostics
             assert not change(3, source)
 
-            invalid = source.replace("expression_text(++counter)",
-                                     "expression_text(counter + true)")
+            invalid = source.replace("expression_text!(++counter)",
+                                     "expression_text!(counter + true)")
             diagnostics = change(4, invalid)
             assert any(item.get("severity", 1) == 1 for item in diagnostics), diagnostics
             assert not change(5, source)
 
-            synthesized = source.replace("expression_text(expression)",
-                                         "expression_text(expression + 1)")
+            synthesized = source.replace("expression_text!(expression)",
+                                         "expression_text!(expression + 1)")
             diagnostics = change(6, synthesized)
             error = next(item for item in diagnostics if item["code"] == "GTI-S2019"
                          and "complete written source expression" in item["message"])
-            invocation = synthesized.index("quoted(answer")
+            invocation = synthesized.index("quoted!(answer")
             assert error["range"] == {
                 "start": lsp_position(synthesized, invocation),
                 "end": lsp_position(synthesized, invocation + len("quoted")),
@@ -122,8 +122,8 @@ def main():
             assert error.get("relatedInformation"), error
             assert not change(7, source)
 
-            incomplete = source.replace("std::expression_text(++counter)",
-                                        "std::expression_text(")
+            incomplete = source.replace("std::expression_text!(++counter)",
+                                        "std::expression_text!(")
             assert change(8, incomplete)
             assert not change(9, source)
             session.send({"jsonrpc": "2.0", "method": "textDocument/didClose", "params": {
@@ -136,7 +136,7 @@ def main():
             assert "expression_text" in hover["contents"]["value"], hover
 
             explicit_fallback = source.replace(
-                "expression_text(expression)",
+                "expression_text!(expression)",
                 'expression_text(expression + 1, "composed condition")')
             assert not change(11, explicit_fallback)
             dynamic_fallback = explicit_fallback.replace(

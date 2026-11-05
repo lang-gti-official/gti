@@ -85,12 +85,13 @@ import std.syntax;
 // An imported consumer writes: html!({ <h1>"Hello"</h1> })
 ```
 
-The `!` marks opaque input; it is required for procedural calls and does not
-change existing typed macro calls. The first profile accepts a non-generic,
+The `!` explicitly marks a macro invocation, for both typed and procedural
+macros. The declaration determines whether arguments are typed expressions or
+opaque input. The first profile accepts a non-generic,
 namespace-scope declaration with one `tokens` parameter and one `expr` result.
 It does not support overloads, defaults, packs or member/operator forms.
 Syntax capabilities cannot be stored or constructed at runtime. Directives and
-imports inside procedural input are rejected before source loading can act on
+imports inside any explicit macro input are rejected before source loading can act on
 them. Ordinary braced arguments retain their existing behavior.
 
 An invocation currently reports that phase 2 is required. The HTML demo and
@@ -100,20 +101,22 @@ end-to-end feature acceptance remain after phase 3 of
 `#macro` declares a source-defined namespace-scope macro with typed
 **expression parameters**, instead of ordinary eager parameter initialization.
 Omitting the result type declares a `void` statement macro. An explicit result
-type uses ordinary C++-familiar prefix spelling. Calls use ordinary qualified
-or unqualified syntax; value macros can participate in expressions:
+type uses ordinary C++-familiar prefix spelling. Calls require `!` between the
+qualified or unqualified name (and any generic arguments) and the argument list:
+`name!(...)`, `namespace::name!(...)`, or `name<T>!(...)`. Value macros can
+participate in expressions:
 
 ```gti
 #macro report_when(bool enabled, std::string_view message) {
   if (enabled) { std::println(message); }
 }
-report_when(verbose, make_message());
+report_when!(verbose, make_message());
 
 #macro int choose(bool enabled, int first, int second) {
   if (enabled) { return first; }
   return second;
 }
-int selected = choose(use_cache, cached_value(), expensive_value());
+int selected = choose!(use_cache, cached_value(), expensive_value());
 ```
 
 Generic parameters follow the macro name (`#macro when<T>(bool enabled, T value)`),
@@ -127,7 +130,11 @@ unused, and literal adaptation does not participate in generic inference. A qual
 cannot mix macro and ordinary-function overloads: a caller must not have its
 evaluation policy silently selected by an argument type. `[[track_caller]]`
 may precede the declaration. Macros participate in ordinary namespace, source
-visibility and module export rules; no invocation marker such as `!` is used.
+visibility and module export rules. Omitting `!` is an error (`GTI-S2124`) with
+an insertion fix; ordinary functions cannot be invoked with `!`. The marker
+does not change argument forcing, type checking, hygiene, overload selection,
+cleanup or local-return behavior. Compiler directives and imports belong outside
+macro argument lists, so loading cannot execute an input token as a directive.
 
 The signature selects and type-checks the written arguments, including ones
 that will not execute. Each parameter use evaluates its supplied expression
@@ -158,10 +165,10 @@ Ordinary automatic locals provide explicit evaluate-once bindings:
 ```gti
 #macro inspect_once(int expression) {
   int saved = expression;
-  std::assert(saved >= 0);
+  std::assert!(saved >= 0);
   std::println("{}", saved);
 }
-inspect_once(next_number()); // next_number runs once, when initialization is reached
+inspect_once!(next_number()); // next_number runs once, when initialization is reached
 ```
 
 Each invocation has a separate lexical scope and distinct local identities.
@@ -228,7 +235,7 @@ require destination-passing construction support; an owning indirection can
 transport an immovable payload in this profile. Ordinary references and
 borrowed values remain usable *inside* macros under their existing rules.
 
-`std::expression_text(expression)` from `std.source_location` is a library
+`std::expression_text!(expression)` from `std.source_location` is a library
 macro over a trusted source-metadata capability. It type-checks but never
 evaluates the expression, returning static literal-backed written text with
 interior comments/whitespace preserved. Whole-argument forwarding retains its

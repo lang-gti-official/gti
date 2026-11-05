@@ -10,8 +10,8 @@ from lsp_smoke_test import LspSession, lsp_position, semantic_tokens_by_position
 
 def main():
     source = ("import std.assert;\n"
-              "int main() { /*😀*/ std::assert(1); return 0; }\n")
-    valid = source.replace("assert(1)", "assert(true)")
+              "int main() { /*😀*/ std::assert!(1); return 0; }\n")
+    valid = source.replace("assert!(1)", "assert!(true)")
     with tempfile.TemporaryDirectory(prefix="gti-deferred-lsp-") as directory:
         path = (pathlib.Path(directory) / "main.gti").resolve()
         path.write_text(source)
@@ -49,32 +49,32 @@ def main():
             assert not change(2, valid)
             session.send({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover", "params": {
                 "textDocument": {"uri": uri},
-                "position": lsp_position(valid, valid.index("assert(true)") + 1)}})
+                "position": lsp_position(valid, valid.index("assert!(true)") + 1)}})
             hover = session.receive_until(lambda message: message.get("id") == 2)["result"]
             assert "#macro" in hover["contents"]["value"], hover
             assert "[[deferred]]" not in hover["contents"]["value"], hover
             malformed = "[[deferred]] void old() {}\n" + valid
             assert any(item["code"] == "GTI-S2099" for item in change(3, malformed))
             assert not change(4, valid)
-            incomplete = valid.replace("std::assert(true)", "std::assert(")
+            incomplete = valid.replace("std::assert!(true)", "std::assert!(")
             assert change(5, incomplete)
             assert not change(6, valid)
             macros = ("import std.assert;\n"
                       "namespace application {\n"
-                      "  /*😀*/ #macro check(int value) { std::assert(value == 7); }\n"
-                      "  #macro check(bool value) { std::assert(value); }\n"
+                      "  /*😀*/ #macro check(int value) { std::assert!(value == 7); }\n"
+                      "  #macro check(bool value) { std::assert!(value); }\n"
                       "}\n"
-                      "int main() { /*😀*/ application::check(7); return 0; }\n")
+                      "int main() { /*😀*/ application::check!(7); return 0; }\n")
             assert not change(7, macros)
             session.send({"jsonrpc": "2.0", "id": 3, "method": "textDocument/hover", "params": {
                 "textDocument": {"uri": uri},
-                "position": lsp_position(macros, macros.index("check(7)") + 1)}})
+                "position": lsp_position(macros, macros.index("check!(7)") + 1)}})
             hover = session.receive_until(lambda message: message.get("id") == 3)["result"]
             assert "#macro" in hover["contents"]["value"], hover
             assert "int32_t value" in hover["contents"]["value"], hover
             session.send({"jsonrpc": "2.0", "id": 4, "method": "textDocument/definition", "params": {
                 "textDocument": {"uri": uri},
-                "position": lsp_position(macros, macros.index("check(7)") + 1)}})
+                "position": lsp_position(macros, macros.index("check!(7)") + 1)}})
             definition = session.receive_until(lambda message: message.get("id") == 4)["result"]
             locations = definition if isinstance(definition, list) else [definition]
             assert any(location["uri"] == uri and location["range"]["start"]["line"] == 2
@@ -83,7 +83,7 @@ def main():
                 "textDocument": {"uri": uri}}})
             token_data = session.receive_until(lambda message: message.get("id") == 5)["result"]["data"]
             tokens = semantic_tokens_by_position(token_data)
-            for offset in (macros.index("check(int"), macros.index("check(7)")):
+            for offset in (macros.index("check(int"), macros.index("check!(7)")):
                 position = lsp_position(macros, offset)
                 token = tokens[(position["line"], position["character"])]
                 assert token_types[token["type"]] == "macro", (position, token, token_types)
@@ -105,7 +105,7 @@ def main():
                 result = session.receive_until(
                     lambda message: message.get("id") == request_id)["result"]
                 assert result is None, (index, result)
-            wrong_type = macros.replace("check(7)", 'check("wrong")')
+            wrong_type = macros.replace("check!(7)", 'check!("wrong")')
             diagnostics = change(8, wrong_type)
             error = next(item for item in diagnostics if item["code"] == "GTI-S2012")
             assert error["range"]["start"]["line"] == 5, error
@@ -117,8 +117,8 @@ def main():
 
             inspection = ("void use(int value) {}\n"
                           "#macro local(int value) { int saved = value; use(saved); }\n"
-                          "#macro relay(int value) { local(value); }\n"
-                          "int main() { int saved = 7; /*😀*/ relay(saved); return 0; }\n")
+                          "#macro relay(int value) { local!(value); }\n"
+                          "int main() { int saved = 7; /*😀*/ relay!(saved); return 0; }\n")
             diagnostics = change(12, inspection)
             assert not diagnostics, diagnostics
             request_id = 50
@@ -132,7 +132,7 @@ def main():
                     "position": lsp_position(text, offset)}})
                 return session.receive_until(lambda message: message.get("id") == request_id)
 
-            offset = inspection.index("relay(saved)")
+            offset = inspection.index("relay!(saved)")
             expanded = inspect(inspection, offset + 2, 12)["result"]
             assert expanded["readOnly"] and expanded["version"] == 12, expanded
             assert expanded["languageId"] == "gti" and not expanded["truncated"], expanded
@@ -158,18 +158,18 @@ def main():
             overlay = "export module policy;\nexport #macro external(int value) { if (value == 2) {} }\n"
             session.send({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
                 "textDocument": {"uri": policy_uri, "languageId": "gti", "version": 1, "text": overlay}}})
-            included = 'import "policy.gti";\nint main() { external(7); return 0; }\n'
+            included = 'import "policy.gti";\nint main() { external!(7); return 0; }\n'
             assert not change(13, included)
-            expanded = inspect(included, included.index("external(7)") + 1, 13)["result"]
+            expanded = inspect(included, included.index("external!(7)") + 1, 13)["result"]
             assert "(7 == 2)" in expanded["text"], expanded
             assert expanded["declaration"]["uri"] == policy_uri, expanded
 
             broken = ("#macro broken(int value) { missing(value); }\n"
-                      "#macro wrapper(int value) { broken(value); }\n"
-                      "int main() { /*😀*/ wrapper(7); return 0; }\n")
+                      "#macro wrapper(int value) { broken!(value); }\n"
+                      "int main() { /*😀*/ wrapper!(7); return 0; }\n")
             diagnostics = change(14, broken)
             error = next(item for item in diagnostics if item.get("severity", 1) == 1)
-            assert error["range"]["start"] == lsp_position(broken, broken.index("wrapper(7)")), error
+            assert error["range"]["start"] == lsp_position(broken, broken.index("wrapper!(7)")), error
             related = error.get("relatedInformation", [])
             assert any("macro" in item["message"] and "broken" in item["message"] for item in related), error
             assert any("macro" in item["message"] and "wrapper" in item["message"] for item in related), error
@@ -177,13 +177,13 @@ def main():
             assert any(item["location"]["range"]["start"]["line"] == 1 for item in related), error
 
             argument_error = ("#macro ignored(int value) {}\n"
-                              "int main() { /*😀*/ ignored(missing_argument); return 0; }\n")
+                              "int main() { /*😀*/ ignored!(missing_argument); return 0; }\n")
             diagnostics = change(15, argument_error)
             error = next(item for item in diagnostics if item.get("severity", 1) == 1)
             assert error["range"]["start"] == lsp_position(
                 argument_error, argument_error.index("missing_argument")), error
             assert not change(16, inspection)
-            assert inspect(inspection, inspection.index("relay(saved)"), 15)["error"]["code"] == -32801
+            assert inspect(inspection, inspection.index("relay!(saved)"), 15)["error"]["code"] == -32801
             session.send({"jsonrpc": "2.0", "method": "textDocument/didClose", "params": {
                 "textDocument": {"uri": uri}}})
             assert inspect(inspection, offset, 16)["result"] is None

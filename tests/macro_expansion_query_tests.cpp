@@ -27,11 +27,11 @@ void use(int value) {}
   while (saved < 3) { ++saved; }
   use(saved);
 }
-#macro outer(int value) { inner(value); }
+#macro outer(int value) { inner!(value); }
 int main() {
   int saved = 7;
-  outer(saved);
-  outer(8);
+  outer!(saved);
+  outer!(8);
   return 0;
 }
 )";
@@ -42,7 +42,7 @@ int main() {
   require(snapshot.semanticValid, "macro inspection fixture must be valid");
   const auto unit = snapshot.sourceGraph.entryUnit();
   const lang::LanguageQueries queries;
-  const auto offset = source.find("outer(saved)");
+  const auto offset = source.find("outer!(saved)");
   const auto info = queries.macroExpansion(snapshot, unit, offset + 2);
   require(info.has_value(),
           "written invocation must have a retained expansion");
@@ -100,7 +100,7 @@ int main() {
           "large inspection fixture must be valid");
   const auto bounded = queries.macroExpansion(
       largeSnapshot, largeSnapshot.sourceGraph.entryUnit(),
-      large.rfind("large(1)"));
+      large.rfind("large!(1)"));
   require(bounded && bounded->truncated && bounded->text.size() <= 16384 &&
               bounded->text.find("display truncated") != std::string::npos,
           "large expansions must terminate with an explicit bounded omission");

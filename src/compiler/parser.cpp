@@ -3699,9 +3699,12 @@ private:
             std::move(path), TypeRef(std::move(owner), std::move(arguments)));
       } else if (isExplicitGenericCallStart()) {
         std::vector<TypeRef> typeArguments = typeArgumentList();
+        const std::optional<Token> bang =
+            match({TokenKind::BANG}) ? std::optional<Token>(previous()) : std::nullopt;
         consume(TokenKind::LEFT_PAREN,
                 "Expect '(' after explicit generic arguments.");
-        expr = finishCall(std::move(expr), std::move(typeArguments));
+        expr = bang ? finishMacroCall(std::move(expr), std::move(typeArguments), *bang)
+                    : finishCall(std::move(expr), std::move(typeArguments));
       } else if (isConceptTestStart() && (exprAs<Variable>(expr.get()) ||
                                           exprAs<QualifiedName>(expr.get()))) {
         NamePath name = exprAs<Variable>(expr.get())
@@ -3714,11 +3717,11 @@ private:
             previous());
       } else if (match({TokenKind::BANG})) {
         if (!exprAs<Variable>(expr.get()) && !exprAs<QualifiedName>(expr.get()))
-          throw error(previous(), "A procedural macro requires a "
+          throw error(previous(), "A macro invocation requires a "
                                   "namespace-qualified or unqualified name.");
-        consume(TokenKind::LEFT_PAREN,
-                "Expect '(' after the procedural macro '!'.");
-        expr = finishProceduralCall(std::move(expr));
+        const Token bang = previous();
+        consume(TokenKind::LEFT_PAREN, "Expect '(' after the macro '!'.");
+        expr = finishMacroCall(std::move(expr), {}, bang);
       } else if (match({TokenKind::LEFT_PAREN})) {
         expr = finishCall(std::move(expr), {});
       } else if (match({TokenKind::DOT})) {
@@ -3747,7 +3750,8 @@ private:
     return expr;
   }
 
-  ExprPtr finishProceduralCall(ExprPtr callee) {
+  ExprPtr finishMacroCall(ExprPtr callee, std::vector<TypeRef> typeArguments,
+                          Token bang) {
     Token leftParen = previous();
     const std::size_t begin = current - 1;
     const auto group = balancedSyntax(tokens, begin);
@@ -3770,13 +3774,38 @@ private:
         input->origins.push_back(syntaxInput->origins[i]);
       }
     }
+    // Typed macros need ordinary AST arguments for hygienic substitution.
+    // A procedural macro instead consumes the untouched capture, even when
+    // that capture is not GTI expression syntax. Keep errors with the
+    // alternative until semantic lookup chooses the declaration kind.
+    const auto errorStart = diagnostics.size();
+    const auto savedCompletion = syntaxCompletion;
+    const auto savedConsumedCompletion = consumedCompletion;
+    const auto savedMissingTokenError = missingTokenError;
+    const auto savedGeneratedNames = generatedNameCounter;
+    ExprPtr parsed;
+    try {
+      parsed = finishCall(cloneExpr(*callee), typeArguments);
+    } catch (const ParseError &) {
+    }
+    std::vector<Diagnostic> argumentErrors(diagnostics.begin() + errorStart,
+                                           diagnostics.end());
+    diagnostics.resize(errorStart);
+    if (!parsed) {
+      syntaxCompletion = savedCompletion;
+      consumedCompletion = savedConsumedCompletion;
+      missingTokenError = savedMissingTokenError;
+      generatedNameCounter = savedGeneratedNames;
+      parsed = std::make_unique<Call>(std::move(callee), std::move(typeArguments),
+                                      tokens[group.end], ExprList{});
+      static_cast<Call &>(*parsed).setArgumentGeometry(leftParen, {});
+    }
     current = group.end + 1;
-    auto call =
-        std::make_unique<Call>(std::move(callee), std::vector<TypeRef>{},
-                               tokens[group.end], ExprList{});
-    call->setArgumentGeometry(std::move(leftParen), {});
-    call->setCapturedArguments(std::move(input));
-    return call;
+    auto &call = static_cast<Call &>(*parsed);
+    call.setMacroBang(std::move(bang));
+    call.setMacroArgumentErrors(std::move(argumentErrors));
+    call.setCapturedArguments(std::move(input));
+    return parsed;
   }
 
   ExprPtr finishCall(ExprPtr callee, std::vector<TypeRef> typeArguments) {
@@ -4345,7 +4374,9 @@ private:
     }
     std::size_t next = 1;
     if (peekAt(next).kind == TokenKind::GREATER) {
-      return peekAt(next + 1).kind == TokenKind::LEFT_PAREN;
+      return peekAt(next + 1).kind == TokenKind::LEFT_PAREN ||
+             (peekAt(next + 1).kind == TokenKind::BANG &&
+              peekAt(next + 2).kind == TokenKind::LEFT_PAREN);
     }
     const std::optional<std::size_t> firstArgumentEnd =
         genericArgumentEnd(next);
@@ -4362,7 +4393,9 @@ private:
       next = *argumentEnd;
     }
     return peekAt(next).kind == TokenKind::GREATER &&
-           peekAt(next + 1).kind == TokenKind::LEFT_PAREN;
+           (peekAt(next + 1).kind == TokenKind::LEFT_PAREN ||
+            (peekAt(next + 1).kind == TokenKind::BANG &&
+             peekAt(next + 2).kind == TokenKind::LEFT_PAREN));
   }
 
   [[nodiscard]] bool isGenericOwnerStart() const {

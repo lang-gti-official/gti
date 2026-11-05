@@ -19,8 +19,8 @@ for concept std::formatting<Reading> {
 int main() {
   Reading actual{3};
   Reading same{3};
-  std::testing::check_eq(actual, same);
+  std::testing::check_eq!(actual, same);
   Reading different{4};
-  std::testing::check_eq(actual, different, "protocol-only assertion");
+  std::testing::check_eq!(actual, different, "protocol-only assertion");
   return 0;
 }

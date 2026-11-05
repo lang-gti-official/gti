@@ -2333,7 +2333,7 @@ struct Cleanup {
   ~Cleanup() { guarded = 9; }
 };
 #macro Cleanup owned() { return Cleanup(); }
-#macro Cleanup nested_owned() { return owned(); }
+#macro Cleanup nested_owned() { return owned!(); }
 )";
     accepted(prefix + owner + R"(
 int main() {
@@ -2367,8 +2367,8 @@ int main() {
 #macro ignore<F>(F action) {}
 int main() {
   int& held = guarded;
-  std::string_view written = std::expression_text(++guarded);
-  ignore([]() -> void { guarded = 9; });
+  std::string_view written = std::expression_text!(++guarded);
+  ignore!([]() -> void { guarded = 9; });
   return held + int(written.size());
 }
 )",
@@ -2377,10 +2377,10 @@ int main() {
 
     const std::string callable = R"(
 #macro int invoke<F>(F action) { return action(); }
-#macro int relay<F>(F action) { return invoke(action); }
+#macro int relay<F>(F action) { return invoke!(action); }
 int selected<uint64_t Mode>() {
   int& held = guarded;
-  int result = relay([]() -> int {
+  int result = relay!([]() -> int {
     if constexpr (Mode == 0) { other = 9; }
     else if constexpr (Mode == 1) { guarded = 9; }
     else { third = 9; }
@@ -2411,8 +2411,8 @@ int selected<uint64_t Mode>() {
 [[discardable]] #macro T status<T>(T expression) { return expression; }
 #macro legacy(int expression) { int saved = expression; }
 #macro stop() { return; }
-void caller<T>(T value) { status(value); }
-int main() { caller(3); status(4); legacy(5); stop(); return 0; }
+void caller<T>(T value) { status!(value); }
+int main() { caller(3); status!(4); legacy!(5); stop!(); return 0; }
 )",
                                    true, true);
   if (!discardable.canGenerateCode())
@@ -2422,9 +2422,9 @@ int main() { caller(3); status(4); legacy(5); stop(); return 0; }
          "ordinary macro statement analysis preserves discardable source "
          "contracts for symbolic and concrete calls and legacy void forms");
   const std::string requiredSource = "#macro int required() { return 1; } "
-                                     "int main() { required(); return 0; }";
+                                     "int main() { required!(); return 0; }";
   const auto required = analyze(requiredSource, true, true);
-  const auto call = requiredSource.rfind("required();");
+  const auto call = requiredSource.rfind("required!();");
   const auto ignored = std::find_if(
       required.diagnostics.begin(), required.diagnostics.end(),
       [](const auto &diagnostic) { return diagnostic.code == "GTI-S2009"; });
@@ -2449,7 +2449,7 @@ void initializerLocalDependencies() {
 }
 #macro int nested_value(int expression) {
   int saved = expression;
-  return local_value(saved);
+  return local_value!(saved);
 }
 #macro int local_callback<F>(F action) {
   int saved = action();
@@ -2487,7 +2487,7 @@ int main() {
   thread_local int nested = local_value(4);
   return local + nested;
 }
-thread_local int outer = nested_storage();
+thread_local int outer = nested_storage!();
 int main() { return outer; }
 )",
            "nested independent TLS initialization restores the outer "

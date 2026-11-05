@@ -760,7 +760,9 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
   // boundary; the parser owns the delimiter diagnostic.
   bool invalidCapture = false;
   for (std::size_t i = 2; i < lexed.size(); ++i) {
-    if (lexed[i - 2].kind != TokenKind::IDENTIFIER ||
+    if ((lexed[i - 2].kind != TokenKind::IDENTIFIER &&
+         lexed[i - 2].kind != TokenKind::GREATER &&
+         lexed[i - 2].kind != TokenKind::SHIFT_RIGHT) ||
         lexed[i - 1].kind != TokenKind::BANG ||
         lexed[i].kind != TokenKind::LEFT_PAREN)
       continue;

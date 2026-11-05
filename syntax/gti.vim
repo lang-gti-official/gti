@@ -33,6 +33,7 @@ syntax match gtiMacroKeyword "#macro\>"
 syntax match gtiMacroKeyword "#macro\s*(proc)"
 syntax match gtiMacroName "\%(#macro\>[^{};()]*\s\)\@<=\h\w*\ze\s*\%(<[^{};()]*>\s*\)\?("
 syntax match gtiMacroName "\%(#macro\s*(proc)\s\+[^{};()]*\s\)\@<=\h\w*\ze\s*("
+syntax match gtiMacroName "\<\h\w*\ze\s*\%(<[^{};()]*>\s*\)\?!\s*("
 syntax keyword gtiInclude import
 syntax keyword gtiStatement break continue return
 syntax keyword gtiOperator alignof and or sizeof

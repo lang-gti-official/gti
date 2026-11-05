@@ -7621,7 +7621,7 @@
             },
             {
               "type": "SYMBOL",
-              "name": "procedural_macro_invocation"
+              "name": "macro_invocation"
             },
             {
               "type": "SYMBOL",
@@ -7702,7 +7702,7 @@
                 },
                 {
                   "type": "SYMBOL",
-                  "name": "procedural_macro_invocation"
+                  "name": "macro_invocation"
                 },
                 {
                   "type": "SYMBOL",
@@ -8473,7 +8473,7 @@
         }
       ]
     },
-    "procedural_macro_invocation": {
+    "macro_invocation": {
       "type": "PREC",
       "value": 15,
       "content": {
@@ -8483,8 +8483,17 @@
             "type": "FIELD",
             "name": "name",
             "content": {
-              "type": "SYMBOL",
-              "name": "_qualified_identifier"
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "SYMBOL",
+                  "name": "_qualified_identifier"
+                },
+                {
+                  "type": "SYMBOL",
+                  "name": "generic_function"
+                }
+              ]
             }
           },
           {
@@ -8492,23 +8501,122 @@
             "value": "!"
           },
           {
-            "type": "STRING",
-            "value": "("
-          },
-          {
             "type": "FIELD",
-            "name": "input",
+            "name": "arguments",
             "content": {
               "type": "SYMBOL",
-              "name": "syntax_group"
+              "name": "macro_argument_list"
             }
-          },
-          {
-            "type": "STRING",
-            "value": ")"
           }
         ]
       }
+    },
+    "macro_argument_list": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "("
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "SYMBOL",
+                  "name": "pack_expansion"
+                },
+                {
+                  "type": "SEQ",
+                  "members": [
+                    {
+                      "type": "SEQ",
+                      "members": [
+                        {
+                          "type": "CHOICE",
+                          "members": [
+                            {
+                              "type": "SYMBOL",
+                              "name": "syntax_group"
+                            },
+                            {
+                              "type": "SYMBOL",
+                              "name": "_expression_not_comma"
+                            },
+                            {
+                              "type": "SYMBOL",
+                              "name": "payload_reference_pattern"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "REPEAT",
+                          "content": {
+                            "type": "SEQ",
+                            "members": [
+                              {
+                                "type": "STRING",
+                                "value": ","
+                              },
+                              {
+                                "type": "CHOICE",
+                                "members": [
+                                  {
+                                    "type": "SYMBOL",
+                                    "name": "syntax_group"
+                                  },
+                                  {
+                                    "type": "SYMBOL",
+                                    "name": "_expression_not_comma"
+                                  },
+                                  {
+                                    "type": "SYMBOL",
+                                    "name": "payload_reference_pattern"
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "type": "CHOICE",
+                      "members": [
+                        {
+                          "type": "SEQ",
+                          "members": [
+                            {
+                              "type": "STRING",
+                              "value": ","
+                            },
+                            {
+                              "type": "SYMBOL",
+                              "name": "pack_expansion"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "BLANK"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "STRING",
+          "value": ")"
+        }
+      ]
     },
     "syntax_group": {
       "type": "SEQ",
@@ -8816,7 +8924,7 @@
       "members": [
         {
           "type": "SYMBOL",
-          "name": "procedural_macro_invocation"
+          "name": "macro_invocation"
         },
         {
           "type": "SYMBOL",
@@ -9784,7 +9892,7 @@
                 },
                 {
                   "type": "SYMBOL",
-                  "name": "procedural_macro_invocation"
+                  "name": "macro_invocation"
                 },
                 {
                   "type": "SYMBOL",
@@ -9856,7 +9964,7 @@
                     },
                     {
                       "type": "SYMBOL",
-                      "name": "procedural_macro_invocation"
+                      "name": "macro_invocation"
                     },
                     {
                       "type": "SYMBOL",
@@ -10024,6 +10132,10 @@
     [
       "expression",
       "argument_list"
+    ],
+    [
+      "expression",
+      "macro_argument_list"
     ],
     [
       "constraint_predicate",

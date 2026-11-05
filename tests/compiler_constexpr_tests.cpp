@@ -7520,8 +7520,8 @@ import std.assert;
 import std.panic;
 #macro fail_if(bool c, int v) { if (c) { std::panic("bad {}", v); } }
 constexpr int checked_half(int v) {
-  std::assert(v % 2 == 0);
-  fail_if(v % 2 != 0, v);
+  std::assert!(v % 2 == 0);
+  fail_if!(v % 2 != 0, v);
   return v / 2;
 }
 constexpr int h = checked_half(8);

@@ -67,14 +67,14 @@ int exact(Passive& owner, uint8_t count) { return 2; }
 int macro_selected(int value) { return 1; }
 int macro_selected(uint8_t value) { return 2; }
 #macro int macro_forward(uint8_t value) { return macro_selected(value); }
-#macro int macro_nested(uint8_t value) { return macro_forward(value); }
-#macro int macro_expression(uint8_t value) { return macro_selected(macro_narrow(value)); }
+#macro int macro_nested(uint8_t value) { return macro_forward!(value); }
+#macro int macro_expression(uint8_t value) { return macro_selected(macro_narrow!(value)); }
 #macro int macro_exact(int value) { return 1; }
 #macro int macro_exact(uint8_t value) { return 2; }
 #macro T macro_generic<T>(T value) { return value; }
 #macro macro_unused(uint8_t value) {}
 #macro int macro_default(uint8_t value = 33) { return macro_selected(value); }
-int macro_instance<T>(T value) { return macro_nested(33); }
+int macro_instance<T>(T value) { return macro_nested!(33); }
 mut int macro_reads = 0;
 uint8_t macro_next() { macro_reads += 1; return 3; }
 #macro int macro_twice(uint8_t value) { return int(value) + int(value); }
@@ -114,12 +114,12 @@ int main() {
   if (narrow(+(255)) != 255 || signed8((-(128))) != -128) { return 15; }
   if (signed64(-((9223372036854775808))) != -9223372036854775808 ||
       unsigned64(((18446744073709551615))) != 18446744073709551615) { return 16; }
-  if (macro_narrow((+(255))) != 255 || macro_signed((-(128))) != -128 ||
-      macro_wide(-((9223372036854775808))) != -9223372036854775808) { return 17; }
-  if (macro_forward(33) != 2 || macro_nested(33) != 2 || macro_expression(33) != 2 ||
-      macro_exact(33) != 1 || macro_generic<uint8_t>(33) != 33 ||
-      macro_generic(33) != 33 || macro_default() != 2 || macro_instance(0) != 2) { return 18; }
-  macro_unused(macro_next());
-  if (macro_reads != 0 || macro_twice(macro_next()) != 6 || macro_reads != 2) { return 19; }
+  if (macro_narrow!((+(255))) != 255 || macro_signed!((-(128))) != -128 ||
+      macro_wide!(-((9223372036854775808))) != -9223372036854775808) { return 17; }
+  if (macro_forward!(33) != 2 || macro_nested!(33) != 2 || macro_expression!(33) != 2 ||
+      macro_exact!(33) != 1 || macro_generic<uint8_t>!(33) != 33 ||
+      macro_generic!(33) != 33 || macro_default!() != 2 || macro_instance(0) != 2) { return 18; }
+  macro_unused!(macro_next());
+  if (macro_reads != 0 || macro_twice!(macro_next()) != 6 || macro_reads != 2) { return 19; }
   return 0;
 }

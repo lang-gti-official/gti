@@ -341,7 +341,7 @@ consteval std::size_t validate(std::string_view pattern) { return pattern.size()
 int main() {
   std::string text{"dyn {}"};
   int value = 3;
-  if (value == 4) { checked(text.view(), value); }
+  if (value == 4) { checked!(text.view(), value); }
   return 0;
 }
 )GTI",

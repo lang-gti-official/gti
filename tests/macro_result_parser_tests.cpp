@@ -1,5 +1,7 @@
 #include "gti/language_queries.h"
 #include "gti/lexer.h"
+#include "gti/ast_clone.h"
+#include "gti/formatter.h"
 #include "gti/parser.h"
 
 #include <iostream>
@@ -27,7 +29,7 @@ void signatures() {
   return enabled ? first : second;
 }
 #macro std::optional<T> maybe<T>(T value) { return value; }
-int main() { return choose(true, 1, 2); }
+int main() { return choose!(true, 1, 2); }
 )";
   lang::Lexer lexer;
   lang::Parser parser(lexer.scan(source, "macro-result-parser.gti"), source);
@@ -55,6 +57,40 @@ int main() { return choose(true, 1, 2); }
                                          : "optional"),
           "result type and macro name remain separate parser facts");
   }
+}
+
+void markedCalls() {
+  lang::Lexer lexer;
+  for (const std::string source : {"choose!(true, 1, 2)",
+                                  "policy::choose<int>!(true, 1, 2)",
+                                  "outer!(inner!(1), 2, 3)"}) {
+    lang::Parser parser(lexer.scan(source, "marked.gti"), source);
+    const auto expression = parser.parseExpression();
+    const auto *call = lang::exprAs<lang::Call>(expression.get());
+    check(!parser.hadError() && call && call->macroBang(),
+          "typed invocations retain the explicit call marker");
+    if (!call) continue;
+    check(call->arguments().size() == 3 && call->macroArgumentErrors().empty(),
+          "typed call arguments remain structured expressions");
+    check(call->capturedArguments() &&
+              call->capturedArguments()->text == source.substr(source.find('(')),
+          "the same call retains exact raw input for declaration-kind resolution");
+    const auto cloned = lang::cloneExpr(*call, 71);
+    const auto *copy = lang::exprAs<lang::Call>(cloned.get());
+    check(copy && copy->macroBang()->expansion == 71 && copy->arguments().size() == 3,
+          "hygienic AST clones retain marker and typed arguments");
+  }
+  for (const std::string source : {"f(1)", "!f(1)", "!(true)", "a != b"}) {
+    lang::Parser parser(lexer.scan(source, "ordinary.gti"), source);
+    check(parser.parseExpression() && !parser.hadError(),
+          "ordinary calls and negation keep their grammar");
+  }
+  const lang::Formatter formatter;
+  const auto formatted = formatter.format(
+      "int main(){return scope::choose<int>!(true,1,2);}");
+  check(formatted.find("choose<int>!(true, 1, 2)") != std::string::npos,
+        "formatter keeps the generic macro call marker adjacent");
+  check(formatter.format(formatted) == formatted, "macro call formatting is idempotent");
 }
 
 void recovery() {
@@ -111,6 +147,7 @@ int main() { return 0; }
 
 int main() {
   signatures();
+  markedCalls();
   recovery();
   signatureQueries();
   return failures == 0 ? 0 : 1;

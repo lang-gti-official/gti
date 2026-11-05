@@ -28,9 +28,9 @@ def main():
                 "textDocument": {"publishDiagnostics": {"relatedInformation": True}}}}})
             session.receive_until(lambda item: item.get("id") == 1)
             session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
-            macro = "#macro BORDER(uint8_t width) {}\nint main() { BORDER(33); return 0; }\n"
+            macro = "#macro BORDER(uint8_t width) {}\nint main() { BORDER!(33); return 0; }\n"
             assert not publish(macro)
-            invalid_macro = macro.replace("BORDER(33)", "BORDER(256)")
+            invalid_macro = macro.replace("BORDER!(33)", "BORDER!(256)")
             errors = publish(invalid_macro)
             assert len(errors) == 1 and errors[0]["code"] == "GTI-S2003", errors
             offset = invalid_macro.index("256")

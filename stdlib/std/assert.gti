@@ -21,7 +21,7 @@ export namespace std {
   [[track_caller]]
   #macro assert(bool condition) {
     std::string_view condition_text =
-        std::expression_text(condition, "assertion condition");
+        std::expression_text!(condition, "assertion condition");
     if (!condition) {
       std::runtime_panic("Assertion failed: {}", condition_text);
     }
@@ -40,7 +40,7 @@ export namespace std {
   #macro debug_assert(bool condition) {
     if (std::debug_assertions_enabled) {
       std::string_view condition_text =
-          std::expression_text(condition, "assertion condition");
+          std::expression_text!(condition, "assertion condition");
       if (!condition) {
         std::runtime_panic("Debug assertion failed: {}", condition_text);
       }
