@@ -564,6 +564,9 @@ auto SemanticVisitor::Impl::analyzeMacroCall(const Call &writtenCall,
   Impl &probe = *probeOwner;
   probe.analyze(*call);
   if (hasErrorDiagnostics(probe.diagnostics)) {
+    // A failed probe has no result type. Do not reuse the preceding caller
+    // expression's type and invent an ignored-return diagnostic for a macro.
+    currentType = SemanticType::Unknown;
     for (auto &diagnostic : probe.diagnostics) {
       macroRelated(diagnostic, tokenSpan(callableToken(call->callee())),
                    "While checking this macro invocation.");

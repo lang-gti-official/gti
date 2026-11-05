@@ -33,7 +33,10 @@ def main():
             invalid_macro = macro.replace("BORDER(33)", "BORDER(256)")
             errors = publish(invalid_macro)
             assert len(errors) == 1 and errors[0]["code"] == "GTI-S2003", errors
-            assert errors[0]["range"]["start"]["line"] == 1, errors
+            offset = invalid_macro.index("256")
+            assert errors[0]["range"] == {"start": lsp_position(invalid_macro, offset),
+                                          "end": lsp_position(invalid_macro, offset + 3)}, errors
+            assert "Integer literal '256' does not fit" in errors[0]["message"], errors
             assert "macro invocation" in str(errors[0].get("relatedInformation")), errors
             assert not publish(macro)
             fixture = Path(__file__).parent / "fixtures/semantic_call_regressions.gti"
