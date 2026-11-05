@@ -129,9 +129,11 @@ wrapper, and neither backend defines its semantics.
   inventory on Linux in cost-balanced bundled-release shards, the `darwin`
   set on macOS (what differs on the platform: the AArch64 LLVM backend,
   Apple-only tests, threads/TLS/atomics, debug info, install/bundle/link,
-  ABI/layout; `tests/ci_darwin_tests.json`), the compiler, LLVM-backend and
-  thread sanitizers, and installed-toolchain checks, produces the production
-  archives, and proves each platform's shards covered its inventory. Explicitly allowlisted orchestration-only changes run lint and workflow
+  ABI/layout; `tests/ci_darwin_tests.json`) and installed-toolchain checks,
+  produces the production archives, and proves each platform's shards covered
+  its inventory. The compiler, LLVM-backend and thread sanitizers run daily on
+  the nightly commit (`sanitizers.yml`), and the release train cuts and
+  promotes only sanitizer-verified commits. Explicitly allowlisted orchestration-only changes run lint and workflow
   regressions instead; compiler/runtime, build/packaging, validation selection,
   mixed and unknown changes retain full integration coverage. A source-only
   `stdlib/std/*.gti` candidate with allowed source tests/docs/metadata may reuse

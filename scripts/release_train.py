@@ -49,6 +49,12 @@ BACKPORT_LABEL = "backport"
 CUT_LABELS = ("rollup=never", "release-cut")
 CUT_BRANCH_PREFIX = "release-cut/"
 GATE_CHECK = "CI gate"
+# The daily sanitizer workflow. Its verdict job names the commit it checked
+# out, because a scheduled or dispatched run's head_sha is main's tip when it
+# started, not the commit it sanitized.
+SANITIZER_WORKFLOW = ".github/workflows/sanitizers.yml"
+SANITIZER_VERDICT = "Sanitizer verdict"
+SANITIZER_RUNS = 60
 STATUS_BRANCH = "release-status"
 STATUS_FILE = "release-status.json"
 STATUS_URL = (f"https://raw.githubusercontent.com/{REPOSITORY}/"
@@ -402,8 +408,8 @@ def train_plan(event: str, ref: str, stage: str, now: datetime) -> dict[str, str
 
 
 def select_cut(repository: str, ref: str, min_age: int, now: datetime,
-               evidence: Evidence, request: Request) -> dict[str, str]:
-    """The completely published nightly, full-CI-verified and old enough to cut."""
+               evidence: Evidence, request: Request, sanitized: Evidence) -> dict[str, str]:
+    """The completely published nightly, full-CI-verified, sanitized and old enough to cut."""
     if ref != "refs/heads/main":
         raise TrainError("a release cut runs only from main's own definition")
     head = source.remote_main()
@@ -425,8 +431,14 @@ def select_cut(repository: str, ref: str, min_age: int, now: datetime,
                     f"{min_age} h old")
     if version_at(nightly) != version_at(head):
         return skip(f"a release cut landed on main after the published nightly {nightly}")
+    # Sanitizers run daily on the nightly commit, not in full validation; a
+    # nightly they have not passed (yet) waits for the next train.
+    try:
+        sanitizer_run = sanitized(repository, nightly)
+    except ValueError as error:
+        return skip(f"published nightly {nightly} has not passed the sanitizers: {error}")
     print(f"Release cut source {nightly}: published nightly, full CI evidence {run}, "
-          f"on main for {age.total_seconds() / 3600:.1f} h")
+          f"sanitizer run {sanitizer_run}, on main for {age.total_seconds() / 3600:.1f} h")
     return {"cut": "true", "sha": nightly, "version": version_at(nightly)}
 
 
@@ -571,7 +583,7 @@ class Delivery:
 
 def run_cut(repository: str, event: str, ref: str, min_age: str, title: str, worktree: Path,
             now: datetime, evidence: Evidence, delivery: Delivery | None,
-            request: Request) -> dict[str, str]:
+            request: Request, sanitized: Evidence) -> dict[str, str]:
     hours, _ = hours_input(min_age, event, NIGHTLY_AGE_HOURS, "the nightly age")
     title = title_input(title, now)
     if delivery:
@@ -582,7 +594,7 @@ def run_cut(repository: str, event: str, ref: str, min_age: str, title: str, wor
             state = delivery.enqueue(pending[0])
             return skip(f"release cut PR #{pending[0]['number']} is open ({state}); "
                         "no new cut until it merges or is closed")
-    selected = select_cut(repository, ref, hours, now, evidence, request)
+    selected = select_cut(repository, ref, hours, now, evidence, request, sanitized)
     if selected["cut"] != "true":
         return selected
     cut = prepare_cut(selected["sha"], title, worktree)
@@ -1005,8 +1017,100 @@ def nightly_publication_complete(repository: str, sha: str, request: Request) ->
     return marker["digest"] == "sha256:" + hashlib.sha256((sha + "\n").encode()).hexdigest()
 
 
+def sanitizer_evidence(repository: str, sha: str, request: Request) -> int:
+    """The sanitizers.yml run, from main's own definition, whose verdict passed on exactly sha.
+
+    Only scheduled and main-dispatched runs count: a dispatch from another
+    branch would run that branch's copy of the workflow. The verdict job is
+    read from the run's latest attempt, so a green retry of one job cannot
+    combine with a red verdict."""
+    if SHA.fullmatch(sha) is None:
+        raise TrainError("sanitizer evidence must name an exact commit SHA")
+    base = source.repository_path(repository)
+    workflow = urllib.parse.quote(PurePosixPath(SANITIZER_WORKFLOW).name, safe="")
+    runs = request(f"{base}/actions/workflows/{workflow}/runs?branch=main&status=completed"
+                   f"&per_page={SANITIZER_RUNS}")
+    if not isinstance(runs, dict) or not isinstance(runs.get("workflow_runs"), list):
+        raise RuntimeError("GitHub returned no sanitizer run inventory")
+    verdict = f"{SANITIZER_VERDICT} ({sha})"
+    for run in runs["workflow_runs"][:SANITIZER_RUNS]:
+        if not isinstance(run, dict) or type(run.get("id")) is not int:
+            raise RuntimeError("GitHub returned a malformed workflow run")
+        owner = (run.get("repository") or {}).get("full_name", "")
+        head_owner = (run.get("head_repository") or {}).get("full_name", "")
+        if (run.get("path") != SANITIZER_WORKFLOW or run.get("head_branch") != "main"
+                or run.get("event") not in ("schedule", "workflow_dispatch")
+                or run.get("status") != "completed"
+                or owner.lower() != repository.lower() or head_owner.lower() != repository.lower()):
+            continue
+        jobs = request(f"{base}/actions/runs/{run['id']}/jobs?filter=latest&per_page=100")
+        if not isinstance(jobs, dict) or not isinstance(jobs.get("jobs"), list):
+            raise RuntimeError("GitHub returned no job inventory")
+        verdicts = [job for job in jobs["jobs"] if isinstance(job, dict) and job.get("name") == verdict]
+        if (len(verdicts) == 1 and verdicts[0].get("status") == "completed"
+                and verdicts[0].get("conclusion") == "success"):
+            return run["id"]
+    raise ValueError(f"no successful '{verdict}' in the last {SANITIZER_RUNS} runs of "
+                     f"{SANITIZER_WORKFLOW} on main; dispatch it with commit {sha}")
+
+
+def sanitized_source(sha: str) -> str:
+    """The commit whose sanitizer verdict covers sha.
+
+    A release cut changes only VERSION, CHANGELOG.md and fragments on top of
+    its one parent, the sanitized nightly, so that parent's verdict covers the
+    beta built from it. Any other commit (a backported beta) needs its own."""
+    if SHA.fullmatch(sha) is None or git("cat-file", "-t", sha, optional=True) != "commit":
+        return sha
+    commit_parents = parents(sha)
+    if release_cut(sha) is None or len(commit_parents) != 1:
+        return sha
+    paths = changed(commit_parents[0], sha)
+    return commit_parents[0] if paths and all(is_metadata(path) for path in paths) else sha
+
+
+def sanitizer_source(repository: str, event: str, ref: str, requested: str,
+                     sanitized: Evidence) -> dict[str, str]:
+    """Which commit sanitizers.yml checks out, and whether it runs at all.
+
+    By default the commit the nightly tag names; a dispatch may name another
+    commit on main or a beta/* line. A scheduled run skips a commit that has
+    already passed, so an unchanged nightly costs no second three-hour run."""
+    if ref != "refs/heads/main":
+        raise TrainError("sanitizer evidence comes only from main's own workflow definition")
+    if event not in ("schedule", "workflow_dispatch"):
+        raise TrainError("sanitizers run only on schedule or dispatch")
+    _, nightly = source.published_nightly()
+    if requested:
+        if event != "workflow_dispatch" or SHA.fullmatch(requested) is None:
+            raise TrainError("a requested sanitizer commit must be a full lowercase SHA from a dispatch")
+        sha = requested
+    elif nightly:
+        sha = nightly
+    else:
+        print("::notice::no nightly has been published yet; nothing to sanitize")
+        return {"sanitize": "false", "sha": "", "nightly": "false"}
+    if git("cat-file", "-t", sha, optional=True) != "commit":
+        raise TrainError(f"{sha} is not a commit in this checkout")
+    lines = source.remote_refs("refs/heads/main", "refs/heads/beta/*")
+    if not any(source.is_ancestor(sha, tip) for tip in lines.values()):
+        raise TrainError(f"{sha} is not on main or a beta/* line")
+    values = {"sanitize": "true", "sha": sha, "nightly": str(sha == nightly).lower()}
+    if event == "schedule":
+        try:
+            previous = sanitized(repository, sha)
+        except ValueError:
+            pass
+        else:
+            print(f"::notice::{sha} already passed the sanitizers in run {previous}")
+            return dict(values, sanitize="false")
+    print(f"Sanitize {sha}" + (" (the published nightly)" if sha == nightly else ""))
+    return values
+
+
 def candidate(repository: str, version: str, tags: dict[str, str], status: dict[str, Any],
-              soak: int, now: datetime, request: Request) -> tuple[dict[str, str] | None, str]:
+              soak: int, now: datetime, request: Request,
+              sanitized: Evidence) -> tuple[dict[str, str] | None, str]:
     """The newest beta of version if it may be promoted, else (None, why not)."""
     numbers = beta_numbers(tags, version)
     if not numbers:
@@ -1025,6 +1129,11 @@ def candidate(repository: str, version: str, tags: dict[str, str], status: dict[
     if blockers:
         return None, f"open {BLOCKER_LABEL} issues name {version}: " + \
             ", ".join(f"#{number}" for number in blockers)
+    covered = sanitized_source(tags[tag])
+    try:
+        sanitized(repository, covered)
+    except ValueError as error:
+        return None, f"{tag} has not passed the sanitizers on {covered}: {error}"
     return {"tag": tag, "version": version, "sha": tags[tag], "number": str(numbers[-1]),
             "soaked": f"{soaked.total_seconds() / 3600:.1f}"}, ""
 
@@ -1046,7 +1155,7 @@ def promotion_supersession(version: str, tags: dict[str, str]) -> str:
 
 
 def select_promotion(repository: str, event: str, soak_input: str, now: datetime,
-                     request: Request) -> dict[str, str]:
+                     request: Request, sanitized: Evidence) -> dict[str, str]:
     """The highest unpromoted version newer than every stable whose newest beta qualifies."""
     soak, override = hours_input(soak_input, event, SOAK_HOURS, "the soak time")
     tags = origin_tags()
@@ -1061,7 +1170,7 @@ def select_promotion(repository: str, event: str, soak_input: str, now: datetime
         if superseded:
             reasons.append(superseded)
             continue
-        chosen, why = candidate(repository, version, tags, status, soak, now, request)
+        chosen, why = candidate(repository, version, tags, status, soak, now, request, sanitized)
         if chosen:
             print(f"Promote {chosen['tag']} ({chosen['sha']}) to v{version}"
                   + (f"; soak overridden to {soak} h by dispatch" if override else ""))
@@ -1071,7 +1180,7 @@ def select_promotion(repository: str, event: str, soak_input: str, now: datetime
 
 
 def admit_promotion(repository: str, event: str, soak_input: str, tag: str, sha: str,
-                    now: datetime, request: Request) -> dict[str, str]:
+                    now: datetime, request: Request, sanitized: Evidence) -> dict[str, str]:
     """Re-check the selected beta after the stable environment approved the job."""
     match = BETA_TAG.fullmatch(tag)
     if match is None or SHA.fullmatch(sha) is None:
@@ -1092,7 +1201,7 @@ def admit_promotion(repository: str, event: str, soak_input: str, tag: str, sha:
     superseded = promotion_supersession(version, tags)
     if superseded:
         raise TrainError(superseded)
-    chosen, why = candidate(repository, version, tags, status, soak, now, request)
+    chosen, why = candidate(repository, version, tags, status, soak, now, request, sanitized)
     if not chosen or chosen["tag"] != tag:
         raise TrainError(why or f"{tag} is no longer the newest beta of {version}")
     print(f"Admitted promotion of {tag} to {target}")
@@ -1328,6 +1437,11 @@ def nightly_evidence_reader() -> Evidence:
     return lambda repository, sha: release_evidence(repository, sha, request)
 
 
+def sanitizer_reader() -> Evidence:
+    request = reader()
+    return lambda repository, sha: sanitizer_evidence(repository, sha, request)
+
+
 def check_repository(repository: str) -> str:
     if repository != REPOSITORY:
         raise TrainError(f"the release train runs only in {REPOSITORY}")
@@ -1366,6 +1480,7 @@ def main(argv: list[str] | None = None) -> int:
     command("record-stable", "version")
     command("rollback", "repository", "action", "target", "reason", "notes", "output")
     command("require-success", "results")
+    command("sanitizer-source", "repository", "event", "ref", "commit", "output")
     sub.add_parser("rulesets").add_argument(
         "--name", choices=[ruleset["name"] for ruleset in rulesets()], default="")
     arguments = parser.parse_args(argv)
@@ -1384,7 +1499,8 @@ def main(argv: list[str] | None = None) -> int:
                 delivery = Delivery(agent_workflow.GitHub(token=token), reader(), token)
             values = run_cut(arguments.repository, arguments.event, arguments.ref,
                              arguments.min_age_hours, arguments.title, Path(arguments.worktree),
-                             now_utc(), nightly_evidence_reader(), delivery, reader())
+                             now_utc(), nightly_evidence_reader(), delivery, reader(),
+                             sanitizer_reader())
         elif name == "select-beta":
             check_repository(arguments.repository)
             values = select_beta(arguments.repository, arguments.ref, evidence_reader(),
@@ -1419,11 +1535,12 @@ def main(argv: list[str] | None = None) -> int:
         elif name == "select-promotion":
             check_repository(arguments.repository)
             values = select_promotion(arguments.repository, arguments.event, arguments.soak_hours,
-                                      now_utc(), reader())
+                                      now_utc(), reader(), sanitizer_reader())
         elif name == "admit-promotion":
             check_repository(arguments.repository)
             values = admit_promotion(arguments.repository, arguments.event, arguments.soak_hours,
-                                     arguments.tag, arguments.sha, now_utc(), reader())
+                                     arguments.tag, arguments.sha, now_utc(), reader(),
+                                     sanitizer_reader())
         elif name == "fetch-draft":
             print("Fetched " + ", ".join(fetch_draft_assets(arguments.tag, Path(arguments.directory))))
             return 0
@@ -1451,6 +1568,10 @@ def main(argv: list[str] | None = None) -> int:
                 encoding="utf-8")
             values = {"tag": plan["tag"], "title": plan["title"], "latest": plan["latest"],
                       "withdraw": str(plan["action"] == "withdraw").lower()}
+        elif name == "sanitizer-source":
+            check_repository(arguments.repository)
+            values = sanitizer_source(arguments.repository, arguments.event, arguments.ref,
+                                      arguments.commit, sanitizer_reader())
         elif name == "require-success":
             require_success(arguments.results)
             return 0

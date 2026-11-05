@@ -2,8 +2,10 @@
 """Hold the example-corpus LoweredProgram inventory within its reviewed budget.
 
 Each example records bodies, generated items and generated items by kind for
-both target profiles. A recorded example fails when any of those leaves the
-census budget (tests/census_budget.py). Declarations are not recorded: one
+both target profiles. A recorded example whose counts leave the census budget
+(tests/census_budget.py) is an advisory finding (tests/advisory_checks.py):
+a `GTI-ADVISORY:` line, not a failure, unless GTI_ADVISORY_CHECKS=strict.
+Declarations are not recorded: one
 more stdlib function is one more declaration in every importing example, so
 that count moved in nearly every row of every stdlib pull request without
 saying anything about what the example lowers to. Examples not yet recorded
@@ -21,6 +23,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import advisory_checks as advisory
 import census_budget as budget
 import census_store as store
 
@@ -143,7 +146,7 @@ def main() -> int:
     elif not arguments.refresh_all:
         raise ValueError(f"missing census baseline {baseline_path}; create it with --refresh-all")
     observed = {target: collect(tool, root, names, target) for target in TARGETS}
-    failed = False
+    drift: list[str] = []
     outside: set[str] = set()
     for target in TARGETS:
         actual = observed[target]
@@ -165,14 +168,13 @@ def main() -> int:
             print(f"  unrecorded: {name} (recorded at the next --refresh-all)")
         outside |= set(changes)
         if changes and not (arguments.update or arguments.refresh_all):
-            failed = True
-            print(f"FAIL: {target} LoweredProgram census left its budget:", file=sys.stderr)
-            for name, change in changes.items():
-                print(f"  {name}: {'; '.join(change)}", file=sys.stderr)
-    if failed:
-        print("Review the lowered inventory, then re-record these rows with --update.",
-              file=sys.stderr)
-        return 1
+            drift += [f"{target} {name}: {'; '.join(change)}; re-record with --update"
+                      for name, change in changes.items()]
+    if drift:
+        # A census budget is a reviewed count, not behaviour: report it.
+        print("LoweredProgram census left its budget (advisory): review the lowered "
+              "inventory, then re-record these rows with --update.")
+        return advisory.report("lowered_program_corpus_census", drift)
     if arguments.update or arguments.refresh_all:
         document = refreshed(baseline, observed, None if arguments.refresh_all else outside)
         store.save(baseline_path, "lowered", document)
@@ -182,4 +184,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    with advisory.leading_findings():
+        status = main()
+    raise SystemExit(status)

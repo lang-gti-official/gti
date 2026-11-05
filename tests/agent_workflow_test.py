@@ -204,6 +204,54 @@ class DeclaredTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "at most"):
             validation.declared_tests(many)
 
+    def test_pull_request_ci_reports_block_rules_and_keeps_runnable_names(self):
+        # PR CI warns about a malformed block instead of failing; it still
+        # re-runs the plain names, never an untrusted token.
+        names, problems = validation.parse_declared("Validation:\n- T0: good_test, $(id)\n- T1: other_test")
+        self.assertEqual(names, ["good_test", "other_test"])
+        self.assertEqual(len(problems), 1)
+        self.assertIn("'$(id)'", problems[0])
+        self.assertEqual(validation.parse_declared(""), ([], [unittest.mock.ANY]))
+        names, problems = validation.parse_declared(
+            "Validation:\n- T1: " + ", ".join(f"t{i:03}" for i in range(validation.DECLARED_LIMIT + 5)))
+        self.assertEqual(len(names), validation.DECLARED_LIMIT)
+        self.assertTrue(any("at most" in problem for problem in problems))
+        document = {"tests": [{"name": "registered"}, {"name": "compiler_pipeline"},
+                              {"name": "off", "properties": [{"name": "DISABLED", "value": True}]}]}
+        selected, problems = validation.runnable_declared(document, ["registered", "compiler_pipeline",
+                                                                     "off", "missing"])
+        self.assertEqual(selected, ["registered"])
+        self.assertEqual(len(problems), 2)
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as directory:
+            summary = Path(directory) / "summary.md"
+            with unittest.mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true",
+                                                       "GITHUB_STEP_SUMMARY": str(summary)}), \
+                    contextlib.redirect_stdout(output):
+                validation.advisory("Validation block", ["first\nline", "second"])
+            self.assertIn("- first line\n- second\n", summary.read_text())
+        self.assertEqual(output.getvalue().splitlines(),
+                         ["::warning title=Validation block::first line", "::warning title=Validation block::second"])
+
+    def test_advisory_census_findings_are_read_from_passing_junit_output(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import advisory_checks
+        self.assertEqual(advisory_checks.MARKER, validation.ADVISORY_MARKER)
+        with tempfile.TemporaryDirectory() as directory:
+            shard = Path(directory) / "shard-linux-0"
+            shard.mkdir()
+            (shard / "linux-0.xml").write_text(
+                '<testsuite><testcase name="mir_census_regression" status="run"><system-out>'
+                "GTI-ADVISORY: mir_census_regression: 001.gti: 10 -> 40\nRECORDED noise\n"
+                '</system-out></testcase><testcase name="other" status="run"><system-out>ok'
+                "</system-out></testcase></testsuite>")
+            (shard / "linux-1.xml").write_text(
+                '<testsuite><testcase name="mir_census_regression"><system-out>'
+                "GTI-ADVISORY: mir_census_regression: 001.gti: 10 -> 40\n</system-out></testcase></testsuite>")
+            (shard / "broken.xml").write_text("<testsuite")
+            self.assertEqual(validation.advisory_findings(directory),
+                             ["mir_census_regression: 001.gti: 10 -> 40"])
+
     def test_coverage_reads_wrapped_ctest_patterns_and_focused_plans(self):
         with tempfile.TemporaryDirectory() as directory:
             plan = {"tier": "T1", "rationale": "local", "regressions": ["planned_regression"],

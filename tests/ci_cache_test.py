@@ -33,7 +33,7 @@ def warmup_contract(repository, bash):
     assert "id: build" in block("Build compiler cache inputs")
     save = block("Save the cache under main")
     assert re.search(r"if: steps\.build\.outcome == 'success' && steps\.cache\.outputs\.cache-hit != 'true'", save), save
-    for validation in ("ci.yml", "full-validation.yml"):
+    for validation in ("ci.yml", "full-validation.yml", "sanitizers.yml"):
         text = (repository / ".github/workflows" / validation).read_text()
         assert "actions/cache/save@" not in text, f"{validation} must only restore the main caches"
     for profile, build_dir, expected in (("native", "build", ["gti", "gti_lsp"]),

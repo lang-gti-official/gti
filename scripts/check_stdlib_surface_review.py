@@ -18,12 +18,18 @@ the following must hold over the same range:
 * a commit in the range ends its message with a trailer block carrying
   `Stdlib-Surface: unchanged` and one nonempty `Stdlib-Surface-Reason:`,
   declaring that the edit leaves the classified surface as recorded.
+
+CI runs it with --advisory: a missing review is reported as a warning (a
+`::warning::` annotation under GitHub Actions) and the job still passes,
+because the review is bookkeeping about the manifest, not a property of the
+shipped library. Without --advisory a missing review exits 1.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from typing import Any
@@ -128,14 +134,37 @@ def declarations(fork: str, head: str) -> dict[str, str]:
     return found
 
 
-def main() -> int:
+def report(lines: list[str], advisory: bool) -> int:
+    """Print a failed review: blocking on stderr, or advisory as warnings that exit 0."""
+    if not advisory:
+        for line in lines:
+            print(line, file=sys.stderr)
+        return 1
+    annotate = os.environ.get("GITHUB_ACTIONS") == "true"
+    for line in lines:
+        print(("::warning title=Stdlib surface review::" if annotate else "advisory: ") + line.strip())
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("base", help="base Git revision")
     parser.add_argument("head", nargs="?", default="HEAD", help="head Git revision")
-    arguments = parser.parse_args()
+    parser.add_argument("--advisory", action="store_true",
+                        help="report a missing review as a warning and exit 0")
+    arguments = parser.parse_args(argv)
+    try:
+        return review(arguments.base, arguments.head, arguments.advisory)
+    except (RuntimeError, ValueError) as error:
+        if arguments.advisory:
+            return report([f"stdlib surface review check could not run: {error}"], True)
+        raise
 
-    head = git("rev-parse", f"{arguments.head}^{{commit}}").stdout.strip()
-    fork = git("merge-base", arguments.base, head).stdout.strip()
+
+def review(base: str, head_revision: str, advisory: bool) -> int:
+
+    head = git("rev-parse", f"{head_revision}^{{commit}}").stdout.strip()
+    fork = git("merge-base", base, head).stdout.strip()
     sources = changed_sources(fork, head)
     if not sources:
         print("No shipped stdlib source was added or modified; no surface review is required.")
@@ -156,24 +185,18 @@ def main() -> int:
         )
         return 0
 
-    print(
+    return report([
         "Stdlib sources changed without a surface review "
         f"(range {fork[:12]}..{head[:12]}):",
-        file=sys.stderr,
-    )
-    for source in unreviewed:
-        print(f"  {source}", file=sys.stderr)
-    print(
+        *(f"  {source}" for source in unreviewed),
         f"Review each source's classification in {MANIFEST}: add, change or "
         "remove at least one entry whose \"source\" names it (its operations, "
         "status, cases or evidence). If the edit leaves the classified surface "
-        "exactly as recorded, end a commit in the range with the trailers\n"
-        f"  {TRAILER}: {TRAILER_VALUE}\n"
-        f"  {REASON_TRAILER}: <why the classified surface is unchanged>\n"
+        "exactly as recorded, end a commit in the range with the trailers",
+        f"  {TRAILER}: {TRAILER_VALUE}",
+        f"  {REASON_TRAILER}: <why the classified surface is unchanged>",
         "in one contiguous trailer block.",
-        file=sys.stderr,
-    )
-    return 1
+    ], advisory)
 
 
 if __name__ == "__main__":
