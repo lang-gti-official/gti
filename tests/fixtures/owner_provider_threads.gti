@@ -1,0 +1,121 @@
+import std.memory;
+import std.thread;
+
+extern "C" {
+  void owner_audit_begin();
+  void owner_audit_fail_next();
+  void owner_audit_event(int32_t value);
+  int32_t owner_audit_event_count(int32_t value);
+  void owner_audit_object(const void* address, uint64_t bytes, uint64_t alignment);
+  void owner_audit_finish(int32_t attempts, int32_t acquired);
+}
+
+void observe(std::unique_ptr<int>& owner) {
+  unsafe {
+    owner_audit_object(std::erase_address(&*owner), std::layout_of<int>().bytes,
+                       std::layout_of<int>().alignment);
+  }
+}
+
+// Reviewed transfer assertion: each task owns only an integer allocation and
+// an integer identity; the native observer is synchronized and keeps no loan.
+[[unsafe_transfer]] class Work {
+  std::unique_ptr<int> child;
+  int identity;
+public:
+  Work(int identity) : child(std::make_unique<int>(identity)), identity(identity) {
+    observe(this.child);
+  }
+  void operator()() { owner_audit_event(100 + *this.child); }
+  ~Work() { owner_audit_event(this.identity); }
+};
+
+[[unsafe_transfer]] class Producer {
+  std::unique_ptr<int> child;
+  int identity;
+public:
+  Producer(int identity) : child(std::make_unique<int>(identity)), identity(identity) {
+    observe(this.child);
+  }
+  std::unique_ptr<int> operator()() {
+    owner_audit_event(100 + this.identity);
+    auto result = std::make_unique<int>(*this.child + 40);
+    observe(result);
+    return result;
+  }
+  ~Producer() { owner_audit_event(this.identity); }
+};
+
+bool once(int identity, bool ran) {
+  return owner_audit_event_count(identity) == 1 &&
+         owner_audit_event_count(100 + identity) == (ran ? 1 : 0);
+}
+
+int main() {
+  // A recoverable box failure consumes and drops its owning task, and does not
+  // call the native thread service or run the task.
+  owner_audit_begin();
+  {
+    auto task = Work(1);
+    owner_audit_fail_next();
+    auto failed = std::thread::start(std::move(task));
+    if (failed || failed.error() != std::thread_errc::resource_unavailable) { return 1; }
+  }
+  if (!once(1, false)) { return 2; }
+  owner_audit_finish(2, 1);
+
+  owner_audit_begin();
+  {
+    auto started = std::thread::start(Work(2));
+    if (!started) { return 3; }
+    mut auto handle = std::move(started).value();
+    if (!handle.join()) { return 4; }
+  }
+  if (!once(2, true)) { return 5; }
+  owner_audit_finish(2, 2);
+
+  // Failure leaves the result handle reusable. Taking an owning result moves
+  // its allocation out before the task box is retired.
+  owner_audit_begin();
+  {
+    mut std::thread_result<std::unique_ptr<int>> handle{};
+    auto task = Producer(3);
+    owner_audit_fail_next();
+    auto failed = handle.start(std::move(task));
+    if (failed || failed.error() != std::thread_errc::resource_unavailable) { return 6; }
+    if (!handle.start(Producer(4))) { return 7; }
+    auto joined = handle.join();
+    if (!joined) { return 8; }
+    auto result = std::move(joined).value();
+    observe(result);
+    if (*result != 44) { return 9; }
+  }
+  if (!once(3, false) || !once(4, true)) { return 10; }
+  owner_audit_finish(5, 4);
+
+  // Rejecting an occupied handle drops the newly consumed task without
+  // allocating another box or disturbing the first worker and its result.
+  owner_audit_begin();
+  {
+    mut std::thread_result<std::unique_ptr<int>> handle{};
+    if (!handle.start(Producer(5))) { return 11; }
+    auto refused = handle.start(Producer(6));
+    if (refused || refused.error() != std::thread_errc::operation_not_permitted) { return 12; }
+    auto joined = handle.join();
+    if (!joined) { return 13; }
+    auto result = std::move(joined).value();
+    observe(result);
+    if (*result != 45) { return 14; }
+  }
+  if (!once(5, true) || !once(6, false)) { return 15; }
+  owner_audit_finish(4, 4);
+
+  owner_audit_begin();
+  {
+    mut std::thread_result<std::unique_ptr<int>> abandoned{};
+    if (!abandoned.start(Producer(7))) { return 16; }
+  }
+  if (!once(7, true)) { return 17; }
+  owner_audit_finish(3, 3);
+  return 0;
+}

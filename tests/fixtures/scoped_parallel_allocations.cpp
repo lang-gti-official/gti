@@ -5,8 +5,9 @@
 #include <cstdlib>
 #include <new>
 
-// Count the exact no-throw C++ allocation seam used by managed task boxes and
-// runtime worker state. Host thread-library and libc allocations are excluded;
+// Count GTI-provider task boxes and the native no-throw C++ allocation seam
+// used by runtime worker state and C++ backend boxes. Host thread-library and
+// libc allocations are excluded;
 // this is a transport-allocation oracle, not total process heap accounting.
 namespace {
 std::atomic<std::uint64_t> allocations{0};

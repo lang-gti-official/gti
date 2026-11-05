@@ -2406,14 +2406,15 @@ generated transfer and exactly-once cleanup path.
 
 ## Backend Boundary
 
-The current backend represents the unique owner's private handle with a
-native `std::unique_ptr`-shaped carrier. Allocation and selected GTI construction
-are nevertheless separate verified-MIR stages; ordinary class allocation uses
-`mir_object_allocation_v1` rather than delegating GTI constructor selection or
-rollback to `std::make_unique`. Public wrappers are ordinary lowered GTI classes,
-not a stable generated namespace or ABI.
+The primary LLVM backend represents a unique owner's private handle as a
+nullable pointer. It acquires object bytes through GTI's sealed process-memory
+provider and releases them through the matching target family. Allocation,
+selected construction, publication and rollback are separate verified-MIR
+stages. Public wrappers are ordinary lowered GTI classes, not a stable namespace
+or ABI. Native C++ objects passed through explicit interoperation retain their
+own native construction and allocation/deallocation contracts.
 
-The checked private upcast lowers to a consuming native owner conversion only
+The checked private upcast lowers to a consuming owner conversion only
 after frontend semantics has proved the public base relation and polymorphic
 destruction; C++ conversion rules never select the GTI operation.
 
@@ -2426,10 +2427,13 @@ This is lowering, not the GTI ABI or language definition. Smart pointers do not
 cross the C runtime boundary. A C ABI cannot portably represent C++ template
 instances, destructors, deleters, or shared ownership control blocks.
 
-A future LLVM backend will consume the same ownership and drop operations and
-may implement them through LLVM IR and narrow runtime allocation helpers. A
-low-level aligned allocator can live behind the runtime boundary, but it does
-not define public raw-pointer ownership or manual lifetime semantics.
+The frozen C++ backend uses a `std::unique_ptr`-shaped private carrier and its
+existing native allocation family. Its `mir_object_allocation_v1` still separates
+GTI constructor selection and rollback from byte acquisition. Replacement C++
+`new`/`delete` hooks therefore observe different allocations than on LLVM; they
+are not a cross-backend GTI allocation-observation contract. Both backends
+consume the verified ownership and drop schedules. Neither a native allocator
+nor a host smart pointer defines GTI raw-pointer ownership or manual lifetimes.
 
 ## Public Typed Allocation
 

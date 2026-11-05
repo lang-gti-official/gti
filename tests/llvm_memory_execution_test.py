@@ -2,6 +2,7 @@
 """Exact memory/lifetime execution, without a generated-C++ native fallback."""
 
 import os
+import re
 import shutil
 from pathlib import Path
 import sys
@@ -9,7 +10,7 @@ import subprocess
 import tempfile
 import json
 
-from backend_execution import Endpoint, execute
+from backend_execution import execute, plan_compile_command, policy_endpoints
 from llvm_evidence_manifest import build_manifest
 from internal_module_fixture import iterator_library, private_library, private_source
 
@@ -309,8 +310,7 @@ def main():
     if (selected and selected not in CASES and selected not in INLINE_CASES
             and selected not in REJECT and selected not in FAILURES):
         raise ValueError(f"unknown memory case: {selected}")
-    endpoints = (Endpoint("cpp", "O3", "c++20"), Endpoint("cpp", "O3", "c++23"),
-                 *(Endpoint("llvm", level) for level in ("O0", "O1", "O2", "O3")))
+    endpoints = policy_endpoints(("O0", "O1", "O2", "O3"))
     env = {**os.environ, "NO_COLOR": "1"}
     with tempfile.TemporaryDirectory(prefix="gti-llvm-memory-") as directory:
         work = Path(directory)
@@ -325,14 +325,25 @@ def main():
             case_root, source = prepare_evidence_case(root, name, source, work)
             case_env = {**env, "GTI_STDLIB_PATH": str(case_root / "stdlib")}
             observed = []
+            executed = []
             for endpoint in endpoints:
                 if name in NATIVE_ONLY and endpoint.backend == "cpp":
+                    destination = work / f"unsupported-{name}"
+                    destination.write_bytes(b"preserved")
+                    rejected = subprocess.run(plan_compile_command(gti, source, destination, endpoint),
+                        capture_output=True, text=True, env=case_env, timeout=120)
+                    diagnostic = re.search(r"backend diagnostics saved at (.+)", rejected.stderr)
+                    detail = Path(diagnostic.group(1).strip()).read_text() if diagnostic else ""
+                    assert (rejected.returncode == 65 and "GTI-B0001" in rejected.stderr
+                            and "outside the complete C++ text vocabulary" in detail
+                            and "construct_at" in detail
+                            and destination.read_bytes() == b"preserved"), rejected
+                    print(f"RECORDED C++ LIMITATION {name}: concrete closure forwarding into a generic wrapper", flush=True)
                     continue
                 if name in {"shared", "empty-shared"} and endpoint.backend == "cpp":
                     destination = work / f"unsupported-{name}-{endpoint.standard}"
                     destination.write_bytes(b"preserved")
-                    rejected = subprocess.run([str(gti), str(source), "--backend", "cpp",
-                        "--std", endpoint.standard, "-O3", "-o", str(destination)],
+                    rejected = subprocess.run(plan_compile_command(gti, source, destination, endpoint),
                         capture_output=True, text=True, env=env, timeout=120)
                     assert (rejected.returncode == 65 and "GTI-B0003" in rejected.stderr
                             and "wrapping atomic read-modify-write" in rejected.stderr
@@ -347,11 +358,11 @@ def main():
                         "program.exe" if os.name == "nt" else "program")
                     check_structural_failures(binary, root, env)
                 observed.append(result.observable)
+                executed.append(f"{endpoint.backend}-{endpoint.optimization}")
             if any(value != observed[0] for value in observed):
                 raise AssertionError(f"memory observable drift: {name}: {observed}")
-            coverage = ("native LLVM O0-O3 source-contract oracle (known C++ representation gap)"
-                        if name in NATIVE_ONLY or name in {"shared", "empty-shared"} else "C++20/23O3 and native LLVM O0-O3")
-            print(f"{name}: {coverage} passed", flush=True)
+            if executed:
+                print(f"{name}: {', '.join(executed)} passed", flush=True)
         for name, (filename, code, marker) in FAILURES.items():
             if selected and selected != name:
                 continue
@@ -372,16 +383,16 @@ def main():
         for name, filename in REJECT.items():
             if selected and selected != name:
                 continue
-            for backend in ("cpp", "llvm"):
-                output = work / f"rejected-{name}-{backend}"
+            for endpoint in policy_endpoints(("O3",)):
+                output = work / f"rejected-{name}-{endpoint.backend}"
                 output.write_text("preserved", encoding="utf-8")
                 result = subprocess.run(
-                    [str(gti), str(root / "tests/fixtures" / filename), "--backend", backend,
-                     "-O3", "-o", str(output)], cwd=root, env=env,
+                    plan_compile_command(gti, root / "tests/fixtures" / filename, output, endpoint),
+                    cwd=root, env=env,
                     capture_output=True, text=True, timeout=60)
                 if (result.returncode != 65 or "error[GTI-S" not in result.stderr
                         or "GTI-B" in result.stderr or output.read_text() != "preserved"):
-                    raise AssertionError(f"{name} {backend}: {result}")
+                    raise AssertionError(f"{name} {endpoint}: {result}")
             print(f"{name}: source rejection and artifact preservation passed", flush=True)
 
 

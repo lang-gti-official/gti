@@ -1,0 +1,42 @@
+import std.memory;
+import std.panic;
+import std.thread;
+
+extern "C" {
+  void owner_audit_begin();
+  void owner_audit_fail_next();
+  void owner_audit_event(int32_t value);
+  int32_t owner_audit_event_count(int32_t value);
+  void owner_audit_object(const void* address, uint64_t bytes, uint64_t alignment);
+  void owner_audit_cleanup_complete(int32_t attempts, int32_t acquired);
+}
+
+// Reviewed transfer assertion: the task owns its integer and has no loans.
+[[unsafe_transfer]] class Work {
+  std::unique_ptr<int> child;
+public:
+  Work() : child(std::make_unique<int>(42)) {
+    unsafe {
+      owner_audit_object(std::erase_address(&*this.child), std::layout_of<int>().bytes,
+                         std::layout_of<int>().alignment);
+    }
+  }
+  void operator()() { owner_audit_event(100); }
+  ~Work() { std::panic("discarded task destructor failed"); }
+};
+class Audit {
+public:
+  Audit() { owner_audit_begin(); }
+  ~Audit() {
+    if (owner_audit_event_count(100) != 0) { std::panic("failed box ran its task"); }
+    owner_audit_cleanup_complete(2, 1);
+  }
+};
+
+int main() {
+  Audit audit{};
+  auto task = Work();
+  owner_audit_fail_next();
+  auto failed = std::thread::start(std::move(task));
+  return 1;
+}

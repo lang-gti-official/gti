@@ -9,6 +9,8 @@ import platform
 import subprocess
 import sys
 
+from backend_modes import cpp_standard, is_cpp_mode, native_modes, optimization_level
+
 
 def host_default_backend() -> str:
     """The backend `gti` builds with on this host when none is selected."""
@@ -34,6 +36,15 @@ class Endpoint:
             raise ValueError("native LLVM endpoints cannot request C++ representation")
         if self.standard is not None and self.standard not in {"c++20", "c++23"}:
             raise ValueError(f"unknown C++ standard: {self.standard}")
+
+
+def policy_endpoints(levels=("O0", "O3"), *, backends=None) -> tuple[Endpoint, ...]:
+    """Use the shared runtime policy for endpoint-based execution harnesses."""
+    return tuple(
+        Endpoint("cpp", optimization_level(flags), cpp_standard(flags))
+        if is_cpp_mode(flags) else Endpoint("llvm", optimization_level(flags))
+        for _name, flags, _native in native_modes(levels, backends=backends)
+    )
 
 
 @dataclass(frozen=True)

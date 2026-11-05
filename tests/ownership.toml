@@ -902,7 +902,8 @@ paths = [
   "runtime/src/memory.cpp",
   "runtime/include/gti/memory.h",
   "tests/fixtures/process_allocation_test_provider.h",
-  "tests/fixtures/owner_provider_interop.*",
+  "tests/fixtures/owner_provider_*",
+  "tests/llvm_owner_provider_integration_test.py",
 ]
 owners = [
   "resource_memory_runtime",
@@ -915,6 +916,7 @@ owners = [
   "unique_scalar_allocation_runtime",
   "unique_class_allocation_runtime",
   "inherited_unique_allocation_runtime",
+  "llvm_owner_provider_integration",
   "llvm_memory_execution",
   "llvm_memory_contracts",
 ]

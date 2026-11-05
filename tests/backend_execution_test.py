@@ -7,10 +7,22 @@ import subprocess
 import tempfile
 from unittest.mock import patch
 
-from backend_execution import Endpoint, execute
+from backend_execution import Endpoint, execute, policy_endpoints
 
 
 def main() -> None:
+    # Endpoint harnesses must honor the same selection as flag-based harnesses:
+    # default LLVM, one frozen C++23/O3 profile, no implicit C++20 differential.
+    for selected in ("llvm", "cpp", "both"):
+        with patch.dict(os.environ, {"GTI_TEST_BACKENDS": selected}):
+            endpoints = policy_endpoints()
+            expected = (() if selected == "cpp" else
+                        (Endpoint("llvm", "O0"), Endpoint("llvm", "O3")))
+            if selected != "llvm":
+                expected += (Endpoint("cpp", "O3", "c++23"),)
+            assert endpoints == expected, (selected, endpoints)
+    assert policy_endpoints(("O0", "O1", "O2", "O3"), backends="llvm") == tuple(
+        Endpoint("llvm", level) for level in ("O0", "O1", "O2", "O3"))
     with tempfile.TemporaryDirectory(prefix="gti-backend-execution-") as raw:
         root = Path(raw)
         calls = []

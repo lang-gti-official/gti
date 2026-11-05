@@ -7,16 +7,15 @@ import subprocess
 import sys
 import tempfile
 
+from backend_execution import plan_compile_command, policy_endpoints
 
-def run_case(gti: Path, root: Path, work: Path, backend: str,
-             optimization: str) -> None:
+
+def run_case(gti: Path, root: Path, work: Path, endpoint) -> None:
+    backend, optimization = endpoint.backend, endpoint.optimization
     output = work / f"program-{backend}-{optimization}"
-    command = [str(gti),
-               str(root / "tests/fixtures/llvm_callable_null_owner_rollback.gti"),
-               "--backend", backend, f"-{optimization}"]
-    if backend == "cpp":
-        command += ["--std", "c++23"]
-    command += ["-o", str(output), "--",
+    command = plan_compile_command(gti,
+               root / "tests/fixtures/llvm_callable_null_owner_rollback.gti", output, endpoint)
+    command += ["--",
                 str(root / "tests/fixtures/llvm_callable_null_owner_provider.cpp")]
     built = subprocess.run(command, cwd=root, env=os.environ.copy(), text=True,
                            capture_output=True, check=False, timeout=240)
@@ -69,14 +68,13 @@ def main() -> None:
         print("null-owner combined-prerequisite boundary: LLVM O0-O3 "
               "rejection preserved artifacts", flush=True)
         return
-    endpoints = [("cpp", "O3")]
-    if not oracle_only:
-        endpoints += [("llvm", level) for level in ("O0", "O1", "O2", "O3")]
+    endpoints = policy_endpoints(("O0", "O1", "O2", "O3"),
+                                 backends="cpp" if oracle_only else None)
     with tempfile.TemporaryDirectory(prefix="gti-llvm-null-owner-") as raw:
         work = Path(raw)
-        for backend, optimization in endpoints:
-            run_case(gti, root, work, backend, optimization)
-    mode = "C++23 oracle" if oracle_only else "C++23/LLVM O0-O3"
+        for endpoint in endpoints:
+            run_case(gti, root, work, endpoint)
+    mode = ", ".join(f"{endpoint.backend}-{endpoint.optimization}" for endpoint in endpoints)
     print(f"null-owner later-failure rollback: {mode} passed", flush=True)
 
 
