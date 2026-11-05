@@ -808,3 +808,8 @@ for (const [text, name] of [["sized", "type"], ["integral", "type"], ["invoke", 
     throw new Error(`Missing concept-condition @${name} capture for ${text}`);
   }
 }
+
+for (const spelling of ["macro_highlight!(", "policy::macro_highlight<int>!(", "html!({"]) {
+  const row = fixtureLines.findIndex((line) => line.includes(spelling));
+  requireCapture(row, spelling.startsWith("html") ? "html" : "macro_highlight", "function.macro");
+}

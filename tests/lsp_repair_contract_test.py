@@ -113,6 +113,17 @@ def run(executable, root):
                   "int main() { /* call site */ identity!(7); return 0; }\n")
         repair(source, "GTI-S2009", source.replace("/* call site */ identity!(7)",
                                                   "/* call site */ [[discard]] identity!(7)"))
+        legacy = ("#macro T identity<T>(T value) { return value; }\n"
+                  "int main() { /*😀*/ return identity<int> /* gap */ (7); }\n")
+        diagnostics = change(legacy, expected_code="GTI-S2124")
+        marker = next(d for d in diagnostics if d["code"] == "GTI-S2124")
+        assert all(f["applicability"] == "machineApplicable" for f in marker["data"]["fixes"])
+        offered = actions(marker)
+        assert len(offered) == 1 and offered[0]["isPreferred"], offered
+        repaired = apply_action(offered[0], uri, version, legacy)
+        assert repaired == legacy.replace("/* gap */ (7)", "/* gap */ !(7)"), repaired
+        assert not [d for d in change(repaired) if d.get("severity") == 1]
+        assert actions(marker) == [], "macro marker fix must reject a stale editor snapshot"
         (root / "calls.gti").write_text((
                                             'export module calls;\n'
                                             'export int calculate(int value) { return value; }\n'

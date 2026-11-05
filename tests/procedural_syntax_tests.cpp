@@ -326,7 +326,7 @@ void semantics() {
       "exactly one braced");
   diagnostic(
       analyze("import \"library.gti\"; int main() { html({1}); return 0; }"),
-      "name!({...})");
+      "require '!'");
   diagnostic(analyze("import \"library.gti\"; int main() { int html = 1; "
                      "html!({x}); return 0; }"),
              "name before '!'");
