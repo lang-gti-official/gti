@@ -4,6 +4,7 @@
 #include "gti/formatter.h"
 #include "gti/parser.h"
 
+#include <algorithm>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -93,6 +94,28 @@ void markedCalls() {
   check(formatter.format(formatted) == formatted, "macro call formatting is idempotent");
 }
 
+void macroCompletion() {
+  const lang::LanguageQueries queries;
+  for (const std::string suffix : {"", "!(true, 1, 2)", "(true, 1, 2)",
+                                   " /* comment */ !(true, 1, 2)", "<int>!(true, 1, 2)"}) {
+    const std::string source = "#macro T choose<T>(bool enabled, T first, T second) { return first; }\n"
+                               "int main() { return choo" + suffix + "; }\n";
+    const auto offset = source.rfind("choo") + 4;
+    const auto result = queries.complete({.entryPath = "macro-completion.gti",
+                                          .source = source, .byteOffset = offset});
+    const auto found = std::find_if(result.candidates.begin(), result.candidates.end(),
+                                   [](const auto &c) { return c.label == "choose"; });
+    check(found != result.candidates.end(), "typed macro completion is available");
+    if (found == result.candidates.end()) continue;
+    const bool existingMarker = suffix.find('!') != std::string::npos;
+    check(found->insertion == (existingMarker ? "choose" : "choose!"),
+          "completion inserts exactly one marker");
+    check(suffix.empty() ? found->snippet == "choose!(${1:enabled}, ${2:first}, ${3:second})"
+                         : !found->snippet,
+          "completion avoids duplicating an existing argument list");
+  }
+}
+
 void recovery() {
   for (const auto &broken :
        {std::string("#macro int broken( { }\n"),
@@ -148,6 +171,7 @@ int main() { return 0; }
 int main() {
   signatures();
   markedCalls();
+  macroCompletion();
   recovery();
   signatureQueries();
   return failures == 0 ? 0 : 1;

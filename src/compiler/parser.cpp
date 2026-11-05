@@ -3783,11 +3783,29 @@ private:
     const auto savedConsumedCompletion = consumedCompletion;
     const auto savedMissingTokenError = missingTokenError;
     const auto savedGeneratedNames = generatedNameCounter;
+    const auto savedClassName = currentClassName;
+    const auto savedClassKind = currentClassKind;
+    const auto savedConformanceParameters = conformanceGenericParameters;
+    const auto savedConformanceRequirement = conformanceRequirement;
+    const auto savedConditionalDepth = conditionalDepth;
+    const auto savedPatternDepth = casePatternDepth;
+    // Recovery in a failed typed alternative must not inspect the next
+    // statement or consume its completion token. The raw capture is already
+    // immutable; this sentinel only bounds the speculative parser.
+    const Token following = tokens.at(group.end + 1);
+    tokens[group.end + 1].kind = TokenKind::END_OF_FILE;
     ExprPtr parsed;
     try {
       parsed = finishCall(cloneExpr(*callee), typeArguments);
     } catch (const ParseError &) {
     }
+    tokens[group.end + 1] = following;
+    currentClassName = savedClassName;
+    currentClassKind = savedClassKind;
+    conformanceGenericParameters = savedConformanceParameters;
+    conformanceRequirement = savedConformanceRequirement;
+    conditionalDepth = savedConditionalDepth;
+    casePatternDepth = savedPatternDepth;
     std::vector<Diagnostic> argumentErrors(diagnostics.begin() + errorStart,
                                            diagnostics.end());
     diagnostics.resize(errorStart);

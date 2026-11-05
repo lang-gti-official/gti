@@ -58,7 +58,7 @@ int main() {
           "hygienic locals must differ from same-spelled caller arguments");
   require(info->invocation.start == offset &&
               info->invocation.end ==
-                  offset + std::string("outer(saved)").size(),
+                  offset + std::string("outer!(saved)").size(),
           "query must retain exact written call geometry");
   const auto again = queries.macroExpansion(snapshot, unit, offset + 2);
   require(again && again->text == info->text,
@@ -94,7 +94,7 @@ int main() {
   std::string large = "void sink(int value) {}\n#macro large(int value) {\n";
   for (int index = 0; index < 1500; ++index)
     large += "sink(value + 123456789);\n";
-  large += "}\nint main() { large(1); return 0; }\n";
+  large += "}\nint main() { large!(1); return 0; }\n";
   auto largeSnapshot = analyze(large);
   require(largeSnapshot.semanticValid,
           "large inspection fixture must be valid");

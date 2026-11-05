@@ -5,7 +5,7 @@
     "phase": "SourceLoading",
     "severity": "Error",
     "group": "macro-input",
-    "format": "Unbalanced delimiters in procedural macro input.",
+    "format": "Unbalanced delimiters in macro input.",
     "arguments": 0
   },
   {
@@ -14,7 +14,7 @@
     "phase": "SourceLoading",
     "severity": "Error",
     "group": "macro-input",
-    "format": "Compiler directives and imports must be outside procedural macro input.",
+    "format": "Compiler directives and imports must be outside macro input.",
     "arguments": 0
   },
   {

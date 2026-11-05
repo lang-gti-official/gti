@@ -58,18 +58,18 @@ std::string macroChain(std::size_t levels) {
   for (std::size_t level = 1; level < levels; ++level)
     source += "#macro int32_t m" + std::to_string(level) +
               "(int32_t v) { return m" + std::to_string(level - 1) +
-              "(v) + 1; }\n";
+              "!(v) + 1; }\n";
   return source + "int main() { return m" + std::to_string(levels - 1) +
-         "(0) - " + std::to_string(levels) + "; }\n";
+         "!(0) - " + std::to_string(levels) + "; }\n";
 }
 // One invocation of t<k> expands 2^(k+1) - 1 bodies.
 std::string macroTree(std::size_t height) {
   std::string source = "#macro int32_t t0(int32_t v) { return v + 1; }\n";
   for (std::size_t level = 1; level <= height; ++level)
     source += "#macro int32_t t" + std::to_string(level) +
-              "(int32_t v) { return t" + std::to_string(level - 1) + "(v) + t" +
-              std::to_string(level - 1) + "(v); }\n";
-  return source + "int main() { return t" + std::to_string(height) + "(0) - " +
+              "(int32_t v) { return t" + std::to_string(level - 1) + "!(v) + t" +
+              std::to_string(level - 1) + "!(v); }\n";
+  return source + "int main() { return t" + std::to_string(height) + "!(0) - " +
          std::to_string(std::size_t{1} << height) + "; }\n";
 }
 bool rejectedAt(const lang::FrontendResult &result, std::string_view message,
@@ -136,7 +136,7 @@ void macroResourceLimits() {
   std::string siblings = "#macro int32_t inc(int32_t v) { return v + 1; }\n"
                          "int32_t step(int32_t x0) {\n  mut int32_t x = x0;\n";
   for (int index = 0; index < 300; ++index)
-    siblings += "  x = inc(x);\n";
+    siblings += "  x = inc!(x);\n";
   siblings += "  return x;\n}\nint main() { return step(0) - 300; }\n";
   check(analyzeLimited(siblings, single).canGenerateCode(),
         "300 separate invocations each own a one-body budget");
@@ -1384,7 +1384,7 @@ int main(int argc, char **argv) {
   diagnostic("import std.string;\n#macro std::string identity(std::string "
              "value) { return value; }\n"
              "int main() { std::string value{\"owned\"}; std::string moved = "
-             "identity(value); return 0; }",
+             "identity!(value); return 0; }",
              "macro result");
   diagnostic(R"gti(
 import std.string;

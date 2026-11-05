@@ -138,7 +138,7 @@ def main():
             assert expanded["languageId"] == "gti" and not expanded["truncated"], expanded
             assert expanded["range"] == {
                 "start": lsp_position(inspection, offset),
-                "end": lsp_position(inspection, offset + len("relay(saved)"))}, expanded
+                "end": lsp_position(inspection, offset + len("relay!(saved)"))}, expanded
             assert "not executable source" in expanded["text"], expanded
             assert "Nested macro expansion" in expanded["text"], expanded
             assert "saved__macro_local_1 = saved" in expanded["text"], expanded

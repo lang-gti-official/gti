@@ -6109,7 +6109,7 @@ void testNativeStackSegmentsAreInvisible() {
   for (int level = 1; level < 24; ++level)
     macros += "#macro int32_t m" + std::to_string(level) +
               "(int32_t v) { return m" + std::to_string(level - 1) +
-              "(v) + 1; }\n";
+              "!(v) + 1; }\n";
   const std::string valid = macros +
                             stagedChainSource(12).substr(
                                 0, stagedChainSource(12).find("int main()")) +
@@ -6118,7 +6118,7 @@ void testNativeStackSegmentsAreInvisible() {
                             "  return fold(n - 1) + n;\n"
                             "}\n"
                             "static_assert(fold(200) == 20100);\n"
-                            "int main() { return m23(0) - 24; }\n";
+                            "int main() { return m23!(0) - 24; }\n";
   const std::string invalid = recursiveDescentSource(300);
   lang::CompileLimits limits;
   limits.constexprDepth = 256;

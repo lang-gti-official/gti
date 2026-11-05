@@ -373,7 +373,7 @@ namespace query_hygiene {
   int check() {
     int subject = 7;
     // The macro's later bool local must not capture this caller's int local.
-    inspect(requires { { subject + subject } -> int; });
+    inspect!(requires { { subject + subject } -> int; });
     inspect!(requires { { subject } -> bool; }); // false, no increment
     inspect!(requires(int& subject) { { subject + subject } -> int; });
     nested!(requires { { subject + subject } -> int; });
