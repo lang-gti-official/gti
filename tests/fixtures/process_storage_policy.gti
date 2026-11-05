@@ -72,13 +72,17 @@ int main() {
     const Fixed* address = &first.get(std::size_t(0));
     // Expose the storage and its reachable owners to an ordinary foreign call;
     // legal allocation elision must not erase the operations being measured.
-    provider_test_observe_storage(address);
-    provider_test_observe_storage(&first.get(std::size_t(2)));
+    unsafe {
+      provider_test_observe_storage(std::erase_address(address));
+      provider_test_observe_storage(std::erase_address(&first.get(std::size_t(2))));
+    }
     mut auto moved = std::move(first);
     if (&moved.get(std::size_t(0)) != address || moved.get(std::size_t(2)).value() != 20) { return 8; }
     moved.destroy(std::size_t(2));
     moved.emplace(std::size_t(2), 21);
-    provider_test_observe_storage(&moved.get(std::size_t(2)));
+    unsafe {
+      provider_test_observe_storage(std::erase_address(&moved.get(std::size_t(2))));
+    }
     if (provider_test_calls() != (process_owners ? 7 : 4) ||
         provider_test_releases() != (process_owners ? 1 : 0) ||
         provider_test_events() != (process_owners ? 2 : 1) ||
