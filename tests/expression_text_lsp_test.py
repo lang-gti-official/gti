@@ -137,7 +137,7 @@ def main():
 
             explicit_fallback = source.replace(
                 "expression_text!(expression)",
-                'expression_text(expression + 1, "composed condition")')
+                'expression_text!(expression + 1, "composed condition")')
             assert not change(11, explicit_fallback)
             dynamic_fallback = explicit_fallback.replace(
                 '"composed condition"', "runtime_fallback()")

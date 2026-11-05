@@ -345,7 +345,7 @@ int main() {
   return 0;
 }
 )GTI",
-           "GTI-S2057", "Consteval invocation", "checked(text.view",
+           "GTI-S2057", "Consteval invocation", "checked!(text.view",
            "Argument 1 to immediate function");
   rejected(R"GTI(class Parcel {
 public:
