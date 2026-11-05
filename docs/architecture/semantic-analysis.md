@@ -15,7 +15,14 @@ consumption and cleanup in HIR/MIR; no backend ownership-name rule is added.
 `semantic_macro.cpp` owns typed `#macro` expansion independently of public
 library names. The declaration's macro identity, not an attribute or public
 spelling, selects that path. Macro/function overload mixtures at one qualified
-name are rejected; macro-only overload sets use ordinary exact selection.
+name are rejected; macro-only overload sets use ordinary exact-first selection
+with the shared representable-integer-literal fallback. The selected integer
+type is a semantic fact on each cloned literal argument root. Nested argument
+cloning and model deltas preserve that fact; expression analysis applies it
+through the existing contextual-literal path, including signed minima. It is
+not a runtime cast and does not introduce eager argument evaluation. A failed
+signature probe leaves an unknown result type, preventing secondary unused-result
+errors from an unrelated preceding expression.
 Signature selection and argument diagnostics use an isolated
 semantic probe; its speculative flow, loans and syntax never enter caller
 execution. The probe forks request context separately from semantic facts,

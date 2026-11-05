@@ -95,7 +95,12 @@ int selected = choose(use_cache, cached_value(), expensive_value());
 
 Generic parameters follow the macro name (`#macro when<T>(bool enabled, T value)`),
 and signatures may have final packs, trailing defaults and `requires` clauses.
-Typed macro overloads share ordinary exact overload selection. A qualified name
+Typed macro overloads share ordinary exact-first overload selection, including
+fitting written integer literals when one fallback candidate remains. The
+selected integer parameter type is retained at each substituted use, including
+nested expansions; a macro parameter does not become an untyped literal again.
+Named values keep their types, out-of-range literals are rejected even when
+unused, and literal adaptation does not participate in generic inference. A qualified name
 cannot mix macro and ordinary-function overloads: a caller must not have its
 evaluation policy silently selected by an argument type. `[[track_caller]]`
 may precede the declaration. Macros participate in ordinary namespace, source

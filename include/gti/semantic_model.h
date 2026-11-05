@@ -2654,6 +2654,10 @@ public:
   findMacroDeclaration(const Call &call) const;
   [[nodiscard]] std::vector<MacroExpansionSite> macroExpansionSites() const;
   [[nodiscard]] const Token *findMacroDefault(const Expr &expression) const;
+  // A substituted integer literal keeps the selected macro parameter's type
+  // through repeated expansion and concrete reanalysis, without a conversion.
+  [[nodiscard]] const SemanticType *
+  findMacroIntegerLiteralType(const Expr &expression) const;
   // The declared attributes of a field or class-like declaration; nullptr
   // when none were recorded.
   [[nodiscard]] const std::vector<ResolvedDeclarationAttribute> *
@@ -3116,6 +3120,7 @@ private:
   void recordMacroDeclaration(const Call &call,
                               const FunctionDecl &declaration);
   void recordMacroDefault(const Expr &expression, Token caller);
+  void recordMacroIntegerLiteralType(const Expr &expression, SemanticType type);
   void recordDeclarationAttributes(
       const Stmt &declaration,
       std::vector<ResolvedDeclarationAttribute> attributes);
@@ -3360,6 +3365,7 @@ private:
   std::unordered_map<const ExpressionStmt *, const FunctionDecl *>
       macroDeclarations;
   std::unordered_map<const Expr *, Token> macroDefaults;
+  std::unordered_map<const Expr *, SemanticType> macroIntegerLiteralTypes;
   std::unordered_map<const Stmt *, std::vector<ResolvedDeclarationAttribute>>
       declarationAttributes;
   struct ExpressionAlias {
