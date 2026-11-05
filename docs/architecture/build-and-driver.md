@@ -175,6 +175,35 @@ consuming a system-LLVM GTI package must enable both C and C++ before
 feature probes while loading their package configuration. The bundled release
 package does not load a downstream LLVM package.
 
+### One pinned LLVM
+
+GTI uses one LLVM everywhere, so what developers build, CI tests and benchmarks
+measure is what ships. `GTI_PINNED_LLVM_VERSION` in `CMakeLists.txt` (LLVM
+23.1.4, with its source tarball's SHA-256) is the single source of truth:
+
+- Release, nightly and beta packages bundle exactly that version
+  (`-DGTI_BUNDLE_LLVM=ON`, forced by `GTI_RELEASE_BUILD`), built from the
+  hash-verified tarball and cached by `llvm-prebuilt.yml`.
+- Every other build uses an installed LLVM of the same major. CMake refuses any
+  other major at configure time, and without `LLVM_DIR` it looks first in
+  Homebrew's `llvm@23` and Ubuntu's `/usr/lib/llvm-23`. Distribution packages
+  follow the release branch's point releases, so only the major is enforced
+  there.
+- CI installs that major through `scripts/configure_ci_toolchain.sh`, which
+  reads it from `CMakeLists.txt`. On macOS that's Homebrew `llvm@23`. Ubuntu
+  does not package LLVM 23, so on Linux it comes from apt.llvm.org, whose
+  signing key is trusted only with its pinned fingerprint.
+- Local tooling (`scripts/install_neovim_local.py`, `scripts/remote_runner.py`)
+  discovers LLVM through `scripts/llvm_pin.py`, which reads the same pin.
+  `python3 scripts/llvm_pin.py --cmake-dir` prints an installed match for
+  `-DLLVM_DIR`.
+
+`-DGTI_ALLOW_UNPINNED_LLVM=ON` accepts another major with a warning, for trying
+a future LLVM before moving the pin. No workflow sets it, and results from such
+a build, including benchmarks, do not describe shipped GTI. Moving the pin is
+one edit to the version and hash in `CMakeLists.txt`. CI, local discovery and
+the prebuilt LLVM cache key all follow it.
+
 ## Published Toolchain Channels
 
 Source lives on GitHub (`lang-gti-official/gti`), and toolchain releases
@@ -230,7 +259,8 @@ when the checkout is newer. This permits recovery after Homebrew removes build
 prerequisites while the bundled runtime remains usable. It preserves a supplied
 build directory's generator and
 does not change source compilation, project manifests, LSP semantics, or release
-publication authority. Discovery accepts LLVM 18 or newer and considers
+publication authority. Discovery accepts only LLVM 23, GTI's pinned major
+(`scripts/llvm_pin.py`), and considers
 retained versions without assuming
 an Intel or Apple Silicon installation prefix. Existing build generators are
 preserved while configuration/install rules are refreshed.

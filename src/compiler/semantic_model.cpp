@@ -1258,6 +1258,15 @@ SemanticModel::shareMacroExpansion(const ExpressionStmt &statement) const {
   return inherited;
 }
 
+const SemanticType *
+SemanticModel::findMacroIntegerLiteralType(const Expr &expression) const {
+  if (const auto found = macroIntegerLiteralTypes.find(&expression);
+      found != macroIntegerLiteralTypes.end())
+    return &found->second;
+  return base == nullptr ? nullptr
+                         : base->findMacroIntegerLiteralType(expression);
+}
+
 const Token *SemanticModel::findMacroDefault(const Expr &expression) const {
   if (const auto found = macroDefaults.find(&expression);
       found != macroDefaults.end())
@@ -2174,6 +2183,7 @@ void SemanticModel::clear() {
   macroValueDeclarations.clear();
   macroDeclarations.clear();
   macroDefaults.clear();
+  macroIntegerLiteralTypes.clear();
   declarationAttributes.clear();
   expressionAliases.clear();
   staticAssertResults.clear();
@@ -2982,6 +2992,11 @@ void SemanticModel::recordMacroExpansion(const ExpressionStmt &statement,
                                          const FunctionDecl &declaration) {
   macroExpansions.insert_or_assign(&statement, std::move(body));
   macroDeclarations.insert_or_assign(&statement, &declaration);
+}
+
+void SemanticModel::recordMacroIntegerLiteralType(const Expr &expression,
+                                                  SemanticType type) {
+  macroIntegerLiteralTypes.insert_or_assign(&expression, std::move(type));
 }
 
 void SemanticModel::recordMacroDefault(const Expr &expression, Token caller) {

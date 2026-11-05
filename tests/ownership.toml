@@ -1689,6 +1689,7 @@ paths = [
   "scripts/configure_ci_*",
   "scripts/check_ci_sanitizers.py",
   "scripts/free_ci_disk.sh",
+  "scripts/llvm_pin.py",
   "scripts/named_test_shards.py",
   "tests/named_test_shards_test.py",
 ]
@@ -1702,6 +1703,8 @@ owners = [
   "source_stdlib_ci",
   "lsp_release",
   "named_test_shards",
+  "neovim_local_installer",
+  "remote_runner",
 ]
 consumers = [
   "release_version_policy",

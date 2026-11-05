@@ -563,7 +563,7 @@ arguments whose mathematical value, including its sign, is representable in
 the integer parameter type. Selection still requires one unique candidate, so
 a literal that fits several candidate parameter types is ambiguous and needs
 an explicit conversion. The rule applies to function, method, constructor,
-base-initializer, operator, lambda, function-item and native-function-pointer
+base-initializer, operator, lambda, typed-macro, function-item and native-function-pointer
 calls. It never retypes a named value or a named constant, never targets a
 floating-point parameter, never participates in generic inference, and never
 ranks candidates. `twice(4)`, `values[0]`, `values.push_back(1)` and

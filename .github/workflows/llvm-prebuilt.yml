@@ -3,7 +3,7 @@ name: Prebuilt LLVM
 # Builds the pinned bundled LLVM/Clang objects once per (LLVM version,
 # platform, compiler, CMake inputs) and saves them as a main-scoped ccache
 # keyed by that tuple, never by commit. Release packaging and the integration
-# shards restore it, so a merge no longer rebuilds LLVM 20.1.0 plus Clang from
+# shards restore it, so a merge no longer rebuilds the pinned LLVM plus Clang from
 # source (86 minutes on Linux, 65 on macOS, with a 0.2% object-cache hit
 # rate when the key carried the SHA). The LLVM source is the same pinned,
 # hash-verified tarball CMakeLists.txt fetches; only the compile is reused.

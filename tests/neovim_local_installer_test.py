@@ -160,34 +160,36 @@ def main():
         llvm = root / "llvm/lib/cmake/llvm"
         llvm.mkdir(parents=True)
         (llvm / "LLVMConfig.cmake").write_text("")
-        (llvm / "LLVMConfigVersion.cmake").write_text('set(PACKAGE_VERSION "22.1.8")')
+        major = installer.llvm_pin.pinned_major()
+        (llvm / "LLVMConfigVersion.cmake").write_text(f'set(PACKAGE_VERSION "{major}.1.2")')
         assert installer.supported_llvm(llvm)
         with cache.open("a") as output:
             output.write(f"LLVM_DIR:PATH={llvm}\n")
         switched = installer.configure_command(build, root / "other-llvm")
         assert "-G" not in switched and f"-DLLVM_DIR={root / 'other-llvm'}" in switched
-        (llvm / "LLVMConfigVersion.cmake").write_text('set(PACKAGE_VERSION "23.1.2")')
-        assert installer.supported_llvm(llvm)
-        (llvm / "LLVMConfigVersion.cmake").write_text('set(PACKAGE_VERSION "24.0.0")')
-        assert installer.supported_llvm(llvm), "new majors must not hit an arbitrary ceiling"
-        (llvm / "LLVMConfigVersion.cmake").write_text('set(PACKAGE_VERSION "17.0.6")')
-        assert not installer.supported_llvm(llvm), "the required minimum remains enforced"
+        # Only GTI's pinned major is accepted: neither an older nor a newer LLVM.
+        for other in (major - 1, major + 1, 17):
+            (llvm / "LLVMConfigVersion.cmake").write_text(f'set(PACKAGE_VERSION "{other}.0.0")')
+            assert not installer.supported_llvm(llvm), other
         assert "-G" not in installer.configure_command(build, root / "other-llvm")
-        retained = root / "Cellar/llvm/22.1.8/lib/cmake/llvm"
+        # Homebrew's opt alias moved to another major; a retained pinned one is found.
+        retained = root / f"Cellar/llvm/{major}.1.4/lib/cmake/llvm"
         retained.mkdir(parents=True)
         (retained / "LLVMConfig.cmake").write_text("")
-        (retained / "LLVMConfigVersion.cmake").write_text('set(PACKAGE_VERSION "22.1.8")')
+        (retained / "LLVMConfigVersion.cmake").write_text(f'set(PACKAGE_VERSION "{major}.1.4")')
         def brew(arguments, **kwargs):
             if arguments == ["brew", "--prefix", "llvm"]:
                 return mock.Mock(returncode=0, stdout=str(root / "llvm"))
             if arguments == ["brew", "--cellar", "llvm"]:
                 return mock.Mock(returncode=0, stdout=str(root / "Cellar/llvm"))
             return mock.Mock(returncode=1, stdout="")
-        with mock.patch.object(installer.shutil, "which", return_value="brew"), \
-                mock.patch.object(installer.subprocess, "run", side_effect=brew):
+        pin = installer.llvm_pin
+        with mock.patch.object(pin.shutil, "which", side_effect=lambda name: "brew" if name == "brew" else None), \
+                mock.patch.object(pin.subprocess, "run", side_effect=brew), \
+                mock.patch.object(pin, "standard_paths", return_value=[]):
             assert installer.discover_llvm() == retained.resolve()
-            (llvm / "LLVMConfigVersion.cmake").write_text('set(PACKAGE_VERSION "23.1.2")')
-            assert installer.discover_llvm() == llvm.resolve(), "prefer installed current LLVM"
+            (llvm / "LLVMConfigVersion.cmake").write_text(f'set(PACKAGE_VERSION "{major}.1.2")')
+            assert installer.discover_llvm() == llvm.resolve(), "prefer the installed pinned LLVM"
         clang = llvm.parent / "clang"
         clang.mkdir()
         (clang / "ClangConfig.cmake").write_text("")

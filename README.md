@@ -156,11 +156,24 @@ or implicit `switch` fallthrough.
 
 ## Build and try it
 
-Requirements are CMake 3.20 or newer, Ninja, a suitable C++ compiler, and LLVM
-18 or newer, matching libclang, and **RTTI enabled** (distribution packages such as
-Debian `llvm-*-dev` and Homebrew `llvm@*` are; upstream LLVM defaults to off).
-CMake uses a compatible system LLVM by default and reports an RTTI mismatch
-at configure time. `-DGTI_BUNDLE_LLVM=ON` instead downloads and builds the
+Requirements are CMake 3.20 or newer, Ninja, a suitable C++ compiler, and
+**LLVM 23**, with matching libclang and **RTTI enabled** (distribution packages
+such as Homebrew `llvm@23` and apt.llvm.org's `llvm-23-dev` are; upstream LLVM
+defaults to off). GTI pins one LLVM for everyone: releases bundle exactly LLVM
+23.1.4 (`GTI_PINNED_LLVM_VERSION` in `CMakeLists.txt`), and CMake refuses any
+other major version, so local builds, CI and benchmarks use the LLVM that
+ships. `python3 scripts/llvm_pin.py --cmake-dir` prints an installed LLVM 23 for
+`-DLLVM_DIR`, and CMake finds Homebrew's `llvm@23` or Ubuntu's `/usr/lib/llvm-23`
+without it:
+
+```sh
+brew install llvm@23   # macOS; on Ubuntu, llvm-23-dev libclang-23-dev from apt.llvm.org
+```
+
+CMake reports an RTTI mismatch at configure time.
+`-DGTI_ALLOW_UNPINNED_LLVM=ON` accepts another major with a warning, for trying
+a future LLVM; its results do not describe shipped GTI.
+`-DGTI_BUNDLE_LLVM=ON` instead downloads and builds the
 pinned LLVM release used for self-contained toolchains, with RTTI enabled
 automatically; that mode also requires an explicit `-DCMAKE_BUILD_TYPE`,
 which LLVM's own build insists on. Release builds force that acquisition
@@ -681,7 +694,7 @@ with that explanation instead of building something else.
 
 Requires Python 3.10+, Neovim 0.11+, CMake, Ninja, a supported installed LLVM
 (including libclang), and the Xcode command-line tools. It discovers Homebrew
-LLVM 18 or newer (also checking retained Homebrew versions) or accepts
+LLVM 23, GTI's pinned major (also checking retained Homebrew versions), or accepts
 `--llvm-dir /path/to/lib/cmake/llvm`; it installs no prerequisites
 automatically. Builds use all detected CPUs at normal priority by default
 (`--jobs N` to limit parallelism).
@@ -716,10 +729,9 @@ python3 scripts/install_neovim_local.py --activate-only --replace-config --repla
 ```
 
 This validates and activates the installed version; it does not rebuild it to
-the checkout's VERSION. For a new build, install supported LLVM (for example
-`brew install llvm`) and rerun the normal installer. LLVM 23.1.2 is included in
-the current system-build compatibility evidence; official release archives
-continue to use the pinned bundled version.
+the checkout's VERSION. For a new build, install the pinned LLVM
+(`brew install llvm@23`) and rerun the normal installer. Official release
+archives bundle exactly LLVM 23.1.4.
 
 Restart Neovim, run `:Lazy sync`, open a `.gti` file, and check `:GTIInfo`.
 Re-run the script after pulling changes. This system-LLVM build uses the same
