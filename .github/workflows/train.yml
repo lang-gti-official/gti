@@ -1,14 +1,14 @@
 name: Release train
 
-# Every 48 hours (scripts/release_train.py admits every other UTC day of the
-# daily schedule) and on manual dispatch:
-# - cut: run scripts/cut_release.py on the published nightly's commit, when it
-#   passed the merge queue and the daily sanitizers (sanitizers.yml) and has
-#   been on main at least 24 h, and deliver the
+# Daily and on manual dispatch:
+# - cut: once a week, from Monday until one lands that ISO week (a day without
+#   a sanitizer verdict retries the next day), run scripts/cut_release.py on
+#   the published nightly's commit when it passed full validation and the
+#   daily sanitizers (sanitizers.yml), and deliver the
 #   `Release-Cut:` commit as a `rollup=never` pull request queued with the
 #   release App token (a GITHUB_TOKEN PR would get no PR checks). The queue
 #   lands it on main; beta.yml then publishes v<VERSION>-beta.1.
-# - promote: republish the newest beta that soaked 48 h with no open
+# - promote (checked every day): republish the newest beta that soaked 48 h with no open
 #   `release-blocker` issue naming its version, and whose code passed the
 #   sanitizers (a release cut's nightly parent, or the backported line
 #   commit itself), as the stable v<VERSION>
@@ -27,7 +27,7 @@ on:
         options: [both, cut, promote]
         default: both
       min_age_hours:
-        description: Owner bootstrap only - minimum hours the nightly commit has been on main (default 24). Queue evidence is always required.
+        description: Optional minimum hours the nightly commit has been on main (default 0). Full CI and sanitizer evidence are always required.
         required: false
         default: ""
         type: string

@@ -481,20 +481,26 @@ or `gh`. Every train ref is created by a plain push that fails rather than
 overwrites; no tag or branch is ever forced, moved or deleted.
 
 1. **Cut** (`train.yml`, job `cut`). The schedule fires daily at 09:00 UTC,
-   after nightly and that day's sanitizer run on the nightly commit, and
-   the train admits every other UTC day (epoch-day parity), a 48-hour cadence
-   without month-end drift; a dispatch always runs. The source is the commit
+   after nightly and that day's sanitizer run on the nightly commit. A
+   scheduled cut happens once per ISO week: it is due from Monday 00:00 UTC
+   until one lands, so a day whose nightly has no sanitizer verdict yet retries
+   the next day rather than losing the week. Only a release cut changes
+   `VERSION`, so main's `VERSION` at the start of the week differing from its
+   head means this week's cut has landed. A dispatch always runs and may cut
+   again. Promotion is checked every day. The source is the commit
    the `nightly` tag names. It must be on main, carry the same successful full CI
    evidence nightly selection requires (`release_artifacts.py
    release_evidence`), have the complete uploaded nightly asset set with GitHub's
-   digest of the final `BUILD_ID` matching that commit, and have been on main
-   at least 24 hours, measured from its
-   committer time, which the queue sets when it lands the commit. It must also
+   digest of the final `BUILD_ID` matching that commit. There is no nightly
+   age requirement: like Rust's beta branch or Firefox's merge day, the cut
+   takes the current validated nightly and the 48-hour beta soak is the
+   safety margin. It must also
    have a passing `Sanitizer verdict (<commit>)` from a scheduled or
    main-dispatched `sanitizers.yml` run; until the daily sanitizers pass on
-   that nightly the train skips with a notice. A dispatch's
-   `min_age_hours` may lower the age for the owner's bootstrap; nothing lowers
-   the full CI evidence requirement. The train skips with a notice when a cut already landed
+   that nightly the train skips with a notice. A dispatch's optional
+   `min_age_hours` can require a minimum age (measured from the commit's
+   committer time, which the queue sets when it lands); nothing lowers the
+   full CI evidence requirement. The train skips with a notice when a cut already landed
    after that nightly, when no fragment is pending, or when only fixes are:
    a train cut opens the next minor line, and patch releases come only from
    backports. It runs `cut_release.py` on a worktree of the nightly commit,
