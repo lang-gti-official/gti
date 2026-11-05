@@ -25,27 +25,6 @@ void expect(bool condition, const char *message) {
   }
 }
 
-void allocationLayoutWitness() {
-  using lang::native_llvm::processMallocSatisfiesLayout;
-  for (const auto specification : {"e-p:32:32", "e-p:64:64", "e-p:64:32"}) {
-    const llvm::DataLayout layout(specification);
-    const auto size = layout.getPointerSize(0);
-    const auto alignment = layout.getPointerABIAlignment(0).value();
-    expect(processMallocSatisfiesLayout(layout, 1, 1),
-           "one byte needs only byte alignment");
-    expect(processMallocSatisfiesLayout(layout, size, alignment) &&
-               processMallocSatisfiesLayout(layout, size + 1, alignment),
-           "a fitting target pointer witnesses its ABI alignment");
-    expect(!processMallocSatisfiesLayout(layout, size - 1, alignment) &&
-               !processMallocSatisfiesLayout(layout, size, alignment * 2),
-           "neither undersized nor over-aligned requests inherit a witness");
-    expect(!processMallocSatisfiesLayout(layout, 0, 1) &&
-               !processMallocSatisfiesLayout(layout, size, 0) &&
-               !processMallocSatisfiesLayout(layout, size, 3),
-           "empty and malformed requests are not ordinary allocations");
-  }
-}
-
 void providerContracts() {
   using namespace lang;
   using namespace lang::native_llvm;
@@ -138,30 +117,40 @@ void providerContracts() {
   expect(!first->onlyReadsMemory() &&
              !first->hasRetAttr(llvm::Attribute::NonNull),
          "freshness does not erase allocation effects or nullable failure");
-  expect(first->doesNotThrow() ==
-             (input->program().mir().target().os == "windows"),
-         "only direct result-only allocation carries the removable contract");
+  // Generated owner storage uses the runtime owner pair (operator new
+  // family), not the source process provider, and carries no removable
+  // allocation contract of its own.
+  expect(!first->doesNotThrow() &&
+             !first->hasFnAttr(llvm::Attribute::AllocKind),
+         "owner-pair allocation carries no removable process contract");
   for (unsigned index = 0; index < first->arg_size(); ++index)
     if (first->getArgOperand(index)->getType()->isPointerTy())
       expect(first->doesNotCapture(index),
              "the sealed allocation provider cannot retain its status pointer");
 
-  if (input->program().mir().target().os != "windows") {
-    auto *ordinaryAllocation =
-        llvm::cast<llvm::CallBase>(memory.allocateStorage(
-            session.dataLayout().getPointerSize(0),
-            session.dataLayout().getPointerABIAlignment(0).value()));
-    auto *tinyAligned =
-        llvm::cast<llvm::CallBase>(memory.allocateStorage(1, 2));
+  const bool windowsTarget = input->program().mir().target().os == "windows";
+  if (!windowsTarget) {
+    const std::array<llvm::Value *, 1> ordinaryInputs{
+        ir.getInt64(session.dataLayout().getPointerSize(0))};
+    auto *ordinaryAllocation = llvm::cast<llvm::CallBase>(
+        memory.processCall(binding(Operation::PosixMalloc), ordinaryInputs));
+    auto *status = ir.CreateAlloca(ir.getInt32Ty());
+    const std::array<llvm::Value *, 3> alignedInputs{
+        ir.getInt64(1), ir.getInt64(session.dataLayout().getPointerSize(0)),
+        status};
+    auto *tinyAligned = llvm::cast<llvm::CallBase>(
+        memory.processCall(binding(Operation::PosixAllocate), alignedInputs));
     expect(ordinaryAllocation->getCalledFunction()->getName() ==
                    "gti_rt_malloc_v1" &&
                ordinaryAllocation->hasRetAttr(llvm::Attribute::NoAlias) &&
                ordinaryAllocation->arg_size() == 1 &&
+               ordinaryAllocation->doesNotThrow() &&
                !ordinaryAllocation->hasRetAttr(llvm::Attribute::NonNull) &&
                !ordinaryAllocation->onlyReadsMemory(),
-           "fitting target witness selects nullable fresh ordinary allocation");
+           "sealed ordinary allocation is nullable, fresh and removable");
     expect(tinyAligned->getCalledFunction()->getName() ==
                    "gti_rt_posix_memalign_v1" &&
+               !tinyAligned->doesNotThrow() &&
                !tinyAligned->hasFnAttr(llvm::Attribute::AllocKind),
            "status-writing allocation retains its complete output contract");
     auto *unclassified = ir.CreateCall(ordinaryAllocation->getCalledFunction(),
@@ -240,10 +229,18 @@ void providerContracts() {
     llvm::IRBuilder<> body(
         llvm::BasicBlock::Create(session.context(), "entry", probe));
     Memory allocation(session, body, {}, {}, {});
-    auto *acquire =
-        llvm::cast<llvm::CallInst>(allocation.allocateStorage(32, 1));
-    allocation.releaseBytes(acquire);
-    auto *release = llvm::cast<llvm::CallInst>(&body.GetInsertBlock()->back());
+    llvm::SmallVector<llvm::Value *, 2> acquireInputs{body.getInt64(32)};
+    if (windowsTarget)
+      acquireInputs.push_back(body.getInt64(16));
+    auto *acquire = llvm::cast<llvm::CallInst>(allocation.processCall(
+        binding(windowsTarget ? Operation::AlignedAllocate
+                              : Operation::PosixMalloc),
+        acquireInputs));
+    const std::array<llvm::Value *, 1> releaseInputs{acquire};
+    auto *release = llvm::cast<llvm::CallInst>(
+        allocation.processCall(binding(windowsTarget ? Operation::AlignedRelease
+                                                     : Operation::PosixRelease),
+                               releaseInputs));
     if (variant == 1) {
       acquire->setAttributes(llvm::AttributeList{});
       release->setAttributes(llvm::AttributeList{});
@@ -251,6 +248,8 @@ void providerContracts() {
       llvm::IRBuilder<> escape(release);
       escape.CreateCall(observe, {acquire});
     }
+    // Module::getTargetTriple returns a string before LLVM 21 and a Triple
+    // afterwards; the explicit Triple accepts both.
     llvm::TargetLibraryInfoImpl libraryImpl(
         llvm::Triple(session.module().getTargetTriple()));
     llvm::TargetLibraryInfo library(libraryImpl);
@@ -394,7 +393,6 @@ void sourceProviderContracts(const std::filesystem::path &root) {
 int main(int argc, char **argv) {
   if (argc != 2)
     return 2;
-  allocationLayoutWitness();
   providerContracts();
   sourceProviderContracts(std::filesystem::path(argv[1]));
   using namespace lang;

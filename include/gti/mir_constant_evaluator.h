@@ -1,13 +1,17 @@
 #pragma once
 
+#include "gti/compile_limits.h"
 #include "gti/mir.h"
 
 #include <span>
 
 namespace lang {
 
+// The remaining budget of one constant request. Semantic staging derives it
+// from the compilation's CompileLimits; the defaults are those limits'
+// defaults for direct (test) callers.
 struct MirConstantLimits {
-  std::size_t steps = 4096;
+  std::size_t steps = CompileLimits{}.constexprSteps;
   std::size_t callDepth = 64;
   // Deterministic logical storage bounds, independent of host/target layout.
   // One unit per value/aggregate node plus one per text byte. Allocation IDs
@@ -29,7 +33,12 @@ struct MirConstantEvaluation {
   MirBlockId block = 0;
   MirInstructionId instruction = 0;
   std::size_t steps = 0;
+  // The per-request limit a ResourceLimit failure exhausted, when it is one
+  // of the configurable CompileLimits; null for internal storage bounds.
+  std::size_t CompileLimits::*exhaustedLimit = nullptr;
   std::string detail;
+  // For RuntimeOnlyCall, the signature-only callee execution reached.
+  HirFunctionInstanceId runtimeCallee = 0;
   struct CallSite {
     MirBodyAddress body;
     MirBlockId block = 0;

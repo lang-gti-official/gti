@@ -5,6 +5,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -125,31 +126,28 @@ def main() -> int:
         source = root / "domain-operator.gti"
         source.write_text(SOURCE, encoding="utf8")
 
-        for standard in ("c++20", "c++23"):
-            for optimization in ("O0", "O3"):
-                executable = root / f"domain-operator-{standard}-{optimization}"
-                built = run(
-                    [
-                        str(compiler),
-                        str(source),
-                        "--std",
-                        standard,
-                        f"-{optimization}",
-                        "-o",
-                        str(executable),
-                    ]
-                )
-                if built.returncode != 0:
-                    return fail(built)
+        for mode, flags, native in native_modes():
+            executable = root / f"domain-operator-{mode}"
+            built = run(
+                [
+                    str(compiler),
+                    str(source),
+                    *flags,
+                    "-o",
+                    str(executable),
+                ]
+            )
+            if built.returncode != 0:
+                return fail(built)
 
-                executed = run([str(executable)])
-                if executed.returncode != 0:
-                    sys.stderr.write(
-                        "domain-value operator behavior failed for "
-                        f"{standard} {optimization}: exit={executed.returncode} "
-                        f"stdout={executed.stdout!r} stderr={executed.stderr!r}\n"
-                    )
-                    return 1
+            executed = run([str(executable)])
+            if executed.returncode != 0:
+                sys.stderr.write(
+                    "domain-value operator behavior failed for "
+                    f"{mode}: exit={executed.returncode} "
+                    f"stdout={executed.stdout!r} stderr={executed.stderr!r}\n"
+                )
+                return 1
 
     print("domain-value operator capability runtime behavior verified")
     return 0

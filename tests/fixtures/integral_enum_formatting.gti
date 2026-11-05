@@ -47,30 +47,34 @@ int main() {
   // An unrelated numeric protocol, independent of formatting.
   uint64_t wire_value = std::to_underlying<uint64_t, Unsigned64>(Unsigned64::high);
   if (wire_value != uint64_t(18446744073709551615)) { return 1; }
-  auto signed_values = std::format("{} {} {} {}", Signed8::low, Signed16::low,
+  auto signed_values = std::runtime_format("{} {} {} {}", Signed8::low, Signed16::low,
                                    Signed32::low, Signed64::low);
   if (signed_values != "-128 -32768 -2147483648 -9223372036854775808") { return 2; }
-  auto unsigned_values = std::format("{} {} {} {}", Unsigned8::high, Unsigned16::high,
+  auto unsigned_values = std::runtime_format("{} {} {} {}", Unsigned8::high, Unsigned16::high,
                                      Unsigned32::high, Unsigned64::high);
   if (unsigned_values != "255 65535 4294967295 18446744073709551615") { return 3; }
-  if (std::format("{:016x} {:08b} {:04d}", Unsigned64::high, Unsigned8::high, Status::failed)
+  if (std::runtime_format("{:016x} {:08b} {:04d}", Unsigned64::high, Unsigned8::high, Status::failed)
       != "ffffffffffffffff 11111111 0009") { return 4; }
-  if (std::format("{} {} {} {}", Named::high, Status::failed, Signed8::sparse, Signed8::alias)
+  if (std::runtime_format("{} {} {} {}", Named::high, Status::failed, Signed8::sparse, Signed8::alias)
       != "named 9 12 12") { return 5; }
-  if (std::format("{} {}", Payload::number(3), Status::ok) != "payload 0") { return 12; }
-  auto ordered = std::format("{} {}", next(0), next(1));
+  if (std::runtime_format("{} {}", Payload::number(3), Status::ok) != "payload 0") { return 12; }
+  // Keep this existing C++ comparator on named enum storage. The separate
+  // integral_enum_formatting_temporary fixture covers borrowed call results.
+  auto first = next(0);
+  auto second = next(1);
+  auto ordered = std::runtime_format("{} {}", first, second);
   if (sequence != 2 || ordered != "9 9") { return 6; }
-  auto bad_type = std::try_format("{:s}", Status::failed);
+  auto bad_type = std::try_runtime_format("{:s}", Status::failed);
   if (bad_type || bad_type.error() != std::format_errc::invalid_format) { return 7; }
-  auto bad_count = std::try_println("missing", Status::failed);
+  auto bad_count = std::try_runtime_println("missing", Status::failed);
   if (bad_count || bad_count.error() != std::print_errc::argument_count_mismatch) { return 8; }
   mut std::string output{"prefix"};
-  auto bad_append = std::try_format_to(output, "{", Status::failed);
+  auto bad_append = std::try_runtime_format_to(output, "{", Status::failed);
   if (bad_append || output != "prefix") { return 9; }
-  std::format_to(output, " {}", Status::failed);
+  std::runtime_format_to(output, " {}", Status::failed);
   if (output != "prefix 9") { return 10; }
-  auto printed = std::try_println("token creation failed: {}", Status::failed);
+  auto printed = std::try_runtime_println("token creation failed: {}", Status::failed);
   if (!printed) { return 11; }
-  std::println("{} {}", Named::high, Unsigned64::high);
+  std::runtime_println("{} {}", Named::high, Unsigned64::high);
   return 0;
 }

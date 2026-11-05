@@ -26,6 +26,9 @@ concept iterable<R> = requires(R& range) { for (auto& element : range) {} };
 concept loop_checked<F, R, Result> = requires(mut F& function, R& range) { for (auto& element : range) { static_assert(requires { { function(element) } -> Result; }); } };
 concept observes<I> = requires(I& cursor) { { *cursor }; };
 concept changes<I> = requires(mut I& cursor) { { *cursor } -> mut auto& [[borrowed_from(cursor)]]; };
+class Window { int& first; public: Window(int& first) : first(first) {} };
+concept views<S> = requires(S& view_source) { { view_source.view() } -> Window [[borrowed_from(view_source)]]; };
+concept infers_view<S> = requires(S& carrier_source) { { carrier_source.view() } -> auto [[borrowed_from(carrier_source)]]; };
 int main() { int left = 3; int right = 4; return add(left, right) == twice(left) + 1 ? 0 : 1; }
 """
 
@@ -115,6 +118,16 @@ def main():
             assert "*cursor };" in str(inferred_contract) and "->" not in str(inferred_contract), inferred_contract
             mutable_contract = hover(SOURCE, SOURCE.index("changes<I>"))
             assert "-> mut auto&" in str(mutable_contract) and "borrowed_from(cursor)" in str(mutable_contract), mutable_contract
+            # A borrow-carrying value result keeps its exact type and origin.
+            carrier_contract = hover(SOURCE, SOURCE.index("views<S>"))
+            assert "-> Window [[borrowed_from(view_source)]]" in str(carrier_contract), carrier_contract
+            inferred_carrier = hover(SOURCE, SOURCE.index("infers_view<S>"))
+            assert "-> auto [[borrowed_from(carrier_source)]]" in str(inferred_carrier), inferred_carrier
+            carrier_origin = request("textDocument/definition", {
+                "textDocument": {"uri": uri},
+                "position": lsp_position(SOURCE, SOURCE.index("view_source)]]"))})
+            carrier_location = carrier_origin[0] if isinstance(carrier_origin, list) else carrier_origin
+            assert carrier_location["range"]["start"] == lsp_position(SOURCE, SOURCE.index("view_source) {")), carrier_origin
             range_use = SOURCE.index(": range)") + 2
             range_definition = request("textDocument/definition", {
                 "textDocument": {"uri": uri},

@@ -17,6 +17,29 @@ void SemanticConstantTrace::appendTo(Diagnostic &diagnostic) const {
                                "this evaluation trace.");
 }
 
+std::string compileTimePanicText(const std::string &message) {
+  std::string quoted = "Compile-time evaluation panicked: \"";
+  for (const char character : message) {
+    switch (character) {
+    case '"':
+      quoted += "\\\"";
+      break;
+    case '\\':
+      quoted += "\\\\";
+      break;
+    case '\n':
+      quoted += "\\n";
+      break;
+    case '\t':
+      quoted += "\\t";
+      break;
+    default:
+      quoted += character;
+    }
+  }
+  return quoted + "\"";
+}
+
 SemanticMoveOrigins
 SemanticMoveOrigins::merge(const SemanticMoveOrigins &left,
                            const SemanticMoveOrigins &right) {
@@ -91,8 +114,9 @@ void SemanticDiagnosticReporter::reportConstexprFailure(
               "' reads a binding that is not constexpr.";
     break;
   case ConstantEvaluationFailure::ResourceLimit:
-    message = "The constexpr initializer exceeded the compiler's bounded "
-              "evaluation limit.";
+    message = "The initializer for constexpr binding '" +
+              declaration.name().lexeme +
+              "' exceeded the compiler's bounded evaluation limit.";
     hint = "Reduce constexpr recursion or loop work, or split the "
            "calculation into smaller constexpr bindings.";
     break;
@@ -135,10 +159,24 @@ void SemanticDiagnosticReporter::reportConstexprFailure(
     message = "The constexpr evaluator cannot apply this operation to "
               "these operand types.";
     break;
+  case ConstantEvaluationFailure::Panicked:
+    message = "The initializer for constexpr binding '" +
+              declaration.name().lexeme + "' failed. " +
+              compileTimePanicText(failureDetail);
+    hint = "A panic that executes during compilation fails the request with "
+           "its message.";
+    break;
+  case ConstantEvaluationFailure::RuntimeOnlyCall:
+    message = "The initializer for constexpr binding '" +
+              declaration.name().lexeme +
+              "' reached a call that cannot run during compilation.";
+    hint = runtimeOnlyCallHint;
+    break;
   case ConstantEvaluationFailure::None:
     break;
   }
-  if (!failureDetail.empty()) {
+  if (!failureDetail.empty() &&
+      failure != ConstantEvaluationFailure::Panicked) {
     message += " " + failureDetail;
   }
 
@@ -154,6 +192,19 @@ void SemanticDiagnosticReporter::reportConstexprFailure(
                               {tokenSpan(*libraryLocation),
                                "Reported inside this library instance."});
   diagnostics.emplace_back(std::move(diagnostic));
+}
+
+void SemanticConstraintGuidance::retain(
+    const std::vector<std::string> &source) {
+  constexpr std::size_t limit = 8;
+  for (const auto &hint : source) {
+    if (std::find(hints.begin(), hints.end(), hint) != hints.end())
+      continue;
+    if (hints.size() < limit)
+      hints.push_back(hint);
+    else
+      ++omitted;
+  }
 }
 
 SemanticMemberConstraintCause
@@ -260,7 +311,8 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
     case MemberRequirementFailureKind::BorrowedResult:
       reason = "Member '" + leaf.memberName +
                "()' returns a reference or tracked borrowed state; this "
-               "requirement needs an owned result.";
+               "requirement needs an owned result. Name a borrowed result's "
+               "origin with [[borrowed_from(parameter)]].";
       break;
     case MemberRequirementFailureKind::Constraints:
       reason = "Member '" + leaf.memberName +
@@ -320,8 +372,20 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
                                    "from the member explanation.");
     }
   };
+  const auto appendExpressionGuidance =
+      [](Diagnostic &diagnostic, const SemanticConstraintFailure &cause) {
+        for (const auto &hint : cause.expressionGuidance.hints)
+          if (std::find(diagnostic.hints.begin(), diagnostic.hints.end(),
+                        hint) == diagnostic.hints.end())
+            diagnostic.hints.push_back(hint);
+        if (cause.expressionGuidance.omitted != 0)
+          diagnostic.hints.push_back(
+              std::to_string(cause.expressionGuidance.omitted) +
+              " additional nested requirement hints omitted.");
+      };
   const auto publish = [&](Diagnostic diagnostic) {
-    if (failure.expressionFailure && !failure.context.empty()) {
+    if (failure.expressionFailure && failure.alternatives.empty() &&
+        !failure.context.empty()) {
       diagnostic.message =
           (failure.applicationArgumentIndex
                ? "Type '" + typeSpelling(failure.argument) +
@@ -334,26 +398,37 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
       std::string prefix =
           "Argument " + std::to_string(*failure.callArgumentIndex + 1) +
           " has type '" + typeSpelling(failure.callArgumentType) + "'";
-      prefix +=
-          failure.callArgumentType == failure.argument
-              ? ", which "
-              : "; its inferred type '" + typeSpelling(failure.argument) + "' ";
-      if (!failure.context.empty()) {
-        diagnostic.message = prefix + "does not satisfy concept '" +
-                             applicationSpelling(failure.context.front()) +
-                             "'.";
-      } else if (failure.structural == StructuralConstraintKind::ReadMember) {
-        diagnostic.message = prefix + "does not satisfy required member '" +
-                             failure.memberName + "()'.";
+      if (!failure.alternatives.empty()) {
+        diagnostic.message += " " + prefix;
+        if (failure.callArgumentType != failure.argument)
+          diagnostic.message +=
+              "; its inferred type is '" + typeSpelling(failure.argument) + "'";
+        diagnostic.message += ".";
       } else {
-        diagnostic.message =
-            prefix + "does not satisfy generic constraint '" +
-            (failure.constraintName
-                 ? semantic_spelling::pathSpelling(*failure.constraintName)
-                 : "the declared constraint") +
-            "'.";
+        prefix += failure.callArgumentType == failure.argument
+                      ? ", which "
+                      : "; its inferred type '" +
+                            typeSpelling(failure.argument) + "' ";
+        if (!failure.context.empty()) {
+          diagnostic.message = prefix + "does not satisfy concept '" +
+                               applicationSpelling(failure.context.front()) +
+                               "'.";
+        } else if (failure.structural == StructuralConstraintKind::ReadMember) {
+          diagnostic.message = prefix + "does not satisfy required member '" +
+                               failure.memberName + "()'.";
+        } else {
+          diagnostic.message =
+              prefix + "does not satisfy generic constraint '" +
+              (failure.constraintName
+                   ? semantic_spelling::pathSpelling(*failure.constraintName)
+                   : "the declared constraint") +
+              "'.";
+        }
       }
     }
+    if (!failure.alternatives.empty() && !failure.context.empty())
+      diagnostic.message += " Required application '" +
+                            applicationSpelling(failure.context.front()) + "'.";
     for (const auto &context : failure.context) {
       diagnostic.related.push_back(
           {tokenSpan(context.location),
@@ -367,6 +442,7 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
           {tokenSpan(location), *failure.expressionFailure});
     }
     appendMemberReason(diagnostic, failure);
+    appendExpressionGuidance(diagnostic, failure);
     if (failure.conformanceBorrowOperation) {
       diagnostic.hints.push_back(
           "Operation '" + failure.conformanceBorrowOperation->lexeme +
@@ -457,6 +533,7 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
                                                   "'."});
           }
           appendMemberReason(diagnostic, alternative);
+          appendExpressionGuidance(diagnostic, alternative);
           if (alternative.expressionFailure &&
               !alternative.expressionFailure->empty())
             diagnostic.related.push_back(
@@ -749,10 +826,22 @@ void SemanticDiagnosticReporter::reportConstexprConditionFailure(
     message = "The constexpr evaluator cannot apply an operation in this "
               "'if constexpr' condition.";
     break;
+  case ConstantEvaluationFailure::Panicked:
+    message = "The condition of 'if constexpr' failed. " +
+              compileTimePanicText(failureDetail);
+    hint = "A panic that executes during compilation fails the request with "
+           "its message.";
+    break;
+  case ConstantEvaluationFailure::RuntimeOnlyCall:
+    message = "The condition of 'if constexpr' reached a call that cannot run "
+              "during compilation.";
+    hint = runtimeOnlyCallHint;
+    break;
   case ConstantEvaluationFailure::None:
     break;
   }
-  if (!failureDetail.empty()) {
+  if (!failureDetail.empty() &&
+      failure != ConstantEvaluationFailure::Panicked) {
     message += " " + failureDetail;
   }
   const Token &keyword = *statement.constexprKeyword();
@@ -778,6 +867,10 @@ void SemanticDiagnosticReporter::reportStaticAssertEvaluationFailure(
   case ConstantEvaluationFailure::NonConstantReference:
     message = "The condition of 'static_assert' reads a binding that is not "
               "constexpr.";
+    // A function's validity cannot depend on each call's arguments.
+    hint += " To check a parameter at each compile-time call, write "
+            "'if (!condition) { std::panic(\"message\"); }' in the function "
+            "body instead.";
     break;
   case ConstantEvaluationFailure::ResourceLimit:
     message = "The condition of 'static_assert' exceeded the compiler's "
@@ -812,11 +905,23 @@ void SemanticDiagnosticReporter::reportStaticAssertEvaluationFailure(
     message = "The constexpr evaluator cannot apply an operation in this "
               "'static_assert' condition.";
     break;
+  case ConstantEvaluationFailure::Panicked:
+    message = "The condition of 'static_assert' failed. " +
+              compileTimePanicText(failureDetail);
+    hint = "A panic that executes during compilation fails the request with "
+           "its message.";
+    break;
+  case ConstantEvaluationFailure::RuntimeOnlyCall:
+    message = "The condition of 'static_assert' reached a call that cannot "
+              "run during compilation.";
+    hint = runtimeOnlyCallHint;
+    break;
   case ConstantEvaluationFailure::UnsupportedExpression:
   case ConstantEvaluationFailure::None:
     break;
   }
-  if (!failureDetail.empty()) {
+  if (!failureDetail.empty() &&
+      failure != ConstantEvaluationFailure::Panicked) {
     message += " " + failureDetail;
   }
   Diagnostic diagnostic =

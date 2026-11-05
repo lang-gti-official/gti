@@ -104,7 +104,7 @@ import std.map;
             for count in range(6):
                 result = subprocess.run([str(binary), *(["fail"] * count)], env=environment,
                                         capture_output=True, text=True, timeout=30)
-                expected = "77\n99\n" if count == 4 else "99\n"
+                expected = "77\n99\n" if count == 5 else "99\n"
                 assert result.returncode == 70 and result.stdout == expected, (count, result)
                 assert "runtime error[GTI-R" in result.stderr, result
     print(f"generic algorithms: {len(negatives)} semantic rejections and 24 failure cleanups passed")

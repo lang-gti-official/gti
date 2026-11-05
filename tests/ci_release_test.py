@@ -25,6 +25,45 @@ def run(command, cwd, success=True):
     return result.stdout.strip()
 
 
+def duplicate_mapping_keys(text):
+    """Keys repeated within one YAML mapping: GitHub refuses such a workflow outright
+    (every run fails in a second with no jobs), while lenient parsers keep the last
+    key, so no job-level pin notices. Block scalars are skipped; flow mappings
+    (`- {os: ...}`) are not scanned."""
+    duplicates, stack, block_scalar = [], [], None
+    for line in text.splitlines():
+        indent = len(line) - len(line.lstrip(" "))
+        if block_scalar is not None:
+            if not line.strip() or indent > block_scalar:
+                continue
+            block_scalar = None
+        content = line.strip()
+        if not content or content.startswith("#"):
+            continue
+        if content.startswith("- "):
+            indent, content = indent + 2, content[2:].strip()
+            while stack and stack[-1][0] >= indent:
+                stack.pop()
+            stack.append((indent, set()))
+        else:
+            while stack and stack[-1][0] > indent:
+                stack.pop()
+            if not stack or stack[-1][0] < indent:
+                stack.append((indent, set()))
+        if content[:1] in "{[\"'":
+            continue
+        match = re.match(r"([A-Za-z0-9_.-]+):(\s|$)", content)
+        if not match:
+            continue
+        key, keys = match.group(1), stack[-1][1]
+        if key in keys:
+            duplicates.append(key)
+        keys.add(key)
+        if content[match.end():].strip() in (">", ">-", ">+", "|", "|-", "|+"):
+            block_scalar = indent
+    return duplicates
+
+
 def jobs(workflow):
     """Split a workflow's top-level jobs by their two-space-indented keys."""
     body = workflow.split("\njobs:\n", 1)[1]
@@ -45,36 +84,49 @@ def artifact_contract(root):
     sys.path.insert(0, str(root / "scripts"))
     artifacts = load_module(root / "scripts/release_artifacts.py", "release_artifacts")
     sha, repository = "c" * 40, "lang-gti-official/gti"
-    run = queue_run(sha, status="completed", conclusion="success", run_attempt=2)
-    names = ["CI gate", *(f"Release package ({p})" for p in artifacts.PLATFORMS),
-             *(f"Integration ({p} {i}/{n})" for p, n in (("linux", 6), ("darwin", 5)) for i in range(n))]
+    run = full_run(sha, status="completed", conclusion="success", run_attempt=2)
+    names = ["Full validation verdict", *(f"Release package ({p})" for p in artifacts.PLATFORMS),
+             *(f"Integration ({p} {i}/{n})" for p, n in artifacts.integration_shards().items() for i in range(n))]
     jobs = [gate_job(sha, name=n) for n in names]
     assets = [{"name": f"gti-nightly-{p}-2", "expired": False} for p in artifacts.PLATFORMS]
 
     def evidence(run=run, jobs=jobs, assets=assets):
         def request(path):
-            if "/workflows/" in path:
-                return {"workflow_runs": [run]}
+            if "/workflows/full-validation.yml/" in path:
+                return {"workflow_runs": [run] if run.get("path") == artifacts.FULL_VALIDATION_WORKFLOW else []}
+            if "/workflows/ci.yml/" in path:
+                return {"workflow_runs": [run] if run.get("path") == ".github/workflows/ci.yml" else []}
             if "/jobs?" in path:
                 assert "/attempts/2/" in path, path
                 return {"jobs": jobs}
             return {"artifacts": assets, "total_count": len(assets)}
         return artifacts.release_evidence(repository, sha, request)
 
+    # The required shards are the ones full validation actually runs.
+    full_text = (root / artifacts.FULL_VALIDATION_WORKFLOW).read_text()
+    shards = artifacts.integration_shards()
+    assert all(f"name: Integration (${{{{ matrix.platform }}}} ${{{{ matrix.index }}}}/${{{{ matrix.shards }}}})" in full_text
+               and f"platform: {p}, shards: {n}, index: {n - 1}}}" in full_text
+               and f"platform: {p}, shards: {n}, index: {n}}}" not in full_text
+               for p, n in shards.items()), shards
     assert evidence() == {"run_id": "7", "run_attempt": "2"}
-    assert evidence(run={**run, "event": "workflow_dispatch", "head_branch": "main"})["run_id"] == "7"
+    assert evidence(run={**run, "event": "workflow_dispatch"})["run_id"] == "7"
     rejected = [
         {"run": {**run, "event": "pull_request"}},
-        {"run": {**run, "event": "workflow_dispatch", "head_branch": "feature"}},
+        {"run": {**run, "event": "merge_group", "head_branch": "gh-readonly-queue/main/pr-1-" + "b" * 40}},
+        {"run": {**run, "head_branch": "feature"}},
         {"run": {**run, "conclusion": "failure"}},
         {"run": {**run, "status": "in_progress"}},
         {"run": {**run, "head_sha": "a" * 40}},
         {"run": {**run, "path": ".github/workflows/fake.yml"}},
+        # The merge gate no longer runs the suite, so a merge_group ci.yml run is never full evidence.
+        {"run": queue_run(sha, status="completed", conclusion="success", run_attempt=2)},
         {"run": {**run, "head_repository": {"full_name": "attacker/gti"}}},
-        {"jobs": jobs[:1]},  # automation gate alone cannot publish
+        {"jobs": jobs[:1]},  # the verdict alone cannot publish
         {"jobs": jobs[1:]},
         {"jobs": [*jobs, jobs[0]]},
         {"jobs": [{**j, "conclusion": "skipped"} if j["name"].startswith("Integration") else j for j in jobs]},
+        {"jobs": [j for j in jobs if j["name"] != f"Integration (darwin {shards['darwin'] - 1}/{shards['darwin']})"]},
         {"assets": assets[:1]},
         {"assets": [{**a, "expired": True} for a in assets]},
         {"assets": [{**a, "name": a["name"].replace("-2", "-1")} for a in assets]},
@@ -153,6 +205,26 @@ def editor_contract(root):
                 else:
                     raise AssertionError("accepted altered editor archive")
             assert not env_path.exists()
+    # A transient network failure is retried; a persistent one still fails.
+    with tempfile.TemporaryDirectory() as directory:
+        archive = pathlib.Path(directory) / "archive"
+        calls, naps = [], []
+        def flaky(url, timeout):
+            calls.append(url)
+            if len(calls) < 3:
+                raise editor.urllib.error.URLError("nodename nor servname provided")
+            return io.BytesIO(b"bytes")
+        with patch.object(editor.urllib.request, "urlopen", side_effect=flaky):
+            editor.download("https://example.invalid/a", archive, sleep=naps.append)
+        assert archive.read_bytes() == b"bytes" and len(calls) == 3 and len(naps) == 2
+        with patch.object(editor.urllib.request, "urlopen",
+                          side_effect=editor.urllib.error.URLError("down")):
+            try:
+                editor.download("https://example.invalid/a", archive, attempts=2, sleep=naps.append)
+            except editor.urllib.error.URLError:
+                pass
+            else:
+                raise AssertionError("a persistent network failure must still fail")
     toolchain = (root / "scripts/configure_ci_toolchain.sh").read_text()
     assert 'python3 "${repository}/scripts/configure_ci_editor.py"' in toolchain
 
@@ -160,6 +232,7 @@ def editor_contract(root):
 def nightly_contract(root):
     nightly = (root / ".github/workflows/nightly.yml").read_text()
     ci = (root / ".github/workflows/ci.yml").read_text()
+    full = (root / ".github/workflows/full-validation.yml").read_text()
     sections = jobs(nightly)
     assert list(sections) == ["select", "publish"], list(sections)
     header = nightly.split("\njobs:\n", 1)[0]
@@ -176,6 +249,8 @@ def nightly_contract(root):
     assert "${{ github.token }}" in nightly
     # Every action is a full-SHA pin of actions/*, the same pin CI uses for the same action.
     pins = dict(re.findall(r"^\s*(?:-\s+)?uses:\s*(actions/\S+)@([0-9a-f]{40})\s", ci, re.MULTILINE))
+    for action, revision in re.findall(r"^\s*(?:-\s+)?uses:\s*(actions/\S+)@([0-9a-f]{40})\s", full, re.MULTILINE):
+        assert pins.get(action, revision) == revision, (action, revision, pins.get(action))
     used = re.findall(r"^\s*(?:-\s+)?uses:\s*(\S+)@(\S+)", nightly, re.MULTILINE)
     assert used
     for action, revision in used:
@@ -195,7 +270,17 @@ def nightly_contract(root):
     assert "ref: main" in select and "fetch-depth: 0" in select
     assert "python3 tests/ci_release_test.py ." in select and "select-nightly" in select
     assert '--ref "${GTI_REF}"' in select
-    integration = jobs(ci)
+    full_header = full.split("\njobs:\n", 1)[0]
+    assert "  push:\n    branches: [main]\n  workflow_dispatch:" in full_header
+    assert "merge_group" not in full and "pull_request" not in full, "full validation runs post-integration"
+    assert "group: full-validation-${{ github.ref }}\n  cancel-in-progress: false" in full_header, \
+        "full validation runs queue; a superseded head's verdict is still channel evidence"
+    integration = jobs(full)
+    assert list(integration) == ["plan", "package", "integration", "sanitizers", "llvm-sanitizers", "tsan",
+                                 "verdict", "report"], list(integration)
+    assert "merge_group" not in jobs(ci).get("gate", "") or "package" not in jobs(ci)["gate"]
+    assert "package" not in jobs(ci) and "integration" not in jobs(ci) and "sanitizers" not in jobs(ci), \
+        "the merge gate proves build and fast checks only"
     package, suite = integration["package"], integration["integration"]
     assert "{os: ubuntu-24.04, platform: linux-x64, host: Linux-X64}" in package
     assert "{os: macos-26, platform: darwin-arm64, host: macOS-ARM64}" in package
@@ -215,20 +300,47 @@ def nightly_contract(root):
         assert check in package, check
     assert '-DGTI_BUILD_ID="${GTI_NIGHTLY_SHA}"' in package and "-DGTI_EXPECTED_TAG=nightly" in package
     assert "CMakeFiles/gti_driver.dir/src/driver/build.cpp.o" in package
-    key = ("gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('CMakeLists.txt', "
-           "'cmake/**') }}-${{ github.sha }}-${{ github.run_id }}")
-    assert f"key: {key}" in package and f"key: {key}" in suite, "suite shards reuse the package objects"
-    assert "actions/cache/save@" in package and "actions/cache/save@" not in suite
+    key = ("gti-ccache-v2-release-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('CMakeLists.txt', "
+           "'cmake/**', 'scripts/configure_ci_toolchain.sh') }}")
+    assert f"key: {key}" in package and f"key: {key}" in suite, "package and shards restore the prebuilt LLVM cache"
+    prebuilt = (root / ".github/workflows/llvm-prebuilt.yml").read_text()
+    assert f"key: {key}" in prebuilt and "actions/cache/save@" in prebuilt, "llvm-prebuilt.yml owns the release cache"
+    assert "actions/cache/save@" not in package and "actions/cache/save@" not in suite, \
+        "validation runs only restore the release cache"
+    assert "needs: [plan]\n" in suite and "needs: [plan, package]" not in suite, "shards no longer wait for packaging"
     shards = re.findall(r"platform: (linux|darwin), shards: (\d+), index: (\d+)", suite)
     for platform in ("linux", "darwin"):
         rows = [(int(count), int(index)) for name, count, index in shards if name == platform]
         assert rows and sorted(index for _, index in rows) == list(range(rows[0][0])), platform
         assert all(count == rows[0][0] for count, _ in rows)
     assert "validation_checks.py shard --build build" in suite
-    gate = integration["gate"]
-    assert "fast, package, integration, sanitizers, source-stdlib, lsp]" in gate
-    assert "validation_checks.py ci-gate" in gate
-    assert "named_test_shards.py verify" in gate
+    gate = jobs(ci)["gate"]
+    assert "fast, source-stdlib, lsp]" in gate and "package" not in gate
+    assert "needs.plan.outputs.mode == 'lsp'" in jobs(ci)["lsp"], \
+        "the LSP lane is a mode-gated merge-gate job beside source-stdlib"
+    assert "validation_checks.py ci-gate" in gate and "--shard-reports" not in gate
+    verdict = integration["verdict"]
+    assert "needs: [plan, package, integration, sanitizers, llvm-sanitizers, tsan]" in verdict
+    assert "GTI_ENABLE_THREAD_SANITIZER_TESTS=ON" in integration["tsan"], "TSan is real in full validation"
+    assert "Require every thread-sanitizer test to run" in integration["tsan"] and 'suite.get("skipped"' in integration["tsan"], \
+        "a skipped _tsan test is a missing runtime, never evidence"
+    assert "libclang-rt-20-dev" in (root / "scripts/configure_ci_toolchain.sh").read_text(), "clang's TSan runtime is installed on Linux"
+    assert "GTI_TEST_BACKENDS: llvm" in integration["llvm-sanitizers"]
+    assert "cpp_mir" not in integration["sanitizers"], "the C++ emitter is sanitized only in cpp-backend.yml"
+    cpp = (root / ".github/workflows/cpp-backend.yml").read_text()
+    assert "GTI_TEST_BACKENDS: cpp" in cpp and "--test-set cpp" in cpp and "cpp_mir_body_emitter" in cpp
+    # CTest's per-test ENVIRONMENT property (from the configure-time cache
+    # default) overrides a job's environment, so the policy must be configured.
+    assert cpp.count("-DGTI_TEST_BACKENDS=cpp") == 2, "every C++ job configure selects the C++ backend policy"
+    assert "merge_group" not in cpp and "pull_request" not in cpp, "the C++ backend never gates"
+    assert "schedule:" in cpp.split("\njobs:\n", 1)[0]
+    assert "validation_checks.py ci-gate" in verdict and "--event full_validation" in verdict
+    assert "--shard-reports" in verdict
+    cpp_jobs = jobs((root / ".github/workflows/cpp-backend.yml").read_text())
+    assert "named_test_shards.py verify" in cpp_jobs["verdict"], "the C++ emitter lifecycle proof lives in the C++ job"
+    report = integration["report"]
+    assert "issues: write" in report and "full_validation_report.py" in report
+    assert "needs.verdict.result != 'cancelled'" in report
     publish = sections["publish"]
     assert "needs: select" in publish
     assert "run-id: ${{ needs.select.outputs.run_id }}" in publish
@@ -301,9 +413,13 @@ def train_contract(root):
         common_train_contract(name, text, ci, rollup)
     nightly_jobs = jobs(nightly)
 
-    # Beta: the nightly's package, suite and gate, packaging the channel-neutral archive.
+    # Beta: the nightly's package job producing the channel-neutral archive; no
+    # suite re-run (the cut's full-CI-verified parent, or the backport's own
+    # suite, is the evidence).
     beta = jobs(beta_text)
-    assert list(beta) == ["select", "package", "suite", "release-gate", "publish"], list(beta)
+    assert list(beta) == ["select", "package", "publish"], list(beta)
+    assert "merge-shards" not in beta_text and "validation_checks.py shard" not in beta_text
+    assert "check_ci_sanitizers" not in beta_text and "actions/cache/save@" not in beta_text
     header = beta_text.split("\njobs:\n", 1)[0]
     assert "  push:\n    branches:\n      - main\n      - \"beta/**\"\n" in header
     assert "schedule:" in header and "workflow_dispatch:" in header and "pull_request" not in header
@@ -314,16 +430,18 @@ def train_contract(root):
         assert writes == (["contents", "id-token", "attestations"] if job == "publish" else []), (job, writes)
     assert "if: github.repository == 'lang-gti-official/gti'" in beta["select"]
     assert "python3 tests/release_train_test.py" in beta["select"] and "select-beta" in beta["select"]
-    package, suite = beta["package"], beta["suite"]
+    package = beta["package"]
     assert re.findall(r"\{os: [^}]*platform: ([a-z0-9-]+)", package) == ["linux-x64", "darwin-arm64"]
     assert "ubuntu-24.04-arm" not in beta_text and "linux-arm64}" not in beta_text
-    for body in (package, suite):
-        assert body.count(CONFIGURE_RELEASE) == 1 and "bash scripts/configure_ci_toolchain.sh" in body
-        assert "ref: ${{ needs.select.outputs.sha }}" in body
-        assert "if: needs.select.outputs.build == 'true'" in body
+    assert package.count(CONFIGURE_RELEASE) == 1 and "bash scripts/configure_ci_toolchain.sh" in package
+    assert "ref: ${{ needs.select.outputs.sha }}" in package
+    assert "if: needs.select.outputs.build == 'true'" in package
+    release_cache = "gti-ccache-v2-release-${{ runner.os }}-${{ runner.arch }}-"
+    assert release_cache in package and release_cache in backport_text, \
+        "release builds restore the cache llvm-prebuilt.yml warms"
     shard_rows = lambda body: re.findall(r"\{os: [^}]*shards: \d+, index: \d+\}", body)
-    assert shard_rows(suite) == shard_rows(jobs(ci)["integration"]), "beta runs the nightly's release shards"
-    assert shard_rows(backport_text) == shard_rows(jobs(ci)["integration"]), "backports run the same shards"
+    full_jobs = jobs((workflows / "full-validation.yml").read_text())
+    assert shard_rows(backport_text) == shard_rows(full_jobs["integration"]), "backports run the nightly's release shards"
     for check in ("lsp_smoke_test.py", "cli_smoke_test.py", "project_cli_smoke_test.py",
                   "process_resource_policy_test.py", "managed_thread_runtime_test.py",
                   "atomic_runtime_test.py", "installed_library_smoke"):
@@ -333,10 +451,8 @@ def train_contract(root):
     assert "release_train.py confirm" in package
     ordered(package, ["name: Build\n", "name: Test installed toolchain", "-DGTI_CHANNEL=stable"],
             "the archive comes from the validated stage")
-    assert 'merge-shards\n          --shard-reports "${RUNNER_TEMP}/shards" --platforms darwin,linux' in \
-        beta["release-gate"]
     publish = beta["publish"]
-    assert "needs: [select, package, release-gate]" in publish
+    assert "needs: [select, package]" in publish
     assert "group: gti-beta-publication\n      cancel-in-progress: false" in publish
     ordered(publish, ["release_train.py verify-assets", "release_train.py admit-beta",
                       "attest-build-provenance", "refs/tags/${GTI_BETA_TAG}", "release_train.py beta-notes",
@@ -415,8 +531,14 @@ def workflow_contract(root):
     # CI, nightly packaging and the rollup bot run on GitHub; the frozen Gitea
     # release workflow stays as written.
     assert sorted(p.name for p in (root / ".github/workflows").glob("*.yml")) == [
-        "backport.yml", "beta.yml", "cache.yml", "ci.yml", "lsp.yml", "nightly.yml", "preview.yml", "rollback.yml", "rollup.yml", "train.yml"]
+        "backport.yml", "beta.yml", "cache.yml", "ci.yml", "cpp-backend.yml", "full-validation.yml",
+        "llvm-prebuilt.yml", "lsp.yml", "nightly.yml", "preview.yml", "rollback.yml", "rollup.yml", "train.yml"]
     assert not (root / ".gitea/workflows/ci.yml").exists()
+    for workflow in sorted((root / ".github/workflows").glob("*.yml")):
+        duplicates = duplicate_mapping_keys(workflow.read_text())
+        assert not duplicates, f"{workflow.name} repeats mapping keys (GitHub refuses the workflow): {duplicates}"
+    assert duplicate_mapping_keys("jobs:\n  a:\n    x: 1\n  a:\n    y: 2\n") == ["a"]
+    assert duplicate_mapping_keys("steps:\n  - name: a\n    run: |\n      k: 1\n      k: 2\n  - name: a\n") == []
     assert "branches:\n      - main" in release and "paths:" not in release
     assert release.count("-DGTI_RELEASE_BUILD=ON") == 1, "channels must share one configure"
     assert release.count('run: cmake --build build --config Release --parallel "${GTI_JOBS}"') == 1
@@ -432,13 +554,17 @@ def workflow_contract(root):
     manual = (root / "docs/architecture/build-and-driver.md").read_text()
     assert "### GitHub nightly publication" in manual and "host-runtime.json" in manual
     assert "Manual macOS release publication" not in manual, "manual macOS publication is retired"
-    assert "documentation-index:" not in ci, "documentation must reuse the native compiler"
-    assert "build/gti_docgen --stdlib stdlib" in ci
-    for profile in ("native", "sanitizers"):
-        assert f"gti-ccache-v1-${{{{ runner.os }}}}-${{{{ runner.arch }}}}-{profile}-" in ci
-    assert "actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9" in ci
-    assert "actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9" in ci
-    assert "path: ${{ env.CCACHE_DIR }}" in ci and "secrets." not in ci
+    full = (root / ".github/workflows/full-validation.yml").read_text()
+    native_ci = ci + full
+    assert "documentation-index:" not in native_ci, "documentation must reuse the native compiler"
+    assert "build/gti_docgen --stdlib stdlib" in full
+    assert "gti-ccache-v2-native-${{ runner.os }}-${{ runner.arch }}-" in ci
+    assert "gti-ccache-v2-sanitizers-${{ runner.os }}-${{ runner.arch }}-" in full
+    assert "gti-ccache-v1" not in ci + full, "per-SHA cache keys are retired"
+    for text in (ci, full):
+        assert "actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9" in text
+        assert "actions/cache/save@" not in text, "only cache.yml and llvm-prebuilt.yml save caches"
+        assert "path: ${{ env.CCACHE_DIR }}" in text and "secrets." not in text
     for contents, profiles in ((release, ("release",)),):
         assert contents.count("bash scripts/configure_ci_cache.sh") == len(profiles)
         assert contents.count("https://gitea.com/actions/cache/restore@2cdf405574d6ef1f33a1d12acccd3ae82f47b3f2") == len(profiles)
@@ -451,6 +577,59 @@ def workflow_contract(root):
         assert "path: ${{ env.CCACHE_DIR }}" in contents
         assert "CMakeFiles/gti_driver.dir/src/driver/build.cpp.o" in contents
         assert "${{ github." not in contents and "GH_TOKEN" not in contents and "gh release" not in contents
+
+
+def change_review_contract(root):
+    """The release-version job judges the candidate's own range once, from where
+    it forked, and runs both diff-based reviews over it: the version decision
+    and the stdlib surface review. Pull requests and merge-queue candidates
+    reach it through the same base expression."""
+    ci = (root / ".github/workflows/ci.yml").read_text()
+    job = jobs(ci)["release-version"]
+    assert "fetch-depth: 0" in job, "diff-based reviews need the full history"
+    ordered(job, ["- name: Find where the candidate forked\n        id: range\n",
+                  'python3 scripts/check_release_version.py "${GTI_FORK_SHA}" "${GTI_HEAD_SHA}"',
+                  'python3 scripts/check_stdlib_surface_review.py "${GTI_FORK_SHA}" "${GTI_HEAD_SHA}"'],
+            "both reviews follow the one fork computation")
+    assert job.count("GTI_FORK_SHA: ${{ steps.range.outputs.base }}") == 2
+    assert job.count("GTI_HEAD_SHA: ${{ github.sha }}") == 3
+    assert ("GTI_BASE_SHA: ${{ github.event.pull_request.base.sha || "
+            "github.event.merge_group.base_sha }}") in job
+    assert "merge_group:" in ci.split("\njobs:\n", 1)[0]
+    automation = jobs(ci)["automation-tests"]
+    assert ("python3 tests/stdlib_surface_review_test.py "
+            "scripts/check_stdlib_surface_review.py") in automation
+    # Execute the fork step: a base that main advanced past still yields the
+    # candidate's fork point, and an absent base falls back to HEAD^.
+    step = job.split("      - name: Find where the candidate forked\n", 1)[1]
+    step = step.split("      - name:", 1)[0]
+    script = "\n".join(line[10:] for line in step.split("        run: |\n", 1)[1].splitlines()) + "\n"
+    with tempfile.TemporaryDirectory(prefix="gti-change-review-") as directory:
+        work = pathlib.Path(directory)
+        run(["git", "init", "--quiet", "-b", "main"], work)
+        run(["git", "config", "user.name", "GTI Test"], work)
+        run(["git", "config", "user.email", "test@example.invalid"], work)
+        def commit(name):
+            (work / name).write_text(name)
+            run(["git", "add", name], work)
+            run(["git", "commit", "--quiet", "-m", name], work)
+            return run(["git", "rev-parse", "HEAD"], work)
+        fork = commit("fork")
+        run(["git", "checkout", "--quiet", "-b", "candidate"], work)
+        parent = commit("candidate-1")
+        head = commit("candidate-2")
+        run(["git", "checkout", "--quiet", "main"], work)
+        advanced = commit("main-advanced")
+        run(["git", "checkout", "--quiet", "candidate"], work)
+        for base, expected in ((advanced, fork), (fork, fork), ("", parent), ("0" * 40, parent)):
+            output = work / "github-output"
+            output.write_text("")
+            result = subprocess.run(["bash", "-e", "-u", "-o", "pipefail"], input=script, cwd=work,
+                                    env=dict(os.environ, GTI_BASE_SHA=base, GTI_HEAD_SHA=head,
+                                             GITHUB_OUTPUT=str(output)),
+                                    text=True, capture_output=True, timeout=10)
+            assert result.returncode == 0, result.stderr
+            assert output.read_text() == f"base={expected}\n", (base, output.read_text())
 
 
 def installed_system_command_contract(root):
@@ -603,6 +782,16 @@ def queue_run(sha, repository="lang-gti-official/gti", **overrides):
     run_record = {"id": 7, "head_sha": sha, "event": "merge_group",
                   "path": ".github/workflows/ci.yml",
                   "head_branch": "gh-readonly-queue/main/pr-12-" + "b" * 40,
+                  "repository": {"full_name": repository},
+                  "head_repository": {"full_name": repository}}
+    run_record.update(overrides)
+    return run_record
+
+
+def full_run(sha, repository="lang-gti-official/gti", **overrides):
+    """A successful post-integration full validation of a main head."""
+    run_record = {"id": 7, "head_sha": sha, "event": "push",
+                  "path": ".github/workflows/full-validation.yml", "head_branch": "main",
                   "repository": {"full_name": repository},
                   "head_repository": {"full_name": repository}}
     run_record.update(overrides)
@@ -833,6 +1022,7 @@ def main():
     root = args.root.resolve()
     workflow_contract(root)
     installed_system_command_contract(root)
+    change_review_contract(root)
     artifact_contract(root)
     editor_contract(root)
     nightly_contract(root)

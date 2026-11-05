@@ -166,9 +166,23 @@ Their ordinary capture initialization, moves, borrows and cleanup occur only
 at evaluated uses; a disabled use does not initialize a capture. Returns inside
 a caller-written lambda still exit that lambda, not a surrounding macro.
 Macro declarations themselves cannot be taken as function items or callbacks.
-Void calls remain complete expression statements. Expansion has deterministic limits of 64
-nested calls and 4096 expanded bodies in one analysis request; recursive
-macro cycles are rejected without expanding the cycle repeatedly.
+Void calls remain complete expression statements. Recursive macro cycles are
+rejected without expanding the cycle repeatedly.
+
+Expansion has two deterministic implementation limits, configured like the
+other compile-time limits (see
+[Implementation limits](static-semantics.md#3112-implementation-limits)):
+`macro-depth` bounds the nested expansions active at once (guaranteed at least
+1024; the default is 1024) and `macro-expansions` bounds the bodies one
+outermost written invocation expands, counting every nested expansion and
+forced argument expansion it causes (guaranteed at least 4096; the default is
+8192). Each outermost invocation has its own budget, so separate invocations
+never accumulate toward a limit, however many a program contains. Exceeding
+either limit rejects that invocation once with `GTI-S2124`, naming the limit,
+its value, and the `--macro-depth`/`--macro-expansions` option and `[limits]`
+key that raise it. Neither limit depends on the host's native stack: the
+compiler continues deep expansion, and the lowering of the expanded bodies, on
+fresh stack segments.
 
 Value results use a typed HIR result region and an ordinary MIR result place.
 The selected result is initialized before macro-local cleanup and remains
@@ -232,7 +246,7 @@ full-expression boundary. Defined failure before production activates no
 obligation, while failure during a later argument or the method discharges the
 active receiver obligation exactly once before propagation.
 
-For an admitted fresh class-value argument to an exact read-only reference,
+For an admitted fresh value argument to an exact read-only reference,
 the producer runs at that argument's written position after all earlier inputs
 have stabilized. Successful production activates one full-expression-owned
 temporary, materializes its place, and begins one read loan. Later arguments
@@ -241,7 +255,9 @@ The argument loan ends immediately after invocation, before full-expression
 cleanup destroys the temporary. Producer failure activates neither loan nor
 drop; failure in a later argument or the selected body ends every active
 temporary-argument loan in reverse order and destroys its temporary exactly
-once while propagating the original failure.
+once while propagating the original failure. Scalar and scalar-enum temporary
+obligations have trivial destruction but retain the same explicit lifetime and
+loan endpoints. Operators use this same ordered input schedule.
 
 A bounded comma-pack fold invokes its already selected call once for each
 concrete element in source-pack order. For each element, its fixed named-place
@@ -864,6 +880,12 @@ owning callable wrappers. An ordinary wrapper or lambda establishes a new
 call site; it does not magically preserve its external caller. Explicit
 tracked wrappers forward the incoming location instead.
 
+A trusted intrinsic uses the attributes of its selected declaration, including
+when it checks a condition and can return normally. Its intrinsic identity does
+not replace that declaration's `track_caller` contract. An untracked source
+wrapper still anchors the location inside its own body; annotating the wrapper
+as well forwards its caller's location through the intrinsic.
+
 Terminal-flow checking retains the existing switch boundary: a `default`
 arm or a semantically exhaustive closed payload-enum switch covers every
 path. Listing all named values of an ordinary integral enum does not prove
@@ -1264,6 +1286,12 @@ native exception or ABI unwinding as the language contract. Cleanup propagation
 is compiler-managed, non-resumable language failure unwinding represented by
 explicit control-flow edges; GTI has no source handler or resume mechanism.
 
+A panic or other terminal failure that executes during compile-time evaluation
+is not a defined runtime failure. It fails that constant request with a
+`GTI-S2057` compile diagnostic carrying the panic's message (static semantics
+§3.11). No failure record is produced, no cleanup runs, and no executable is
+built.
+
 An ordinary failure carries one immutable fixed-size, versioned, copyable,
 allocation-free record containing:
 
@@ -1638,7 +1666,8 @@ observable effects. The current implementation and acceptance status is tracked
 in S-ALLOC-08/S-ALLOC-09; this permission is not a guarantee that every eligible
 allocation is optimized away.
 
-Compile-time diagnostics, compiler resource exhaustion, IEEE-754 nontrapping
+Compile-time diagnostics, including compile-time panics, compiler resource
+exhaustion, IEEE-754 nontrapping
 results, explicit `expected` errors, native error/sentinel values,
 best-effort cleanup-service errors, and violated unsafe raw-pointer or native
 obligations are not defined runtime failures. Unsafe obligation violations

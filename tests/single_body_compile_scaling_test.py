@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """Compiling one function body must scale about linearly with its length.
 
-MIR verification, C++ emission planning and HIR full-expression bookkeeping
-once rescanned the whole body for each instruction, value or place they
-examined. A main() of about 1,100 formatting statements then ran for more
+MIR verification, backend emission planning and HIR full-expression
+bookkeeping once rescanned the whole body for each instruction, value or place
+they examined. A main() of about 1,100 formatting statements then ran for more
 than 18 CPU-minutes while the same statements split into small functions
 compiled in seconds.
 
 The same block of statements is repeated in one body at two lengths, and the
 compiler's own CPU time (not wall time) is compared after subtracting the cost
-of a single block, which carries the fixed standard-library work. Four times
+of a single block, which carries the fixed standard-library and native link
+work. The shipped LLVM backend builds each program (tests/backend_modes.py);
+the frozen C++ backend cannot emit the formatting calls' scalar temporary
+reference arguments. Four times
 the statements must cost well under eight times the work: linear growth costs
 about four times, while the former quadratic and cubic searches cost sixteen
 times or far more.
@@ -23,6 +26,8 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+from backend_modes import llvm_modes
 
 PRELUDE = """import std.format;
 import std.string;
@@ -38,15 +43,15 @@ void show(expected<std::string, std::format_errc> result) {
 
 # One block covers integers of several widths, chars, text, bools and floats,
 # with both the fallible and the infallible formatting entry points.
-BLOCK = """  show(std::try_format("[{:>8}]", int32_t(-12345)));
-  show(std::try_format("[{:#x}]", uint64_t(48879)));
-  show(std::try_format("[{:^7}]", int8_t(7)));
-  show(std::try_format("[{:c}]", 'a'));
-  show(std::try_format("[{:.2}]", "formatting"));
-  show(std::try_format("[{:8}]", std::string("gti")));
-  show(std::try_format("[{:6}]", true));
-  show(std::try_format("[{:.3f}]", double(3.14159265)));
-  std::println(std::format("{}|{:04}", int64_t(-1), uint16_t(2)));
+BLOCK = """  show(std::try_runtime_format("[{:>8}]", int32_t(-12345)));
+  show(std::try_runtime_format("[{:#x}]", uint64_t(48879)));
+  show(std::try_runtime_format("[{:^7}]", int8_t(7)));
+  show(std::try_runtime_format("[{:c}]", 'a'));
+  show(std::try_runtime_format("[{:.2}]", "formatting"));
+  show(std::try_runtime_format("[{:8}]", std::string("gti")));
+  show(std::try_runtime_format("[{:6}]", true));
+  show(std::try_runtime_format("[{:.3f}]", double(3.14159265)));
+  std::println(std::runtime_format("{}|{:04}", int64_t(-1), uint16_t(2)));
 """
 
 SMALL = 45
@@ -57,6 +62,9 @@ RUNS = 3
 GROWTH_LIMIT = 8.0
 # Below this much per-body CPU time the small measurement is mostly noise.
 MINIMUM_BODY_SECONDS = 0.2
+# The production LLVM build at the GTI optimization level the C++ emission
+# measurement used.
+BUILD_FLAGS = llvm_modes(("O1",))[0][1]
 
 
 def program(repetitions: int) -> str:
@@ -64,12 +72,12 @@ def program(repetitions: int) -> str:
 
 
 def compile_seconds(compiler: str, source: Path, timeout: float) -> float:
-    """Return the child CPU seconds of one clean --emit-cpp compilation."""
-    output = source.with_suffix(".cpp")
+    """Return the child CPU seconds of one clean native LLVM build."""
+    output = source.with_suffix(".exe")
     before = resource.getrusage(resource.RUSAGE_CHILDREN)
     try:
         result = subprocess.run(
-            [compiler, str(source), "-O1", "--emit-cpp", "-o", str(output)],
+            [compiler, str(source), *BUILD_FLAGS, "-o", str(output)],
             capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         raise SystemExit(
@@ -80,7 +88,7 @@ def compile_seconds(compiler: str, source: Path, timeout: float) -> float:
         raise SystemExit(
             f"{source.name}: compiler exited {result.returncode}\n{result.stderr}")
     if not output.is_file() or output.stat().st_size == 0:
-        raise SystemExit(f"{source.name}: no C++ was emitted")
+        raise SystemExit(f"{source.name}: no executable was built")
     return ((after.ru_utime - before.ru_utime) +
             (after.ru_stime - before.ru_stime))
 

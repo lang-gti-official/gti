@@ -21,9 +21,16 @@ def main() -> int:
     isolated = arguments[:1] == ["--isolate-tests"]
     if isolated:
         arguments = arguments[1:]
+    # --suite NAME runs one suite after verifying the complete census, so a
+    # per-suite CTest entry carries the same partition proof as the aggregate.
+    only_suite = None
+    if arguments[:1] == ["--suite"]:
+        if len(arguments) < 2:
+            return fail("--suite requires a suite name")
+        only_suite, arguments = arguments[1], arguments[2:]
     if len(arguments) < 2:
         return fail(
-            "usage: compiler_test_aggregate.py [--isolate-tests] "
+            "usage: compiler_test_aggregate.py [--isolate-tests] [--suite NAME] "
             "MANIFEST SUITE=EXECUTABLE..."
         )
 
@@ -97,6 +104,12 @@ def main() -> int:
         return fail("compiler shard index/count out of range")
     selected = [suite for position, suite in enumerate(expected_by_suite)
                 if position % count == index - 1]
+    if only_suite is not None:
+        if only_suite not in expected_by_suite:
+            return fail(f"unknown suite: {only_suite}")
+        if index_text is not None:
+            return fail("--suite and compiler shard selection are exclusive")
+        selected = [only_suite]
     for suite in selected:
         executable = executables[suite]
         started = time.monotonic()

@@ -4109,7 +4109,7 @@ int main() { if (invalid(uint8_t(0))) { return 1; } return 0; }
       "bool mixed<std::numeric T>(T value, int other) { return value == other; "
       "}",
       "bool unconstrained<T>(T value) { return value == 0; }",
-      "void exact(uint8_t value) {} int main() { exact(1); return 0; }",
+      "void exact(uint8_t value) {} int main() { exact(256); return 0; }",
       "T narrow<std::numeric T>(T value) { return value / 2; } "
       "int main() { uint8_t result = narrow(uint8_t(4)); return 0; }",
       "T invalid<std::numeric T>(T value) { return T(value % 2); }",
@@ -5387,6 +5387,62 @@ int main() { Item value{}; return read(value); }
          "each failed disjunction branch must retain its own exact leaf "
          "explanation without combining unrelated proof facts");
 
+  const auto *disjunctionDiagnostic =
+      findDiagnosticByCode(disjunction.diagnostics, "GTI-S2029");
+  const auto disjunctionArgument = alternatives.find("value);");
+  expect(disjunctionDiagnostic != nullptr &&
+             disjunctionDiagnostic->message.find(
+                 "Argument 1 has type 'Item'") != std::string::npos &&
+             disjunctionDiagnostic->message.find("readable<Item>") !=
+                 std::string::npos &&
+             disjunctionDiagnostic->primary.start == disjunctionArgument &&
+             disjunctionDiagnostic->primary.end == disjunctionArgument + 5,
+         "a disjunction whose alternatives share one declared input should "
+         "blame its exact call argument and retain the concrete application");
+
+  const auto nestedDisjunction = lang::Frontend().analyze(
+      "nested-disjunction-constraint-provenance.gti", R"(
+concept snapshots<T> = requires(T& value) { { value.snapshot() } -> int; };
+concept serializes<T> = requires(T& value) { { value.serialize() } -> int; };
+concept readable<T> = snapshots<T> || serializes<T>;
+concept public_readable<T> = readable<T>;
+int read<public_readable T>(T& value) { return 0; }
+struct Item { public: Item() = default; };
+int main() { Item value{}; return read(value); }
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(
+      !nestedDisjunction.canGenerateCode() &&
+          hasDiagnostic(nestedDisjunction.diagnostics,
+                        "Argument 1 has type 'Item'") &&
+          hasDiagnostic(nestedDisjunction.diagnostics, "public_readable<Item>"),
+      "nested named disjunctions preserve their mapped input for inline "
+      "generic constraints");
+
+  for (const std::string &contract :
+       {std::string("concept readable<T, U> = snapshots<T> || serializes<U>;"),
+        std::string(
+            "concept readable<T, U> = snapshots<int> || serializes<T>;")}) {
+    const auto uncertainOrigin = lang::Frontend().analyze(
+        "disjunction-without-one-origin.gti", R"(
+concept snapshots<T> = requires(T& value) { { value.snapshot() } -> int; };
+concept serializes<T> = requires(T& value) { { value.serialize() } -> int; };
+)" + contract + R"(
+int read<T, U>(T& first, U& second) requires readable<T, U> { return 0; }
+struct Item { public: Item() = default; };
+int main() { Item first{}; Item second{}; return read(first, second); }
+)",
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    const auto *diagnostic =
+        findDiagnosticByCode(uncertainOrigin.diagnostics, "GTI-S2029");
+    expect(!uncertainOrigin.canGenerateCode() && diagnostic != nullptr &&
+               diagnostic->message.find("Argument") == std::string::npos &&
+               diagnostic->message.find("readable<Item, Item>") !=
+                   std::string::npos,
+           "closed or distinct disjunction inputs must not select an argument "
+           "because their concrete types happen to match");
+  }
+
   const std::string overloads = R"(
 concept snapshots<T> = requires(T& value) { { value.snapshot() } -> int; };
 concept serializes<T> = requires(T& value) { { value.serialize() } -> int; };
@@ -5900,10 +5956,10 @@ int main() { Overloaded r{}; int value = 7; bool condition = true;
   const std::string formatPrefix =
       "import std.format;\nimport std.string;\nstruct Item { public: "
       "Item() = default; };\n";
-  for (const auto &call :
-       {"std::format(\"{}\", Item())", "std::try_format(\"{}\", Item())",
-        "std::try_format(\"{} {}\", 1, Item())",
-        "std::format(\"{0}\", 1, Item())"}) {
+  for (const auto &call : {"std::runtime_format(\"{}\", Item())",
+                           "std::try_runtime_format(\"{}\", Item())",
+                           "std::try_runtime_format(\"{} {}\", 1, Item())",
+                           "std::runtime_format(\"{0}\", 1, Item())"}) {
     const auto invalid = analyze(formatPrefix + "int main() { [[discard]] " +
                                  call + "; return 0; }");
     expect(!invalid.canGenerateCode() &&
@@ -6866,8 +6922,8 @@ int main() {
          "a single non-generic member overload must check requirements after "
          "substituting its generic class arguments");
 
-  const lang::FrontendResult rejectedConstrainedOperator =
-      lang::Frontend().analyze("rejected-constrained-operator.gti", R"(
+  const lang::FrontendResult constrainedOperator = lang::Frontend().analyze(
+      "constrained-operator.gti", R"(
 class ConstrainedOperator<T> {
 public:
   bool operator()(T value)
@@ -6882,16 +6938,19 @@ public:
 public:
   ConstrainedOperator() = default;
 };
+int main() {
+  ConstrainedOperator<int> value{};
+  ConstrainedOperator<int> other{};
+  ConstrainedOperator<bool> unused{};
+  return value(4) && !(value != other) ? 0 : 1;
+}
 )",
-                               {standardLibraryPrelude()}, {},
-                               {standardLibraryRoot()});
-  expect(!rejectedConstrainedOperator.canGenerateCode() &&
-             hasDiagnosticCode(rejectedConstrainedOperator.diagnostics,
-                               "GTI-S2049") &&
-             hasDiagnostic(rejectedConstrainedOperator.diagnostics,
-                           "not supported on operator declarations"),
-         "bounded trailing requirements should reject operator declarations "
-         "instead of creating recursively constrained operator proof");
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(
+      constrainedOperator.canGenerateCode() &&
+          lang::verifyMirProgram(constrainedOperator.mir).valid(),
+      "non-polymorphic operators retain ordinary requirements through "
+      "concrete selection and verified MIR without constraining unused owners");
   const lang::FrontendResult rejectedPolymorphicRequirements =
       lang::Frontend().analyze("rejected-polymorphic-requires.gti", R"(
 class AbstractValues<T> {
@@ -9490,7 +9549,9 @@ void nonfinal_generic<Args..., T>(Args... values, T tail) {}
 void missing_parameter<Args...>() {}
 void wrong_type<Args...>(int... values) {}
 void mutable_pack<Args...>(mut Args... values) {}
-void reference_pack<Args...>(Args&... values) {}
+void forwarding_pack<Args...>(Args&&... values) {}
+[[borrowed_from(first)]]
+int& borrowed_result<Args...>(int& first, Args&... values) { return first; }
 void direct_use<Args...>(Args... values) { values; }
 void local_pack<Args...>(Args... values) { Args local; }
 void bad_forward<Args...>(Args... values) { fixed(values...); }
@@ -9505,7 +9566,11 @@ void not_a_pack(int value) { consume(value...); }
                         "must be bound by a final parameter pack") &&
           hasDiagnostic(invalid.diagnostics, "parameter pack type must name") &&
           hasDiagnostic(invalid.diagnostics, "Parameter packs are immutable") &&
-          hasDiagnostic(invalid.diagnostics, "only by-value parameter packs") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "arrays and forwarding references are not supported") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "A reference parameter pack requires a result with "
+                        "no borrowed state") &&
           hasDiagnostic(invalid.diagnostics,
                         "must be expanded as the final call argument") &&
           hasDiagnostic(
@@ -9514,7 +9579,9 @@ void not_a_pack(int value) { consume(value...); }
           hasDiagnostic(invalid.diagnostics,
                         "only be forwarded to another variadic") &&
           hasDiagnostic(invalid.diagnostics, "is not a parameter pack"),
-      "variadic diagnostics should explain every confined first-wave rule");
+      "variadic diagnostics should explain invalid pack placement, mutable "
+      "value packs, forwarding references, borrowed results, and invalid "
+      "expansions");
 
   lang::Lexer lexer;
   lang::Parser malformed(lexer.scan(R"(
@@ -9914,7 +9981,7 @@ int main() {
   int invalid_receiver = read_only.inspect();
   function_value;
   width;
-  float mismatch = width(1);
+  float mismatch = width(true);
   int ambiguous = choose(1);
   float inexact = only_float(1);
   uint8_t too_small = uint8_t(300);
@@ -9938,7 +10005,7 @@ int main() {
       hasDiagnostic(invalidSemantic, "main entry point cannot be overloaded"),
       "the native entry point should remain a unique function");
   expect(hasDiagnostic(invalidSemantic, "No overload of 'width'") &&
-             hasDiagnostic(invalidSemantic, "argument types (int32_t)"),
+             hasDiagnostic(invalidSemantic, "argument types (bool)"),
          "overload lookup should reject calls without an exact candidate");
   expect(hasDiagnostic(invalidSemantic, "ambiguous") &&
              hasDiagnostic(invalidSemantic, "exactly match"),
@@ -13179,6 +13246,328 @@ int main() { return 0; }
          "argument type");
 }
 
+void testContextualIntegerLiteralArguments() {
+  lang::FrontendResult accepted = lang::Frontend().analyze(
+      "contextual-integer-literal-arguments.gti", R"(
+import std.vector;
+
+class Counter {
+  std::size_t count;
+public:
+  Counter(std::size_t count) : count(count) {}
+  std::size_t get() { return this.count; }
+};
+
+class Wide : public Counter {
+public:
+  Wide() : Counter(7) {}
+};
+
+class Table {
+  mut int elements[2] = {10, 20};
+public:
+  Table() = default;
+  int operator[](uint64_t index) { return this.elements[index]; }
+  int operator()(uint64_t index, int64_t offset) {
+    return this.elements[index] + int(offset);
+  }
+};
+
+std::size_t twice(std::size_t value) { return value * 2; }
+int pick(int value) { return value; }
+uint64_t pick(uint64_t value) { return value; }
+uint8_t narrow(uint8_t value) { return value; }
+int64_t widen(int64_t value) { return value; }
+std::size_t relay(std::size_t value) { return twice(value); }
+std::size_t take(int values[2], std::size_t count) {
+  return std::size_t(values[0]) + std::size_t(values[1]) + count;
+}
+
+int main() {
+  std::size_t doubled = twice(4);
+  std::size_t parenthesized = twice((4));
+  int chosen = pick(5);
+  mut std::vector<std::size_t> values{};
+  values.push_back(1);
+  std::size_t first = values[0];
+  Counter counter{3};
+  Wide wide{};
+  Table table{};
+  int element = table[1];
+  int shifted = table(0, -3);
+  auto lambda = [](std::size_t value) -> std::size_t { return value + 1; };
+  std::size_t next = lambda(9);
+  uint8_t small = narrow(200);
+  int64_t negative = widen(-5);
+  std::size_t relayed = relay(2);
+  std::size_t taken = take({1, 2}, 3);
+  if (doubled != 8 || parenthesized != 8 || chosen != 5 || first != 1 ||
+      counter.get() != 3 || wide.get() != 7 || element != 20 ||
+      shifted != 7 || next != 10 || small != 200 || negative != -5 ||
+      relayed != 4 || taken != 6) {
+    return 1;
+  }
+  return 0;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(accepted.canGenerateCode() && accepted.diagnostics.empty(),
+         "a written integer literal argument should adopt the unique fitting "
+         "integer parameter type of a function, method, constructor, base "
+         "initializer, operator, and lambda call");
+
+  lang::FrontendResult ambiguous = lang::Frontend().analyze(
+      "ambiguous-integer-literal-arguments.gti", R"(
+uint8_t amb(uint8_t value) { return value; }
+uint64_t amb(uint64_t value) { return value; }
+
+class Amb {
+  uint64_t value;
+public:
+  Amb(uint8_t value) : value(value) {}
+  Amb(uint64_t value) : value(value) {}
+};
+
+int main() {
+  uint64_t selected = amb(5);
+  Amb constructed{5};
+  return 0;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!ambiguous.canGenerateCode() &&
+             countDiagnosticCode(ambiguous.diagnostics, "GTI-S2013") == 2 &&
+             hasDiagnostic(ambiguous.diagnostics,
+                           "multiple constructors accept the written integer "
+                           "literal") &&
+             hasDiagnosticHint(ambiguous.diagnostics,
+                               "fits more than one candidate parameter type"),
+         "a literal that fits several candidate parameter types with no exact "
+         "candidate should stay ambiguous rather than ranked");
+
+  lang::FrontendResult exactTier = lang::Frontend().analyze(
+      "exact-tier-integer-literal-arguments.gti", R"(
+int pick(int value) { return value; }
+uint64_t pick(uint64_t value) { return value; }
+
+int main() {
+  uint64_t mismatch = pick(5);
+  return 0;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!exactTier.canGenerateCode() &&
+             hasDiagnosticCode(exactTier.diagnostics, "GTI-S2003") &&
+             hasDiagnostic(exactTier.diagnostics,
+                           "Cannot initialize 'mismatch' of type 'uint64_t' "
+                           "with a value of type 'int32_t'"),
+         "an exact int32_t candidate should win the first tier, so the "
+         "uint64_t overload is never selected by a plain literal");
+
+  lang::FrontendResult rejected = lang::Frontend().analyze(
+      "rejected-integer-literal-arguments.gti", R"(
+import std.vector;
+
+class Table {
+  mut int elements[2] = {10, 20};
+public:
+  Table() = default;
+  int operator[](uint64_t index) { return this.elements[index]; }
+};
+
+class Narrow {
+  uint8_t value;
+public:
+  Narrow(uint8_t value) : value(value) {}
+};
+
+std::size_t twice(std::size_t value) { return value * 2; }
+uint8_t narrow(uint8_t value) { return value; }
+constexpr int named = 3;
+
+int main() {
+  uint8_t overflow = narrow(300);
+  std::size_t negative = twice(-1);
+  int plain = 1;
+  std::size_t variable = twice(plain);
+  std::size_t constant = twice(named);
+  Narrow wide{256};
+  Table table{};
+  int element = table[-1];
+  return 0;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!rejected.canGenerateCode() &&
+             countDiagnosticCode(rejected.diagnostics, "GTI-S2003") == 4 &&
+             hasDiagnosticCode(rejected.diagnostics, "GTI-S2012") &&
+             hasDiagnosticCode(rejected.diagnostics, "GTI-S2022") &&
+             hasDiagnosticHint(rejected.diagnostics,
+                               "Integer literal '300' does not fit the "
+                               "parameter type 'uint8_t'") &&
+             hasDiagnosticHint(rejected.diagnostics,
+                               "Integer literal '-1' does not fit the "
+                               "parameter type 'uint64_t'") &&
+             hasDiagnosticHint(rejected.diagnostics,
+                               "Integer literal '256' does not fit the "
+                               "parameter type 'uint8_t'") &&
+             hasDiagnosticHint(rejected.diagnostics,
+                               "Calls require exact argument types"),
+         "a literal outside the parameter range, a named value, and a named "
+         "constant keep the exact-type rejection with a value-specific hint "
+         "for the literal");
+
+  // Range filtering is per argument and must not mutate literals while merely
+  // inspecting a candidate. Reversing declaration order keeps the same result.
+  const auto boundaries = lang::Frontend().analyze(
+      "literal-boundaries-and-borrows.gti", R"(
+int8_t s8(int8_t value) { return value; }
+int16_t s16(int16_t value) { return value; }
+int32_t s32(int32_t value) { return value; }
+int64_t s64(int64_t value) { return value; }
+uint8_t u8(uint8_t value) { return value; }
+uint16_t u16(uint16_t value) { return value; }
+uint32_t u32(uint32_t value) { return value; }
+uint64_t u64(uint64_t value) { return value; }
+int pair(uint8_t a, uint16_t b) { return 1; }
+int pair(uint16_t a, uint8_t b) { return 2; }
+int reverse(uint16_t a, uint8_t b) { return 2; }
+int reverse(uint8_t a, uint16_t b) { return 1; }
+class Owner { public: Owner() = default; };
+int borrow(Owner& owner, uint8_t count) { return int(count); }
+int exact(Owner owner, int count) { return 1; }
+int exact(Owner& owner, uint8_t count) { return 2; }
+int main() {
+  int8_t a = s8(-128);
+  int16_t b = s16(-32768);
+  int32_t c = s32(-2147483648);
+  int64_t d = s64(-9223372036854775808);
+  int64_t groupedMinimum = s64(-((9223372036854775808)));
+  uint8_t e = u8(255);
+  uint16_t f = u16(65535);
+  uint32_t g = u32(4294967295);
+  uint64_t h = u64(18446744073709551615);
+  uint8_t grouped = u8(+(255));
+  int8_t negative = s8((-(128)));
+  return pair(255, 256) + reverse(255, 256) + pair(256, 255) +
+         borrow(Owner(), 5) + exact(Owner(), 5) - 10;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(boundaries.canGenerateCode() && boundaries.diagnostics.empty() &&
+             lang::verifyMirProgram(boundaries.mir).valid(),
+         "signed minima, unsigned maxima, grouped signs, range-filtered "
+         "multiple arguments and literal/temporary-borrow composition preserve "
+         "valid typed MIR");
+
+  for (const std::string_view source : {
+           R"(int choose(uint8_t a, int b) { return 1; }
+int choose(uint8_t a, uint8_t b) { return 2; }
+int main() { return choose(1, 2); })",
+           R"(int choose(uint8_t a, uint16_t b) { return 1; }
+int choose(uint16_t a, uint8_t b) { return 2; }
+int main() { return choose(1, 2); })",
+           R"(class Owner { public: Owner() = default; };
+int choose(Owner& owner, int count) { return 1; }
+int choose(Owner owner, uint8_t count) { return 2; }
+int main() { return choose(Owner(), 5); })",
+           R"(class Owner { public: Owner() = default; };
+int choose(Owner& owner, uint8_t count) { return 1; }
+int choose(Owner& owner, uint64_t count) { return 2; }
+int main() { return choose(Owner(), 5); })"}) {
+    const auto result = lang::Frontend().analyze(
+        "unranked-literal-fallback.gti", std::string(source),
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    expect(!result.canGenerateCode() &&
+               hasDiagnosticCode(result.diagnostics, "GTI-S2013"),
+           "the shared fallback tier ranks neither literal width, the number "
+           "of adapted arguments, nor literal adaptation against a temporary "
+           "read borrow");
+  }
+
+  for (const std::string_view source : {
+           R"(class Choice { public:
+Choice(uint8_t a, int b) {} Choice(uint8_t a, uint8_t b) {} };
+int main() { Choice choice{1, 2}; return 0; })",
+           R"(class Base { public:
+Base(uint8_t a, int b) {} Base(uint8_t a, uint8_t b) {} };
+class Derived : public Base { public: Derived() : Base(1, 2) {} };
+int main() { Derived value{}; return 0; })"}) {
+    const auto result = lang::Frontend().analyze(
+        "unranked-constructor-literal-fallback.gti", std::string(source),
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    expect(!result.canGenerateCode() &&
+               hasDiagnosticCode(result.diagnostics, "GTI-S2013"),
+           "constructors and base initializers do not rank fallback counts");
+  }
+
+  const auto belowInt64 = lang::Frontend().analyze(
+      "literal-below-int64.gti", R"(
+int64_t take(int64_t value) { return value; }
+int main() { int64_t value = take(-9223372036854775809); return 0; }
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(
+      !belowInt64.canGenerateCode() &&
+          hasDiagnosticCode(belowInt64.diagnostics, "GTI-S2000") &&
+          hasDiagnostic(belowInt64.diagnostics,
+                        "Unary '-' cannot be applied to an unsigned integer"),
+      "below int64 minimum has no signed default domain and must be "
+      "rejected during argument analysis, before overload selection");
+
+  const auto groupedMinimum = lang::Frontend().analyze(
+      "grouped-literal-minimum.gti", R"(
+int8_t take(int8_t value) { return value; }
+int main() { if (take((-(128))) != -128) { return 1; } return 0; }
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(groupedMinimum.canGenerateCode(),
+         "a grouped signed minimum must be admitted before optimization");
+  if (groupedMinimum.canGenerateCode()) {
+    const auto optimized = lang::OptimizationPipeline().run(
+        lang::OptimizationRequest{.hir = groupedMinimum.hir,
+                                  .mir = groupedMinimum.mir,
+                                  .level = lang::OptimizationLevel::O3});
+    expect(optimized.valid(),
+           "a grouped signed minimum retains valid optimized MIR");
+    if (!optimized.valid()) {
+      for (const auto &pass : optimized.report.passes)
+        std::cerr << "pass: " << pass.name << '\n';
+      for (const auto &error : optimized.report.outputVerification.errors)
+        std::cerr << "verification: " << error.message << '\n';
+    }
+  }
+
+  for (const auto &[type, value] :
+       std::vector<std::pair<std::string, std::string>>{
+           {"int8_t", "-129"},
+           {"int8_t", "128"},
+           {"int16_t", "-32769"},
+           {"int16_t", "32768"},
+           {"int32_t", "-2147483649"},
+           {"int32_t", "2147483648"},
+           {"int64_t", "9223372036854775808"},
+           {"uint8_t", "-1"},
+           {"uint8_t", "256"},
+           {"uint16_t", "65536"},
+           {"uint32_t", "4294967296"},
+           {"uint64_t", "-1"}}) {
+    const auto result = lang::Frontend().analyze(
+        "literal-outside-parameter-range.gti",
+        type + " take(" + type + " value) { return value; }\n" +
+            "int main() { " + type + " value = take(" + value +
+            "); return 0; }",
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    expect(
+        !result.canGenerateCode() &&
+            hasDiagnosticCode(result.diagnostics, "GTI-S2003") &&
+            hasDiagnosticHint(result.diagnostics,
+                              "does not fit the parameter type '" + type + "'"),
+        "a literal one beyond a parameter boundary must be rejected before "
+        "backend entry, with its value-specific range hint");
+  }
+}
+
 constexpr NamedTest kTests[] = {
     {"testDependentRequiresArgumentAdmission",
      testDependentRequiresArgumentAdmission},
@@ -13252,6 +13641,8 @@ constexpr NamedTest kTests[] = {
     {"testConcreteApplicationSpecialMembers",
      testConcreteApplicationSpecialMembers},
     {"testDefaultParameters", testDefaultParameters},
+    {"testContextualIntegerLiteralArguments",
+     testContextualIntegerLiteralArguments},
 };
 
 } // namespace

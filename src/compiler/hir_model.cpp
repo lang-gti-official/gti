@@ -807,6 +807,12 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         const auto *call = body.findValue(element.call);
         const auto *target =
             program.findFunctionInstance(element.functionTarget);
+        const auto referent =
+            element.elementType.kind != SemanticType::Reference
+                ? element.elementType
+            : element.elementType.arguments.size() == 1
+                ? element.elementType.arguments.front()
+                : SemanticType::Unknown;
         exact =
             call && target && expandedCalls.insert(element.call).second &&
             fold.operands[fold.packFoldArgument + 1 + index] == element.call &&
@@ -815,8 +821,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
             target->declaration == fold.packFoldFunction && !target->owner &&
             target->returnType == SemanticType::Void &&
             target->parameterTypes == element.parameterTypes &&
-            target->typeArguments ==
-                std::vector<SemanticType>{element.elementType} &&
+            target->typeArguments == std::vector<SemanticType>{referent} &&
             target->valueArguments.empty() &&
             call->kind == HirValueKind::Call && call->source == pattern &&
             call->info == fold.info && call->dispatch == CallDispatch::Static &&
@@ -855,24 +860,29 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                     expandedInputs.insert(value->id).second;
           } else {
             const auto &parameter = element.parameterTypes[argument];
-            exact = value->kind == HirValueKind::PackElement &&
-                    value->packElement == index && value->source == nullptr &&
-                    value->symbol == pack->symbol &&
-                    value->operands == std::vector<HirValueId>{pack->id} &&
-                    value->info.type == element.elementType &&
-                    value->info.category == ValueCategory::Place &&
-                    value->info.access == AccessMode::ReadOnly &&
-                    value->definedFailure.empty() &&
-                    value->unsafeOperation == UnsafeOperationKind::None &&
-                    !value->functionTarget && !value->constructorTarget &&
-                    !value->lambdaTarget && !value->callPlan && !value->place &&
-                    !value->ownership && value->sequencedInputs.empty() &&
-                    parameter.kind == SemanticType::Reference &&
-                    parameter.referenceAccess == AccessMode::ReadOnly &&
-                    parameter.arguments ==
-                        std::vector<SemanticType>{element.elementType} &&
-                    input.kind == HirCallInputKind::ReadBorrow &&
-                    expandedElements.insert(value->id).second;
+            exact =
+                value->kind == HirValueKind::PackElement &&
+                value->packElement == index && value->source == nullptr &&
+                value->symbol == pack->symbol &&
+                value->operands == std::vector<HirValueId>{pack->id} &&
+                value->info.type == element.elementType &&
+                value->info.category == ValueCategory::Place &&
+                value->info.access == AccessMode::ReadOnly &&
+                value->definedFailure.empty() &&
+                value->unsafeOperation == UnsafeOperationKind::None &&
+                !value->functionTarget && !value->constructorTarget &&
+                !value->lambdaTarget && !value->callPlan && !value->place &&
+                !value->ownership && value->sequencedInputs.empty() &&
+                parameter.kind == SemanticType::Reference &&
+                (parameter.referenceAccess == AccessMode::ReadOnly ||
+                 (element.elementType.kind == SemanticType::Reference &&
+                  element.elementType.referenceAccess ==
+                      AccessMode::Mutable)) &&
+                parameter.arguments == std::vector<SemanticType>{referent} &&
+                input.kind == (parameter.referenceAccess == AccessMode::Mutable
+                                   ? HirCallInputKind::MutableBorrow
+                                   : HirCallInputKind::ReadBorrow) &&
+                expandedElements.insert(value->id).second;
           }
         }
       }
@@ -2436,6 +2446,23 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           value.kind == HirValueKind::Call && value.functionTarget
               ? program.findFunctionInstance(*value.functionTarget)
               : nullptr;
+      const auto &intrinsicProof = value.intrinsicCallContractProof;
+      const FunctionControlContract *intrinsicContract =
+          intrinsicProof ? &intrinsicProof->contract() : nullptr;
+      if (intrinsicContract &&
+          ((value.kind != HirValueKind::Call &&
+            (value.neverReturns || value.tracksCaller)) ||
+           value.functionTarget || intrinsicProof->source() != value.source ||
+           intrinsicContract->declaration() == 0 ||
+           intrinsicContract->intrinsic() == IntrinsicKind::None ||
+           intrinsicContract->intrinsic() != value.intrinsic ||
+           intrinsicContract->snapshot() !=
+               semantics.analysisSeal().programSnapshot ||
+           intrinsicContract->neverReturns() != value.neverReturns ||
+           intrinsicContract->tracksCaller() != value.tracksCaller)) {
+        result.errors.emplace_back("HIR intrinsic call lost its selected "
+                                   "semantic declaration contract");
+      }
       const bool expectedTerminal =
           (value.kind == HirValueKind::Call &&
            intrinsicTerminalFailureOutcome(value.intrinsic)) ||
@@ -2465,7 +2492,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       }
       const bool expectedTracking =
           (value.kind == HirValueKind::Call &&
-           intrinsicTracksCaller(value.intrinsic)) ||
+           (intrinsicContract ? intrinsicContract->tracksCaller()
+                              : intrinsicTracksCaller(value.intrinsic))) ||
           (contractTarget != nullptr && contractTarget->tracksCaller);
       const auto &callerProof = value.callerLocationProof;
       if (value.neverReturns != expectedTerminal ||

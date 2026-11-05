@@ -214,7 +214,8 @@ returnOriginFormal(std::span<const SemanticType> parameterTypes,
 // ownership or validity to the address itself. The exact ordered input
 // stages and resulting loan source are shared by verification and emission.
 [[nodiscard]] const MirLoan *
-textAddressResultLoan(const MirBody &body, const MirInstruction &instruction);
+textAddressResultLoan(const MirBody &body, const MirInstruction &instruction,
+                      const MirProgram *program = nullptr);
 // A distinct loan-rooted address retains either descendant provenance or a
 // parallel read-only loan over the identical source/dependencies. Check typed
 // call publication too; this proves identity and access, never liveness or

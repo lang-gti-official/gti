@@ -2,6 +2,7 @@
 
 #include "../mir_verification_queries.h"
 #include "gti/mir_effects.h"
+#include "runtime_abi.h"
 
 #include <algorithm>
 #include <array>
@@ -13,15 +14,6 @@
 #include <optional>
 
 namespace lang::native_llvm {
-
-bool processMallocSatisfiesLayout(const llvm::DataLayout &layout,
-                                  std::uint64_t size, std::uint64_t alignment) {
-  if (!size || !alignment || (alignment & (alignment - 1)))
-    return false;
-  return alignment == 1 ||
-         (alignment <= layout.getPointerABIAlignment(0).value() &&
-          size >= layout.getPointerSize(0));
-}
 
 bool nativeProcessMemoryBinding(const MirProgram &program,
                                 const MirFunctionInstance &function) {
@@ -191,9 +183,11 @@ llvm::Value *Memory::providerCall(ProcessMemoryRuntimeOperation operation,
     } else {
       call->addParamAttr(0, llvm::Attribute::AllocatedPointer);
     }
-    call->addFnAttr(llvm::Attribute::get(
-        session.context(), llvm::Attribute::AllocKind,
-        static_cast<std::uint64_t>(kind)));
+    // Spelled through the integer-attribute constructor, which every supported
+    // LLVM provides; Attribute::getWithAllocKind arrived after LLVM 20.
+    call->addFnAttr(llvm::Attribute::get(session.context(),
+                                         llvm::Attribute::AllocKind,
+                                         static_cast<std::uint64_t>(kind)));
   }
   // The POSIX status address is only written, never returned or retained. Do
   // not mechanically translate every MIR non-escaping argument: for example,
@@ -231,26 +225,15 @@ llvm::Value *Memory::allocateBytes(std::uint64_t size,
       (alignment & (alignment - 1)))
     throw BackendUnsupportedError(
         "LLVM allocation extent/alignment is not representable");
-  if (session.program().mir().target().os == "windows") {
-    const std::array<llvm::Value *, 2> inputs{ir.getInt64(size),
-                                              ir.getInt64(alignment)};
-    return providerCall(ProcessMemoryRuntimeOperation::AlignedAllocate, inputs);
-  }
-  // Use target layout, never host sizeof: malloc's fundamental-alignment
-  // witness must fit this request. Tiny non-byte-aligned requests stay aligned.
-  const auto pointerSize = session.dataLayout().getPointerSize();
-  if (processMallocSatisfiesLayout(session.dataLayout(), size, alignment)) {
-    const std::array<llvm::Value *, 1> inputs{ir.getInt64(size)};
-    return providerCall(ProcessMemoryRuntimeOperation::PosixMalloc, inputs);
-  }
-  llvm::IRBuilder<> entry(
-      &ir.GetInsertBlock()->getParent()->getEntryBlock(),
-      ir.GetInsertBlock()->getParent()->getEntryBlock().begin());
-  auto *status = entry.CreateAlloca(ir.getInt32Ty());
-  const std::array<llvm::Value *, 3> inputs{
-      ir.getInt64(size),
-      ir.getInt64(std::max<std::uint64_t>(alignment, pointerSize)), status};
-  return providerCall(ProcessMemoryRuntimeOperation::PosixAllocate, inputs);
+  // Generated owner representations use the runtime owner pair, which calls
+  // the same replaceable nothrow operator new as the generated C++ support
+  // code; only sealed source-policy calls (processCall) reach the injectable
+  // process provider.
+  auto *call = ir.CreateCall(
+      declareRuntimeService(session, RuntimeService::OwnerAllocate),
+      {ir.getInt64(size), ir.getInt64(alignment)});
+  call->addRetAttr(llvm::Attribute::NoAlias);
+  return call;
 }
 
 llvm::Value *Memory::allocateObject(const MirInstruction &instruction) {
@@ -266,12 +249,11 @@ llvm::Value *Memory::allocateObject(const MirInstruction &instruction) {
   return address;
 }
 
-void Memory::releaseBytes(llvm::Value *address) {
-  const std::array<llvm::Value *, 1> inputs{address};
-  (void)providerCall(session.program().mir().target().os == "windows"
-                         ? ProcessMemoryRuntimeOperation::AlignedRelease
-                         : ProcessMemoryRuntimeOperation::PosixRelease,
-                     inputs);
+void Memory::releaseBytes(llvm::Value *address, std::uint64_t alignment) {
+  // The release selects the matching (aligned or ordinary) delete from the
+  // same alignment the allocation received.
+  ir.CreateCall(declareRuntimeService(session, RuntimeService::OwnerRelease),
+                {address, ir.getInt64(alignment)});
 }
 
 Memory::SharedRelease Memory::releaseShared(llvm::Value *handle) {

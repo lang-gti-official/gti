@@ -342,6 +342,12 @@ public:
     return this.nodes[result.first - 1]->entry.second;
   }
 
+  /// Return the entry, inserting a default value only when this exact owned key is absent.
+  /// The returned mutable reference exclusively borrows the map until its last use.
+  mut V& operator[](K key) mut requires std::default_initializable<V> {
+    return this.get_or_insert(std::move(key));
+  }
+
   [[discardable]] size_t erase(K& key) mut {
     size_t node = this.locate(key);
     if (node == 0) { return 0; }

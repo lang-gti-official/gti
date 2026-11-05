@@ -3448,10 +3448,14 @@ public:
       const auto &type = stage.parameterTypes[0].arguments[0];
       if (nativeValue(type))
         return true;
-      // A selected constructor initializes mutex identity at its final address.
-      // Generated move/copy must not fall through to aggregate bit copying.
-      if (stage.constructorTarget && mutexShape(type).has_value())
-        return true;
+      // Both selected construction and generated move establish a fresh mutex
+      // identity at the final address. BodyEmitter::store routes the latter
+      // through transferMutexes; this never authorizes aggregate byte copying.
+      if (mutexShape(type).has_value())
+        return stage.constructorTarget ||
+               (stage.constructorKind == ConstructorKind::Move &&
+                stage.operands.size() == 2 &&
+                stage.operands[1].kind == MirOperandKind::Value);
       // Hierarchy storage is constructed by its selected constructor, by
       // relocating a moved owned argument, or by the generated field copy.
       if (!dispatchProofs.contains(type) ||
@@ -3651,7 +3655,8 @@ public:
     const auto &pointer = stage.operands[reversed ? 1 : 0].type;
     if (pointer.kind != SemanticType::RawPointer ||
         pointer.arguments.size() != 1 ||
-        !nativeClassPointee(pointer.arguments[0]))
+        (!nativeClassPointee(pointer.arguments[0]) &&
+         !mutexShape(pointer.arguments[0])))
       return false;
     if (stage.operation == MirOperation::PointerDifference)
       return stage.operands[1].type == pointer &&
@@ -4183,7 +4188,7 @@ public:
 
   bool representedTextAddress(const MirBody &body,
                               const MirInstruction &stage) const {
-    if (!mir_detail::textAddressResultLoan(body, stage))
+    if (!mir_detail::textAddressResultLoan(body, stage, &program))
       return false;
     const std::size_t witness =
         stage.intrinsic == IntrinsicKind::TextViewFromAddress ? 2 : 1;
@@ -4549,8 +4554,9 @@ public:
         !stage.localFailureSites.empty())
       return nullptr;
     const auto &input = stage.operands.front();
-    if (input.kind != MirOperandKind::Loan || input.place || input.value ||
-        input.literal || input.type != stage.info.type)
+    if (input.kind != MirOperandKind::Loan || input.place ||
+        (text ? !input.value : input.value != 0) || input.literal ||
+        input.type != stage.info.type)
       return nullptr;
     const auto *from = body.findLoan(input.loan);
     const auto *to = body.findLoan(*stage.loan);
@@ -4580,14 +4586,14 @@ public:
                  : nullptr;
     // Fundamental text is a borrowed value, not an owning object or a reference
     // address. Preserve its complete dependency and exact returned SSA value.
-    if (from->parent || from->lifecycleBound || from->twoPhase ||
-        !from->carriers.empty() || to->lifecycleBound || to->twoPhase ||
-        !to->carriers.empty() || from->access != AccessMode::ReadOnly ||
-        stage.ownership || stage.preparedParameterDrop ||
-        stage.successResultDrop || stage.successResultDestination)
+    if (from->lifecycleBound || from->twoPhase || !from->carriers.empty() ||
+        to->lifecycleBound || to->twoPhase || !to->carriers.empty() ||
+        from->access != AccessMode::ReadOnly || stage.ownership ||
+        stage.preparedParameterDrop || stage.successResultDrop ||
+        stage.successResultDestination)
       return nullptr;
     if (term.value->kind != MirOperandKind::Value || !term.value->value ||
-        term.value->loan)
+        term.value->value != input.value || term.value->loan)
       return nullptr;
     const auto *producer = earlierLiveCallResult(
         body, block, stage, *from, referent, category, term.value->value);
@@ -4954,7 +4960,10 @@ public:
                                    event.source ? event.source : event.target)
                              : nullptr;
       add(Shape::ConditionalDrop,
-          drop ? (dispatchProofs.contains(drop->dropType.type)
+          drop ? (!drop->dropType.requiresActiveCleanup &&
+                          passiveReference(drop->dropType.type)
+                      ? std::optional(Shape::PassiveReference)
+                  : dispatchProofs.contains(drop->dropType.type)
                       ? dispatchProofs.cleanup(drop->dropType)
                       : classShape(drop->dropType.type))
                : std::nullopt);
@@ -5092,7 +5101,12 @@ public:
           : place.root == MirPlaceRootKind::Value &&
                   scalarArrayProjection(mir, place)
               ? std::optional(Shape::CheckedArrayProjection)
-          : place.root == MirPlaceRootKind::Loan && passiveReference(place.type)
+          : (place.root == MirPlaceRootKind::Loan ||
+             (place.root == MirPlaceRootKind::Value &&
+              (findMirTemporaryMaterialization(mir, place, place.sourceValue) ||
+               findMirMovedTemporaryMaterialization(mir, place,
+                                                    place.sourceValue)))) &&
+                  passiveReference(place.type)
               ? std::optional(Shape::PassiveReference)
               : placeClassShape(place));
       add(place.access);
@@ -5207,7 +5221,10 @@ public:
       }
     }
     for (const auto &drop : mir.dropObligations) {
-      add(drop.kind, dispatchProofs.contains(drop.dropType.type)
+      add(drop.kind, !drop.dropType.requiresActiveCleanup &&
+                             passiveReference(drop.dropType.type)
+                         ? std::optional(Shape::PassiveReference)
+                     : dispatchProofs.contains(drop.dropType.type)
                          ? dispatchProofs.cleanup(drop.dropType)
                          : classShape(drop.dropType.type));
       cleanup(drop.dropType);
@@ -5313,7 +5330,10 @@ public:
           for (const auto &drop : mir.dropObligations)
             for (const auto &event : stage.lifecycle)
               if (event.source == drop.id)
-                storageShape = classShape(drop.dropType.type);
+                storageShape = !drop.dropType.requiresActiveCleanup &&
+                                       passiveReference(drop.dropType.type)
+                                   ? std::optional(Shape::PassiveReference)
+                                   : classShape(drop.dropType.type);
         if (stage.kind == MirInstructionKind::CleanupBeforeAssign &&
             stage.replacementCleanup)
           storageShape = classShape(stage.replacementCleanup->type);
@@ -5367,7 +5387,9 @@ public:
           add(stage.callInputKind,
               passiveReference(stage.info.type) &&
                       (stage.callInputKind == HirCallInputKind::ReadBorrow ||
-                       stage.callInputKind == HirCallInputKind::MutableBorrow)
+                       stage.callInputKind == HirCallInputKind::MutableBorrow ||
+                       stage.callInputKind ==
+                           HirCallInputKind::ReadTemporaryBorrow)
                   ? std::optional(Shape::PassiveReference)
                   : inputShape);
         }

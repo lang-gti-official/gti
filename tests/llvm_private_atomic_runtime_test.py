@@ -6,6 +6,8 @@ import re
 import sys
 import tempfile
 
+from backend_modes import is_cpp_mode, native_modes
+
 
 def expected(mode, initial, delta, count):
     maximum = (1 << 64) - 1
@@ -38,10 +40,9 @@ def main():
     cases = [(mode, initial, delta, count) for mode in range(8)
              for initial, delta in ((0, 1), (255, 1), (0, 255), (127, 128), (240, 17), (255, 0))
              for count in (0, 1, 4)]
-    modes = [("llvm-O0", ["--backend", "llvm", "-O0"]),
-             ("llvm-O2", ["--backend", "llvm", "-O2"]),
-             ("llvm-O3", ["--backend", "llvm", "-O3"]),
-             ("cpp-O3", ["--backend", "cpp", "--std", "c++23", "-O3"])]
+    # LLVM at O0/O2/O3 under the default policy; the C++ profile, when
+    # GTI_TEST_BACKENDS selects it, pins the backend boundary below.
+    modes = [(label, flags) for label, flags, _native in native_modes(levels=("O0", "O2", "O3"))]
     baseline = {}
     with tempfile.TemporaryDirectory(prefix="gti-private-atomics-") as directory:
         for name, flags in modes:
@@ -49,7 +50,7 @@ def main():
             command = [str(compiler), str(fixture), "-o", str(binary),
                        "--execution-profile", "concurrent", *flags]
             built = subprocess.run(command, capture_output=True, text=True, timeout=120)
-            if name == "cpp-O3":
+            if is_cpp_mode(flags):
                 # Wrapping atomic RMW is an existing LLVM-only operation.
                 # Assert that boundary explicitly; C++ supplies no execution
                 # oracle for this fixture. Supported C++ atomic operations are
@@ -58,7 +59,7 @@ def main():
                 codes = set(re.findall(r"error\[(GTI-[A-Z][0-9]+)\]", built.stderr))
                 assert built.returncode != 0 and codes == {"GTI-B0003"} and message in built.stderr, (
                     command, built.returncode, built.stdout, built.stderr)
-                print("Private atomics: cpp-O3 known GTI-B0003 boundary verified", flush=True)
+                print(f"Private atomics: {name} known GTI-B0003 boundary verified", flush=True)
                 continue
             assert built.returncode == 0, (command, built.stdout, built.stderr)
             for case in cases:

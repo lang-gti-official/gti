@@ -243,12 +243,14 @@ public:
       RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off,
       bool requireFunctionDefinitions = false,
       TrustedBodyAnalysis trustedBodies = TrustedBodyAnalysis::Complete,
-      SourceDebugProfile sourceDebugProfile = SourceDebugProfile::None)
+      SourceDebugProfile sourceDebugProfile = SourceDebugProfile::None,
+      CompileLimits compileLimits = {})
       : target(std::move(target)), sourceGraph(sourceGraph), sources(sources),
         toolingOccurrences(toolingOccurrences), workMetrics(workMetrics),
         rawPointerAudit(rawPointerAudit),
         requireFunctionDefinitions(requireFunctionDefinitions),
-        trustedBodies(trustedBodies), sourceDebugProfile(sourceDebugProfile) {
+        trustedBodies(trustedBodies), sourceDebugProfile(sourceDebugProfile),
+        compileLimits(compileLimits) {
     semanticModel.setToolingOccurrencesEnabled(toolingOccurrences);
     semanticModel.setSourceDebugProfile(sourceDebugProfile);
   }
@@ -270,6 +272,9 @@ public:
   // the abandoned analyzer is discarded. Speculative workers never receive it.
   struct AnalysisCancelled {};
   const std::atomic<bool> *cancellation = nullptr;
+  // FrontendOptions::reuseConstantEvaluations; workers share the request's
+  // StagedConstantResults, which carries it.
+  bool reuseConstantEvaluations = true;
   bool analysisCancelled = false;
   void throwIfCancelled() const {
     if (cancellation != nullptr &&
@@ -869,6 +874,9 @@ public:
 
   void visitLayoutQueryExpr(const LayoutQuery &expr) override;
   void visitMemberRequirementExpr(const MemberRequirement &expr) override;
+  void visitConceptTestExpr(const ConceptTest &expr) override;
+  [[nodiscard]] std::vector<AppliedConceptRequirement>
+  conceptConditionRequirements(const Expr &expr) const;
 
   void visitLiteralExpr(const LiteralExpr &expr) override;
 
@@ -1936,6 +1944,7 @@ private:
     // One pattern per concept parameter: a closed concrete type, or one class
     // or enum template applied to block parameters (an open pattern).
     std::vector<SemanticType> patterns;
+    std::vector<AppliedConceptRequirement> requirements;
     std::vector<SemanticType> associatedTypes;
     std::vector<std::vector<GenericParameterInfo>> associatedTypeParameters;
     std::vector<Symbol> operations;
@@ -1991,6 +2000,9 @@ private:
     // user's evaluation site; this keeps the library location for a note.
     std::optional<Token> libraryLocation;
     SemanticConstantTrace trace;
+    // Set with a resource-limit failure whose limit is known: how to
+    // configure that limit (see describeLimitExhaustion).
+    std::string limitHint;
 
     [[nodiscard]] explicit operator bool() const { return value.has_value(); }
   };
@@ -2000,6 +2012,16 @@ private:
   struct ConstexprWorkBudget {
     std::size_t steps = 0;
     std::size_t stagingDepth = 0;
+    // The staged evaluations currently being lowered, outermost first, by
+    // target declaration (see stagedNestingLimit); also names a cycle.
+    std::vector<const void *> stagingChain;
+    // The per-request limit this request last exhausted, and the function
+    // executing when it did. Failure-only evidence for the diagnostic.
+    struct Exhaustion {
+      std::size_t CompileLimits::*limit = nullptr;
+      std::string function;
+    };
+    std::optional<Exhaustion> exhaustion;
   };
 
   // The successful staged evaluations of one request, shared like its work
@@ -2011,6 +2033,27 @@ private:
   // took, reports its warnings again, and is used only where the evaluation's
   // step and depth limits still hold. Failures are never recorded; they run
   // and report as before.
+  //
+  // The lowered call closure (HIR and verified MIR) of a successful staging
+  // is kept too, keyed like a result without its arguments and receiver: an
+  // evaluation of the same closure with other arguments executes it again
+  // without lowering it again. A reuse charges the steps lowering consumed
+  // (nested staged constants) and replays its warnings, under the same depth
+  // rule, so neither cache can change which requests succeed. Both live for
+  // one analysis request (see resetRequestState) and therefore for one
+  // compilation or editor snapshot.
+  //
+  // Extension contract (for example lazy closure staging): any producer of a
+  // staged closure stores it here through recordClosure under the result key
+  // with arguments and receiver cleared, and consumers look it up with
+  // findClosure before lowering; there is no second closure cache. A closure
+  // records every step its lowering charged to the request (Closure::steps)
+  // and the staging depth it was lowered at, and a lookup is honored only
+  // where those still fit; work added to a closure after it is recorded must
+  // either be charged on every reuse or be recorded as a new closure.
+  // Resource exhaustion is attributed through ConstexprWorkBudget (see
+  // recordLimitExhaustion and describeLimitExhaustion), never by matching
+  // failure text.
   struct StagedConstantResults {
     struct Key {
       FunctionId function = 0;
@@ -2033,6 +2076,8 @@ private:
     struct Result {
       Key key;
       ConstantValue value;
+      // A successful void execution (an immediate void statement).
+      bool voidCompletion = false;
       std::size_t steps = 0;
       // The enclosing staging plus call depth the evaluation succeeded at; a
       // shallower or equal depth leaves every nested limit at least as wide.
@@ -2043,6 +2088,15 @@ private:
     static constexpr std::size_t capacity = 65536;
     std::unordered_map<std::size_t, std::vector<Result>> results;
     std::size_t size = 0;
+    // Defined in semantic_constexpr.cpp.
+    struct Closure;
+    static constexpr std::size_t closureCapacity = 256;
+    std::unordered_map<std::size_t, std::vector<std::shared_ptr<const Closure>>>
+        closures;
+    std::size_t closureCount = 0;
+    // FrontendOptions::reuseConstantEvaluations: false disables both caches,
+    // so tests can prove a program means the same with and without them.
+    bool enabled = true;
     // Interned environments: whether a concrete reanalysis is open, then the
     // definitions and constructors a worker may execute and those HIR may
     // lower, each sorted.
@@ -2053,6 +2107,9 @@ private:
     [[nodiscard]] static bool same(const Key &left, const Key &right);
     [[nodiscard]] const Result *find(const Key &key) const;
     void record(Result result);
+    [[nodiscard]] std::shared_ptr<const Closure>
+    findClosure(const Key &key) const;
+    void recordClosure(std::shared_ptr<const Closure> closure);
     // Executor-local transient owners name allocations of one evaluation;
     // neither a key nor a result may carry one.
     [[nodiscard]] static bool reusable(const ConstantValue &value);
@@ -2065,6 +2122,11 @@ private:
     bool recordValues = true;
     bool allowVoidCompletion = false;
     const Expr *immediateRoot = nullptr;
+    // The function or constructor the compatibility interpreter is executing,
+    // named in a resource-limit diagnostic; null at expression level. Stable
+    // syntax identities: names are resolved only when a limit is exhausted.
+    const FunctionDecl *executingFunction = nullptr;
+    const ConstructorDecl *executingConstructor = nullptr;
     std::vector<std::unordered_map<SymbolId, ConstexprLocalValue>> scopes;
     std::vector<GenericSubstitution> substitutions;
     std::vector<ConstantValue> receivers;
@@ -2084,8 +2146,26 @@ private:
     ConstexprEvaluation failure;
   };
 
-  static constexpr std::size_t constexprExpressionStepLimit = 4096;
-  static constexpr std::size_t constexprCallDepthLimit = 64;
+  // Fixed compiler work bounds on recursive semantic queries. They are not
+  // the configurable constant-evaluation call depth (CompileLimits) and do
+  // not change with it.
+  // Nested expression-requirement (constraint predicate) queries.
+  static constexpr std::size_t constraintQueryDepthLimit = 64;
+  // Transparent predicate calls traced to a trusted type-fact query.
+  static constexpr std::size_t predicateCapabilityDepthLimit = 64;
+  // Concrete class reanalyses one layout query may have open at once.
+  static constexpr std::size_t layoutAssertionDepthLimit = 64;
+  // Concrete class instances one layout query may validate. A compiler work
+  // bound on instance discovery, not a constant-evaluation step limit.
+  static constexpr std::size_t layoutAssertionInstanceLimit = 4096;
+  // Nested staging: staged evaluations begun while another staged evaluation
+  // of the same request is still being lowered. A fixed implementation limit
+  // (guaranteed minimum 64), separate from the configurable call depth: each
+  // level currently copies the semantic model into its staged worker (about
+  // 6 MB, far more with the standard library), so a cyclic definition at the
+  // 512-call default would hold 3-12 GB. Raise it once staging shares that
+  // snapshot.
+  static constexpr std::size_t stagedNestingLimit = 64;
 
   [[nodiscard]] std::optional<ConstexprEvaluation> executeStagedConstexpr(
       const std::variant<const FunctionDecl *, ResolvedConstructionInfo>
@@ -2186,6 +2266,23 @@ private:
   [[nodiscard]] ConstexprEvaluation
   evaluateConstexprExpression(const Expr &source,
                               ConstexprInterpreter &context);
+  [[nodiscard]] ConstexprEvaluation
+  evaluateConstexprNode(const Expr &source, ConstexprInterpreter &context);
+
+  // Charges one compatibility-interpreter step to the request; false once
+  // the request's step limit is exhausted (and records that exhaustion).
+  [[nodiscard]] bool chargeConstexprStep(ConstexprInterpreter &context) const;
+  // Records the per-request limit the request exhausted (the latest trip is
+  // the one a failure reports); `function` defaults to the function or
+  // constructor the compatibility interpreter is executing.
+  void recordLimitExhaustion(ConstexprInterpreter &context,
+                             std::size_t CompileLimits::*limit,
+                             std::string_view function = {}) const;
+  // Names a recorded exhaustion in a resource-limit failure: the limit, the
+  // work done and the executing function in `detail`, and the configuration
+  // hint in `limitHint`. Idempotent; other failures are unchanged.
+  void describeLimitExhaustion(ConstexprEvaluation &failure,
+                               const ConstexprInterpreter &context) const;
 
   [[nodiscard]] ConstexprEvaluation
   evaluateConstexprCall(const Expr &source, const ResolvedCallInfo &resolved,
@@ -3500,7 +3597,15 @@ private:
   [[nodiscard]] bool expressionRequirementSatisfied(
       const MemberRequirement &query, std::span<const SemanticType> arguments,
       std::string *reason = nullptr,
-      const std::vector<std::string> *lookupScope = nullptr) const;
+      const std::vector<std::string> *lookupScope = nullptr,
+      SemanticConstraintGuidance *guidance = nullptr) const;
+  // `{ e } -> C [[borrowed_from(x)]]` for a non-reference C: compares the
+  // dependencies a binding of e's value would retain against the origin x.
+  // `worker` is the query's isolated analyzer that has already analyzed e.
+  [[nodiscard]] static bool borrowedCarrierResultSatisfied(
+      Impl &worker, const MemberRequirement &query, const SemanticType &actual,
+      const SemanticType &required, const SemanticType &origin,
+      SymbolId originIdentity, std::string *reason);
   static void
   collectRequirementTypeArguments(const Expr *expression,
                                   std::vector<const TypeRef *> &types);
@@ -3513,12 +3618,16 @@ private:
   [[nodiscard]] bool constraintPredicateSatisfied(
       const ConceptApplication &application,
       const std::vector<SemanticType> &arguments, std::string *reason,
-      const std::vector<std::string> *lookupScope = nullptr) const;
+      const std::vector<std::string> *lookupScope = nullptr,
+      SemanticConstraintGuidance *guidance = nullptr) const;
   [[nodiscard]] std::optional<PredicateCapability> predicateCapabilityFor(
       const ConceptApplication &application,
       const std::vector<SemanticType> &arguments,
       const std::vector<std::string> *lookupScope = nullptr) const;
   mutable std::size_t expressionRequirementDepth = 0;
+  mutable std::shared_ptr<std::size_t> requirementQueryWork;
+  [[nodiscard]] bool
+  chargeRequirementQueryTypes(std::span<const SemanticType> arguments) const;
   struct ActiveRequirementQuery {
     const void *syntax = nullptr;
     std::vector<SemanticType> arguments;
@@ -3605,12 +3714,23 @@ private:
                               const std::vector<SemanticType> &argumentTypes,
                               const ExprList &expressions) const;
 
+  void warnCheckedOverloadOverlap(const CallableCandidate &left,
+                                  const CallableCandidate &right);
+  [[nodiscard]] bool
+  checkedArgumentNonDeduced(const SemanticType &parameter,
+                            const SemanticType &argument) const;
+  [[nodiscard]] bool checkedArgumentPotential(const ExprPtr &argument,
+                                              const SemanticType &source,
+                                              const SemanticType &target);
+  bool applyCheckedArgument(const ExprPtr &argument, const SemanticType &source,
+                            const SemanticType &target, const Token &parameter);
+
   bool applyVariadicFunctionTypeArguments(
       CallableCandidate &function,
       const std::vector<SemanticType> &explicitTypeArguments,
       const std::vector<CompileTimeValue> &explicitValueArguments,
       const std::vector<SemanticType> &argumentTypes, const ExprList &arguments,
-      const Token &paren);
+      const Token &paren, bool checkedArguments = false);
 
   bool inferTypeArguments(const SemanticType &pattern,
                           const SemanticType &argument,
@@ -3624,7 +3744,7 @@ private:
       const std::vector<SemanticType> &explicitTypeArguments,
       const std::vector<CompileTimeValue> &explicitValueArguments,
       const std::vector<SemanticType> &argumentTypes, const ExprList &arguments,
-      const Token &paren);
+      const Token &paren, bool checkedArguments = false);
 
   [[nodiscard]] bool tryInferTypeArguments(
       const SemanticType &pattern, const SemanticType &argument,
@@ -3641,7 +3761,8 @@ private:
       const ExprList &expressions, CallableCandidate &resolved,
       std::vector<SemanticType> &resolvedTypeArguments,
       std::vector<CompileTimeValue> &resolvedValueArguments,
-      ConstraintFailure *constraintFailure = nullptr);
+      ConstraintFailure *constraintFailure = nullptr,
+      bool checkedArguments = false);
 
   [[nodiscard]] static bool containsLambdaType(const SemanticType &type);
 
@@ -3822,6 +3943,9 @@ private:
   symbolicRangeMemberReturnType(const SemanticType &rangeType,
                                 std::string_view member) const;
 
+  [[nodiscard]] std::vector<SemanticType>
+  symbolicCallableResultTypes(const SemanticType &receiver,
+                              std::span<const SemanticType> arguments) const;
   [[nodiscard]] std::vector<CallableCandidate> symbolicOperatorRequirements(
       OverloadedOperator kind, const SemanticType &receiverType,
       std::span<const SemanticType> argumentTypes) const;
@@ -4079,22 +4203,57 @@ private:
     Mismatch,
     Exact,
     EphemeralReadBorrow,
+    // A written integer literal whose mathematical value fits an integer
+    // parameter of another type. The literal has no type of its own until
+    // selection; it adopts the parameter type of the unique candidate chosen
+    // in the fallback tier. A named value never qualifies.
+    ContextualIntegerLiteral,
   };
 
   [[nodiscard]] bool
-  ephemeralBorrowResultSupported(const CallableCandidate &function) const;
+  contextualIntegerLiteralArgumentFits(const SemanticType &parameter,
+                                       const SemanticType &argument,
+                                       const ExprPtr &expression) const;
 
-  [[nodiscard]] bool
-  ephemeralBorrowTargetSupported(const CallableCandidate &function) const;
+  SemanticType
+  adoptContextualIntegerLiteralArgument(const ExprPtr &expression,
+                                        const SemanticType &parameter);
+
+  void adoptContextualIntegerLiteralArguments(
+      std::span<const SemanticType> parameterTypes, const ExprList &arguments,
+      std::vector<SemanticType> &argumentTypes,
+      std::span<const std::size_t> indices);
+
+  void adoptFittingContextualIntegerLiteralArguments(
+      std::span<const SemanticType> parameterTypes, const ExprList &arguments,
+      std::vector<SemanticType> &argumentTypes,
+      const std::vector<bool> *deferred = nullptr);
+
+  void appendContextualIntegerLiteralAmbiguityHint(
+      std::span<const std::size_t> indices);
+
+  [[nodiscard]] bool ephemeralBorrowResultSupported(
+      const CallableCandidate &function,
+      std::optional<std::size_t> temporaryParameter = std::nullopt) const;
+
+  [[nodiscard]] bool ephemeralBorrowTargetSupported(
+      const CallableCandidate &function,
+      std::optional<std::size_t> temporaryParameter = std::nullopt) const;
 
   [[nodiscard]] bool ephemeralTemporaryArgumentMatches(
       const CallableCandidate &function, const SemanticType &parameter,
-      const SemanticType &argument, const ExprPtr &expression) const;
+      const SemanticType &argument, const ExprPtr &expression,
+      std::size_t parameterIndex);
+
+  [[nodiscard]] bool
+  temporaryReadBorrowArgumentMatches(const SemanticType &parameter,
+                                     const SemanticType &argument,
+                                     const ExprPtr &expression);
 
   [[nodiscard]] CallArgumentMatchKind
   functionCallArgumentMatch(const CallableCandidate &function,
                             std::size_t index, const SemanticType &argument,
-                            const ExprPtr &expression, bool deferred) const;
+                            const ExprPtr &expression, bool deferred);
 
   void reportCallArgumentMismatch(std::size_t index,
                                   const SemanticType &parameter,
@@ -4133,7 +4292,8 @@ private:
       std::vector<AnalyzedCallArgument> arguments, const Token &paren,
       bool requireExactNullParameter = false,
       bool contextualConstruction = false,
-      std::vector<const ConstructorInfo *> *candidateProbe = nullptr);
+      std::vector<const ConstructorInfo *> *candidateProbe = nullptr,
+      bool checkedArgument = false);
 
   void selectConstructorCallArguments(
       const Expr *construction, const ReturnStmt *emptyReturn, ClassId classId,
@@ -4141,7 +4301,8 @@ private:
       const std::vector<CompileTimeValue> &valueArguments,
       std::vector<AnalyzedCallArgument> arguments, const Token &paren,
       bool requireExactNullParameter, bool contextualConstruction,
-      std::vector<const ConstructorInfo *> *candidateProbe);
+      std::vector<const ConstructorInfo *> *candidateProbe,
+      bool checkedArgument = false);
 
   void analyzeArrayMemberCall(const Call &call, const Get &member,
                               const std::vector<SemanticType> &argumentTypes,
@@ -4413,7 +4574,8 @@ private:
 
   std::vector<AppliedConceptRequirement>
   resolveRequirements(const RequiresClause *clause,
-                      const std::vector<std::string> &scope);
+                      const std::vector<std::string> &scope,
+                      bool validateSyntax = true);
 
   void analyzeConcreteClassStaticAssertions(const StmtList &members);
 
@@ -4837,6 +4999,9 @@ private:
       const std::vector<SemanticType> &familyArguments = {}) const;
   [[nodiscard]] std::optional<ConstraintFailure> protocolConformanceFailure(
       const AppliedConceptRequirement &requirement) const;
+  mutable std::vector<std::pair<ConceptId, std::vector<SemanticType>>>
+      activeConformanceRequirements;
+  mutable std::size_t conformanceRequirementWork = 0;
   [[nodiscard]] std::optional<std::size_t>
   protocolBorrowContractFailure(const RegisteredConformance &conformance,
                                 const std::vector<SemanticType> &binding) const;
@@ -5081,14 +5246,16 @@ private:
 
   // The declared type of a pure place path over a formal, the receiver, their
   // fields and array elements, and whether its last step selects stored
-  // state (a field or an element).
+  // state (a field or an element). With `lexicalLocals`, a lexical binding
+  // of the predeclared relay walk shadows formals and fields and roots the
+  // path at its own declared type.
   struct PredeclaredPlace {
     SemanticType type = SemanticType::Unknown;
     bool stored = false;
   };
   [[nodiscard]] std::optional<PredeclaredPlace>
   predeclaredPlace(const Expr *expression, const FunctionInfo &function,
-                   SemanticType ownerType);
+                   SemanticType ownerType, bool lexicalLocals = false);
 
   [[nodiscard]] bool storedTextViewRead(const ExprPtr &expression,
                                         const FunctionInfo &function,
@@ -5111,6 +5278,18 @@ private:
   };
   [[nodiscard]] static std::optional<FunctionReturnBorrowSummary>
   textRelaySummary(const TextRelaySources &sources);
+
+  // Lexical bindings while predeclaring one text relay: an immutable alias
+  // retains its initializer's prospective owner, and every binding keeps its
+  // declared type (Unknown when that cannot be named without body analysis).
+  // These are prospective contracts; resolved body analysis still proves
+  // exact owners.
+  struct TextBorrowAlias {
+    PredeclaredTextBorrowSource source;
+    SemanticType type = SemanticType::Unknown;
+  };
+  const FunctionDecl *textBorrowAliasFunction = nullptr;
+  std::unordered_map<std::string, TextBorrowAlias> textBorrowAliases;
 
   // The text summaries of the outermost dynamicTextReturnBorrowSummary query,
   // per declaration. A summary whose evaluation read one lower on the stack
@@ -5777,8 +5956,15 @@ private:
   const Call *macroStatementCall = nullptr;
   const ExpressionStmt *macroStatementContext = nullptr;
   std::unordered_set<const Expr *> macroProbeArguments;
+  // Active nested expansions, and the bodies expanded so far by the
+  // outermost written invocation that contains them
+  // (CompileLimits::macroDepth and ::macroExpansions).
   std::size_t macroExpansionDepth = 0;
   std::size_t macroExpandedBodies = 0;
+  // That outermost invocation, named by limit diagnostics, and whether it
+  // already reported exhausting a limit (reported once per invocation).
+  std::optional<SourceSpan> macroOutermostInvocation;
+  bool macroLimitReported = false;
   std::vector<std::pair<const FunctionDecl *, std::size_t>> macroActiveBodies;
   [[nodiscard]] const MacroLookupContext *
   macroContext(const Token &token) const;
@@ -5818,9 +6004,8 @@ private:
                         const std::vector<CompileTimeValue> &valueArguments);
   [[nodiscard]] bool validMacroBody(const Stmt &statement,
                                     std::size_t ownLoopDepth = 0) const;
-  static constexpr std::size_t kConstexprForElementLimit = 1024;
-  static constexpr std::size_t kConstexprForBodyLimit = 4096;
-  // Bodies expanded by `constexpr for` inside the declaration being analysed.
+  // Bodies expanded by `constexpr for` inside the declaration being analysed
+  // (CompileLimits::constexprForCopies).
   std::size_t constexprForExpandedBodies = 0;
 
   [[nodiscard]] bool isNumericLibraryUnit(SourceUnitId sourceUnit) const;
@@ -6170,8 +6355,11 @@ private:
   [[nodiscard]] FreshTemporaryValueAssessment
   freshTemporaryValue(const ExprPtr &expression) const;
 
-  // Receiver-only extension. Temporary reference arguments retain the stricter
-  // self-contained-value rule in freshTemporaryValue.
+  // A temporary carrier may retain only proven stable external dependencies.
+  // Shared by receivers and call-scoped reference arguments.
+  [[nodiscard]] FreshTemporaryValueAssessment
+  freshTemporaryBorrowValue(const ExprPtr &expression);
+
   [[nodiscard]] FreshTemporaryValueAssessment
   freshTemporaryReceiverValue(const ExprPtr &expression);
 
@@ -6652,6 +6840,8 @@ private:
          const std::vector<std::string> &fromScope) const;
 
   [[nodiscard]] SemanticType typeOf(const Parameter &parameter) const;
+  [[nodiscard]] SemanticType
+  parameterBindingType(const Parameter &parameter) const;
 
   [[nodiscard]] static SemanticType literalType(const Literal &literal);
 
@@ -7682,6 +7872,9 @@ private:
   bool requireFunctionDefinitions = false;
   TrustedBodyAnalysis trustedBodies = TrustedBodyAnalysis::Complete;
   SourceDebugProfile sourceDebugProfile = SourceDebugProfile::None;
+  // The compilation's per-request limits (FrontendOptions::limits). Every
+  // worker analyzer this one creates receives the same value.
+  CompileLimits compileLimits;
 
   // ---- Staged constant evaluation worker --------------------------------
   // The model the constants required here stage against: this analyzer's

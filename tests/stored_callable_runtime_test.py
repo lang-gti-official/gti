@@ -6,6 +6,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def run(command):
@@ -68,10 +69,7 @@ def main():
         (70, "2\n", pack_double(pack_body)),
         (70, "2\n1\n", pack_double(pack_cleanup)),
     ]
-    modes = [(f"{standard}-{level}", ["--std", standard, f"-{level}"], [])
-             for standard in ("c++20", "c++23") for level in ("O0", "O1", "O3")]
-    modes += [("no-elide", ["--std", "c++23", "-O0"], ["-fno-elide-constructors"]),
-              ("asan-ubsan", ["--std", "c++23", "-O1"], ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])]
+    modes = native_modes()
     with tempfile.TemporaryDirectory(prefix="gti-stored-callable-") as temporary:
         for mode, flags, native in modes:
             for source, cases in [(fixtures / "stored_callable_invocation.gti", [(0, "", "")]),

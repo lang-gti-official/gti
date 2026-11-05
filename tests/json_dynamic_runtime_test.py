@@ -6,6 +6,8 @@ import subprocess
 import sys
 import tempfile
 
+from backend_modes import native_modes
+
 
 def run(command, env, cwd, *, code=0, timeout=180):
     result = subprocess.run(list(map(str, command)), env=env, cwd=cwd,
@@ -23,13 +25,9 @@ def main():
     with tempfile.TemporaryDirectory(prefix="gti-dynamic-json-") as temporary:
         work = Path(temporary)
         fixture = root / "tests/fixtures/json_dynamic.gti"
-        modes = [("llvm-O0", ["--backend", "llvm", "-O0"], []),
-                 ("llvm-O3", ["--backend", "llvm", "-O3"], []),
-                 ("cpp20-O0", ["--backend", "cpp", "--std", "c++20", "-O0"], []),
-                 ("cpp23-O3", ["--backend", "cpp", "--std", "c++23", "-O3"], []),
-                 ("sanitized", ["--backend", "cpp", "--std", "c++23", "-O1"],
-                  ["--", "-fsanitize=address,undefined", "-fno-omit-frame-pointer"])]
-        for name, flags, native in modes:
+        # The backends GTI_TEST_BACKENDS selects (tests/backend_modes.py);
+        # the harness spells no backend profile itself.
+        for name, flags, native in native_modes():
             binary = work / name
             run([compiler, fixture, *flags, "-o", binary, *native], env, work, timeout=600)
             result = run([binary], env, work)

@@ -426,25 +426,29 @@ export namespace std {
   /// Overflow-free halfway value. Integral ties round toward left. Floating
   /// inputs follow GTI IEEE arithmetic, including signed zero and nonfinites.
   constexpr T midpoint<std::numeric T>(T left, T right) {
-    // This ordinary constant condition keeps explicit midpoint<T> valid for
-    // every numeric T without requiring type reflection or specialization.
-    if (T(T(1) / 2) == 0) {
-      T left_half = T(left / 2);
-      T right_half = T(right / 2);
-      T remainder = T((left - left_half * 2) + (right - right_half * 2));
-      T remainder_half = T(remainder / 2);
-      T result = T(left_half + right_half + remainder_half);
-      T odd = T(remainder - remainder_half * 2);
-      if (odd > 0 && left > right) { return T(result + 1); }
-      if (odd < 0 && left < right) { return T(result - 1); }
+    // Remainder exists exactly for the fixed-width integers, so this selects
+    // the integer path at compile time for every numeric T.
+    if constexpr (requires (T value) { { T(value % value) } -> T; }) {
+      // Halves and remainders are exact, the remainder sum lies in [-2, 2],
+      // and the sum of the halves lies in [MIN, MAX - 1], so no step can
+      // leave T: wrapping arithmetic is exact here and keeps the integer
+      // path free of overflow exits.
+      T remainder = gti_internal::integer_wrapping_add(T(left % 2), T(right % 2));
+      T result = gti_internal::integer_wrapping_add(
+          gti_internal::integer_wrapping_add(T(left / 2), T(right / 2)),
+          T(remainder / 2));
+      T odd = T(remainder % 2);
+      if (odd > 0 && left > right) { return gti_internal::integer_wrapping_add(result, T(1)); }
+      if (odd < 0 && left < right) { return gti_internal::integer_wrapping_sub(result, T(1)); }
       return result;
+    } else {
+      // A finite sum can be halved directly, preserving subnormal accuracy.
+      // If addition overflows, halving each finite input is exact. Floating
+      // status flags are not observable GTI state.
+      T sum = T(left + right);
+      if (T(sum - sum) == 0) { return T(sum / 2); }
+      return T(left / 2 + right / 2);
     }
-    // A finite sum can be halved directly, preserving subnormal accuracy.
-    // If addition overflows, halving each finite input is exact. Floating
-    // status flags are not observable GTI state; no integer uses this branch.
-    T sum = T(left + right);
-    if (T(sum - sum) == 0) { return T(sum / 2); }
-    return T(left / 2 + right / 2);
   }
 
 }

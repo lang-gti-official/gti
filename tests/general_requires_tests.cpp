@@ -1,3 +1,4 @@
+#include "../src/compiler/semantic_diagnostics.h"
 #include "gti/formatter.h"
 #include "gti/frontend.h"
 #include "gti/generic_constraint.h"
@@ -114,6 +115,32 @@ void rejected(const lang::FrontendResult &result, const std::string &name,
       std::none_of(result.diagnostics.begin(), result.diagnostics.end(),
                    [](const auto &item) { return item.code == "GTI-B0001"; }),
       name + " is not a backend error");
+}
+
+// The rejection is attributable: the diagnostic or one of its related notes
+// carries the rule that failed, not only an unsatisfied-concept summary.
+void rejectedBecause(const lang::FrontendResult &result,
+                     const std::string &name, const std::string &reason,
+                     const std::string &code = "GTI-S2029") {
+  rejected(result, name, code);
+  const bool attributed = std::any_of(
+      result.diagnostics.begin(), result.diagnostics.end(),
+      [&](const auto &item) {
+        return item.code == code &&
+               (item.message.find(reason) != std::string::npos ||
+                std::any_of(item.related.begin(), item.related.end(),
+                            [&](const auto &note) {
+                              return note.message.find(reason) !=
+                                     std::string::npos;
+                            }));
+      });
+  expect(attributed, name + " names its reason: " + reason);
+  if (!attributed)
+    for (const auto &item : result.diagnostics) {
+      std::cerr << "  " << item.code << ": " << item.message << '\n';
+      for (const auto &note : item.related)
+        std::cerr << "    " << note.message << '\n';
+    }
 }
 } // namespace
 
@@ -552,6 +579,69 @@ int main() { return pick(3); }
 )GTI"),
            "overload filtering retains ordinary source-predicate failures",
            "GTI-S2029");
+
+  lang::SemanticConstraintGuidance boundedGuidance;
+  std::vector<std::string> guidance;
+  for (int index = 0; index < 10; ++index)
+    guidance.push_back("hint " + std::to_string(index));
+  guidance.push_back("hint 0");
+  boundedGuidance.retain(guidance);
+  expect(boundedGuidance.hints.size() == 8 && boundedGuidance.omitted == 2 &&
+             boundedGuidance.hints.front() == "hint 0" &&
+             boundedGuidance.hints.back() == "hint 7",
+         "nested query guidance retains a bounded, deduplicated source-order "
+         "sample with an explicit omission count");
+
+  const std::string nestedHintPrefix = R"GTI(
+[[unsatisfied("Provide an application::registered conformance before dispatch.")]]
+concept registered<T> { int read(T& value); };
+struct Relay<T> {
+  int operator()(T& value) requires registered<T> { return 0; }
+public: Relay() = default;
+};
+)GTI";
+  const std::vector<std::string> nestedHintContracts{
+      R"GTI(
+concept dispatchable<T> =
+  requires(Relay<T>& relay, T& value) { { relay(value) } -> int; } ||
+  requires(Relay<T>& relay, T& value) { { (relay(value)) } -> int; };
+)GTI",
+      R"GTI(
+constexpr bool admission<T>() requires registered<T> { return true; }
+concept dispatchable<T> = admission<T>();
+)GTI"};
+  const std::string nestedHintSuffix = R"GTI(
+int dispatch<T>(T& value) requires dispatchable<T> { return 0; }
+struct Item { public: Item() = default; };
+int main() { Item value{}; return dispatch(value); }
+)GTI";
+  for (std::size_t index = 0; index < nestedHintContracts.size(); ++index) {
+    const auto source =
+        nestedHintPrefix + nestedHintContracts[index] + nestedHintSuffix;
+    const auto result =
+        check(root, directory, "nested_query_guidance_" + std::to_string(index),
+              source);
+    rejected(result, "nested query retains the concept's explanation");
+    const auto failure =
+        std::find_if(result.diagnostics.begin(), result.diagnostics.end(),
+                     [](const auto &item) { return item.code == "GTI-S2029"; });
+    expect(failure != result.diagnostics.end() && failure->fixes.empty() &&
+               std::count(failure->hints.begin(), failure->hints.end(),
+                          "Provide an application::registered conformance "
+                          "before dispatch.") == 1,
+           "expression alternatives and constexpr predicate workers retain "
+           "one actionable source-authored hint without synthetic fixes");
+    auto repaired = source;
+    repaired.insert(repaired.find("int main()"), R"GTI(
+for concept registered<Item> {
+  int read(Item& value) { return 7; }
+};
+)GTI");
+    accepted(check(root, directory,
+                   "nested_query_guidance_repaired_" + std::to_string(index),
+                   repaired),
+             "satisfying the nested protocol preserves normal query success");
+  }
 
   accepted(check(root, directory, "source_sentinel_policy", R"GTI(
 import std.iterator;
@@ -1080,6 +1170,203 @@ int main() {
 }
 )"),
       "checked borrowed queries preserve exact owner, access and referent");
+
+  // Borrow-carrying value results. The carriers are user-defined, so the rule
+  // is proven without any standard-library spelling.
+  const std::string carriers = R"GTI(
+mut int32_t global_value = 5;
+class Slice {
+  int32_t& first;
+public:
+  Slice(int32_t& first) : first(first) {}
+  int32_t get() { return this.first; }
+};
+class Pair {
+  int32_t& left;
+  int32_t& right;
+public:
+  Pair(int32_t& left, int32_t& right) : left(left), right(right) {}
+};
+class MutSlice {
+  mut int32_t& first;
+public:
+  MutSlice(mut int32_t& first) : first(first) {}
+};
+class Holder {
+  mut int32_t value = 3;
+public:
+  Holder() = default;
+  Slice view() { return Slice(this.value); }
+  MutSlice edit_view() mut { return MutSlice(this.value); }
+  int32_t count() { return this.value; }
+  void bump() mut { this.value = this.value + 1; }
+};
+concept viewable<H> = requires(H& h) {
+  { h.view() } -> Slice [[borrowed_from(h)]];
+};
+concept bumpable<H> = requires(mut H& h) { { h.bump() } -> void; };
+)GTI";
+
+  accepted(
+      check(root, directory, "borrowed_carrier_requirements", carriers + R"GTI(
+concept inferred_view<H> = requires(H& h) {
+  { h.view() } -> auto [[borrowed_from(h)]];
+};
+int32_t peek<H>(H& h) requires viewable<H> {
+  Slice view = h.view();
+  return view.get();
+}
+int32_t peek_inferred<H>(H& h) requires inferred_view<H> {
+  auto view = h.view();
+  return 0;
+}
+int32_t bump_after<H>(mut H& h) requires viewable<H> && bumpable<H> {
+  { Slice first = h.view(); [[discard]] first.get(); }
+  h.bump();
+  Slice second = h.view();
+  return second.get();
+}
+int main() {
+  static_assert(requires(Holder& h) { { h.view() } -> Slice [[borrowed_from(h)]]; });
+  static_assert(requires(Holder& h) { { h.view() } -> auto [[borrowed_from(h)]]; });
+  static_assert(requires(int32_t& x) { { Slice(x) } -> Slice [[borrowed_from(x)]]; });
+  static_assert(requires(int32_t& x) { { Pair(x, x) } -> Pair [[borrowed_from(x)]]; });
+  static_assert(requires(mut Holder& h) { { h.edit_view() } -> MutSlice [[borrowed_from(h)]]; });
+  static_assert(!(requires(Holder& a, Holder& b) { { a.view() } -> Slice [[borrowed_from(b)]]; }));
+  static_assert(!(requires(Holder& h) { { Slice(global_value) } -> Slice [[borrowed_from(h)]]; }));
+  static_assert(!(requires(Holder& h) { { Holder().view() } -> Slice [[borrowed_from(h)]]; }));
+  static_assert(!(requires(int32_t& x, int32_t& y) { { Pair(x, y) } -> Pair [[borrowed_from(x)]]; }));
+  static_assert(!(requires(Holder& h) { { h.edit_view() } -> MutSlice [[borrowed_from(h)]]; }));
+  static_assert(!(requires(int32_t& x) { { MutSlice(x) } -> MutSlice [[borrowed_from(x)]]; }));
+  static_assert(!(requires(Holder& h) { { h.count() } -> int32_t [[borrowed_from(h)]]; }));
+  static_assert(!(requires(Holder& h) { { h.view() } -> Slice; }));
+  static_assert(!(requires(Holder h) { { h.view() } -> Slice [[borrowed_from(h)]]; }));
+  mut Holder holder{};
+  if (peek(holder) != 3) { return 1; }
+  if (peek_inferred(holder) != 0) { return 2; }
+  return bump_after(holder) == 4 ? 0 : 3;
+}
+)GTI"),
+      "borrow-carrying requirement results name and check one origin");
+
+  // Each rejected shape reports the rule it violated at the requirement.
+  const auto constrainedCall = [&](const std::string &requirement,
+                                   const std::string &call) {
+    return carriers + "concept probe<H> = requires" + requirement + ";\n" +
+           "int32_t use<H>(H& h) requires probe<H> { return 0; }\n" +
+           "int main() {\n  mut Holder holder{};\n  " + call + "\n}\n";
+  };
+  rejectedBecause(
+      check(root, directory, "carrier_wrong_origin",
+            constrainedCall("(H& h, H& other) { { h.view() } -> Slice "
+                            "[[borrowed_from(other)]]; }",
+                            "return use(holder);")),
+      "a carrier borrowed from another input",
+      "not borrowed solely from the named requirement parameter");
+  rejectedBecause(
+      check(root, directory, "carrier_global_origin",
+            constrainedCall("(H& h) { { Slice(global_value) } -> Slice "
+                            "[[borrowed_from(h)]]; }",
+                            "return use(holder);")),
+      "a carrier borrowed from a global",
+      "not borrowed solely from the named requirement parameter");
+  rejectedBecause(check(root, directory, "carrier_temporary_origin",
+                        constrainedCall("(H& h) { { H().view() } -> Slice "
+                                        "[[borrowed_from(h)]]; }",
+                                        "return use(holder);")),
+                  "a carrier borrowed from a temporary",
+                  "not borrowed solely from the named requirement parameter");
+  rejectedBecause(
+      check(root, directory, "carrier_two_origins", carriers + R"GTI(
+concept paired<T> = requires(T& x, T& y) {
+  { Pair(x, y) } -> Pair [[borrowed_from(x)]];
+};
+int32_t use<T>(T& x) requires paired<T> { return 0; }
+int main() { mut int32_t value = 1; return use(value); }
+)GTI"),
+      "a carrier borrowed from two inputs",
+      "not borrowed solely from the named requirement parameter");
+  rejectedBecause(check(root, directory, "carrier_owned_result",
+                        constrainedCall("(H& h) { { h.count() } -> int32_t "
+                                        "[[borrowed_from(h)]]; }",
+                                        "return use(holder);")),
+                  "an owned result under borrowed_from",
+                  "carries no borrowed state");
+  rejectedBecause(check(root, directory, "carrier_owned_origin",
+                        constrainedCall("(H h) { { h.view() } -> Slice "
+                                        "[[borrowed_from(h)]]; }",
+                                        "return use(holder);")),
+                  "a carrier whose origin is an owned parameter",
+                  "needs a borrowed parameter origin");
+  rejectedBecause(check(root, directory, "carrier_without_origin",
+                        constrainedCall("(H& h) { { h.view() } -> Slice; }",
+                                        "return use(holder);")),
+                  "a borrow-carrying result without borrowed_from",
+                  "[[borrowed_from(parameter)]]");
+  rejectedBecause(
+      check(root, directory, "carrier_mutable_from_read_only",
+            constrainedCall("(H& h) { { h.edit_view() } -> MutSlice "
+                            "[[borrowed_from(h)]]; }",
+                            "return use(holder);")),
+      "a mutable carrier from a read-only input",
+      "Mutable method requires a mutable receiver");
+  rejectedBecause(
+      check(root, directory, "carrier_open_body_mutable_from_read_only",
+            carriers + R"GTI(
+concept edits<H> = requires(H& h) {
+  { h.edit_view() } -> MutSlice [[borrowed_from(h)]];
+};
+int32_t use<H>(H& h) requires edits<H> {
+  MutSlice view = h.edit_view();
+  return 0;
+}
+int main() { return 0; }
+)GTI"),
+      "an open body selecting a mutable carrier from a read-only origin",
+      "grants mutable access, but its borrow origin is read-only");
+  rejectedBecause(check(root, directory, "carrier_origin_mutated_while_live",
+                        carriers + R"GTI(
+int32_t bad<H>(mut H& h) requires viewable<H> && bumpable<H> {
+  Slice view = h.view();
+  h.bump();
+  return view.get();
+}
+int main() { mut Holder holder{}; return bad(holder); }
+)GTI"),
+                  "mutating the origin while the carrier is live",
+                  "child reborrow may still be live", "GTI-S2017");
+  // A reference to a carrier is not a carrier value: its exposed expression
+  // type is the carrier, but it has its own checked reference form.
+  accepted(check(root, directory, "carrier_reference_is_not_value", R"GTI(
+class Slice {
+  int32_t& first;
+public:
+  Slice(int32_t& first) : first(first) {}
+};
+class Keeper {
+  Slice kept;
+public:
+  Keeper(Slice kept) : kept(kept) {}
+  Slice& slice_ref() { return this.kept; }
+};
+int main() {
+  static_assert(!(requires(Keeper& k) { { k.slice_ref() } -> auto [[borrowed_from(k)]]; }));
+  static_assert(!(requires(Keeper& k) { { k.slice_ref() } -> Slice [[borrowed_from(k)]]; }));
+  static_assert(requires(Keeper& k) { { k.slice_ref() } -> Slice& [[borrowed_from(k)]]; });
+  static_assert(!(requires(Slice& s) { { s } -> Slice [[borrowed_from(s)]]; }));
+  return 0;
+}
+)GTI"),
+           "a reference to a carrier needs the checked reference form");
+  rejected(check(root, directory, "carrier_inferred_without_origin",
+                 "concept c<S> = requires(S& s) { { s.view() } -> auto; };\n"
+                 "int main() { return 0; }\n"),
+           "an inferred value result without borrowed_from", "GTI-P0001");
+  rejected(check(root, directory, "carrier_mutable_inferred_value",
+                 "concept c<S> = requires(mut S& s) {\n"
+                 "  { s.view() } -> mut auto [[borrowed_from(s)]];\n};\n"
+                 "int main() { return 0; }\n"),
+           "mut on an inferred value result", "GTI-P0001");
 
   accepted(
       check(root, directory, "source_mutable_cursor_policy", R"GTI(

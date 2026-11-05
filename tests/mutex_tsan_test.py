@@ -1,103 +1,56 @@
 #!/usr/bin/env python3
 
-"""Run the public mutex contention fixture under ThreadSanitizer when available."""
+"""Run the public mutex contention fixture under ThreadSanitizer when available.
+
+The fixture is emitted by the LLVM backend and instrumented through the shared
+recipe in managed_thread_tsan_test.py; no C++-backend output is sanitized.
+"""
 
 from __future__ import annotations
 
-import os
 import pathlib
-import subprocess
 import sys
 import tempfile
 
+from managed_thread_tsan_test import (
+    build_instrumented_binary,
+    compile_instrumented_runtime,
+    run_under_thread_sanitizer,
+    thread_sanitizer_available,
+)
 from sanitizer_support import SKIP_RETURN_CODE, thread_sanitizer_enabled
 
 
-def execute(
-    command: list[str],
-    *,
-    environment: dict[str, str] | None = None,
-    timeout: int = 300,
-) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        command,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        check=False,
-        env=environment,
-    )
-
-
 def main() -> int:
-    if len(sys.argv) != 4:
+    if len(sys.argv) != 5:
         raise SystemExit(
-            "usage: mutex_tsan_test.py /path/to/gti concurrent.gti /path/to/c++"
+            "usage: mutex_tsan_test.py /path/to/llvm-instrumented-source "
+            "/path/to/matching-clang++ /path/to/reviewed-c++ mutex_concurrent.gti"
         )
     if not thread_sanitizer_enabled():
         print("mutex ThreadSanitizer check skipped: unsupported runner")
         return SKIP_RETURN_CODE
 
-    compiler = pathlib.Path(sys.argv[1]).resolve()
-    source = pathlib.Path(sys.argv[2]).resolve()
-    native_compiler = pathlib.Path(sys.argv[3]).absolute()
+    emitter = pathlib.Path(sys.argv[1]).resolve()
+    native_compiler = pathlib.Path(sys.argv[2]).absolute()
+    runtime_compiler = pathlib.Path(sys.argv[3]).absolute()
+    source = pathlib.Path(sys.argv[4]).resolve()
 
     with tempfile.TemporaryDirectory(prefix="gti-mutex-tsan-") as scratch:
         root = pathlib.Path(scratch)
-        probe_source = root / "probe.cpp"
-        probe_binary = root / "probe"
-        probe_source.write_text("int main() { return 0; }\n", encoding="utf-8")
-        probe = execute(
-            [
-                str(native_compiler),
-                "-std=c++20",
-                "-fsanitize=thread",
-                str(probe_source),
-                "-o",
-                str(probe_binary),
-            ]
-        )
-        if probe.returncode != 0:
+        if not (thread_sanitizer_available(native_compiler, root)
+                and thread_sanitizer_available(runtime_compiler, root)):
             print(
                 "mutex ThreadSanitizer check skipped: native compiler does not "
                 "provide -fsanitize=thread"
             )
             return SKIP_RETURN_CODE
 
-        binary = root / "mutex_concurrent"
-        build = execute(
-            [
-                str(compiler),
-                "--execution-profile",
-                "concurrent",
-                "--std",
-                "c++23",
-                "-O1",
-                "--cxx",
-                str(native_compiler),
-                str(source),
-                "-o",
-                str(binary),
-                "--",
-                "-fsanitize=thread",
-                "-fno-omit-frame-pointer",
-                "-g",
-            ]
-        )
-        if build.returncode != 0:
-            raise AssertionError(
-                f"ThreadSanitizer build returned {build.returncode}\n"
-                f"stdout: {build.stdout}\nstderr: {build.stderr}"
-            )
-        environment = os.environ.copy()
-        environment["TSAN_OPTIONS"] = "halt_on_error=1:abort_on_error=1"
-        for _ in range(3):
-            run = execute([str(binary)], environment=environment)
-            if run.returncode != 0:
-                raise AssertionError(
-                    f"ThreadSanitizer run returned {run.returncode}\n"
-                    f"stdout: {run.stdout}\nstderr: {run.stderr}"
-                )
+        binary = root / source.stem
+        runtime = compile_instrumented_runtime(runtime_compiler, root)
+        build_instrumented_binary(emitter, native_compiler, source, binary,
+                                  runtime, linker=runtime_compiler)
+        run_under_thread_sanitizer(binary)
 
     print("mutex ThreadSanitizer check passed")
     return 0

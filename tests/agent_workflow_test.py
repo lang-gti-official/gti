@@ -1240,7 +1240,7 @@ class ValidationChecks(unittest.TestCase):
                    "tests/encoding_runtime_test.py", "examples/094-encoding.gti",
                    "examples/README.md", "stdlib/README.md", "docs/language/encoding.md",
                    "changes/encoding.feature.md", "tests/stdlib_surface_manifest.json",
-                   "tests/mir_census_baseline.json", "tests/lowered_program_census_baseline.json"]
+                   "tests/census/094-encoding.json"]
         self.assertEqual(validation.focused_scope(source + allowed), "source-stdlib")
         self.assertEqual(validation.ci_mode({}, source + allowed), "source-stdlib")
         self.assertEqual(validation.focused_scope(["docs/index.md"]), "automation")
@@ -1323,24 +1323,36 @@ class ValidationChecks(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validation.build_cache(root, build)
 
-    def test_ci_gate_requires_fast_checks_on_prs_and_the_suite_in_the_queue(self):
+    def test_ci_gate_requires_fast_checks_and_full_validation_proves_the_suite(self):
         lint = {name: {"result": "success"} for name in validation.LINT_JOBS}
-        pr = {**lint, "fast": {"result": "success"}}
-        queue = {**lint, "fast": {"result": "success"}, "package": {"result": "success"}, "integration": {"result": "success"}, "sanitizers": {"result": "success"}}
-        validation.admission("full", pr, "pull_request")
-        validation.admission("full", queue, "merge_group")
-        with self.assertRaises(ValueError):
-            validation.admission("full", pr, "merge_group")
+        gate = {**lint, "fast": {"result": "success"}}
+        suite = {name: {"result": "success"} for name in validation.FULL_VALIDATION_JOBS}
+        # The PR and the merge queue prove the same bounded set.
+        validation.admission("full", gate, "pull_request")
+        validation.admission("full", gate, "merge_group")
         with self.assertRaises(ValueError):
             validation.admission("full", lint, "pull_request")
-        for results, event in ((pr, "pull_request"), (queue, "merge_group")):
-            for name in results:
-                failed = copy.deepcopy(results)
+        with self.assertRaises(ValueError):
+            validation.admission("full", lint, "merge_group")
+        for event in ("pull_request", "merge_group"):
+            for name in gate:
+                failed = copy.deepcopy(gate)
                 failed[name]["result"] = "skipped"
                 with self.assertRaises(ValueError):
                     validation.admission("full", failed, event)
+        # Post-integration full validation requires packaging, every shard and the sanitizers.
+        validation.admission("full", suite, "full_validation")
+        for name in suite:
+            failed = copy.deepcopy(suite)
+            failed[name]["result"] = "failure"
+            with self.assertRaises(ValueError):
+                validation.admission("full", failed, "full_validation")
         with self.assertRaises(ValueError):
-            validation.admission("full", queue, "push")
+            validation.admission("full", gate, "full_validation")
+        with self.assertRaises(ValueError):
+            validation.admission("automation", suite, "full_validation")
+        with self.assertRaises(ValueError):
+            validation.admission("full", gate, "push")
 
     def test_ci_draft_and_component_report_incomplete_integration(self):
         lint = {name: {"result": "success"} for name in validation.LINT_JOBS}
@@ -1356,6 +1368,55 @@ class ValidationChecks(unittest.TestCase):
         validation.admission("draft", lint, "pull_request")
         with self.assertRaises(ValueError):
             validation.admission("draft", lint, "merge_group")
+
+    def test_shard_inventory_runs_split_parts_instead_of_aggregates_and_gate_set_is_a_subset(self):
+        cpp_only = {"cpp_mir_body_emitter_text", "cpp_debug_artifacts", "lowered_program_corpus_census"}
+        registered = {"smoke", "compiler_pipeline", "compiler_pipeline_frontend", "compiler_pipeline_backend",
+                      "instance_reuse", "instance_reuse_0", "instance_reuse_1", "other", "llvm_backend_scalar",
+                      *validation.GATE_EXCLUDED, *cpp_only}
+        aggregates = {"compiler_pipeline", "instance_reuse"}
+        full = validation.shard_inventory(registered, "full")
+        # The aggregates are replaced by their registered parts; the C++-only tests leave for the weekly job.
+        self.assertNotIn("compiler_pipeline", full)
+        self.assertNotIn("instance_reuse", full)
+        self.assertEqual(full, registered - aggregates - cpp_only)
+        # Only the scheduled C++ set runs the frozen backend's own tests.
+        self.assertEqual(validation.shard_inventory(registered, "cpp"), registered - aggregates)
+        # Without the parts, an aggregate stays (no coverage loss on an older tree).
+        alone = {"smoke", "compiler_pipeline", "other", *validation.GATE_EXCLUDED}
+        self.assertIn("compiler_pipeline", validation.shard_inventory(alone, "full"))
+        gate = validation.shard_inventory(registered, "gate")
+        self.assertEqual(gate, full - validation.GATE_EXCLUDED)
+        self.assertTrue(gate < full)
+        self.assertNotIn("generic_algorithm_breadth", validation.GATE_EXCLUDED, "the shipped default stays in the gate")
+        self.assertFalse(validation.cpp_only("generic_algorithm_breadth"))
+        self.assertNotIn("trusted_body_analysis_0", validation.GATE_EXCLUDED)
+        # macOS runs only the platform-specific inventory: listed names and prefixed families.
+        darwin = validation.shard_inventory(registered, "darwin", (("llvm_",), {"other"}))
+        self.assertEqual(darwin, {"other", "llvm_backend_scalar"})
+        self.assertTrue(darwin < full)
+        with self.assertRaises(ValueError):
+            validation.shard_inventory(registered, "darwin", ((), {"missing"}))  # stale names fail the shard
+        with self.assertRaises(ValueError):
+            validation.shard_inventory({"smoke", "other"}, "gate")  # exclusions must name registered tests
+        with self.assertRaises(ValueError):
+            validation.shard_inventory(registered, "nightly")
+
+    def test_durations_refresh_keeps_the_maximum_and_ignores_unknown_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            table = Path(directory) / "durations.json"
+            table.write_text(json.dumps({"schema": 1, "default_seconds": 30, "seconds": {"a": 50.0, "b": 10.0}}))
+            reports = Path(directory) / "reports"
+            reports.mkdir()
+            (reports / "one.xml").write_text(
+                '<testsuite><testcase name="a" time="20.4"/><testcase name="b" time="33.3"/>'
+                '<testcase name="c" time="1.0"/><testcase name="bad name" time="9"/></testsuite>')
+            validation.update_durations(table, reports)
+            seconds = json.loads(table.read_text())["seconds"]
+            self.assertEqual(seconds, {"a": 50.0, "b": 33.3, "c": 1.0})
+            (reports / "broken.xml").write_text("<testsuite>")
+            with self.assertRaises(ValueError):
+                validation.update_durations(table, reports)
 
     def test_shards_partition_deterministically_and_merge_only_complete_coverage(self):
         names = ["a", "b", "c", "d", "e"]
@@ -1435,6 +1496,25 @@ class ValidationChecks(unittest.TestCase):
             with self.subTest(label), self.assertRaises(ValueError):
                 validation.merge_shards(reports, ["darwin", "linux"])
 
+    def test_test_targets_keeps_only_names_the_ninja_tree_builds(self):
+        # A test also receives build-tree paths that are not targets (an
+        # evidence directory, a registry it writes); feeding those to
+        # `cmake --build --target` fails the whole build step.
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory).resolve()
+            (build / "tests").mkdir()
+            (build / "tests" / "CTestTestfile.cmake").write_text(
+                f'add_test("llvm_wait" "/usr/bin/python3" "/src/w.py" "{build}/gti_llvm_wait_tests" "{build}/atomic-wait-service-evidence" "{build}/registry.tsv")\n')
+            self.assertEqual(validation.test_targets(build, "^llvm_wait$"),
+                             ["atomic-wait-service-evidence", "gti", "gti_llvm_wait_tests", "gti_runtime", "registry.tsv"])
+            original = validation.build_targets
+            validation.build_targets = lambda tree: {"all", "gti", "gti_runtime", "gti_llvm_wait_tests"}
+            try:
+                self.assertEqual(validation.test_targets(build, "^llvm_wait$"),
+                                 ["gti", "gti_llvm_wait_tests", "gti_runtime"])
+            finally:
+                validation.build_targets = original
+
     def test_test_targets_reads_configured_commands_without_a_build(self):
         with tempfile.TemporaryDirectory() as directory:
             build = Path(directory).resolve()
@@ -1494,6 +1574,7 @@ class ValidationChecks(unittest.TestCase):
                     for sensitive in ("src/compiler/parser.cpp", "runtime/src/memory.cpp",
                                       "stdlib/std.gti", "tests/CMakeLists.txt", "CMakeLists.txt",
                                       ".github/workflows/ci.yml", ".github/workflows/cache.yml",
+                                      ".github/workflows/full-validation.yml",
                                       ".github/workflows/nightly.yml", ".github/workflows/beta.yml",
                                       ".github/workflows/new.yml", "scripts/validation_checks.py",
                                       "scripts/validation_batch.py", "scripts/named_test_shards.py",

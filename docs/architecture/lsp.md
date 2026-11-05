@@ -3,6 +3,14 @@
 Status: Current implementation, with future symbol/index work explicitly
 separated below.
 
+Concept tests in expression positions use the constraint resolver's concept
+symbol and type-argument occurrences. Hover, definition, references, semantic
+tokens and wrong-arity diagnostics therefore use the same identities as a
+requires-clause application. An incomplete angle application may temporarily
+produce parser diagnostics; a repaired buffer rebuilds those compiler facts.
+Tree-sitter distinguishes a concept application from an explicit generic call,
+and formatting retains compact type angles before Boolean operators.
+
 Associated type families use compiler-owned protocol member and input-binder
 symbols. Declaration, conformance definition and projected member uses share
 the exact contract identity; renamed family inputs retain their own independent
@@ -856,7 +864,10 @@ Completion keeps one worker. Every worker is a long-lived LLVM thread with an
 explicit 8 MiB stack. That avoids Darwin's 512 KiB secondary-thread default
 and ensures the compiler's bounded-depth recovery runs before native stack
 exhaustion in debug builds, without creating a new thread for every edit or
-completion request.
+completion request. Compile-time evaluation and macro expansion are not
+limited by that stack: like the compiler, a worker continues them on fresh
+stack segments of the same thread (see the frontend architecture), so editor
+analysis reaches exactly the configured compile-time limits.
 
 Completion adopts compatible trusted preambles instead of registering and
 checking the standard library again for each request. Its request-owned
@@ -945,8 +956,14 @@ infer target defines for a unique matching entry root, or any document in a
 single-target package. Shared files and ambiguous entry roots in multi-target
 packages receive no target defines: unrelated target sets are never combined.
 Inactive consumer target/profile flag names remain known for typo diagnostics,
-and both active and declared sets enter the frontend cache context. Watching a
-manifest refreshes these facts for diagnostics and completion together.
+and both active and declared sets enter the frontend cache context. The facts
+also carry the root package's `[limits]` table resolved over the defaults
+(`ProjectFacts::compileLimits()`), which analysis and completion pass as
+`FrontendOptions::limits`, so an editor reports the same compile-limit
+exhaustion as `gti check`; standalone files use the defaults. The limits enter
+the semantic cache context, so a preamble or instance analysis is never reused
+across a limit change. Watching a manifest refreshes these facts for
+diagnostics and completion together.
 Profile changes also advance every open document's analysis generation,
 invalidate token caches and queued semantic requests, and capture the exact
 profile into each analysis/completion request. In-flight old-profile results
@@ -1243,6 +1260,33 @@ The service shares the bounded parsed-unit cache but retains no semantic IDs
 across snapshots. Edits preserve BOM/CRLF and follow a module header when the
 requesting file has one. Multiple valid files produce separate, deterministic,
 non-preferred alternatives rather than silently choosing a declaration.
+
+The editor also shares an `IncludeDiscoveryCache` across snapshots. It keeps
+only syntax-level facts derived from source text: each candidate text's token
+spellings, and each candidate interface's parse-only scan (export-surface
+declaration names, surface units and every unit the load read). A scan is
+reused only when its context is unchanged and every unit it read still has
+the same text. The context covers the frontend cache context (target and
+configuration), the prelude and library roots, and the source-owner
+resolution identity with its roots. Discovery reads the current text of each
+input from the frozen snapshot, an unsaved buffer or disk, and compares it.
+Rows from loads with unresolved imports are never stored. Explicit
+invalidation is therefore reclamation rather than the correctness mechanism.
+A source invalidation drops rows that read the path, and a project-model
+change clears the cache. The speculative analysis that proves each fix always
+runs again, so reuse cannot change a suggestion.
+
+Discovery also skips speculative analyses that provably cannot succeed. A
+missing name `a::b::name` resolves after an import only if every written
+qualifier resolves. A qualifier that no unit of the analysed program spells,
+other than as a qualifier of a use being repaired, can only gain a meaning
+from the imported export surface. That surface must then spell it. A
+candidate whose surface never spells such a qualifier is not analysed for
+that use. For example, standard-library interfaces that declare a `value`
+member are no longer analysed for `api::value`. A qualifier the program spells
+elsewhere imposes nothing: a namespace alias, a reopened namespace or a local
+declaration may already give it a meaning. Unqualified names keep the
+declaration-name filter alone.
 
 Open/change/close and watched-file events refresh snapshots that requested
 discovery, including negative searches and newly created files outside the

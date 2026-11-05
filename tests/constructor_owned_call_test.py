@@ -6,6 +6,12 @@ import sys
 import tempfile
 
 from unique_class_allocation_runtime_test import run
+from backend_modes import is_cpp_mode, keep_cpp, native_modes, record_symptom, unsupported
+
+# Every phase executes on both backends. A failing body-local destructor still
+# rolls back completed fields because MIR retires construction rollback only
+# after scope-exit cleanup (lang-gti-official/gti#198).
+LLVM_UNSUPPORTED = {}
 
 
 def main():
@@ -47,22 +53,25 @@ def main():
          f"{source.name}:{replacement}; secondary [GTI-R0002]\n"),
         (70, "4\n5\n9\n", ordinary(replacement_cleanup)),
     ]
-    modes = [(f"{standard}-{opt}", ["--std", standard, f"-{opt}"], [])
-             for standard in ("c++20", "c++23") for opt in ("O0", "O1", "O3")]
-    modes.append(("sanitized", ["--std", "c++23", "-O1"],
-                  ["--", "-fsanitize=address,undefined", "-fno-omit-frame-pointer"]))
+    modes = native_modes()
     with tempfile.TemporaryDirectory(prefix="gti-constructor-owned-call-") as directory:
         for name, flags, native in modes:
             binary = pathlib.Path(directory) / name
-            command = [str(compiler), str(source), *flags, "--keep-cpp",
+            command = [str(compiler), str(source), *flags, *keep_cpp(flags),
                        "-o", str(binary), *native]
             built = run(command)
             assert built.returncode == 0, (command, built.stdout, built.stderr)
-            generated = binary.with_suffix(".gti.cpp").read_text()
-            assert "// GTI verified-MIR body:" in generated
+            if is_cpp_mode(flags):
+                generated = binary.with_suffix(".gti.cpp").read_text()
+                assert "// GTI verified-MIR body:" in generated
             for phase, expected in enumerate(cases):
                 result = run([str(binary), *(["phase"] * phase)])
                 actual = (result.returncode, result.stdout, result.stderr)
+                limitation = unsupported(f"phase {phase}", flags, llvm_unsupported=LLVM_UNSUPPORTED)
+                if limitation:
+                    # A filed LLVM bug: the declaration must keep reproducing.
+                    record_symptom(limitation, f"phase {phase}", name, flags, actual != expected)
+                    continue
                 assert actual == expected, (name, phase, actual, expected)
             print(f"constructor owned call: {name} passed ({len(cases)} cases)", flush=True)
 

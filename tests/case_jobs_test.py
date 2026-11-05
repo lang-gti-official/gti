@@ -16,6 +16,7 @@ import case_jobs
 import generic_payload_enum_runtime_test as payload_matrix
 import lambda_pack_invocation_runtime_test as matrix
 import stdlib_surface_test as surface
+from backend_modes import is_cpp_mode, native_modes
 
 
 class CaseJobsTests(unittest.TestCase):
@@ -166,10 +167,9 @@ class CaseJobsTests(unittest.TestCase):
         parallel, parallel_runs = self.matrix_calls(2)
         self.assertEqual(serial, parallel)
         self.assertEqual(serial_runs, parallel_runs)
-        self.assertEqual(len(serial), 16)
-        self.assertEqual(len(serial_runs), 32)
-        self.assertTrue(any("-fno-elide-constructors" in row[0] for row in serial))
-        self.assertTrue(any("-fsanitize=address,undefined" in row[0] for row in serial))
+        # Two fixtures in every mode the policy selects, two observations each.
+        self.assertEqual(len(serial), 2 * len(native_modes()))
+        self.assertEqual(len(serial_runs), 4 * len(native_modes()))
         self.assertTrue(all(row[2] == "bytes" for row in serial_runs))
         self.assertTrue(all(row[-1] == threading.get_ident() for row in serial_runs))
 
@@ -205,14 +205,15 @@ class CaseJobsTests(unittest.TestCase):
                                                    "", "compile rejection")
             binary = pathlib.Path(command[0]).name
             code, stdout, stderr = expected[binary]
-            if binary == "construction-only-callee-secondary-failure-7":
+            last = len(native_modes()) - 1  # the corruptions reach the last mode's binaries
+            if binary == f"construction-only-callee-secondary-failure-{last}":
                 if corrupt == "exit":
                     code = 0
                 elif corrupt == "stdout":
                     stdout += "duplicate cleanup\n"
                 elif corrupt == "stderr":
                     stderr = stderr.replace("primary", "incorrect origin")
-            if binary == "non-failing-cleanup-after-move-7":
+            if binary == f"non-failing-cleanup-after-move-{last}":
                 if corrupt == "reason":
                     stderr = "incorrect reason"
                 elif corrupt == "sanitizer":
@@ -253,11 +254,19 @@ class CaseJobsTests(unittest.TestCase):
         self.assertEqual(serial, parallel)
         result, builds, negatives, executions = serial
         self.assertEqual(result, 0)
-        self.assertEqual(len(builds), 26 * 8)
+        # 25 fixtures in every LLVM mode (the TU-private transport probe is
+        # C++ text) and all 26 under the C++ profile, as the policy selects.
+        modes = native_modes()
+        cpp_count = sum(is_cpp_mode(flags) for _, flags, _ in modes)
+        expected_builds = 25 * (len(modes) - cpp_count) + 26 * cpp_count
+        self.assertEqual(len(builds), expected_builds)
         self.assertEqual(len(negatives), 4)
-        self.assertEqual(len(executions), 26 * 8)
+        self.assertEqual(len(executions), expected_builds)
         self.assertTrue(all(row[-1] == threading.get_ident() for row in executions))
-        self.assertEqual({pathlib.Path(row[0][1]).stem for row in builds}, {
+        stems = {pathlib.Path(row[0][1]).stem for row in builds}
+        if not cpp_count:
+            stems.add("borrowed-class-payload")  # its TU-private transport probe is C++ text
+        self.assertEqual(stems, {
             "call-binding-publication", "call-binding-publication-failure",
             "consuming-binding-publication", "consuming-binding-publication-failure",
             "observed-owned-field", "nested-reference-construction",
@@ -272,28 +281,23 @@ class CaseJobsTests(unittest.TestCase):
             "construction-only-called-destructor-failure",
             "construction-only-called-secondary-failure", "construction-only-callee-failure",
             "construction-only-callee-secondary-failure"})
-        self.assertEqual(sum("-fno-elide-constructors" in row[0] for row in builds), 26)
-        self.assertEqual(sum("-fsanitize=address,undefined" in row[0] for row in builds), 26)
-        expected_modes = [(standard, optimization, ())
-                          for standard in ("c++20", "c++23")
-                          for optimization in ("-O0", "-O1", "-O3")]
-        expected_modes += [("c++23", "-O0", ("-fno-elide-constructors",)),
-                           ("c++23", "-O1", ("-fsanitize=address,undefined",
-                                              "-fno-omit-frame-pointer"))]
+        expected_modes = [tuple(flags) for _, flags, _ in modes]
         by_fixture = {}
         for command, _ in builds:
-            native = command[command.index("--") + 1:] if "--" in command else ()
-            mode = (command[command.index("--std") + 1],
-                    command[command.index("--std") + 2], native)
-            by_fixture.setdefault(pathlib.Path(command[1]).stem, []).append(mode)
-        for modes in by_fixture.values():
-            self.assertEqual(sorted(modes), sorted(expected_modes))
+            start = command.index("--backend") if "--backend" in command else command.index("--std")
+            by_fixture.setdefault(pathlib.Path(command[1]).stem, []).append(tuple(command[start:start + 3]))
+        for fixture, observed in by_fixture.items():
+            expected = ([tuple(flags) for _, flags, _ in modes if is_cpp_mode(flags)]
+                        if fixture == "borrowed-class-payload" else expected_modes)
+            self.assertEqual(sorted(observed), sorted(expected), fixture)
 
     def test_payload_all_negative_and_native_failures_remain_fatal(self):
         for corrupt in ("implicit-copy", "live-borrow", "moved-owner",
                         "construction-only-assignment"):
             self.assertEqual(self.payload_calls(2, corrupt)[0], 1)
-        for corrupt in ("build", "exit", "stdout", "stderr", "reason", "sanitizer", "ubsan"):
+        # "sanitizer"/"ubsan" corruptions reach only an instrumented C++ mode,
+        # which the policy no longer runs.
+        for corrupt in ("build", "exit", "stdout", "stderr", "reason"):
             with self.assertRaises(RuntimeError):
                 self.payload_calls(2, corrupt)
 

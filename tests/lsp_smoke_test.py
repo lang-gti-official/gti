@@ -11509,18 +11509,42 @@ def test_restricted_arithmetic_operator_tooling(executable, root):
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 3
         )
+        # A fresh temporary may bind to a read-only reference parameter of a
+        # member operator for the duration of the call.
+        assert not any(
+            item.get("code") == "GTI-S2022"
+            for item in publication["params"]["diagnostics"]
+        ), publication
+        assert not has_error_diagnostics(publication["params"]), publication
+        mutable_source = temporary_source.replace(
+            "operator==(Exact& other)", "operator==(mut Exact& other)"
+        )
+        session.send({
+            "jsonrpc": "2.0", "method": "textDocument/didChange",
+            "params": {
+                "textDocument": {"uri": uri, "version": 4},
+                "contentChanges": [{"text": mutable_source}],
+            },
+        })
+        publication = session.receive_until(
+            lambda message: message.get("method") == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 4
+        )
         diagnostic = next(
             item for item in publication["params"]["diagnostics"]
             if item.get("code") == "GTI-S2022"
         )
+        temporary_source = mutable_source
         use = temporary_source.index("== Exact()")
         assert diagnostic["range"] == {
             "start": lsp_position(temporary_source, use),
             "end": lsp_position(temporary_source, use + 2),
         }, diagnostic
-        assert any("temporary value" in item["message"]
+        assert any("is a temporary" in item["message"]
+                   and "mutable reference" in item["message"]
                    for item in diagnostic["relatedInformation"]), diagnostic
-        assert any("Bind a temporary" in hint
+        assert any("Mutable references require existing mutable places" in hint
                    for hint in diagnostic["data"]["hints"]), diagnostic
         assert not any("convert" in hint
                        for hint in diagnostic["data"]["hints"]), diagnostic
@@ -11837,7 +11861,7 @@ def main():
         "std::unique_ptr<Pixel> moved = std::move(owner); "
         "auto copied_owner = moved; "
         "int borrowed = inspect_pixel(*moved); int moved_value = owner->x; "
-        "uint64_t exact = overloaded(uint64_t(1)); overloaded(1); "
+        "uint64_t exact = overloaded(uint64_t(1)); overloaded(true); "
         'Shade invalid_shade = Shade("bad"); '
         "mut int buffer[1 + 2] = {1, 2, 3}; buffer[1] += 2; "
         "int invalid_array = buffer[3]; uint64_t buffer_size = buffer.size(); "
@@ -12072,7 +12096,7 @@ def main():
         if diagnostic["code"] == "GTI-S2012"
         and "overloaded" in diagnostic["message"]
     )
-    assert "exactly matches argument types (int32_t)" in overload["message"]
+    assert "exactly matches argument types (bool)" in overload["message"]
     assert len(overload["relatedInformation"]) == 2
     assert all(
         "Candidate:" in related["message"]

@@ -243,6 +243,7 @@ auto SemanticVisitor::Impl::validMacroBody(const Stmt &statement,
       switch (node.exprKind()) {
       case ExprKind::Lambda:
       case ExprKind::MemberRequirement:
+      case ExprKind::ConceptTest:
       case ExprKind::PackFold:
         allowed = false;
         break;
@@ -399,10 +400,10 @@ auto SemanticVisitor::Impl::makeMacroProbe(const Call &call)
   // Resolve and type-check the complete written call in an isolated semantic
   // snapshot. In particular, a disabled helper still checks its arguments,
   // but their speculative moves, loans and writes never affect caller flow.
-  auto result = std::make_unique<Impl>(target, sourceGraph, toolingOccurrences,
-                                       nullptr, sources, rawPointerAudit,
-                                       requireFunctionDefinitions,
-                                       trustedBodies, sourceDebugProfile);
+  auto result = std::make_unique<Impl>(
+      target, sourceGraph, toolingOccurrences, nullptr, sources,
+      rawPointerAudit, requireFunctionDefinitions, trustedBodies,
+      sourceDebugProfile, compileLimits);
   Impl &probe = *result;
   copyRequestSessionForSpeculativeModel(probe);
   // Constraint queries may select another typed macro before this probe has
@@ -472,6 +473,8 @@ auto SemanticVisitor::Impl::makeMacroProbe(const Call &call)
   probe.nextExpansion = nextExpansion;
   probe.macroExpansionDepth = macroExpansionDepth;
   probe.macroExpandedBodies = macroExpandedBodies;
+  probe.macroOutermostInvocation = macroOutermostInvocation;
+  probe.macroLimitReported = macroLimitReported;
   probe.macroActiveBodies = macroActiveBodies;
   probe.instanceAnalysisActive = instanceAnalysisActive;
   probe.instanceBaseModel = instanceBaseModel;
@@ -484,6 +487,11 @@ auto SemanticVisitor::Impl::makeMacroProbe(const Call &call)
 auto SemanticVisitor::Impl::analyzeMacroCall(const Call &writtenCall,
                                              const ExpressionStmt *statement)
     -> bool {
+  // Each nested expansion recurses through ordinary analysis on the native
+  // stack; its depth is CompileLimits::macroDepth, not the host stack's.
+  if (nativeStackNearlyExhausted())
+    return onFreshNativeStack(
+        [&] { return analyzeMacroCall(writtenCall, statement); });
   if (currentFunctionDeclaration && currentFunctionDeclaration->isMacro())
     return false;
   const Call *call = &writtenCall;
@@ -517,8 +525,39 @@ auto SemanticVisitor::Impl::analyzeMacroCall(const Call &writtenCall,
     diagnostics.push_back(
         makeDiagnostic(DiagnosticId::MacroExpansion, call->paren(), {message}));
   };
-  if (macroExpansionDepth >= 64 || macroExpandedBodies >= 4096) {
-    reject("Macro expansion exceeds the 64-call or 4096-body resource limit.");
+  // An outermost written invocation starts its own expansion budget; every
+  // expansion it causes, including forced written arguments, shares it.
+  // Separate invocations never accumulate toward one limit.
+  if (macroExpansionDepth == 0) {
+    macroExpandedBodies = 0;
+    macroOutermostInvocation = tokenSpan(callableToken(call->callee()));
+    macroLimitReported = false;
+  }
+  const bool tooDeep = macroExpansionDepth >= compileLimits.macroDepth;
+  if (tooDeep || macroExpandedBodies >= compileLimits.macroExpansions) {
+    // Nothing is expanded; the enclosing expression must not cascade, and
+    // the rest of an exhausted invocation's fan-out stays quiet.
+    currentType = SemanticType::Unknown;
+    if (std::exchange(macroLimitReported, true))
+      return true;
+    auto CompileLimits::*const limit =
+        tooDeep ? &CompileLimits::macroDepth : &CompileLimits::macroExpansions;
+    const std::string name = callableToken(call->callee()).lexeme;
+    reject(tooDeep ? "Macro invocation '" + name +
+                         "' exceeds the macro nesting limit of " +
+                         std::to_string(compileLimits.macroDepth) +
+                         " nested expansions."
+                   : "Macro invocation '" + name + "' exceeds the limit of " +
+                         std::to_string(compileLimits.macroExpansions) +
+                         " macro bodies expanded by one outermost "
+                         "invocation.");
+    Diagnostic &diagnostic = diagnostics.back();
+    if (macroOutermostInvocation && macroExpansionDepth != 0)
+      diagnostic.related.push_back(
+          {*macroOutermostInvocation,
+           "The outermost macro invocation of this expansion is here."});
+    diagnostic.hints.push_back(
+        compileLimitHint(compileLimitInfo(limit), compileLimits.*limit));
     return true;
   }
   auto probeOwner = makeMacroProbe(*call);
@@ -823,6 +862,11 @@ auto SemanticVisitor::Impl::analyzeMacroCall(const Call &writtenCall,
          semanticModel.database().findSymbol(occurrence->symbol)))
       semanticModel.recordOccurrence(*occurrence);
   }
+  // Everything the probe established has been copied out. Release it before
+  // expanding the body: each nested expansion would otherwise keep one
+  // complete speculative analyzer alive per level, quadratic in depth.
+  selection = nullptr;
+  probeOwner.reset();
   ++macroExpansionDepth;
   ++macroExpandedBodies;
   macroActiveBodies.push_back(activeBody);

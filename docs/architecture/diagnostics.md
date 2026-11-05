@@ -13,13 +13,27 @@ Status: Current infrastructure and conventions.
 primary span; related information names the selected immediate declaration and
 the failing operation, with the staged call trace when available. Runtime-value
 inputs, checked arithmetic/conversion failure and evaluator resource limits
-retain distinct explanations. No automatic edit changes an ordinary API into
+retain distinct explanations. When evaluating an immediate argument fails,
+its explanation identifies the argument and immediate function, and a nested
+non-constexpr call names that inner function. This does not describe the
+selected immediate function itself as non-constexpr. No automatic edit changes an ordinary API into
 an immediate one or replaces a runtime argument. These records are shared by
 CLI and LSP publication, including unsaved-buffer recovery.
 The same diagnostic covers a failed standalone immediate `void` completion or
 immediate constructor selected by bare `return;`. A `void` call outside the
 standalone statement shape explains that structural limit at its call site.
 
+
+Checked argument construction reports nonconstant input at the original argument
+with the parameter name and the constructor's `@runtime_escape` documentation,
+when present. A terminal panic executed while checking the argument follows the
+compile-time panic rule below: the invocation stays primary and the library's
+message is carried on the failing-operation note. `GTI-S2125` warns at the later declaration of a same-shaped exact/checked
+overload pair, relates the earlier declaration, and recommends a distinct runtime
+name or wrapper. Exact overload selection remains unchanged. Neither diagnostic
+has an automatic fix because changing an API or its validation policy requires
+an author decision. Hover names the selected checked constructor independently
+of these diagnostics; source-token and rename identity remain unchanged.
 
 Staged MIR constant-evaluation failures retain executed caller identities,
 which semantic staging maps to source spans before its HIR/MIR snapshot expires.
@@ -33,6 +47,22 @@ even when their source locations repeat. Successful execution allocates no
 trace. These notes are explanatory, not an automatic repair. CLI and LSP share
 them. This is the staged MIR profile, not a claim of complete AST compatibility,
 generic-instantiation or every constant-context trace coverage.
+
+Two staged failures are authoritative in every constant context; neither is
+retried in the AST compatibility evaluator. An executed panic or other trusted
+terminal failure carries its message as
+`Compile-time evaluation panicked: "<message>"`. Constexpr bindings,
+`if constexpr` and `static_assert` put that text in the primary message at the
+failing call. An immediate invocation keeps the invocation as its primary span
+and puts the text on the failing-operation note. `[[track_caller]]` frames move
+that location to the call that reached them, so it is the panic call the user
+wrote, not the library's runtime-terminal operation. An executed call to a
+function that is not `constexpr`, or whose constexpr definition is not yet
+available, is reported at that call. The diagnostic names the callee, and its
+shared hint explains that only executed operations must be compile-time
+capable. Lazy staging means an unexecuted call of either kind produces no
+diagnostic. A `static_assert` that reads a non-constexpr binding, such as a
+parameter, additionally hints at `if (!condition) { std::panic("..."); }`.
 
 `GTI-S2012` rejects zero-argument class/struct construction when no constructor
 was explicitly declared for it. The construction site is primary; a related
@@ -77,6 +107,11 @@ Editors may inspect a retained expansion through the read-only
 [`gti/inspectMacroExpansion` workflow](lsp.md#read-only-macro-expansion-inspection);
 that explanatory view has no authority to repair or execute an invalid body.
 
+Inline concept failures retain their concrete outer application and the
+uniquely attributable argument span even when every alternative in a
+disjunction fails. Related information preserves the separate failing branches;
+a failure inside a nested requirement does not become a different root contract.
+
 `GTI-S2029` retains the ordinary unsatisfied-requirement call span and related
 requirement detail when a general query re-enters an identical in-flight
 syntax/type/value substitution. The inner query fails as a recursive cycle;
@@ -120,9 +155,9 @@ the exact source range and clearing after an initializer is supplied.
 
 `GTI-S2107` rejects a `constexpr for` whose sequence is not a value of a class
 with one type-pack argument list; the colon is primary and the message names
-the actual type. `GTI-S2108` reports an expansion over the compile-time budget
-(1024 elements per statement, 4096 expanded copies per declaration) at the
-`for` keyword. `GTI-S2109` rejects a function, class, enum, concept, alias or
+the actual type. `GTI-S2108` reports an expansion over the
+`constexpr-for-elements` (per statement) or `constexpr-for-copies` (per
+declaration) compile limit at the `for` keyword, with the configuration hint. `GTI-S2109` rejects a function, class, enum, concept, alias or
 namespace declaration inside a `constexpr for` body. `GTI-S2111` rejects a
 `std::meta::field<T, I>` whose index is out of range for `T`, naming the count.
 `GTI-S2112` rejects `get_mut` on a field that is not writable through the
@@ -336,7 +371,11 @@ diagnostic storage.
 Failed overload lookup distinguishes argument-count failures from exact-type
 and reference/ownership requirements. A count mismatch does not suggest a cast;
 defaults and parameter packs use the resolver's own argument-shape predicate.
-Named call failures highlight the callee. Missing overload declarations use
+Named call failures highlight the callee. If a unique otherwise matching
+overload is excluded by a deleted copy, `GTI-S2018` instead identifies the
+actual argument and explains explicit ownership transfer, including elements
+of a by-value pack. Other type, constraint and ambiguous-candidate failures
+retain their own resolver diagnostics. Missing overload declarations use
 the existing include discovery and frontend reanalysis, offering an include
 only when it resolves to that file without introducing errors. No standard
 library name determines this advice. Operator reference mismatches relate the
@@ -762,6 +801,13 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   token, retain a negative sign in the message, and emit only the range
   diagnostic rather than cascading with unary-unsigned or mixed-operand
   errors. No replacement is universally correct, so do not attach a fix-it.
+- A written integer literal argument that fits no exact candidate keeps the
+  call's exact-type diagnostic (`GTI-S2003`, `GTI-S2012`, `GTI-S2022`) and
+  adds a hint naming the literal's value and the parameter type it does not
+  fit. When several candidates accept the literal and none matches exactly,
+  the ambiguity diagnostic (`GTI-S2013`, or `GTI-S2022` for operators) adds a
+  hint naming the literal argument positions and the explicit conversion
+  form; GTI never ranks those candidates.
 - `GTI-S2033` owns the obsolete unqualified `string` spelling. Explain the
   implemented ownership choice: `std::string` after `import std.string;` is
   owning, while prelude-provided `std::string_view` is non-owning. Do not offer
@@ -866,6 +912,21 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   or move construction is unavailable, and suggest explicit ownership transfer
   when applicable. Do not attach a fix-it: moving the value versus preserving
   it with an explicit allocating copy requires programmer intent.
+  Function overload sets follow the same rule: when exactly one overload
+  accepts every argument type and is rejected only because a by-value
+  argument cannot be copied or moved, the first such argument reports the
+  call's one causal `GTI-S2018`, with that overload as the
+  `Exact-type candidate:` note, instead of `GTI-S2012` and the whole
+  candidate list. A set rejected for any other reason keeps that reason's
+  resolver diagnostic, and one with several such overloads keeps
+  `GTI-S2012`. Every by-value
+  copy report from a function call relates the declared parameter
+  (`Parameter 'name' takes its argument by value.`, or for a parameter pack
+  `Parameter pack 'name' takes each argument by value, ...`). When that
+  parameter's type is deduced and the argument's type has a public read-only
+  `view()` member, a hint names `'<value>.view()'` as the borrowing
+  alternative. Named move-only arguments to a by-value overload and to a
+  by-value parameter pack therefore report the same deleted copy.
   A destructor's attempted receiver-field move uses the same code at the
   field token and explains that field cleanup belongs to the enclosing object.
   Explicit and implicit `this` paths share this rule; separately owned locals
@@ -1418,6 +1479,11 @@ shared inference origins, and multi-cause disjunctions retain the call primary.
 Both concrete public applications and leaf locations are structured related
 information, including across source units. No public library spelling selects
 diagnostic behavior.
+Isolated expression and constexpr-predicate requirement workers retain the
+first failing diagnostic's guidance alongside its reason. Each query keeps
+at most eight distinct hints and reports an omitted count. Ordinary failures
+and failed disjunction alternatives publish that guidance without copying
+synthetic-source fix-its or changing the failure's argument provenance.
 When several overloads fail their requirements, the existing no-exact-overload
 diagnostic retains each candidate's constraint explanation and leaf notes as
 related information; it does not replace these causes with a conversion-only

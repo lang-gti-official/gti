@@ -1,5 +1,52 @@
 # Compiler Verification
 
+## Google Spot runner pilot
+
+`gcp_spot_runner` is entirely offline: strict policy parsing, disabled/expired
+admission, currency/account pinning, integer reservations, daily/total limits,
+missing/corrupt history, four competing controller processes, provider creation
+flags and returned-resource checks, verified IAP transport, cancellation and
+disconnection, unknown insert responses and failed deletion. `remote_runner`
+retains actual disposable Git/process/snapshot/cleanup regressions for fixed
+hosts. These are not live-cloud or billing receipts. Owner commissioning and
+expansion gates live in the [Spot contract](agent-workflow.md#opt-in-google-spot-pilot).
+
+## Checked immediate arguments (#169)
+
+The final call tier changes semantic selection and constant publication (T2).
+`testConsteval` in `compiler_pipeline` covers exact input types, trailing defaults,
+read-only references, ordinary/temporary-borrow precedence, constructor and
+function ambiguity, non-inference, operator/assignment fences, function items,
+forwarding and request-local reuse. Its repeated-call fixture requires at least
+49 cache reuses and fewer than five MIR executions for 50 identical validations;
+cache hits retain deterministic work charges. An infinite validator is rejected.
+
+`consteval_runtime` runs the user-defined duration and checked formatting clients
+on LLVM at O0/O1/O3, verifies the C++ GTI-B0003 boundary, and checks rejected
+literals without replacing existing outputs. It includes a 300-character/16-field
+pattern, a custom formatter validator, owning arguments with exactly-once cleanup,
+ordinary generic/function-item forwarding, owner-backed dynamic views, and checked
+formatted panic cleanup. `consteval_lsp` checks hover, library messages, UTF-16
+argument spans and repair. Runtime formatting, integral-enum/custom formatters,
+panic adoption, deferred assertions and their editor tests retain the explicit
+runtime API as the C++ oracle. No comparator expectation is removed.
+
+On macOS arm64 with an optimized compiler, three compile-only observations of
+one versus 50 identical checked format calls had medians 1.04s and 1.09s. A
+2,000,000-iteration O3 integer/text formatting workload had seven-run medians
+0.190s on the parent, 0.183s through the explicit runtime API and 0.190s through
+the checked API. These measurements show comparable runtime cost, not a claimed
+speedup. Both new executables were 157736 bytes versus 157728 on the parent.
+Interposing the actual POSIX aligned-allocation provider recorded the same
+2,000,004 calls and 98,000,256 requested bytes for all three. Startup libc
+allocation counts were also identical. The successful runtime operation retains
+one output allocation; checked validation adds no runtime pattern allocation.
+
+The complete suite belongs to the merge queue. Focused contributor evidence also
+includes the related constexpr/call/diagnostic tests, compiler_pipeline, native
+O0/O3 smoke, surface inventory and both target profiles of the format-dependent
+example census.
+
 ## Default module discovery
 
 `project_model` owns declaration-driven registration, explicit interface and
@@ -21,9 +68,27 @@ overlays/close, definition navigation, new/renamed/removed headers saved without
 a watcher, and a trace assertion that body-only saves do not repeat analysis.
 
 The affected source-module, driver, cache and LSP consumers, `compiler_pipeline`
-and native O0/O3 smoke remain focused acceptance obligations. Linux portability
-checks complement macOS evidence. The merge queue validates complete integration
-on macOS arm64 and Linux x64 before the change can reach nightly.
+and native O0/O3 smoke remain focused acceptance obligations. Post-integration
+full validation proves the complete inventory on Linux x64 and the `darwin`
+set on macOS arm64 (what differs on the platform) before the change can
+reach nightly; the deprecated C++ backend is proven weekly at `c++23 -O3`.
+
+Runtime harnesses take their modes from `tests/backend_modes.py`
+(`native_modes()`: `llvm-O0` and `llvm-O3` under the default
+`GTI_TEST_BACKENDS=llvm`, `cpp-c++23-O3` under `cpp`, all three under `both`)
+and never spell `--std`, `--backend cpp` or a bare `--keep-cpp` themselves.
+Assertions on the emitted C++ text run only for modes where `is_cpp_mode(flags)`
+holds, with `keep_cpp(flags)` requesting the text; `cpp_text_modes()` serves
+`--emit-cpp` probes, and `cpp_variant_mode` a harness's own C++-text variant
+such as a thread-sanitizer run. A fixture the LLVM backend cannot execute is
+declared, never skipped: `llvm_unsupported` (mirroring `cpp_unsupported` in
+`lambda_pack_invocation_runtime_test.main`) asserts the exact rejection, or
+that a filed bug symptom still reproduces, while the C++ profile keeps the
+fixture's execution evidence. `execution_coverage` inventories every registered
+harness that receives `gti`, runs the shared main's `--list-modes` plan under
+the default policy, rejects a hard-coded backend spelling outside its named
+contract allowlist, and so fails whenever a fixture would lose its last
+execution mode.
 
 ## Owned inline consumption (unreleased)
 
@@ -8108,6 +8173,9 @@ whole-program HIR exists, covering array extents, static assertions, and
 discarded-branch exclusion. Completed-body closure tests reject missing roots
 and callees; ordinary failure-metadata/MIR verification still succeeds, while
 whole-program backend publication rejects the intentionally unsealed closure.
+Tracked-intrinsic staging also retains the exact semantic snapshot, rejects
+foreign declaration witnesses and erased snapshot identity, and proves that
+this identity alone never permits whole-program backend publication.
 Required-expression arithmetic failures retain their semantic diagnostic code
 and original source operator. Existing enum and returned-view evaluation stays
 covered while those families await MIR-profile migration.
@@ -8232,8 +8300,9 @@ samples establish a compact allocation-free successful consumer, not a
 statistically significant compile-time or runtime speedup. Constant construction
 does additional bounded compiler work: location traversal and immutable
 aggregate replacement are charged, and updating an array copies its backing
-elements. Larger tables still have to fit the shared 4096-step budget; this
-feature neither removes runtime checks nor raises that resource bound.
+elements. Larger tables still have to fit the request's step budget (4096 steps
+when this was recorded; now a configurable compile limit); this feature neither
+removes runtime checks nor raises that resource bound.
 
 `testConstexprReadOnlyReferences` and `constexpr_readonly_references_runtime`
 cover checked read-only parameters, local bindings, returned field/index
@@ -9384,11 +9453,11 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `runtime_failure_header_coexistence` | the compiler's semantic `gti/failure.h` and runtime C `gti/runtime_failure.h` contracts coexist in one translation unit and link through both archives |
 | `managed_thread_semantic_ir` | exact private capability identity; consumed transfer-safe `void()` and owned-result task selection; result-type and transfer-denial causes; HIR/MIR/Lowered adapter inventory; spawn/join/result-take-or-abandon synchronization and ownership; profile/target rejection; optimizer preservation; and fail-closed missing, duplicate, reordered, retargeted, and forged records |
 | `managed_thread_runtime` | version-one opaque runtime ABI; creation cleanup exactly once; recoverable join-state preservation and post-join write publication; typed result take/abandon exactly once; exact ordinary/emergency record and descriptor handoff, including task-object cleanup; observer silence on the worker; native fault seams; and repeated plus simultaneous spawn/join stress |
-| `managed_thread_end_to_end` / `managed_thread_tsan` | public source-defined `std::thread` and `std::thread_result<Result>` through direct and project workflows; lambda, owned capture, fresh/overloaded nominal callable, typed named/closure tasks, explicit cleanup-free and cleanup-owning class-result join/extraction, handle move, deterministic destructor autojoin and unobserved-result cleanup, exact body/capture/nested-worker failure and `GTI-R0014` handoff, injected automatic-join `GTI-R0012`, 128-worker repeated stress, O0/O3 across C++20/C++23, and class-result publication under ThreadSanitizer where supported |
+| `managed_thread_end_to_end` / `managed_thread_tsan` | public source-defined `std::thread` and `std::thread_result<Result>` through direct and project workflows; lambda, owned capture, fresh/overloaded nominal callable, typed named/closure tasks, explicit cleanup-free and cleanup-owning class-result join/extraction, handle move, deterministic destructor autojoin and unobserved-result cleanup, exact body/capture/nested-worker failure and `GTI-R0014` handoff, injected automatic-join `GTI-R0012`, 128-worker repeated stress, O0/O3 across C++20/C++23, and class-result publication under ThreadSanitizer (instrumenting the LLVM backend's own emission) where supported |
 | `function_item_semantic_ir` | declaration-order-independent exact namespace-function selection through a generic algorithm and managed-thread `void`/result tasks; nominal semantic/HIR/MIR/Lowered identity; optimizer and private C++ tag preservation; compiler-backed hover/definition; direct-call and native-callback isolation; no-context, mismatch, ambiguity, capture, storage, and escape diagnostics; and fail-closed missing-target, nominal-ID, signature, and class-owner mutations |
 | `function_item_runtime` | exact namespace function items through a source-defined algorithm plus managed `void()` and owned-result tasks; deterministic MIR identity; C++20/O0 and C++23/O3 build and execution without a raw/native function pointer |
 | `atomic_semantic_ir` | closed scalar domain and rejected near misses; dormant-import/profile/target/private-capability boundaries; immutable global admission; exact SC defaults plus every legal explicit load/store/exchange/CAS success/failure order in HIR/MIR; rejection of operation-illegal tag combinations before backend entry; optimizer barrier preservation; sealed C++20/C++23 vocabulary; and fail-closed forged operation/order/provenance mutations |
-| `atomic_end_to_end` / `atomic_tsan` | scalar construction/load/store/exchange/strong-CAS success, failure, observation, movement, and every explicit order overload; managed-thread CAS contention; the SC store-buffer litmus; deterministic release/acquire publication with relaxed payload access; O0/O3 under C++20/C++23; repeated stress; and ThreadSanitizer where supported |
+| `atomic_end_to_end` / `atomic_tsan` | scalar construction/load/store/exchange/strong-CAS success, failure, observation, movement, and every explicit order overload; managed-thread CAS contention; the SC store-buffer litmus; deterministic release/acquire publication with relaxed payload access; O0/O3 under C++20/C++23; repeated stress; and ThreadSanitizer over the LLVM backend's emission where supported |
 | `mutex_move_cleanup_runtime` | C++20/23 O0/O3 moved trivial/nontrivial mutex owners and moved guards; exactly-once reverse payload cleanup; inactive moved-from native shells leave primary records unchanged; active secondary failure preserves the emergency envelope and abandons later cleanup. A retained-C++ oracle repair, not native LLVM mutex acceptance. |
 | `expected_wrong_state_runtime` | wrong-state `expected.value()` and `expected.error()` terminate through `GTI-R0009` at O0/O3 under C++20/C++23 rather than inheriting native-library behavior |
 | `expected_propagation_runtime` | exact once-only, left-to-right `?` evaluation; `expected<void, E>` forwarding; named-operand copy versus prvalue/`std::move` move behavior; active-alternative error transport; and ordinary branch/return cleanup at O0/O3 under C++20/C++23 |
@@ -9424,7 +9493,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `backend_lowered_program_rejection` | C++, MIR, and native-header backends accept one valid lowered value and reject construction-seal and generated-inventory mutations before emission |
 | `backend_lowered_program_boundary` | structural prohibition on frontend includes/types, `BackendInput`, source-MIR/optimizer inputs, and builder leakage across production backend files and the standalone contract client |
 | `cpp_mir_control_flow` | deterministic backend-private direct-CFG plans; canonical block labels and edge slots; complete terminal vocabulary; repeated-target switch edges; and missing, duplicate, reordered, relabelled, retargeted, malformed-entry, and invalid-MIR rejection |
-| `lowered_program_corpus_census` | exact per-example declaration, body, generated-item, and generated-family counts recorded in `tests/lowered_program_census_baseline.json` across the complete shipped corpus for explicit macOS arm64 and Linux x86_64 targets, independently of the executing host; other inventory consumers default to the canonical macOS profile. Linux variants retain exact C ABI identity differences (four examples share one `layout_of<unsigned long>` instantiation there) rather than ignoring count drift |
+| `lowered_program_corpus_census` | per-example body, generated-item, and generated-family counts held within the census budget (`tests/census_budget.py`) of `tests/census/` (`lowered`) across the complete shipped corpus for explicit macOS arm64 and Linux x86_64 targets, independently of the executing host; other inventory consumers default to the canonical macOS profile. Linux variants retain exact C ABI identity differences (four examples share one `layout_of<unsigned long>` instantiation there) rather than ignoring count drift |
 | `mir_backend_first_family` | verified source/optimized MIR handoff, ordinary and failure-form general emission, optimized instruction control, and missing, stale, duplicated, or unauthorized snapshot rejection |
 | `mir_backend_first_family_runtime` | general verified-MIR execution at O0/O1/O3 under C++20/C++23, including body-identity markers and optimized-MIR artifact differences |
 | `mir_backend_scalar_cfg` | exact `scalar-cfg-v1` selection across scalar computations, places, assignment, branch, switch, short-circuit, and loop CFG; direct-label/goto spelling without mutable block dispatch; checked/call/reference near-miss fallback; optimized-literal control; and fail-closed same-domain operation and branch-routing mutations with unchanged source MIR |
@@ -9440,9 +9509,9 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `mir_backend_owned_lifecycle_runtime` | exact nested-scope construction, move-by-value, first-close ordering, and explicit cleanup at O0/O1/O3 under C++20/C++23, including emitted family markers and lifetime-slot schedule evidence |
 | `mir_backend_scalar_failure_callgraph` | atomic hosted `scalar-failure-callgraph-v1` selection; exact hidden bool/out-result/record ABI; local-site creation and unchanged call propagation; Return-only publication; reverse failure drops; unique terminal/firewall shape; complete HIR-body reverse-edge and selected-class representation closure; native/virtual/lambda/dynamic-initializer/checked-lifecycle/normal-ABI/cycle near misses; and fail-closed metadata, target, record, cleanup, and source-MIR mutations |
 | `mir_backend_scalar_failure_callgraph_runtime` | normal execution plus every admitted signed/unsigned fixed-integer detector outcome at O0/O1/O3 under C++20/C++23, with exact selected-body counts, reports, original source sites, status 70, stdout silence, one terminal call, and the immediate native-exception firewall |
-| `mir_census_regression` | exact reviewed per-example MIR body ownership recorded in `tests/mir_census_baseline.json` |
+| `mir_census_regression` | every example compiles and its MIR body count stays within the census budget (`tests/census_budget.py`) of `tests/census/` (`mir`) |
 | `compiler_debug_tooling` | portable failure capture/replay plus decline-census body segmentation, body-kind-local spellability, deterministic generation, backend-only classification, and argument validation |
-| `mir_cutover_corpus_oracle` | every example builds and runs at `-O0`/C++20 and `-O3`/C++23 with identical body ownership, exit status, stdout, and stderr |
+| `mir_cutover_corpus_oracle` | every example builds and runs at `-O0`/C++20 and `-O3`/C++23 with identical exit status, stdout, and stderr, and recorded examples keep their body count within the census budget |
 | `cpp_mir_body_emitter_preflight` / `cpp_mir_body_emitter_text` / `cpp_mir_body_emitter_lifecycle` / `cpp_mir_body_emitter_census` / `cpp_mir_body_emitter_corpus` / `cpp_mir_body_emitter_corpus_protocol` | Manifest-backed tests split into preflight/representation, ordinary text, lifecycle/failure, and corpus-protocol executables; classification, immutable-plan lifetime, typed-edge, initializer, ownership, array, virtual-family, inline-capture, Expected, and reference-transfer assertions remain owned by focused suites; the census rejects missing or duplicate registrations, while the four-processor coordinator runs both corpus sweeps once per exact lowered-program census source and re-aggregates readiness floors, feature witnesses, determinism, direct control flow, and byte agreement; protocol tests reject malformed or mismatched worker evidence |
 | `issue_144_class_array_field_runtime` | trivial, cleanup-owning, move-only, passive-polymorphic, and destructor-bearing polymorphic fixed-array fields at O0/O2 under C++20/C++23; concrete interface dispatch and constant element-field projections; exact construction and destruction totals; and move-only element-copy rejection with `GTI-S2003` |
 | `issue_146_class_value_positions_runtime` | generated-copy and explicit-move class parameter field initialization, passive and move-only lambda move-capture, and owning `Expected` payload return/extraction at O0/O3 under C++20/C++23, with no output and exact zero-status completion |
@@ -9456,7 +9525,10 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `typed_differential_smoke` | one fixed real-compiler differential batch comparing original/transformed GTI, the independent evaluator, and independent C++ at O0/O3, plus injected evaluator/reference/GTI drift and retained evidence |
 | `feature_interaction_model` | constrained pairwise/selected-triple and full three-way coverage, seeded typed source generation, independent value/effect/cleanup expectations, metamorphic renaming, failure classifiers, retained evidence, and predicate-preserving bounded reduction |
 | `feature_interaction_smoke` | three fixed interaction programs through the real optimized compiler at C++20/C++23 and O0/O3, original/renamed variants, repeated execution, exact destructor/call/output checks, and negative ownership admission controls |
-| `stdlib_surface_manifest` | complete stdlib-source fingerprints and executable/scaffold/unsupported classification; injected missing-source, stale-source, missing-case, and wrong-case-kind rejection |
+| `stdlib_package_runtime` | copy the real `stdlib/tests` package into isolated directories and run its module graph plus declared native C++ source with LLVM/C++ in dev/release profiles; require the complete numeric/foundation success output |
+| `stdlib_api_contracts` | execute stateful set-policy swaps on LLVM/C++ at O0/O3, reject borrowed comparator/hash/equality policies at the public swap call, and reject unformattable first/middle/last arguments across all formatting/printing/panic overloads at the caller |
+| `stdlib_surface_manifest` | complete stdlib-source census and executable/scaffold/unsupported classification; injected unclassified-source, unknown-source, retired-fingerprint, missing-case, and wrong-case-kind rejection; review-script/census source agreement |
+| `stdlib_surface_review_policy` | `scripts/check_stdlib_surface_review.py` in throwaway repositories: an added or modified stdlib source needs a changed manifest entry naming it or a `Stdlib-Surface: unchanged` + `Stdlib-Surface-Reason:` trailer block; unreviewed, reason-less, split-block and reverted reviews fail, non-surface edits and deletions pass, and the range starts at the fork point |
 | `stdlib_surface` | every currently classified executable stdlib entry through the production compiler/native-driver path at O0/O3 with exact exit/stdout/stderr, including counted I/O create/write/seek/chunk-read/append/close, standard streams, and strict Base64/hexadecimal encoding and decoding over all byte values, plus bounded expected diagnostics for unsupported surfaces. Each native build has a 300-second limit unless its case records a longer one, at most 900 seconds, with a `build_timeout_reason`; no case currently does |
 | `stdlib_include_sweep` | every shipped `std` module independently reaches C++ emission from an import-only source unit, including unused generic declarations |
 | `stdlib_modules` | every public `std.name` module has exactly one canonical `stdlib/std/name.gti` interface, and `import std.name;` alone reaches verified MIR for each |
@@ -9719,7 +9791,10 @@ compile job and 4096 MiB per test worker, since an instrumented compiler
 suite grows several times larger than its plain run (six workers on a 12 GiB
 runner had the ownership suite OOM-killed). The sanitizer job also scales
 every test timeout six times (`-DGTI_TEST_TIMEOUT_SCALE=6`, so the 600-second
-default becomes an hour) and runs
+default becomes an hour). Its three compiler partitions run only
+`compiler_pipeline`, split round-robin by suite, and scale its 1800-second
+bound ten times: the instrumented ownership suite alone took more than three
+hours on 2026-11-04 (run 41837802931). The job runs
 the emitter's preflight, text, lifecycle, census and corpus-protocol checks
 rather than the whole generated-C++ corpus, and omits `failure_metadata`:
 both exceeded an hour under ASan on the 6-core runner and remain the plain
@@ -9728,13 +9803,32 @@ remain external policy; the helper prints the processors and memory it saw so
 a killed compile can be read against them. A small ASan/UBSan preflight
 fails early when that mandatory capability is broken. ThreadSanitizer execution
 is an explicit host capability controlled by
-`GTI_ENABLE_THREAD_SANITIZER_TESTS`, which defaults to enabled. The hosted
-workflows disable it: Docker/host environments that cannot reserve the required
+`GTI_ENABLE_THREAD_SANITIZER_TESTS`, which defaults to enabled; the hosted
+`tsan` job of `full-validation.yml` configures it on and runs every `_tsan`
+CTest. Docker/host environments that cannot reserve the required
 shadow-memory mapping have not passed the dedicated TSAN preflight. Mixed runtime matrices keep
 their ordinary and ASan/UBSan modes; dedicated TSAN CTests report an explicit
 skip with return code 77. A compatible dedicated runner must pass the TSAN
 preflight and leave the option enabled before its result counts as race-checking
-evidence.
+evidence. Every `_tsan` harness (`managed_thread_tsan_test.py`, which
+`atomic_tsan_test.py` and `mutex_tsan_test.py` import) sanitizes the LLVM
+backend's own emission and never C++-backend output: the test-only
+`gti_llvm_instrumented_source` helper emits the publicly admitted verified
+program as thread-sanitizer-attributed LLVM IR, the matching Clang compiles that
+IR with `-fsanitize=thread`, the platform's reviewed compiler
+(`CMAKE_CXX_COMPILER`, the only profile `runtime/src/atomic_lane.h` admits:
+GCC 14 on Linux x86_64, where the LLVM-matching Clang is rejected) compiles
+the fixture's runtime dependency closure with `-fsanitize=thread` and links
+the binary against its own thread-sanitizer runtime. That closure is not a
+hand-written unit list: it is the set of members a static link of the fixture
+object would pull from the built `gti_runtime` archive (exported to the test as
+`GTI_RUNTIME_LIBRARY`), so a runtime entry point in a new source joins the
+sanitized link with that source. `nm -u`
+must show `__tsan_read`/`__tsan_write` on the fixture object (plus instrumented
+`__tsan_atomic` operations of any width for the public atomic fixtures and
+`__tsan_atomic64` for the wrapping-atomic source owners), and the linked binary runs three
+times with `halt_on_error=1`. The wrapping-atomic source owners additionally pin
+the frozen C++ backend's `GTI-B0003` rejection, which emits nothing.
 Release build-tree tests derive their resource overrides from the final CTest
 inventory, including every CLI/LSP test; installed-consumer checks retain clean,
 relocatable discovery without those overrides. Their C
@@ -11002,7 +11096,7 @@ the requisite native lowering milestones, and does not certify support today.
 ### MIR And C++ Corpus Gates
 
 The MIR census and native corpus oracle select the reviewed host target from
-`mir_census_baseline.json`: common `arm64-apple-macos` counts with sparse
+`tests/census/` (`mir`): common `arm64-apple-macos` counts with sparse
 `x86_64-unknown-linux` overrides, matching the LoweredProgram census convention.
 Both validate the complete example inventory and every profile total before
 using a selected-case filter. Unknown hosts, targets, examples and malformed
@@ -11053,7 +11147,7 @@ Two complementary gates replace it:
 
 - `tests/mir_census_test.py` recompiles every `examples/*.gti` source and
   requires the exact per-example body-identity counts recorded in
-  `tests/mir_census_baseline.json` for the host target. The macOS arm64 base and
+  `tests/census/` (`mir`) for the host target. The macOS arm64 base and
   Linux x86_64 variant differ in four container examples by one
   `std::layout_of<c_size_t>()` body: on Linux, `c_size_t` and `uint64_t` have
   the same native C type identity and share an existing specialization; on
@@ -11066,7 +11160,7 @@ Two complementary gates replace it:
   status, stdout, and stderr.
 
 The reviewed corpus inventory is the checked-in
-`tests/mir_census_baseline.json`; documentation does not duplicate its changing
+`tests/census/` (`mir`); documentation does not duplicate its changing
 counts. The two-endpoint corpus matrix covers source and optimized MIR plus both
 supported C++ standards without retaining eight duplicate full-corpus jobs.
 Focused runtime matrices continue to exercise intermediate optimization levels
@@ -11429,7 +11523,7 @@ as the tests they inspect.
 python3 scripts/build_window.py --kind suite -- \
     ctest --test-dir build --parallel 4 --output-on-failure -L feedback-fast
 python3 scripts/build_window.py --kind suite -- \
-    ctest --test-dir build --parallel 4 --output-on-failure -L coverage-full
+    ctest --test-dir build --parallel 4 --output-on-failure -L coverage-full -LE cpp-backend
 python3 scripts/build_window.py --kind suite -- \
     python3 tests/owning_function_runtime_test.py build/gti --jobs 1
 ```
@@ -11449,7 +11543,7 @@ cmake -S . -B build -DGTI_TEST_CASE_JOBS=4
 python3 scripts/build_window.py --kind build -- \
     cmake --build build --parallel 12
 python3 scripts/build_window.py --kind suite -- \
-    ctest --test-dir build --parallel 12 --test-load 12 --output-on-failure
+    ctest --test-dir build --parallel 12 --test-load 12 --output-on-failure -LE cpp-backend
 ```
 
 `--test-load` makes CTest wait to start a test while the host's load average

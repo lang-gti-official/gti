@@ -15,7 +15,8 @@ def main() -> int:
     root = Path(__file__).resolve().parent.parent
     env = {**os.environ, "GTI_STDLIB_PATH": str(root / "stdlib")}
     sources = (root / "examples/183-immediate-functions.gti",
-               root / "tests/fixtures/consteval_values.gti")
+               root / "tests/fixtures/consteval_values.gti",
+               root / "tests/fixtures/checked_literal_arguments.gti")
     with tempfile.TemporaryDirectory(prefix="gti-consteval-") as directory:
         def compile_case(case):
             source, backend, level = case
@@ -39,13 +40,52 @@ def main() -> int:
                 return
             result = subprocess.run([str(binary)], capture_output=True,
                                     text=True, timeout=30)
-            assert (result.returncode, result.stdout, result.stderr) == (0, "", ""), result
+            expected = "42\n" if binary.name.startswith("checked_literal_arguments") else ""
+            assert (result.returncode, result.stdout, result.stderr) == (0, expected, ""), result
 
         plan = [(f"{source.name}/llvm-{level}", (source, "llvm", level))
                 for source in sources for level in ("O0", "O1", "O3")]
         plan += [(f"{source.name}/cpp-limitation", (source, "cpp", "O1"))
                  for source in sources]
         run_cases(plan, compile_case, configured_jobs(), execute_case)
+
+        # Realistic literal length and field count exceed the old small budget.
+        long_source = Path(directory) / "long-pattern.gti"
+        long_source.write_text('import std.format; int main() { auto text = std::format("' +
+                               'x' * 300 + '{}' * 16 + '", ' + ', '.join(['1'] * 16) +
+                               '); return text.size() == 316 ? 0 : 1; }')
+        long_binary = compile_case((long_source, "llvm", "O3"))
+        execute_case(long_binary)
+
+        prefix = (root / "tests/fixtures/checked_literal_arguments.gti").read_text().split("int main()")[0]
+        rejected_clients = {
+            "duration": ('int main() { return wait_time("150s", 0); }', "Duration must end in ms"),
+            "grammar": ('int main() { auto value = std::format("{", 1); return 0; }', "Invalid format pattern"),
+            "count": ('int main() { auto value = std::try_format("{} {}", 1); return 0; }', "field count or index"),
+            "type": ('int main() { auto value = std::format("{:x}", "text"); return 0; }', "does not accept this argument type"),
+            "custom": ('int main() { Token token = {.value=1}; auto value = std::format("{:x}", token); return 0; }', "does not accept this argument type"),
+            "runtime": ('int run(std::string_view input) { auto value = std::format(input, 1); return 0; } int main(){return run("{}");}', "parameter 'pattern' must be a compile-time constant"),
+            "panic": ('int main() { std::panic("{} {}", 1); return 0; }', "field count or index"),
+            "println": ('int main() { std::println("{:x}", "text"); return 0; }', "does not accept this argument type"),
+        }
+        for name, (text, message) in rejected_clients.items():
+            source = Path(directory) / f"checked-{name}.gti"
+            source.write_text(prefix + text)
+            binary = source.with_suffix("")
+            binary.write_bytes(b"preserve checked output")
+            rejected = subprocess.run([str(compiler), str(source), "--backend", "llvm", "-O3", "-o", str(binary)],
+                                      capture_output=True, text=True, env=env, timeout=120)
+            assert rejected.returncode == 65 and "GTI-S2057" in rejected.stderr and message in rejected.stderr, rejected
+            assert "GTI-B" not in rejected.stderr and binary.read_bytes() == b"preserve checked output", rejected
+            if name == "runtime":
+                assert "std::runtime_format" in rejected.stderr, rejected
+
+        for level in ("O0", "O3"):
+            source = root / "tests/fixtures/checked_format_panic.gti"
+            binary = compile_case((source, "llvm", level))
+            result = subprocess.run([str(binary), "panic"], capture_output=True, text=True, timeout=30)
+            assert result.returncode == 70 and result.stdout == "cleanup\n", result
+            assert 'checked_format_panic.gti:11: runtime error[GTI-R0017]: panic: "value=42"' in result.stderr, result
 
         rejected_payloads = {
             "runtime": """
@@ -105,6 +145,73 @@ int main() { return make<0>().value; }
                     "GTI-S2057" in rejected.stderr and
                     "GTI-B" not in rejected.stderr and
                     binary.read_bytes() == b"preserve existing artifact"), rejected
+
+        # One lazy compile-time rule (#174, #175): unexecuted runtime-only
+        # operations never reject a request, and compile-time values equal
+        # run-time evaluation of the same bodies.
+        lazy = root / "tests/fixtures/compile_time_lazy_values.gti"
+        for level in ("O0", "O3"):
+            binary = Path(directory) / f"{lazy.stem}-{level}"
+            built = subprocess.run(
+                [str(compiler), str(lazy), "--backend", "llvm", f"-{level}",
+                 "-o", str(binary)], capture_output=True, text=True, env=env,
+                timeout=120)
+            assert built.returncode == 0, (level, built.stdout, built.stderr)
+            result = subprocess.run([str(binary)], capture_output=True,
+                                    text=True, timeout=30)
+            assert (result.returncode, result.stdout, result.stderr) == (0, "", ""), result
+
+        validator = """import std.panic;
+constexpr int checked_third(int v) {
+  if (v % 3 != 0) { std::panic("not a multiple of three"); }
+  return v / 3;
+}
+int runtime_only(int v) { return v - 1; }
+constexpr int clamp_positive(int v) {
+  if (v < 0) { return runtime_only(v); }
+  return v;
+}
+constexpr int checked_half(int v) {
+  if (v % 2 != 0) { std::panic("odd {}", v); }
+  return v / 2;
+}
+"""
+        panic = 'Compile-time evaluation panicked: "not a multiple of three"'
+        executed_failures = {
+            "panic-immediate": ("consteval int third(int v) { return checked_third(v); }\n"
+                                "int main() { return third(10); }\n", panic),
+            "panic-binding": ("constexpr int bad = checked_third(10);\n"
+                              "int main() { return bad; }\n", panic),
+            "panic-static-assert": ("static_assert(checked_third(10) == 3);\n"
+                                    "int main() { return 0; }\n", panic),
+            "runtime-only-immediate": (
+                "consteval int clamp(int v) { return clamp_positive(v); }\n"
+                "int main() { return clamp(-3); }\n",
+                "'runtime_only' is not constexpr."),
+            "runtime-only-binding": ("constexpr int c = clamp_positive(-5);\n"
+                                     "int main() { return c; }\n",
+                                     "'runtime_only' is not constexpr."),
+            # A formatted message is not yet constant-eligible; executing it
+            # still fails the request rather than being accepted.
+            "formatted-panic-executed": (
+                "consteval int half(int v) { return checked_half(v); }\n"
+                "int main() { return half(7); }\n",
+                "'std::panic' is not constexpr."),
+        }
+        for name, (use, expected) in executed_failures.items():
+            source = Path(directory) / f"executed-{name}.gti"
+            source.write_text(validator + use)
+            binary = source.with_suffix("")
+            binary.write_bytes(b"preserve existing artifact")
+            rejected = subprocess.run(
+                [str(compiler), str(source), "--backend", "llvm", "-O0",
+                 "-o", str(binary), "--color=never"], capture_output=True,
+                text=True, env=env, timeout=120)
+            assert (rejected.returncode == 65 and
+                    "GTI-S2057" in rejected.stderr and
+                    expected in rejected.stderr and
+                    "Constant evaluation requested here." in rejected.stderr and
+                    binary.read_bytes() == b"preserve existing artifact"), (name, rejected)
     return 0
 
 

@@ -438,3 +438,25 @@ using Nested = storage<Heap>::buffer<storage<Heap>::buffer<int>>;
               (type_argument_clause
                 (type
                   (primitive_type))))))))))
+
+================================================================================
+Conditional conformance
+================================================================================
+
+for <T> concept C<Box<T>> requires C<T> {
+  using result = T;
+};
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (conformance_declaration
+    (generic_parameter_clause (generic_parameter (identifier)))
+    (concept_application
+      (identifier)
+      (type (user_type (identifier) (type_argument_clause (type (user_type (identifier)))))))
+    (requires_clause
+      (constraint_expression
+        (concept_application (identifier) (type (user_type (identifier))))))
+    (conformance_body
+      (type_alias_declaration (identifier) (type (user_type (identifier)))))))

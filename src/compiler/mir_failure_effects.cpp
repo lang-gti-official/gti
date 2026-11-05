@@ -2377,12 +2377,15 @@ bool MirOwnedFailureClosure::proveSingleFieldTransferConstructor(
     }
   }
 
+  // Normal completion retires the field rollback only after the body's
+  // scope-exit cleanup: the moved-from parameter's drop runs while the
+  // rollback is still armed, and cannot fail because the parameter was moved.
   const MirInstruction &move = block.instructions[0];
   const MirInstruction &initialize = block.instructions[1];
   const MirInstruction &fullEnd = block.instructions[2];
-  const MirInstruction &transfer = block.instructions[3];
-  const MirInstruction &drop = block.instructions[4];
-  const MirInstruction &cleanupEnd = block.instructions[5];
+  const MirInstruction &drop = block.instructions[3];
+  const MirInstruction &cleanupEnd = block.instructions[4];
+  const MirInstruction &transfer = block.instructions[5];
   const auto exactLifecycle =
       [](const MirInstruction &instruction, MirLifecycleEventKind kind,
          MirDropObligationId source, MirDropObligationId target) {

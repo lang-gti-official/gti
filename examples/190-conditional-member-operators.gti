@@ -1,0 +1,63 @@
+// A requirement makes an operator available for suitable concrete types.
+// It never ranks overloads or imposes that requirement on the whole class.
+import std.map;
+import std.unordered_map;
+import std.string;
+import std.utility;
+
+class Cell<T> {
+  mut T value;
+public:
+  Cell(T initial) : value(std::move(initial)) {}
+  mut T& operator[](int index) mut requires std::default_initializable<T> {
+    return this.value;
+  }
+  bool operator==(Cell<T>& other) requires std::equality_comparable<T> {
+    return this.value == other.value;
+  }
+  bool operator!=(Cell<T>& other) requires std::equality_comparable<T> {
+    return !(this == other);
+  }
+};
+
+class ExplicitValue {
+public:
+  int amount;
+  ExplicitValue(int initial) : amount(initial) {}
+};
+
+int main() {
+  mut Cell<int> cell{4};
+  cell[0] = 5;
+  Cell<int> expected{5};
+  if (!(cell == expected) || cell != expected) { return 1; }
+
+  mut std::map<std::string, int> counts{};
+  // Indexing takes an exact owned key on every call, including a hit.
+  // A missing key gets the default int value (zero); a hit keeps its value.
+  counts[std::string("tea")]++;
+  counts[std::string("tea")]++;
+  {
+    mut int& amount = counts[std::string("coffee")];
+    amount = 3;
+    // While amount remains live, another mutation or read of counts is rejected.
+  }
+  std::string tea = "tea";
+  if (counts.at(tea) != 2 || counts.size() != std::size_t(2)) { return 2; }
+
+  mut std::unordered_map<int, int> hashed{};
+  hashed[7] = 11;
+  hashed[7]++;
+  if (hashed[7] != 12 || hashed.size() != std::size_t(1)) { return 3; }
+
+  // Non-default-constructible mapped types still support explicit insertion
+  // and lookup. Only inserting indexing is unavailable for them.
+  mut std::map<int, ExplicitValue> explicit_values{};
+  [[discard]] explicit_values.insert(1, ExplicitValue(9));
+  int one = 1;
+  if (explicit_values.at(one).amount != 9) { return 4; }
+
+  std::pair<int, bool> left{2, true};
+  std::pair<int, bool> right{2, true};
+  return left == right && !(left != right) ? 0 : 5;
+}

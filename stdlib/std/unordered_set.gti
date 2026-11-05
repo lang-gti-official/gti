@@ -31,7 +31,7 @@ public:
 };
 }
 /// Unique immutable keys backed by the cached-hash chained dictionary.
-export class unordered_set<K, Hash = std::hash<K>, KeyEqual = std::equal_to<K>> {
+export class unordered_set<K, Hash = std::default_hash<K>, KeyEqual = std::equal_to<K>> {
   mut unordered_map<K, bool, Hash, KeyEqual> entries;
   unordered_map<K, bool, Hash, KeyEqual> replace(unordered_map<K, bool, Hash, KeyEqual> value) mut {
     auto previous = std::move(this.entries);
@@ -78,7 +78,8 @@ public:
   size_t count(K& key) { return this.entries.count(key); }
   [[discardable]] size_t erase(K& key) mut { return this.entries.erase(key); }
   void clear() mut { this.entries.clear(); }
-  void swap(mut unordered_set<K, Hash, KeyEqual>& other) mut {
+  void swap(mut unordered_set<K, Hash, KeyEqual>& other) mut
+      requires std::relocatable<Hash> && std::relocatable<KeyEqual> {
     auto previous = std::move(this.entries);
     this.entries = other.replace(std::move(previous));
   }

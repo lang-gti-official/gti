@@ -772,6 +772,7 @@ struct MirInstruction {
   std::optional<std::size_t> payloadIndex;
   std::optional<PayloadExtractionKind> payloadExtractionKind;
   IntrinsicKind intrinsic = IntrinsicKind::None;
+  std::optional<FunctionControlContract> intrinsicCallContract;
   // Concrete queried representation; only ObjectSize/ObjectAlignment may
   // carry this field. It is not a runtime argument or a borrow origin.
   std::optional<SemanticType> objectLayoutType;
@@ -1284,6 +1285,10 @@ findMirTemporaryCarrierDependency(const MirBody &body, const MirPlace &place);
 [[nodiscard]] bool mirBodyRoutesFailureEdges(const MirBody &body);
 [[nodiscard]] bool
 requiresMirFailureControlFlow(const MirInstruction &instruction);
+// A read that leaves its place available has nothing for a failure edge to
+// restore, so it never decides whether an operation can take an Invoke edge.
+[[nodiscard]] bool
+isStatePreservingOwnership(const std::optional<OwnershipEvent> &event);
 struct MirFieldDrop {
   HirBindingId field = 0;
   SymbolId symbol = 0;
@@ -1946,6 +1951,9 @@ struct MirThreadLocalStorage {
 
 class MirProgram {
 public:
+  [[nodiscard]] std::uint64_t semanticSnapshot() const {
+    return semanticSnapshot_;
+  }
   [[nodiscard]] bool requiresNativeObjectLayout() const {
     return nativeObjectLayout_;
   }
@@ -2148,6 +2156,7 @@ private:
   friend struct MirProgramTestAccess;
 
   bool nativeObjectLayout_ = false;
+  std::uint64_t semanticSnapshot_ = 0;
   bool valid_ = true;
   SourceDebugProfile sourceDebugProfile_ = SourceDebugProfile::None;
   TargetInfo target_ = TargetInfo::host();

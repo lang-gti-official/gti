@@ -330,6 +330,10 @@
       "suite": "declarations"
     },
     {
+      "name": "testContextualIntegerLiteralArguments",
+      "suite": "declarations"
+    },
+    {
       "name": "testOwnershipSemanticFoundation",
       "suite": "ownership"
     },
@@ -566,6 +570,10 @@
       "suite": "ownership"
     },
     {
+      "name": "testConstructorRollbackSpansLocalCleanup",
+      "suite": "ownership"
+    },
+    {
       "name": "testDefaultFieldRollbackEntersConstructor",
       "suite": "ownership"
     },
@@ -630,6 +638,14 @@
       "suite": "ownership"
     },
     {
+      "name": "testCompileLimits",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testConstantEvaluationReuse",
+      "suite": "constexpr"
+    },
+    {
       "name": "testConsteval",
       "suite": "constexpr"
     },
@@ -683,6 +699,10 @@
     },
     {
       "name": "testMirConstantEvaluation",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testStagedIntrinsicContracts",
       "suite": "constexpr"
     },
     {
@@ -747,6 +767,18 @@
     },
     {
       "name": "testCompileTimeConditionals",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testConfigurableCompileTimeDepth",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testNativeStackSegmentsAreInvisible",
+      "suite": "constexpr"
+    },
+    {
+      "name": "testLazyStagingAndCompileTimePanic",
       "suite": "constexpr"
     },
     {

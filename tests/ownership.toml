@@ -31,6 +31,10 @@ schema = 1
 reason = "registered only on some hosts or with optional tools or build options"
 tests = [
   # GTI_BUILD_LSP=OFF omits these registrations.
+  "scalar_temporary_borrow_lsp",
+  "concept_conditions_lsp",
+  "conditional_member_operators_lsp",
+  "reference_parameter_packs_lsp",
   "block_comment_lsp",
   "comment_placement_lsp",
   "concurrency_composition_lsp",
@@ -39,6 +43,7 @@ tests = [
   "executable_entry_cli_lsp",
   "export_placement_lsp",
   "extensible_formatting_lsp",
+  "semantic_call_regressions_lsp",
   "frontend_cache_invalidation",
   "include_removal_lsp",
   "lsp_code_snippets",
@@ -100,6 +105,9 @@ paths = [
   "tests/source_text_tests.cpp",
 ]
 owners = [
+  "concept_conditions",
+  "conditional_member_operators",
+  "reference_parameter_packs",
   "parser_conditional_recovery",
   "source_text_pipeline",
   "source_unit_services",
@@ -115,6 +123,9 @@ owners = [
   "scoped_configuration_defines",
 ]
 consumers = [
+  "concept_conditions_lsp",
+  "conditional_member_operators_lsp",
+  "reference_parameter_packs_lsp",
   "language_coverage_corpus",
   "lsp_protocol",
   "diagnostic_recovery_lsp",
@@ -142,6 +153,9 @@ owners = [
   "nested_type_syntax",
 ]
 consumers = [
+  "concept_conditions_lsp",
+  "conditional_member_operators_lsp",
+  "reference_parameter_packs_lsp",
   "lsp_protocol",
   "comment_placement_lsp",
   "export_placement_lsp",
@@ -255,6 +269,11 @@ consumers = [
 [[area]]
 area = "semantics"
 paths = [
+  "tests/semantic_call_regression_tests.cpp",
+  "tests/semantic_call_regressions*_test.py",
+  "tests/fixtures/semantic_call_regressions.gti",
+  "tests/scalar_temporary_borrow*_test.py",
+  "tests/fixtures/call_operator_temporary_borrow.gti",
   "src/compiler/semantic_*",
   "include/gti/semantic_*",
   "include/gti/generic_constraint.h",
@@ -262,6 +281,15 @@ paths = [
   "include/gti/concurrency.h",
 ]
 owners = [
+  "concept_conditions",
+  "conditional_member_operators",
+  "protocol_requirements_runtime",
+  "protocol_format_hash_runtime",
+  "reference_parameter_packs",
+  "reference_parameter_pack_mir",
+  "scalar_temporary_borrow",
+  "scalar_temporary_borrow_runtime",
+  "scalar_temporary_borrow_lsp",
   "^.*_semantic_ir$",
   "semantic_header_boundary",
   "semantic_header_self_containment",
@@ -289,18 +317,25 @@ owners = [
   "unsafe_expression_contract",
   "discardable_result",
   "conversion_operators",
+  "literal_call_arguments_runtime",
   "function_signature_types",
   "callable_return_type",
   "stored_callable_types",
+  "semantic_call_regressions",
+  "semantic_call_regressions_runtime",
   "owning_function_types",
   "consuming_receiver_types",
 ]
 consumers = [
+  "concept_conditions_lsp",
+  "conditional_member_operators_lsp",
+  "reference_parameter_packs_lsp",
   "language_coverage_corpus",
   "lsp_protocol",
   "diagnostic_recovery_lsp",
+  "semantic_call_regressions_lsp",
   "generic_algorithm_errors",
-  "^generic_algorithm_breadth_(cpp20|cpp23|no_elide|sanitized)$",
+  "generic_algorithm_breadth",
 ]
 
 [[area]]
@@ -337,6 +372,8 @@ consumers = [
 [[area]]
 area = "constexpr"
 paths = [
+  "src/compiler/compile_limits.cpp",
+  "include/gti/compile_limits.h",
   "src/compiler/constant_evaluator.cpp",
   "src/compiler/mir_constant_evaluator.cpp",
   "src/compiler/semantic_constexpr.cpp",
@@ -345,6 +382,7 @@ paths = [
 ]
 owners = [
   "^constexpr_",
+  "compile_limits",
   "macro_values_semantic_ir",
   "macro_values_runtime",
   "macro_fresh_callables",
@@ -419,6 +457,9 @@ owners = [
   "output_determinism",
 ]
 consumers = [
+  "concept_conditions",
+  "reference_parameter_pack_mir",
+  "reference_parameter_packs",
   "mir_full_expression",
   "mir_program_initialization",
   "lowered_program_contract",
@@ -432,12 +473,20 @@ consumers = [
 area = "mir"
 risk = "shared"
 paths = [
+  "tests/borrow_origin_publication_tests.cpp",
+  "tests/borrow_origin_publication_runtime_test.py",
+  "tests/fixtures/borrowed_text_field_reborrow.gti",
+  "tests/fixtures/temporary_cursor_cleanup_provider.gti",
+  "tests/fixtures/receiver_field_carriers*.gti",
   "src/compiler/mir_*",
   "src/compiler/mir.cpp",
   "include/gti/mir*",
 ]
 owners = [
+  "reference_parameter_pack_mir",
   "^mir_",
+  "borrow_origin_publication",
+  "borrow_origin_publication_runtime",
   "ephemeral_carrier_mir",
   "borrowing_callbacks_mir",
   "storage_adoption_contract",
@@ -454,6 +503,10 @@ owners = [
   "borrowing_callback_restoration_return",
 ]
 consumers = [
+  "concept_conditions",
+  "conditional_member_operators",
+  "protocol_requirements_runtime",
+  "reference_parameter_packs",
   "lowered_program_contract",
   "lowered_program_corpus_census",
   "cpp_mir_body_emitter_corpus",
@@ -537,6 +590,12 @@ consumers = [
 [[area]]
 area = "backend-common"
 paths = [
+  "tests/backend_contract_regressions_test.py",
+  "tests/fixtures/projected_move_assignment.gti",
+  "tests/fixtures/projected_move_failure.gti",
+  "tests/fixtures/projected_move_user.gti",
+  "tests/fixtures/mutex_vector_storage.gti",
+  "tests/panic_contract_tests.cpp",
   "src/compiler/backend.cpp",
   "src/compiler/native_header.cpp",
   "src/compiler/failure_metadata.cpp",
@@ -553,6 +612,8 @@ paths = [
 ]
 owners = [
   "backend_execution_protocol",
+  "backend_contract_regressions",
+  "panic_contracts",
   "backend_lowered_program_boundary",
   "failure_metadata",
   "failure_descriptor_backend",
@@ -838,6 +899,7 @@ area = "runtime-memory"
 risk = "system"
 paths = [
   "runtime/src/memory.cpp",
+  "runtime/src/owner_memory.cpp",
   "runtime/include/gti/memory.h",
 ]
 owners = [
@@ -985,6 +1047,8 @@ consumers = [
 area = "stdlib"
 paths = [
   "stdlib/",
+  "tests/stdlib_api_contracts_test.py",
+  "tests/fixtures/set_swap_contract.gti",
 ]
 owners = [
   "stdlib_surface",
@@ -995,6 +1059,7 @@ owners = [
   "stdlib_include_sweep",
   "stdlib_discardable",
   "stdlib_adoption_runtime",
+  "stdlib_api_contracts",
 ]
 consumers = [
   "language_coverage_corpus",
@@ -1020,6 +1085,19 @@ owners = [
 consumers = []
 
 [[area]]
+area = "stdlib-surface-review"
+paths = [
+  "scripts/check_stdlib_surface_review.py",
+  "tests/stdlib_surface_review_test.py",
+]
+owners = [
+  "stdlib_surface_review_policy",
+]
+consumers = [
+  "stdlib_surface_manifest",
+]
+
+[[area]]
 area = "stdlib-algorithm-breadth-tests"
 paths = [
   "tests/generic_algorithm_breadth_test.py",
@@ -1029,7 +1107,7 @@ paths = [
   "tests/fixtures/algorithm_user_types.gti",
 ]
 owners = [
-  "^generic_algorithm_breadth_(cpp20|cpp23|no_elide|sanitized)$",
+  "generic_algorithm_breadth",
 ]
 consumers = [
   "stdlib_surface",
@@ -1081,6 +1159,8 @@ paths = [
   "stdlib/std/detail/unordered_map_iterators.gti",
 ]
 owners = [
+  "conditional_member_operators",
+  "protocol_format_hash_runtime",
   "complete_containers",
   "complete_containers_collection",
   "container_contract_failure",
@@ -1102,7 +1182,7 @@ owners = [
   "vector_construction_only_runtime",
   "vector_prepared_constructor_runtime",
   "vector_scalar_constructor_runtime",
-  "^generic_algorithm_breadth_(cpp20|cpp23|no_elide|sanitized)$",
+  "generic_algorithm_breadth",
   "generic_algorithm_cluster",
   "removal_algorithms",
   "generic_algorithm_errors",
@@ -1125,6 +1205,8 @@ paths = [
   "stdlib/std/cstdio.gti",
 ]
 owners = [
+  "protocol_format_hash_runtime",
+  "reference_parameter_packs",
   "string_operations_runtime",
   "string_operations_errors",
   "string_ordering_runtime",
@@ -1186,6 +1268,9 @@ paths = [
   "stdlib/std/meta.gti",
 ]
 owners = [
+  "concept_conditions",
+  "conditional_member_operators",
+  "protocol_format_hash_runtime",
   "shared_ownership_runtime",
   "shared_ownership_failure",
   "unique_owner_access_runtime",
@@ -1269,12 +1354,12 @@ consumers = [
 area = "stdlib-package-tests"
 paths = [
   "stdlib/tests/",
+  "tests/stdlib_package_runtime_test.py",
 ]
 owners = [
-  "^trusted_body_analysis_[0-3]$",
-  "body_analysis_order",
+  "stdlib_package_runtime",
 ]
-consumers = []
+consumers = ["project_cli_workflow"]
 
 # ---------------------------------------------------------------------------
 # Driver, CLI, projects, packages and caches
@@ -1337,6 +1422,7 @@ owners = [
 consumers = [
   "lsp_project_facts",
   "lsp_configuration",
+  "compile_limits",
   "llvm_cache_project_workflows",
   "native_packages",
   "module_discovery_lsp",
@@ -1436,6 +1522,7 @@ owners = [
   "package_registry_auth_cli",
   "missing_definition_cli_lsp",
   "executable_entry_cli_lsp",
+  "compile_limits",
 ]
 consumers = [
   "compiler_failure_reducer",
@@ -1495,6 +1582,7 @@ owners = [
 consumers = [
   "neovim_lsp_configuration",
   "package_registry_cli",
+  "compile_limits",
 ]
 
 [[area]]
@@ -1591,6 +1679,7 @@ paths = [
   "cmake/ReuseToolchain.cmake",
   "scripts/configure_ci_*",
   "scripts/check_ci_sanitizers.py",
+  "scripts/free_ci_disk.sh",
   "scripts/named_test_shards.py",
   "tests/named_test_shards_test.py",
 ]
@@ -1619,6 +1708,7 @@ paths = [
   "scripts/resolve_release_source.py",
   "scripts/release_artifacts.py",
   "scripts/release_train.py",
+  "scripts/full_validation_report.py",
   "scripts/bundle_macos_runtime.py",
   "cmake/PackageRelease.cmake",
 ]
@@ -1669,6 +1759,22 @@ owners = [
   "optimized_test_compiler_policy",
 ]
 consumers = []
+
+[[area]]
+area = "backend-modes"
+paths = [
+  "tests/backend_modes.py",
+  "tests/execution_coverage_test.py",
+]
+owners = [
+  "execution_coverage",
+  "test_throughput_registration",
+]
+consumers = [
+  "lambda_pack_invocation_runtime",
+  "native_fixture_build",
+  "test_case_jobs",
+]
 
 [[area]]
 area = "ci-shard-durations"
@@ -1734,9 +1840,13 @@ consumers = [
 area = "remote-runner"
 paths = [
   "scripts/remote_runner.py",
+  "scripts/gcp_spot_runner.py",
+  "scripts/gcp_spot_policy.example.json",
+  "tests/gcp_spot_runner_test.py",
 ]
 owners = [
   "remote_runner",
+  "gcp_spot_runner",
 ]
 consumers = [
   "agent_workflow",

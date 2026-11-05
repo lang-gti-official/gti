@@ -39,6 +39,13 @@ const ResolvedPackFoldInfo *programPackFoldExpansion(const SemanticModel &model,
   for (std::size_t index = 0; index < resolved->elements.size(); ++index) {
     const auto &element = resolved->elements[index];
     const auto &call = element.call;
+    // A reference-pack element is a reference; deduction binds the target's
+    // type parameter to its object type, which the target then borrows.
+    const SemanticType &objectType =
+        element.elementType.kind == SemanticType::Reference &&
+                element.elementType.arguments.size() == 1
+            ? element.elementType.arguments.front()
+            : element.elementType;
     if (element.elementType != info->type.arguments[index] ||
         call.function != resolved->function ||
         call.declaration != resolved->declaration ||
@@ -47,14 +54,14 @@ const ResolvedPackFoldInfo *programPackFoldExpansion(const SemanticModel &model,
         call.returnType != SemanticType::Void ||
         call.parameterTypes.size() != resolved->pattern->arguments().size() ||
         call.typeArguments.size() != 1 ||
-        call.typeArguments.front() != element.elementType ||
+        call.typeArguments.front() != objectType ||
         !call.valueArguments.empty())
       return nullptr;
     const auto &parameter = call.parameterTypes.back();
     if (parameter.kind != SemanticType::Reference ||
         parameter.referenceAccess != AccessMode::ReadOnly ||
         parameter.arguments.size() != 1 ||
-        parameter.arguments.front() != element.elementType)
+        parameter.arguments.front() != objectType)
       return nullptr;
   }
   return resolved;
@@ -634,7 +641,7 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
             worker = std::make_unique<Impl>(
                 target, sourceGraph, false, workMetrics, sources,
                 rawPointerAudit, requireFunctionDefinitions, trustedBodies,
-                sourceDebugProfile);
+                sourceDebugProfile, compileLimits);
             worker->catalog = catalog.snapshotForInstanceAnalysis();
             worker->semanticModel = semanticModel;
             worker->macroLookup = macroLookup;
@@ -8903,8 +8910,17 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
   const bool callable =
       info != nullptr && (info->type.kind == SemanticType::Lambda ||
                           info->type.kind == SemanticType::FunctionItem);
+  const bool scalar = info != nullptr &&
+                      (isPassiveScalarValueType(info->type) ||
+                       (info->type.kind == SemanticType::Enum && !payloadEnum));
+  const bool ownerlessText = info != nullptr &&
+                             info->type.kind == SemanticType::StringView &&
+                             !isOwnerDependentTextExpression(expression);
+  const bool text =
+      info != nullptr && info->type.kind == SemanticType::StringView;
   if (info == nullptr || info->category != ValueCategory::Value ||
-      (info->type.kind != SemanticType::Class && !payloadEnum && !callable)) {
+      (info->type.kind != SemanticType::Class && !payloadEnum && !callable &&
+       !scalar && !text)) {
     return result;
   }
   result.type = info->type;
@@ -8912,7 +8928,7 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
     result.failure = FreshTemporaryValueFailure::ExplicitMove;
     return result;
   }
-  if (!payloadEnum && !callable) {
+  if (!payloadEnum && !callable && !scalar && !text) {
     const ClassInfo *record = classInfo(info->type);
     if (record == nullptr || (record->kind != ClassKind::Class &&
                               record->kind != ClassKind::Struct)) {
@@ -8920,7 +8936,8 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
       return result;
     }
   }
-  if (info->traits.containsBorrowedState && !callable) {
+  if ((info->traits.containsBorrowedState && !callable) ||
+      (text && !ownerlessText)) {
     result.failure = FreshTemporaryValueFailure::BorrowedState;
     return result;
   }
@@ -8928,6 +8945,16 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
   const Expr *producer = transparentTemporaryProducer(expression);
   if (producer == nullptr) {
     result.failure = FreshTemporaryValueFailure::UnsupportedProducer;
+    return result;
+  }
+  // Resolved passive scalar values cannot retain borrowed storage. This also
+  // covers an exact scalar result guaranteed by a concept member in an open
+  // body; concrete instance analysis resolves the producer before HIR. Text
+  // uses the semantic ownerless proof, including joined literal-derived values,
+  // rather than requiring one particular producer syntax.
+  if (scalar || ownerlessText) {
+    result.eligible = true;
+    result.failure = FreshTemporaryValueFailure::None;
     return result;
   }
   if (callable) {
@@ -9068,16 +9095,15 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
   return result;
 }
 
-auto SemanticVisitor::Impl::freshTemporaryReceiverValue(
-    const ExprPtr &expression) -> FreshTemporaryValueAssessment {
+auto SemanticVisitor::Impl::freshTemporaryBorrowValue(const ExprPtr &expression)
+    -> FreshTemporaryValueAssessment {
   FreshTemporaryValueAssessment result = freshTemporaryValue(expression);
   if (result.failure != FreshTemporaryValueFailure::BorrowedState) {
     return result;
   }
 
-  // A carrier is materialized only for its immediate receiver use. Its
-  // established stored-borrow summary, not the public type name, supplies the
-  // external dependency. Keep this separate from temporary argument admission.
+  // A carrier is materialized for one immediate invocation. Its established
+  // stored-borrow summary supplies the stable external dependency.
   const Expr *producer = transparentTemporaryProducer(expression);
   if (producer == nullptr) {
     result.failure = FreshTemporaryValueFailure::UnsupportedProducer;
@@ -9125,6 +9151,11 @@ auto SemanticVisitor::Impl::freshTemporaryReceiverValue(
   result.eligible = true;
   result.failure = FreshTemporaryValueFailure::None;
   return result;
+}
+
+auto SemanticVisitor::Impl::freshTemporaryReceiverValue(
+    const ExprPtr &expression) -> FreshTemporaryValueAssessment {
+  return freshTemporaryBorrowValue(expression);
 }
 
 auto SemanticVisitor::Impl::freshTemporaryMethodSupported(
@@ -11403,10 +11434,10 @@ auto SemanticVisitor::Impl::runRawResultQuery(
   // As in constexpr staging, concrete analysis must never reset an active
   // caller's scope/loan state. Reuse the ordinary analyzer in an isolated
   // snapshot; only the normalized result facts leave this worker.
-  auto worker =
-      std::make_unique<Impl>(target, sourceGraph, false, workMetrics, sources,
-                             RawPointerAuditMode::Warn, false,
-                             TrustedBodyAnalysis::Complete, sourceDebugProfile);
+  auto worker = std::make_unique<Impl>(target, sourceGraph, false, workMetrics,
+                                       sources, RawPointerAuditMode::Warn,
+                                       false, TrustedBodyAnalysis::Complete,
+                                       sourceDebugProfile, compileLimits);
   // Every snapshot of the sealed catalog is identical, and the instance
   // analysis below asserts the worker's catalog unchanged on exit, so a
   // snapshot released by an earlier query is the same as a fresh one.
@@ -14931,12 +14962,36 @@ auto SemanticVisitor::Impl::typeOf(const TypeRef &type,
 auto SemanticVisitor::Impl::typeOf(
     const Parameter &parameter, const std::vector<std::string> &fromScope) const
     -> SemanticType {
-  return typeOf(parameter.type, parameter.mutability, fromScope);
+  SemanticType type = typeOf(parameter.type, parameter.mutability, fromScope);
+  if (parameter.pack && type.kind == SemanticType::Reference &&
+      type.arguments.size() == 1 &&
+      type.arguments.front().kind == SemanticType::TypePack &&
+      type.arguments.front().concretePack) {
+    SemanticType pack = type.arguments.front();
+    for (auto &element : pack.arguments)
+      element =
+          SemanticType::referenceTo(std::move(element), type.referenceAccess);
+    return pack;
+  }
+  return type;
 }
 
 auto SemanticVisitor::Impl::typeOf(const Parameter &parameter) const
     -> SemanticType {
   return typeOf(parameter, currentNamespace);
+}
+
+auto SemanticVisitor::Impl::parameterBindingType(
+    const Parameter &parameter) const -> SemanticType {
+  SemanticType type = typeOf(parameter);
+  // A symbolic binding names a group, never a reference to the group itself.
+  // Concrete reanalysis materializes its separately checked reference elements.
+  if (parameter.pack && type.kind == SemanticType::Reference &&
+      type.arguments.size() == 1 &&
+      (type.arguments.front().kind == SemanticType::TypePack ||
+       type.arguments.front().kind == SemanticType::TypeParameter))
+    return SemanticType::typePack(type.arguments.front().genericParameterId);
+  return type;
 }
 
 auto SemanticVisitor::Impl::literalType(const Literal &literal)
@@ -15007,6 +15062,10 @@ auto SemanticVisitor::Impl::expressionToken(const Expr &expression) -> Token {
     return static_cast<const LayoutQuery &>(expression).keyword();
   case ExprKind::MemberRequirement:
     return static_cast<const MemberRequirement &>(expression).keyword();
+  case ExprKind::ConceptTest:
+    return static_cast<const ConceptTest &>(expression)
+        .application()
+        .name.last();
   case ExprKind::LiteralExpr:
     return static_cast<const LiteralExpr &>(expression).token();
   case ExprKind::Logical:

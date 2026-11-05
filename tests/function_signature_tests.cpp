@@ -1512,15 +1512,26 @@ void mutableSignatureArguments() {
         "x); return 0; }",
         "void change(int& left, mut int& right) {} int main() { "
         "std::function<void(int&, mut int&)> fn{change}; mut int x = 0; fn(x, "
-        "x); return 0; }",
-        "void read(int& value) {} int main() { std::function<void(mut int&)> "
-        "fn{read}; return 0; }"}) {
+        "x); return 0; }"}) {
     const auto rejected = analyzeTrustedPreludeFixture(
         "invalid-mutable-arguments.gti", "import std.functional;\n" + body);
     expect(!rejected.canGenerateCode() &&
                !hasDiagnosticCode(rejected.diagnostics, "GTI-B0001"),
            "mutable references reject immutable/rvalue inputs, aliasing and "
            "signature mismatch");
+  }
+  {
+    // A read-only target may be held for a mutable-reference argument: the
+    // wrapper forwards the caller's mutable reference as a read-only one
+    // (reference-pack forwarding, #170; decided in #234). The wrapper's
+    // invocation still requires mutable access at the call.
+    const auto accepted = analyzeTrustedPreludeFixture(
+        "readonly-target-for-mutable-argument.gti",
+        "import std.functional;\nvoid read(int& value) {} int main() { "
+        "std::function<void(mut int&)> fn{read}; mut int x = 0; fn(x); "
+        "return 0; }");
+    expect(accepted.canGenerateCode(),
+           "a read-only target serves a mutable-reference argument");
   }
   const std::string invalid = "using Bad = void(mut int);";
   const auto rejected =

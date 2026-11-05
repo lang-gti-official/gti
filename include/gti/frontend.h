@@ -1,5 +1,6 @@
 #pragma once
 
+#include "gti/compile_limits.h"
 #include "gti/configuration_flags.h"
 #include "gti/diagnostic.h"
 #include "gti/failure_metadata.h"
@@ -42,6 +43,13 @@ struct FrontendOptions {
   // Declared but possibly inactive switches; this set never selects a branch.
   ConfigurationFlags declaredConfigurationFlags;
   RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off;
+  // Per-request compile-time resource limits for the whole compilation; they
+  // join every semantic cache identity below.
+  CompileLimits limits;
+  // Reuse staged constant results and lowered call closures within this
+  // analysis (see "Bounded Constant Evaluation" in static-semantics.md).
+  // Reuse never changes which requests succeed; tests clear it to prove so.
+  bool reuseConstantEvaluations = true;
   bool analyzeRecoveredProgram = false;
   // Editor-only partial snapshots may inspect available units after a load
   // failure. The graph stays invalid and never reaches HIR or code generation.
@@ -74,6 +82,9 @@ struct FrontendOptions {
   std::unordered_map<std::string, std::uint64_t> sourceDigests;
   bool suggestIncludes = true;
   std::vector<IncludeSearchRoot> includeSearchRoots;
+  // Candidate scans shared across discoveries (see IncludeDiscoveryCache).
+  // Editor snapshots set it; one-shot checks and builds do not.
+  std::shared_ptr<IncludeDiscoveryCache> includeDiscoveryCache;
   // Lower to MIR only the instances reachable from the program roots. The
   // complete program is still analyzed, so diagnostics are unchanged; artifact
   // builds set this, while inspection of every declaration's lowering does
@@ -192,5 +203,10 @@ private:
 
   FrontendOptions options;
 };
+
+// The target and configuration identity these options give lexical and
+// parsed cache rows (`FrontendUnitCacheKey::context`). Callers that memoize
+// syntax-level facts derived from those rows key them by the same identity.
+[[nodiscard]] std::string frontendCacheContext(const FrontendOptions &options);
 
 } // namespace lang

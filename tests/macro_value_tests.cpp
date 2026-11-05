@@ -42,6 +42,111 @@ void diagnostic(std::string source, std::string_view fragment) {
                    [](const auto &value) { return value.code == "GTI-B0001"; }),
       "unsupported result shapes need a source diagnostic, not an ICE");
 }
+lang::FrontendResult analyzeLimited(std::string source,
+                                    lang::CompileLimits limits) {
+  const auto library =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  lang::FrontendOptions options;
+  options.limits = limits;
+  return lang::Frontend(options).analyze("macro-limits.gti", std::move(source),
+                                         {library / "prelude.gti"}, {},
+                                         {library});
+}
+// `levels` distinct macros, each expanding the next inside its own body.
+std::string macroChain(std::size_t levels) {
+  std::string source = "#macro int32_t m0(int32_t v) { return v + 1; }\n";
+  for (std::size_t level = 1; level < levels; ++level)
+    source += "#macro int32_t m" + std::to_string(level) +
+              "(int32_t v) { return m" + std::to_string(level - 1) +
+              "(v) + 1; }\n";
+  return source + "int main() { return m" + std::to_string(levels - 1) +
+         "(0) - " + std::to_string(levels) + "; }\n";
+}
+// One invocation of t<k> expands 2^(k+1) - 1 bodies.
+std::string macroTree(std::size_t height) {
+  std::string source = "#macro int32_t t0(int32_t v) { return v + 1; }\n";
+  for (std::size_t level = 1; level <= height; ++level)
+    source += "#macro int32_t t" + std::to_string(level) +
+              "(int32_t v) { return t" + std::to_string(level - 1) + "(v) + t" +
+              std::to_string(level - 1) + "(v); }\n";
+  return source + "int main() { return t" + std::to_string(height) + "(0) - " +
+         std::to_string(std::size_t{1} << height) + "; }\n";
+}
+bool rejectedAt(const lang::FrontendResult &result, std::string_view message,
+                std::string_view key, std::size_t limit) {
+  const std::string hint = "The limit is " + std::to_string(limit) +
+                           "; raise it with '--" + std::string(key) +
+                           " <n>' or with '" + std::string(key) + " = <n>'";
+  std::size_t errors = 0;
+  bool found = false;
+  for (const auto &diagnostic : result.diagnostics) {
+    if (diagnostic.severity != lang::DiagnosticSeverity::Error)
+      continue;
+    ++errors;
+    found =
+        found || (diagnostic.code == "GTI-S2124" &&
+                  diagnostic.message.find(message) != std::string::npos &&
+                  std::any_of(diagnostic.hints.begin(), diagnostic.hints.end(),
+                              [&](const std::string &value) {
+                                return value.find(hint) != std::string::npos;
+                              }));
+  }
+  if (!found || errors != 1)
+    for (const auto &diagnostic : result.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  return !result.canGenerateCode() && found && errors == 1;
+}
+void macroResourceLimits() {
+  const lang::CompileLimits defaults;
+  check(defaults.macroDepth == 1024 && defaults.macroExpansions == 8192,
+        "macro depth defaults to 1024 nested expansions and 8192 bodies per "
+        "outermost invocation");
+  // The default depth is reachable through every phase that walks the
+  // expanded bodies (semantic analysis, HIR and MIR lowering), whatever the
+  // host stack, and one more level is a clean diagnostic.
+  check(analyzeLimited(macroChain(1024), defaults).canGenerateCode(),
+        "a 1024-deep macro chain lowers to verified MIR");
+  check(rejectedAt(analyzeLimited(macroChain(1025), defaults),
+                   "exceeds the macro nesting limit of 1024 nested expansions",
+                   "macro-depth", 1024),
+        "the 1025th nested expansion reports the limit once, with its value "
+        "and how to raise it");
+
+  lang::CompileLimits shallow;
+  shallow.macroDepth = 8;
+  check(analyzeLimited(macroChain(8), shallow).canGenerateCode(),
+        "a lowered depth admits exactly its own nesting");
+  check(rejectedAt(analyzeLimited(macroChain(9), shallow),
+                   "macro nesting limit of 8 nested", "macro-depth", 8),
+        "a lowered depth rejects one level more");
+
+  // Bodies are counted per outermost written invocation: separate
+  // invocations never accumulate toward one limit.
+  lang::CompileLimits bodies;
+  bodies.macroExpansions = 127;
+  check(analyzeLimited(macroTree(6), bodies).canGenerateCode(),
+        "one invocation may expand exactly its 127-body budget");
+  check(rejectedAt(analyzeLimited(macroTree(7), bodies),
+                   "exceeds the limit of 127 macro bodies expanded by one "
+                   "outermost invocation",
+                   "macro-expansions", 127),
+        "fan-out beyond the budget is rejected");
+  lang::CompileLimits single;
+  single.macroExpansions = 1;
+  std::string siblings = "#macro int32_t inc(int32_t v) { return v + 1; }\n"
+                         "int32_t step(int32_t x0) {\n  mut int32_t x = x0;\n";
+  for (int index = 0; index < 300; ++index)
+    siblings += "  x = inc(x);\n";
+  siblings += "  return x;\n}\nint main() { return step(0) - 300; }\n";
+  check(analyzeLimited(siblings, single).canGenerateCode(),
+        "300 separate invocations each own a one-body budget");
+  check(rejectedAt(
+            analyzeLimited("#macro int32_t inc(int32_t v) { return v + 1; }\n"
+                           "int main() { return inc(inc(0)) - 2; }\n",
+                           single),
+            "exceeds the limit of 1 macro bodies", "macro-expansions", 1),
+        "a forced written argument expansion shares its invocation's budget");
+}
 void positiveAndMutation() {
   const std::string source = R"gti(
 #macro int choose(bool enabled, int first, int second) {
@@ -1075,7 +1180,7 @@ int main() { return change(fresh(1)); }
 Value& escape(Value& value) { return value; }
 int main() { Value& value = escape(fresh(1)); return value.number; }
 )gti",
-             "may return a reference");
+             "may retain this argument");
   diagnostic(prefix + R"gti(
 int observe(Value& value);
 int main() { return observe(fresh(1)); }
@@ -1182,6 +1287,8 @@ int main(int argc, char **argv) {
       macroFreshArgumentBoundaries();
     else if (name == "passiveInitializerMaterializations")
       passiveInitializerMaterializations();
+    else if (name == "macroResourceLimits")
+      macroResourceLimits();
     else
       return 2;
     return failures == 0 ? 0 : 1;
@@ -1196,6 +1303,7 @@ int main(int argc, char **argv) {
   passiveInitializerMaterializations();
   macroFreshArgumentBoundaries();
   callerConversionsAndPropagation();
+  macroResourceLimits();
   diagnostic("#macro int bad(bool flag) { if (flag) { return 1; } }\n"
              "int main() { return bad(false); }",
              "every normally completing path");

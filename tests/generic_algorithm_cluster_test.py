@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def run(
@@ -62,8 +63,6 @@ def emit_artifact(
             str(compiler),
             str(source),
             option,
-            "--std",
-            "c++23",
             "-O0",
             "-o",
             str(output),
@@ -263,35 +262,32 @@ def main() -> int:
             ("for-each", for_each),
             ("complete-range", complete_range),
         ):
-            for standard in ("c++20", "c++23"):
-                for optimization in ("O0", "O3"):
-                    executable = root / f"{label}-{standard}-{optimization}"
-                    built = run(
-                        [
-                            str(compiler),
-                            str(source),
-                            "--std",
-                            standard,
-                            f"-{optimization}",
-                            "-o",
-                            str(executable),
-                        ],
-                        environment,
+            for mode, flags, _native in native_modes():
+                executable = root / f"{label}-{mode}"
+                built = run(
+                    [
+                        str(compiler),
+                        str(source),
+                        *flags,
+                        "-o",
+                        str(executable),
+                    ],
+                    environment,
+                )
+                if built.returncode != 0:
+                    return fail(
+                        f"build {label} {mode}", built
                     )
-                    if built.returncode != 0:
-                        return fail(
-                            f"build {label} {standard} {optimization}", built
-                        )
 
-                    executed = run([str(executable)], environment)
-                    if (
-                        executed.returncode != 0
-                        or executed.stdout != ""
-                        or executed.stderr != ""
-                    ):
-                        return fail(
-                            f"run {label} {standard} {optimization}", executed
-                        )
+                executed = run([str(executable)], environment)
+                if (
+                    executed.returncode != 0
+                    or executed.stdout != ""
+                    or executed.stderr != ""
+                ):
+                    return fail(
+                        f"run {label} {mode}", executed
+                    )
 
         negative_cases = (
             (
@@ -316,7 +312,8 @@ def main() -> int:
                 (
                     "do not satisfy any alternative in concept 'std::equality_comparable'",
                     "Required application 'std::equality_comparable<value>'.",
-                    "Provide safe, public, read-only bool == and != operators",
+                    "Provide available, safe, public, read-only bool == and != "
+                    "operators",
                 ),
             ),
             (
@@ -436,16 +433,13 @@ def main() -> int:
         # The destination carrier crosses the algorithm's module boundary and
         # a generic move relay. Its input owner can die independently, while
         # its exclusive destination dependency survives until the result ends.
+        # Every LLVM level plus the C++ profile GTI_TEST_BACKENDS selects
+        # (tests/backend_modes.py); the harness spells no backend itself.
         copy_return = fixtures / "generic_algorithm_copy_return.gti"
-        for backend, standard, level in (
-            ("llvm", "c++23", "O0"), ("llvm", "c++23", "O1"),
-            ("llvm", "c++23", "O2"), ("llvm", "c++23", "O3"),
-            ("cpp", "c++20", "O3"), ("cpp", "c++23", "O3"),
-        ):
-            binary = root / f"copy-return-{backend}-{standard}-{level}"
-            built = run([str(compiler), str(copy_return), "--backend", backend,
-                         *(["--std", standard] if backend == "cpp" else []),
-                         f"-{level}", "-o", str(binary)], environment)
+        for mode, flags, native in native_modes(levels=("O0", "O1", "O2", "O3")):
+            binary = root / f"copy-return-{mode}"
+            built = run([str(compiler), str(copy_return), *flags,
+                         "-o", str(binary), *native], environment)
             if built.returncode:
                 return fail("returned copy cursor build", built)
             executed = run([str(binary)], environment)

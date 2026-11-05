@@ -139,8 +139,10 @@ void emitProbe(Session &session, const LlvmAdmissionPlan &admission,
     check(ir.CreateICmpNE(ir.CreateLoad(ir.getInt32Ty(), last.allocation),
                           ir.getInt32(73)),
           23);
-    memory.releaseBytes(last.allocation);
-    memory.releaseBytes(last.block);
+    memory.releaseBytes(last.allocation,
+                        session.layouts().get(SemanticType::Int32).alignment);
+    memory.releaseBytes(last.block,
+                        session.layouts().sharedOwner().block.alignment);
     check(memory.releaseShared(second).last, 24);
   }
   ir.CreateRet(ir.getInt32(0));
@@ -201,8 +203,10 @@ void emitConcurrentProbes(Session &session) {
   auto *done = llvm::BasicBlock::Create(context, "done", release);
   releaseIr.CreateCondBr(released.last, last, done);
   releaseIr.SetInsertPoint(last);
-  releasing.releaseBytes(released.allocation);
-  releasing.releaseBytes(released.block);
+  releasing.releaseBytes(released.allocation,
+                         session.layouts().get(SemanticType::Int32).alignment);
+  releasing.releaseBytes(released.block,
+                         session.layouts().sharedOwner().block.alignment);
   releaseIr.CreateBr(done);
   releaseIr.SetInsertPoint(done);
   releaseIr.CreateRet(releaseIr.getInt32(0));
@@ -338,6 +342,15 @@ void *gti_rt_aligned_malloc_v1(uint64_t bytes, uint64_t alignment) {
   int32_t status; return allocate(bytes, alignment, &status);
 }
 void gti_rt_aligned_free_v1(void *address) { release(address); }
+/* Generated owners use the runtime owner pair, not the process provider. */
+void *gti_rt_owner_allocate_v1(uint64_t bytes, uint64_t alignment) {
+  int32_t status;
+  if (alignment < sizeof(void *)) alignment = sizeof(void *);
+  return allocate(bytes, alignment, &status);
+}
+void gti_rt_owner_release_v1(void *address, uint64_t alignment) {
+  (void)alignment; release(address);
+}
 #ifdef _WIN32
 static DWORD WINAPI worker(void *handle) {
 #else

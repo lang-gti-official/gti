@@ -63,4 +63,4 @@ if __name__ == "__main__":
     repository = pathlib.Path(__file__).resolve().parent.parent
     os.environ["GTI_STDLIB_PATH"] = str(repository / "stdlib")
     reject_bad_contracts(pathlib.Path(sys.argv[1]).resolve())
-    run_runtime_matrix(names=("associative_hash_contracts",))
+    run_runtime_matrix(llvm_modes=True, names=("associative_hash_contracts",))

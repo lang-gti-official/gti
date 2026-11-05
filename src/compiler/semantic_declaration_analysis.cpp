@@ -6332,6 +6332,7 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
     const ConstructorInfo *constructor = nullptr;
     std::vector<SemanticType> parameterTypes;
     bool generatedDefault = false;
+    std::vector<std::size_t> contextualIntegerLiteralArguments;
   };
   std::vector<ViableConstructor> viable;
   const Token &location = initializer.target.name.last();
@@ -6346,6 +6347,7 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
     std::vector<SemanticType> parameterTypes;
     parameterTypes.reserve(constructor.parameterTypes.size());
     bool exact = true;
+    std::vector<std::size_t> literalArguments;
     for (std::size_t index = 0; index < constructor.parameterTypes.size();
          ++index) {
       const SemanticType parameter =
@@ -6356,13 +6358,20 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
       }
       if (!callArgumentMatches(parameter, argumentTypes[index],
                                initializer.arguments[index])) {
+        if (contextualIntegerLiteralArgumentFits(
+                parameter, argumentTypes[index],
+                initializer.arguments[index])) {
+          literalArguments.push_back(index);
+          continue;
+        }
         exact = false;
         break;
       }
     }
     if (exact) {
       viable.push_back({&constructor, std::move(parameterTypes),
-                        requestsStructuralDefaultConstruction(constructor)});
+                        requestsStructuralDefaultConstruction(constructor),
+                        std::move(literalArguments)});
     }
   }
   if (initializer.arguments.empty() &&
@@ -6371,7 +6380,26 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
     viable.push_back({nullptr, {}, true});
   }
 
-  retainBestCallConversionMatches(viable, argumentTypes,
+  const auto literalFallback = [](const ViableConstructor &candidate) {
+    return !candidate.contextualIntegerLiteralArguments.empty();
+  };
+  if (std::any_of(viable.begin(), viable.end(),
+                  [&](const ViableConstructor &candidate) {
+                    return !literalFallback(candidate);
+                  })) {
+    std::erase_if(viable, literalFallback);
+  }
+  // A literal fallback position is a viability decision, never a ranking
+  // conversion.
+  std::vector<SemanticType> rankingArgumentTypes = argumentTypes;
+  for (const ViableConstructor &candidate : viable) {
+    for (const std::size_t index :
+         candidate.contextualIntegerLiteralArguments) {
+      if (index < rankingArgumentTypes.size())
+        rankingArgumentTypes[index] = SemanticType::Unknown;
+    }
+  }
+  retainBestCallConversionMatches(viable, rankingArgumentTypes,
                                   [](const ViableConstructor &candidate)
                                       -> const std::vector<SemanticType> & {
                                     return candidate.parameterTypes;
@@ -6407,11 +6435,22 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
         }
       }
       diagnostics.emplace_back(std::move(diagnostic));
+      if (!viable.empty() &&
+          std::all_of(viable.begin(), viable.end(), literalFallback)) {
+        appendContextualIntegerLiteralAmbiguityHint(
+            viable.front().contextualIntegerLiteralArguments);
+      }
     }
     return;
   }
 
   const ViableConstructor &selected = viable.front();
+  for (const std::size_t index : selected.contextualIntegerLiteralArguments) {
+    if (index < initializer.arguments.size() && index < argumentTypes.size()) {
+      argumentTypes[index] = adoptContextualIntegerLiteralArgument(
+          initializer.arguments[index], selected.parameterTypes[index]);
+    }
+  }
   if (selected.constructor != nullptr && selected.constructor->requiresUnsafe) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2055", DiagnosticPhase::Semantics, location,
@@ -7933,7 +7972,8 @@ auto SemanticVisitor::Impl::collectBorrowReturnExpressions(
 
 auto SemanticVisitor::Impl::predeclaredPlace(const Expr *expression,
                                              const FunctionInfo &function,
-                                             SemanticType ownerType)
+                                             SemanticType ownerType,
+                                             bool lexicalLocals)
     -> std::optional<PredeclaredPlace> {
   if (expression == nullptr || function.declaration == nullptr)
     return std::nullopt;
@@ -7969,9 +8009,19 @@ auto SemanticVisitor::Impl::predeclaredPlace(const Expr *expression,
                             .type = ownerType}}
                       : std::nullopt;
     if (const auto *variable = exprAs<Variable>(current)) {
+      // A lexical binding shadows formals and fields when the caller asks
+      // for it; one whose declared type is unknown names no place.
+      if (lexicalLocals && textBorrowAliasFunction == function.declaration)
+        if (const auto local = textBorrowAliases.find(variable->name().lexeme);
+            local != textBorrowAliases.end())
+          return local->second.type.kind == SemanticType::Unknown
+                     ? std::nullopt
+                     : std::optional<PredeclaredPlace>{
+                           PredeclaredPlace{.type = local->second.type}};
       // Parameters take precedence over implicit instance fields, as in
-      // predeclaredTextBorrowSource. A shadowing local cannot be seen here;
-      // body analysis still rejects a dependent value under this contract.
+      // predeclaredTextBorrowSource. Otherwise a shadowing local cannot be
+      // seen here; body analysis still rejects a dependent value under this
+      // contract.
       for (std::size_t index = 0;
            index < parameters.size() && index < function.parameterTypes.size();
            ++index)
@@ -8114,6 +8164,14 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
   if (!expression) {
     return {};
   }
+  // A lexical binding shadows both formals and fields, even when its source
+  // is unknown. Immutable aliases retain their initializer's prospective owner.
+  if (const auto *variable = exprAs<Variable>(expression.get());
+      variable && textBorrowAliasFunction == function.declaration) {
+    if (const auto alias = textBorrowAliases.find(variable->name().lexeme);
+        alias != textBorrowAliases.end())
+      return alias->second.source;
+  }
   // A contract formal's text field may hold the caller's dynamic text
   // (L-OWN-02), so reading it relays that field's dependency. Any other
   // stored view holds ownerless text.
@@ -8173,9 +8231,11 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
   }
   // Text read through a raw pointer's index or `->` is raw memory under
   // unsafe obligations, not storage of the pointer's origin: like text a raw
-  // dereference reads, it has no GTI owner and nominates no relay.
+  // dereference reads, it has no GTI owner and nominates no relay. That holds
+  // wherever the pointer is held, a local binding of it included.
   const auto rawPointee = [&](const ExprPtr &object) {
-    const auto place = predeclaredPlace(object.get(), function, ownerType);
+    const auto place =
+        predeclaredPlace(object.get(), function, ownerType, true);
     if (!place)
       return false;
     const SemanticType &pointer = place->type.kind == SemanticType::Reference &&
@@ -8665,6 +8725,11 @@ auto SemanticVisitor::Impl::dynamicTextReturnBorrowSummary(
                      ? std::nullopt
                      : std::optional<ClassId>{function.ownerClass};
 
+  const auto outerAliasFunction = textBorrowAliasFunction;
+  auto outerAliases = std::move(textBorrowAliases);
+  textBorrowAliasFunction = function.declaration;
+  textBorrowAliases.clear();
+
   // The least fixpoint over the returns of each set of mutually recursive
   // functions: every summary starts as that of no completed return, and a
   // recursive call reads the summary computed so far through its arguments.
@@ -8681,13 +8746,95 @@ auto SemanticVisitor::Impl::dynamicTextReturnBorrowSummary(
     provisionalTextBorrowGrew = false;
     TextRelaySources next = summary.sources;
     next.unknown = next.unknown || returns.empty();
-    for (const ExprPtr *returned : returns) {
-      if (next.settled())
-        break;
-      next.add(returned == nullptr ? PredeclaredTextBorrowSource{}
-                                   : predeclaredTextBorrowSource(
-                                         *returned, function, ownerType));
-    }
+    // Walk lexical scopes in source order. Mutable locals deliberately carry
+    // no predeclared alias proof: a path-sensitive assignment summary would be
+    // required to account for every subsequent rebind. The ordinary body check
+    // remains authoritative for the selected return contract.
+    textBorrowAliases.clear();
+    std::size_t remainingAliasStatements = 4096;
+    const auto visit = [&](const auto &self, const Stmt *statement,
+                           std::size_t depth) -> void {
+      if (!statement || next.settled())
+        return;
+      if (depth > 128 || remainingAliasStatements-- == 0) {
+        next.unknown = true;
+        return;
+      }
+      if (const auto *returned = stmtAs<ReturnStmt>(statement)) {
+        next.add(predeclaredTextBorrowSource(returned->value(), function,
+                                             ownerType));
+      } else if (const auto *local = stmtAs<VariableDecl>(statement)) {
+        const auto source = !local->isMutable() && !local->isStatic()
+                                ? predeclaredTextBorrowSource(
+                                      local->initializer(), function, ownerType)
+                                : PredeclaredTextBorrowSource{};
+        // The binding's declared type, or for `auto` the declared type of
+        // the place it copies; anything else needs body analysis.
+        SemanticType type = SemanticType::Unknown;
+        const auto &spelled = local->type().name.segments;
+        if (spelled.empty() || spelled.back().kind != TokenKind::AUTO) {
+          type = typeOf(local->type());
+        } else if (const auto copied = predeclaredPlace(
+                       local->initializer().get(), function, ownerType, true)) {
+          type = copied->type.kind == SemanticType::Reference &&
+                         copied->type.arguments.size() == 1
+                     ? SemanticType(copied->type.arguments.front())
+                     : copied->type;
+        }
+        textBorrowAliases.insert_or_assign(
+            local->name().lexeme,
+            TextBorrowAlias{.source = source, .type = std::move(type)});
+      } else if (const auto *block = stmtAs<BlockStmt>(statement)) {
+        const auto enclosing = textBorrowAliases;
+        for (const auto &nested : block->statements())
+          self(self, nested.get(), depth + 1);
+        textBorrowAliases = enclosing;
+      } else if (const auto *conditional = stmtAs<ConditionalStmt>(statement)) {
+        if (const auto *branch = conditional->activeBranch(target))
+          for (const auto &nested : *branch)
+            self(self, nested.get(), depth + 1);
+      } else if (const auto *branch = stmtAs<IfStmt>(statement)) {
+        const auto enclosing = textBorrowAliases;
+        self(self, branch->thenBranch().get(), depth + 1);
+        textBorrowAliases = enclosing;
+        self(self, branch->elseBranch().get(), depth + 1);
+        textBorrowAliases = enclosing;
+      } else if (const auto *selection = stmtAs<SwitchStmt>(statement)) {
+        const auto enclosing = textBorrowAliases;
+        for (const auto &arm : selection->arms()) {
+          for (const auto &nested : arm.statements)
+            self(self, nested.get(), depth + 1);
+          textBorrowAliases = enclosing;
+        }
+      } else if (const auto *loop = stmtAs<ForStmt>(statement)) {
+        const auto enclosing = textBorrowAliases;
+        self(self, loop->initializer().get(), depth + 1);
+        self(self, loop->body().get(), depth + 1);
+        textBorrowAliases = enclosing;
+      } else if (const auto *loop = stmtAs<RangeForStmt>(statement)) {
+        self(self, loop->lowered().get(), depth + 1);
+      } else if (const auto *loop = stmtAs<ConstexprForStmt>(statement)) {
+        if (const auto *expansion =
+                semanticModel.findConstexprForExpansion(*loop)) {
+          for (const auto &iteration : expansion->iterations)
+            self(self, iteration.block.get(), depth + 1);
+        } else {
+          const auto enclosing = textBorrowAliases;
+          self(self, loop->elementBinding().get(), depth + 1);
+          self(self, loop->body().get(), depth + 1);
+          textBorrowAliases = enclosing;
+        }
+      } else if (const auto *loop = stmtAs<DoWhileStmt>(statement)) {
+        const auto enclosing = textBorrowAliases;
+        self(self, loop->body().get(), depth + 1);
+        textBorrowAliases = enclosing;
+      } else if (const auto *loop = stmtAs<WhileStmt>(statement)) {
+        const auto enclosing = textBorrowAliases;
+        self(self, loop->body().get(), depth + 1);
+        textBorrowAliases = enclosing;
+      }
+    };
+    visit(visit, function.bodyDeclaration()->body().get(), 0);
     const bool grew = next != summary.sources;
     summary.sources = std::move(next);
     if (textBorrowReadDepth < summary.depth) {
@@ -8724,6 +8871,8 @@ auto SemanticVisitor::Impl::dynamicTextReturnBorrowSummary(
   summary.depth = 0;
   textBorrowReadDepth = std::min(outerReadDepth, textBorrowReadDepth);
 
+  textBorrowAliasFunction = outerAliasFunction;
+  textBorrowAliases = std::move(outerAliases);
   currentNamespace = enclosingNamespace;
   currentSourceUnit = enclosingSourceUnit;
   currentClass = enclosingClass;

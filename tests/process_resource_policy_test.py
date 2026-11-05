@@ -8,6 +8,12 @@ import platform
 import shutil
 import subprocess
 import tempfile
+from backend_modes import native_modes, record_symptom, unsupported
+
+# Every fixture executes on both backends. Generated owner storage uses its
+# own runtime family on LLVM as in the C++ profile, so the injected provider
+# observes only source-policy allocations (lang-gti-official/gti#200).
+LLVM_UNSUPPORTED = {}
 
 
 def run(command, environment, expected_status=0):
@@ -62,11 +68,7 @@ def main():
     else:
         environment.update(GTI_STDLIB_PATH=str(root / "stdlib"),
                            GTI_RUNTIME_INCLUDE=str(root / "runtime/include"))
-    modes = [(f"{standard}-{level}", ["--std", standard, f"-{level}"], [])
-             for standard in ("c++20", "c++23") for level in ("O0", "O1", "O3")]
-    modes += [("no-elide", ["--std", "c++23", "-O0"], ["-fno-elide-constructors"]),
-              ("sanitized", ["--std", "c++23", "-O1"],
-               ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])]
+    modes = native_modes()
     if arguments.mode:
         unknown = set(arguments.mode) - {label for label, _, _ in modes}
         if unknown:
@@ -106,6 +108,13 @@ def main():
                 run([compiler, str(root / "tests/fixtures" / f"{fixture}.gti"),
                      *flags, "-o", str(binary), "--", *native_inputs,
                      *native_flags], environment)
+                limitation = unsupported(fixture, flags, llvm_unsupported=LLVM_UNSUPPORTED)
+                if limitation:
+                    # A filed LLVM bug: the declared symptom must keep reproducing.
+                    observed = subprocess.run([str(binary)], env=environment, capture_output=True, text=True)
+                    record_symptom(limitation, fixture, label, flags,
+                                   observed.returncode != 0 or bool(observed.stdout) or bool(observed.stderr))
+                    continue
                 result = run([str(binary)], environment)
                 assert not result.stdout and not result.stderr, result
             binary = temporary / f"process-resource-limit-{label}"

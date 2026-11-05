@@ -8,6 +8,24 @@ import tempfile
 from lsp_smoke_test import LspSession, lsp_position, semantic_tokens_by_position
 
 
+def recursive_descent(frames):
+    """A string-view scan exactly `frames` constexpr calls deep."""
+    text = "(" * (frames - 1) + "x"
+    return ("constexpr int32_t depth_of(std::string_view text, int32_t at) {\n"
+            "  if (text[at] == '(') { return depth_of(text, at + 1) + 1; }\n"
+            "  return 0;\n}\n"
+            f"static_assert(depth_of(\"{text}\", 0) == {frames - 1});\n")
+
+
+def macro_chain(levels):
+    """`levels` distinct macros, each expanding the next."""
+    lines = ["#macro int32_t m0(int32_t v) { return v + 1; }"]
+    lines += [f"#macro int32_t m{level}(int32_t v) {{ return m{level - 1}(v) + 1; }}"
+              for level in range(1, levels)]
+    lines.append(f"int main() {{ return m{levels - 1}(0) - {levels}; }}")
+    return "\n".join(lines) + "\n"
+
+
 SOURCE = """consteval int square(int value) { return value * value; }
 struct Port {
   int value;
@@ -117,12 +135,95 @@ int main() { validate(2); return make().value - 42; }
             assert any("Immediate declaration" in item["message"]
                        for item in error["relatedInformation"]), error
 
+            # Default limits reach the same depth on the editor's analysis
+            # workers (explicit 8 MiB threads) as in the compiler: the 1024
+            # nested expansions alone need several times that much native
+            # stack, so analysis continues on fresh stack segments.
+            assert not publish(recursive_descent(512) + macro_chain(1024))
+            diagnostics = publish(recursive_descent(513) + macro_chain(1024))
+            error = next(item for item in diagnostics if item.get("code") == "GTI-S2057")
+            assert "call depth exceeded" in error["message"], error
+            assert "--constexpr-depth <n>" in error["message"], error
+            diagnostics = publish(recursive_descent(512) + macro_chain(1025))
+            errors = [item for item in diagnostics if item.get("severity") == 1]
+            assert len(errors) == 1 and errors[0].get("code") == "GTI-S2124", diagnostics
+            assert "macro nesting limit of 1024" in errors[0]["message"], errors
+            assert "--macro-depth <n>" in errors[0]["message"], errors
+            checked = """struct Port {
+  int value;
+  implicit consteval Port(int number) : value(number) {}
+};
+int send(Port port, int payload) { return port.value + payload; }
+int run(int runtime) { /* 😀 */ return send(80, runtime); }
+int main() { return run(2) - 82; }
+"""
+            assert not publish(checked)
+            hover = request("textDocument/hover", at(checked, checked.index("send(80")))
+            assert "Argument 1" in str(hover) and "implicit consteval Port" in str(hover), hover
+            assert "checked at compile time" in str(hover), hover
+            runtime_checked = checked.replace("send(80,", "send(runtime,")
+            diagnostics = publish(runtime_checked)
+            error = next(item for item in diagnostics if item.get("code") == "GTI-S2057")
+            assert "parameter 'port' must be a compile-time constant" in error["message"], error
+            argument = runtime_checked.index("send(runtime,") + len("send(")
+            assert error["range"] == {"start": lsp_position(runtime_checked, argument),
+                                      "end": lsp_position(runtime_checked, argument + len("runtime"))}, error
+            assert not publish(checked)
+
+            message_source = """import std.panic;
+struct Pattern {
+  std::string_view text;
+  implicit consteval Pattern(std::string_view value) : text(value) {
+    if (value.empty()) { std::panic("Pattern must not be empty"); }
+  }
+};
+void report(Pattern pattern) {}
+int main() { /* 😀 */ report(""); return 0; }
+"""
+            diagnostics = publish(message_source)
+            error = next(item for item in diagnostics if item.get("code") == "GTI-S2057")
+            # The shared compile-time panic rule keeps the invocation primary
+            # and carries the library's message on the failing-operation note.
+            assert "Consteval invocation" in error["message"], error
+            assert any('Compile-time evaluation panicked: "Pattern must not be empty"'
+                       in item["message"] for item in error["relatedInformation"]), error
+            argument = message_source.index('report("")') + len("report(")
+            assert error["range"] == {"start": lsp_position(message_source, argument),
+                                      "end": lsp_position(message_source, argument + 2)}, error
+            assert any("Constant evaluation requested" in item["message"]
+                       for item in error["relatedInformation"]), error
+            assert not publish(message_source.replace('report("")', 'report("ok")'))
+
+            # A panic executed during compile-time evaluation publishes its
+            # message at the user's panic call, with the request trace; an
+            # unexecuted panic publishes nothing (#174, #175).
+            panicking = """import std.panic;
+consteval void require_small(int value) {
+  if (value > 10) { std::panic("format pattern rejected: too large"); }
+}
+int main() { require_small(3); return 0; }
+"""
+            assert not publish(panicking)
+            invalid_panic = panicking.replace("require_small(3)", "require_small(30)")
+            diagnostics = publish(invalid_panic)
+            error = next(item for item in diagnostics if item.get("code") == "GTI-S2057")
+            assert "Consteval invocation" in error["message"], error
+            note = next(item for item in error["relatedInformation"]
+                        if 'Compile-time evaluation panicked: "format pattern '
+                           'rejected: too large"' in item["message"])
+            panic_call = invalid_panic.index("std::panic(")
+            assert (note["location"]["range"]["start"]["line"] ==
+                    lsp_position(invalid_panic, panic_call)["line"]), note
+            assert any("requested here" in item["message"]
+                       for item in error["relatedInformation"]), error
+
             incomplete = "consteval int pending(int value"
             assert publish(incomplete)
             assert not publish(SOURCE)
         finally:
             session.close()
-    print("consteval LSP signatures, tokens, navigation and diagnostic edits passed")
+    print("consteval LSP signatures, tokens, navigation, diagnostic edits and "
+          "default compile-time depth limits passed")
 
 
 if __name__ == "__main__":

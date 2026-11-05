@@ -152,7 +152,7 @@ local race with other tasks needs closing. Nothing locks ordinary editing.
 | `cleanup <task>` | After confirmed merge/sync, remove a plain clean worktree with no ignored files and delete only unchanged integrated branches. |
 | `abandon <task> --reason <text>` | Publish the final checkpoint and close its PR with a reason, preserving branch and worktree. A task with no PR whose branch holds no commits beyond `origin/main` has nothing to preserve. Its clean worktree and branches are removed and the reason is recorded. |
 | `status [task]` | Read task records and current remote PR state. |
-| `protection [--configure]` | Audit, or establish the owner-approved `main` ruleset: pull requests, the merge queue and the `CI gate` check required; no force pushes, deletion or bypass actors. |
+| `protection [--configure]` | Audit, or establish the owner-approved `main` ruleset: pull requests, the merge queue (one entry built at a time, up to five all-green entries merged per build, a two-hour check timeout) and the `CI gate` check required; no force pushes, deletion or bypass actors. |
 
 Checkpoint paths are literal files, including exact identities for deleted
 files: Git pathspec magic, deleted-directory prefixes, directory/root staging,
@@ -198,7 +198,7 @@ one-minute test to seventeen minutes and made timing-sensitive LSP tests
 flake, so every worktree and session of a repository shares one window:
 
 ```sh
-python3 scripts/build_window.py --kind suite -- ctest --test-dir build-release -j 12 --test-load 12
+python3 scripts/build_window.py --kind suite -- ctest --test-dir build-release -j 12 --test-load 12 -LE cpp-backend
 python3 scripts/build_window.py --kind build -- cmake --build build-release -j 8
 python3 scripts/build_window.py --status
 ```
@@ -280,8 +280,8 @@ the Git common directory:
 | `ubuntu-8` | `root@100.81.111.76` | Ubuntu; 8 vCPUs, 13 GB RAM | 3 / 6 |
 
 Selection is explicit, not automatic failover or test sharding: inspect
-`status --all`, then choose an idle appropriate host. Linux evidence does not
-replace macOS-only acceptance. `run --platform Darwin` or `--platform Linux`
+`status --all`, then choose an idle appropriate host. Tests in the `darwin`
+set need macOS evidence; Linux proves the rest once. `run --platform Darwin` or `--platform Linux`
 rejects a mismatched selection before uploading; the worker also verifies the
 required platform before executing steps. Configure validates the actual OS.
 
@@ -342,6 +342,106 @@ configure command above updates an existing LAN-address configuration too.
 Detached runs retain their recorded endpoint; configuring a new default does
 not rewrite their connection records.
 
+### Opt-in Google Spot pilot
+
+`--runner gcp-spot` is a development-runner pilot, not a compiler backend,
+CI gate or default. `scripts/gcp_spot_runner.py` wraps the same snapshot,
+executor and result path. Local hosts and their selection are unchanged.
+The checked-in example is disabled and expired. Offline planning never invokes
+Google or creates resources:
+
+```sh
+python3 scripts/gcp_spot_runner.py --policy scripts/gcp_spot_policy.example.json plan
+```
+
+**Owner setup:** use a dedicated Google project. Verify in the billing console
+that the account is still an **unupgraded Free Trial**, and check credit expiry
+and currency. Remaining credits alone are not proof. The BillingAccount API
+does not supply a reliable trial-status field; a short-lived owner
+acknowledgement is deliberate, not an automatic proof. The helper never upgrades
+billing, changes quotas, creates IAM/networking or falls back to on-demand VMs.
+Trial quotas may prevent the chosen profile; do not automatically upgrade.
+
+Prepare a versioned Ubuntu x64 image with Python, Git, CMake, Ninja, GCC/G++ 14,
+the required LLVM/native dependencies, OpenSSH and Google guest/OS Login agents.
+It must publish its public SSH host keys in the `hostkeys/` guest attributes.
+The controller needs the Google Cloud CLI already authenticated; the helper
+does not run login or download service-account keys.
+Put no provisioning credentials in the image. Configure a private subnet with Private
+Google Access and SSH ingress restricted to IAP. Grant the controller reviewed,
+project-scoped VM/disk lifecycle, subnet/image read, guest-attribute read, OS
+Login and IAP tunnel permissions, plus read access to the linked billing
+account/project. Workers have **no service account and no public IP**. No NAT,
+always-on controller VM or shared cache disk is provisioned. Image, storage and
+network setup can have costs of their own.
+
+Copy `scripts/gcp_spot_policy.example.json` outside the repository to
+`~/.config/gti/spot-runner.json` (or select `--spot-policy PATH`). Set the actual
+project, billing account, account email, controller hostname, zone, versioned
+image and subnet. Review conservative all-in pricing in the billing currency,
+including compute, boot/image storage, networking and request/setup overhead.
+`hourly_ceiling_micros` and `per_run_extra_micros` are **owner-entered ceilings,
+not fetched price quotes**. Example numbers are not advertised Google prices.
+One currency unit is 1,000,000 micros. Pricing and trial acknowledgements must
+cover the lease and expire within seven days. Only the named controller host
+may provision; copied checkouts/policies do not create another allowed pool.
+
+Phase one admits one concurrent VM, E2 standard 4/8 vCPUs, at most 100 GiB boot
+storage, a 90-minute VM lifetime and a 60-minute job timeout. The job leaves at
+least 15 minutes of lifecycle headroom. Daily allowance is at most 5 currency
+units and lifetime trial allowance at most 20; lower values are valid. Every
+attempt reserves the entire VM lifetime rounded up, plus overhead. Successful
+deletion does not refund the allowance. UTC days reset the daily subtotal,
+never the accumulated trial allowance.
+An independent pilot cap permits at most two attempts per UTC day and eight
+attempts in total (at most 12 VM-hours), even if price estimates are wrong.
+These counters also never refund or reset automatically. After enablement:
+
+```sh
+python3 scripts/remote_runner.py --runner gcp-spot run --target gti --target gti_tests --target gti_lsp --ctest-regex '^compiler_pipeline$'
+python3 scripts/remote_runner.py --runner gcp-spot status
+python3 scripts/remote_runner.py --runner gcp-spot clean
+```
+
+Only foreground runs with explicit targets/steps are admitted; there is no full
+suite, detached mode, cloud-first selection or retry loop. The journal under
+`~/.local/state/gti-spot-runner/` is shared across clones/worktrees, locked across
+processes and written before creation. It is pinned to one project/account and
+currency. Do not delete it to reclaim space or reset limits. Missing/corrupt
+history, unresolved creation or failed cleanup blocks admission. This is a
+cooperating-tool allowance, not a security boundary against an operator with
+Google credentials or permission to edit the journal. Entire-state deletion or
+restoration from an old backup can reset its history; it is persistent state,
+not a disposable cache. Missing history is detected while its pool marker remains.
+
+Creation requests a provider-enforced maximum runtime, Spot termination action DELETE,
+no automatic restart and an auto-deleted boot disk. Returned resource facts are
+verified. The runtime cap is independent of the controller's wall clock; the
+journal's UTC expiry is a conservative reaping deadline, not a reason to restart
+or renew a VM. IAP SSH uses provider-fetched guest host keys, never disabled host-key
+checking, and explicitly disables agent/port forwarding. Normal completion, errors, cancellation and SIGTERM attempt VM/disk
+cleanup and verify absence before releasing the slot. A lost insert response
+is quarantined even when a list currently shows no VM: absence cannot prove an
+in-flight creation will not finish. An operator must reconcile that ambiguity;
+never erase the record. `clean` reaps expired confirmed leases, or a selected
+run ID explicitly. Cleanup verifies resource ownership, not merely a prefix.
+
+**Commissioning remains required:** tests create no paid resources. The owner
+must exercise success, cancellation, preemption and lost-controller scenarios,
+verify actual deletion/billing and retain receipts. Provider expiry survives
+client failure, but `clean` is not an independently scheduled cloud janitor.
+Normal results are fetched before deletion; preemption, SIGKILL or controller
+loss can lose results. Durable off-worker results, an independent orphan
+reaper, live pricing/cost reconciliation and a multi-host provisioning broker
+are prerequisites before three workers, retries, detached runs or cloud-first
+selection. Ordinary budget alerts are delayed, not a Compute Engine hard cap.
+
+Google references: [trial rules](https://docs.cloud.google.com/free/docs/free-cloud-features),
+[Spot lifecycle](https://docs.cloud.google.com/compute/docs/instances/spot),
+[VM expiry](https://docs.cloud.google.com/compute/docs/instances/limit-vm-runtime),
+[budget limits](https://docs.cloud.google.com/billing/docs/how-to/budgets),
+[IAP/host-key security](https://docs.cloud.google.com/solutions/connecting-securely).
+
 All runs use one window **per host**, not their isolated Git directories. The
 Mini's is `/private/tmp/gti-remote-runner/window`; Ubuntu uses
 `/tmp/gti-remote-runner/window`. The authoritative `build_window.Window` uses
@@ -358,7 +458,7 @@ use the **same directory and counts**; for the Mini:
 
 ```sh
 GTI_BUILD_WINDOW_DIR=/private/tmp/gti-remote-runner/window python3 scripts/build_window.py --kind build -- cmake --build build-release -j 6
-GTI_BUILD_WINDOW_DIR=/private/tmp/gti-remote-runner/window python3 scripts/build_window.py --kind suite -- ctest --test-dir build-release -j 12 --test-load 12
+GTI_BUILD_WINDOW_DIR=/private/tmp/gti-remote-runner/window python3 scripts/build_window.py --kind suite -- ctest --test-dir build-release -j 12 --test-load 12 -LE cpp-backend
 ```
 
 On Ubuntu, set `GTI_BUILD_WINDOW_DIR=/tmp/gti-remote-runner/window` and
@@ -491,9 +591,13 @@ Failure to confirm cancellation prevents publication. `--pr-only` also withdraws
 intent. New work after a confirmed merge belongs to a new task. The `main` ruleset requires
 pull requests, the merge queue and the `CI gate` status check, denies force
 pushes and deletion, and has no bypass actors, administrators included. The
-queue builds each candidate on the current `main`, runs the complete suite and
-merges it only if `CI gate` passes; it removes a failing PR and rebuilds the
-entries behind it. The last handoff record stays `rollup`, `awaiting-ci` or `queued` until refreshed;
+queue builds each candidate on the current `main`, runs the bounded gate
+(build and fast checks on both platforms) and merges it only if `CI gate`
+passes; it removes a failing PR and rebuilds the entries behind it. The
+complete suite runs after integration on each main head
+(`full-validation.yml`); a red main is reported in the `main-broken` issue and
+is fixed forward or reverted, and no channel selects a main commit full
+validation has not passed. The last handoff record stays `rollup`, `awaiting-ci` or `queued` until refreshed;
 GitHub owns the transition and failures/conflicts still need repair. Once GitHub reports
 the merge, and `sync` (or a repeated `finish`) then advances local main. Do not force a merge
 or bypass a server rule. Release workflows run after integration and need not
@@ -504,21 +608,37 @@ The library sanitizer jobs partition `cpp_mir_body_emitter_lifecycle` through
 its existing `--list` / `--test NAME` protocol. Each job runs half of the sorted
 named-case inventory serially under the unchanged 5,400-second aggregate bound;
 native integration still runs the ordinary aggregate CTest. The sanitizer jobs
-retain per-case outcomes and durations. The final gate requires both reports
-for its exact candidate, identical inventories, and every named case passing
+retain per-case outcomes and durations. The full validation verdict requires both reports
+for its exact main head, identical inventories, and every named case passing
 exactly once. Missing, stale, failed or timed-out case evidence fails the gate.
 Compiler sanitizer jobs build only the targets of `compiler_pipeline`; library
 jobs retain the library subset targets. This avoids filling runner disks with
 unexecuted sanitizer library binaries in compiler jobs.
+The LLVM backend sanitizer job runs the backend's test binaries and its cheap
+control harnesses (`GTI_LLVM_SANITIZER_TESTS` in `full-validation.yml`) in the
+same sanitized tree under the LLVM-only backend policy. The `llvm_*` execution
+harnesses compile and run dozens of programs each; under ASan they cost 20-30
+hours of test time in total (measured 2026-11-03: the thread, placement and
+memory execution harnesses alone took 41-68 minutes each on six cores), and
+several bound their compiler subprocesses at a fixed 90 seconds that no timeout
+scale reaches, so they remain native integration gates. Any archive that `gti`
+links into a generated program is built uninstrumented in a sanitized tree
+(`gti_program_component` in CMake: the runtime archive and the cleanup oracle
+component): such archives are linked by the host toolchain, and runtime code
+inside a generated program is sanitized through the driver's instrumentation
+plan, which recompiles the runtime units with matching flags. Building `gti`
+also builds the Tree-sitter grammar module, so a tree that built only its
+tests' targets can still stage the `gti_toolchain` install component.
 This avoids assigning the entire lifecycle suite to one library shard without
 removing sanitizer coverage or increasing timeouts. Runner termination still
-fails integration; this scheduling change does not claim to repair host loss.
+fails full validation; this scheduling change does not claim to repair host loss.
 
 ## Risk-based batch validation
 
 The risk tiers below select how broad a change's focused checks must be. The
 batch commands that follow are the degraded-mode path: in normal operation each
-PR goes through the merge queue, which runs the complete suite.
+PR goes through the merge queue, which runs the bounded gate; post-integration
+full validation runs the complete suite on the merged result.
 
 Per-change validation establishes that a patch fixes its motivating problem
 and preserves the affected rules. Integration validation establishes that the
@@ -609,7 +729,7 @@ on a declared platform. All unscoped tests/checks remain required everywhere.
 Do not include credentials. Every declared gate is executed; plans are not
 permission to omit required checks. `platforms` lists hosts on which the
 combined full campaign must pass; CI's Linux native/sanitizer jobs are additional
-server gates and do not substitute for required macOS evidence.
+server gates, and macOS evidence is required only for the `darwin` test set.
 
 ```sh
 python3 scripts/agent_workflow.py batch enroll my-fix \
@@ -709,13 +829,55 @@ advisory-CI policy. `.github/workflows/ci.yml` reports one required check,
 
 | Event | Mode | Jobs the gate requires |
 | --- | --- | --- |
-| `pull_request` (ready) | full | lint (formatting, release version, Tree-sitter), workflow regressions, and `fast` on macOS arm64 and Linux x64 (`feedback-fast`, `compiler_pipeline` and the PR's declared T0/T1 tests) |
+| `pull_request` (ready) | full | lint (formatting, release version, Tree-sitter), workflow regressions, and `fast` on macOS arm64 and Linux x64 (`feedback-fast` and the PR's declared T0/T1 tests on both; `compiler_pipeline` on Linux, where the platform-independent unit suites are proven once) |
 | `pull_request` (draft) | draft | lint and workflow regressions only; a draft cannot enter the queue |
-| `merge_group` | full | lint, workflow regressions, system-LLVM `fast` checks, production packaging and installed checks, every bundled-release `integration` shard on both platforms, and `sanitizers` |
-| `workflow_dispatch` on main | full | the same full integration and production packaging gates, for release commissioning/recovery |
+| `merge_group` | full | the same as a ready pull request: lint, workflow regressions and system-LLVM `fast` checks on the exact candidate (a bounded gate, as rustc and LLVM gate merges) |
+| `workflow_dispatch` on main | full | the same bounded gate, for recovery |
+| `push` to main, or `workflow_dispatch` (`full-validation.yml`) | full | post-integration full validation: production packaging and installed checks, bundled-release `integration` shards (Linux over the complete inventory, `--test-set full`; macOS over the `darwin` set, `--test-set darwin`), the compiler `sanitizers`, the LLVM-backend sanitizers and the thread sanitizer, all with `GTI_TEST_BACKENDS=llvm`; its `Full validation verdict` and retained packages are the nightly/beta/train evidence, a failure opens the `main-broken` issue, and the run refreshes `tests/ci_test_durations.json` (artifact `ci-test-durations`) for shard balancing |
 | PR or merge group | source-stdlib | lint, workflow regressions, source-library owners and consumers, declared PR regressions and native smoke on both platforms using an admitted full-CI compiler; merge groups also package the new source library |
+| PR or merge group | lsp | lint, workflow regressions and the `lsp` lane on both platforms: the adapter rebuilt against an admitted full-CI compiler SDK, registered LSP/editor consumers, declared PR regressions, native smoke and installed checks; merge groups also package the complete toolchain with the reused compiler's provenance |
 | PR or merge group | automation | lint and workflow regressions only |
 | PR or merge group | component | always fails: a batch component cannot merge directly |
+
+`validation_checks.py shard` executes one cost-balanced shard of a test set.
+The deprecated C++ backend runs only in `cpp-backend.yml` (weekly and on
+dispatch; `--test-set cpp` over the full inventory with
+`GTI_TEST_BACKENDS=cpp`, plus the C++ emitter's own tests under ASan/UBSan);
+its failure opens the `cpp-backend` issue and never blocks the queue, full
+validation or a channel. Harness mode tables come from
+`tests/backend_modes.py`: `llvm-O0` and `llvm-O3` by default, `c++23 -O3` under
+`GTI_TEST_BACKENDS=cpp`. The C++-only CTest entries (`cpp_mir_*`,
+`cpp_debug_artifacts`, `lowered_program_corpus_census`) run only there; they
+carry the CTest label `cpp-backend`, which `test_throughput_registration`
+keeps equal to `CPP_ONLY_PREFIXES`. Local validation follows the same policy:
+a configured tree exports `GTI_TEST_BACKENDS` (`llvm` by default) to every
+harness, and broad local runs pass `-LE cpp-backend`. A C++-backend bug fix
+configures `-DGTI_TEST_BACKENDS=cpp` (or `both`), runs its harnesses and
+`-L cpp-backend` locally, and gets exact-candidate CI evidence by dispatching
+the weekly workflow on its branch (`gh workflow run cpp-backend.yml --ref
+<branch>`); the gate's declared-test re-run stays on the shipped backend.
+Four long aggregates (`compiler_pipeline`, `allocator_raw_audit_independence`,
+`body_analysis_order`, `instance_reuse`) are also registered as per-suite,
+per-source or corpus-partition entries; a sharded run executes the parts and
+skips the aggregate (`SHARDED_AGGREGATES`), so the same cases run spread
+across workers instead of one 16–54-minute test ending a shard alone. The
+`gate` set (`GATE_EXCLUDED`) further omits C++-backend-only variants whose
+shipped-default (c++23) or primary entry still runs, and the generated-C++
+corpus censuses; the `full` set runs everything. Every registered test carries
+its observed duration as a CTest `COST` ordering hint from
+`tests/ci_test_durations.json` (`tests/TestThroughput.cmake`), which
+`validation_checks.py durations` refreshes from JUnit reports, keeping the
+maximum.
+
+The bundled LLVM/Clang objects that production packaging and the shards need
+are prebuilt once per toolchain definition by `llvm-prebuilt.yml` (on changes
+to `CMakeLists.txt`, `cmake/`, the toolchain and cache scripts, weekly, and on
+dispatch) and saved as a `main`-scoped ccache keyed by those inputs, never by
+commit; validation runs only restore it, and the integration shards no longer
+wait for packaging. `cache.yml` warms the native and sanitizer profiles the
+same way and is never cancelled by a newer push, so the instrumented warm can
+finish once. No validation run saves a cache: per-commit keys were unreachable
+by later runs and evicted the reachable entries from the 10 GB cache.
 
 `validation_checks.py ci-mode` classifies the candidate from its diff. A
 conservative automation-only diff (docs and the workflow scripts with their own
@@ -781,11 +943,11 @@ GitHub's repository-wide cache quota and the runner's filesystem capacity.
 The main-branch warmup builds only `gti` (plus `gti_lsp` for native profiles),
 using CI's identical compile configuration; it does not link every sanitizer
 test executable. It trims restored caches before compiling and removes its
-scratch build tree before cache archival, leaving room for the upload archive.
-Native and sanitizer CI jobs restore shared main caches and save only when
-running on main, avoiding duplicate PR/merge-queue stores. Release packaging
-still saves its run-specific cache for integration shards. Cache misses merely
-recompile objects: they never relax validation or artifact admission.
+scratch build tree before cache archival, leaving room for the upload archive,
+and saves only when that build ran to completion. Validation runs (`ci.yml`,
+`full-validation.yml`) only restore the shared main caches; `cache.yml` and
+`llvm-prebuilt.yml` are the only writers. Cache misses merely recompile
+objects: they never relax validation or artifact admission.
 
 `validation_checks.py shard` builds the optimized tree, takes the
 complete CTest inventory, and runs its share of a deterministic partition:
@@ -860,7 +1022,11 @@ build, CI, test-registration or unknown path retains full integration. A missing
 full-CI ancestor SDK or unequal shared-input identity also selects full CI.
 Contributors still record focused owning evidence and submit through the normal
 preview/PR lifecycle; this lane is not a local-validation exemption. Both platform
-LSP jobs must pass the CI gate. Reused compiler provenance is mandatory when
+LSP jobs must pass the CI gate: like `source-stdlib`, the lane is a mode-gated
+`ci.yml` job that runs on pull requests and merge groups, never a
+post-integration job. The full-CI SDK it reuses comes from `full-validation.yml`
+on a main head, and `lsp.yml` publishes components after a successful `CI`
+merge-group run or `Full validation` run. Reused compiler provenance is mandatory when
 nightly consumes their complete packages. LSP-only evidence cannot seed another
 compiler SDK. Independent component publication is detached after integration
 and does not require an agent to poll publication or install anything.
@@ -898,7 +1064,27 @@ orders them by priority, then the time their gate passed, then number, and
 merges each exact head onto current `main` with `--no-ff`, up to six members. A
 PR that conflicts with `main` is skipped and labelled `needs-rebase` with a
 comment; one that conflicts only with an earlier member waits for a later
-rollup. The bot never resolves conflicts. A single eligible member enters the
+rollup. The bot never resolves conflicts. `reconcile` applies the same label
+and comment to every open, non-draft PR on `main` that no longer merges
+cleanly, whichever path it was on: the merge queue drops a conflicting entry
+without a run, a status or a comment, and merge-when-ready never fires, so a
+PR that waited while `main` moved otherwise vanishes from every pipeline (on
+2026-11-03, 13 of 31 open PRs). An open rollup that no longer merges with
+`main` is closed the same way, with a comment, so its members return to the
+pool and the next `compose` rebuilds from current heads instead of leaving
+them "busy" behind a rollup the queue would drop without a verdict. The census baselines
+(one file per example under `tests/census/`)
+store per-example counts only, never totals, and a recorded example fails only
+when a count leaves the census budget (`tests/census_budget.py`: the larger of
+five counts or five percent). A PR therefore edits a census baseline only for
+an example it changes materially, and `--update` rewrites only those rows; an
+added example is reported as unrecorded until someone runs `--refresh-all`.
+Declarations are not recorded, because one more stdlib function changed that
+count in nearly every example. Two PRs conflict there only when both move the
+same example past its budget. The LLVM readiness baseline pins no provider
+member count or inventory digest: the audit derives both from the tree on every
+run (a pinned copy went stale whenever two PRs that each added a stdlib-surface
+case or example merged in sequence, and the merge queue does not run the audit). A single eligible member enters the
 merge queue alone, so it cannot wait indefinitely for a second PR. With no
 eligible members it does nothing. Otherwise it commits `.gti-validation/batches/rollup-<date>-<n>.json`
 (the batch manifest schema that `validation_checks.py full` checks) and opens
@@ -933,7 +1119,10 @@ and cancelled CI runs also wake reconciliation; they do not qualify a PR for
 integration. Admission requires the latest CI run for that exact head to finish
 successfully and its own matching check suite's gate to pass; an older green
 draft gate cannot substitute for pending ready-for-review validation. The
-scheduled trigger remains a recovery fallback.
+scheduled trigger remains a recovery fallback only: GitHub delivers a
+half-hourly schedule sporadically (on 2026-11-03 it fired twice in a day), so
+CI completion is the bot's working cadence and a dispatch is the way to force a
+tick.
 
 Automation-only and source-only GTI stdlib local owning checks may use
 `verify --focused`, which checks the actual diff and does not reserve a
@@ -1004,9 +1193,12 @@ unmerged PR. It requires the merged head in current main, retains the previous
 head/tests/contributions in the feature's append-only `history`, and records
 the replacement checks, accepted main identity and reason. The old source must
 be an ancestor of the accepted head. Checks cannot be changed again without a
-new accepted head. The combined source still rebuilds and passes all current
-feature checks and example admission before publication; neither test failures
-nor missing registration are ignored. A pre-merge submission waiting in the
+new accepted head. The accepted head enters preview through the candidate's
+main merge, so the feature counts as admitted again: the combined source
+still rebuilds and passes the replacement checks (`preview_examples.py
+--pending` selects them until that preview is published) and example admission
+before publication; neither test failures nor missing registration are
+ignored. A pre-merge submission waiting in the
 queue retains its record and becomes superseded; it does not prevent this
 explicit accepted-head refresh. Other features' records are unchanged.
 
@@ -1032,6 +1224,19 @@ or ignored files are preserved. An exited worker is reported as interrupted;
 inspect its retained log and any remote run before resubmitting rather than
 automatically launching a duplicate uncertain run.
 
+Failures are reported, because submission success means only queued. A
+worker that ends `failed` or `stale` posts one comment on the original PR with
+the reason, any unresolved candidate paths, its log path and the resubmit
+command; a hidden marker keeps it to one comment per submission. The comment
+changes no label, review or check, and a comment API failure is recorded as
+`report_error` without changing the outcome. A worker that died cannot report
+itself, so `status` attaches `preview_attention` to every task whose latest
+submission is failed, stale or interrupted, and every helper command prints a
+one-line stderr notice naming them. A later submission, delivery of the task
+(merged, synced, completed or abandoned) or a fetched `origin/preview` that
+contains the submitted head resolves the entry. Agents relay that notice to
+the user rather than treating a queued submission as admitted.
+
 The lower-level `prepare`, `verify`, `publish`, `seed`, `resume` and `revert`
 commands remain for maintainer recovery, not mandatory feature-delivery steps.
 For an explicitly requested combined downloadable release, the production
@@ -1043,11 +1248,16 @@ For example, `preview prepare my-task --worktree /absolute/new-candidate
 `preview publish CANDIDATE`, still supports explicit local validation settings.
 
 `verify` configures and builds an optimized compiler from the combined source,
-reruns the focused checks of **every included feature**, and runs the fixed
-`preview_examples.py` gate. This covers the numbered corpus at O0/C++20 and
-O3/C++23, practical HTTP examples and established automated
-project/native harnesses. Missing, disabled or skipped required tests fail
-admission, including focused tests. One-off checks must be registered with
+runs the focused checks of the features **this candidate admits** (those whose
+merge is not yet in the published preview; `preview_examples.py --pending`,
+which the registered `preview_admission` gate also uses), and runs the fixed
+`preview_examples.py` gate. Preview promises that each admitted feature
+compiled and passed its own focused checks once; it does not re-prove every
+earlier feature on every admission. The fixed gate covers the numbered corpus,
+practical HTTP examples and established automated project/native harnesses
+under the tree's backend policy (`GTI_TEST_BACKENDS`, LLVM by default).
+Missing, disabled or skipped required tests fail admission, including focused
+tests. `--manifest` replays every included feature for maintainer recovery. One-off checks must be registered with
 CTest first; focused names are deduplicated for execution while their owning
 PR identities remain in the manifest. New nested example directories require an explicit coverage update;
 the allocator helper is exercised by its numbered client. Objective-C++ execution is required on macOS and explicitly reported
@@ -1102,6 +1312,18 @@ resolution and the combined candidate must pass the normal preview gates.
 Low-level/failed preview candidates and source installations are retained intentionally; do not
 delete them while another user may rely on their commits or installed paths.
 No automatic pruning/resetting of modified worktrees is performed.
+
+`preview.yml` (push to `preview`, or dispatch) publishes what admission
+accepted and repeats no focused checks: on each packaged platform it restores
+the release object cache `llvm-prebuilt.yml` warms, builds only the installed
+toolchain products (`preview_build.py --products-only`), proves the compiler
+executes native programs at O0 and O3 with the candidate's own stdlib and
+runtime (`validation_checks.py smoke --root .`), stages, runs the installed
+CLI/LSP/project and consumer-library smoke, packages, records identity and
+checksums, then attests and publishes. A warm run takes about twenty minutes
+per platform; the previous design re-ran every admitted feature's focused
+checks and the example gate on both platforms (50–90 minutes) on top of a
+cold compiler build, for three- to four-hour walls.
 
 ## Preservation and cleanup
 

@@ -62,9 +62,9 @@ validity together, which keeps AST-address semantic side tables alive.
   assembly are backend policy. Their resolved language and target-independent
   inputs come from lowered declarations, symbols, instances, MIR, and
   generated-item payloads.
-- The post-cutover example corpus is guarded by the exact body census in
-  `tests/mir_census_baseline.json`, the declaration/body/generated-item census
-  in `tests/lowered_program_census_baseline.json`, and native endpoint builds.
+- The post-cutover example corpus is guarded by the budgeted body census in
+  `tests/census/` (one file per example, MIR bodies and the
+  body/generated-item census), and native endpoint builds.
   Focused structural and runtime fixtures cover shapes outside that corpus.
 - Substantial compiler algorithms compile behind public declarations.
   `gti_compiler` owns source loading through optimization and compiler support;

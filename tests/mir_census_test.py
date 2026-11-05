@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
 
-"""Require the reviewed post-cutover MIR body census for every example.
+"""Hold every example's MIR body census within its reviewed budget.
 
-The hard cutover has one executable backend route, so any body-count change is
-a reviewed corpus-contract change rather than an incremental coverage gain or
-loss. This test recomputes the per-example census and names every mismatch.
+The test recomputes the per-example census. A recorded example fails when its
+count leaves the census budget (tests/census_budget.py: the larger of five
+bodies or five percent), and every example must still compile. Drift inside
+the budget, examples not yet recorded and recorded examples that were removed
+are reported, never failed, so pull requests do not rewrite each other's rows.
 
     python3 tests/mir_census_test.py <gti> <repo-root> <baseline.json>
     python3 tests/mir_census_test.py <gti> <repo-root> <baseline.json> --update
+    python3 tests/mir_census_test.py <gti> <repo-root> <baseline.json> --refresh-all
 
-Refresh the baseline with --update only after the corpus oracle and suite are
-green. The baseline is a claim about the complete reviewed corpus, not a way to
-silence a change.
+--update re-records only the examples outside the budget; --refresh-all
+re-records the whole host profile, including added and removed examples. Do
+either only after the corpus oracle and suite are green: a refresh is a claim
+about the reviewed corpus, not a way to silence a change.
 """
 
 from __future__ import annotations
@@ -25,6 +29,8 @@ import subprocess
 import sys
 import tempfile
 
+import census_budget as budget
+import census_store as store
 import example_case_context as examples
 import mir_census_baseline as reviewed
 
@@ -115,10 +121,16 @@ def main() -> int:
                         help="explicit build dependency for LLVM-only example inventories")
     parser.add_argument("--target", choices=reviewed.TARGETS,
                         help="assert the native host target; cross-target execution is not supported")
-    parser.add_argument(
+    refresh = parser.add_mutually_exclusive_group()
+    refresh.add_argument(
         "--update",
         action="store_true",
-        help="rewrite the baseline from the current tree",
+        help="re-record only the examples outside the census budget",
+    )
+    refresh.add_argument(
+        "--refresh-all",
+        action="store_true",
+        help="re-record the whole host profile, including added and removed examples",
     )
     arguments = parser.parse_args()
 
@@ -127,7 +139,7 @@ def main() -> int:
     baseline_path = Path(arguments.baseline)
 
     try:
-        document = json.loads(baseline_path.read_text(encoding="utf-8"))
+        document = store.load(baseline_path, "mir")
         target = reviewed.host_target()
         if arguments.target is not None and arguments.target != target:
             parser.error(f"--target {arguments.target} does not match executing host {target}")
@@ -141,31 +153,7 @@ def main() -> int:
         print("FAIL: no examples/*.gti found", file=sys.stderr)
         return 1
 
-    if arguments.update:
-        try:
-            document = reviewed.updated(document, target, current)
-        except ValueError as error:
-            print(f"FAIL: {error}", file=sys.stderr)
-            return 1
-        baseline_path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
-        print(f"baseline updated ({target}): {total(current)} bodies across {len(current)} examples")
-        return 0
-
     broken = sorted(name for name, value in current.items() if value is None)
-    changed = sorted(
-        (name, baseline[name], current[name])
-        for name in current
-        if name in baseline
-        and current[name] is not None
-        and baseline[name] is not None
-        and current[name] != baseline[name]
-    )
-    added = sorted(name for name in current if name not in baseline)
-    removed = sorted(name for name in baseline if name not in current)
-
-    print(f"MIR census ({target}): {total(current)} bodies across {len(current)} examples "
-          f"(baseline {sum(v for v in baseline.values() if v)})")
-
     if broken:
         print("FAIL: examples no longer compile, so their census is unknown:",
               file=sys.stderr)
@@ -176,34 +164,49 @@ def main() -> int:
                 print(f"    {line}", file=sys.stderr)
         return 1
 
-    if changed:
-        print(f"FAIL: MIR body census changed across {len(changed)} examples:",
+    observed = {name: value for name, value in current.items() if value is not None}
+    recorded = sorted(name for name in observed if name in baseline)
+    outside = [(name, baseline[name], observed[name]) for name in recorded
+               if not budget.within(baseline[name], observed[name])]
+    drifted = [name for name in recorded if observed[name] != baseline[name]]
+    added = sorted(name for name in observed if name not in baseline)
+    removed = sorted(name for name in baseline if name not in observed)
+
+    if arguments.update or arguments.refresh_all:
+        names = None if arguments.refresh_all else {name for name, _, _ in outside}
+        try:
+            document = reviewed.refreshed(document, target, observed, names)
+        except ValueError as error:
+            print(f"FAIL: {error}", file=sys.stderr)
+            return 1
+        store.save(baseline_path, "mir", document)
+        scope = "every example" if names is None else f"{len(names)} examples outside the budget"
+        print(f"baseline updated ({target}): {scope}")
+        return 0
+
+    print(f"MIR census ({target}): {total(current)} bodies across {len(current)} examples "
+          f"(baseline {sum(v for v in baseline.values() if v)}); "
+          f"{len(drifted) - len(outside)} within budget, {len(added)} unrecorded, "
+          f"{len(removed)} removed")
+    for name in added:
+        print(f"  unrecorded: {name} ({observed[name]} bodies; recorded at the next --refresh-all)")
+    for name in removed:
+        print(f"  removed: {name} (dropped at the next --refresh-all)")
+
+    if outside:
+        print(f"FAIL: MIR body census left its budget in {len(outside)} examples:",
               file=sys.stderr)
-        for name, before, after in changed:
-            print(f"  {name}: {before} -> {after}  ({after - before:+d})",
-                  file=sys.stderr)
+        for name, before, after in outside:
+            print(f"  {name}: {before} -> {after}  ({after - before:+d}, "
+                  f"budget +/-{budget.allowance(before)})", file=sys.stderr)
         print(
-            "Review the changed body inventory and run the corpus oracle before "
-            "refreshing the baseline.",
+            "Review the changed body inventory and run the corpus oracle, then "
+            "re-record these rows with --update.",
             file=sys.stderr,
         )
         return 1
 
-    if removed:
-        print(f"FAIL: {len(removed)} baseline examples are missing from the "
-              "corpus:", file=sys.stderr)
-        for name in removed:
-            print(f"  {name}", file=sys.stderr)
-        return 1
-
-    if added:
-        print(f"FAIL: {len(added)} corpus examples are absent from the reviewed "
-              "baseline:", file=sys.stderr)
-        for name in added:
-            print(f"  {name}", file=sys.stderr)
-        return 1
-
-    print("ok: census unchanged")
+    print("ok: census within budget")
     return 0
 
 

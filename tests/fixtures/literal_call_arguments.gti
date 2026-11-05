@@ -1,0 +1,100 @@
+import std.vector;
+
+class Counter {
+  std::size_t count;
+public:
+  Counter(std::size_t count) : count(count) {}
+  std::size_t get() { return this.count; }
+};
+
+class Wide : public Counter {
+public:
+  Wide() : Counter(7) {}
+};
+
+class Table {
+  mut int elements[2] = {10, 20};
+public:
+  Table() = default;
+  int operator[](uint64_t index) { return this.elements[index]; }
+  int operator()(uint64_t index, int64_t offset) {
+    return this.elements[index] + int(offset);
+  }
+};
+
+std::size_t twice(std::size_t value) { return value * 2; }
+int pick(int value) { return value; }
+uint64_t pick(uint64_t value) { return value + 100; }
+uint8_t narrow(uint8_t value) { return value; }
+int64_t widen(int64_t value) { return value; }
+std::size_t relay(std::size_t value) { return twice(value); }
+std::size_t take(int values[2], std::size_t count) {
+  return std::size_t(values[0]) + std::size_t(values[1]) + count;
+}
+
+// Each literal is passed through a concrete ABI parameter at its exact limit.
+int8_t signed8(int8_t value) { return value; }
+int16_t signed16(int16_t value) { return value; }
+int32_t signed32(int32_t value) { return value; }
+int64_t signed64(int64_t value) { return value; }
+uint16_t unsigned16(uint16_t value) { return value; }
+uint32_t unsigned32(uint32_t value) { return value; }
+uint64_t unsigned64(uint64_t value) { return value; }
+
+int pair(uint8_t first, uint16_t second) { return 1; }
+int pair(uint16_t first, uint8_t second) { return 2; }
+int reverse(uint16_t first, uint8_t second) { return 2; }
+int reverse(uint8_t first, uint16_t second) { return 1; }
+
+mut int drops = 0;
+class Borrowed {
+public:
+  Borrowed() = default;
+  ~Borrowed() { drops += 1; }
+  int value() { return 7; }
+};
+int borrowed(Borrowed& owner, uint8_t count) {
+  if (drops != 0) { return -1; }
+  return owner.value() + int(count);
+}
+class Passive { public: Passive() = default; };
+int exact(Passive owner, int count) { return 1; }
+int exact(Passive& owner, uint8_t count) { return 2; }
+
+int main() {
+  if (twice(4) != 8 || twice((4)) != 8 || pick(5) != 5) { return 1; }
+  mut std::vector<std::size_t> values{};
+  values.push_back(1);
+  values.push_back(2);
+  if (values[0] != 1 || values[1] != 2 || values.size() != 2) { return 2; }
+  Counter counter{3};
+  Wide wide{};
+  if (counter.get() != 3 || wide.get() != 7) { return 3; }
+  Table table{};
+  if (table[1] != 20 || table(0, -3) != 7) { return 4; }
+  auto lambda = [](std::size_t value) -> std::size_t { return value + 1; };
+  if (lambda(9) != 10) { return 5; }
+  if (narrow(200) != 200 || widen(-5) != -5) { return 6; }
+  std::size_t fixed[3] = {4, 5, 6};
+  mut std::size_t total = 0;
+  for (mut std::size_t index = 0; index < 3; index += 1) {
+    total += fixed[index];
+  }
+  if (fixed[1] != 5 || total != 15) { return 7; }
+  if (relay(2) != 4 || take({1, 2}, 3) != 6) { return 8; }
+  if (signed8(-128) != -128 || signed8(127) != 127 || narrow(255) != 255) { return 9; }
+  if (signed16(-32768) != -32768 || signed16(32767) != 32767 ||
+      unsigned16(65535) != 65535) { return 10; }
+  if (signed32(-2147483648) != -2147483648 || signed32(2147483647) != 2147483647 ||
+      unsigned32(4294967295) != 4294967295) { return 11; }
+  if (signed64(-9223372036854775808) != -9223372036854775808 ||
+      signed64(9223372036854775807) != 9223372036854775807 ||
+      unsigned64(18446744073709551615) != 18446744073709551615) { return 12; }
+  if (pair(255, 256) != 1 || reverse(255, 256) != 1 || pair(256, 255) != 2) { return 13; }
+  int borrowedResult = borrowed(Borrowed(), 5);
+  if (borrowedResult != 12 || drops != 1 || exact(Passive(), 5) != 1) { return 14; }
+  if (narrow(+(255)) != 255 || signed8((-(128))) != -128) { return 15; }
+  if (signed64(-((9223372036854775808))) != -9223372036854775808 ||
+      unsigned64(((18446744073709551615))) != 18446744073709551615) { return 16; }
+  return 0;
+}

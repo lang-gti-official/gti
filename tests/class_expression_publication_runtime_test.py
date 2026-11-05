@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+from backend_modes import native_modes
 
 
 CASES = (
@@ -84,14 +85,11 @@ def main():
                      "-o", str(scratch / f"{source.stem}.cpp")])
             print(f"{len(sources)} C++ admission probes passed (no native execution)")
             return
-        for standard in ("c++20", "c++23"):
-            for optimization in ("O0", "O1", "O3"):
-                for source in sources:
-                    executable = scratch / f"{source.stem}-{standard}-{optimization}"
-                    run([str(compiler), str(source), "--std", standard,
-                         f"-{optimization}", "--progress", "never", "-o", str(executable),
-                         "--", "-fno-elide-constructors"])
-                    execute(executable, source)
+        for mode, flags, _native in native_modes():
+            for source in sources:
+                executable = scratch / f"{source.stem}-{mode}"
+                run([str(compiler), str(source), *flags, "--progress", "never", "-o", str(executable)])
+                execute(executable, source)
         for source in sources:
             executable = scratch / f"{source.stem}-sanitized"
             run([str(compiler), str(source), "-O1", "--progress", "never",

@@ -898,7 +898,10 @@ fields for implicit receiver spellings as well as explicit `this` paths.
 Parameter names take precedence; static fields/methods do not nominate a
 receiver. Text read through a raw pointer's index or `->` nominates nothing,
 as a raw dereference does: it is raw memory, not storage of the pointer's
-formal or field. This is a candidate contract, not a body-local lifetime proof:
+formal, field or local binding. A lexical binding of the predeclaration walk
+records its declared type (an `auto` binding the type of the place it copies),
+so a local alias of a pointer formal is still recognized as a raw pointer
+rather than relaying the formal it was initialized from. This is a candidate contract, not a body-local lifetime proof:
 ordinary body lookup and return-borrow validation must confirm the actual
 origin, rejecting local shadowing and unrelated borrowed call results. HIR/MIR
 and the LSP consume the same validated receiver/argument summary.
@@ -1356,6 +1359,22 @@ state: lifecycle traits still derive from actual fields and bases. Concrete
 storage and reference-referent validation remain frontend responsibilities.
 There is no public-library-name recognition or backend-selected expansion rule.
 
+A named `Args&...` or `mut Args&...` parameter stores an abstract
+`Reference<TypePack>` signature. Concrete substitution distributes the access
+mode over each object element, producing `TypePack<Reference<T>...>`; ordinary
+by-value packs remain distinct. Function, method and constructor inference bind
+the object elements, while explicit reference element arguments are rejected
+instead of applying reference collapsing. A body binds the grouped concrete
+pack, not a reference to the group. Forwarding and folds retain each element's
+origin and access: mutable elements may be reborrowed read-only, but read-only
+elements cannot acquire exclusive access. Named move-only values are observed
+without copying; multiple read-only aliases are permitted and exclusive alias
+conflicts use ordinary call checking. The first slice confines reference packs
+to invocations with non-borrowed results. Exact fresh read-only arguments use
+the same full-expression materialization and failure cleanup as fixed reference
+parameters, including ordinary source constructors whose result carries no
+borrow. Mutable arguments always require a mutable source place.
+
 Named method packs can bind the enclosing class's final generic pack by its
 resolved identity. Declaration signatures retain symbolic `TypePack` metadata;
 class substitution preserves that identity through symbolic base forwarding.
@@ -1374,8 +1393,8 @@ instance signatures flatten concrete packs independently of discovery path,
 while body bindings retain source pack identity for cleanup and forwarding.
 Each mutable-reference pack element has its own semantic entry loan, identified
 by the formal pack binding and constant element index. Whole-pack forwarding
-preserves the exact reference type/access rather than borrowing the grouped
-binding. These elements cannot be named independently or escape through a pack
+preserves the element origin and requested reference access rather than borrowing
+the grouped binding. These elements cannot be named independently or escape through a pack
 expression; the entry capabilities last for the invocation. HIR and MIR retain
 the projected identities and end the loans on normal and failure exits.
 Concrete by-value pack elements that carry reference fields likewise retain
@@ -1872,6 +1891,25 @@ the selected parameter types. `ResolvedCallInfo` and
 `ResolvedConstructionInfo` retain the separated type and value arguments plus
 the concrete fixed-array parameter types. Braces never acquire an independent
 semantic type.
+
+A written integer literal argument is analyzed at its default type and may
+match a candidate's integer parameter of another type as a
+`CallArgumentMatchKind::ContextualIntegerLiteral` when its mathematical value
+fits. Function, constructor, base-initializer and operator selection keep such
+candidates in the same fallback tier as call-only temporary borrows: any
+exact candidate discards them, and the tier still requires one unique
+candidate. After selection, `adoptContextualIntegerLiteralArgument` re-runs
+the operand retyping that `value == 0` uses, so the recorded expression type
+and HIR literal carry the selected parameter type; MIR and the backends see an
+exactly typed literal and add no conversion. Single-signature callees
+(lambdas, function items, native function pointers) adopt every fitting
+literal directly. Ambiguity reports append a hint naming the literal
+positions; a literal outside the parameter range keeps the exact-type
+diagnostic with a value-specific hint. The later bounded raw-pointer/text
+compatibility ranking ignores argument positions admitted only by literal or
+temporary-borrow fallback. It cannot prefer a candidate merely because fewer
+literal positions require adaptation; this also holds for constructors and
+base initializers.
 
 An explicit ordinary function or method generic suffix is classified before
 candidate selection using its syntax, the target parameter kinds, and the
@@ -2518,6 +2556,22 @@ retain their own origins instead of being folded under that parent.
 
 ## Temporary Value Call Capabilities
 
+`functionCallArgumentMatch` and operator resolution share the exact-then-temporary
+viability tiers. `ResolvedCallInfo` and `ResolvedOperatorInfo` publish the selected
+`ephemeralBorrowArguments`; HIR preserves them as `ReadTemporaryBorrow` inputs.
+The producer proof admits passive scalar operations, plain-enum results and
+ownerless string literals as well as aggregate temporaries. A temporary counted
+text view also qualifies when its source producer and stored-borrow summary
+prove stable external storage through the full expression. Unknown or transient
+text owners remain rejected. The target proof
+uses the temporary parameter index to exclude that parameter from every returned
+borrow origin; a result retaining a different caller-owned argument is valid.
+Untracked pointer-like results remain rejected. MIR independently rechecks the
+producer, per-parameter result contract, full-expression obligation and loan end.
+No backend reclassifies source expressions or selects overloads.
+Fallible scalar producers arm their temporary obligation only on the MIR Invoke
+success edge; lazy branches retain a hidden scalar slot and conditional cleanup.
+
 Resolved ordinary method calls and class `operator()` calls retain a
 `CallReceiverMode` alongside the exact selected target. The mode distinguishes
 read-only and mutable source places, reusable values, consuming receivers, and
@@ -2526,11 +2580,10 @@ freshness: ordinary construction, by-value GTI calls, typed macro result regions
 and value-producing GTI operators qualify for the bounded ephemeral-borrow
 contract. A concrete self-contained macro result uses its checked expansion and
 exact result type as producer authority, not an invented executable function
-call. The ordinary selected-target confinement, non-borrowing result, linkage,
-access and loan rules still apply. Receiver-only
-materialization also accepts owned movable class values from conditional
-expressions, lambda calls and copy/move construction; this does not broaden
-ephemeral argument borrowing. Reusable
+call. The ordinary selected-target confinement, parameter-specific result-origin,
+linkage, access and loan rules still apply. Conditional and built-in assignment
+results share argument materialization; lambda calls and copy/move construction
+retain their separate receiver support. Reusable
 targets remain non-static with non-borrowing results, apart from the existing
 nonescaping read-observation exception. A virtual target, including an
 override or interface implementation, keeps `CallDispatch::Virtual`: dispatch
@@ -2543,9 +2596,9 @@ type and lifecycle traits. Expression value category and access remain
 unchanged, preventing the receiver-only capability from authorizing general
 mutable-place operations.
 
-`freshTemporaryReceiverValue` extends that receiver assessment, but not
-`freshTemporaryValue`'s separate temporary-argument contract, to direct
-ordinary GTI construction/calls producing a class with a nonempty proven stable
+`freshTemporaryBorrowValue` extends the shared producer assessment for both
+receivers and readonly temporary arguments to direct ordinary GTI
+construction/calls producing a class with a nonempty proven stable
 stored-dependency set. It reuses `storedBorrowDependencies`, the resolved producer
 summary, and the existing stable-storage query. Native, virtual, unresolved,
 or temporary-owner production fails closed. Multiple proven stable origins
@@ -2680,6 +2733,10 @@ substitutions fails immediately rather than expanding a branching probe tree.
 Isolated query workers and typed-macro selection probes inherit that active
 identity stack without sharing mutable runtime flow or capture state. Changing
 concrete generic arguments remain distinct checks within the existing budget.
+Each root expression/predicate query additionally shares a 16,384-type-node
+work budget across its isolated workers. It is charged before copying query
+arguments or identities, bounding recursively expanding generic operator
+requirements even when every nested query has a distinct type.
 
 The nullary consuming-use concept is now a source expression query over an
 owned synthetic binding and `std::move(binding)()`. Its compound shape remains
@@ -3651,8 +3708,8 @@ bodies. Recursive constant nodes retain exact scoped-enum, array, class, generic
 argument identity; declaration spelling and emitted C++ types are never used as
 substitutes for those identities. One execution context carries concrete
 generic substitutions, automatic values, and an optional read-only receiver
-through constexpr calls and constructors while enforcing the existing shared
-4096-step and 64-call-depth limits.
+through constexpr calls and constructors while enforcing the request's
+configured step and call-depth limits (`CompileLimits`).
 
 Staged class discovery distinguishes generic type-argument identity from an
 executed object layout. A metadata carrier or ordinary user-defined type tag
@@ -3714,7 +3771,7 @@ assertions) stage against its canonical base model, never its partially
 analyzed delta. Nested workers keep separate semantic state and share only a
 constant-request work account and the list of instances whose reanalysis is
 open along the staging chain. Nested staging counts toward the depth bound,
-and its executed work consumes the same 4096-step budget as the enclosing
+and its executed work consumes the same step budget as the enclosing
 request. Recursive semantic-staging cycles therefore fail with a resource
 diagnostic instead of unbounded reentry. An assertion's constant may need the
 instance that owns it, as when a class assertion or a destructor reflects on
@@ -3754,7 +3811,7 @@ budget by the primary analysis, its reanalyses and every worker they stage
 through) and replays it wherever all of those match. A replay charges the steps
 the evaluation consumed and reports its warnings again, and is used only where
 the evaluation's limits still hold: the current steps plus that charge stay
-within the 4096-step budget, and the current staging plus call depth is no
+within the request's step limit, and the current staging plus call depth is no
 deeper than the one it succeeded at. Otherwise, and for every failure, the call
 executes as before, so exhaustion and failure diagnostics are unchanged.
 Results holding an executor-local transient owner are never recorded, and
@@ -3844,6 +3901,40 @@ profile; it is not admitted by the integral-enum catalog.
 
 Language rules belong in [`docs/language/`](../language/index.md); this document
 only describes their implementation ownership.
+
+## Staged Constant Limits And Reuse
+
+Every constant request owns one `ConstexprWorkBudget`: the step count, the
+staging depth, the chain of staged evaluations being lowered and, after a
+failure, the exhausted limit with the function that was executing. The chain is
+bounded by the fixed `stagedNestingLimit` (64), separately from the configured
+call depth, because every staging level copies the semantic model into its
+worker; a target already on the chain is reported as a recursive or cyclic
+staged definition. Concrete reanalysis workers, nested staged evaluations and the
+compatibility interpreter charge the same budget against the compilation's
+`CompileLimits` (`FrontendOptions::limits`), which every worker analyzer
+receives at construction. The MIR evaluator receives the remaining budget as
+`MirConstantLimits` and reports which configurable limit it exhausted; the
+request's diagnostic names that limit, its value, the executing function and
+the flag and manifest key (see
+[implementation limits](../language/static-semantics.md#3112-implementation-limits)).
+
+`StagedConstantResults` is shared by every analyzer of one analysis request and
+reset with it, so no reuse crosses a compilation or editor snapshot. It keys a
+staged evaluation by callee identity, generic substitution, constant arguments
+and receiver, and its environment: whether a concrete reanalysis is open and the
+constexpr definitions and constructors the worker may execute and HIR may lower.
+A successful value or void completion is replayed; the lowered call closure (HIR
+plus verified MIR, keyed without arguments and receiver) is executed again with
+new arguments instead of being lowered again. A replay charges the steps the
+original evaluation, or the original lowering's nested work, consumed and
+replays its warnings, and is used only where those steps fit the remaining
+budget and the original staging depth is at least the current one; otherwise
+the request runs fresh and fails exactly as it would have. Failures and work
+done while a layout query exhausted its budget are never recorded.
+`FrontendOptions::reuseConstantEvaluations` disables both caches for tests that
+prove a program's diagnostics are identical either way. HIR retains the
+synthetic syntax it references, so a cached closure outlives its provider.
 
 ## Immediate Invocation Publication
 
@@ -4009,3 +4100,27 @@ contracts, generics and semantic-shaping constants still require the F1/F3
 schemas and staged query work in [ADR 032](../decisions/032-compiled-library-bundles.md).
 See the [scalar driver profile](build-and-driver.md#executable-scalar-separate-compilation-profile)
 for linkage, compatibility and the runnable source-absent example.
+
+### Checked immediate call arguments
+
+Ordinary call resolution completes its exact and temporary-reference pass before
+probing implicit immediate construction. The final pass skips inference through
+a mismatched checked class parameter, resolves other arguments, and selects one
+function and constructor without conversion ranking. Semantics records the
+contextual construction on the original argument and the resulting constant
+through the existing immediate publication path. The operand retains its source
+type and identity; HIR/MIR consume the proved destination constant. Operator
+resolution does not opt into this tier.
+
+`ResolvedCallInfo::checkedArguments` retains the selected construction and argument
+index for hover. The original occurrence remains the source identifier; adding
+validation must not change rename, reference or semantic-token identity.
+
+Immediate requests run under the request's configured step and call-depth
+limits (`CompileLimits`), like every other constant context. Nested execution
+inherits one budget. The existing request-local `StagedConstantResults` cache reuses completed
+exact requests while charging their original work. A terminal panic
+fails the request as `Panicked` with its constant text, the same compile-time
+panic rule as every other constant context; the immediate diagnostic owns
+caller blame and trace presentation. This reuses canonical verified MIR and
+never retries an immediate request through the compatibility AST interpreter.

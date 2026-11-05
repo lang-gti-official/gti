@@ -15,15 +15,31 @@ def build_fixture(command, output, *, native_sources=(), native_arguments=(), na
                   standard="c++23", optimization="O0", cxx=None, **options):
     command = list(map(str, command))
     output = Path(output)
-    if not native_sources and not native_suffix:
+    llvm = "--backend" in command and command[command.index("--backend") + 1] == "llvm"
+    if (not native_sources and not native_suffix) or (llvm and not native_suffix):
+        # The LLVM driver links native sources itself, providers first.
         direct = [*command, "-o", str(output)]
-        if native_arguments:
-            direct += ["--", *map(str, native_arguments)]
+        if native_sources or native_arguments:
+            direct += ["--", *map(str, native_sources), *map(str, native_arguments)]
         return subprocess.run(direct, **options)
+    if llvm:
+        raise ValueError("a native suffix needs the C++ text; select the C++ backend")
 
     generated = output.with_suffix(".gti.cpp")
+    # --emit-cpp already selects C++; the production CLI deliberately rejects
+    # combining an explicit executable backend selector with an emission mode.
+    emission_command = command
+    if "--backend" in command and command[command.index("--backend") + 1] == "cpp":
+        emission_command = []
+        index = 0
+        while index < len(command):
+            if command[index] == "--backend":
+                index += 2
+            else:
+                emission_command.append(command[index])
+                index += 1
     emitted = subprocess.run(
-        [*command, "--emit-cpp", "-o", str(generated)], **options)
+        [*emission_command, "--emit-cpp", "-o", str(generated)], **options)
     if emitted.returncode != 0:
         return emitted
     if native_suffix:

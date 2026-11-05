@@ -17,10 +17,13 @@ on:
 permissions:
   contents: read
 
-# A newer main supersedes a warm-up still compiling an older one.
+# Warm-ups queue rather than cancel: the keys are content-derived, so a
+# superseded run still produces a cache the next run restores, and the
+# instrumented warm (over two hours cold) must be allowed to finish once.
+# The release (bundled LLVM/Clang) profile is warmed by llvm-prebuilt.yml.
 concurrency:
   group: gti-compiler-cache
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   warm:
@@ -59,10 +62,9 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.profile }}-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-${{ github.sha }}
+          key: gti-ccache-v2-${{ matrix.profile }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'scripts/configure_ci_toolchain.sh') }}
           restore-keys: |
-            gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.profile }}-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-
-            gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.profile }}-
+            gti-ccache-v2-${{ matrix.profile }}-${{ runner.os }}-${{ runner.arch }}-
       - name: Configure
         if: matrix.profile == 'native'
         run: >-
@@ -79,9 +81,11 @@ jobs:
           -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
           -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g"
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+          -DCMAKE_JOB_POOLS=link=1 -DCMAKE_JOB_POOL_LINK=link
       - name: Trim restored cache before building
         run: ccache --cleanup
       - name: Build compiler cache inputs
+        id: build
         shell: bash
         run: |
           # Linking every instrumented test binary exhausted the runner disk.
@@ -106,10 +110,13 @@ jobs:
       - name: Report compiler cache statistics
         if: always()
         run: ccache --show-stats || true
+      # Only a build that ran to completion saves. Saving on `always()` once
+      # stored the few objects a cancelled run had compiled under the content
+      # key, after which every later run hit the key and skipped the build.
       - name: Save the cache under main
-        if: always() && steps.cache.outputs.cache-hit != 'true'
+        if: steps.build.outcome == 'success' && steps.cache.outputs.cache-hit != 'true'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.profile }}-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-${{ github.sha }}
+          key: gti-ccache-v2-${{ matrix.profile }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'scripts/configure_ci_toolchain.sh') }}

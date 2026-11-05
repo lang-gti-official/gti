@@ -1,0 +1,34 @@
+import std.format;
+import std.utility;
+
+// A variadic observer keeps ownership with its caller, including for a
+// move-only user type. The ordinary reference rules apply to every element.
+class Ticket {
+  int number;
+public:
+  Ticket(int value) : number(value) {}
+  Ticket(Ticket& other) = delete;
+  Ticket(Ticket&& other) = default;
+  int read() { return this.number; }
+};
+
+concept readable<T> = requires(T& value) { { value.read() } -> int; };
+void print_one<readable T>(T& value) { std::println("ticket {}", value.read()); }
+void show_all<readable Args...>(Args&... args) { (print_one(args), ...); }
+void increment<std::integral T>(mut T& value) { value++; }
+void increment_all<std::integral Args...>(mut Args&... args) {
+  (increment(args), ...);
+}
+
+int main() {
+  Ticket first{7};
+  Ticket second{8};
+  show_all(first, second, first);
+  show_all(Ticket(9)); // The temporary survives the complete call.
+  show_all();
+  mut int left = 1;
+  mut int right = 2;
+  increment_all(left, right);
+  // increment_all(left, left) is rejected: mutable elements must be disjoint.
+  return first.read() == 7 && second.read() == 8 && left == 2 && right == 3 ? 0 : 1;
+}

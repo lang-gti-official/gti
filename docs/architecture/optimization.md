@@ -173,6 +173,16 @@ Both levels currently derive the same GTI proofs. They still select their
 corresponding native optimization levels. `-O0` and `-O1` do not attach safety
 discharges.
 
+Literal-identity folding and SCCP preserve a contextual signed minimum's
+magnitude/identity/negation chain. Its wider positive magnitude is a carrier
+for one signed literal, with an exact single-use proof. Replacing an identity
+alone adds a provenance use and invalidates that proof; these passes leave
+the chain intact until a whole-literal replacement is available. LLVM consumes
+the existing verified literal contract, so this does not add a runtime check
+or conversion. The optimizer regression covers grouped minima at O0–O3;
+`literal_call_arguments_runtime` checks their native O0/O3 execution.
+
+
 `dead-unused-computations` removes only a neutral `Compute` whose result has
 no MIR use. One consumer lives outside the body's use model: a constructor
 record publishes an unstaged field initializer, one that no `Initialize`

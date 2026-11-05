@@ -13,7 +13,7 @@ namespace std {
   /// Explicit duplication: use an exact read-only clone member when present,
   /// otherwise ordinary copy construction. Shared owners retain sharing.
   export T clone<T>(T& value) requires std::cloneable<T> {
-    if constexpr (requires (T& candidate) { { candidate.clone() } -> T; }) {
+  if constexpr (std::member_cloneable<T>) {
       return value.clone();
     } else {
       return value;
@@ -27,6 +27,18 @@ namespace std {
     mut U second;
 
     constexpr pair(T first_value, U second_value) : first(std::move(first_value)), second(std::move(second_value)) {}
+
+    /// Compare both elements when each element type supports equality.
+    constexpr bool operator==(pair<T, U>& other)
+        requires std::equality_comparable<T> && std::equality_comparable<U> {
+      return this.first == other.first && this.second == other.second;
+    }
+
+    /// Test whether either element differs, using the same equality contract.
+    constexpr bool operator!=(pair<T, U>& other)
+        requires std::equality_comparable<T> && std::equality_comparable<U> {
+      return !(this == other);
+    }
   };
 
   export constexpr pair<T, U> make_pair<T, U>(T first, U second) {

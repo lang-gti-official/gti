@@ -98,11 +98,11 @@
         "named": true
       },
       {
-        "type": "conditional_expression",
+        "type": "concept_application",
         "named": true
       },
       {
-        "type": "generic_function",
+        "type": "conditional_expression",
         "named": true
       },
       {
@@ -215,11 +215,11 @@
           "named": true
         },
         {
-          "type": "conditional_expression",
+          "type": "concept_application",
           "named": true
         },
         {
-          "type": "generic_function",
+          "type": "conditional_expression",
           "named": true
         },
         {
@@ -409,15 +409,15 @@
           "named": true
         },
         {
+          "type": "concept_application",
+          "named": true
+        },
+        {
           "type": "conditional_expression",
           "named": true
         },
         {
           "type": "designated_initializer",
-          "named": true
-        },
-        {
-          "type": "generic_function",
           "named": true
         },
         {
@@ -460,7 +460,7 @@
             "named": true
           },
           {
-            "type": "generic_function",
+            "type": "concept_application",
             "named": true
           },
           {
@@ -880,6 +880,10 @@
             "named": true
           },
           {
+            "type": "concept_application",
+            "named": true
+          },
+          {
             "type": "generic_function",
             "named": true
           },
@@ -920,11 +924,11 @@
             "named": true
           },
           {
-            "type": "conditional_expression",
+            "type": "concept_application",
             "named": true
           },
           {
-            "type": "generic_function",
+            "type": "conditional_expression",
             "named": true
           },
           {
@@ -1677,11 +1681,11 @@
             "named": true
           },
           {
-            "type": "conditional_expression",
+            "type": "concept_application",
             "named": true
           },
           {
-            "type": "generic_function",
+            "type": "conditional_expression",
             "named": true
           },
           {
@@ -1719,7 +1723,7 @@
             "named": true
           },
           {
-            "type": "generic_function",
+            "type": "concept_application",
             "named": true
           },
           {
@@ -1858,6 +1862,16 @@
         "types": [
           {
             "type": "concept_application",
+            "named": true
+          }
+        ]
+      },
+      "requirements": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "requires_clause",
             "named": true
           }
         ]
@@ -2026,11 +2040,11 @@
           "named": true
         },
         {
-          "type": "conditional_expression",
+          "type": "concept_application",
           "named": true
         },
         {
-          "type": "generic_function",
+          "type": "conditional_expression",
           "named": true
         },
         {
@@ -2223,11 +2237,11 @@
           "named": true
         },
         {
-          "type": "conditional_expression",
+          "type": "concept_application",
           "named": true
         },
         {
-          "type": "generic_function",
+          "type": "conditional_expression",
           "named": true
         },
         {
@@ -2374,11 +2388,11 @@
             "named": true
           },
           {
-            "type": "conditional_expression",
+            "type": "concept_application",
             "named": true
           },
           {
-            "type": "generic_function",
+            "type": "conditional_expression",
             "named": true
           },
           {
@@ -2462,15 +2476,15 @@
           "named": true
         },
         {
+          "type": "concept_application",
+          "named": true
+        },
+        {
           "type": "conditional_expression",
           "named": true
         },
         {
           "type": "designated_initializer",
-          "named": true
-        },
-        {
-          "type": "generic_function",
           "named": true
         },
         {
@@ -2646,11 +2660,11 @@
             "named": true
           },
           {
-            "type": "conditional_expression",
+            "type": "concept_application",
             "named": true
           },
           {
-            "type": "generic_function",
+            "type": "conditional_expression",
             "named": true
           },
           {
@@ -3612,7 +3626,7 @@
             "named": true
           },
           {
-            "type": "generic_function",
+            "type": "concept_application",
             "named": true
           },
           {
@@ -3707,11 +3721,11 @@
             "named": true
           },
           {
-            "type": "conditional_expression",
+            "type": "concept_application",
             "named": true
           },
           {
-            "type": "generic_function",
+            "type": "conditional_expression",
             "named": true
           },
           {
@@ -3979,7 +3993,7 @@
             "named": true
           },
           {
-            "type": "generic_function",
+            "type": "concept_application",
             "named": true
           },
           {
@@ -4053,11 +4067,11 @@
             "named": true
           },
           {
-            "type": "conditional_expression",
+            "type": "concept_application",
             "named": true
           },
           {
-            "type": "generic_function",
+            "type": "conditional_expression",
             "named": true
           },
           {
@@ -4556,11 +4570,11 @@
             "named": true
           },
           {
-            "type": "conditional_expression",
+            "type": "concept_application",
             "named": true
           },
           {
-            "type": "generic_function",
+            "type": "conditional_expression",
             "named": true
           },
           {
@@ -5032,11 +5046,11 @@
             "named": true
           },
           {
-            "type": "conditional_expression",
+            "type": "concept_application",
             "named": true
           },
           {
-            "type": "generic_function",
+            "type": "conditional_expression",
             "named": true
           },
           {
@@ -5452,11 +5466,11 @@
             "named": true
           },
           {
-            "type": "conditional_expression",
+            "type": "concept_application",
             "named": true
           },
           {
-            "type": "generic_function",
+            "type": "conditional_expression",
             "named": true
           },
           {
@@ -5877,7 +5891,7 @@
             "named": true
           },
           {
-            "type": "generic_function",
+            "type": "concept_application",
             "named": true
           },
           {
@@ -5987,7 +6001,7 @@
             "named": true
           },
           {
-            "type": "generic_function",
+            "type": "concept_application",
             "named": true
           },
           {

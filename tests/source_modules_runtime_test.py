@@ -9,6 +9,7 @@ import sys
 import tempfile
 
 from project_cli_smoke_test import executable_named, run
+from backend_modes import is_cpp_mode, keep_cpp, native_modes
 
 
 def main():
@@ -49,12 +50,12 @@ namespace sample {
 }
 '''
         direct.write_text('import "facade.gti";\n' + body)
-        for standard in ("c++20", "c++23"):
-            for optimization in ("-O0", "-O1", "-O3"):
-                binary = root / f"direct-{standard}-{optimization}"
-                run([compiler, str(direct), "--std", standard, optimization,
-                     "--keep-cpp", "-o", str(binary)])
-                run([str(binary)])
+        for mode, flags, _native in native_modes():
+            binary = root / f"direct-{mode}"
+            run([compiler, str(direct), *flags,
+                 *keep_cpp(flags), "-o", str(binary)])
+            run([str(binary)])
+            if is_cpp_mode(flags):
                 assert "// GTI verified-MIR body:" in binary.with_suffix(".gti.cpp").read_text()
 
         (library / "gti.toml").write_text('manifest-version = 1\n[package]\nname = "library"\n'
@@ -109,17 +110,18 @@ int main() {
   mut std::vector<int32_t> values{};
   values.push_back(legacy::base());
   values.push_back(2);
-  std::println(std::format("{}", values[std::size_t(0)] + values[std::size_t(1)]));
+  std::println(std::runtime_format("{}", values[std::size_t(0)] + values[std::size_t(1)]));
   return 0;
 }
 ''')
-        for standard_name, optimization in (("c++20", "-O0"), ("c++23", "-O3")):
-            standard_binary = root / f"standard-{standard_name}-{optimization}"
-            run([compiler, str(standard), "--std", standard_name, optimization,
-                 "--keep-cpp", "-o", str(standard_binary)])
+        for mode, flags, native in native_modes():
+            standard_binary = root / f"standard-{mode}"
+            run([compiler, str(standard), *flags,
+                 *keep_cpp(flags), "-o", str(standard_binary)])
             assert run([str(standard_binary)]).stdout == "42\n"
-            emitted = standard_binary.with_suffix(".gti.cpp").read_text()
-            assert "// GTI verified-MIR body:" in emitted
+            if is_cpp_mode(flags):
+                emitted = standard_binary.with_suffix(".gti.cpp").read_text()
+                assert "// GTI verified-MIR body:" in emitted
         (app / "main.gti").write_text(
             "import std.vector;\nint main() { mut std::vector<int32_t> values{}; "
             "values.push_back(0); return values[std::size_t(0)]; }\n")

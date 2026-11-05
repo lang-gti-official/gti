@@ -29,10 +29,15 @@ def ancestor(older, newer, api=source.request):
 
 def select(api=source.request):
     main = api(f"{BASE}/git/ref/heads/main")["object"]["sha"]
-    runs = api(f"{BASE}/actions/workflows/ci.yml/runs?status=success&per_page=100")
-    for run in runs.get("workflow_runs", []):
+    # Complete packages come from post-integration full validation of a main
+    # head or from a merge-queue source-library/LSP lane; newest run first.
+    runs = []
+    for workflow in ("full-validation.yml", "ci.yml"):
+        runs += api(f"{BASE}/actions/workflows/{workflow}/runs?status=success&per_page=100").get("workflow_runs", [])
+    runs.sort(key=lambda run: run.get("id") if type(run.get("id")) is int else 0, reverse=True)
+    for run in runs:
         sha = run.get("head_sha", "")
-        if (run.get("event") not in ("merge_group", "workflow_dispatch") or
+        if (run.get("event") not in ("push", "merge_group", "workflow_dispatch") or
                 not source.SHA.fullmatch(sha) or not ancestor(sha, main, api)):
             continue
         try:

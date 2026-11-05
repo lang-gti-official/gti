@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def main():
@@ -78,13 +79,7 @@ for (mut int i = 0; i < 65; i++) { [[discard]] values.try_emplace(i, i, 1); }
         cases[f"argument-{label}"] = (
             f"mut std::unordered_map<int, int> values{{}}; values.max_load_factor({value});",
             16, "invalid_container_argument", "container_argument")
-    modes = [(f"{standard}-{level}", ["--std", standard, f"-{level}"], [])
-             for standard in ("c++20", "c++23") for level in ("O0", "O1", "O3")]
-    modes += [(f"llvm-{level}", ["--backend", "llvm", f"-{level}"], [])
-              for level in ("O0", "O1", "O2", "O3")]
-    modes += [("no-elide", ["--std", "c++23", "-O0"], ["-fno-elide-constructors"]),
-              ("sanitized", ["--std", "c++23", "-O1"],
-               ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])]
+    modes = native_modes()
     selected = [sys.argv[index + 1] for index, value in enumerate(sys.argv) if value == "--mode"]
     if selected:
         modes = [mode for mode in modes if mode[0] in selected]

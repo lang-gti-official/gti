@@ -1,111 +1,61 @@
 #!/usr/bin/env python3
 
-"""Run the public atomic concurrency fixture under ThreadSanitizer when available."""
+"""Run the public atomic concurrency fixtures under ThreadSanitizer when available.
+
+Each fixture is emitted by the LLVM backend and instrumented through the
+shared recipe in managed_thread_tsan_test.py; no C++-backend output is
+sanitized.
+"""
 
 from __future__ import annotations
 
-import os
 import pathlib
-import subprocess
 import sys
 import tempfile
 
+from managed_thread_tsan_test import (
+    ATOMIC_MARKERS,
+    build_instrumented_binary,
+    compile_instrumented_runtime,
+    run_under_thread_sanitizer,
+    thread_sanitizer_available,
+)
 from sanitizer_support import SKIP_RETURN_CODE, thread_sanitizer_enabled
 
 
-def execute(
-    command: list[str],
-    *,
-    environment: dict[str, str] | None = None,
-    timeout: int = 300,
-) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        command,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        check=False,
-        env=environment,
-    )
-
-
 def main() -> int:
-    if len(sys.argv) not in (6, 7):
+    if len(sys.argv) < 5:
         raise SystemExit(
-            "usage: atomic_tsan_test.py /path/to/gti concurrent.gti "
-            "orders.gti fetch.gti /path/to/c++"
+            "usage: atomic_tsan_test.py /path/to/llvm-instrumented-source "
+            "/path/to/matching-clang++ /path/to/reviewed-c++ fixture.gti [fixture.gti ...]"
         )
     if not thread_sanitizer_enabled():
         print("atomic ThreadSanitizer check skipped: unsupported runner")
         return SKIP_RETURN_CODE
 
-    compiler = pathlib.Path(sys.argv[1]).resolve()
-    sources = [
-        pathlib.Path(sys.argv[2]).resolve(),
-        pathlib.Path(sys.argv[3]).resolve(),
-        pathlib.Path(sys.argv[4]).resolve(),
-    ]
-    native_compiler = pathlib.Path(sys.argv[5]).absolute()
-    if len(sys.argv) == 7:
-        sources.append(pathlib.Path(sys.argv[6]).resolve())
+    emitter = pathlib.Path(sys.argv[1]).resolve()
+    native_compiler = pathlib.Path(sys.argv[2]).absolute()
+    runtime_compiler = pathlib.Path(sys.argv[3]).absolute()
+    sources = [pathlib.Path(argument).resolve() for argument in sys.argv[4:]]
 
     with tempfile.TemporaryDirectory(prefix="gti-atomic-tsan-") as scratch:
         root = pathlib.Path(scratch)
-        probe_source = root / "probe.cpp"
-        probe_binary = root / "probe"
-        probe_source.write_text("int main() { return 0; }\n", encoding="utf-8")
-        probe = execute(
-            [
-                str(native_compiler),
-                "-std=c++20",
-                "-fsanitize=thread",
-                str(probe_source),
-                "-o",
-                str(probe_binary),
-            ]
-        )
-        if probe.returncode != 0:
+        if not (thread_sanitizer_available(native_compiler, root)
+                and thread_sanitizer_available(runtime_compiler, root)):
             print(
                 "atomic ThreadSanitizer check skipped: native compiler does not "
                 "provide -fsanitize=thread"
             )
             return SKIP_RETURN_CODE
 
-        environment = os.environ.copy()
-        environment["TSAN_OPTIONS"] = "halt_on_error=1:abort_on_error=1"
+        runtime = compile_instrumented_runtime(runtime_compiler, root)
         for source in sources:
             binary = root / source.stem
-            build = execute(
-                [
-                    str(compiler),
-                    "--execution-profile",
-                    "concurrent",
-                    "--std",
-                    "c++23",
-                    "-O1",
-                    "--cxx",
-                    str(native_compiler),
-                    str(source),
-                    "-o",
-                    str(binary),
-                    "--",
-                    "-fsanitize=thread",
-                    "-fno-omit-frame-pointer",
-                    "-g",
-                ]
-            )
-            if build.returncode != 0:
-                raise AssertionError(
-                    f"ThreadSanitizer build returned {build.returncode}\n"
-                    f"stdout: {build.stdout}\nstderr: {build.stderr}"
-                )
-            for _ in range(3):
-                run = execute([str(binary)], environment=environment)
-                if run.returncode != 0:
-                    raise AssertionError(
-                        f"ThreadSanitizer run returned {run.returncode}\n"
-                        f"stdout: {run.stdout}\nstderr: {run.stderr}"
-                    )
+            build_instrumented_binary(emitter, native_compiler, source, binary,
+                                      runtime, markers=ATOMIC_MARKERS,
+                                      linker=runtime_compiler)
+            run_under_thread_sanitizer(binary)
+            print(f"atomic ThreadSanitizer fixture {source.stem} passed")
 
     print("atomic ThreadSanitizer check passed")
     return 0

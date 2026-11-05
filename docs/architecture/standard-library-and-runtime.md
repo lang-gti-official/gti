@@ -125,8 +125,9 @@ its unchanged status mapping. Both routes release through the same POSIX free
 adapter. Windows keeps its aligned CRT pair. Zero-size requests make no native
 allocation; null on the ordinary route maps to resource exhaustion. Descriptor
 contents, actual address checks, exact release and failed sparse-region rollback
-are unchanged. LLVM's compiler-owned scalar/box allocation chooses the physical
-provider with the same target-layout witness after extent validation.
+are unchanged. This witness is source policy only: LLVM's compiler-owned
+scalar/box storage does not use the provider and allocates through the runtime
+owner pair described under the remaining allocation families below.
 
 The appended private operation has an exact fixed-width signature and target
 selection in `process_memory_runtime`; an application declaration with the same
@@ -456,11 +457,19 @@ operation as a representation cast. No public formatter, concept, enum, or
 format-pattern spelling grants compiler behavior. Explicit source
 specializations retain their existing canonical selection and contract checks.
 
+Checked patterns use the same parser through `format_pattern<Args...>`'s implicit
+consteval constructor. Built-in presentation predicates are shared with runtime
+formatting, and custom formatters can opt into a constexpr `validate` hook.
+Separately named `runtime_*` / `try_runtime_*` APIs accept dynamic string views
+without storing an escaping aggregate or allocating a pattern copy. Checked
+wrappers forward an already validated carrier to the common implementation.
+Raw text output and deferred assertions retain their existing contracts.
+
 Formatting allocates once per result in the common case:
-- `try_format` reserves the pattern length plus 16 bytes per argument.
+- The shared formatting implementation reserves the pattern length plus 16 bytes per argument.
 - Every later append goes through `detail::reserve_additional`, which grows
-  capacity at least geometrically. `string::append` itself reserves the exact
-  new size.
+  capacity at least geometrically. `string::append` applies the same
+  geometric policy, so the helper only reserves ahead of each formatted piece.
 - Integer formatting keeps its sign and base prefix in a three-character
   array, and its digits in the existing reversed digit buffer. It writes fill,
   prefix, zero padding and digits straight into the output.
@@ -519,20 +528,46 @@ method from the spelling `push_back`.
 ### Executable Surface Census
 
 `tests/stdlib_surface_manifest.json` is the reviewed evidence ledger for the
-shipped source surface. It fingerprints `stdlib/prelude.gti` and every
-`stdlib/std/**/*.gti` unit, then classifies each inventoried operation as
-`executable`, an intentional declaration `scaffold`, or currently
-`unsupported`. A changed or added source unit therefore requires an explicit
-surface review; the manifest does not parse GTI or become API authority.
+shipped source surface. Its census is the shipped tree: `stdlib/prelude.gti`,
+`stdlib/std.gti` and every `stdlib/std/**/*.gti` unit must be the `source` of
+at least one entry, and an entry naming any other path fails. Each entry
+classifies its inventoried operations as `executable`, an intentional
+declaration `scaffold`, or currently `unsupported`. The manifest does not
+parse GTI or become API authority.
+
+A changed or added source unit requires an explicit surface review, and the
+review is read from the change itself, the way an API-baseline check reads a
+diff. `scripts/check_stdlib_surface_review.py <base> <head>` runs in CI's
+`release-version` job for every pull request and merge-queue candidate. For
+each census source added or modified between `git merge-base <base> <head>`
+and `<head>`, it requires either that the manifest's diff over the same range
+adds, changes or removes an entry (compared by `id`) whose `source` is that
+file, or that a commit in the range ends its message with one trailer block
+carrying both
+
+```text
+Stdlib-Surface: unchanged
+Stdlib-Surface-Reason: <why the classified surface is unchanged>
+```
+
+for an edit, such as a comment or a body-only fix, that leaves every recorded
+operation, status and piece of evidence accurate. The trailer is a reviewed
+declaration, not permission to skip a classification the edit changed. A
+deleted source needs no review here; the census rejects its remaining entries.
+The manifest deliberately stores no per-source hashes: a shared table of every
+source's digest made any two library changes conflict on that one object even
+when their code did not overlap.
 
 Every executable entry names at least one minimal concrete fixture and any
 required generic instantiation. The `stdlib_surface` CTest compiles those
 fixtures through the production compiler/native-driver path at O0 and O3 and
 checks exact exit status, stdout, and stderr. Unsupported entries may name one
 bounded expected-diagnostic case; scaffolds never masquerade as executable
-coverage. `stdlib_surface_manifest` additionally injects missing source,
-stale fingerprint, missing executable evidence, and wrong evidence-kind
-mutations. The checked-in manifest exhaustively classifies every shipped
+coverage. `stdlib_surface_manifest` additionally injects unclassified-source,
+unknown-source, retired-fingerprint, missing executable evidence, and wrong
+evidence-kind mutations, and checks that the review script and the census
+agree on which files are shipped sources; `stdlib_surface_review_policy`
+proves the review check against throwaway repositories. The checked-in manifest exhaustively classifies every shipped
 standard-library source unit and its executable, diagnostic, or scaffold
 evidence, including managed-thread construction and join, concrete `std::pair`
 construction/field access, and the
@@ -826,7 +861,10 @@ policy, including default typed factories. Prefix owners now use the same source
 provider. Other generated-program allocations remain in unique-owner
 construction and shared-owner/control-block representations in the generated
 support code. These retain their current allocation families until their own
-source/lifecycle migration is validated. Native HTTP/filesystem/thread handles
+source/lifecycle migration is validated: replaceable nothrow `new`/`delete`,
+called directly by generated C++ and through the runtime's
+`gti_rt_owner_allocate_v1`/`gti_rt_owner_release_v1` pair on LLVM. Neither
+backend routes them through the injectable provider adapters. Native HTTP/filesystem/thread handles
 also allocate host implementation objects behind their existing C ABI. Compiler
 host allocations such as emission-plan `std::make_unique` are not GTI-program
 allocations and are outside this migration.

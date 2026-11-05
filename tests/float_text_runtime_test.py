@@ -5,6 +5,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -95,33 +96,29 @@ def main() -> int:
         source = root / "float-text.gti"
         source.write_text(SOURCE, encoding="utf8")
 
-        for standard in ("c++20", "c++23"):
-            for optimization in ("O0", "O3"):
-                executable = root / f"float-text-{standard}-{optimization}"
-                built = run(
-                    [
-                        str(compiler),
-                        str(source),
-                        "--std",
-                        standard,
-                        f"-{optimization}",
-                        "-o",
-                        str(executable),
-                    ]
-                )
-                if built.returncode != 0:
-                    return fail(built)
+        for mode, flags, native in native_modes():
+            executable = root / f"float-text-{mode}"
+            built = run(
+                [
+                    str(compiler),
+                    str(source),
+                    *flags,
+                    "-o",
+                    str(executable),
+                ]
+            )
+            if built.returncode != 0:
+                return fail(built)
 
-                executed = run([str(executable)])
-                if executed.returncode != 0:
-                    return fail(executed)
-                if executed.stdout != EXPECTED:
-                    sys.stderr.write(
-                        f"binary32 decimal text mismatch for {standard} "
-                        f"{optimization}:\nexpected:\n{EXPECTED}\nactual:\n"
-                        f"{executed.stdout}"
-                    )
-                    return 1
+            executed = run([str(executable)])
+            if executed.returncode != 0:
+                return fail(executed)
+            if executed.stdout != EXPECTED:
+                sys.stderr.write(
+                    f"binary32 decimal text mismatch for {mode}:\nexpected:\n{EXPECTED}\nactual:\n"
+                    f"{executed.stdout}"
+                )
+                return 1
 
     print("binary32 decimal text verified against the C %f reference")
     return 0

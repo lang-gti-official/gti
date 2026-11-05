@@ -998,9 +998,9 @@ int main() {
 void checkExclusiveCarrierTemporaryViews() {
   const auto fixture = standardLibraryRoot().parent_path() /
                        "tests/fixtures/exclusive_carrier_temporary_views.gti";
-  const auto frontend = lang::Frontend().analyze(
-      fixture, std::nullopt, {standardLibraryPrelude()}, {},
-      {standardLibraryRoot()});
+  const auto frontend = lang::Frontend().analyze(fixture, std::nullopt,
+                                                 {standardLibraryPrelude()}, {},
+                                                 {standardLibraryRoot()});
   expect(frontend.canGenerateCode(),
          "temporary views of an exclusive carrier verify");
   if (!frontend.canGenerateCode()) {
@@ -1042,12 +1042,12 @@ void checkExclusiveCarrierTemporaryViews() {
     const auto rejected = lang::Frontend().analyze(
         "exclusive-carrier-temporary-conflict.gti", invalid,
         {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-    expect(!rejected.semanticValid &&
-               std::none_of(rejected.diagnostics.begin(),
-                            rejected.diagnostics.end(),
-                            [](const auto &diagnostic) {
-                              return diagnostic.code == "GTI-B0001";
-                            }),
+    expect(!rejected.semanticValid && std::none_of(rejected.diagnostics.begin(),
+                                                   rejected.diagnostics.end(),
+                                                   [](const auto &diagnostic) {
+                                                     return diagnostic.code ==
+                                                            "GTI-B0001";
+                                                   }),
            "the carrier's exclusive authority still blocks: " + conflict);
   }
 }

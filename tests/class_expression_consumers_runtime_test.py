@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+from backend_modes import cpp_text_modes, native_modes
 
 
 PRELUDE = """import std.vector;
@@ -65,18 +66,16 @@ def main():
                               "Value named = Value(5);\n"
                               "mut std::vector<Value> bag{};\n"
                               f"bool flag = {str(flag).lower()};\n{body}\n}}\n")
-            modes = (("c++23", "O0"),) if args.emit_only else (
-                (standard, level) for standard in ("c++20", "c++23")
-                for level in ("O0", "O1", "O3"))
-            for standard, level in modes:
-                output = root / f"{name}-{standard}-{level}"
-                command = [str(compiler), str(source), "--std", standard,
-                           f"-{level}", "--progress", "never", "-o", str(output)]
-                command += ["--emit-cpp"] if args.emit_only else ["--", "-fno-elide-constructors"]
+            modes = cpp_text_modes() if args.emit_only else native_modes()
+            for mode, flags, _native in modes:
+                output = root / f"{name}-{mode}"
+                command = [str(compiler), str(source), *flags, "--progress", "never", "-o", str(output)]
+                if args.emit_only:
+                    command.append("--emit-cpp")
                 compiled = subprocess.run(command, env=env, text=True,
                                           capture_output=True, timeout=120)
                 if compiled.returncode:
-                    return f"FAIL {name} {standard}/{level}\n{compiled.stdout}{compiled.stderr}"
+                    return f"FAIL {name} {mode}\n{compiled.stdout}{compiled.stderr}"
                 if not args.emit_only:
                     result = subprocess.run([str(output)], text=True,
                                             capture_output=True, timeout=30)

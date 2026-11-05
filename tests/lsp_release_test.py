@@ -97,13 +97,16 @@ class IndependentLSP(unittest.TestCase):
     def test_lsp_evidence_cannot_seed_compiler_sdk(self):
         jobs = [dict(name=n, head_sha=SHA, status='completed', conclusion='success')
                 for n in ['CI gate', 'LSP (linux-x64)', 'LSP (darwin-arm64)']]
-        api = api_fixture(SHA, jobs=jobs)
+        api = api_fixture(SHA, source_lane=True, jobs=jobs)
         self.assertEqual(artifacts.release_evidence(REPO, SHA, api)['validation_mode'], 'lsp')
         with self.assertRaises(ValueError):
             artifacts.release_evidence(REPO, SHA, api, full_only=True)
+        with self.assertRaises(ValueError):
+            # The lane runs in the merge queue; a full-validation run never carries it.
+            artifacts.release_evidence(REPO, SHA, api_fixture(SHA, jobs=jobs))
         for missing in range(len(jobs)):
             with self.assertRaises(ValueError):
-                artifacts.release_evidence(REPO, SHA, api_fixture(SHA, jobs=jobs[:missing]+jobs[missing+1:]))
+                artifacts.release_evidence(REPO, SHA, api_fixture(SHA, source_lane=True, jobs=jobs[:missing]+jobs[missing+1:]))
 
     def test_package_embeds_exact_identity_without_compiler(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -140,6 +143,8 @@ class IndependentLSP(unittest.TestCase):
             self.assertIsNone(component.select(api))
         workflow = (ROOT / '.github/workflows/lsp.yml').read_text()
         self.assertIn("workflow_run.event == 'merge_group'", workflow)
+        self.assertIn("workflow_run.event == 'push'", workflow)
+        self.assertIn('workflows: [CI, Full validation]', workflow)
         self.assertIn('ref: main', workflow)
         self.assertIn('cancel-in-progress: false', workflow)
         self.assertNotIn('cmake --build', workflow)

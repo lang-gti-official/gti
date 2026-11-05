@@ -8,6 +8,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 NEGATIVE_CASES = {
@@ -146,20 +147,9 @@ def build(
     compiler: pathlib.Path,
     source: pathlib.Path,
     executable: pathlib.Path,
-    standard: str,
-    optimization: str,
+    flags: list[str],
 ) -> subprocess.CompletedProcess[str]:
-    return run(
-        [
-            str(compiler),
-            str(source),
-            "--std",
-            standard,
-            f"-{optimization}",
-            "-o",
-            str(executable),
-        ]
-    )
+    return run([str(compiler), str(source), *flags, "-o", str(executable)])
 
 
 def main() -> int:
@@ -168,24 +158,20 @@ def main() -> int:
 
     compiler = pathlib.Path(sys.argv[1]).resolve()
     success_source = pathlib.Path(sys.argv[2]).resolve()
-    configurations = [
-        (standard, optimization)
-        for standard in ("c++20", "c++23")
-        for optimization in ("O0", "O3")
-    ]
+    configurations = native_modes()
 
     with tempfile.TemporaryDirectory(prefix="gti-arena-pool-") as temporary:
         root = pathlib.Path(temporary)
-        for standard, optimization in configurations:
-            executable = root / f"success-{standard}-{optimization}"
+        for mode, flags, _native in configurations:
+            executable = root / f"success-{mode}"
             built = build(
-                compiler, success_source, executable, standard, optimization
+                compiler, success_source, executable, flags
             )
             if built.returncode != 0:
-                return fail(f"build success {standard} {optimization}", built)
+                return fail(f"build success {mode}", built)
             executed = run([str(executable)])
             if executed.returncode != 0 or executed.stdout or executed.stderr:
-                return fail(f"run success {standard} {optimization}", executed)
+                return fail(f"run success {mode}", executed)
 
         for label, (source_text, fragments) in NEGATIVE_CASES.items():
             source = root / f"{label}.gti"
@@ -201,20 +187,20 @@ def main() -> int:
         for label, (source_text, stdout, fragments) in FAILURE_CASES.items():
             source = root / f"{label}.gti"
             source.write_text(source_text, encoding="utf-8")
-            for standard, optimization in configurations:
-                executable = root / f"{label}-{standard}-{optimization}"
+            for mode, flags, _native in configurations:
+                executable = root / f"{label}-{mode}"
                 built = build(
-                    compiler, source, executable, standard, optimization
+                    compiler, source, executable, flags
                 )
                 if built.returncode != 0:
-                    return fail(f"build {label} {standard} {optimization}", built)
+                    return fail(f"build {label} {mode}", built)
                 executed = run([str(executable)])
                 if (
                     executed.returncode != 70
                     or executed.stdout != stdout
                     or any(fragment not in executed.stderr for fragment in fragments)
                 ):
-                    return fail(f"run {label} {standard} {optimization}", executed)
+                    return fail(f"run {label} {mode}", executed)
 
     return 0
 

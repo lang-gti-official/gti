@@ -4,6 +4,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -203,33 +204,30 @@ int main() {
         source = root / "mutable-temporary.gti"
         source.write_text(source_text, encoding="utf8")
 
-        for standard in ("c++20", "c++23"):
-            for optimization in ("O0", "O3"):
-                executable = root / f"mutable-temporary-{standard}-{optimization}"
-                built = run(
-                    [
-                        str(compiler),
-                        str(source),
-                        "--std",
-                        standard,
-                        f"-{optimization}",
-                        "-o",
-                        str(executable),
-                    ]
-                )
-                if built.returncode != 0:
-                    return fail(built)
+        for mode, flags, native in native_modes():
+            executable = root / f"mutable-temporary-{mode}"
+            built = run(
+                [
+                    str(compiler),
+                    str(source),
+                    *flags,
+                    "-o",
+                    str(executable),
+                ]
+            )
+            if built.returncode != 0:
+                return fail(built)
 
-                executed = run([str(executable)])
-                if executed.returncode != 0:
-                    sys.stderr.write(
-                        "temporary receiver or reference argument cleanup, "
-                        "overload selection or initializer ordering "
-                        f"failed for {standard} {optimization}: "
-                        f"exit={executed.returncode} stdout={executed.stdout!r} "
-                        f"stderr={executed.stderr!r}\n"
-                    )
-                    return 1
+            executed = run([str(executable)])
+            if executed.returncode != 0:
+                sys.stderr.write(
+                    "temporary receiver or reference argument cleanup, "
+                    "overload selection or initializer ordering "
+                    f"failed for {mode}: "
+                    f"exit={executed.returncode} stdout={executed.stdout!r} "
+                    f"stderr={executed.stderr!r}\n"
+                )
+                return 1
 
         cleanup_destructor = """\
 class FailureTracker {
@@ -311,9 +309,7 @@ int main() {
                 [
                     str(compiler),
                     str(failure_source),
-                    "--std",
-                    "c++23",
-                    "-O0",
+                    *native_modes(levels=("O0",))[0][1],
                     "-o",
                     str(failure_executable),
                 ]

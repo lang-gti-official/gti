@@ -271,19 +271,52 @@ int main() {
   expect(enumStages == 5,
          "each fresh payload-enum argument stages one temporary borrow");
 
-  for (const std::string source :
-       {"enum class code { ok, failed }; code pick() { return code::ok; } "
-        "bool good(code& c) { return c == code::ok; } int main() { return "
-        "good(pick()) ? 0 : 1; }",
-        "enum class state { empty, engaged(int value) }; void clear(mut state& "
-        "s) { s = state::empty; } int main() { clear(state::engaged(1)); "
-        "return 0; }"}) {
-    const auto invalid =
-        lang::Frontend().analyze("payload-enum-temporary-invalid.gti", source);
-    expect(invalid.syntaxValid && !invalid.semanticValid,
-           "scalar-backed enum temporaries and mutable temporary borrows "
-           "remain source errors");
-  }
+  // Scalar-backed enum factories now share the same readonly temporary
+  // argument contract as payload enums; mutation still requires a place.
+  const auto scalar = lang::Frontend().analyze(
+      "scalar-enum-temporary.gti",
+      "enum class code { ok, failed }; code pick() { return code::ok; } "
+      "bool good(code& c) { return c == code::ok; } int main() { return "
+      "good(pick()) ? 0 : 1; }");
+  expect(
+      scalar.canGenerateCode() && lang::verifyMirProgram(scalar.mir).valid(),
+      "a scalar-backed enum factory supplies one checked readonly temporary");
+  bool checkedScalar = false;
+  for (const auto &function : scalar.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Call ||
+            !instruction.functionTarget)
+          continue;
+        const auto *target =
+            scalar.hir.findFunctionInstance(*instruction.functionTarget);
+        if (!target || !target->source ||
+            target->source->name().lexeme != "good")
+          continue;
+        for (const auto &inputBlock : function.body.blocks)
+          for (const auto &input : inputBlock.instructions) {
+            const auto *loan =
+                input.loan ? function.body.findLoan(*input.loan) : nullptr;
+            if (input.callSite == instruction.callSite &&
+                input.callInputRole == lang::MirCallInputRole::Argument &&
+                input.callInputKind ==
+                    lang::HirCallInputKind::ReadTemporaryBorrow &&
+                loan && loan->kind == lang::MirLoanKind::CallArgument &&
+                loan->access == lang::AccessMode::ReadOnly && !loan->escapes &&
+                !loan->storedDependency)
+              checkedScalar = true;
+          }
+      }
+  expect(checkedScalar, "the selected enum observer receives an exact "
+                        "nonescaping temporary loan");
+
+  const auto invalid = lang::Frontend().analyze(
+      "payload-enum-temporary-invalid.gti",
+      "enum class state { empty, engaged(int value) }; void clear(mut state& "
+      "s) { s = state::empty; } int main() { clear(state::engaged(1)); return "
+      "0; }");
+  expect(invalid.syntaxValid && !invalid.semanticValid,
+         "mutable temporary enum borrows still require a named place");
 }
 
 void checkFreshClassArgumentResults() {

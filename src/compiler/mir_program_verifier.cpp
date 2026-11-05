@@ -1544,17 +1544,33 @@ exactInPlaceConstructionRoles(const std::vector<SemanticType> &arguments,
 
 // Temporary argument borrows and borrowed-carrier receivers cannot export
 // reference-like results, including untracked raw/native address values.
-[[nodiscard]] bool
-supportsEphemeralBorrowResult(const MirFunctionInstance *target,
-                              const ExpressionInfo &result) {
-  return target != nullptr &&
-         target->returnType.kind != SemanticType::Reference &&
-         target->returnType.kind != SemanticType::StringView &&
-         target->returnType.kind != SemanticType::CString &&
-         target->returnType.kind != SemanticType::RawPointer &&
-         target->returnType.kind != SemanticType::NativeFunction &&
-         target->returnBorrowOrigin == BorrowOriginKind::None &&
-         !result.traits.containsBorrowedState;
+[[nodiscard]] bool supportsEphemeralBorrowResult(
+    const MirFunctionInstance *target, const ExpressionInfo &result,
+    std::optional<std::size_t> parameter = std::nullopt) {
+  if (!target || target->returnType.kind == SemanticType::RawPointer ||
+      target->returnType.kind == SemanticType::NativeFunction ||
+      target->returnType.kind == SemanticType::CString)
+    return false;
+  const bool borrowed = target->returnBorrowOrigin != BorrowOriginKind::None ||
+                        target->returnType.kind == SemanticType::Reference ||
+                        target->returnType.kind == SemanticType::StringView ||
+                        result.traits.containsBorrowedState;
+  if (!borrowed)
+    return true;
+  if (!parameter || target->returnBorrowOrigin == BorrowOriginKind::None)
+    return false;
+  if (target->returnBorrowOrigin == BorrowOriginKind::Argument &&
+      (target->returnBorrowParameter == *parameter ||
+       std::find(target->returnBorrowParameters.begin(),
+                 target->returnBorrowParameters.end(),
+                 *parameter) != target->returnBorrowParameters.end()))
+    return false;
+  return std::none_of(target->returnBorrowFields.begin(),
+                      target->returnBorrowFields.end(), [&](const auto &field) {
+                        return field.origin == BorrowOriginKind::None ||
+                               (field.origin == BorrowOriginKind::Argument &&
+                                field.parameter == *parameter);
+                      });
 }
 
 [[nodiscard]] std::optional<MirPlaceId>
@@ -1908,9 +1924,32 @@ uniqueMirClassInstanceForType(const MirProgram &program,
               block.id, instruction.id);
         }
       }
-      if (instruction.kind != MirInstructionKind::Call) {
+      const bool temporaryConstruction =
+          instruction.kind == MirInstructionKind::Construct &&
+          std::any_of(instruction.operands.begin(), instruction.operands.end(),
+                      [&](const MirOperand &operand) {
+                        const auto *input =
+                            operand.kind == MirOperandKind::Value
+                                ? definitionFor(body, operand.value)
+                                : nullptr;
+                        return input &&
+                               input->kind == MirInstructionKind::CallInput &&
+                               input->callInputKind ==
+                                   HirCallInputKind::ReadTemporaryBorrow;
+                      });
+      if (instruction.kind != MirInstructionKind::Call &&
+          !temporaryConstruction) {
         continue;
       }
+
+      const auto *constructorTarget =
+          temporaryConstruction && instruction.constructorTarget
+              ? program.findConstructorInstance(*instruction.constructorTarget)
+              : nullptr;
+      const auto *constructorOwner =
+          constructorTarget
+              ? program.findClassInstance(constructorTarget->owner)
+              : nullptr;
 
       const MirFunctionInstance *functionTarget =
           instruction.functionTarget
@@ -2189,7 +2228,7 @@ uniqueMirClassInstanceForType(const MirProgram &program,
             instruction.operands[index].kind == MirOperandKind::Value
                 ? definitionFor(body, instruction.operands[index].value)
                 : nullptr;
-        if (argumentInput &&
+        if (!temporaryConstruction && argumentInput &&
             argumentInput->kind == MirInstructionKind::CallInput &&
             argumentInput->callInputKind == HirCallInputKind::MoveValue &&
             argumentInput->info.type.kind == SemanticType::Lambda &&
@@ -2331,13 +2370,34 @@ uniqueMirClassInstanceForType(const MirProgram &program,
               published->kind == MirLoanKind::Stored && !published->entry &&
               !published->escapes &&
               published->producedBy == producer->hirValue;
+          // The result contract is the resolved declaration's, wherever its
+          // body lives: a dispatched interface method, a foreign function and
+          // a source function each publish a fresh value of their declared
+          // return type.
+          // A passive scalar or plain-enum result is fresh whichever callable
+          // produced it: neither a closure invocation nor an intrinsic can
+          // leave it borrowing anything.
+          const bool scalarResult =
+              argumentPlace != nullptr &&
+              producer->info.type == argumentPlace->type &&
+              (isPassiveScalarValueType(argumentPlace->type) ||
+               (argumentPlace->type.kind == SemanticType::Enum &&
+                program.findPayloadEnum(argumentPlace->type) == nullptr));
           exactProducer =
+              scalarResult ||
               (target != nullptr && argumentPlace != nullptr &&
-               target->definitionKind == MirDefinitionKind::Source &&
-               target->linkage == LanguageLinkage::Gti &&
                target->returnType == argumentPlace->type &&
                (target->returnBorrowOrigin == BorrowOriginKind::None ||
                 retainedCarrier));
+        } else if (producer && argumentPlace &&
+                   producer->kind == MirInstructionKind::Compute &&
+                   producer->info.type == argumentPlace->type &&
+                   (isPassiveScalarValueType(argumentPlace->type) ||
+                    (argumentPlace->type.kind == SemanticType::Enum &&
+                     program.findPayloadEnum(argumentPlace->type) == nullptr) ||
+                    (argumentPlace->type.kind == SemanticType::StringView &&
+                     producer->operation == MirOperation::Literal))) {
+          exactProducer = true;
         } else if (producer != nullptr && argumentPlace != nullptr &&
                    producer->kind == MirInstructionKind::Compute &&
                    producer->operation == MirOperation::PayloadConstruct &&
@@ -2392,7 +2452,32 @@ uniqueMirClassInstanceForType(const MirProgram &program,
                                       CallableBoundary::Confined;
                          }));
         const bool supportedResult =
-            supportsEphemeralBorrowResult(functionTarget, instruction.info);
+            temporaryConstruction
+                ? constructorTarget && constructorOwner &&
+                      constructorTarget->borrowOrigin ==
+                          BorrowOriginKind::None &&
+                      constructorOwner->type == instruction.info.type &&
+                      !constructorOwner->traits.containsBorrowedState &&
+                      !instruction.info.traits.containsBorrowedState
+                : supportsEphemeralBorrowResult(functionTarget,
+                                                instruction.info, index);
+        const bool exactTarget =
+            temporaryConstruction
+                ? constructorTarget &&
+                      constructorTarget->definitionKind ==
+                          MirDefinitionKind::Source &&
+                      instruction.constructorKind ==
+                          ConstructorKind::Ordinary &&
+                      index < constructorTarget->parameterTypes.size() &&
+                      constructorTarget->parameterTypes[index] ==
+                          argumentInput->info.type
+                : functionTarget &&
+                      functionTarget->definitionKind ==
+                          MirDefinitionKind::Source &&
+                      functionTarget->linkage == LanguageLinkage::Gti &&
+                      index < functionTarget->parameterTypes.size() &&
+                      functionTarget->parameterTypes[index] ==
+                          argumentInput->info.type;
         const std::size_t argumentObligations =
             argumentPlace == nullptr
                 ? 0
@@ -2406,13 +2491,7 @@ uniqueMirClassInstanceForType(const MirProgram &program,
                                obligation.hirFullExpression != 0 &&
                                obligation.fullExpression != 0;
                       }));
-        if (functionTarget == nullptr ||
-            functionTarget->definitionKind != MirDefinitionKind::Source ||
-            functionTarget->linkage != LanguageLinkage::Gti ||
-            functionTarget->overloadedOperator ||
-            argumentInput->callInputIndex != index ||
-            index >= functionTarget->parameterTypes.size() ||
-            functionTarget->parameterTypes[index] != argumentInput->info.type ||
+        if (!exactTarget || argumentInput->callInputIndex != index ||
             argumentInput->info.type.kind != SemanticType::Reference ||
             argumentInput->info.type.referenceAccess != AccessMode::ReadOnly ||
             argumentInput->info.type.arguments.size() != 1 ||
@@ -2429,6 +2508,8 @@ uniqueMirClassInstanceForType(const MirProgram &program,
               block.id, instruction.id);
         }
       }
+      if (temporaryConstruction)
+        continue;
       const bool exactFunctionCallable =
           functionTarget != nullptr && !instruction.lambdaTarget &&
           (isCallOperatorTarget(functionTarget) ||
@@ -3089,8 +3170,18 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
       if (!result.empty())
         return result;
     }
-    return source ? std::vector<MirLoanDependency>{{.source = *source}}
-                  : std::vector<MirLoanDependency>{};
+    // An owned receiver has no stored loan to supply its permission. Preserve
+    // the actual input borrow, not merely the mutability of its place: a
+    // read-only receiver cannot publish a writable field reference.
+    return source
+               ? std::vector<
+                     MirLoanDependency>{{.source = *source,
+                                         .access =
+                                             operand.kind ==
+                                                     MirOperandKind::BorrowWrite
+                                                 ? AccessMode::Mutable
+                                                 : AccessMode::ReadOnly}}
+               : std::vector<MirLoanDependency>{};
   };
   for (const MirBlock &block : body.blocks) {
     for (const MirInstruction &instruction : block.instructions) {
@@ -3698,6 +3789,14 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
             body, owner,
             "call's caller location differs from canonical source metadata",
             block.id, instruction.id);
+      }
+      if (instruction.intrinsicCallContract &&
+          instruction.intrinsicCallContract->snapshot() !=
+              program.semanticSnapshot()) {
+        return verificationFailure(body, owner,
+                                   "intrinsic call declaration contract "
+                                   "belongs to another semantic snapshot",
+                                   block.id, instruction.id);
       }
       if (instruction.unsafeOperation ==
               UnsafeOperationKind::DeclaredUnsafeCall &&
@@ -6006,9 +6105,30 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
         isPotentiallyBorrowedCarrier(program, sourceType)) {
       for (const auto &block : body.blocks) {
         for (const auto &instruction : block.instructions) {
+          const bool textPublication =
+              instruction.kind == MirInstructionKind::Call &&
+              instruction.result && instruction.hirValue == loan.producedBy &&
+              instruction.info.category == ValueCategory::Value &&
+              (instruction.info.type.kind == SemanticType::StringView ||
+               instruction.info.type.kind == SemanticType::CString) &&
+              instruction.borrowAccess == AccessMode::ReadOnly &&
+              instruction.borrowFields.empty() &&
+              instruction.borrowArguments.empty() &&
+              loan.access == AccessMode::ReadOnly &&
+              loan.designatedFields.empty() &&
+              loan.additionalDependencies.empty() &&
+              ((instruction.borrowOrigin == BorrowOriginKind::Receiver &&
+                instruction.receiver.has_value()) ||
+               (instruction.borrowOrigin == BorrowOriginKind::Argument &&
+                instruction.borrowArgument <
+                    instruction.parameterTypes.size()));
           if (instruction.loan != loan.id ||
-              !isCarrierReferenceResult(program, instruction))
+              (!isCarrierReferenceResult(program, instruction) &&
+               !textPublication))
             continue;
+          // Scalar text publishes its own evaluated value while retaining the
+          // same physical carrier shell and independently verified dependency.
+          // Its owner has fields; the text result must not inherit them.
           const auto &input =
               instruction.borrowOrigin == BorrowOriginKind::Receiver
                   ? instruction.receiver->type
@@ -6017,7 +6137,11 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
                                          input.arguments.size() == 1
                                      ? input.arguments.front()
                                      : input;
-          constructedShell = referent == sourceType;
+          // Relaying text by value keeps its existing external owner. Only
+          // a distinct owner type publishes a new physical text-owner shell.
+          constructedShell =
+              referent == sourceType &&
+              (!textPublication || referent != instruction.info.type);
         }
       }
     }
@@ -18325,7 +18449,7 @@ verifyMirProgramContracts(const MirProgram &program) {
                           "type, access, origin or restoration permission"});
         if ((instruction.intrinsic == IntrinsicKind::TextViewFromAddress ||
              instruction.intrinsic == IntrinsicKind::CStringFromAddress) &&
-            !mir_detail::textAddressResultLoan(body, instruction)) {
+            !mir_detail::textAddressResultLoan(body, instruction, &program)) {
           result.errors.push_back(
               {.bodyKind = body.kind,
                .owner = owner,

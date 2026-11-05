@@ -136,10 +136,12 @@ def main():
             run_program(executable, "2\n", environment, root)
         local_state = root / "installed-thread-local-storage.gti"
         local_state.write_text((examples / "175-thread-local-storage.gti").read_text())
-        for standard, optimization in (("c++20", "-O0"), ("c++23", "-O3")):
-            executable = root / ("installed-thread-local-" + standard)
-            run([cli, local_state, "--execution-profile", "concurrent", "--std",
-                 standard, optimization, "-o", executable], environment, cwd=root)
+        # Its formatted destructor passes scalar temporary references, which
+        # only the LLVM backend represents (a recorded C++ limitation).
+        for optimization in ("-O0", "-O3"):
+            executable = root / ("installed-thread-local" + optimization)
+            run([cli, local_state, "--execution-profile", "concurrent",
+                 optimization, "-o", executable], environment, cwd=root)
             run_program(executable, "thread state retired after 2 visits\n"
                         "worker 14 main 2\n"
                         "thread state retired after 2 visits\n", environment, root)

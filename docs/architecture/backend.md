@@ -2126,6 +2126,11 @@ value parameter. Type rows distinguish body-scoped template overlays from
 program-wide spellings. MIR body emission composes nested class, unique-owner,
 pointer, and reference types from those overlays or a local closure alias;
 it must not reuse a program-wide placeholder for an unnameable closure.
+When several template parameters resolve to the same concrete type, the
+body map keeps the first in-scope alias as its canonical spelling. Exact
+selected-instance signature and substitution validation still precedes this
+reuse; distinct concrete types cannot be conflated by a declaration alias.
+The native template signature retains each source parameter independently.
 The same representation is used for allocation storage, result carriers, and
 borrowed receiver pointers. An exact moved closure parameter may cross the
 transformed failure-call boundary without requiring a local closure definition.
@@ -3788,6 +3793,13 @@ it names one. Every other destination, a bare-binding, field or loan publication
 a failure site, an incomplete two-phase loan schedule, extra uses, and any
 additional lifecycle event on the staging obligation also fail closed.
 
+A moved owning value may replace a mutable field projected from a checked
+call-result referent, including an indexed container element. The
+entire field path must pass the ordinary concrete field/representation proof.
+The checked schedule stages the RHS before the destination accessor, including
+selected operator calls with direct evaluated inputs. The accessor is not
+evaluated again, and the containing owner retains cleanup authority.
+
 A cleanup-free ordinary-constructor result used as an exact by-value argument
 retains representation-only storage at its MIR construction point, for both
 free functions and borrowed-receiver methods/operators. The receiver proof
@@ -4605,6 +4617,15 @@ O0-O3. Separate source-composition oracles use real GTI constructors and
 destructors, not that destructor double: they cover nested payload shell moves,
 constructor rollback and ordinary/emergency failure cleanup. These do not
 select a different C04 failure transport.
+
+Raw pointer arithmetic over an exact mutex-containing object uses its native
+layout witness independently of aggregate-copy eligibility. Placement
+construction admits the selected constructor or a verified generated move;
+the latter uses the existing fresh-shell transfer and retires the consumed
+identity. Neither address calculation nor placement admission authorizes a
+bytewise copy of native mutex state. This permits source-defined containers to
+grow and index synchronized elements without changing their allocation policy
+or adding representation fields.
 
 Native-only process retirement is distinct from general source shutdown.
 Semantics excludes shell-only cleanup from the source-destructor restriction;
@@ -6275,7 +6296,8 @@ The C++ comparator still relocates nested/default scalar fields in
 address-sensitive probes, and rejects the class-array argument/copy/move and
 side-effecting reference-initializer fixtures in its representation vocabulary.
 These cases have explicit native-only
-oracles, not claimed C++ parity; supported comparators still run C++20/C++23.
+oracles, not claimed C++ parity; the scheduled C++ job runs supported
+comparators at `c++23 -O3` only.
 `llvm_target_layout_abi` observes exact post-failure cleanup traces after real
 checked field, array and prepared-return calls, not just terminal exit codes.
 
@@ -6285,6 +6307,19 @@ samples). Executables were 16,848/17,016 bytes; direct builds took 0.213/0.096 s
 The program contains no GTI heap-allocation operation; process-startup
 allocations were not measured. This bounded probe shows no material regression,
 not a general class-backend speedup claim.
+
+Generated owner storage (unique-owner pointees, shared-owner control blocks,
+task boxes and `ObjectAllocation` raw storage) calls the runtime's
+`gti_rt_owner_allocate_v1`/`gti_rt_owner_release_v1` pair, never the
+source-owned process provider. The pair makes exactly the generated C++
+support code's calls: nothrow `operator new`, aligned only for an over-aligned
+request, and the matching `operator delete`, selected again at release from
+the allocation's alignment. A program that replaces those allocation functions
+therefore observes owners identically on both backends, and only a sealed
+source-policy call reaches `gti_rt_posix_memalign_v1`/`gti_rt_aligned_malloc_v1`.
+The pair's calls carry `noalias` results but no `nounwind` or non-null promise.
+It lives in its own runtime object so a program that supplies the provider
+adapters links without the default adapter object (lang-gti-official/gti#200).
 
 ### LLVM Unions And Payloads
 
@@ -6793,11 +6828,14 @@ unsupported record retained as fallback. Malformed base rows, witnesses and
 location records reject before that selection is evaluated.
 
 `tests/llvm_readiness_baseline.json` is the versioned durable readiness
-contract. It pins the frozen-baseline provenance, canonical source providers,
-supported-family obligations, shipped target/profile identities and complete
-O-LLVM-16 gate names without copying body/block/instruction inventories. Exact
-required-use inventories, counts and digests are run artifacts tied to the
-source, compiler, build and target that produced them. Receipts for a different,
+contract. It pins the frozen-baseline provenance, the canonical source
+providers (identity, kind and manifest), supported-family obligations, shipped
+target/profile identities and complete O-LLVM-16 gate names without copying
+body/block/instruction inventories. Provider member counts and inventory
+digests, like exact required-use inventories, are run artifacts tied to the
+source, compiler, build and target that produced them: the audit derives them
+on every run, after resolving every member to a repository file and digesting
+every shipped stdlib source from the tree. Receipts for a different,
 truncated or stale artifact do not apply. The normal focused evidence gate
 emits `gti.llvm.readiness-run/v1` with an explicit
 `focused-schema-control` scope and therefore cannot make a candidate promotion

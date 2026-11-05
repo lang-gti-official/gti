@@ -1,0 +1,54 @@
+import std.format;
+import std.string;
+
+class Counter {
+  int amount;
+public:
+  Counter(int initial) : amount(initial) {}
+  int read() { return this.amount; }
+};
+
+concept readable<T> = requires(T& value) { { value.read() } -> int; };
+int observe(int& value) { return value; }
+int inspect<readable T>(T& value) { return observe(value.read()); }
+void print_value<readable T>(T& value) {
+  std::println("value {}", value.read());
+}
+std::size_t text_size(std::string_view& text) { return text.size(); }
+std::string_view static_text() { return "static"; }
+
+// Scalar and plain-enum results are fresh whichever callable produced them:
+// a closure invocation, an intrinsic or a virtual call.
+interface Shape { int area(); };
+class Square : public Shape {
+  int side;
+public:
+  Square(int side) : side(side) {}
+  int area() override { return this.side * this.side; }
+};
+enum Light { off, on };
+bool lit(Light& light) { return light == Light::on; }
+int dispatched(Shape& shape) { return observe(shape.area()); }
+
+int main() {
+  Counter value{7};
+  if (inspect(value) != 7) { return 1; }
+  print_value(value);
+  bool selected = inspect(value) == 7;
+  if (text_size(selected ? "yes" : "no") != std::size_t(3)) { return 2; }
+  if (text_size(static_text()) != std::size_t(6)) { return 3; }
+  std::string text = std::format("{} {}", "choice", selected ? "yes" : "no");
+  std::println(text);
+  // The first borrowed temporary must publish only after its producing call
+  // succeeds, before evaluation of the next argument branches.
+  std::string owner = "owned";
+  std::println(std::format("{} {}", owner.view(), selected ? "yes" : "no"));
+  auto three = []() -> int { return 3; };
+  auto light = []() -> Light { return Light::on; };
+  std::string_view word = "four";
+  if (observe(three()) != 3 || !lit(light())) { return 4; }
+  Square square{3};
+  if (dispatched(square) != 9) { return 5; }
+  std::runtime_println("closure {} intrinsic {}", three(), word.size());
+  return 0;
+}

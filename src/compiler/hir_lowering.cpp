@@ -29,7 +29,12 @@ public:
     initializeConstant(semantics, provider, completedFunctions,
                        completedConstructors);
     const FunctionInfo *function = semantics.findFunction(root);
-    if (function == nullptr) {
+    // Only callees stage lazily: the requested root must itself be a
+    // completed constexpr definition.
+    if (function == nullptr || function->declaration == nullptr ||
+        !function->declaration->isConstexpr() ||
+        std::find(constantFunctions.begin(), constantFunctions.end(), root) ==
+            constantFunctions.end()) {
       output.program.valid_ = false;
       return std::move(output);
     }
@@ -193,10 +198,13 @@ private:
     constantFunctions = completedFunctions;
     constantConstructors = completedConstructors;
     constantClosure = true;
-    // Preserve source-unit/target identity for failure origins without
-    // claiming completed whole-program semantic analysis.
+    // Preserve source and declaration-proof identity without claiming completed
+    // whole-program semantic analysis. The absent active-statement inventory
+    // still prevents this partial closure from passing whole-program sealing.
     output.program.semanticAnalysisSeal = {
-        .target = target, .sourceGraph = semantics.analysisSeal().sourceGraph};
+        .programSnapshot = semantics.analysisSeal().programSnapshot,
+        .target = target,
+        .sourceGraph = semantics.analysisSeal().sourceGraph};
   }
 
   HirLoweringResult finishConstant() {
@@ -222,6 +230,7 @@ private:
     constantClosure = false;
     constantFunctions.clear();
     constantConstructors.clear();
+    constantUnavailableFunctions.clear();
     instanceIndex = HirInstanceIndex();
     nextValueId = 1;
     nextBindingId = 1;
@@ -574,14 +583,16 @@ private:
                   std::optional<SourceSpan> site = std::nullopt) {
     if (declaration.macroExpansion)
       return 0;
-    if (constantClosure &&
+    // Constant staging is lazy: a callee outside the completed constexpr
+    // closure keeps its exact signature but no body, and the MIR evaluator
+    // rejects the request only if execution reaches the call. Its own body is
+    // never lowered, so nothing it would call is discovered either.
+    const bool constantUnavailable =
+        constantClosure &&
         (declaration.declaration == nullptr ||
          !declaration.declaration->isConstexpr() ||
          std::find(constantFunctions.begin(), constantFunctions.end(),
-                   declaration.id) == constantFunctions.end())) {
-      lifecycleValid = false;
-      return 0;
-    }
+                   declaration.id) == constantFunctions.end());
     // Calls can discover an instance through individual arguments or through
     // one forwarded pack. Virtual members are also seeded from declarations.
     // These paths must publish the same concrete signature; source pack
@@ -652,11 +663,14 @@ private:
           freeFunction ? std::vector<CompileTimeValue>{} : classValueArguments,
           functionTypeArguments, functionValueArguments, id);
     }
+    if (constantUnavailable)
+      constantUnavailableFunctions.push_back(id);
     output.program.functions.push_back(
         {.id = id,
          .sourceUnit = declaration.sourceUnit,
          .declaration = declaration.id,
-         .source = declaration.bodyDeclaration(),
+         .source =
+             constantUnavailable ? nullptr : declaration.bodyDeclaration(),
          .owner = owner,
          .typeArguments = std::move(functionTypeArguments),
          .valueArguments = std::move(functionValueArguments),
@@ -2292,8 +2306,62 @@ private:
     return false;
   }
 
+  // A callee outside the completed constant closure keeps a canonical
+  // declaration body: one binding per parameter, with the instance's exact
+  // concrete type, and no statements. Neither its semantic body facts nor a
+  // concrete reanalysis are needed, because evaluation never enters it.
+  void lowerSignatureOnlyFunction(std::size_t index,
+                                  const FunctionInfo &declaration) {
+    const FunctionDecl *source = declaration.bodyDeclaration() != nullptr
+                                     ? declaration.bodyDeclaration()
+                                     : declaration.declaration;
+    const std::vector<SemanticType> concrete =
+        output.program.functions[index].parameterTypes;
+    HirBody body;
+    std::vector<HirBindingId> parameterBindings;
+    std::size_t next = 0;
+    for (const Parameter &parameter : source->parameters()) {
+      const BindingInfo *info = baseModel->findBinding(parameter);
+      BindingInfo binding =
+          info == nullptr ? makeBindingInfo(SemanticType::Unknown) : *info;
+      if (parameter.pack) {
+        binding.type = SemanticType::concreteTypePack(
+            binding.type.genericParameterId,
+            std::vector<SemanticType>(concrete.begin() + next, concrete.end()));
+        next = concrete.size();
+      } else if (next < concrete.size()) {
+        binding.type = concrete[next++];
+      } else {
+        lifecycleValid = false;
+        return;
+      }
+      const HirBindingId id = nextBindingId++;
+      body.bindings.push_back(
+          {.id = id, .parameter = &parameter, .info = std::move(binding)});
+      parameterBindings.push_back(id);
+    }
+    if (next != concrete.size()) {
+      lifecycleValid = false;
+      return;
+    }
+    output.program.functions[index].body = std::move(body);
+    output.program.functions[index].parameterBindings =
+        std::move(parameterBindings);
+  }
+
   void processFunction(std::size_t index) {
     const HirFunctionInstance snapshot = output.program.functions[index];
+    if (std::find(constantUnavailableFunctions.begin(),
+                  constantUnavailableFunctions.end(),
+                  snapshot.id) != constantUnavailableFunctions.end()) {
+      if (const FunctionInfo *declaration =
+              baseModel->findFunction(snapshot.declaration);
+          declaration != nullptr && declaration->declaration != nullptr)
+        lowerSignatureOnlyFunction(index, *declaration);
+      else
+        lifecycleValid = false;
+      return;
+    }
     const FunctionInfo *declaration =
         baseModel->findFunction(snapshot.declaration);
     if (declaration == nullptr || declaration->declaration == nullptr) {
@@ -3854,6 +3922,13 @@ private:
                  const std::vector<SemanticType> &classArguments,
                  const std::vector<CompileTimeValue> &classValueArguments,
                  HirBody &body) {
+    // Macro expansions lower inline, so statement and expression nesting is
+    // bounded by CompileLimits::macroDepth rather than by written syntax.
+    if (nativeStackNearlyExhausted())
+      return onFreshNativeStack([&] {
+        return lowerStatement(statement, model, classArguments,
+                              classValueArguments, body);
+      });
     const std::optional<HirStatementId> lowered = lowerStatementImpl(
         statement, model, classArguments, classValueArguments, body);
     if (lowered && statement != nullptr && !body.statements.empty() &&
@@ -4586,12 +4661,11 @@ private:
             parameter.referenceAccess != AccessMode::ReadOnly ||
             parameter.arguments.size() != 1 ||
             parameter.arguments.front() != input->info.type ||
-            (input->info.type.kind != SemanticType::Class &&
-             input->info.type.kind != SemanticType::Enum &&
-             input->info.type.kind != SemanticType::Lambda &&
-             input->info.type.kind != SemanticType::FunctionItem) ||
+            !isTemporaryBorrowReferentType(input->info.type) ||
             input->info.category != ValueCategory::Value ||
             (input->info.traits.containsBorrowedState &&
+             input->info.type.kind != SemanticType::Class &&
+             input->info.type.kind != SemanticType::StringView &&
              (input->kind != HirValueKind::Lambda ||
               input->captureBorrowDependencies.empty()))) {
           return std::nullopt;
@@ -4645,11 +4719,11 @@ private:
   }
 
   [[nodiscard]] std::optional<std::vector<HirCallArgument>>
-  orderedConstructorArguments(const HirValue &constructor,
-                              const std::vector<HirValueId> &arguments,
-                              const std::vector<SemanticType> &parameterTypes,
-                              const HirBody &body,
-                              std::size_t explicitArgumentCount) const {
+  orderedConstructorArguments(
+      const HirValue &constructor, const std::vector<HirValueId> &arguments,
+      const std::vector<SemanticType> &parameterTypes, const HirBody &body,
+      std::size_t explicitArgumentCount,
+      std::span<const std::size_t> ephemeralBorrowArguments = {}) const {
     if (!constructor.constructorTarget ||
         constructor.constructorKind != ConstructorKind::Ordinary ||
         (constructor.intrinsic != IntrinsicKind::None &&
@@ -4657,7 +4731,7 @@ private:
       return std::nullopt;
     }
     return orderedArguments(arguments, parameterTypes, body,
-                            explicitArgumentCount);
+                            explicitArgumentCount, ephemeralBorrowArguments);
   }
 
   [[nodiscard]] std::optional<HirCallReceiver>
@@ -4868,7 +4942,9 @@ private:
         orderedReceiver(receiverValue, resolved.receiverMutability,
                         resolved.receiverMode, body);
     const std::optional<std::vector<HirCallArgument>> plannedArguments =
-        orderedArguments(arguments, resolved.parameterTypes, body);
+        orderedArguments(arguments, resolved.parameterTypes, body,
+                         std::numeric_limits<std::size_t>::max(),
+                         resolved.ephemeralBorrowArguments);
     if (!plannedReceiver || !plannedArguments) {
       lifecycleValid = false;
       return;
@@ -5765,6 +5841,11 @@ private:
                   const std::vector<SemanticType> &classArguments,
                   const std::vector<CompileTimeValue> &classValueArguments,
                   HirBody &body) {
+    if (nativeStackNearlyExhausted())
+      return onFreshNativeStack([&] {
+        return lowerExpression(expression, model, classArguments,
+                               classValueArguments, body);
+      });
     ensurePlaceDomain(body);
     if (const Token *caller = model.findMacroDefault(expression);
         caller && !activeDefaultArguments.contains(&expression))
@@ -6314,7 +6395,8 @@ private:
       for (const LambdaCapture &capture : lambda->captures()) {
         lowerOperand(capture.initializer);
       }
-    } else if (exprAs<MemberRequirement>(raw) != nullptr) {
+    } else if (exprAs<MemberRequirement>(raw) != nullptr ||
+               exprAs<ConceptTest>(raw) != nullptr) {
       kind = HirValueKind::Literal;
       if (const auto constant = model.findConstant(*raw)) {
         if (const auto *value = std::get_if<bool>(&*constant))
@@ -6746,6 +6828,8 @@ private:
           (void)seedConcreteDeclarationType(*value.objectLayoutType);
         }
         value.neverReturns = resolved->neverReturns;
+        value.intrinsicCallContractProof =
+            model.intrinsicCallContractProof(*call);
         value.noNormalBorrowResultProof =
             model.noNormalBorrowResultProof(*call);
         value.tracksCaller = resolved->tracksCaller;
@@ -7337,10 +7421,16 @@ private:
                          value.operands.end());
       }
       const ResolvedCallInfo *resolved = model.findCall(*call);
+      // A selected operator() records its call-scoped temporary arguments on
+      // the operator resolution, as every overloaded operator does.
+      const ResolvedOperatorInfo *selectedOperator = model.findOperator(*call);
       const std::span<const std::size_t> ephemeralBorrowArguments =
-          resolved == nullptr ? std::span<const std::size_t>{}
-                              : std::span<const std::size_t>{
-                                    resolved->ephemeralBorrowArguments};
+          selectedOperator != nullptr
+              ? std::span<const std::size_t>{selectedOperator
+                                                 ->ephemeralBorrowArguments}
+          : resolved == nullptr ? std::span<const std::size_t>{}
+                                : std::span<const std::size_t>{
+                                      resolved->ephemeralBorrowArguments};
       const std::optional<std::vector<HirCallArgument>> plannedArguments =
           exactOperands
               ? orderedArguments(arguments, value.parameterTypes, body,
@@ -7569,9 +7659,10 @@ private:
               ? exprAs<DirectInitializer>(raw)->arguments().size()
               : value.parameterTypes.size();
       if (std::optional<std::vector<HirCallArgument>> plannedArguments =
-              orderedConstructorArguments(value, arguments,
-                                          value.parameterTypes, body,
-                                          explicitArgumentCount)) {
+              orderedConstructorArguments(
+                  value, arguments, value.parameterTypes, body,
+                  explicitArgumentCount,
+                  model.findConstruction(*raw)->ephemeralBorrowArguments)) {
         value.callPlan = HirCallPlan{.receiver = std::nullopt,
                                      .arguments = std::move(*plannedArguments)};
       }
@@ -7598,7 +7689,10 @@ private:
           receiver->info.category == ValueCategory::Value &&
           receiver->info.type.kind == SemanticType::Class &&
           receiver->info.traits.containsBorrowedState;
-      if ((freshReceiver || borrowedValueReceiver || explicitConversion) &&
+      const bool temporaryArguments =
+          resolved != nullptr && !resolved->ephemeralBorrowArguments.empty();
+      if ((freshReceiver || borrowedValueReceiver || explicitConversion ||
+           temporaryArguments) &&
           value.operands.size() >= value.parameterTypes.size() + 1) {
         const HirValueId receiverValue = value.operands.front();
         std::vector<HirValueId> arguments(
@@ -7609,7 +7703,9 @@ private:
             orderedReceiver(receiverValue, resolved->receiverMutability,
                             resolved->receiverMode, body);
         const std::optional<std::vector<HirCallArgument>> plannedArguments =
-            orderedArguments(arguments, value.parameterTypes, body);
+            orderedArguments(arguments, value.parameterTypes, body,
+                             std::numeric_limits<std::size_t>::max(),
+                             resolved->ephemeralBorrowArguments);
         if (plannedReceiver && plannedArguments) {
           value.receiver = receiverValue;
           value.callPlan = HirCallPlan{.receiver = *plannedReceiver,
@@ -7687,6 +7783,9 @@ private:
   std::vector<InstanceDiscovery> destructorDiscoveryDepths;
   std::vector<FunctionId> constantFunctions;
   std::vector<ConstructorId> constantConstructors;
+  // Signature-only instances of callees outside the completed constant
+  // closure; see enqueueFunction.
+  std::vector<HirFunctionInstanceId> constantUnavailableFunctions;
   std::size_t processedClasses = 0;
   HirInstanceIndex instanceIndex;
   std::size_t processedFunctions = 0;

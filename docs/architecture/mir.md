@@ -18,6 +18,42 @@ element; subsequent fields and selected operators project from the reference
 carrier, not from the coarser range origin. The lowering query preserves this
 distinction without changing access permissions, active-loan rules or endpoints.
 
+A text result whose owner is a reference to a borrowed carrier retains its own
+producing loan. Its parent protects the carrier's physical storage, while the
+separate stored dependency retains the carrier's external owners. A local text
+binding is not a value copy of that differently typed entry carrier. Returning
+text publishes its exact evaluated SSA value alongside the owner loan: the
+value is the producing call's result or a copy from its retained local carrier.
+The owner address is never a substitute for the text representation. A shared
+reborrow through a receiver's nested reference field likewise retains the
+abstract entry's selected permission; read-only access to the carrier shell
+does not erase an exclusive field's authority or upgrade the shared child.
+While that shared child retains an exclusive entry, operations through the
+carrier remain suspended, including read-only methods, just as for a named
+borrowed carrier. Direct access to unrelated owned fields and shared reads
+through plain references retain their separate permissions. A shared local
+reborrow of an exclusive formal carrier, such as a reference binding or the
+range binding of `for (x : formal)`, retains the formal's stored dependency.
+A shared mapped result read through that reborrow selects the dependency as
+its parent; the suspended formal shell is the reborrow's ancestor rather than
+a competing sibling. The reborrow never selects it for an exclusive result,
+and the formal itself stays suspended until the result ends.
+
+A returned carrier assembled from independent reference-returning calls keeps
+the parent of each additional input separately. Its second input is not a child
+of the first input's unrelated storage. Field-mapped return verification also
+preserves an owned receiver's explicit input borrow permission, without deriving
+writable access merely from a mutable place. These are compile-time provenance
+facts; they introduce no runtime loan state or allocation.
+
+A temporary view of a carrier's physical storage retains the carrier's
+external authority as one stored dependency. If selecting the receiver also
+selected that same authority as a parent, lowering removes the duplicate
+parent edge. This applies to shared cleanup-bound owners as well as exclusive
+carriers; it does not remove the dependency or shorten its cleanup lifetime.
+The verifier continues to reject duplicate parent/dependency identities and
+retirement of an independently owned provider before its dependent cleanup.
+
 Unique allocation of an already-built class value uses the selected generated
 copy/move policy. HIR stages a generated move as a consuming same-type value,
 not as a callable shared-reference formal. MIR reuses the separate checked
@@ -84,13 +120,25 @@ the selected declaration contract and that continuation. A terminal source
 function cannot contain a reachable `Return`.
 
 Caller transport is a separate fact from failure effects. A tracked MIR call
+to a trusted intrinsic retains an immutable, AST-free declaration contract
+issued by semantics, including its declaration identity, intrinsic identity,
+control flags and semantic snapshot. HIR checks the source call that selected
+that contract; MIR checks the flags and snapshot independently. Intrinsics do
+not acquire an ordinary executable function target merely to carry attributes.
+The sealed declaration inventory retains those selected intrinsic declarations
+even without executable instances. The same semantic control witness seals
+ordinary declaration flags, including declarations without a retained body;
+each MIR intrinsic witness must equal its exact sealed declaration witness.
+A tracked MIR call
 contains the exact semantic `CallerLocationOrigin`, its canonical artifact-local
 site ID, and whether the enclosing tracked function forwards its incoming token.
 `MirBody::hasCallerLocation` must agree with its concrete function declaration.
 `FailureMetadata` binds caller anchors separately from actual detector origins;
 the artifact descriptor admits the union of genuine detector outcomes and the
-bounded caller-tracked terminal outcomes at caller anchors: explicit panic,
-inactive success access, and inactive error access. A caller anchor does not
+bounded caller-tracked terminal outcomes and the checked local outcomes of
+explicitly tracked intrinsic declarations at caller anchors. This includes
+nonterminal condition checks such as missing-key detection. The metadata keeps
+this reporting inventory separate from local detector assignments. A caller anchor does not
 invent a local detector or make a failure-free wrapper fallible. Inline and
 cold record publication both select that same verified caller token; the
 detected category and detail remain those of the exact intrinsic.
@@ -453,7 +501,10 @@ including dependencies transported through generic parameters and fields.
 No native address or public library spelling replaces those checked facts.
 
 A cleanup-owning borrowed result uses the same success-only call publication
-protocol whether its source type is a class or payload enum. A failure-capable
+protocol whether its source type is a class or payload enum, and whether or
+not that type is movable: an immovable object with a stored reference is
+constructed in its final storage, which does not make its construction
+infallible or its obligation active before success. A failure-capable
 producer initializes its result obligation only on the Invoke success edge;
 the failed call publishes neither the result nor its dependent reference.
 Borrow metadata does not turn an owning result into a reference-only call or
@@ -2879,6 +2930,10 @@ A `MirBody` owns:
   retains the source HIR identity, exact place, bounds origin and assigned
   failure site, and its successful `Invoke` edge precedes publication. Other
   origin and propagation families remain on the operation that owns them.
+  Temporary argument loans end in reverse staging order on both invocation
+  successors. A terminal call still publishes that epilogue before sealing its
+  normal successor as `Unreachable`; no-return control flow does not erase
+  full-expression borrow or failure-cleanup obligations.
   Scheduled ordinary constructors use this same path:
   written, defaulted, and pack-expanded inputs retain prepared-parameter
   places across later argument evaluation and transfer at `Construct`, not at
@@ -2934,7 +2989,9 @@ A `MirBody` owns:
   drop or borrowed-state traits. Pack and scoped-task
   verification consume those same published nominal facts;
 - ordinary staged calls for a concrete bounded call fold, with exact
-  read-only `PackElement` places. HIR retains the source fold and selected
+  `PackElement` places. Reference elements preserve their declared access;
+  mutable calls use the element's ordinary entry loan and read-only reborrows
+  cannot strengthen that capability. HIR retains the source fold and selected
   expansion; executable MIR contains no `MirOperation::PackFold`. Earlier
   expression-inventory descriptions of that operation are historical, not a
   second execution path. An empty expansion emits no input evaluation or call;
@@ -3789,7 +3846,10 @@ class field completed from one owning constructed temporary is an explicit
 `ConstructionRollback` obligation on the exact This-rooted field place; every
 defined-failure edge of the constructor body drains the armed set in reverse
 stage order behind one failure cleanup boundary, and normal completion
-retires it by transfer to the caller. A constructor that
+retires it by transfer to the caller. Normal completion follows the body's
+scope-exit drops: a failing body-local destructor is a defined-failure edge
+of the constructor, so its drain still rolls back every completed field
+(lang-gti-official/gti#198). A constructor that
 silently transfers any subobject into `this` without arming rollback (the
 owned-parameter and other unstaged initializer forms) routes no
 defined-failure edges at all — the lowering decides body-wide before any
@@ -4793,6 +4853,10 @@ the slot's exact value-drop obligation definitely live at the borrow on
 every incoming path; the non-escaping loan still ends before its later
 transfer or cleanup. This applies equally to ordinary conditional results
 and scoped macro results, without a library-type exception.
+A passive scalar or plain-enum value owns no storage another value could
+borrow, so any call that publishes one, including a closure invocation or an
+intrinsic, is an admissible producer; the other referent families keep their
+exact construction, callable or source-call producers.
 The loan is active while later arguments are prepared and ends in
 reverse temporary-argument order immediately after the call, or at the start
 of both normal and failure successors for an `Invoke`. The producer's one
@@ -4801,7 +4865,7 @@ branch-only value it is the conditional drop after the merge, and failure
 edges inside the arm drop the definitely active slot. Verification rejects a
 mutable/projected/wrong-type place, a hidden slot detached from the exact
 producer identity or naming another temporary's slot, a native or
-declaration-only producer/target, borrowed state, an escaping result,
+declaration-only target or non-scalar producer, borrowed state, an escaping result,
 producer/input reordering, premature or missing loan ending, and a missing,
 duplicate or unconditional post-merge drop. The backend therefore consumes a
 complete schedule rather than relying on C++ reference lifetime rules.

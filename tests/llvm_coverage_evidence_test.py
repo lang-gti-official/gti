@@ -176,12 +176,10 @@ def load_baseline(path: Path, root: Path) -> tuple[dict, dict[str, dict],
         if provider_id != "registered-llvm-evidence":
             repository_path(root, provider.get("manifest"),
                             f"provider {provider_id} manifest")
-        require(isinstance(provider.get("member_count"), int) and
-                provider["member_count"] > 0,
-                f"provider {provider_id} member_count must be positive")
-        fingerprint = provider.get("inventory_sha256")
-        require(isinstance(fingerprint, str) and len(fingerprint) == 64,
-                f"provider {provider_id} inventory_sha256 must be SHA-256")
+        # A provider's member count and inventory digest are derived from the
+        # tree on every run (provider_identity). A pinned copy went stale
+        # whenever two PRs that each grew a provider merged in sequence, so
+        # legacy `member_count`/`inventory_sha256` fields are ignored.
     return baseline, providers, targets, gates
 
 
@@ -294,19 +292,18 @@ def load_registry(registry: Path, root: Path,
 def example_provider_inventory(root: Path, provider: dict) -> dict:
     manifest_path = repository_path(root, provider["manifest"],
                                     "shipped examples manifest")
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    examples = manifest.get("examples")
-    require(isinstance(examples, dict) and examples,
-            "shipped examples census must be nonempty")
+    # Membership is the shipped corpus itself. The census baseline may lag it:
+    # an added example stays unrecorded there until the next --refresh-all.
+    examples = sorted(path.name for path in (root / "examples").glob("*.gti"))
+    require(examples, "shipped examples corpus must be nonempty")
     members = []
-    for name in sorted(examples):
+    for name in examples:
         source = repository_path(root, f"examples/{name}",
                                  f"shipped example {name}")
         members.append({"path": source.relative_to(root).as_posix(),
                         "sha256": file_digest(source)})
     return {
         "manifest": manifest_path.relative_to(root).as_posix(),
-        "manifest_sha256": file_digest(manifest_path),
         "members": members,
     }
 
@@ -315,16 +312,19 @@ def stdlib_provider_inventory(root: Path, provider: dict) -> dict:
     manifest_path = repository_path(root, provider["manifest"],
                                     "stdlib surface manifest")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    fingerprints = manifest.get("source_fingerprints")
     cases = manifest.get("cases")
-    require(isinstance(fingerprints, dict) and fingerprints,
-            "stdlib surface source inventory must be nonempty")
+    # The source census is the shipped tree, the same set the surface manifest
+    # must classify; digesting it here keeps the inventory tied to the exact
+    # sources without a stored copy of their hashes.
+    from stdlib_surface_test import stdlib_sources
+    source_digests = {}
+    for path in stdlib_sources(root.resolve()):
+        relative = path.relative_to(root.resolve()).as_posix()
+        source = repository_path(root, relative, f"stdlib source {relative}")
+        source_digests[relative] = file_digest(source)
+    require(source_digests, "stdlib surface source inventory must be nonempty")
     require(isinstance(cases, list) and cases,
             "stdlib surface case inventory must be nonempty")
-    for relative, expected in fingerprints.items():
-        source = repository_path(root, relative, f"stdlib source {relative}")
-        require(file_digest(source) == expected,
-                f"stdlib surface source identity drifted: {relative}")
     case_inventory = []
     for case in cases:
         case_id = case.get("id")
@@ -346,8 +346,7 @@ def stdlib_provider_inventory(root: Path, provider: dict) -> dict:
         })
     return {
         "manifest": manifest_path.relative_to(root).as_posix(),
-        "manifest_sha256": file_digest(manifest_path),
-        "source_fingerprints": fingerprints,
+        "source_digests": source_digests,
         "cases": case_inventory,
     }
 
@@ -361,8 +360,13 @@ def registered_provider_inventory(root: Path, modules: dict) -> dict:
     return {"manifests": manifests}
 
 
-def validate_provider_inventory(provider_id: str, provider: dict,
-                                inventory: dict) -> None:
+def provider_identity(provider_id: str, inventory: dict) -> dict:
+    """The provider's member count and inventory digest, derived from the tree.
+
+    The inventory functions already resolve every member to a repository file
+    and digest each stdlib source from the tree; the count and digest are
+    recorded in the run summary, never pinned in the baseline.
+    """
     if provider_id == "shipped-examples":
         count = len(inventory["members"])
     elif provider_id == "stdlib-surface":
@@ -370,35 +374,35 @@ def validate_provider_inventory(provider_id: str, provider: dict,
     else:
         count = sum(len(manifest["sources"])
                     for manifest in inventory["manifests"].values())
-    require(count == provider["member_count"],
-            f"provider {provider_id} member count drifted: expected "
-            f"{provider['member_count']}, found {count}")
-    actual = digest(inventory)
-    require(actual == provider["inventory_sha256"],
-            f"provider {provider_id} inventory drifted: expected "
-            f"{provider['inventory_sha256']}, found {actual}")
+    require(count > 0, f"provider {provider_id} inventory is empty")
+    return {"member_count": count, "inventory_sha256": digest(inventory)}
 
 
 def provider_mutation_controls(providers: dict[str, dict],
                                inventories: dict[str, dict]) -> None:
     identity = "shipped-examples"
-    stale = deepcopy(providers[identity])
-    stale["inventory_sha256"] = "0" * 64
+    emptied = deepcopy(inventories[identity])
+    emptied["members"].clear()
     try:
-        validate_provider_inventory(identity, stale, inventories[identity])
+        provider_identity(identity, emptied)
     except AssertionError:
         pass
     else:
-        raise AssertionError("stale canonical source-provider identity passed")
-
-    truncated = deepcopy(inventories[identity])
-    truncated["members"].pop()
-    try:
-        validate_provider_inventory(identity, providers[identity], truncated)
-    except AssertionError:
-        pass
-    else:
-        raise AssertionError("truncated canonical source provider passed")
+        raise AssertionError("empty canonical source provider passed")
+    changed = deepcopy(inventories[identity])
+    changed["members"][0]["sha256"] = "0" * 64
+    require(provider_identity(identity, changed)["inventory_sha256"] !=
+            provider_identity(identity, inventories[identity])["inventory_sha256"],
+            "a changed provider member left the inventory digest unchanged")
+    # A stdlib source edit must move the surface provider's identity even
+    # though no stored source hash records it.
+    identity = "stdlib-surface"
+    changed = deepcopy(inventories[identity])
+    first = next(iter(changed["source_digests"]))
+    changed["source_digests"][first] = "0" * 64
+    require(provider_identity(identity, changed)["inventory_sha256"] !=
+            provider_identity(identity, inventories[identity])["inventory_sha256"],
+            "a changed stdlib source left the surface inventory digest unchanged")
 
 
 def profile_sources(root: Path, modules: dict) -> dict:
@@ -1252,11 +1256,10 @@ def readiness_summary(report: dict, baseline_path: Path, baseline: dict,
             "provenance": baseline["provenance"],
             "providers": {
                 identity: {
-                    "member_count": provider["member_count"],
-                    "inventory_sha256": digest(provider_inventories[identity]),
+                    **provider_identity(identity, provider_inventories[identity]),
                     "status": "full-use-artifact-unrun",
                 }
-                for identity, provider in sorted(providers.items())
+                for identity in sorted(providers)
             },
             "required_targets": sorted(targets),
             "required_gates": sorted(gates),
@@ -1334,9 +1337,8 @@ def main() -> None:
             root, providers["stdlib-surface"]),
         "registered-llvm-evidence": registered_provider_inventory(root, modules),
     }
-    for identity, provider in providers.items():
-        validate_provider_inventory(identity, provider,
-                                    provider_inventories[identity])
+    for identity in providers:
+        provider_identity(identity, provider_inventories[identity])
     provider_mutation_controls(providers, provider_inventories)
     registry_mutation_controls(registry, root, inventory)
     manifest_mutation_controls(root, modules)

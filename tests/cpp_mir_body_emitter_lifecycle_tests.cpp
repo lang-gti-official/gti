@@ -16250,6 +16250,18 @@ void testClassStoresIntoNamedPlaces() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-class-store-named-places.gti", R"(
 import std.vector;
+import std.memory;
+struct Holder {
+  mut std::unique_ptr<int> value;
+  Holder(std::unique_ptr<int> input) : value(std::move(input)) {}
+};
+int32_t projected_move() {
+  mut std::vector<Holder> values{};
+  values.push_back(Holder(std::make_unique<int>(1)));
+  std::unique_ptr<int> replacement = std::make_unique<int>(2);
+  values[std::size_t(0)].value = std::move(replacement);
+  return *values[std::size_t(0)].value - 2;
+}
 struct Point {
   int32_t x;
   int32_t y;
@@ -16273,7 +16285,7 @@ int32_t subscript(Point q) {
 }
 int main() {
   return to_global(Point(5, 4)) + fresh_global(5) + from_global() +
-         captured(Point(5, 4)) + subscript(Point(5, 4)) - 28;
+         captured(Point(5, 4)) + subscript(Point(5, 4)) - 28 + projected_move();
 }
 )");
   expect(frontend.canGenerateCode(),
@@ -16291,7 +16303,8 @@ int main() {
           ? &frontend.mir.lambdaInstances().front()
           : nullptr;
   const std::vector<std::string> names{"to_global", "fresh_global",
-                                       "from_global", "subscript"};
+                                       "from_global", "subscript",
+                                       "projected_move"};
   const bool lowered =
       lambda != nullptr &&
       std::all_of(names.begin(), names.end(),
@@ -16371,6 +16384,31 @@ int main() {
         }
   expect(loanChanged && functionText(readOnlyLoan, "subscript").empty(),
          "a read-only loan is not a destination the copy may fuse into");
+  expect(!functionText(frontend.mir, "projected_move").empty(),
+         "an owning field of the checked referent accepts its exact moved RHS");
+  for (unsigned mutation = 0; mutation < 3; ++mutation) {
+    auto malformed = frontend.mir;
+    auto *function = const_cast<lang::MirFunctionInstance *>(
+        malformed.findFunctionInstance(idOf("projected_move")));
+    bool changed = false;
+    for (auto &loan : function->body.loans) {
+      if (loan.kind != lang::MirLoanKind::CallResult ||
+          loan.access != lang::AccessMode::Mutable || loan.escapes)
+        continue;
+      changed = true;
+      if (mutation == 0)
+        loan.access = lang::AccessMode::ReadOnly;
+      if (mutation == 1)
+        loan.twoPhase = true;
+      if (mutation == 2)
+        loan.producedBy = 0;
+    }
+    expect(changed && !lang::verifyMirProgram(malformed).valid(),
+           "projected owning replacement retains mutable, ordered, exact "
+           "producer authority");
+    expect(functionText(malformed, "projected_move").empty(),
+           "C++ replacement refuses malformed projected destination authority");
+  }
   lang::MirProgram readOnlyCapture = frontend.mir;
   bool captureChanged = false;
   for (auto &instance : const_cast<std::vector<lang::MirLambdaInstance> &>(

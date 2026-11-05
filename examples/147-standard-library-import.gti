@@ -7,7 +7,7 @@ int main() {
   values.push_back(20);
   values.push_back(22);
   int32_t total = values[std::size_t(0)] + values[std::size_t(1)];
-  std::string message = std::format("aggregate import: {}", total);
+  std::string message = std::runtime_format("aggregate import: {}", total);
   std::println(message.view());
   return total == 42 ? 0 : 1;
 }

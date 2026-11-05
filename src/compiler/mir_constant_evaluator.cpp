@@ -1,5 +1,6 @@
 #include "gti/mir_constant_evaluator.h"
 #include "gti/mir_verifier.h"
+#include "gti/support.h"
 #include "mir_verification_queries.h"
 
 #include <algorithm>
@@ -139,12 +140,19 @@ public:
                       "constant evaluation finishes.";
     }
     result.steps = steps;
+    // A bulk charge that would overrun the budget fails where it is made,
+    // without a frame of its own; it is still the request's step limit.
+    if (result.failure == ConstantEvaluationFailure::ResourceLimit &&
+        result.exhaustedLimit == nullptr && stepLimitReached)
+      result.exhaustedLimit = &CompileLimits::constexprSteps;
     return result;
   }
 
 private:
   ConstantEvaluationFailure persistentValue(const ConstantValue &value,
                                             std::size_t depth = 0) {
+    if (nativeStackNearlyExhausted())
+      return onFreshNativeStack([&] { return persistentValue(value, depth); });
     const auto *node = std::get_if<ConstantAggregateValue>(&value);
     if (!node)
       return ConstantEvaluationFailure::None;
@@ -328,8 +336,75 @@ private:
             .detail = std::move(detail)};
   }
 
+  MirConstantEvaluation stepLimitFailure(const Frame &frame) {
+    auto result = fail(frame, ConstantEvaluationFailure::ResourceLimit,
+                       "Constant MIR execution-step limit exceeded.");
+    result.exhaustedLimit = &CompileLimits::constexprSteps;
+    stepLimitReached = true;
+    return result;
+  }
+
+  // limits.callDepth is what remains of the request's configured depth after
+  // any enclosing staged evaluations; the caller names the configured value.
+  MirConstantEvaluation depthLimitFailure(const Frame &frame) {
+    auto result = fail(frame, ConstantEvaluationFailure::ResourceLimit,
+                       "The constexpr call depth exceeded the compiler limit.");
+    result.exhaustedLimit = &CompileLimits::constexprDepth;
+    return result;
+  }
+
+  // A terminal failure stops the request with the message the operation would
+  // report at run time. This is the trusted operation's own compile-time
+  // meaning, bound by its declaration identity, not a rule for any wrapper.
+  MirConstantEvaluation terminalFailure(Frame &frame,
+                                        const MirInstruction &instruction) {
+    std::string message;
+    switch (instruction.intrinsic) {
+    case IntrinsicKind::Panic: {
+      if (instruction.operands.size() != 1)
+        return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+      auto text = operand(frame, instruction.operands.front());
+      if (!text)
+        return fail(frame, text.failure);
+      const auto *bytes = std::get_if<std::string>(&*text.value);
+      if (bytes == nullptr)
+        return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+      message = *bytes;
+      break;
+    }
+    case IntrinsicKind::FailEmptyOwner:
+      message = "An empty owner was accessed.";
+      break;
+    case IntrinsicKind::FailInactiveValue:
+      message = "The value of an expected holding an error was accessed.";
+      break;
+    case IntrinsicKind::FailInactiveError:
+      message = "The error of an expected holding a value was accessed.";
+      break;
+    default:
+      return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+    }
+    return fail(frame, ConstantEvaluationFailure::Panicked, std::move(message));
+  }
+
   MirConstantEvaluation throughCall(MirConstantEvaluation result,
                                     const Frame &caller) const {
+    // A [[track_caller]] function reports a terminal failure at the call that
+    // reached it, exactly as its run-time failure report does, so the
+    // innermost location is the call its user wrote.
+    if (result.failure == ConstantEvaluationFailure::Panicked &&
+        result.calls.empty() && result.body.kind == MirBodyKind::Function) {
+      const auto *callee = program.findFunctionInstance(result.body.owner);
+      if (callee != nullptr && callee->tracksCaller) {
+        result.function = caller.address.kind == MirBodyKind::Function
+                              ? caller.address.owner
+                              : 0;
+        result.body = caller.address;
+        result.block = caller.block;
+        result.instruction = caller.instruction;
+        return result;
+      }
+    }
     constexpr std::size_t limit = 8;
     if (result.calls.empty())
       result.calls.reserve(limit);
@@ -581,8 +656,10 @@ private:
   }
 
   bool charge(std::size_t amount) {
-    if (amount > limits.steps - std::min(steps, limits.steps))
+    if (amount > limits.steps - std::min(steps, limits.steps)) {
+      stepLimitReached = true;
       return false;
+    }
     steps += amount;
     return true;
   }
@@ -648,6 +725,9 @@ private:
   ConstantEvaluationFailure measureValue(const ConstantValue &value,
                                          std::size_t &units,
                                          std::size_t depth = 0) {
+    if (nativeStackNearlyExhausted())
+      return onFreshNativeStack(
+          [&] { return measureValue(value, units, depth); });
     if (depth >= limits.callDepth || !charge(1) || units >= limits.heapUnits)
       return ConstantEvaluationFailure::ResourceLimit;
     ++units;
@@ -1114,10 +1194,15 @@ private:
 
   MirConstantEvaluation destroy(const MirDropType &recipe, Location location,
                                 Frame &caller, std::size_t depth) {
+    if (nativeStackNearlyExhausted())
+      return onFreshNativeStack(
+          [&] { return destroy(recipe, location, caller, depth); });
     if (!recipe.requiresActiveCleanup)
       return {};
-    if (!charge(1) || depth >= limits.callDepth)
+    if (!charge(1))
       return fail(caller, ConstantEvaluationFailure::ResourceLimit);
+    if (depth >= limits.callDepth)
+      return depthLimitFailure(caller);
     if (!storageType(recipe.type) || recipe.polymorphicCleanup ||
         recipe.recursiveCleanup || recipe.lambdaInstance)
       return fail(caller, ConstantEvaluationFailure::UnsupportedType,
@@ -1303,9 +1388,7 @@ private:
     }
     if (instruction.kind == MirInstructionKind::Call &&
         intrinsicTerminalFailureOutcome(instruction.intrinsic))
-      return fail(frame, ConstantEvaluationFailure::InvalidOperands,
-                  "A terminal defined-failure operation executed during "
-                  "constant evaluation.");
+      return terminalFailure(frame, instruction);
     if (instruction.kind == MirInstructionKind::AllocateObject) {
       if (!instruction.destination || !instruction.objectAllocation)
         return fail(frame, ConstantEvaluationFailure::InvalidOperands);
@@ -1746,6 +1829,15 @@ private:
             program.findFunctionInstance(*instruction.functionTarget);
         if (!callee || callee->parameterTypes.size() != arguments.size())
           return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+        // Staging keeps only the signature of a callee that cannot run during
+        // compilation. Reaching its call, not merely containing it, fails.
+        if (callee->definitionKind != MirDefinitionKind::Source ||
+            !callee->constexprFunction ||
+            callee->linkage != LanguageLinkage::Gti) {
+          auto failed = fail(frame, ConstantEvaluationFailure::RuntimeOnlyCall);
+          failed.runtimeCallee = callee->id;
+          return failed;
+        }
         std::vector<std::optional<Location>> origins(arguments.size());
         for (std::size_t index = 0; index < arguments.size(); ++index) {
           if (callee->parameterTypes[index].kind != SemanticType::Reference)
@@ -2057,6 +2149,16 @@ private:
               std::optional<Location> receiverOrigin = {},
               AccessMode receiverAccess = AccessMode::ReadOnly,
               std::optional<Location> *referenceResult = nullptr) {
+    // Every executed call, constructor and destructor body enters here, one
+    // native frame chain per nested call; the depth bound is limits.callDepth
+    // (CompileLimits::constexprDepth), never the host stack.
+    if (nativeStackNearlyExhausted())
+      return onFreshNativeStack([&] {
+        return executeBody(
+            body, address, returnType, parameterTypes, parameterBindings,
+            arguments, depth, std::move(receiver), argumentOrigins,
+            std::move(receiverOrigin), receiverAccess, referenceResult);
+      });
     Frame frame{
         .body = body,
         .address = address,
@@ -2072,10 +2174,8 @@ private:
         .receiver = std::move(receiver),
         .receiverOrigin = std::move(receiverOrigin),
         .receiverAccess = receiverAccess};
-    if (depth >= limits.callDepth) {
-      return fail(frame, ConstantEvaluationFailure::ResourceLimit,
-                  "The constexpr call depth exceeded the compiler limit.");
-    }
+    if (depth >= limits.callDepth)
+      return depthLimitFailure(frame);
     for (const auto &obligation : body.dropObligations) {
       frame.liveDrops[obligation.id] = obligation.initiallyActive;
       if (!storageType(obligation.dropType.type)) {
@@ -2209,20 +2309,16 @@ private:
     while (const auto *block = body.findBlock(frame.block)) {
       for (const auto &instruction : block->instructions) {
         frame.instruction = instruction.id;
-        if (steps++ >= limits.steps) {
-          return fail(frame, ConstantEvaluationFailure::ResourceLimit,
-                      "Constant MIR execution-step limit exceeded.");
-        }
+        if (steps++ >= limits.steps)
+          return stepLimitFailure(frame);
         auto result = execute(frame, instruction, depth);
         if (result.failure != ConstantEvaluationFailure::None)
           return result;
         applyLifecycle(frame, instruction.lifecycle);
       }
       frame.instruction = 0;
-      if (steps++ >= limits.steps) {
-        return fail(frame, ConstantEvaluationFailure::ResourceLimit,
-                    "Constant MIR execution-step limit exceeded.");
-      }
+      if (steps++ >= limits.steps)
+        return stepLimitFailure(frame);
       const auto &terminator = block->terminator;
       switch (terminator.kind) {
       case MirTerminatorKind::Goto:
@@ -2409,6 +2505,7 @@ private:
   const MirProgram &program;
   MirConstantLimits limits;
   std::size_t steps = 0;
+  bool stepLimitReached = false;
   std::vector<std::unique_ptr<Allocation>> heap;
   std::size_t heapUnits = 0;
   std::unordered_map<const MirBody *,

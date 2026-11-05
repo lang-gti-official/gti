@@ -24,13 +24,19 @@ ORIGIN = dict(sha='a' * 40, native_inputs='b' * 64, run_id=7, attempt=2,
 
 
 def api_fixture(sha, source_lane=False, **changes):
-    run = dict(id=7, run_attempt=2, event='merge_group', head_branch='gh-readonly-queue/main/pr-1',
-               head_sha=sha, path='.github/workflows/ci.yml', status='completed', conclusion='success',
-               repository={'full_name': REPO}, head_repository={'full_name': REPO})
-    names = ['CI gate']
-    names += ([f'Source stdlib ({p})' for p in artifacts.PLATFORMS] if source_lane else
-              [f'Release package ({p})' for p in artifacts.PLATFORMS] +
-              [f'Integration ({p} {i}/{n})' for p, n in [('linux', 6), ('darwin', 5)] for i in range(n)])
+    # A full-CI compiler comes from post-integration full validation of main;
+    # the source lane is a merge-queue ci.yml run.
+    if source_lane:
+        run = dict(id=7, run_attempt=2, event='merge_group', head_branch='gh-readonly-queue/main/pr-1',
+                   head_sha=sha, path='.github/workflows/ci.yml', status='completed', conclusion='success',
+                   repository={'full_name': REPO}, head_repository={'full_name': REPO})
+        names = ['CI gate'] + [f'Source stdlib ({p})' for p in artifacts.PLATFORMS]
+    else:
+        run = dict(id=7, run_attempt=2, event='push', head_branch='main',
+                   head_sha=sha, path='.github/workflows/full-validation.yml', status='completed',
+                   conclusion='success', repository={'full_name': REPO}, head_repository={'full_name': REPO})
+        names = ['Full validation verdict'] + [f'Release package ({p})' for p in artifacts.PLATFORMS] + \
+                [f'Integration ({p} {i}/{n})' for p, n in artifacts.integration_shards().items() for i in range(n)]
     jobs = [dict(name=n, head_sha=sha, status='completed', conclusion='success') for n in names]
     assets = [dict(name=f'gti-nightly-{p}-2', expired=False) for p in artifacts.PLATFORMS]
     run.update(changes.get('run', {}))
@@ -42,7 +48,9 @@ def api_fixture(sha, source_lane=False, **changes):
             return {'jobs': jobs}
         if '/artifacts?' in path:
             return {'artifacts': assets, 'total_count': len(assets)}
-        return {'workflow_runs': [run]}
+        # Each workflow's run listing returns only its own runs.
+        workflow = run['path'].rsplit('/', 1)[1]
+        return {'workflow_runs': [run] if f'/workflows/{workflow}/' in path else []}
     return request
 
 
@@ -303,14 +311,16 @@ class SourceStdlibCI(unittest.TestCase):
 
     def test_workflow_source_lane_and_full_lane_are_separate(self):
         text = (ROOT / '.github/workflows/ci.yml').read_text()
-        lane = text.split('\n  source-stdlib:\n')[1].split('\n  package:\n')[0]
+        lane = text.split('\n  source-stdlib:\n')[1].split('\n  gate:\n')[0]
         for required in ['source_stdlib_ci.py prepare', 'source_stdlib_ci.py test', 'compiler_origin.run_id',
                          'compiler_origin.attempt', '--compiler-origin', 'github.event_name == \'merge_group\'']:
             self.assertIn(required, lane)
         self.assertNotIn('cmake --install', lane)
         self.assertNotIn('continue-on-error', lane)
         self.assertIn('GTI_COMPILER_TEST_ISOLATE_CASES ON', (ROOT / 'cmake/ReuseToolchain.cmake').read_text())
-        self.assertIn("needs.plan.outputs.mode == 'full'", text.split('\n  package:\n')[1])
+        full = (ROOT / '.github/workflows/full-validation.yml').read_text()
+        self.assertIn("needs.plan.outputs.mode == 'full'", full.split('\n  package:\n')[1])
+        self.assertNotIn('\n  package:\n', text)
 
 
 if __name__ == '__main__':

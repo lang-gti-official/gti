@@ -11,7 +11,7 @@ struct Node {
   Node(int value, std::unique_ptr<Node> next)
       : value(value), next(std::move(next)) {}
 
-  ~Node() { std::println("destroy {}", this.value); }
+  ~Node() { std::runtime_println("destroy {}", this.value); }
 };
 
 // Both return paths borrow the same parameter, even across recursive calls.
@@ -36,12 +36,12 @@ int main(int argc, std::vector<std::string> argv) {
   // An extra command-line argument exercises checked failure past the end.
   mut auto& selected = element_mut(*root, argc == 1 ? 2 : 3);
   selected = 42;
-  std::println("selected {}", selected);
+  std::runtime_println("selected {}", selected);
 
   // Last use ends the exclusive borrow; shared observations can follow.
   auto& first = element(*root, 0);
   auto& last = element(*root, 2);
-  std::println("ends {} {}", first, last);
+  std::runtime_println("ends {} {}", first, last);
 
   // Both observations are finished. Deterministic cleanup can now proceed.
   root.reset();

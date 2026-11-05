@@ -25791,7 +25791,9 @@ uniqueOwnerBorrowDetailSpelling(const MirProgram &program,
        instruction.operands.front().type != parameters.front()) ||
       instruction.neverReturns != terminal.has_value() ||
       instruction.tracksCaller !=
-          intrinsicTracksCaller(instruction.intrinsic) ||
+          (instruction.intrinsicCallContract
+               ? instruction.intrinsicCallContract->tracksCaller()
+               : intrinsicTracksCaller(instruction.intrinsic)) ||
       instruction.parameterTypes != parameters ||
       instruction.definedFailure.propagation != FailurePropagationKind::None ||
       instruction.localFailureSites.size() != 1 ||
@@ -27543,13 +27545,21 @@ checkedStorageReadLoanProducer(const MirBody &body, const MirLoan &loan) {
 [[nodiscard]] bool advanceCheckedAssignmentReceiver(
     const MirBody &body, const MirLoan &loan, const MirBlock *&block,
     std::vector<MirInstruction>::const_iterator &position) {
-  if (position == block->instructions.end() ||
-      position->kind != MirInstructionKind::CallInput)
+  if (position == block->instructions.end())
     return false;
-  const MirInstruction &input = *position++;
-  if (position == block->instructions.end() ||
-      producedCallResultLoan(body, *position) != &loan ||
-      input.callSite != position->callSite)
+  if (position->kind == MirInstructionKind::CallInput) {
+    const MirInstruction &input = *position++;
+    if (position == block->instructions.end() ||
+        input.callSite != position->callSite)
+      return false;
+  } else if (position->kind != MirInstructionKind::Call ||
+             position->callSite != 0 || !position->functionTarget) {
+    return false;
+  }
+  // Selected operator calls can carry their already evaluated inputs directly.
+  // They preserve the same RHS-before-accessor order and exact result loan;
+  // requiring an explicit CallInput here rejects that existing MIR spelling.
+  if (producedCallResultLoan(body, *position) != &loan)
     return false;
   if (position->definedFailure.empty() && position->localFailureSites.empty()) {
     ++position;
@@ -30217,7 +30227,35 @@ storedValueReturnLoanProducer(const MirBody &body, const MirLoan &loan) {
           block.instructions[index + 1].kind == MirInstructionKind::EndBorrow &&
           block.instructions[index + 1].loan == origin.loan &&
           block.instructions[index + 1].hirValue == instruction.hirValue;
-      if (loan.storedDependency != 0) {
+      // A text value's runtime payload is the explicitly retained SSA value.
+      // Its physical parent and logical owner are lifetime evidence, not a
+      // replacement runtime address for that payload.
+      const bool exactTextValue = [&] {
+        if ((origin.type != SemanticType::StringView &&
+             origin.type != SemanticType::CString) ||
+            origin.value == 0 || retained->escapes ||
+            !retained->designatedFields.empty() ||
+            retained->access != AccessMode::ReadOnly)
+          return false;
+        const auto *value = mir_detail::definitionFor(body, origin.value);
+        if (!value || value->result != origin.value ||
+            value->info.type != origin.type)
+          return false;
+        if (value->loan == retained->id &&
+            value->hirValue == retained->producedBy)
+          return true;
+        const auto *copy =
+            value->kind == MirInstructionKind::Load &&
+                    value->operands.size() == 1 &&
+                    value->operands.front().kind == MirOperandKind::Copy
+                ? body.findPlace(value->operands.front().place)
+                : nullptr;
+        return copy && copy->root == MirPlaceRootKind::Binding &&
+               copy->projections.empty() && copy->type == origin.type &&
+               std::find(retained->carriers.begin(), retained->carriers.end(),
+                         copy->binding) != retained->carriers.end();
+      }();
+      if (loan.storedDependency != 0 && !exactTextValue) {
         const auto *dependency = body.findLoan(loan.storedDependency);
         const auto *dependencySource =
             dependency ? body.findPlace(dependency->source) : nullptr;
@@ -30297,7 +30335,7 @@ storedValueReturnLoanProducer(const MirBody &body, const MirLoan &loan) {
       if (!immediateRetirement && !exactCopiedEntry) {
         return nullptr;
       }
-      if (exactCopiedEntry)
+      if (exactCopiedEntry || exactTextValue)
         copiedPublication = origin.value;
       producer = &instruction;
     }
@@ -41115,7 +41153,7 @@ private:
     if (instruction.kind == MirInstructionKind::Call &&
         (instruction.intrinsic == IntrinsicKind::TextViewFromAddress ||
          instruction.intrinsic == IntrinsicKind::CStringFromAddress)) {
-      if (!mir_detail::textAddressResultLoan(facts.body, instruction))
+      if (!mir_detail::textAddressResultLoan(facts.body, instruction, &program))
         throw std::logic_error(
             "verified raw text assertion lost its checked witness");
       const bool counted =
@@ -44533,12 +44571,11 @@ private:
     output << "::gti_internal::backend::mir_publish_failure_v1("
               "__gti_mir_failure_record, __gti_mir_failure_status_"
            << instruction.id << ", ";
-    if (intrinsicTracksCaller(instruction.intrinsic) &&
-        instruction.forwardsCallerLocation) {
+    if (instruction.tracksCaller && instruction.forwardsCallerLocation) {
       output << "__gti_mir_caller_site";
     } else {
       output << "UINT32_C("
-             << (intrinsicTracksCaller(instruction.intrinsic)
+             << (instruction.tracksCaller
                      ? instruction.callerLocationSite
                      : instruction.localFailureSites.front())
              << ')';
@@ -44579,12 +44616,11 @@ private:
     output << "GTI_FAILURE_ABI_VERSION_V2, __gti_mir_failure_status_"
            << instruction.id << ".code, __gti_mir_failure_status_"
            << instruction.id << ".detail, ";
-    if (intrinsicTracksCaller(instruction.intrinsic) &&
-        instruction.forwardsCallerLocation) {
+    if (instruction.tracksCaller && instruction.forwardsCallerLocation) {
       output << "__gti_mir_caller_site";
     } else {
       output << "UINT32_C("
-             << (intrinsicTracksCaller(instruction.intrinsic)
+             << (instruction.tracksCaller
                      ? instruction.callerLocationSite
                      : instruction.localFailureSites.front())
              << ')';
@@ -56419,7 +56455,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           const std::size_t witness =
               instruction.intrinsic == IntrinsicKind::TextViewFromAddress ? 2
                                                                           : 1;
-          if (!mir_detail::textAddressResultLoan(body, instruction) ||
+          if (!mir_detail::textAddressResultLoan(body, instruction,
+                                                 &program_) ||
               !hasCompleteCallInputSchedule(body, instruction) ||
               !typeRow(instruction.info.type) ||
               !std::all_of(instruction.operands.begin(),

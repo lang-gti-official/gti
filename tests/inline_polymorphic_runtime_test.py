@@ -15,6 +15,7 @@ import tempfile
 
 from allocation_abort_runtime_test import ABORT_STATUS
 from unique_class_allocation_runtime_test import run
+from backend_modes import native_modes
 
 
 SUCCESS = """empty empty
@@ -88,21 +89,21 @@ def main():
          located("return value / zero;",
                  "GTI-R0002]: division_by_zero in integer_division")),
     ]
-    modes = [(f"{std}-{opt}", ["--std", std, f"-{opt}"], [])
-             for std in ("c++20", "c++23") for opt in ("O0", "O1", "O3")]
-    modes += [("no-elide", ["--std", "c++23", "-O0"], ["-fno-elide-constructors"]),
-              ("sanitized", ["--std", "c++23", "-O1"],
-               ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])]
+    modes = native_modes()
     with tempfile.TemporaryDirectory(prefix="gti-inline-polymorphic-") as temporary:
         for name, flags, native_flags in modes:
             binary = Path(temporary) / name
             built = run([str(compiler), str(source), *flags, "-o", str(binary),
                          "--", str(native), *native_flags])
             assert built.returncode == 0, (name, built.stdout, built.stderr)
+            # Generated C++ and the LLVM backend's runtime owner pair allocate
+            # owners through the same replaceable nothrow operator new, so the
+            # counting and fault-injecting companion observes both backends
+            # identically (lang-gti-official/gti#200).
             for phase, expected in enumerate(cases):
                 result = run([str(binary), *(["phase"] * phase)])
-                assert (result.returncode, result.stdout, result.stderr) == expected, (
-                    name, phase, result.returncode, result.stdout, result.stderr)
+                observed = (result.returncode, result.stdout, result.stderr)
+                assert observed == expected, (name, phase, observed, expected)
             print(f"inline polymorphic lifecycle: {name} passed", flush=True)
 
 

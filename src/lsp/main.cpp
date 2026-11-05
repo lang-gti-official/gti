@@ -1899,6 +1899,9 @@ struct ProjectAnalysisInputs {
   lang::RawPointerAuditMode rawPointerAudit = lang::RawPointerAuditMode::Off;
   bool rawPointerAuditLibraryFindings = false;
   lang::driver::AnalysisConfiguration configuration;
+  // The root package's [limits] (the same resolution builds use); defaults
+  // for a standalone file.
+  lang::CompileLimits compileLimits;
   std::vector<lang::PackageSourceRoot> packageSourceRoots;
   lang::WarningPolicy warnings;
   lang::driver::PackageWarningPolicy packageWarnings;
@@ -1959,6 +1962,7 @@ ProjectAnalysisInputs resolveProjectAnalysisInputs(
   }
 
   const lang::driver::ProjectFacts &facts = *project.facts;
+  result.compileLimits = facts.compileLimits();
   const std::string &profileName =
       requestedProfile ? *requestedProfile : facts.defaultProfileName();
   const auto *profile = facts.findProfile(profileName);
@@ -2520,6 +2524,7 @@ private:
   invalidateProjectSnapshotsLocked(std::vector<AnalysisRequest> &requests) {
     requests.clear();
     ++includeDiscoveryGeneration;
+    frontendSnapshots.invalidateIncludeDiscovery();
     for (const auto &[uri, source] : documents) {
       (void)source;
       // The token cache stays: publication compares the new tokens with it
@@ -3493,6 +3498,10 @@ private:
     frontendOptions.declaredConfigurationFlags =
         project.configuration.declaredConfigurationFlags();
     frontendOptions.includeSearchRoots = project.includeSearchRoots;
+    // Candidate scans are shared by every snapshot's import discovery.
+    frontendOptions.includeDiscoveryCache =
+        request.frontendSources.includeDiscoveryCache;
+    frontendOptions.limits = project.compileLimits;
     for (const lang::Diagnostic &diagnostic : project.diagnostics) {
       result.diagnostics.push_back(convertDiagnostic(
           diagnostic, project.sources, rootPath, uri, source));
@@ -3915,6 +3924,7 @@ private:
                  // the audit is background work (see `runAuditWorker`).
                  .rawPointerAudit = lang::RawPointerAuditMode::Off,
                  .trustedBodies = lang::TrustedBodyAnalysis::Reachable,
+                 .limits = project.compileLimits,
                  .preludePaths = {standardLibrary.prelude},
                  .sourceOverrides = request.sourceOverrides,
                  .standardLibraryRoots = {standardLibrary.root},

@@ -64,6 +64,39 @@ const lang::MirInstruction *definingInstruction(const lang::MirBody &body,
   return nullptr;
 }
 
+bool checkedTemporaryObserver(const lang::FrontendResult &frontend,
+                              std::string_view name, bool storedOwner) {
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &call : block.instructions) {
+        if (call.kind != lang::MirInstructionKind::Call ||
+            !call.functionTarget || call.operands.size() != 1 ||
+            call.parameterTypes.size() != 1)
+          continue;
+        const auto *target =
+            frontend.hir.findFunctionInstance(*call.functionTarget);
+        const auto *input =
+            definingInstruction(function.body, call.operands.front().value);
+        const auto *loan = input && input->loan
+                               ? function.body.findLoan(*input->loan)
+                               : nullptr;
+        const auto &parameter = call.parameterTypes.front();
+        if (target && target->source && target->source->name().lexeme == name &&
+            parameter.kind == lang::SemanticType::Reference &&
+            parameter.referenceAccess == lang::AccessMode::ReadOnly && input &&
+            input->callSite == call.callSite && input->info.type == parameter &&
+            input->callInputRole == lang::MirCallInputRole::Argument &&
+            input->callInputKind ==
+                lang::HirCallInputKind::ReadTemporaryBorrow &&
+            loan && loan->kind == lang::MirLoanKind::CallArgument &&
+            loan->access == lang::AccessMode::ReadOnly && !loan->escapes &&
+            bool(loan->storedDependency) == storedOwner &&
+            call.borrowOrigin == lang::BorrowOriginKind::None)
+          return true;
+      }
+  return false;
+}
+
 lang::FrontendResult analyzeWithMemory(std::string_view name,
                                        std::string source) {
   source.insert(0, "import std.memory;\n");
@@ -3518,6 +3551,15 @@ void testNonNullReferences() {
          "references should preserve const access in MIR signatures and use "
          "pointer carriers for retained local loans");
 
+  const auto temporaryObserver = lang::Frontend().analyze(
+      "scalar-reference-observer.gti",
+      "void inspect(int& value) {} int main() { inspect(3); return 0; }");
+  expect(temporaryObserver.canGenerateCode() &&
+             lang::verifyMirProgram(temporaryObserver.mir).valid() &&
+             checkedTemporaryObserver(temporaryObserver, "inspect", false),
+         "scalar literals now select the readonly observer with a nonescaping "
+         "call loan");
+
   const lang::FrontendResult invalid =
       analyzeWithMemory("invalid-references.gti", R"(
 int& escape(mut int& value) { return value; }
@@ -3534,7 +3576,7 @@ void modify(mut int& value) {}
 int main() {
   int immutable = 1;
   mut int mutable_value = 2;
-  inspect(3);
+  int& temporary_binding = 3;
   modify(immutable);
   mut int& invalid_mutable = immutable;
   int& missing;
@@ -3556,7 +3598,7 @@ int main() {
           hasDiagnostic(invalid.diagnostics,
                         "References cannot be used as a storage") &&
           hasDiagnostic(invalid.diagnostics,
-                        "cannot bind a reference to a temporary") &&
+                        "Reference initializer must be an addressable") &&
           hasDiagnostic(invalid.diagnostics, "requires a mutable value") &&
           hasDiagnostic(invalid.diagnostics,
                         "mutable reference requires a mutable initializer") &&
@@ -8956,7 +8998,6 @@ int main() {
 
   const lang::HirFunctionInstance *nextHir = nullptr;
   const lang::HirFunctionInstance *binarySearchHir = nullptr;
-  const lang::HirFunctionInstance *countedSearchHir = nullptr;
   for (const lang::HirFunctionInstance &instance :
        valid.hir.functionInstances()) {
     if (instance.source == nullptr) {
@@ -8968,8 +9009,6 @@ int main() {
       nextHir = &instance;
     } else if (instance.source->name().lexeme == "binary_search") {
       binarySearchHir = &instance;
-    } else if (instance.source->name().lexeme == "binary_search_counted") {
-      countedSearchHir = &instance;
     }
   }
   const bool hirEntryStored =
@@ -8980,8 +9019,7 @@ int main() {
                            loan.entry &&
                            loan.access == lang::AccessMode::ReadOnly;
                   });
-  expect(nextHir != nullptr && binarySearchHir != nullptr &&
-             countedSearchHir != nullptr && hirEntryStored &&
+  expect(nextHir != nullptr && binarySearchHir != nullptr && hirEntryStored &&
              nextHir->returnBorrowOrigin == lang::BorrowOriginKind::Argument &&
              nextHir->returnBorrowParameter == 0 &&
              nextHir->returnBorrowAccess == lang::AccessMode::ReadOnly,
@@ -20365,6 +20403,115 @@ int main() { return 0; }
          "named move-only values should receive focused diagnostics");
 }
 
+void testConstructorRollbackSpansLocalCleanup() {
+  // A constructor completes only after its body-local cleanup: a failing
+  // local destructor must still roll back the completed field.
+  const std::string source = R"(
+mut int32_t zero = 0;
+
+class Resource {
+public:
+  int32_t identity;
+  Resource(int32_t value) : identity(value) {}
+  ~Resource() {
+    if (this.identity == 4) { int32_t failure = 19 / zero; }
+  }
+};
+
+class Holder {
+public:
+  Resource completed;
+  Holder() : completed(Resource(5)) { Resource local{4}; }
+};
+
+int main() {
+  Holder holder{};
+  return holder.completed.identity - 5;
+}
+)";
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "constructor-rollback-local-cleanup.gti", source);
+  expect(frontend.canGenerateCode(),
+         "the constructor rollback local-cleanup fixture should pass the "
+         "frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::MirBody *body = nullptr;
+  lang::MirDropObligationId rollback = 0;
+  for (const lang::MirConstructorInstance &constructor :
+       frontend.mir.constructorInstances()) {
+    for (const lang::MirDropObligation &obligation :
+         constructor.body.dropObligations) {
+      if (obligation.kind ==
+          lang::MirDropObligationKind::ConstructionRollback) {
+        body = &constructor.body;
+        rollback = obligation.id;
+      }
+    }
+  }
+  expect(body != nullptr && rollback != 0,
+         "Holder's constructor should arm rollback for its completed field");
+  if (body == nullptr) {
+    return;
+  }
+  const lang::MirBlock *dropBlock = nullptr;
+  std::size_t dropIndex = 0;
+  for (const lang::MirBlock &block : body->blocks) {
+    for (std::size_t index = 0; index < block.instructions.size(); ++index) {
+      const lang::MirInstruction &instruction = block.instructions[index];
+      // The local's own drop, not the failure drain's fallible field drop.
+      if (dropBlock == nullptr &&
+          instruction.kind == lang::MirInstructionKind::Drop &&
+          block.terminator.invokeInstruction == instruction.id &&
+          block.terminator.elseTarget != 0 &&
+          std::none_of(instruction.lifecycle.begin(),
+                       instruction.lifecycle.end(),
+                       [](const lang::MirLifecycleEvent &event) {
+                         return event.failureCleanup;
+                       })) {
+        dropBlock = &block;
+        dropIndex = index;
+      }
+    }
+  }
+  expect(dropBlock != nullptr,
+         "the local's fallible destructor should end its block with a failure "
+         "edge");
+  if (dropBlock == nullptr) {
+    return;
+  }
+  bool retiredBeforeLocalDrop = false;
+  bool retired = false;
+  bool failureDrainsField = false;
+  for (const lang::MirBlock &block : body->blocks) {
+    for (std::size_t index = 0; index < block.instructions.size(); ++index) {
+      const lang::MirInstruction &instruction = block.instructions[index];
+      for (const lang::MirLifecycleEvent &event : instruction.lifecycle) {
+        if (event.source != rollback) {
+          continue;
+        }
+        if (event.kind == lang::MirLifecycleEventKind::TransferOut) {
+          retired = true;
+          retiredBeforeLocalDrop = retiredBeforeLocalDrop ||
+                                   (&block == dropBlock && index < dropIndex);
+        }
+        if (block.id == dropBlock->terminator.elseTarget &&
+            instruction.kind == lang::MirInstructionKind::Drop &&
+            event.failureCleanup) {
+          failureDrainsField = true;
+        }
+      }
+    }
+  }
+  expect(retired && !retiredBeforeLocalDrop,
+         "normal completion should retire construction rollback only after "
+         "the body's scope-exit drops");
+  expect(failureDrainsField,
+         "the failure edge of a local destructor in a constructor should drain "
+         "the armed field rollback");
+}
+
 void testFieldInitializerRollbackAndFailureEdges() {
   const std::string source = R"(
 static mut int32_t seed = 4;
@@ -21213,6 +21360,17 @@ int main() {
   expect(!temporaryMutex.canGenerateCode(),
          "temporary mutex guard cannot export its protected reference");
 
+  const auto argumentObserver = lang::Frontend().analyze(
+      "ephemeral-carrier-argument.gti",
+      declarations + "int main() { mut Client api{}; return "
+                     "inspect_service(api.auth()); }");
+  expect(
+      argumentObserver.canGenerateCode() &&
+          lang::verifyMirProgram(argumentObserver.mir).valid() &&
+          checkedTemporaryObserver(argumentObserver, "inspect_service", true),
+      "a readonly observer may borrow a fresh carrier while retaining its "
+      "stable external owner");
+
   struct InvalidCase {
     std::string_view body;
     std::string_view reason;
@@ -21244,9 +21402,6 @@ int main() {
       {"mut VirtualClient api{}; return api.auth().create_access_token(1);",
        "a virtual producer is not an ordinary directly resolved producer",
        true},
-      {"mut Client api{}; return inspect_service(api.auth());",
-       "receiver permission does not admit a temporary borrowed carrier as a "
-       "reference argument"},
       {"mut Client api{}; return "
        "api.auth().create_access_token(invalidate(std::move(api)));",
        "a later argument cannot consume the borrowed owner"},
@@ -22751,10 +22906,11 @@ int main() {
   return 0;
 }
 )");
-  expect(!borrowedState.canGenerateCode() &&
-             hasDiagnosticCode(borrowedState.diagnostics, "GTI-S2017"),
-         "a fresh value carrying tracked borrowed state should remain "
-         "ineligible");
+  expect(borrowedState.canGenerateCode() &&
+             lang::verifyMirProgram(borrowedState.mir).valid() &&
+             checkedTemporaryObserver(borrowedState, "inspect", true),
+         "a fresh carrier with a proved stable dependency now supplies a "
+         "nonescaping readonly argument");
 
   const lang::FrontendResult escapingResult =
       rejected("escaping-temporary-argument.gti", R"(
@@ -24158,6 +24314,8 @@ constexpr NamedTest kTests[] = {
     {"testExpectedPropagationOperator", testExpectedPropagationOperator},
     {"testFieldInitializerRollbackAndFailureEdges",
      testFieldInitializerRollbackAndFailureEdges},
+    {"testConstructorRollbackSpansLocalCleanup",
+     testConstructorRollbackSpansLocalCleanup},
     {"testDefaultFieldRollbackEntersConstructor",
      testDefaultFieldRollbackEntersConstructor},
     {"testOwnedParameterStageArmsRollback",

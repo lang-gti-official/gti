@@ -248,6 +248,7 @@ struct HirValue {
   std::optional<ConstantValue> constant;
   bool programConstantSubstitution = false;
   IntrinsicKind intrinsic = IntrinsicKind::None;
+  std::optional<SemanticIntrinsicCallContractProof> intrinsicCallContractProof;
   // A runtime representation query names a type, never an object or loan.
   std::optional<SemanticType> objectLayoutType;
   // Checked source control-flow contracts, retained independently of the

@@ -4,6 +4,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+from backend_modes import native_modes
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -66,30 +67,27 @@ int32_t main() {
         root = pathlib.Path(temporary)
         source = root / "returned-class-field.gti"
         source.write_text(source_text, encoding="utf8")
-        for standard in ("c++20", "c++23"):
-            for optimization in ("O0", "O3"):
-                executable = root / f"returned-field-{standard}-{optimization}"
-                built = run(
-                    [
-                        str(compiler),
-                        str(source),
-                        "--std",
-                        standard,
-                        f"-{optimization}",
-                        "-o",
-                        str(executable),
-                    ]
-                )
-                if built.returncode != 0:
-                    return fail(f"build {standard} {optimization}", built)
+        for mode, flags, native in native_modes():
+            executable = root / f"returned-field-{mode}"
+            built = run(
+                [
+                    str(compiler),
+                    str(source),
+                    *flags,
+                    "-o",
+                    str(executable),
+                ]
+            )
+            if built.returncode != 0:
+                return fail(f"build {mode}", built)
 
-                executed = run([str(executable)])
-                if (
-                    executed.returncode != 0
-                    or executed.stdout != ""
-                    or executed.stderr != ""
-                ):
-                    return fail(f"run {standard} {optimization}", executed)
+            executed = run([str(executable)])
+            if (
+                executed.returncode != 0
+                or executed.stdout != ""
+                or executed.stderr != ""
+            ):
+                return fail(f"run {mode}", executed)
 
     return 0
 

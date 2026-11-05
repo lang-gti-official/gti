@@ -38,6 +38,14 @@ policy below without bypassing that lifecycle.
   that resolved a conflict in a shipped file needs the trailers in its own
   message (`git commit --amend`) before the checkpoint. See
   [the release policy](../../../docs/architecture/build-and-driver.md).
+- When a change adds or modifies a shipped stdlib source (`stdlib/prelude.gti`,
+  `stdlib/std.gti`, `stdlib/std/**/*.gti`), review its entries in
+  `tests/stdlib_surface_manifest.json` and change at least one entry naming
+  that source. Only when the edit leaves the classified surface exactly as
+  recorded, end a commit's trailer block with `Stdlib-Surface: unchanged` and
+  one nonempty `Stdlib-Surface-Reason:` instead.
+  `scripts/check_stdlib_surface_review.py` enforces this from the PR's diff;
+  see [the surface census](../../../docs/architecture/standard-library-and-runtime.md#executable-surface-census).
 
 ## Commit And Reconcile
 
@@ -50,8 +58,10 @@ policy below without bypassing that lifecycle.
    `lang-gti-official/gti`). Never publish source branches or PRs to Gitea;
    its `main` is frozen and it keeps only the reference site and packages.
 3. Run the focused build, tests, packaging checks, formatting, and
-   release-version checks (`python3 scripts/check_release_version.py
-   origin/main HEAD`) that `verify-change` selects. The merge queue runs the
+   release-version and stdlib surface-review checks
+   (`python3 scripts/check_release_version.py origin/main HEAD` and
+   `python3 scripts/check_stdlib_surface_review.py origin/main HEAD`) that
+   `verify-change` selects. The merge queue runs the
    complete suite; do not repeat it locally. Use the
    [execution contract](../../../docs/architecture/agent-workflow.md#bounded-output-analysis-and-waiting)
    for bounded output and waiting.

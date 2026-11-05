@@ -25,6 +25,76 @@ public:
   }
 };
 
+// Unrelated cursors over the coordinates 0..100. One declares the checked
+// jump and sized-sentinel contracts, so the movement utilities make one jump
+// or one subtraction; the other only steps and keeps stepping. A jumping
+// cursor paired with an end it cannot subtract still counts its distance.
+mut int coordinate_steps = 0;
+mut int coordinate_jumps = 0;
+struct coordinate_end {
+public:
+  coordinate_end() = default;
+};
+struct unsized_coordinate_end {
+public:
+  unsized_coordinate_end() = default;
+};
+struct jumping_coordinate {
+  mut std::ptrdiff_t at = 0;
+  int operator*() { return int(this.at); }
+  void operator++() mut { this.at++; coordinate_steps++; }
+  void operator--() mut { this.at--; coordinate_steps++; }
+  void operator+=(std::ptrdiff_t offset) mut { this.at += offset; coordinate_jumps++; }
+  void operator-=(std::ptrdiff_t offset) mut { this.at -= offset; coordinate_jumps++; }
+  bool operator!=(coordinate_end end) { return this.at != std::ptrdiff_t(100); }
+  bool operator!=(unsized_coordinate_end end) { return this.at != std::ptrdiff_t(100); }
+  std::ptrdiff_t operator-(coordinate_end end) { return this.at - std::ptrdiff_t(100); }
+public:
+  jumping_coordinate() = default;
+};
+struct stepping_coordinate {
+  mut std::ptrdiff_t at = 0;
+  int operator*() { return int(this.at); }
+  void operator++() mut { this.at++; coordinate_steps++; }
+  void operator--() mut { this.at--; coordinate_steps++; }
+  bool operator!=(coordinate_end end) { return this.at != std::ptrdiff_t(100); }
+public:
+  stepping_coordinate() = default;
+};
+
+int coordinate_movement() {
+  mut jumping_coordinate jumper{};
+  std::advance(jumper, std::size_t(40));
+  std::advance(jumper, std::ptrdiff_t(-10));
+  jumping_coordinate ahead = std::next(jumper, std::size_t(5));
+  jumping_coordinate behind = std::prev(ahead, std::size_t(3));
+  std::ptrdiff_t sized = std::distance(jumper, coordinate_end());
+  if (jumper.at != 30 || behind.at != 32 || sized != 70 ||
+      coordinate_steps != 0 || coordinate_jumps != 4) {
+    return 1;
+  }
+  if (std::distance(behind, unsized_coordinate_end()) != 68 ||
+      coordinate_steps != 68 || coordinate_jumps != 4) {
+    return 2;
+  }
+
+  coordinate_steps = 0;
+  coordinate_jumps = 0;
+  mut stepping_coordinate stepper{};
+  std::advance(stepper, std::size_t(40));
+  std::advance(stepper, std::ptrdiff_t(-10));
+  stepping_coordinate stepped_ahead = std::next(stepper, std::size_t(5));
+  stepping_coordinate stepped_behind = std::prev(stepped_ahead, std::size_t(3));
+  if (stepper.at != 30 || stepped_behind.at != 32 ||
+      coordinate_steps != 58 || coordinate_jumps != 0) {
+    return 3;
+  }
+  if (std::distance(stepper, coordinate_end()) != 70 || coordinate_steps != 128) {
+    return 4;
+  }
+  return 0;
+}
+
 int main() {
   mut audit_iterator unsigned_advance = audit_iterator(std::size_t(0));
   std::advance(unsigned_advance, std::size_t(3));
@@ -84,6 +154,9 @@ int main() {
   std::advance(walker, std::ptrdiff_t(-2));
   if (*walker != 2) {
     return 7;
+  }
+  if (coordinate_movement() != 0) {
+    return 8;
   }
   return 0;
 }

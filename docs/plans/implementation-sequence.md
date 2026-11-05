@@ -280,9 +280,11 @@ Further goals, not implemented by this slice:
   profile diagnoses this shape rather than requiring a native C++ move or
   silently relocating a pinned payload. Acceptance must include deleted-move
   user types and cleanup-failure paths with no intermediate relocation.
-- Constant-context macro calls require the staged verified-MIR evaluation
-  profile from L-CONST-01, preserving phase timing and diagnostic/resource
-  limits. This slice does not add another AST execution rule.
+- Constant-context macro calls use the staged verified-MIR evaluation profile
+  from L-CONST-01, preserving phase timing and diagnostic/resource limits.
+  Since lazy closure staging (2026-11-03, issues #174/#175), a macro such as
+  `std::assert` inside a constexpr function runs through constexpr bindings and
+  immediate calls alike; no AST macro execution rule exists or is planned.
 - Escaping or memoized lazy values require a separate lifetime/forcing/storage
   contract; they are not silently provided by expression parameters.
 
@@ -570,7 +572,7 @@ every composition, target, installed package or performance gate.
 | Reference payload enums | `reference_payload_semantic_tests.cpp`, `fixtures/reference_payload_tryable.gti`, complete-borrow-summary tests and [payload semantics](../language/static-semantics.md). | Borrowed-value consuming handoffs, additional carrier containment, direct captures/polymorphic/native transport and richer patterns. Do not classify all stored reference alternatives as absent. |
 | Owner-dependent text fields | `view_field_tests.cpp`, nested-value and dependent-reference fixtures; L-OWN-02 phases 1/2 and **3a** are delivered. | Phase 3b's nested reference-carrier payload/results, additional nested copies/field contracts and phase 4 unification; arbitrary borrowed collections remain incomplete. |
 | Constexpr mutation and allocation | `mir_constant_evaluator.cpp`, `compiler_constexpr_tests.cpp`, `constexpr_results.gti`, `constexpr_allocation.gti`; [constant semantics](../language/static-semantics.md#transient-allocation-and-destruction). | Persistent allocation, stored-reference/raw/provider/shared/payload-enum/polymorphic profiles outside the stated evaluator contract, and retirement of remaining AST execution schedules. |
-| Protocol associated types and static queries | `semantic_protocol_concepts.cpp`, `semantic_requirement_expressions.cpp`, `protocol_concept_tests.cpp`, `general_requires_tests.cpp`; [concepts](../language/concepts.md). | Conditional member operators, additional expression/relationship families and generic associated families beyond implemented projections; operation borrow contracts are delivered. |
+| Protocol associated types and static queries | `semantic_protocol_concepts.cpp`, `semantic_requirement_expressions.cpp`, `protocol_concept_tests.cpp`, `general_requires_tests.cpp`; [concepts](../language/concepts.md). | Additional expression/relationship families and generic associated families beyond implemented projections; operation borrow contracts and conditional member operators are delivered. |
 | Typed macros and per-thread storage | `semantic_macro.cpp`, `macro_value_tests.cpp`, macro fixtures and `thread_local_{syntax,semantic}_tests.cpp` / `mir_thread_local_tests.cpp`; [static semantics](../language/static-semantics.md) and [concurrency](../language/concurrency.md). | General preprocessing is not the typed-macro contract; ordinary block static and C thread-specific-storage keys remain separate. |
 | Foreign C variables | `foreign_variable_tests.cpp`, `foreign_variable_borrow_tests.cpp`, native-variable bindgen tests; [native interop](../language/native-c-interop.md). | TLS/volatile/top-level-array objects, ownership annotations, retained/captured callbacks and foreign-thread entry; C-08B ordinary objects are implemented. |
 | Reflection and JSON | Reflection phases 1–3 and the reflected JSON client are delivered; `<std/json>` has used the promoted reflection-driven library since 0.409.0. See [reflection](reflection.md) and [JSON](../language/json.md). | Metaobject invocation/runtime reflection and named residual metadata/execution profiles; do not repeat the experimental-JSON gate. |
@@ -617,18 +619,18 @@ workflow determine task scope and integration.
 | Reflection clients | phases 1–3 and reflection-driven JSON delivered | `<std/json>` is the promoted reflected library since 0.409.0. Select remaining metadata/invocation/constant-execution clients from the [reflection plan](reflection.md), preserving construction, rollback and expansion budgets; do not repeat the experimental JSON gate. |
 | `L-UP-10` -> `L-UP-11` | acceptance closure, then adoption; may be co-validated | The retained borrowed-pack reproducer passes current O0/O3 probes. Complete the relevant constructor/cleanup composition matrix while adopting final-node emplacement; do not presume another compiler fix. |
 | `L-UP-12` -> `L-UP-18` | inline protocol is a new capability | Reuse delivered allocated final-address construction. Establish inline publication/rollback and structural wrapper lifecycle eligibility before claiming immovable optional support. |
-| `L-UP-14` | ready for a bounded new capability | Current staged MIR text/passive-record profile -> one constant-eligible pattern validator -> general required call-site literal validation. Dynamic formatting stays recoverable. |
-| `L-UP-15` | ready for a bounded new capability | Ordinary method requirements and operator selection exist; extend validity-only requirements to member operators and co-deliver conditional map indexing with unrelated-type proof. |
+| `L-UP-14` | delivered | Shared constant-eligible parser and checked immediate argument conversion; explicit runtime APIs retain recoverable dynamic formatting. |
+| `L-UP-15` | implemented | Validity-only non-polymorphic operator requirements, conditional map indexing and pair equality; example 190 and focused operator/ownership tests. |
 | `L-OWN-02` owner-tracked view fields | phases 1/2 and phase 3a nested text values implemented | Phase 3b nested reference-carrier payload/results and phase 4 contract unification remain, along with the named nested-copy/field-contract restrictions. Preserve caller-owned origins, physical carrier lifetime, cleanup and conservative whole-carrier protection. See [`L-OWN-02`](#l-own-02-owner-tracked-view-fields). |
 | `L-UP-16` | ready for a bounded new capability | Existing multi-owner carrier facts -> explicit result-projection summary -> independently useful precise read-only projection. Proxy iteration needs a separate yield contract. |
 | `L-UP-17` | ready for a bounded recoverable-owner slice | Typed allocation results and lifetime rollback exist. Preserve selected construction, unpublished ownership and once-only arguments; co-deliver recoverable unique allocation without pretending all packs/immovable cases are covered. |
 | `E-EMBED-01B/C`, `B-LIB-02`, `T-EMBED-01`, `Q-EMBED-01` | infallible LLVM context/wrapper/project-library workflow implemented; full campaign partial | Complete fallible closure containment, editor integration and installed load/call/fail/unload/reload/platform acceptance. Preserve the existing generated header, immutable generations, cache/report/clean and C/C++ host fixtures; see [embedding delivery](#engine-embedding-delivery-campaign). |
 | Native import `C-08B` | ordinary foreign objects implemented | Exact external-storage identity, unsafe loads/stores, inert addresses, explicit owner-witness borrowing, headers and bindgen cover scalar, recursive pointer, callback and passive-record objects. TLS/volatile and top-level arrays require their general access/address contracts. |
-| `L-CONST-01` extension | mutable-builder, ordinary-enum and passive-result profiles implemented; further profiles ready to select | Checked references, constructor defaults/reference inputs, void helpers, non-consuming mutable methods/operators, ordinary enums and passive Expected composition use staged verified MIR. Select remaining stored-reference, pack, owning/sum or operator profiles with runtime parity and shared budgets; do not grow a permanent duplicate AST rule. |
+| `L-CONST-01` extension | mutable-builder, ordinary-enum and passive-result profiles implemented; one lazy rule and compile-time panics implemented; further profiles ready to select | Checked references, constructor defaults/reference inputs, void helpers, non-consuming mutable methods/operators, ordinary enums and passive Expected composition use staged verified MIR. Call closures stage lazily for every constant context, and an executed panic reports its message. Select remaining stored-reference, pack, owning/sum or operator profiles with runtime parity and shared budgets; do not grow a permanent duplicate AST rule. |
 | `T-LSP` latency client | trusted-body/preamble/instance reuse delivered; edit cancellation/debounce, library concept/storage-effect reuse, staged constant-call memoization and unchanged-source replay delivered through 0.486.1 | Re-measure current workloads before selecting reuse/adoption costs. The 0.423.0 timing is historical, not today's bottleneck ranking. [LSP evolution](lsp-evolution.md#per-keystroke-analysis-cost) records remaining identity/invalidation and completion work. |
 | `RT-2` through `RT-12` | independent goals with technical prerequisites | Use the [current optimization disposition](optimization.md#pr-166-audit-disposition-2026-10-09), not retired minimum-speedup admission rules. RT-12 recovers the optimizer proofs and exit sharing that the source-defined `expected` (0.449.0) gave up by owner decision; its tests mark the lost controls as recovery-pending. Its closed-call proofs and failure closure are delivered in 0.468.0 ([RT-12](optimization.md)); exit sharing for exits that construct the result remains. Select one proof/transform/representation family with correctness replay and performance acceptance. RT-9's sort slice (introsort) is delivered in 0.410.1. RT-1's cold failure-edge slice is delivered (2026-10-12); `hashmap` lookups are the remaining inlining headroom. RT-5's body-local slice is delivered (2026-10-13) and changes no program on its own; crossing an accessor is the remaining work, with a measured ceiling of about 20% on one loop shape ([RT-5](optimization.md#rt-5-no-relational-facts-between-indices-and-lengths)). RT-4's refresh currently reaches four probe helpers, so it should follow discharge improvements (RT-2, RT-3, RT-5); see [its measured reach](optimization.md#rt-4-infallibility-is-not-refreshed-after-discharge). |
 | Shared failure-cleanup tails (`M-FAIL-01`) | function and lambda bodies delivered in 0.402.2; their scalar normal exits in 0.421.1 | Continuation records entered by `ContinueFailure` share identical failure-cleanup suffixes, and normal exits returning nothing, a scalar or a scalar error share exit ladders; see the M-FAIL-01 entry below. Remaining: constructor, field-initializer, destructor, module and hosted-startup bodies; exits returning owning, class or borrowed results; path-dependent steps stay private. |
-| Protocol concepts (`L-CONCEPT-02`) | phase 1 delivered in 0.434.0; several parameters in 0.435.0 | Concepts with a body and `for concept` blocks are implemented ([ADR 028](../decisions/028-protocol-concepts.md)), including concepts over several types. Prefix `?` propagates every non-`expected` type through the prelude's `std::tryable` in 0.436.0 ([ADR 029](../decisions/029-tryable-propagation.md)). `std::experimental::optional`, source-defined over a payload enum, propagates through `?` without a copy in 0.439.0. General payload-enum destination construction, tagged representation and observation/retirement improvements replace the historical 1.6-times scalar / 1.13-times string result. Singleton cleanup forwarding removes the preceding robust GCC/Linux string residual in fresh paired evidence at `560cafa9` (median 1.0035, interval spanning parity); fresh macOS measurements remain pending ([RT-11](optimization.md#pr-166-audit-disposition-2026-10-09)). Promotion to `std::optional` still requires surface, failure-behaviour and platform performance acceptance, not merely the representation change. `expected` is a source class on the same `std::tryable` protocol since 0.449.0, and conformance-block patterns over raw pointers and fixed-length arrays are delivered in 0.450.0. Signature-level borrow-origin contracts on concept operations and generic associated type families are implemented. Families have independent positional type inputs, exact unary input constraints, nested projections and explicit generic consumer contracts; the storage-policy example exercises vector and inline mappings. First-class type constructors, value/lifetime families, result bounds and generic operations remain separate goals. Further goals include moving remaining member-name protocols (collection hooks, iterator value types) onto protocol concepts where coherent. |
+| Protocol concepts (`L-CONCEPT-02`) | phase 1 delivered in 0.434.0; several parameters in 0.435.0 | Concepts with a body and `for concept` blocks are implemented ([ADR 028](../decisions/028-protocol-concepts.md)), including concepts over several types. Prefix `?` propagates every non-`expected` type through the prelude's `std::tryable` in 0.436.0 ([ADR 029](../decisions/029-tryable-propagation.md)). `std::experimental::optional`, source-defined over a payload enum, propagates through `?` without a copy in 0.439.0. General payload-enum destination construction, tagged representation and observation/retirement improvements replace the historical 1.6-times scalar / 1.13-times string result. Singleton cleanup forwarding removes the preceding robust GCC/Linux string residual in fresh paired evidence at `560cafa9` (median 1.0035, interval spanning parity); fresh macOS measurements remain pending ([RT-11](optimization.md#pr-166-audit-disposition-2026-10-09)). Promotion to `std::optional` still requires surface, failure-behaviour and platform performance acceptance, not merely the representation change. `expected` is a source class on the same `std::tryable` protocol since 0.449.0, and conformance-block patterns over raw pointers and fixed-length arrays are delivered in 0.450.0. Signature-level borrow-origin contracts on concept operations and generic associated type families are implemented. Trailing conformance requirements now admit recursive protocols with cycle/work bounds; source formatting and hashing use these protocols for generic user families and pairs, with protocol-first exact formatter adapters and an explicit legacy hash-policy migration that preserves per-container state. Families have independent positional type inputs, exact unary input constraints, nested projections and explicit generic consumer contracts; the storage-policy example exercises vector and inline mappings. First-class type constructors, value/lifetime families, result bounds and generic operations remain separate goals. Further goals include moving remaining member-name protocols (collection hooks, iterator value types) onto protocol concepts where coherent. |
 | Library/host completion | independent clients where their exact prerequisites hold | Weak ownership and fallible shared allocation; unfinished iteration/invalidation; process capture and environment mutation/enumeration or child-local overrides; required text/range/service breadth. Owned read-only environment lookup is delivered in 0.402.0. Reconcile the [library gaps](../language/standard-library.md#77-library-specification-gaps) with source before choosing a slice. |
 
 This is priority/readiness information, not an artificial dependency chain.
@@ -864,7 +866,8 @@ the canonical [library contract](../language/standard-library.md).
 | Owned Expected propagation, `expect`, `transform`, `and_then`, and `transform_error`; exact error identity and consuming receiver rules remain. Version 0.366.0 also supports checked read-only `expected<T&, E>` extraction through `?` and `expect`; borrowed combinators remain excluded. | Simplify owned fallible pipelines and checked borrowed lookups now. | `L-UP-01`, `L-UP-09`; [Expected](../language/expected.md). |
 | Explicit movement, bounded implicit return of an exact whole move-only local, generated lifecycle policy, immediate borrowed-carrier receivers, and sealed restoring/indexed transfers. None permits unrestricted consumption through references or dynamic indices. | Move owned mapper results, exchange initialized mutable places, and reverse/sort relocatable move-only vectors without cloning. | `L-UP-03`, `L-UP-07/08`; [ownership](../language/ownership-and-lifetimes.md). |
 | Nested owner-tied text relay, shared multi-origin carriers, checked exclusive access, storage shift/relocation, and source-defined explicit cloning. Multi-owner projections remain conservative. | Remove duplicate URL view backing; retain owner invalidation. Precise range projection and proxy iteration remain separate work. | `L-UP-02`, `L-UP-16`; [relay fixture](../../tests/fixtures/text_owner_relay.gti). |
-| Exact operation/comparator concepts, bounded ordinary-method requirements, exact class specialization, exact argument-bearing read/mut member requirements, dependent compound concept arguments, constrained heterogeneous call-pack elements, and attributable contract diagnostics. Static queries, general expression requirements, reference packs, and conditional operators are not implemented. | Source-defined public formatter customization and ordinary read/write protocols now use these facts; conditional indexing remains separate. | `L-UP-04`, `L-UP-13/15`; [concepts](../language/concepts.md). |
+| Exact operation/comparator concepts, bounded ordinary-method and non-polymorphic operator requirements, exact class specialization, exact argument-bearing read/mut member requirements, dependent compound concept arguments, constrained heterogeneous call-pack elements, and attributable contract diagnostics. | Source-defined public formatter customization, ordinary read/write protocols, conditional map indexing and pair equality use these facts. | `L-UP-04`, `L-UP-13/15`; [concepts](../language/concepts.md). |
+| Inferred and owner-prescribed read-only/mutable reference packs preserve per-element call loans through forwarding, folds and ordinary source constructors; reference-bearing results remain excluded. Exact temporary read borrows cover scalar, enum and operator inputs. | Formatting, printing and panic observe named owning strings and move-only custom values without consuming them. | Issues #161, #162, #166; [I/O](../language/io.md). |
 | Constructor-local type packs, final-field construction and the retained borrowed forward-list reproducer have passing current-head evidence. Source sparse storage already emplaces immovable elements at final addresses; optional publication still transfers a completed payload. | Close the remaining pack acceptance matrix, adopt direct map-node emplacement, then extend inline-slot publication. Do not rebuild the delivered sparse-storage path. | `L-UP-10/11/12/18`; [current probes](../architecture/verification.md#documentation-reconciliation-capability-probes-2026-10-11). |
 | Staged verified-MIR constant evaluation supports passive records/results, selected constructor defaults and reference inputs, read-only and non-consuming mutable methods, checked references, void helpers, fixed arrays, ordinary scoped enums and literal-backed text. Allocation, stored borrows, owning aggregates and packs remain outside that profile. | Add eligible pure chrono observers and passive table builders now. Automatic literal-format checking still needs a general call-site contract. | `L-UP-06/14`; [`L-CONST-01`](#l-const-01-remaining-bounded-compile-time-programming). |
 | Exact function items, source-defined owning callable erasure, modules, panic/caller tracking, managed threads, atomic order tags and mutex guards are implemented within documented bounds. | Do not schedule these as absent. Measure callback erasure costs; preserve host error and concurrency policies. Modules do not require a global include-to-import rewrite. | [callable checkpoint](#l-call-02-source-defined-owning-function-wrappers), [concurrency](../language/concurrency.md), [module contract](../language/programs-and-targets.md). |
@@ -901,8 +904,8 @@ Rows with unmet prerequisites cannot be marked complete by a source-only workaro
 | 11 / `L-UP-11` | planned | `L-UP-10` | Node-container emplacement constructs immovable mapped values at their final address. |
 | 12 / `L-UP-12` | sparse portion delivered; inline portion planned | existing general object-lifetime/final-slot construction; inline publication/rollback contract | Optional emplacement constructs eligible payloads directly in its empty inline slot; source sparse emplacement is not pending. |
 | 13 / `L-UP-13` | implemented and locally validated for 0.371.0 | exact argument-bearing read/mut signatures, dependent compound concept facts, constrained pack calls | Public source-defined formatter protocol and compile-time unsupported-type diagnostics; examples 105/106 and compiler/runtime/editor/corpus/installed gates pass. |
-| 14 / `L-UP-14` | ready / new capability, staged | current literal-text/passive-record MIR constant profile; shared validator before call-site admission | Bad literal format strings fail before execution; dynamic strings stay recoverable. |
-| 15 / `L-UP-15` | ready / new capability | current validity-only requirements and operator selection | Conditionally available map indexing without imposing default construction on every mapped type. |
+| 14 / `L-UP-14` | delivered | shared parser, checked immediate argument conversion, request-local reuse | Bad literal format strings fail before execution; explicit runtime APIs stay recoverable. |
+| 15 / `L-UP-15` | implemented | validity-only requirements and exact operator selection | Map indexing is conditional on default construction; pair equality is conditional on both element contracts. |
 | 16 / `L-UP-16` | ready / new capability | current multi-origin shared-carrier facts | Precisely projected read-only views retain only their actual owner dependencies. |
 | 17 / `L-UP-17` | ready / new capability | typed allocation status, lifecycle rollback and exact owner publication | Recoverable unique-owner allocation rather than terminal allocation failure only. |
 | 18 / `L-UP-18` | allocated storage delivered; inline portion planned | `L-UP-12`; inline wrapper lifecycle eligibility proof | A deliberately bounded immovable inline optional; stable allocated-owner movement is already implemented. |
@@ -1374,47 +1377,50 @@ and select an independent row.
 
 ### L-UP-14: Validate Literal Patterns Through One Parser
 
-- **Current disposition (2026-10-28):** passive Expected/tryable constant
-  composition is implemented, superseding the 2026-10-04 result-shape
-  prerequisite. `validate_format_pattern` and its parser helpers remain
-  runtime functions, and no general required call-site literal-validation
-  contract is implemented. Make the shared parser constant-eligible, then
-  implement call-site enforcement; adding constexpr to one wrapper alone
-  would not diagnose every invalid literal call. This remains a capability row.
-- **Prerequisite/client:** the current literal-text/passive-record MIR profile.
-  Substep A is a shared constant-eligible validator; substep B's call-site
-  validation requires A's passing evidence. Adopt the general explicit
-  call-site constant-validation rule with that client, not as unowned future work.
-  `L-UP-13` is needed only if the accepted contract also validates user argument
-  adapters; pure pattern validation need not wait for formatter customization.
-- **Steps:** isolate pure pattern validation from output allocation while
-  retaining the same grammar and error categories. Establish a constant-eligible
-  passive result rather than assuming Expected/packs already execute in CTFE.
-  Prove compile-time/runtime parity, then adopt the bounded call-site/literal
-  carrier contract and make invalid literal patterns source diagnostics.
-- **Boundary:** current `constexpr` alone does not require literal arguments to
-  be evaluated at a call. The rule must apply to an unrelated validated-literal
-  API, run at the correct semantic query stage using canonical verified MIR,
-  and preserve deterministic resource limits. No second format grammar inside
-  the compiler, optimizer-only check, or native C++ compile-time authority.
-- **Exit:** invalid brace/index/specifier/argument-count cases at source spans,
-  valid literal examples and identical dynamic `try_format` errors; custom
-  adapter cases when in scope. Dynamic strings remain supported and recoverable.
+- **Budget prerequisite (2026-11-03):** the 4096-step request budget that
+  rejected valid format patterns beyond roughly 130 characters or 11 fields
+  (audit CB-07) is now a configurable 1048576-step default, and repeated
+  immediate validation no longer re-lowers the validator's call closure (CB-08):
+  50 identical calls cost about one. Neither is a remaining blocker for the
+  validator or for call-site validation.
+- **Delivered (2026-11-03, #169):** the source parser is constant-eligible and
+  `format_pattern<Args...>` applies the general checked immediate argument tier.
+  Grammar, indexing, count and built-in presentation failures are caller-span
+  diagnostics; custom formatter validators may opt in. Already checked carriers
+  forward through ordinary generic functions without revalidation.
+- **Runtime contract:** separately named `runtime_*` / `try_runtime_*` APIs
+  retain dynamic views, error categories, cleanup and output behavior. Existing
+  runtime oracle fixtures use those entry points. Raw text output and assertion
+  evaluation semantics are unchanged.
+- **Companion decisions:** a declaration warning exposes same-shaped exact
+  overloads that bypass validation; an executed literal-message panic fails the
+  request through the shared compile-time panic rule (`Panicked`, issue #174);
+  immediate requests run under the configurable per-request step and
+  call-depth limits (`constexpr-steps`, `constexpr-depth`) and reuse exact
+  request-local staged results with original-work charges; hover names the
+  selected checked constructor. See [ADR 033](../decisions/033-checked-immediate-arguments.md).
+- **Boundary:** one parser and canonical verified MIR; no public type-name
+  recognition, AST retry, operator conversion, conversion ranking or inference
+  through the checked parameter. C++ declines aggregate constant publication
+  with `GTI-B0003`; LLVM executes the new checked path.
+- **Compile-time panic messages (issue #174 follow-up):** an executed
+  `std::panic(std::string_view)` fails a constant request with its message, and
+  staging is lazy in every constant context. Formatted panic messages, including
+  the single-argument `std::assert` failure text, still need a constant-eligible
+  formatter output path; the pattern parser alone is constant-eligible. Until
+  then an executed formatted panic fails the request as a runtime-only call.
 
 ### L-UP-15: Conditionally Available Member Operators
 
-- **Adoption audit (2026-10-04):** still explicitly rejected by semantic
-  declaration analysis with `GTI-S2049` for an operator's trailing requirement.
-  Existing ordinary-method constraints used by `get_or_insert` do not remove
-  that boundary; row 4 does not silently widen it.
-- **Client/evidence:** associative containers supply `get_or_insert` guarded
-  by `default_initializable<V>`; conditional `operator[]` remains excluded by
-  [concepts](../language/concepts.md) and
-  [`L-CONT-02`](#l-cont-02-associative-containers).
-- **General rule/steps:** extend exact validity-only requirements to bounded
-  non-polymorphic member operators; preserve the condition through selection,
-  concrete instances, MIR/lowering and tooling. Prove a generic user-defined
-  operator family before adding map indexing.
+- **Implemented (2026-11-03):** non-polymorphic member operators use the
+  ordinary validity-only requirement path. This revises the 2026-10-04
+  rejection: semantic selection and concrete body analysis now check the
+  same declared condition before an exact function instance reaches MIR.
+- **Clients/evidence:** `map` and `unordered_map` expose mutable indexing
+  guarded by `default_initializable<V>`; `pair` equality requires both
+  element contracts. Unrelated `Cell<T>`/`Box<T>` operators, unavailable
+  candidates, nested pair comparisons, and map ownership are covered by
+  example 190 and `conditional_member_operators`.
 - **Boundary:** no constraint-based ranking, C++ implicit key conversion or
   global default-construction requirement. Indexing inserts only when the
   source API's exact default-value contract applies; `at`/lookup and explicit
@@ -9927,13 +9933,38 @@ follow-ups:
   defaults retain exact identity through the same frontend-owned constant
   model. The remaining AST interpreter is a compatibility path for unmigrated
   profiles, not the intended endpoint for future execution facilities.
+- **One lazy rule and compile-time panics (2026-11-03, issues #174/#175):**
+  staging lowers only completed constexpr callees. Every other callee keeps a
+  signature-only declaration body, so only executed operations must be
+  compile-time capable in constexpr bindings, `static_assert`, `if constexpr`
+  and immediate calls alike. An executed runtime-only call or terminal failure
+  is an authoritative verified-MIR result and never falls back to the AST
+  interpreter. The trusted runtime-terminal panic operation fails the request
+  with its message. `[[track_caller]]` frames move the reported location to the
+  user's call, and `std::panic(std::string_view)` is an ordinary constexpr
+  wrapper. Lazy closures use the request's configurable step and depth
+  limits and the staged-closure cache unchanged: the cache key already
+  includes the completed constexpr inventory that decides which callees are
+  lowered, and only successes are memoized. Remaining: formatted messages
+  (`L-UP-14` substep A) and macro-body failure locations inside trusted
+  library macros.
 - **Implemented scope:** The existing evaluator admits concrete type/pack
   and `uint64_t` value-generic calls, exact scoped enums, concrete fixed arrays,
   fully initialized structural class/struct values, ordinary constexpr
   constructors, and read-only or mutable instance methods. Constants retain exact
   declaration/type/value identity through semantics and required HIR/MIR data;
-  the backend only materializes an already-proven value. One shared 4096-step
-  budget and 64-call-depth limit cover recursive/default aggregate work.
+  the backend only materializes an already-proven value. Each request's step
+  budget and call-depth limit cover recursive/default aggregate work. Both are
+  configurable per compilation (`--constexpr-steps`/`--constexpr-depth` and the
+  root `[limits]` table) with guaranteed minimums of 1048576 steps and 512
+  calls; a staged call closure is lowered once per analysis and identical
+  successful evaluations replay with their recorded step cost (2026-11-03,
+  stdlib audit CB-07/CB-08; see
+  [implementation limits](../language/static-semantics.md#3112-implementation-limits)).
+  Nested staging stays at a fixed 64 levels because each staging level copies
+  the semantic model (a cyclic definition held 3.3-11.7 GB at 512 levels).
+  **Follow-up:** share the staged worker's analysis snapshot across nesting
+  levels, then raise or remove the separate staging bound.
 - **Text-inspection slice (implemented):** Literal-backed string-view `size()`,
   `empty()`, and checked unsigned-byte indexing now use backend-neutral constant
   kernels selected by resolved intrinsic/type identity. Focused frontend and
@@ -10174,8 +10205,8 @@ follow-ups:
   escaped braces, bounded presentation specifiers, binary32/binary64 values,
   and public exact `std::formatter<T>` specializations. It validates before
   stdout; named/dynamic fields and compile-time literal validation remain
-  later breadth. Named move-only strings use an
-  owner-tied view because GTI does not yet admit `Args&...` reference packs.
+  later breadth. Explicit `Args&...` reference packs now let formatting borrow
+  named move-only strings and custom owners without a view or transfer.
   Recoverable counted stderr output is now supplied by `L-HOST-01`.
 - **Implemented binary32 text sub-slice:** `std::to_string(float)` plus the
   `std::print`/`std::println` binary32 overloads and the matching
@@ -10265,8 +10296,11 @@ follow-ups:
   iterator path. General multi-field carriers and cleanup-bound borrowed guards
   have since shipped; this does not admit borrowed-state container elements,
   reseating, hidden owner escape or independent container invalidation rules.
-- **Remaining breadth:** allocator customization, `operator[]` (which needs
-  conditional operator requirements), finer-grained
+- **Conditional indexing (2026-11-03):** `L-UP-15` delivers mutable `operator[]`
+  for default-initializable mapped types, with eager exact owned keys and
+  ordinary exclusive entry loans. Other mapped types retain explicit insertion
+  and lookup.
+- **Remaining breadth:** allocator customization, finer-grained
   invalidation, and comparative performance tuning are separate follow-ups.
   The current gates cover capability rejection, tree balancing, hash collisions,
   ownership/cleanup, failure behavior, all selected native modes, and editor
@@ -12297,10 +12331,9 @@ entry/cleanup/order and foreign-boundary obligations below.
   private runtime contracts (a foreign exception
   at a callback boundary, a wrong-thread confined-callback binding, malformed
   thread or mutex state) end through `std::terminate` as in C++, so a host
-  terminate handler observes both backends alike. Known non-semantic
-  divergence: the C++-only nothrow-`operator new` allocation oracle
-  (`scoped_parallel_allocations`) does not observe native task boxes, which
-  use the process memory provider. Remaining:
+  terminate handler observes both backends alike. The nothrow-`operator new`
+  allocation oracle (`scoped_parallel_allocations`) observes native task
+  boxes through the runtime's owner allocation entry. Remaining:
   hierarchy-bearing thread results (O-LLVM-10 payload enums), Linux execution
   evidence,
   generated-code TSan, the terminal containment of a defined failure inside an
@@ -12497,8 +12530,6 @@ artifacts name `--backend cpp` explicitly.
   on LLVM, the owner's lifecycle-dispatch rule. The C++ backend reaches the
   destroyed derived override; this is a recorded C++ bug and the one corpus
   mismatch (`llvm_dispatch_lifecycle_phases`).
-- `scoped_parallel_allocations` counts the C++ backend's nothrow `operator new`,
-  which native task boxes do not use.
 - A derived constructor that passes an owned value, or forwards a class or
   enum reference, to its base initializer now runs on LLVM; MIR stages the
   argument as a prepared parameter or a borrow input. C++ still fails on it.
@@ -12590,22 +12621,17 @@ LLVM gap the audit found, runs on LLVM since PR 421.
   the C++ backend never supported, or are deliberate whole-program errors.
   `llvm_mutex_guard_lifecycle`, `llvm_native_process_storage` and
   `llvm_mutex_source_lifecycle` (a C++ backend `GTI-B0001`) run only on LLVM.
-- **Allocator-hook differences in companion fixtures.** `process_storage_policy`,
-  `process_allocation_elision`, `scoped_parallel_allocations`,
-  `unique_scalar_allocation_failure`, `unique_scalar_allocation_cleanup_failure`
-  and `inline_polymorphic_lifecycle` give different results on the two
-  backends. Their companions count or fault-inject the C++ allocator
-  (`operator new`) or replace the runtime's `gti_rt_posix_memalign_v1`. On
-  LLVM, unique owners allocate through that runtime function, and on C++
-  through `operator new`. No GTI document fixes which allocator backs a unique
-  owner. Source-only GTI cannot see the difference; these companions can.
-  Since 2026-10-29 the `unique_scalar_allocation_failure`,
-  `unique_scalar_allocation_cleanup_failure` and `process_allocation_elision`
-  programs also run with companions that replace the runtime's POSIX provider
-  through the same switch or probe, so `unique_scalar_allocation_runtime` and
-  `process_allocation_elision` check exhaustion, failure during cleanup and
-  owner release on LLVM as well (not on Windows). The other three tests stay
-  C++-only.
+- **Allocator-hook companions now agree (2026-11-03).** Generated owner
+  storage on LLVM calls the runtime's `gti_rt_owner_allocate_v1`/
+  `gti_rt_owner_release_v1`, which use the same replaceable nothrow
+  `operator new`/`delete` as generated C++, so the injectable process provider
+  (`gti_rt_posix_memalign_v1`) sees only source-policy allocations on both
+  backends (lang-gti-official/gti#200). `process_storage_policy`,
+  `process_allocation_elision`, `unique_scalar_allocation_failure`,
+  `unique_scalar_allocation_cleanup_failure` and `inline_polymorphic_lifecycle`
+  now observe the same allocations, exhaustion and cleanup failure on both
+  backends, including Windows. The runtime-provider fault companion is retired.
+  `scoped_parallel_allocations` therefore runs in every LLVM mode as well.
 - **Recorded C++ lifecycle bug.** In `llvm_dispatch_lifecycle_phases`, a base
   destructor's virtual call on `this` runs the destructor's own class on LLVM,
   the owner's lifecycle-dispatch rule. The C++ backend reaches the destroyed

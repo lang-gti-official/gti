@@ -450,8 +450,9 @@ the GTI source graph does not.
 Initialization requires an exact type unless a specific rule permits a
 conversion. Numeric conversions use `Type(value)` and checked GTI semantics.
 Constructors are selected by one exact parameter list, and a class may declare
-conversion operators to other types (section 3.9.2). Neither defines an
-implicit conversion for calls or assignment. The initialization rule below
+conversion operators to other types (section 3.9.2). Neither defines a general
+implicit conversion for calls or assignment. Section 3.6 admits one bounded
+call exception through `implicit consteval` constructors. The initialization rule below
 selects one, declared `implicit`, for a declaration initializer or an explicitly
 declared value return type.
 
@@ -489,7 +490,8 @@ initialization error, with a hint naming the explicit form. The rule does not
 apply to `constexpr` bindings, range-`for` element bindings, reference fields,
 unions, abstract classes, a declared type that carries a borrow, or an
 initializer whose type comes from its destination: a brace list, a
-contextually typed call, or a function name. Function arguments and assignment never use it.
+contextually typed call, or a function name. Assignment never uses it. Function arguments use only the narrower checked
+immediate construction rule in section 3.6.
 
 The same one-step selection initializes an explicitly declared value return
 type from a return operand. For example, `Celsius read() { return 21; }` uses
@@ -548,7 +550,30 @@ integer may widen to a strictly wider signed destination. An integer value is
 also assignment-compatible with `float` or `double`, and `float` may widen to
 `double`. `double` never implicitly narrows to `float`, including through a
 compound assignment. These assignment compatibilities do not participate in
-call or constructor overload selection.
+call or constructor overload selection, apart from the literal argument rule
+below.
+
+A written integer literal argument, optionally parenthesized and optionally
+preceded by one unary `+` or `-`, adopts the integer parameter type of the
+selected callable when no candidate matches the call exactly. Candidates whose
+parameters match exactly, with the literal at its default type, form the first
+tier and are always preferred; only when that tier is empty do candidates
+remain whose sole mismatches are call-only temporary borrows or literal
+arguments whose mathematical value, including its sign, is representable in
+the integer parameter type. Selection still requires one unique candidate, so
+a literal that fits several candidate parameter types is ambiguous and needs
+an explicit conversion. The rule applies to function, method, constructor,
+base-initializer, operator, lambda, function-item and native-function-pointer
+calls. It never retypes a named value or a named constant, never targets a
+floating-point parameter, never participates in generic inference, and never
+ranks candidates. `twice(4)`, `values[0]`, `values.push_back(1)` and
+`Counter{3}` therefore resolve against `uint64_t` parameters, while
+`narrow(300)` against `uint8_t` and `twice(-1)` against `uint64_t` remain
+errors that name the literal's value.
+See [example 186](../../examples/186-literal-call-arguments.gti) for a
+source-defined window API and exact-overload preference. Adding an exact
+overload later can redirect a literal call; callers needing a fixed signature
+can pass an explicitly typed argument.
 
 Integer-to-floating assignment conversion is a rounding conversion, not a
 value-preserving widening guarantee. It uses the destination's IEEE binary32
@@ -735,7 +760,8 @@ not exempt it from alias checks. See the [thread-local contract](concurrency.md#
 
 An overload set is resolved to one unique candidate whose parameter types match
 exactly after generic substitution, apart from the bounded raw-pointer
-qualification and null compatibility defined above. Return types, parameter
+qualification and null compatibility defined above, the temporary-borrow tier
+below, and checked immediate argument construction. Return types, parameter
 names, and by-value parameter mutability do not distinguish overloads. GTI does
 not otherwise perform conversion ranking, return-type overloading, ADL, or a
 concrete-over-generic preference.
@@ -826,11 +852,13 @@ occurrences must infer one canonical type, and every local type parameter must
 occur in an inferable parameter position. A local parameter is visible only in
 that constructor's parameters, requirements, defaults, initializer list, and
 body and cannot shadow an owner parameter. A final constructor-local type pack
-and final by-value parameter-pack expansion are implemented within the ordinary
-owned pack/selected-constructor contract, including final-field construction.
+and final by-value, read-only-reference or mutable-reference parameter-pack
+expansion are implemented within the ordinary selected-constructor contract,
+including final-field construction for owned arguments.
 Concrete pack elements retain exact copy/move/borrow roles, source order and
 cleanup; this does not add explicit constructor-local arguments, local generic
-defaults, CTAD, parameter reference packs or native variadic forwarding.
+defaults, CTAD or native variadic forwarding. Reference packs require a result
+without borrowed state and retain the same call-confined access as function packs.
 
 The selected constructor declaration, concrete owner, and ordered local
 type/value arguments form one concrete constructor identity. Distinct local
@@ -863,6 +891,15 @@ concrete result or using that result to distinguish overloads. An unresolved
 outer generic parameter cannot supply an exact result context. A typed local
 can supply the context explicitly when selection otherwise remains ambiguous.
 
+An active structural call requirement can itself establish the exact owned
+result of a generic invocation, including a callable stored in a field. Such
+results compose in arithmetic, comparison and other expressions without an
+extra typed local. A disjunction establishes a result only when every
+alternative proves that same result for the same receiver and argument types;
+borrowed and consumed argument alternatives do not thereby become identical
+invocation permissions. Concrete instantiation still checks the selected call,
+receiver access, argument ownership and the ordinary result boundary.
+
 When the outer receiver is itself an open generic callable, a direct nested
 invocation such as `outer(inner(value))` records a deferred result obligation
 instead. Concrete semantic instantiation resolves `inner` first, then checks
@@ -883,6 +920,12 @@ supported, including reference reborrows; this does not permit access upgrades,
 consuming a borrowed object, reference packs, capture, storage or escape of a
 confined callable. No `requires` clause is necessary; callable concepts can
 add an explicit signature requirement.
+
+Generic owned-transport metadata also describes ordinary values. A concrete
+value without lexical closure state remains subject to ordinary ownership and
+reference binding; returning it by move does not impose a callable-confinement
+requirement on a later call that borrows it. Actual closure-containing values
+and unresolved generic forwarding retain their callable boundary checks.
 
 A conditional in an `auto` value initializer can defer a direct open callable
 arm's result until concrete semantic instantiation. Either or both arms may
@@ -962,25 +1005,41 @@ local owner's text is not such a borrow: its result is a view of that owner
 (see [owner-tracked view fields](ownership-and-lifetimes.md#owner-tracked-view-fields)).
 Consuming members cannot return any reference or tracked borrowed state.
 
-For an ordinary GTI function or non-operator method call, a direct fresh
-construction, GTI function call, or GTI value-operator result may initialize an
-exact read-only `T&` parameter for that invocation
-only. An explicit `std::move(local)` of a whole local or parameter may do the
-same, as an explicitly moved receiver does: the move transfers the local into a
-temporary that the enclosing full expression owns and destroys, and the local
-is moved on every later path.
-Overload selection first considers every otherwise-exact candidate that needs
-no temporary argument borrow. Only when that tier is empty does it consider
-otherwise-exact candidates whose mismatch consists solely of one or more such
-fresh values targeting read-only references; selection still requires one
-unique candidate within the active tier. The selected callable must have a
-body, use GTI linkage, and return `void`, a scalar, or an owned value without
-tracked borrowed state. Mutable references, moves of a projection, native or
-callback targets, compound producers, borrowed-state values, and results that
-could retain the argument loan remain ill-formed. Transparent parentheses do
-not change eligibility. A temporary borrowed inside a conditionally evaluated
-operand, such as the right operand of `||`, lives to the end of the enclosing
-full expression only on the path that created it.
+For an ordinary GTI function, method, or member operator call, a supported
+fresh value may initialize an exact read-only `T&` parameter for that invocation
+only. This includes integer, floating, Boolean and character literals and
+built-in value expressions, scalar-backed enum results, direct record or
+payload-enum construction, and GTI function or value-operator results. A string
+literal or another semantically ownerless text-view value, including a checked
+conditional or factory result, may similarly supply a temporary. Unknown or
+transient text dependencies are not admitted by this ownerless-value rule. Built-in
+assignment values and conditional values retain their ordinary full-expression
+semantics. Transparent parentheses do not change eligibility.
+
+An explicit `std::move(local)` of a whole local or parameter may do the same:
+the move transfers the local into a temporary owned by the enclosing full
+expression, and the local is moved on every later path. A temporary carrier may
+contain borrowed state only when its ordinary construction or source factory
+proves stable external owner dependencies. Those dependencies stay live through
+the carrier's full-expression cleanup.
+
+Overload selection first considers every otherwise-exact candidate needing no
+temporary argument borrow. Only when that tier is empty does it consider
+candidates requiring such readonly borrows. Ordinary functions preserve their
+existing conversion ranking, including a same-type value overload's preference
+over a reference overload. Operators retain unique exact selection within each
+tier: same-type `T` and `T&` operators remain ambiguous for an existing place.
+One readonly-reference operator can observe both places and temporaries; no new
+operator preference or constraint ranking is introduced.
+
+The selected callable must have a body and GTI linkage. Its result must not
+retain the temporary parameter: a reference or borrowed value derived solely
+from other caller-owned arguments or the receiver is permitted when its exact
+origin summary proves that exclusion. Untracked raw/native addresses, unknown
+borrowed results, mutable reference parameters, moved projections, native and
+callback targets remain rejected. A temporary inside a conditionally evaluated
+operand lives until the enclosing full-expression boundary only on the path
+that created it.
 
 The same call-scoped read-only parameter boundary admits an exact fresh lambda,
 an explicitly moved lambda local, or a selected GTI function item. The selected
@@ -1014,6 +1073,44 @@ still requires an ownership contract beyond ordinary virtual dispatch.
 
 The selected callable, constructor, or operator identity is part of the
 program's semantics and must not be re-selected by a backend.
+
+### Checked immediate argument construction
+
+Only after the exact and temporary-borrow tiers are empty, a constant expression
+of type `T` may initialize a by-value class/struct parameter `P` through an
+accessible `implicit consteval` constructor. Its first explicit parameter must
+be exactly `T` or read-only `T&`; any trailing parameters need defaults. There
+is one construction, with no numeric conversion, chained constructor, conversion
+operator, ordinary implicit constructor, or reference destination. The existing
+construction ownership/access checks and immediate publication limits apply.
+Assignment and all operators, including `operator()` and `operator[]`, keep
+exact matching.
+
+The final tier requires one function and one constructor. It does not rank
+checked candidates by the number of conversions, receiver preference, generic
+specificity, or defaults. Generic inference does not use a class parameter
+satisfied by this conversion: infer its arguments elsewhere or supply them
+explicitly, then check the substituted class. For example:
+
+```gti
+std::string log<std::formattable Args...>(std::format_pattern<Args...> pattern, Args... args) {
+  return std::format(pattern, args...);
+}
+// Args comes from 42; the literal initializes format_pattern<int> afterward.
+auto text = log("value={}", 42);
+```
+
+An already constructed `P` passes exactly and forwards without revalidation.
+A nonconstant argument reports `GTI-S2057` at that argument, names the parameter,
+and requires a compile-time constant. A constructor documentation line
+`@runtime_escape <description>` adds library-authored runtime guidance. It has
+no effect on overloads or language semantics.
+
+An exact overload continues to win even for a literal. `GTI-S2125` warns when
+same-shaped overload declarations differ by an exact source parameter and a
+class parameter accepting that source through an implicit immediate constructor.
+API authors should separate runtime entry points by name or wrapper type. The
+warning is a declaration lint, not a change to exact-tier precedence.
 
 ### Namespace Function Items
 
@@ -1125,15 +1222,19 @@ type/value substitution as written or inferred arguments. Concrete generic
 bodies are rechecked after substitution; generic validity and default selection
 are not delegated to C++ template instantiation.
 
-A function or method may own one final type pack, bound either through a final
-named immutable by-value parameter pack or an explicit type-list expansion in
+A function, method or constructor may own one final type pack, bound either through a final
+named parameter pack or an explicit type-list expansion in
 a formal parameter's type metadata. A metadata-bound pack does not add runtime
 parameters and may also expand into returned nominal metadata. Bare pack types
 remain invalid as return values or object storage. A named value pack uses the
 same deduced list if both forms are present. Whole-pack forwarding remains available
 only as the final argument of another variadic call. The bounded comma-pack
 fold `(call(fixed, pack), ...)` additionally applies one call pattern to each
-concrete pack element. It is well-formed only when:
+concrete pack element. `Args... args` retains value transport; `Args&... args`
+borrows each argument read-only, and `mut Args&... args` borrows each argument
+mutably. Deduction binds `Args` to object types; explicitly supplying reference
+types to a reference-pack declarator is rejected rather than collapsed.
+The grouped pack is not an independently assignable object. It is well-formed only when:
 
 - the bare parameter-pack name occurs exactly once and is the pattern call's
   final argument;
@@ -1142,7 +1243,8 @@ concrete pack element. It is well-formed only when:
 - the target is one directly named, non-overloaded ordinary free function with
   `void` result;
 - that target has one generic type parameter supplied by the element and an
-  exact final read-only reference parameter to that element type; and
+  exact final reference parameter to that element type (mutable access requires
+  a mutable reference element); and
 - the source pack's constraint facts imply the target element parameter's
   constraints while the generic body is checked.
 
@@ -1151,8 +1253,8 @@ reanalysis then substitutes each source-pack element in order, validates its
 constraints and exact parameter types, and records one resolved call identity
 per element. It does not reopen an overload set for each type. The expression
 has type `void`, including for an empty pack. This rule adds neither a general
-fold-expression algebra nor pack indexing, multiple packs, mutable element
-iteration, partial movement, member-call patterns, or backend-selected
+fold-expression algebra nor pack indexing, multiple packs,
+partial movement, member-call patterns, or backend-selected
 template behavior.
 
 A class or struct may also declare one final type pack, for example
@@ -1179,8 +1281,22 @@ must be non-void object types or references; bare signatures are rejected even
 if the method is never called. Mutable reference elements require exact mutable
 reference forwarding and do not consume the referent, so sequential forwarding
 is allowed. The grouped pack binding itself remains immutable.
-This does not admit reference-pack declarators (`Args&...`) or forwarding
-references, nor implicit borrowing during unconstrained pack deduction.
+Reference-pack declarators can also bind a class's prescribed object-type pack.
+They use the same per-element references as explicit function-pack deduction.
+Read-only elements may alias; mutable elements require disjoint places, including
+against fixed reference parameters. Forwarding can reborrow mutable elements
+read-only but cannot strengthen read-only access. Reference packs admit only
+results without borrowed state, including for constructors: pack elements cannot
+escape through a returned reference, borrowed carrier, field, global, escaping
+closure or thread. Plain value packs and owned thread/task entry points retain
+their existing transport rules. Forwarding references and implicit borrowing
+during value-pack deduction remain unsupported.
+
+Fresh arguments admitted by the ordinary call-scoped temporary rule live until
+the caller's full-expression boundary. Conditional operands are materialized
+only on the executed path. An explicit `std::move` consumes its source and the
+callee borrows the resulting temporary. A named borrowed owner is destroyed by
+its caller, whereas a by-value argument is destroyed at the callee's exit.
 
 ## 3.8 Classes, Interfaces, And Lifecycle
 
@@ -2014,11 +2130,45 @@ conversions plus lossless `uint8_t(char)`/`char(uint8_t)` code-unit conversion.
 Integer operations use the language's checked domains.
 Floating literals, arithmetic, comparisons, integer conversions, signed zero,
 infinities, and NaNs use the selected binary32 or binary64 rules in execution
-semantics. Evaluation has one shared 4096-step budget, including recursively
-synthesized default array elements, and a 64-call-depth limit. It reports
-integer overflow, integer zero divisors, invalid shifts, out-of-range
+semantics. Each request has one step budget, including recursively
+synthesized default array elements, and one call-depth limit (see
+[3.11.2](#3112-implementation-limits)). It reports integer overflow, integer zero divisors, invalid shifts, out-of-range
 conversions, non-constant references, unsupported operations, and resource
 exhaustion at source locations.
+
+Every compile-time context follows one lazy execution rule: constexpr
+bindings and fields, `static_assert`, `if constexpr` conditions and immediate
+invocations. Only the operations that actually execute must be compile-time
+capable. Staged verified MIR lowers a callee's body only when the callee is a
+completed constexpr definition. Any other callee keeps only its exact
+signature, and its body is never lowered or staged. A call to a function that
+is not `constexpr`, or whose constexpr definition is not yet available, rejects
+the request only when evaluation reaches it. On an unexecuted branch it has no
+effect. An executed call of that kind reports `GTI-S2057` at the call, names the
+callee, and includes the constant call trace. Typed macros, including
+`std::assert`, expand to ordinary verified MIR, so a macro inside a constexpr
+function follows the same rule in every context. Executed runtime-only calls
+and compile-time panics are authoritative verified-MIR results. They are never
+retried in the compatibility AST evaluator. That evaluator remains only for
+operations outside the MIR profile, which are the unmigrated profiles of
+`L-CONST-01`.
+
+A terminal failure operation that executes during evaluation fails the request
+as a compile error, not as a runtime failure. `std::panic(std::string_view)`
+and every constexpr function that reaches it report
+`Compile-time evaluation panicked: "<message>"`, with the message quoted and
+its control characters escaped. This includes library wrappers, `expected`
+accessors and user validators. The meaning belongs to the trusted
+runtime-terminal operation, bound by its declaration identity, not to any
+library spelling. The library's own empty-owner and inactive-`expected` failures
+report fixed messages the same way. A `[[track_caller]]` function anchors the
+failure at the call that reached it, so the reported panic location is the
+call the user wrote. The trace notes then show how evaluation reached it. The
+supported pattern for checking a parameter at each compile-time call is
+`if (!condition) { std::panic("message"); }`. A formatted message such as
+`std::panic("odd {}", v)` is not yet constant-eligible. Executing it fails the
+request as a runtime-only call, and it is never accepted. A compile-time panic
+cannot be caught or recovered.
 
 Constant string views retain their complete byte sequence, including embedded
 NULs. Indexing produces one unsigned `char` code unit, not a Unicode code point;
@@ -2163,7 +2313,17 @@ flow must be checked again for each concrete instance; the symbolic primary is
 not an executable flow proof. A concrete instance must select every branch
 before HIR lowering. Nested constexpr predicates may themselves require staged
 concrete analysis; their execution shares the enclosing constant request's
-step budget and a bounded staging/call depth.
+step budget and call-depth limit ([3.11.2](#3112-implementation-limits)).
+
+A concept application `C<T>` is a semantic Boolean query using the existing
+constraint satisfaction service. In a selected true `if constexpr` arm it
+supplies that application's guaranteed constraint facts; grouping retains them
+and conjunction combines them. Disjunction, negation and the else arm supply no
+additional facts. A dependent test uses the same deferred selection described
+above. Closed query results are Boolean constants lowered to MIR literals;
+constexpr function execution remains in the staged MIR evaluator. See
+[concept tests](concepts.md#concept-tests-in-expressions) for expression positions
+and the distinction from constraint-clause negation.
 
 Concrete non-negative integer constexpr values may supply fixed-array extents
 and `uint64_t` value-generic arguments. These uses refer to the declaration's
@@ -2197,10 +2357,11 @@ Allocation identities are symbolic and confined to one evaluation request.
 All allocations must be reclaimed before the outer request completes. A helper
 may return an owner to another helper, but an allocation, ownership handle or
 active-cleanup object cannot become a persistent constexpr binding. Return a
-passive summary instead. The existing step/depth limits also cover destruction
-and heap operations. Each request allows at most 1024 allocation identities and
-65536 live logical storage units (one per value/aggregate node plus each text
-byte), independent of target layout. Exhaustion is a semantic diagnostic.
+passive summary instead. The request's step and depth limits also cover
+destruction and heap operations. Each request allows at most 1024 allocation
+identities and 65536 live logical storage units (one per value/aggregate node
+plus each text byte), independent of target layout. Exhaustion is a semantic
+diagnostic.
 
 Shared ownership, virtual/recursive owning destruction, raw-memory/provider
 allocation protocols, stored-reference carriers, unions and
@@ -2232,10 +2393,10 @@ cannot be immediate.
 An ordinary invocation of an immediate declaration must complete constant
 evaluation during semantic analysis, even when its surrounding expression or
 API also receives runtime arguments. Exact overload and constructor selection
-happens first; immediacy does not rank candidates or introduce conversions.
-An `implicit consteval` constructor participates in GTI's existing declaration
-initialization conversion. Ordinary function arguments still require exact
-types, such as `send(Port(443), runtime_payload)`.
+happens first; immediacy does not rank candidates. An `implicit consteval`
+constructor participates in declaration/return initialization and the final
+checked argument tier in section 3.6: `send(443, runtime_payload)` can initialize
+a by-value `Port` while the payload remains ordinary runtime data.
 
 Inside an immediate function or constructor body, parameters and local values
 may feed other constexpr or immediate calls: their enclosing immediate
@@ -2247,16 +2408,17 @@ otherwise runtime-only substitutions. Immediate declarations cannot become
 function items or native callbacks; this bounded rule also excludes references
 to them used only during constant evaluation.
 
-Execution uses staged, canonical verified MIR and the existing shared
-4096-step/64-call-depth limits. It never retries an immediate request through
-the compatibility AST function interpreter. Runtime-dependent arguments,
-unsupported executed operations, arithmetic failures and resource exhaustion
-produce `GTI-S2057`, with the invocation and failing operation retained.
-The staged call closure must be structurally available to the MIR evaluator;
-an unavailable runtime-only callee can therefore reject a request even in an
-unexecuted branch. Constant execution itself preserves ordinary lazy branch
-selection. Transient allocations
-and cleanup supported by that evaluator remain confined to the request.
+Execution uses staged, canonical verified MIR and the request's step and
+call-depth limits ([3.11.2](#3112-implementation-limits)). It never retries an
+immediate request through the compatibility AST function interpreter.
+Runtime-dependent arguments, unsupported executed operations, executed
+runtime-only calls, compile-time panics, arithmetic failures and resource
+exhaustion produce `GTI-S2057`. The invocation is the primary location, and the
+failing operation, or the panic's message at its call, is retained. Staging is
+lazy, exactly as for constexpr bindings (see the one lazy execution rule in
+§3.11). An unexecuted runtime-only callee never rejects a request, and constant
+execution preserves ordinary lazy branch selection. Transient allocations and
+cleanup supported by that evaluator remain confined to the request.
 
 A successful ordinary invocation publishes an exact supported scalar, text,
 array, passive record or passive sum value. No constructor or immediate
@@ -2280,6 +2442,85 @@ this feature.
 See [`183-immediate-functions.gti`](../../examples/183-immediate-functions.gti)
 for an immediate calculation, standalone void validation, bare-return
 construction, and a checked port combined with runtime data.
+
+### 3.11.2 Implementation Limits
+
+Compile-time work is bounded per request. As with C++ implementation
+quantities, each limit below has a guaranteed minimum that every GTI
+implementation supports: a program whose requests stay within every minimum is
+portable. An implementation's defaults may exceed a minimum, and a compilation
+may configure each limit. No limit accumulates across a module, a package or a
+compilation; there is no aggregate compile-time budget.
+
+A constant-evaluation request is one constexpr binding initializer, one
+`static_assert` condition, one `if constexpr` condition, one fixed-array extent
+or value-generic argument, or one immediate (`consteval`) invocation. Its nested
+calls, its staged concrete analysis and the compile-time predicates that
+analysis requires share the request's step budget and call depth. A macro
+request is one outermost written macro invocation together with every
+invocation its expansion produces. `constexpr for` limits apply per statement
+(elements) and per enclosing declaration (copies).
+
+| Limit | Bounds | Guaranteed minimum | Default | Largest setting |
+| --- | --- | ---: | ---: | ---: |
+| `constexpr-steps` | Constant-evaluation steps per request | 1048576 | 1048576 | 4294967295 |
+| `constexpr-depth` | Nested constant-evaluation calls per request, including staging | 512 | 512 | 16384 |
+| `macro-depth` | Nested macro invocations | 1024 | 1024 | 4096 |
+| `macro-expansions` | Macro bodies expanded by one outermost invocation | 4096 | 8192 | 32768 |
+| `constexpr-for-elements` | Elements of one `constexpr for` statement | 1024 | 1024 | 16384 |
+| `constexpr-for-copies` | `constexpr for` body copies per declaration | 4096 | 4096 | 16384 |
+
+The defaults of the two constant-evaluation limits are Clang's
+`-fconstexpr-steps` and `-fconstexpr-depth` defaults. A step is one unit of
+evaluator work: one executed MIR instruction or terminator, or one expression
+or statement of the compatibility interpreter, with bulk charges for copying
+and traversing aggregate storage. The count is deterministic for a compiler
+version and identical on every host, but it is not a cross-implementation cost
+model. The per-request transient allocation bounds above (1024 identities and
+65536 storage units) are fixed.
+
+Nested staging is bounded separately, at a fixed 64 levels (guaranteed minimum
+64). A staged evaluation nests when it begins while another staged evaluation
+of the same request is still being lowered, for example a constexpr function
+whose `if constexpr` condition calls a constexpr function that must itself be
+staged. Each level currently copies the semantic analysis state, so the
+512-call default would let a cyclic definition hold several gigabytes before
+it is rejected (measured: 3.3 GB, or 11.7 GB with the standard library
+imported, against 0.46 GB and 2.7 GB at 64 levels). Exceeding it reports
+`GTI-S2057` naming the nested staging depth; when the function being staged is
+already being staged further out, the diagnostic names the recursive or cyclic
+definition. Calls executed within one staged evaluation remain bounded only by
+`constexpr-depth`. This bound is not configurable and will rise when staging
+shares its analysis snapshot.
+
+A compilation's limits come from the command line (`--<limit> <n>` or
+`--<limit>=<n>`), then the root package's `gti.toml` `[limits]` table entry of
+the same name, then the defaults. The root (selected) package's table applies
+to the whole compilation, including code from its dependencies; a dependency's
+`[limits]` table is validated with its manifest but never applied, like a C++
+per-compilation flag. A setting is an integer from 1 to the largest setting.
+Settings below a guaranteed minimum are accepted but make a program depend on
+its configuration. Direct single-file compilation has no manifest and uses only
+the command line, and editor analysis applies the same root-package table as
+a build. See [the driver contract](../architecture/build-and-driver.md#compile-limits).
+
+Reaching any limit, up to its largest setting, reports that limit's
+diagnostic: the depth of nested evaluation, staged analysis, macro expansion
+and the lowering of expanded bodies does not depend on the host's native stack.
+Exceeding a constant-evaluation limit reports `GTI-S2057` at the request. The
+diagnostic names the request, the limit and its value and the function that was
+executing, and its hint names the command-line flag and manifest key that
+configure the limit. Exceeding a macro limit or a `constexpr for` limit
+reports that construct's own diagnostic with the same configuration hint.
+
+Within one compilation or editor snapshot, the compiler may reuse the lowered
+call closure of a staged evaluation, and the result of an earlier successful
+evaluation with the same callee, generic arguments, constant arguments and
+available definitions. A reused result charges the steps its original
+evaluation consumed, and either reuse applies only where the original
+evaluation's step and depth requirements still fit. Reuse therefore never
+changes which requests succeed, the values they produce or the diagnostics
+reported. Failed evaluations are never reused.
 
 ## 3.12 Compile-Time Iteration And Reflection
 
@@ -2314,9 +2555,10 @@ condition: no copy is analyzed, and each concrete instance expands the
 statement with the substituted sequence. A declaration of a function, class,
 enum, concept, alias or namespace inside the body is rejected (`GTI-S2109`);
 a sequence that is not such a class is rejected (`GTI-S2107`). Expansion is
-bounded: at most 1024 elements per statement and 4096 expanded copies per
-declaration (`GTI-S2108`), counted separately from the constant-evaluation
-step budget. A diagnostic produced inside a copy carries related information
+bounded by the `constexpr-for-elements` limit per statement and the
+`constexpr-for-copies` limit per declaration (`GTI-S2108`;
+[3.11.2](#3112-implementation-limits)), counted separately from the
+constant-evaluation step budget. A diagnostic produced inside a copy carries related information
 naming the element; a diagnostic that every copy produces identically is
 reported once.
 
@@ -2558,7 +2800,12 @@ depth-bounded constexpr evaluator used by constexpr bindings and
 `if constexpr`. A `true` result records a passed semantic fact. A `false`
 result emits `GTI-S2079` at the condition, with the optional decoded message.
 An unsupported constant operation or runtime dependency uses the existing
-constexpr-evaluation diagnostic family. Assertions in inactive configuration
+constexpr-evaluation diagnostic family; an executed compile-time panic reports
+its message (§3.11). A condition cannot read a function parameter, even in a
+`constexpr` or `consteval` body, because a function's validity cannot depend on
+each call's arguments. The rejection hints at the supported
+`if (!condition) { std::panic("message"); }` pattern, which checks the
+parameter at each compile-time call. Assertions in inactive configuration
 branches and discarded `if constexpr` branches are not evaluated; ordinary
 runtime reachability does not suppress them.
 
