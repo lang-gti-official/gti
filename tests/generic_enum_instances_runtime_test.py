@@ -735,7 +735,8 @@ def main():
     compiler = pathlib.Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix="gti-generic-enum-instances-") as temporary:
         root = pathlib.Path(temporary)
-        check_rejections(compiler, root)
+        if "--list-modes" not in sys.argv:
+            check_rejections(compiler, root)
         fixtures = {}
         observations = {}
         for name, (source, status, output) in runtime_cases().items():
