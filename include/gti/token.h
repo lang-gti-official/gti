@@ -254,6 +254,9 @@ struct Token {
         completion(completion), generated(generated) {}
 
   TokenKind kind{};
+  // Generated spelling may be longer than its validated diagnostic origin.
+  // Zero means the written lexeme length. Kept beside kind in its padding.
+  std::uint32_t sourceLength = 0;
   std::string lexeme;
   Literal literal{};
   std::size_t position{};

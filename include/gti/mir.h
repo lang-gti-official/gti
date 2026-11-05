@@ -1382,6 +1382,7 @@ struct MirClassInstance {
   std::optional<CapabilityCondition> shareCondition;
   CompilerCapabilityTypeKind compilerCapability =
       CompilerCapabilityTypeKind::None;
+  CompileTimeSyntaxKind syntaxKind = CompileTimeSyntaxKind::None;
   bool lifecycleBoundBorrowCarrier = false;
   bool mutexGuardBorrowCarrier = false;
   ClassKind kind = ClassKind::Class;
@@ -1482,6 +1483,7 @@ struct MirFunctionInstance {
   ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly;
   std::optional<OverloadedOperator> overloadedOperator;
   bool constexprFunction = false;
+  bool proceduralFunction = false;
   bool requiresUnsafe = false;
   bool neverReturns = false;
   bool tracksCaller = false;

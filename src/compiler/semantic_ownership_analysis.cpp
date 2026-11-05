@@ -4899,6 +4899,11 @@ auto SemanticVisitor::Impl::storedReferencePath(const SemanticType &type) const
 auto SemanticVisitor::Impl::completeBorrowDependencySet(
     const ExprPtr &expression) const
     -> std::optional<SemanticBorrowDependencySet> {
+  return completeBorrowDependencySet(expression.get());
+}
+
+auto SemanticVisitor::Impl::completeBorrowDependencySet(const Expr *expression)
+    const -> std::optional<SemanticBorrowDependencySet> {
   if (!expression)
     return std::nullopt;
   if (const auto *construction =
@@ -4907,9 +4912,11 @@ auto SemanticVisitor::Impl::completeBorrowDependencySet(
     return construction->contextualBorrowDependencies;
   if (const auto *complete = semanticModel.findBorrowDependencySet(*expression))
     return *complete;
-  if (const auto *group = exprAs<Grouping>(expression.get()))
+  if (const auto *alias = semanticModel.findExpressionAlias(*expression))
+    return completeBorrowDependencySet(alias);
+  if (const auto *group = exprAs<Grouping>(expression))
     return completeBorrowDependencySet(group->expression());
-  if (const auto *field = exprAs<Get>(expression.get())) {
+  if (const auto *field = exprAs<Get>(expression)) {
     const auto owner = completeBorrowDependencySet(field->object());
     const auto *place = semanticModel.findPlace(*expression);
     if (owner && place && !place->projections.empty() &&
@@ -4950,15 +4957,15 @@ auto SemanticVisitor::Impl::completeBorrowDependencySet(
         return result;
     }
   }
-  if (const auto *binary = exprAs<Binary>(expression.get());
+  if (const auto *binary = exprAs<Binary>(expression);
       binary && binary->oper().kind == TokenKind::COMMA)
     return completeBorrowDependencySet(binary->right());
   if (const auto *construction = semanticModel.findConstruction(*expression);
       construction && construction->directInitialization) {
-    if (const auto *call = exprAs<Call>(expression.get());
+    if (const auto *call = exprAs<Call>(expression);
         call && call->arguments().size() == 1)
       return completeBorrowDependencySet(call->arguments().front());
-    if (const auto *direct = exprAs<DirectInitializer>(expression.get());
+    if (const auto *direct = exprAs<DirectInitializer>(expression);
         direct && direct->arguments().size() == 1)
       return completeBorrowDependencySet(direct->arguments().front());
   }
@@ -7234,6 +7241,36 @@ auto SemanticVisitor::Impl::trustedSynchronizationOperation(
 auto SemanticVisitor::Impl::trustedIntrinsicKind(
     SourceUnitId sourceUnit, const std::vector<std::string> &scope,
     std::string_view name) const -> IntrinsicKind {
+  const auto *unit = sourceGraph ? sourceGraph->findUnit(sourceUnit) : nullptr;
+  if (unit && unit->role == SourceUnitRole::StandardLibrary &&
+      unit->standardLibraryName == "std/syntax" &&
+      scope == std::vector<std::string>{"std", "syntax"}) {
+    static constexpr std::pair<std::string_view, IntrinsicKind> operations[] = {
+        {"size", IntrinsicKind::SyntaxSize},
+        {"text", IntrinsicKind::SyntaxText},
+        {"kind", IntrinsicKind::SyntaxKind},
+        {"adjacent", IntrinsicKind::SyntaxAdjacent},
+        {"slice", IntrinsicKind::SyntaxSlice},
+        {"group", IntrinsicKind::SyntaxGroup},
+        {"location", IntrinsicKind::SyntaxSpan},
+        {"literal", IntrinsicKind::SyntaxLiteral},
+        {"string_literal", IntrinsicKind::SyntaxStringLiteral},
+        {"punctuation", IntrinsicKind::SyntaxPunctuation},
+        {"identifier", IntrinsicKind::SyntaxIdentifier},
+        {"keyword", IntrinsicKind::SyntaxKeyword},
+        {"fresh", IntrinsicKind::SyntaxFresh},
+        {"reference", IntrinsicKind::SyntaxReference},
+        {"join", IntrinsicKind::SyntaxJoin},
+        {"parse", IntrinsicKind::SyntaxParse},
+        {"splice", IntrinsicKind::SyntaxSplice},
+        {"fail", IntrinsicKind::SyntaxFail},
+        {"fail_related", IntrinsicKind::SyntaxFailRelated},
+    };
+    for (const auto &[spelling, intrinsic] : operations)
+      if (name == spelling)
+        return intrinsic;
+    return IntrinsicKind::None;
+  }
   if (scope.size() != 1) {
     return IntrinsicKind::None;
   }
@@ -7706,6 +7743,12 @@ auto SemanticVisitor::Impl::movedVariable(const ExprPtr &expression)
 auto SemanticVisitor::Impl::operatorBorrowSource(
     const ExprPtr &expression, const ResolvedOperatorInfo &resolved) const
     -> const ExprPtr * {
+  return operatorBorrowSource(expression.get(), resolved);
+}
+
+auto SemanticVisitor::Impl::operatorBorrowSource(
+    const Expr *expression, const ResolvedOperatorInfo &resolved) const
+    -> const ExprPtr * {
   return expression ? operatorRelayOperand(*expression, resolved,
                                            resolved.borrowOrigin,
                                            resolved.borrowArgument)
@@ -7799,20 +7842,24 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(
 
 auto SemanticVisitor::Impl::storedBorrowDependencies(const ExprPtr &expression)
     -> std::vector<SemanticLoanDependency> {
+  return storedBorrowDependencies(expression.get());
+}
+
+auto SemanticVisitor::Impl::storedBorrowDependencies(const Expr *expression)
+    -> std::vector<SemanticLoanDependency> {
   if (!expression) {
     return {};
   }
   // A contextual construction publishing its argument's owner (L-OWN-02) is
   // the converted value: the argument's own dependency at the published path.
   if (const auto *contextual =
-          contextualTextArgument == expression.get()
+          contextualTextArgument == expression
               ? nullptr
               : semanticModel.findContextualConstruction(*expression);
       contextual != nullptr && contextual->dependentTextPublication) {
     if (contextual->borrowFields.size() != 1)
       return {};
-    const Expr *enclosing =
-        std::exchange(contextualTextArgument, expression.get());
+    const Expr *enclosing = std::exchange(contextualTextArgument, expression);
     auto sources = storedBorrowDependencies(expression);
     contextualTextArgument = enclosing;
     const auto &mapping = contextual->borrowFields.front();
@@ -7826,12 +7873,14 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const ExprPtr &expression)
     publishTextDependency(*source, mapping.resultFields);
     return {std::move(*source)};
   }
-  if (const auto *group = exprAs<Grouping>(expression.get())) {
+  if (const auto *alias = semanticModel.findExpressionAlias(*expression))
+    return storedBorrowDependencies(alias);
+  if (const auto *group = exprAs<Grouping>(expression)) {
     return storedBorrowDependencies(group->expression());
   }
   // A view read through a reference relay holds what its receiver holds in
   // the designated field, as a read of that field would (L-OWN-02).
-  if (const auto *call = exprAs<Call>(expression.get()))
+  if (const auto *call = exprAs<Call>(expression))
     if (const auto *resolved = semanticModel.findCall(*call))
       if (const auto relay = textReferenceRelay(*call, *resolved);
           relay && relay->origin != nullptr) {
@@ -7866,17 +7915,17 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const ExprPtr &expression)
   if (const auto *construction = semanticModel.findConstruction(*expression);
       construction != nullptr && construction->directInitialization &&
       !construction->dependentTextPublication) {
-    if (const auto *call = exprAs<Call>(expression.get()))
+    if (const auto *call = exprAs<Call>(expression))
       return storedBorrowDependencies(call->arguments().front());
-    if (const auto *direct = exprAs<DirectInitializer>(expression.get()))
+    if (const auto *direct = exprAs<DirectInitializer>(expression))
       return storedBorrowDependencies(direct->arguments().front());
   }
   if (const auto *construction = semanticModel.findConstruction(*expression);
       construction != nullptr && construction->dependentTextPublication) {
     // Each published text field designates its argument's sole owner. A
     // designated list names its inputs in field order.
-    const auto *call = exprAs<Call>(expression.get());
-    const auto *direct = exprAs<DirectInitializer>(expression.get());
+    const auto *call = exprAs<Call>(expression);
+    const auto *direct = exprAs<DirectInitializer>(expression);
     const auto *arguments = call != nullptr     ? &call->arguments()
                             : direct != nullptr ? &direct->arguments()
                                                 : nullptr;
@@ -7917,7 +7966,7 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const ExprPtr &expression)
   // A published payload designates its argument's sole owner. A dependent
   // enum value cannot be reassigned, so its alternative is fixed for the
   // dependency's lifetime and the payload symbol alone names it.
-  if (const auto *call = exprAs<Call>(expression.get()))
+  if (const auto *call = exprAs<Call>(expression))
     if (const auto *payload = semanticModel.findPayloadConstruction(*call);
         payload != nullptr && payload->dependentTextPublication) {
       std::vector<SemanticLoanDependency> dependencies;
@@ -7940,8 +7989,8 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const ExprPtr &expression)
                                         construction->declaration,
                                         construction->parameterTypes)
            .empty()) {
-    const auto *call = exprAs<Call>(expression.get());
-    const auto *initializer = exprAs<DirectInitializer>(expression.get());
+    const auto *call = exprAs<Call>(expression);
+    const auto *initializer = exprAs<DirectInitializer>(expression);
     const auto *arguments = call != nullptr          ? &call->arguments()
                             : initializer != nullptr ? &initializer->arguments()
                                                      : nullptr;
@@ -7990,7 +8039,7 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const ExprPtr &expression)
   }
   // A function relaying its reference formal's referent text returns a
   // value that views the borrowed argument itself at the relayed path.
-  if (const auto *call = exprAs<Call>(expression.get()))
+  if (const auto *call = exprAs<Call>(expression))
     if (const auto *resolved = semanticModel.findCall(*call);
         resolved != nullptr && resolved->dependentTextReturn &&
         resolved->borrowFields.size() == 1 &&
@@ -8008,7 +8057,7 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const ExprPtr &expression)
       return {std::move(dependency)};
     }
   {
-    const auto *call = exprAs<Call>(expression.get());
+    const auto *call = exprAs<Call>(expression);
     const auto *resolved =
         call == nullptr ? nullptr : semanticModel.findCall(*call);
     const auto *operation = semanticModel.findOperator(*expression);
@@ -8107,7 +8156,7 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const ExprPtr &expression)
       }
     }
   }
-  if (const auto *call = exprAs<Call>(expression.get())) {
+  if (const auto *call = exprAs<Call>(expression)) {
     if (const auto *resolved = semanticModel.findCall(*call);
         resolved != nullptr && !resolved->borrowArguments.empty()) {
       std::vector<SemanticLoanDependency> dependencies;
@@ -8159,16 +8208,16 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const ExprPtr &expression)
       // Rebase their identities to the projected value's own layout, so a
       // constructor wrapping it can prepend its destination field without
       // confusing sibling paths on the original receiver.
-      const ExprPtr *projected = &expression;
+      const Expr *projected = expression;
       std::unordered_set<const Expr *> visited;
-      while (exprAs<Call>(projected->get()) != nullptr &&
-             visited.insert(projected->get()).second) {
-        const ExprPtr *origin = storedBorrowSource(*projected);
+      while (exprAs<Call>(projected) != nullptr &&
+             visited.insert(projected).second) {
+        const ExprPtr *origin = storedBorrowSource(projected);
         if (origin == nullptr)
           break;
-        projected = origin;
+        projected = origin->get();
       }
-      const auto *place = semanticModel.findPlace(**projected);
+      const auto *place = semanticModel.findPlace(*projected);
       std::vector<SymbolId> prefix;
       if (place != nullptr)
         for (const auto &projection : place->projections) {
@@ -8233,6 +8282,11 @@ auto SemanticVisitor::Impl::resolvedBorrowVariable(
 
 auto SemanticVisitor::Impl::storedBorrowSource(const ExprPtr &expression) const
     -> const ExprPtr * {
+  return storedBorrowSource(expression.get());
+}
+
+auto SemanticVisitor::Impl::storedBorrowSource(const Expr *expression) const
+    -> const ExprPtr * {
   if (!expression) {
     return nullptr;
   }
@@ -8247,7 +8301,7 @@ auto SemanticVisitor::Impl::storedBorrowSource(const ExprPtr &expression) const
     // A complete scalar result already identifies its external referents.
     // Its argument expression may contain other alternatives/dependencies.
     return nullptr;
-  if (const auto *unary = exprAs<Unary>(expression.get());
+  if (const auto *unary = exprAs<Unary>(expression);
       unary != nullptr && unary->oper().kind == TokenKind::QUESTION) {
     if (const auto *plan = semanticModel.findTryablePropagation(*unary);
         plan != nullptr &&
@@ -8256,7 +8310,7 @@ auto SemanticVisitor::Impl::storedBorrowSource(const ExprPtr &expression) const
         plan->output.borrowArgument == 0)
       return &unary->right();
   }
-  if (const auto *variable = exprAs<Variable>(expression.get())) {
+  if (const auto *variable = exprAs<Variable>(expression)) {
     const Symbol *symbol = resolvedBorrowVariable(*variable);
     if (symbol != nullptr &&
         (symbol->type.kind == SemanticType::Reference ||
@@ -8275,18 +8329,18 @@ auto SemanticVisitor::Impl::storedBorrowSource(const ExprPtr &expression) const
       semanticModel.findConstruction(*expression);
   if (construction != nullptr &&
       construction->borrowOrigin == BorrowOriginKind::Argument) {
-    if (const auto *call = exprAs<Call>(expression.get())) {
+    if (const auto *call = exprAs<Call>(expression)) {
       return construction->borrowArgument < call->arguments().size()
                  ? &call->arguments()[construction->borrowArgument]
                  : nullptr;
     }
-    if (const auto *initializer = exprAs<DirectInitializer>(expression.get())) {
+    if (const auto *initializer = exprAs<DirectInitializer>(expression)) {
       return construction->borrowArgument < initializer->arguments().size()
                  ? &initializer->arguments()[construction->borrowArgument]
                  : nullptr;
     }
   }
-  const auto *call = exprAs<Call>(expression.get());
+  const auto *call = exprAs<Call>(expression);
   if (call == nullptr) {
     return nullptr;
   }
@@ -8330,6 +8384,11 @@ auto SemanticVisitor::Impl::storedBorrowSource(const ExprPtr &expression) const
 
 auto SemanticVisitor::Impl::borrowedOwnerVariable(
     const ExprPtr &expression) const -> const Variable * {
+  return borrowedOwnerVariable(expression.get());
+}
+
+auto SemanticVisitor::Impl::borrowedOwnerVariable(const Expr *expression) const
+    -> const Variable * {
   std::unordered_set<const Expr *> visiting;
   return borrowedOwnerVariable(expression, visiting);
 }
@@ -8337,10 +8396,18 @@ auto SemanticVisitor::Impl::borrowedOwnerVariable(
 auto SemanticVisitor::Impl::borrowedOwnerVariable(
     const ExprPtr &expression, std::unordered_set<const Expr *> &visiting) const
     -> const Variable * {
-  if (!expression || !visiting.insert(expression.get()).second) {
+  return borrowedOwnerVariable(expression.get(), visiting);
+}
+
+auto SemanticVisitor::Impl::borrowedOwnerVariable(
+    const Expr *expression, std::unordered_set<const Expr *> &visiting) const
+    -> const Variable * {
+  if (!expression || !visiting.insert(expression).second) {
     return nullptr;
   }
-  if (const auto *variable = exprAs<Variable>(expression.get())) {
+  if (const auto *alias = semanticModel.findExpressionAlias(*expression))
+    return borrowedOwnerVariable(alias, visiting);
+  if (const auto *variable = exprAs<Variable>(expression)) {
     if (const ExprPtr *source = storedBorrowSource(expression)) {
       if (const Variable *owner = borrowedOwnerVariable(*source, visiting)) {
         return owner;
@@ -8348,20 +8415,20 @@ auto SemanticVisitor::Impl::borrowedOwnerVariable(
     }
     return variable;
   }
-  if (const auto *grouping = exprAs<Grouping>(expression.get())) {
+  if (const auto *grouping = exprAs<Grouping>(expression)) {
     return borrowedOwnerVariable(grouping->expression(), visiting);
   }
-  if (const auto *binary = exprAs<Binary>(expression.get());
+  if (const auto *binary = exprAs<Binary>(expression);
       binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
     return borrowedOwnerVariable(binary->right(), visiting);
   }
-  if (const auto *index = exprAs<Index>(expression.get())) {
+  if (const auto *index = exprAs<Index>(expression)) {
     return borrowedOwnerVariable(index->object(), visiting);
   }
-  if (const auto *member = exprAs<Get>(expression.get())) {
+  if (const auto *member = exprAs<Get>(expression)) {
     return borrowedOwnerVariable(member->object(), visiting);
   }
-  if (const auto *unary = exprAs<Unary>(expression.get());
+  if (const auto *unary = exprAs<Unary>(expression);
       unary != nullptr && unary->oper().kind == TokenKind::STAR) {
     return borrowedOwnerVariable(unary->right(), visiting);
   }
@@ -8442,6 +8509,11 @@ auto SemanticVisitor::Impl::projectedStoredDependency(
 
 auto SemanticVisitor::Impl::retainedLoanSource(const ExprPtr &expression) const
     -> std::optional<RetainedLoanSource> {
+  return retainedLoanSource(expression.get());
+}
+
+auto SemanticVisitor::Impl::retainedLoanSource(const Expr *expression) const
+    -> std::optional<RetainedLoanSource> {
   if (!expression) {
     return std::nullopt;
   }
@@ -8460,6 +8532,8 @@ auto SemanticVisitor::Impl::retainedLoanSource(const ExprPtr &expression) const
     return RetainedLoanSource{.loan = dependency.parent,
                               .dependency = dependency};
   }
+  if (const auto *alias = semanticModel.findExpressionAlias(*expression))
+    return retainedLoanSource(alias);
   const auto mappedDependency = [&](const SemanticLoanInfo &loan,
                                     const ExprPtr &origin,
                                     const std::vector<SymbolId> &sourceFields)
@@ -8553,14 +8627,14 @@ auto SemanticVisitor::Impl::retainedLoanSource(const ExprPtr &expression) const
         // unrelated owned field. Borrowing that field starts a separate loan.
         return std::optional<RetainedLoanSource>{};
       };
-  if (exprAs<This>(expression.get()) != nullptr) {
+  if (exprAs<This>(expression) != nullptr) {
     for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
       const auto found = scope->find(std::string(receiverStateName));
       if (found != scope->end() && found->second.retainedLoan != 0)
         return RetainedLoanSource{.loan = found->second.retainedLoan};
     }
   }
-  if (const auto *variable = exprAs<Variable>(expression.get())) {
+  if (const auto *variable = exprAs<Variable>(expression)) {
     const Symbol *symbol = resolvedBorrowVariable(*variable);
     if (symbol != nullptr && symbol->retainedLoan != 0) {
       return RetainedLoanSource{.loan = symbol->retainedLoan,
@@ -8578,17 +8652,17 @@ auto SemanticVisitor::Impl::retainedLoanSource(const ExprPtr &expression) const
     }
     return std::nullopt;
   }
-  if (const auto *grouping = exprAs<Grouping>(expression.get())) {
+  if (const auto *grouping = exprAs<Grouping>(expression)) {
     return retainedLoanSource(grouping->expression());
   }
-  if (const auto *binary = exprAs<Binary>(expression.get());
+  if (const auto *binary = exprAs<Binary>(expression);
       binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
     return retainedLoanSource(binary->right());
   }
-  if (const auto *member = exprAs<Get>(expression.get())) {
+  if (const auto *member = exprAs<Get>(expression)) {
     return selectedDependency(retainedLoanSource(member->object()));
   }
-  if (const auto *unary = exprAs<Unary>(expression.get());
+  if (const auto *unary = exprAs<Unary>(expression);
       unary != nullptr && unary->oper().kind == TokenKind::STAR &&
       unary->rangeObject()) {
     auto source = retainedLoanSource(unary->right());
@@ -8630,10 +8704,10 @@ auto SemanticVisitor::Impl::retainedLoanSource(const ExprPtr &expression) const
     }
     return source;
   }
-  if (const auto *index = exprAs<Index>(expression.get())) {
+  if (const auto *index = exprAs<Index>(expression)) {
     return retainedLoanSource(index->object());
   }
-  if (const auto *unary = exprAs<Unary>(expression.get());
+  if (const auto *unary = exprAs<Unary>(expression);
       unary != nullptr && unary->oper().kind == TokenKind::STAR) {
     if (unary->rangeObject()) {
       const SemanticType *rangeType =
@@ -8649,7 +8723,7 @@ auto SemanticVisitor::Impl::retainedLoanSource(const ExprPtr &expression) const
     }
     return retainedLoanSource(unary->right());
   }
-  if (const auto *unary = exprAs<Unary>(expression.get());
+  if (const auto *unary = exprAs<Unary>(expression);
       unary != nullptr && unary->oper().kind == TokenKind::QUESTION) {
     if (const auto *plan = semanticModel.findTryablePropagation(*unary);
         plan != nullptr &&
@@ -8667,20 +8741,20 @@ auto SemanticVisitor::Impl::retainedLoanSource(const ExprPtr &expression) const
       semanticModel.findConstruction(*expression);
   if (construction != nullptr &&
       construction->borrowOrigin == BorrowOriginKind::Argument) {
-    if (const auto *call = exprAs<Call>(expression.get())) {
+    if (const auto *call = exprAs<Call>(expression)) {
       return construction->borrowArgument < call->arguments().size()
                  ? retainedLoanSource(
                        call->arguments()[construction->borrowArgument])
                  : std::nullopt;
     }
-    if (const auto *initializer = exprAs<DirectInitializer>(expression.get())) {
+    if (const auto *initializer = exprAs<DirectInitializer>(expression)) {
       return construction->borrowArgument < initializer->arguments().size()
                  ? retainedLoanSource(
                        initializer->arguments()[construction->borrowArgument])
                  : std::nullopt;
     }
   }
-  const auto *call = exprAs<Call>(expression.get());
+  const auto *call = exprAs<Call>(expression);
   if (call == nullptr) {
     return std::nullopt;
   }
@@ -9005,11 +9079,19 @@ auto SemanticVisitor::Impl::loanPlace(const BorrowOriginPlace &place) const
 
 auto SemanticVisitor::Impl::loanPlace(const ExprPtr &expression)
     -> SemanticLoanPlace {
+  return loanPlace(expression.get());
+}
+
+auto SemanticVisitor::Impl::loanPlace(const Expr *expression)
+    -> SemanticLoanPlace {
+  if (expression)
+    if (const auto *alias = semanticModel.findExpressionAlias(*expression))
+      return loanPlace(alias);
   SemanticPlace place = semanticPlace(expression);
   if (place.root != nullptr) {
     return loanPlace(std::move(place));
   }
-  if (const auto *call = exprAs<Call>(expression.get())) {
+  if (const auto *call = exprAs<Call>(expression)) {
     const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
     if (resolved != nullptr &&
         isBorrowedCarrierReference(resolved->returnType)) {
@@ -9338,6 +9420,11 @@ auto SemanticVisitor::Impl::validateMutableCallArgumentLoans(
 
 auto SemanticVisitor::Impl::transientBorrowProduction(const ExprPtr &expression)
     -> std::optional<TransientBorrowProduction> {
+  return transientBorrowProduction(expression.get());
+}
+
+auto SemanticVisitor::Impl::transientBorrowProduction(const Expr *expression)
+    -> std::optional<TransientBorrowProduction> {
   if (!expression) {
     return std::nullopt;
   }
@@ -9355,10 +9442,12 @@ auto SemanticVisitor::Impl::transientBorrowProduction(const ExprPtr &expression)
     return TransientBorrowProduction{.place = dependency.place,
                                      .access = dependency.access};
   }
-  if (const auto *grouping = exprAs<Grouping>(expression.get())) {
+  if (const auto *alias = semanticModel.findExpressionAlias(*expression))
+    return transientBorrowProduction(alias);
+  if (const auto *grouping = exprAs<Grouping>(expression)) {
     return transientBorrowProduction(grouping->expression());
   }
-  if (const auto *binary = exprAs<Binary>(expression.get());
+  if (const auto *binary = exprAs<Binary>(expression);
       binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
     return transientBorrowProduction(binary->right());
   }
@@ -9393,7 +9482,7 @@ auto SemanticVisitor::Impl::transientBorrowProduction(const ExprPtr &expression)
             valueCarrier || (nested && nested->retainsValueCarrier)};
   };
 
-  if (const auto *unary = exprAs<Unary>(expression.get());
+  if (const auto *unary = exprAs<Unary>(expression);
       unary != nullptr && unary->oper().kind == TokenKind::QUESTION) {
     if (const auto *plan = semanticModel.findTryablePropagation(*unary);
         plan != nullptr &&
@@ -9430,12 +9519,11 @@ auto SemanticVisitor::Impl::transientBorrowProduction(const ExprPtr &expression)
       resolved != nullptr &&
       resolved->borrowOrigin == BorrowOriginKind::Argument) {
     const ExprPtr *source = nullptr;
-    if (const auto *call = exprAs<Call>(expression.get());
+    if (const auto *call = exprAs<Call>(expression);
         call != nullptr &&
         resolved->borrowArgument < call->arguments().size()) {
       source = &call->arguments()[resolved->borrowArgument];
-    } else if (const auto *initializer =
-                   exprAs<DirectInitializer>(expression.get());
+    } else if (const auto *initializer = exprAs<DirectInitializer>(expression);
                initializer != nullptr &&
                resolved->borrowArgument < initializer->arguments().size()) {
       source = &initializer->arguments()[resolved->borrowArgument];
@@ -9451,7 +9539,7 @@ auto SemanticVisitor::Impl::transientBorrowProduction(const ExprPtr &expression)
             AccessMode::Mutable;
     return fromSource(*source, resolved->borrowAccess, mutableProducer, true);
   }
-  if (const auto *call = exprAs<Call>(expression.get())) {
+  if (const auto *call = exprAs<Call>(expression)) {
     if (const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
         resolved != nullptr &&
         resolved->borrowOrigin != BorrowOriginKind::None) {
@@ -9517,12 +9605,20 @@ auto SemanticVisitor::Impl::transientLoanPlace(const ExprPtr &expression)
 
 auto SemanticVisitor::Impl::retainedLoanPlace(const ExprPtr &expression)
     -> SemanticLoanPlace {
+  return retainedLoanPlace(expression.get());
+}
+
+auto SemanticVisitor::Impl::retainedLoanPlace(const Expr *expression)
+    -> SemanticLoanPlace {
+  if (expression)
+    if (const auto *alias = semanticModel.findExpressionAlias(*expression))
+      return retainedLoanPlace(alias);
   // Exact field contracts compose across accessor calls. Reuse the same
   // dependency substitution as carrier-valued calls, including the suffix
   // beneath a stored external reference; the receiver shell is not the
   // returned reference's owner merely because a call hides its field syntax.
   if (expression) {
-    const auto *call = exprAs<Call>(expression.get());
+    const auto *call = exprAs<Call>(expression);
     const auto *resolved =
         call == nullptr ? nullptr : semanticModel.findCall(*call);
     const auto *operation = semanticModel.findOperator(*expression);
@@ -10817,9 +10913,14 @@ auto SemanticVisitor::Impl::recordParameterEntryLoan(const Parameter &parameter)
 
 auto SemanticVisitor::Impl::receiverStorageBorrow(
     const ExprPtr &expression) const -> bool {
+  return receiverStorageBorrow(expression.get());
+}
+
+auto SemanticVisitor::Impl::receiverStorageBorrow(const Expr *expression) const
+    -> bool {
   if (!expression)
     return false;
-  if (const auto *grouping = exprAs<Grouping>(expression.get()))
+  if (const auto *grouping = exprAs<Grouping>(expression))
     return receiverStorageBorrow(grouping->expression());
   const auto borrowedResult = [&](const SemanticType &type) {
     return type.kind == SemanticType::Reference ||
@@ -10843,7 +10944,7 @@ auto SemanticVisitor::Impl::receiverStorageBorrow(
            operation->borrowArguments.empty() &&
            operation->borrowFields.empty() &&
            borrowedReceiver(operatorBorrowSource(expression, *operation));
-  const auto *call = exprAs<Call>(expression.get());
+  const auto *call = exprAs<Call>(expression);
   const auto *resolved =
       call == nullptr ? nullptr : semanticModel.findCall(*call);
   if (resolved == nullptr || resolved->declaration == nullptr ||
@@ -10861,23 +10962,39 @@ auto SemanticVisitor::Impl::receiverStorageBorrow(
 auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
                                                  const ExprPtr &expression)
     -> void {
+  recordRetainedBorrow(binding, expression.get());
+}
+
+auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
+                                                 const Expr *expression)
+    -> void {
   // A terminal initializer never publishes this binding or a retained loan.
-  if (expressionNeverReturns(expression.get()))
+  if (expressionNeverReturns(expression))
     return;
   if (expression && semanticModel.directInitializationSource(*expression)) {
     // A transparent result wrapper has no separate invocation contract or
     // lifetime. Retain the producer's complete field-wise loan, not the
     // wrapper's one-argument construction summary. HIR maps both source
     // expressions to that same value and publication.
-    if (const auto *group = exprAs<Grouping>(expression.get()))
+    if (const auto *group = exprAs<Grouping>(expression))
       return recordRetainedBorrow(binding, group->expression());
     if (const auto *comma = semanticModel.builtinComma(*expression))
       return recordRetainedBorrow(binding, comma->right());
-    if (const auto *call = exprAs<Call>(expression.get()))
+    if (const auto *call = exprAs<Call>(expression))
       return recordRetainedBorrow(binding, call->arguments().front());
-    if (const auto *direct = exprAs<DirectInitializer>(expression.get()))
+    if (const auto *direct = exprAs<DirectInitializer>(expression))
       return recordRetainedBorrow(binding, direct->arguments().front());
   }
+  // Checked aliases and grouping preserve the producer's complete ownership
+  // facts, including closure capture fields and multi-origin carrier loans.
+  // Contextual conversions on the wrapper remain authoritative when present.
+  if (expression && !semanticModel.findContextualConstruction(*expression)) {
+    if (const auto *alias = semanticModel.findExpressionAlias(*expression))
+      return recordRetainedBorrow(binding, alias);
+    if (const auto *group = exprAs<Grouping>(expression))
+      return recordRetainedBorrow(binding, group->expression());
+  }
+  const auto sourceToken = expression ? expressionToken(*expression) : Token{};
   Symbol *carrier = resolveMutable(binding.name());
   if (carrier == nullptr ||
       carrier->bindingKind != SemanticBindingKind::LocalVariable) {
@@ -10905,7 +11022,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
   const bool republished = [&] {
     if (!expression)
       return false;
-    const Expr *current = expression.get();
+    const Expr *current = expression;
     while (const auto *group = exprAs<Grouping>(current))
       current = group->expression() ? group->expression().get() : nullptr;
     if (current == nullptr)
@@ -10967,7 +11084,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       // endpoint machinery so every copy keeps each external owner live.
       // Keep the exact field/tag/origin contract, not merely a matching first
       // referent, and never duplicate an exclusive or cleanup-bound carrier.
-      const Expr *copyExpression = expression.get();
+      const Expr *copyExpression = expression;
       while (const auto *group = exprAs<Grouping>(copyExpression))
         copyExpression = group->expression().get();
       const auto *named = exprAs<Variable>(copyExpression);
@@ -11020,17 +11137,17 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       }
       for (const auto &dependency : dependencies)
         reportBorrowConflict(
-            expressionToken(expression),
+            sourceToken,
             conflictingLoans(dependency.place, dependency.access,
                              dependency.parent),
             "Cannot retain this value while an overlapping borrow may still "
             "be live.");
       const auto &primary = dependencies.front();
       const auto id = createRetainedLoan(
-          *carrier, carrierSymbol, SemanticLoanKind::StoredValue,
-          expression.get(), primary.place, primary.place.root,
-          primary.place.receiver, primary.access, primary.protectsStorage,
-          primary.parent, false, primary.designatedFields, primary.conditions);
+          *carrier, carrierSymbol, SemanticLoanKind::StoredValue, expression,
+          primary.place, primary.place.root, primary.place.receiver,
+          primary.access, primary.protectsStorage, primary.parent, false,
+          primary.designatedFields, primary.conditions);
       auto loan = *semanticModel.findLoan(id);
       loan.additionalDependencies.assign(dependencies.begin() + 1,
                                          dependencies.end());
@@ -11047,7 +11164,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
     }
   }
   const auto *symbolicRangeCall =
-      binding.isRangeIterator() ? exprAs<Call>(expression.get()) : nullptr;
+      binding.isRangeIterator() ? exprAs<Call>(expression) : nullptr;
   const ResolvedCallInfo *symbolicRangeResolution =
       symbolicRangeCall == nullptr ? nullptr
                                    : semanticModel.findCall(*symbolicRangeCall);
@@ -11079,7 +11196,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
             dependency.access != AccessMode::Mutable)
           return; // Ordinary reference binding owns the access diagnostic.
         reportBorrowConflict(
-            expressionToken(expression),
+            sourceToken,
             conflictingLoans(dependency.place, carrierAccess,
                              dependency.parent),
             "Cannot retain this reference while an overlapping borrow may "
@@ -11088,10 +11205,9 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       }
       const auto &primary = dependencies.front();
       const auto id = createRetainedLoan(
-          *carrier, carrierSymbol, SemanticLoanKind::Reference,
-          expression.get(), primary.place, primary.place.root,
-          primary.place.receiver, carrierAccess, primary.protectsStorage,
-          primary.parent);
+          *carrier, carrierSymbol, SemanticLoanKind::Reference, expression,
+          primary.place, primary.place.root, primary.place.receiver,
+          carrierAccess, primary.protectsStorage, primary.parent);
       if (id == 0)
         return;
       auto loan = *semanticModel.findLoan(id);
@@ -11120,7 +11236,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       retainedProduction->globalStorage;
   const auto *construction =
       expression ? semanticModel.findConstruction(*expression) : nullptr;
-  const auto *call = exprAs<Call>(expression.get());
+  const auto *call = exprAs<Call>(expression);
   const auto *resolved =
       call == nullptr ? nullptr : semanticModel.findCall(*call);
   const auto storedPath =
@@ -11157,7 +11273,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       isBorrowedCarrierReference((*shellParameters)[shellArgument]) &&
       storedPath->reference.arguments ==
           (*shellParameters)[shellArgument].arguments) {
-    const auto *initializer = exprAs<DirectInitializer>(expression.get());
+    const auto *initializer = exprAs<DirectInitializer>(expression);
     const ResolvedCallArguments arguments =
         call != nullptr ? ResolvedCallArguments(*call, resolved)
         : initializer != nullptr
@@ -11192,8 +11308,8 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
           const auto receiver = shell.receiver;
           const auto id = createRetainedLoan(
               *carrier, carrierSymbol, SemanticLoanKind::StoredValue,
-              expression.get(), std::move(shell), owner, receiver,
-              carrierAccess, true, parent);
+              expression, std::move(shell), owner, receiver, carrierAccess,
+              true, parent);
           auto loan = *semanticModel.findLoan(id);
           loan.storedDependency = dependency;
           semanticModel.recordLoan(std::move(loan));
@@ -11216,7 +11332,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
                                 !resolved->borrowFields.empty())))) {
     auto dependencies = storedBorrowDependencies(expression);
     if (dependencies.empty()) {
-      report(expressionToken(expression),
+      report(sourceToken,
              "Every dependency of a composed borrowed value must have a "
              "checked stable owner.",
              "GTI-S2045");
@@ -11231,7 +11347,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
     std::vector<SemanticLoanId> entryReferenceInputs;
     if (construction != nullptr ||
         (resolved != nullptr && resolved->intrinsic == IntrinsicKind::None)) {
-      const auto *initializer = exprAs<DirectInitializer>(expression.get());
+      const auto *initializer = exprAs<DirectInitializer>(expression);
       const ResolvedCallArguments arguments =
           call != nullptr ? ResolvedCallArguments(*call, resolved)
           : initializer != nullptr
@@ -11300,7 +11416,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
                          id) != entryReferenceInputs.end();
       });
       reportBorrowConflict(
-          expressionToken(expression), conflicts,
+          sourceToken, conflicts,
           "Cannot compose borrowed values while an overlapping mutable "
           "borrow may still be live.");
     }
@@ -11343,10 +11459,10 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       // not projections under this parent.
       parent = originLoan->id;
     const SemanticLoanId id = createRetainedLoan(
-        *carrier, carrierSymbol, SemanticLoanKind::StoredValue,
-        expression.get(), primary.place, primary.place.root,
-        primary.place.receiver, primary.access, primary.protectsStorage, parent,
-        false, primary.designatedFields, primary.conditions);
+        *carrier, carrierSymbol, SemanticLoanKind::StoredValue, expression,
+        primary.place, primary.place.root, primary.place.receiver,
+        primary.access, primary.protectsStorage, parent, false,
+        primary.designatedFields, primary.conditions);
     SemanticLoanInfo loan = *semanticModel.findLoan(id);
     loan.additionalDependencies.assign(dependencies.begin() + 1,
                                        dependencies.end());
@@ -11417,14 +11533,12 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       const auto dependency =
           referenceOwner ? origin.storedDependency : origin.id;
       reportBorrowConflict(
-          expressionToken(expression),
-          conflictingLoans(place, carrierAccess, parent),
+          sourceToken, conflictingLoans(place, carrierAccess, parent),
           "Cannot retain this text while an overlapping owner borrow may still "
           "be live.");
       const auto id = createRetainedLoan(
-          *carrier, carrierSymbol, SemanticLoanKind::StoredValue,
-          expression.get(), place, place.root, place.receiver, carrierAccess,
-          true, parent);
+          *carrier, carrierSymbol, SemanticLoanKind::StoredValue, expression,
+          place, place.root, place.receiver, carrierAccess, true, parent);
       auto loan = *semanticModel.findLoan(id);
       loan.storedDependency = dependency;
       semanticModel.recordLoan(std::move(loan));
@@ -11452,7 +11566,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       auto dependencies = selectedReferenceDependencies(selectedPlace);
       if (!dependencies || !selectedPlace.projections.empty() ||
           source->transfer) {
-        report(expressionToken(expression),
+        report(sourceToken,
                "A selected reference can currently be reborrowed only at "
                "the same referent; projected or consuming aliases require "
                "an exact checked address and dependency transfer.",
@@ -11465,7 +11579,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
             dependency.access != AccessMode::Mutable)
           return; // Ordinary reference binding owns the access diagnostic.
         reportBorrowConflict(
-            expressionToken(expression),
+            sourceToken,
             conflictingLoans(dependency.place, carrierAccess, origin.id),
             "Cannot reborrow this selected reference while an overlapping "
             "child borrow may still be live.");
@@ -11473,10 +11587,9 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       }
       const auto &primary = dependencies->front();
       const auto child = createRetainedLoan(
-          *carrier, carrierSymbol, SemanticLoanKind::Reference,
-          expression.get(), primary.place, primary.place.root,
-          primary.place.receiver, carrierAccess, primary.protectsStorage,
-          origin.id);
+          *carrier, carrierSymbol, SemanticLoanKind::Reference, expression,
+          primary.place, primary.place.root, primary.place.receiver,
+          carrierAccess, primary.protectsStorage, origin.id);
       if (child == 0)
         return;
       auto loan = *semanticModel.findLoan(child);
@@ -11528,13 +11641,13 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
               : (origin.storedDependency != 0 ? origin.storedDependency
                                               : origin.id);
       reportBorrowConflict(
-          expressionToken(expression), childConflicts(origin.place),
+          sourceToken, childConflicts(origin.place),
           "Cannot restore this reference while an overlapping child borrow "
           "may still be live.");
       const auto child = createRetainedLoan(
-          *carrier, carrierSymbol, SemanticLoanKind::Reference,
-          expression.get(), origin.place, origin.owner, origin.receiverOrigin,
-          carrierAccess, true, origin.id);
+          *carrier, carrierSymbol, SemanticLoanKind::Reference, expression,
+          origin.place, origin.owner, origin.receiverOrigin, carrierAccess,
+          true, origin.id);
       auto loan = *semanticModel.findLoan(child);
       loan.storedDependency = dependency;
       semanticModel.recordLoan(std::move(loan));
@@ -11548,14 +11661,14 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
           selected.access != AccessMode::Mutable)
         return; // Reference binding owns the permission diagnostic.
       reportBorrowConflict(
-          expressionToken(expression), childConflicts(selected.place),
+          sourceToken, childConflicts(selected.place),
           "Cannot create a child reborrow while another overlapping child "
           "loan may still be live.");
       const auto storedDependency = sourceLoan->storedDependency;
       const auto child = createRetainedLoan(
-          *carrier, carrierSymbol, SemanticLoanKind::Reference,
-          expression.get(), selected.place, selected.place.root,
-          selected.place.receiver, carrierAccess, true, sourceLoan->id);
+          *carrier, carrierSymbol, SemanticLoanKind::Reference, expression,
+          selected.place, selected.place.root, selected.place.receiver,
+          carrierAccess, true, sourceLoan->id);
       if (storedDependency != 0) {
         auto loan = *semanticModel.findLoan(child);
         loan.storedDependency = storedDependency;
@@ -11608,7 +11721,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       // identity: it must retain both its shell and its nested dependencies.
       SemanticLoanPlace shell = retainedLoanPlace(expression);
       if (shell.root == 0 && !shell.receiver) {
-        report(expressionToken(expression),
+        report(sourceToken,
                "A reference to borrowed-state storage requires a stable "
                "carrier object.",
                "GTI-S2017");
@@ -11624,8 +11737,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
               ? sourceLoan->id
               : 0;
       reportBorrowConflict(
-          expressionToken(expression),
-          conflictingLoans(shell, carrierAccess, parent),
+          sourceToken, conflictingLoans(shell, carrierAccess, parent),
           "Cannot borrow this carrier while an overlapping borrow of its "
           "storage may still be live.");
       const SymbolId owner = shell.root;
@@ -11634,8 +11746,8 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
           createRetainedLoan(*carrier, carrierSymbol,
                              storedReceiverShell ? SemanticLoanKind::StoredValue
                                                  : SemanticLoanKind::Reference,
-                             expression.get(), std::move(shell), owner,
-                             receiver, carrierAccess, true, parent);
+                             expression, std::move(shell), owner, receiver,
+                             carrierAccess, true, parent);
       SemanticLoanInfo loan = *semanticModel.findLoan(reference);
       loan.storedDependency = dependency;
       semanticModel.recordLoan(std::move(loan));
@@ -11724,7 +11836,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
     };
     if (retainedStoredBorrow && !exactStoredReborrow &&
         (sourceLoan->access == AccessMode::Mutable || mutableAncestry())) {
-      report(expressionToken(expression),
+      report(sourceToken,
              "A local borrowed-state value cannot retain a mutable parent "
              "or child reborrow.",
              "GTI-S2017");
@@ -11778,7 +11890,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       if (publishedExternalExclusion) {
         const auto parent = sourceLoan->id;
         const auto place = source->dependency->place;
-        const auto token = expressionToken(expression);
+        const auto token = sourceToken;
         auto conflicts = childConflicts(place);
         // The selected call can already have reported this exact loan at
         // this source token. Preserve that cause rather than duplicating it
@@ -11800,9 +11912,9 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
             "Cannot retain this value while an overlapping borrow may still "
             "be live.");
         const auto child = createRetainedLoan(
-            *carrier, carrierSymbol, SemanticLoanKind::StoredValue,
-            expression.get(), place, place.root, place.receiver,
-            AccessMode::Mutable, false, parent);
+            *carrier, carrierSymbol, SemanticLoanKind::StoredValue, expression,
+            place, place.root, place.receiver, AccessMode::Mutable, false,
+            parent);
         semanticModel.recordBindingLoan(binding, child);
         recordSemanticLoanUseForLoan(parent);
       }
@@ -11856,7 +11968,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
             *carrier, carrierSymbol,
             retainedStoredBorrow ? SemanticLoanKind::StoredValue
                                  : SemanticLoanKind::Reference,
-            expression.get(), place, place.root, place.receiver, carrierAccess,
+            expression, place, place.root, place.receiver, carrierAccess,
             source->dependency ? source->dependency->protectsStorage
                                : sourceRecord.protectsStorage,
             sourceRecord.id);
@@ -11877,10 +11989,9 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
         // the shared external owner, but is not a Load/Move copy of the
         // parameter's carrier shell (its offset/length may differ).
         const auto id = createRetainedLoan(
-            *carrier, carrierSymbol, SemanticLoanKind::StoredValue,
-            expression.get(), sourceLoan->place, sourceLoan->owner,
-            sourceLoan->receiverOrigin, AccessMode::ReadOnly,
-            sourceLoan->protectsStorage);
+            *carrier, carrierSymbol, SemanticLoanKind::StoredValue, expression,
+            sourceLoan->place, sourceLoan->owner, sourceLoan->receiverOrigin,
+            AccessMode::ReadOnly, sourceLoan->protectsStorage);
         semanticModel.recordBindingLoan(binding, id);
         return;
       }
@@ -11890,7 +12001,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
     }
 
     SemanticLoanPlace childPlace = retainedLoanPlace(expression);
-    const auto *rangeElement = dynamic_cast<const Unary *>(expression.get());
+    const auto *rangeElement = dynamic_cast<const Unary *>(expression);
     if (carrierAccess == AccessMode::Mutable && rangeElement != nullptr &&
         rangeElement->oper().kind == TokenKind::STAR &&
         rangeElement->rangeObject()) {
@@ -11904,7 +12015,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       childPlace = sourceLoan->place;
     }
     reportBorrowConflict(
-        expressionToken(expression), childConflicts(childPlace),
+        sourceToken, childConflicts(childPlace),
         "Cannot create a child reborrow while another overlapping child "
         "loan may still be live.");
     const SemanticLoanKind kind = retainedStoredBorrow
@@ -11986,12 +12097,12 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
                 !lifecycleBoundBorrowCarrierFor(carrier->type) &&
                 !rangeForBinding &&
                 ((sourceLoan->entry &&
-                  directCarrierSource(directCarrierSource, expression.get())) ||
+                  directCarrierSource(directCarrierSource, expression)) ||
                  opaqueCarrier)
             ? SemanticLoanId{0}
             : sourceLoan->id;
     const SemanticLoanId child = createRetainedLoan(
-        *carrier, carrierSymbol, kind, expression.get(), std::move(childPlace),
+        *carrier, carrierSymbol, kind, expression, std::move(childPlace),
         sourceLoan->owner, sourceLoan->receiverOrigin, carrierAccess,
         sourceLoan->protectsStorage ||
             (source->dependency && sourceLoan->access == AccessMode::Mutable),
@@ -12025,7 +12136,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
     place.receiver = receiverOrigin;
   }
   reportBorrowConflict(
-      expressionToken(expression), conflictingLoans(place, carrierAccess),
+      sourceToken, conflictingLoans(place, carrierAccess),
       carrierAccess == AccessMode::Mutable
           ? "Cannot create a mutable borrow while an overlapping borrow "
             "may still be live."
@@ -12035,8 +12146,8 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       createRetainedLoan(*carrier, carrierSymbol,
                          retainedStoredBorrow ? SemanticLoanKind::StoredValue
                                               : SemanticLoanKind::Reference,
-                         expression.get(), std::move(place), ownerId,
-                         receiverOrigin, carrierAccess, protectsStorage);
+                         expression, std::move(place), ownerId, receiverOrigin,
+                         carrierAccess, protectsStorage);
   if (lexicalGlobalMutableBorrow) {
     loanFlow.records.at(id).confinedToRegion = false;
   }

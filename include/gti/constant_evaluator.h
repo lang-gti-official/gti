@@ -60,6 +60,10 @@ enum class ConstantAggregateKind {
   // or publication; only the MIR evaluator may create/resolve these nodes.
   // identity is a request-local allocation ID, not a host or target address.
   TransientOwner,
+  // MIR procedural-profile table index. Never a persistent constant. The
+  // executor validates exact node identity against its private capability
+  // table.
+  TransientSyntax,
   PayloadEnum,
 };
 

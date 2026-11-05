@@ -476,6 +476,7 @@ public:
       }
       output << " kind=" << number(instance.kind)
              << " compiler-capability=" << number(instance.compilerCapability)
+             << " syntax-kind=" << number(instance.syntaxKind)
              << " lifecycle-bound-borrow-carrier="
              << instance.lifecycleBoundBorrowCarrier
              << " mutex-guard-borrow-carrier="
@@ -727,6 +728,7 @@ public:
              << (instance.linkage == LanguageLinkage::C ? "c" : "gti")
              << " symbol=" << instance.externalSymbol << " c-array-count=";
       optional(instance.cArrayCountParameter);
+      output << " procedural=" << instance.proceduralFunction;
       output << " receiver=" << number(instance.receiverMutability)
              << " operator=";
       if (instance.overloadedOperator) {

@@ -149,6 +149,29 @@ add_test(NAME procedural_syntax COMMAND gti_procedural_syntax_tests)
 add_test(NAME procedural_declaration_example
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
     $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/examples/procedural-macro-declaration.gti")
+add_test(NAME procedural_execution_example
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+    $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/examples/procedural-macros.gti")
+add_executable(gti_procedural_html_tests procedural_html_tests.cpp)
+target_link_libraries(gti_procedural_html_tests PRIVATE gti_compiler)
+add_test(NAME procedural_html_semantics COMMAND gti_procedural_html_tests)
+add_test(NAME procedural_html_example
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+    $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/examples/procedural-html.gti")
+add_test(NAME procedural_html_workflow
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/procedural_html_workflow_test.py"
+    $<TARGET_FILE:gti>)
+add_test(NAME procedural_html_installed
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/procedural_html_workflow_test.py"
+    $<TARGET_FILE:gti> --install-build "${PROJECT_BINARY_DIR}")
+add_test(NAME procedural_html_cost
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/procedural_html_cost_test.py"
+    $<TARGET_FILE:gti>)
+if(TARGET gti_lsp)
+  add_test(NAME procedural_html_lsp
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/procedural_html_lsp_test.py"
+      $<TARGET_FILE:gti_lsp> $<TARGET_FILE:gti>)
+endif()
 find_program(GTI_MACRO_SYNTAX_NEOVIM_EXECUTABLE nvim)
 if(GTI_MACRO_SYNTAX_NEOVIM_EXECUTABLE)
   add_test(NAME macro_neovim_syntax

@@ -2348,6 +2348,13 @@ private:
       std::vector<AnalysisRequest> requests;
       {
         const std::lock_guard lock(stateMutex);
+        // Full-sync notifications may arrive late. Never replace a newer
+        // document or invalidate its snapshot for an equal/older version.
+        if (version) {
+          const auto current = documentVersions.find(uri);
+          if (current != documentVersions.end() && *version <= current->second)
+            return;
+        }
         clientUris[uri] = clientUri;
         openClientUris[uri].insert(clientUri);
         documents[uri] = source;

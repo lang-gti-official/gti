@@ -1,5 +1,15 @@
 # Standard Library, Compiler Capabilities, And Runtime
 
+The source HTML demonstration in `examples/demo` uses `std.syntax` to validate
+markup and emit ordinary owned node construction. `string_literal(value, origin)`
+quotes a text value into one token; `literal(spelling, origin)` instead validates
+an already spelled literal. Both preserve a validated diagnostic origin without
+changing lookup authority. All syntax capabilities and operations are compile-time
+only. The HTML grammar, escaping, overloads, storage and allocation policy live
+in the example library, not compiler recognition of a public name. See
+[procedural expression macros](../language/execution.md#procedural-expression-macros)
+and the [semantic execution contract](semantic-analysis.md).
+
 Status: Current architecture.
 
 GTI separates public library policy from irreducible compiler capabilities and

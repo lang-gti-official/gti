@@ -715,6 +715,7 @@ auto SemanticVisitor::Impl::StagedConstantResults::reusable(
     return true;
   const ConstantAggregate &node = *aggregate->value;
   return node.kind != ConstantAggregateKind::TransientOwner &&
+         node.kind != ConstantAggregateKind::TransientSyntax &&
          std::all_of(node.elements.begin(), node.elements.end(), reusable) &&
          std::all_of(node.fields.begin(), node.fields.end(),
                      [](const auto &field) { return reusable(field.value); });
@@ -1066,7 +1067,7 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
                               completed, constructors)
           : std::nullopt;
   const std::size_t depth = enclosingDepth + context.callDepth;
-  if (reuseKey) {
+  if (reuseKey && !context.procedural) {
     const auto *reused = stagedConstants->find(*reuseKey);
     // A void success replays only where a fresh void completion would be
     // accepted; elsewhere the fresh evaluation reports it as before.
@@ -1246,6 +1247,13 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
           compileLimits.constexprDepth - context.work->stagingDepth + 1};
   auto result = [&] {
     const PhaseTimeScope evaluateScope("constexpr-staged-evaluate");
+    if (context.procedural) {
+      auto execution = evaluateMirProceduralFunction(
+          mirProgram, root.owner, *context.procedural, limits);
+      context.proceduralResult = std::move(execution.expression);
+      context.proceduralDiagnostic = std::move(execution.diagnostic);
+      return std::move(execution.execution);
+    }
     return construction
                ? evaluateMirConstantConstructor(mirProgram, root.owner,
                                                 arguments, limits)
@@ -1294,9 +1302,9 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
   }
   // A speculative predicate can consume a nested assertion diagnostic, but
   // an exhausted layout query still has no reusable completed result.
-  const bool recordable =
-      reuseKey && (!requestSession.layoutAssertionWork ||
-                   !requestSession.layoutAssertionWork->failure);
+  const bool recordable = reuseKey && !context.procedural &&
+                          (!requestSession.layoutAssertionWork ||
+                           !requestSession.layoutAssertionWork->failure);
   if (result.voidResult) {
     if (!context.allowVoidCompletion)
       return constexprFailure(callSite,

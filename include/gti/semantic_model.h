@@ -363,6 +363,26 @@ struct CallableParameterContract {
 
 enum class IntrinsicKind {
   None,
+  SyntaxSize,
+  SyntaxText,
+  SyntaxKind,
+  SyntaxAdjacent,
+  SyntaxSlice,
+  SyntaxGroup,
+  SyntaxSpan,
+  SyntaxLiteral,
+  SyntaxStringLiteral,
+  SyntaxPunctuation,
+  SyntaxIdentifier,
+  SyntaxKeyword,
+  SyntaxFresh,
+  SyntaxReference,
+  SyntaxJoin,
+  SyntaxParse,
+  SyntaxSplice,
+  SyntaxFail,
+  SyntaxFailRelated,
+
   NumericTypeParameterConversion,
   NumericAliasConversion,
   DefaultTypeParameterConstruction,
@@ -539,6 +559,11 @@ enum class IntrinsicKind {
 };
 
 // Terminal failure identity is separate from message capture and owner policy.
+[[nodiscard]] constexpr bool syntaxIntrinsic(IntrinsicKind kind) {
+  return kind >= IntrinsicKind::SyntaxSize &&
+         kind <= IntrinsicKind::SyntaxFailRelated;
+}
+
 [[nodiscard]] inline bool intrinsicTracksCaller(IntrinsicKind intrinsic) {
   return intrinsic == IntrinsicKind::Panic ||
          intrinsic == IntrinsicKind::FailInactiveValue ||
@@ -912,6 +937,8 @@ struct FunctionInfo {
   bool staticMember = false;
   bool internalLinkage = false;
   bool constexprFunction = false;
+  // The body or its selected closure consumes syntax capabilities.
+  bool proceduralOnly = false;
   bool requiresUnsafe = false;
   bool neverReturns = false;
   bool tracksCaller = false;
@@ -1103,6 +1130,8 @@ struct ClassVirtualDispatch {
                          const ClassVirtualDispatch &) = default;
 };
 
+enum class CompileTimeSyntaxKind { None, Tokens, Expression, Span, Binding };
+
 struct ClassTypeInfo {
   ClassId id = 0;
   SourceUnitId sourceUnit = 0;
@@ -1156,6 +1185,7 @@ struct ClassTypeInfo {
       ComputedTypeProjectionKind::None;
   CompilerCapabilityTypeKind compilerCapability =
       CompilerCapabilityTypeKind::None;
+  CompileTimeSyntaxKind syntaxKind = CompileTimeSyntaxKind::None;
 };
 
 struct EnumConstant {
@@ -2383,6 +2413,7 @@ struct MacroExpansionSite {
   const Stmt *body = nullptr;
   const FunctionDecl *declaration = nullptr;
   const Call *call = nullptr;
+  const Expr *expression = nullptr;
 };
 
 // These anchors are private to the analyzed syntax lifetime. HIR joins them
