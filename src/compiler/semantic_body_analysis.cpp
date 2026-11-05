@@ -797,7 +797,7 @@ auto SemanticVisitor::Impl::analyzeClassFieldInitializers(
           self(self, *branch);
         }
       } else if (const auto *alias = stmtAs<TypeAliasDecl>(member.get())) {
-        validateType(alias->target());
+        validateTypeAliasTarget(alias->target());
         if (const TypeAliasInfo *primary =
                 semanticModel.findTypeAlias(*alias)) {
           TypeAliasInfo concrete = *primary;
@@ -3466,10 +3466,15 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
                       return parameter.mutability == Mutability::Mutable ||
                              parameter.type.reference;
                     })) {
-      reportContract(keyword,
-                     "A typed macro requires a defined, safe, non-constexpr "
-                     "namespace-scope template with typed expression "
-                     "parameters.");
+      reportContract(
+          keyword,
+          stmt.isProceduralMacro()
+              ? "A procedural macro requires a defined, safe, "
+                "non-constexpr namespace-scope function with "
+                "immutable value parameters."
+              : "A typed macro requires a defined, safe, non-constexpr "
+                "namespace-scope template with typed expression "
+                "parameters.");
     } else if (!stmt.isProceduralMacro() && !validMacroBody(*stmt.body())) {
       reportContract(keyword,
                      "A macro body supports automatic locals, expressions, "
@@ -6249,11 +6254,7 @@ auto SemanticVisitor::Impl::visitTypeAliasDecl(const TypeAliasDecl &stmt)
   // execute constexpr predicates. Check them at this declaration's lexical
   // position, after preceding definitions have been analyzed, even if the
   // alias is never used. Registration cannot supply those body-derived facts.
-  const bool previousSyntaxType = allowProceduralSyntaxType;
-  allowProceduralSyntaxType =
-      true; // Naming a capability is not runtime storage.
-  validateType(stmt.target(), stmt.target().isNativeFunction());
-  allowProceduralSyntaxType = previousSyntaxType;
+  validateTypeAliasTarget(stmt.target(), stmt.target().isNativeFunction());
   const TypeAliasInfo *info = semanticModel.findTypeAlias(stmt);
   const SemanticType type =
       info == nullptr ? SemanticType::Unknown : info->type;

@@ -24,8 +24,9 @@ or advertised as type-checked procedural implementations.
 
 `std.syntax` declares `tokens`, `expr`, `span`, and `binding` via trusted
 `@compiler_type` identities. Application spelling cannot manufacture these
-capabilities. They are allowed only in the initial procedural signature;
-ordinary runtime storage and construction are rejected. The required signature
+capabilities. Type aliases may name them, but values are allowed only in the
+initial procedural signature; ordinary runtime storage and construction are
+rejected, including through aliases. The required signature
 is exactly `std::syntax::expr name(std::syntax::tokens input)` without generics,
 defaults, packs, member/operator forms or constraints.
 

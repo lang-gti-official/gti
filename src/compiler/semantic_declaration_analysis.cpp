@@ -1709,6 +1709,19 @@ auto SemanticVisitor::Impl::resolveTypeAliasDependencies(
   }
 }
 
+auto SemanticVisitor::Impl::validateTypeAliasTarget(
+    const TypeRef &type, bool allowNativeFunctionType) -> void {
+  // Naming a capability never constructs or stores it. Apply this during
+  // registration as well as lexical and instantiated alias validation.
+  struct Restore {
+    bool &flag;
+    bool previous;
+    ~Restore() { flag = previous; }
+  } restore{allowProceduralSyntaxType, allowProceduralSyntaxType};
+  allowProceduralSyntaxType = true;
+  validateType(type, allowNativeFunctionType);
+}
+
 auto SemanticVisitor::Impl::validateTypeAliasReference(
     const TypeRef &target, const SemanticType &resolved) -> bool {
   if (!target.reference && resolved.kind != SemanticType::Reference)
@@ -1776,7 +1789,7 @@ auto SemanticVisitor::Impl::resolveTypeAlias(TypeAliasId id, const Token *use)
     targetFormValid = false;
   }
   if (targetFormValid) {
-    validateType(target, target.isNativeFunction());
+    validateTypeAliasTarget(target, target.isNativeFunction());
   }
   const SemanticType resolved = typeOf(target, alias.lookupScope);
   if (!target.reference && !validateTypeAliasReference(target, resolved))

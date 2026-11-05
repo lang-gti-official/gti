@@ -4375,6 +4375,8 @@ private:
   void validateArrayExtent(const ArrayExtentExprPtr &extent);
 
   void validateType(const TypeRef &type, bool allowNativeFunctionType = false);
+  void validateTypeAliasTarget(const TypeRef &type,
+                               bool allowNativeFunctionType = false);
 
   [[nodiscard]] CompilerCapabilityTypeKind
   compilerCapabilityType(const TypeRef &type,

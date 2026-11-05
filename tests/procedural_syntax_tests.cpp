@@ -197,6 +197,22 @@ void semantics() {
       std::cerr << d.code << ": " << d.message << '\n';
   check(aliased.canGenerateCode(),
         "signature checks trusted type identity through aliases");
+  const auto memberAliased = analyze(
+      "import std.syntax; struct Names { using Input = std::syntax::tokens; "
+      "using Output = std::syntax::expr; }; #macro(proc) Names::Output "
+      "chosen(Names::Input input) {} int main(){return 0;}");
+  if (!memberAliased.canGenerateCode())
+    for (const auto &d : memberAliased.diagnostics)
+      std::cerr << d.code << ": " << d.message << '\n';
+  check(memberAliased.canGenerateCode(),
+        "class-scoped aliases retain syntax capability identity");
+  diagnostic(analyze("import std.syntax; using Input = std::syntax::tokens; "
+                     "int main(){ Input value{}; return 0; }"),
+             "compile-time-only");
+  diagnostic(analyze("import std.syntax; #macro(proc) std::syntax::expr "
+                     "invalid(mut std::syntax::tokens input) {} "
+                     "int main(){return 0;}"),
+             "immutable value parameters");
   const std::string hoverSource =
       "import std.syntax; #macro(proc) std::syntax::expr "
       "inspect(std::syntax::tokens input) {} int main(){return 0;}";
@@ -223,7 +239,7 @@ void semantics() {
   auto ordinary = analyze(
       "import std.array; int main(){ auto values = std::array<int, 2>({\n"
       "#define ORDINARY_FLAG\n1,2});\n#ifdef ORDINARY_FLAG\nreturn values[0] - "
-      "1;\n#else\n#error flag lost\n#endif\n}");
+      "1;\n#else\n#error \"flag lost\"\n#endif\n}");
   if (!ordinary.canGenerateCode())
     for (const auto &d : ordinary.diagnostics)
       std::cerr << d.code << ": " << d.message << '\n';
