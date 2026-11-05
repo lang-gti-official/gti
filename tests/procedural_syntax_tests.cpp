@@ -680,7 +680,7 @@ export #macro(proc) std::syntax::expr target_value(std::syntax::tokens input) {
   const std::string reusedSource = R"gti(
 import "library.gti";
 #macro int double_value(int value) { return value + value; }
-int main(){ return double_value(identity!({21})) - 42; }
+int main(){ return double_value!(identity!({21})) - 42; }
 )gti";
   for (bool reuse : {true, false}) {
     lang::FrontendWorkMetrics metrics;
