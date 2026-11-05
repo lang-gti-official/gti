@@ -1251,12 +1251,15 @@ auto SemanticVisitor::Impl::functionCallArgumentMatch(
                                     : argument;
     // Expression parameters are not an eager copy/move boundary. Their
     // actual uses in the expansion perform ordinary ownership checking.
-    return parameter == value || parameter == SemanticType::Unknown ||
-                   value == SemanticType::Unknown ||
-                   (value.kind == SemanticType::TypePack &&
-                    forwardedPackArgumentMatches(parameter, value))
-               ? CallArgumentMatchKind::Exact
-               : CallArgumentMatchKind::Mismatch;
+    if (parameter == value || parameter == SemanticType::Unknown ||
+        value == SemanticType::Unknown ||
+        (value.kind == SemanticType::TypePack &&
+         forwardedPackArgumentMatches(parameter, value)))
+      return CallArgumentMatchKind::Exact;
+    if (!deferred &&
+        contextualIntegerLiteralArgumentFits(parameter, value, expression))
+      return CallArgumentMatchKind::ContextualIntegerLiteral;
+    return CallArgumentMatchKind::Mismatch;
   }
   if (contextualCallArgumentPotentiallyMatches(parameter, argument, expression,
                                                deferred)) {
@@ -1287,8 +1290,9 @@ auto SemanticVisitor::Impl::contextualIntegerLiteralArgumentFits(
   // Only a written literal, optionally parenthesized and optionally carrying
   // one sign, may adopt a fitting parameter type after exact matching fails.
   // A named constant or any other expression keeps its declared type.
-  if (!expression || parameter == argument || !isInteger(parameter) ||
-      !isInteger(argument) || !isContextualIntegerLiteral(expression.get())) {
+  if (!expression || semanticModel.findMacroIntegerLiteralType(*expression) ||
+      parameter == argument || !isInteger(parameter) || !isInteger(argument) ||
+      !isContextualIntegerLiteral(expression.get())) {
     return false;
   }
   const std::optional<IntegerConstant> value =

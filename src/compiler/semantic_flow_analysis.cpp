@@ -4499,7 +4499,18 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
   valueFlow.rawOperatorResults.erase(&expr);
   const std::size_t diagnosticsBefore = diagnostics.size();
   recordSourceDebugExpression(expr);
+  // A forced macro argument retains the type selected at its invocation.
+  // Apply context only to this literal tree; unary signed-minimum handling
+  // still analyzes its magnitude using the ordinary contextual-literal path.
+  const auto *macroLiteralType =
+      semanticModel.findMacroIntegerLiteralType(expr);
+  std::optional<SemanticType> enclosingLiteralContext;
+  if (macroLiteralType)
+    enclosingLiteralContext =
+        std::exchange(contextualOperatorIntegerType, *macroLiteralType);
   expr.accept(*this);
+  if (macroLiteralType)
+    contextualOperatorIntegerType = std::move(enclosingLiteralContext);
   SemanticType result = currentType;
   // Report only an otherwise valid assignment; an invalid one already has
   // its own diagnostic.
@@ -13828,6 +13839,8 @@ auto SemanticVisitor::Impl::isContextualIntegerLiteral(const Expr *expression)
 
 auto SemanticVisitor::Impl::analyzeContextualIntegerOperand(
     const ExprPtr &expression, SemanticType target) -> SemanticType {
+  if (expression && semanticModel.findMacroIntegerLiteralType(*expression))
+    return analyze(expression);
   // A numeric generic needs the same literal-operand contract as an
   // integral generic during symbolic checking (notably for equality).
   // Concrete floating operations retain their ordinary integer-to-float

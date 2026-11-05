@@ -28,6 +28,14 @@ def main():
                 "textDocument": {"publishDiagnostics": {"relatedInformation": True}}}}})
             session.receive_until(lambda item: item.get("id") == 1)
             session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+            macro = "#macro BORDER(uint8_t width) {}\nint main() { BORDER(33); return 0; }\n"
+            assert not publish(macro)
+            invalid_macro = macro.replace("BORDER(33)", "BORDER(256)")
+            errors = publish(invalid_macro)
+            assert len(errors) == 1 and errors[0]["code"] == "GTI-S2003", errors
+            assert errors[0]["range"]["start"]["line"] == 1, errors
+            assert "macro invocation" in str(errors[0].get("relatedInformation")), errors
+            assert not publish(macro)
             fixture = Path(__file__).parent / "fixtures/semantic_call_regressions.gti"
             assert not publish(fixture.read_text())
             immediate = "int runtime_value() { return 1; }\nconsteval int check(int value) { return value; }\nint main() { return check(runtime_value()); }\n"

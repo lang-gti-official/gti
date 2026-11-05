@@ -733,6 +733,27 @@ auto SemanticVisitor::Impl::analyzeMacroCall(const Call &writtenCall,
       bodyContext.types.emplace(parameter.name.lexeme,
                                 selection->typeArguments[typeIndex++]);
   }
+  std::unordered_map<const Expr *, SemanticType> literalArgumentTypes;
+  for (std::size_t index = 0; index < call->arguments().size() &&
+                              index < selection->parameterTypes.size();
+       ++index) {
+    const auto &argument = call->arguments()[index];
+    if (isContextualIntegerLiteral(argument.get()) &&
+        isInteger(selection->parameterTypes[index]))
+      literalArgumentTypes.emplace(argument.get(),
+                                   selection->parameterTypes[index]);
+  }
+  for (std::size_t index = call->arguments().size();
+       index < parameters.size() && index < selection->parameterTypes.size();
+       ++index) {
+    if (parameters[index].defaultArgument &&
+        isContextualIntegerLiteral(
+            parameters[index].defaultArgument->expression.get()) &&
+        isInteger(selection->parameterTypes[index]))
+      literalArgumentTypes.emplace(
+          parameters[index].defaultArgument->expression.get(),
+          selection->parameterTypes[index]);
+  }
   const auto cloneArgument = [&](const Expr &expression,
                                  const MacroLookupContext *fallback = nullptr) {
     // An argument of a nested expansion may itself contain substituted
@@ -766,6 +787,22 @@ auto SemanticVisitor::Impl::analyzeMacroCall(const Call &writtenCall,
       }
       copy.expansion = entry->second;
       return copy;
+    };
+    options.expression = [&](const Expr &source) -> ExprPtr {
+      const auto selected = literalArgumentTypes.find(&source);
+      const auto *type =
+          selected != literalArgumentTypes.end()
+              ? &selected->second
+              : semanticModel.findMacroIntegerLiteralType(source);
+      if (!type)
+        return nullptr;
+      // Clone the literal root once, retaining all token provenance. This
+      // callback also carries already-bound literals inside nested arguments.
+      auto literalOptions = options;
+      literalOptions.expression = {};
+      auto value = cloneExpr(source, 0, literalOptions);
+      semanticModel.recordMacroIntegerLiteralType(*value, *type);
+      return value;
     };
     return cloneExpr(expression, 0, options);
   };
