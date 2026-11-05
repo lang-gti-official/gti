@@ -765,6 +765,12 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
         lexed[i].kind != TokenKind::LEFT_PAREN)
       continue;
     const auto group = balancedSyntax(lexed, i);
+    if (!group.complete) {
+      diagnostics.push_back(
+          makeDiagnostic(DiagnosticId::UnbalancedProceduralInput,
+                         lexed[std::min(group.end, lexed.size() - 1)]));
+      invalidCapture = true;
+    }
     const auto end = std::min(group.end + 1, lexed.size());
     for (std::size_t j = i; j < end; ++j) {
       if (!syntaxDirective(lexed[j].kind))

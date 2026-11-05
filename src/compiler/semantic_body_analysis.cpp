@@ -6249,7 +6249,11 @@ auto SemanticVisitor::Impl::visitTypeAliasDecl(const TypeAliasDecl &stmt)
   // execute constexpr predicates. Check them at this declaration's lexical
   // position, after preceding definitions have been analyzed, even if the
   // alias is never used. Registration cannot supply those body-derived facts.
+  const bool previousSyntaxType = allowProceduralSyntaxType;
+  allowProceduralSyntaxType =
+      true; // Naming a capability is not runtime storage.
   validateType(stmt.target(), stmt.target().isNativeFunction());
+  allowProceduralSyntaxType = previousSyntaxType;
   const TypeAliasInfo *info = semanticModel.findTypeAlias(stmt);
   const SemanticType type =
       info == nullptr ? SemanticType::Unknown : info->type;

@@ -1,5 +1,14 @@
 [
   {
+    "id": "UnbalancedProceduralInput",
+    "code": "GTI-I0016",
+    "phase": "SourceLoading",
+    "severity": "Error",
+    "group": "macro-input",
+    "format": "Unbalanced delimiters in procedural macro input.",
+    "arguments": 0
+  },
+  {
     "id": "CapturedSyntaxDirective",
     "code": "GTI-I0015",
     "phase": "SourceLoading",

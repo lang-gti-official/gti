@@ -51,6 +51,7 @@ public:
 struct SealedSyntaxExpression {
   std::shared_ptr<const Expr> expression;
   std::shared_ptr<const SyntaxCapture> syntax;
+  std::vector<RelatedDiagnostic> expansionTrace;
 };
 
 class SyntaxArena {
@@ -59,7 +60,8 @@ public:
   // The allocator must allocate from that SAME registry, never from spelling.
   SyntaxArena(std::uint32_t definitionContext, std::uint32_t callerContext,
               std::function<std::uint32_t()> freshContext,
-              SyntaxLimits limits = {}, std::function<bool()> cancelled = {});
+              SyntaxLimits limits = {}, std::function<bool()> cancelled = {},
+              std::vector<RelatedDiagnostic> expansionTrace = {});
   ~SyntaxArena();
   SyntaxArena(const SyntaxArena &) = delete;
   SyntaxArena &operator=(const SyntaxArena &) = delete;
@@ -107,5 +109,6 @@ private:
   std::size_t bytes_ = 0, tokens_ = 0;
   std::vector<Node> nodes_;
   std::unordered_set<std::uint32_t> freshIdentities_;
+  std::vector<RelatedDiagnostic> expansionTrace_;
 };
 } // namespace lang

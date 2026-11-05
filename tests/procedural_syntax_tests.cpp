@@ -1,6 +1,7 @@
 #include "gti/ast_clone.h"
 #include "gti/formatter.h"
 #include "gti/frontend.h"
+#include "gti/language_queries.h"
 #include "gti/lexer.h"
 #include "gti/parser.h"
 #include "gti/procedural_syntax.h"
@@ -83,10 +84,16 @@ void arena() {
   std::uint32_t identity = 100;
   lang::SealedSyntaxExpression retained;
   {
-    lang::SyntaxArena arena(10, 20, [&] { return ++identity; });
+    lang::SyntaxArena arena(10, 20, [&] { return ++identity; }, {}, {},
+                            {{{"macro.gti", 1, 5, 1}, "Macro definition."}});
     const auto input = arena.capture(capture("caller /*comment*/ + 2"));
     check(arena.text(input) == "caller /*comment*/ + 2",
           "arena retains trivia");
+    const auto grouped = arena.capture(capture("{a([b]) /*gap*/ c}"));
+    check(arena.text(arena.group(grouped, 0)) == "{a([b]) /*gap*/ c}",
+          "nested group inspection preserves original trivia");
+    check(arena.adjacent(grouped, 0) && !arena.adjacent(input, 0),
+          "punctuation adjacency is independent of diagnostic spans");
     const auto origin = arena.span(input, 0, 1);
     const auto name = arena.identifier("helper", origin);
     check(arena.token(name, 0).expansion == 10,
@@ -132,6 +139,8 @@ void arena() {
   check(retained.expression && retained.syntax &&
             retained.syntax->tokens.size() == 5,
         "sealed expression and provenance survive arena teardown");
+  check(retained.expansionTrace.size() == 1,
+        "sealed output retains expansion trace");
   lang::SyntaxArena limited(10, 20, [&] { return ++identity; }, {.nodes = 1});
   (void)limited.capture(capture("1"));
   rejects([&] { (void)limited.capture(capture("2")); },
@@ -171,6 +180,38 @@ void semantics() {
       std::cerr << d.code << ": " << d.message << '\n';
   check(unused.canGenerateCode(), "unused procedural declaration needs no "
                                   "execution or runtime representation");
+  const auto aliased =
+      analyze("import std.syntax; using Input = std::syntax::tokens; "
+              "using Output = std::syntax::expr; #macro(proc) Output "
+              "chosen(Input input) {} int main(){return 0;}");
+  check(aliased.canGenerateCode(),
+        "signature checks trusted type identity through aliases");
+  const std::string hoverSource =
+      "import std.syntax; #macro(proc) std::syntax::expr "
+      "inspect(std::syntax::tokens input) {} int main(){return 0;}";
+  const auto hoverSnapshot = analyze(hoverSource);
+  const auto hover = lang::LanguageQueries().hover(
+      hoverSnapshot, hoverSnapshot.sourceGraph.entryUnit(),
+      hoverSource.find("inspect") + 2);
+  check(hover && hover->signature.find("#macro(proc)") != std::string::npos,
+        "shared LSP hover distinguishes procedural declarations");
+  diagnostic(analyze("import std.syntax; #macro(proc) std::syntax::expr "
+                     "same(std::syntax::tokens input) {} "
+                     "int main(){ same!({x}); return 0;}"),
+             "imported definition");
+  diagnostic(analyze("import std.syntax; #macro(proc) std::syntax::expr "
+                     "clash(std::syntax::tokens input) {} "
+                     "int clash(int x){return x;} int main(){return 0;}"),
+             "cannot have overloads");
+  diagnostic(analyze("@compiler_type(\"syntax_tokens\") struct Counterfeit {}; "
+                     "int main(){return 0;}"),
+             "trusted standard-library unit");
+  auto ordinary = analyze(
+      "import std.array; int main(){ auto values = std::array<int, 2>({\n"
+      "#define ORDINARY_FLAG\n1,2});\n#ifdef ORDINARY_FLAG\nreturn values[0] - "
+      "1;\n#else\n#error flag lost\n#endif\n}");
+  check(ordinary.canGenerateCode(),
+        "ordinary braced calls keep configuration directive behavior");
   auto selected = analyze("import \"library.gti\"; int main() { html!({ "
                           "<h1>{unknown}</h1> }); return 0; }");
   check(selected.sourceValid && selected.syntaxValid,
@@ -219,6 +260,14 @@ void semantics() {
                            return edge.spelling == "missing.gti";
                          }),
         "rejected input creates no import edges");
+  auto unbalanced =
+      analyze("html!({ ]\n#define STOLEN\nimport \"missing.gti\";\n});");
+  diagnostic(unbalanced, "Unbalanced delimiters");
+  check(std::none_of(
+            unbalanced.sourceGraph.imports().begin(),
+            unbalanced.sourceGraph.imports().end(),
+            [](const auto &edge) { return edge.spelling == "missing.gti"; }),
+        "unbalanced input cannot expose following directives to the loader");
 }
 } // namespace
 int main() {

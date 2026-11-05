@@ -26,12 +26,16 @@ bool literalKind(TokenKind kind) {
 SyntaxArena::SyntaxArena(std::uint32_t definitionContext,
                          std::uint32_t callerContext,
                          std::function<std::uint32_t()> freshContext,
-                         SyntaxLimits limits, std::function<bool()> cancelled)
+                         SyntaxLimits limits, std::function<bool()> cancelled,
+                         std::vector<RelatedDiagnostic> expansionTrace)
     : session_(nextSession.fetch_add(1)), definitionContext_(definitionContext),
       callerContext_(callerContext), freshContext_(std::move(freshContext)),
-      limits_(limits), cancelled_(std::move(cancelled)) {
+      limits_(limits), cancelled_(std::move(cancelled)),
+      expansionTrace_(std::move(expansionTrace)) {
   if (!session_ || !definitionContext_ || !callerContext_ || !freshContext_)
     throw SyntaxError("Syntax requires valid frontend context identities.");
+  if (expansionTrace_.size() > 128)
+    throw SyntaxError("Syntax expansion trace limit exceeded.");
 }
 SyntaxArena::~SyntaxArena() = default;
 void SyntaxArena::check() const {
@@ -265,7 +269,7 @@ SyntaxTokens SyntaxArena::splice(SyntaxExpression expression) {
 }
 SealedSyntaxExpression SyntaxArena::seal(SyntaxExpression expression) const {
   const auto &node = get(expression);
-  return {node.expression, node.syntax};
+  return {node.expression, node.syntax, expansionTrace_};
 }
 Diagnostic SyntaxArena::failure(SyntaxSpan primary, std::string message,
                                 std::span<const SyntaxSpan> related) const {
@@ -277,6 +281,8 @@ Diagnostic SyntaxArena::failure(SyntaxSpan primary, std::string message,
   for (auto location : related)
     result.related.push_back(
         {get(location).sourceSpan, "Related macro input."});
+  result.related.insert(result.related.end(), expansionTrace_.begin(),
+                        expansionTrace_.end());
   return result;
 }
 void SyntaxArena::reset() {
