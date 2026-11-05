@@ -12,6 +12,44 @@ consumption and cleanup in HIR/MIR; no backend ownership-name rule is added.
 
 ## Typed statement macro expansion
 
+Procedural declarations are a distinct `FunctionDecl` mode. The phase-1
+`name!({...})` path resolves the name without probing captured expressions.
+It requires one imported, non-overloaded namespace-scope procedural declaration
+and one braced group. Local shadowing applies normally; an ordinary callable
+never gains procedural behavior from its spelling. A selected declaration is
+recorded in the existing macro-declaration table for shared tooling queries.
+Invocations currently diagnose the missing phase-2 execution engine and never
+reach HIR/MIR as runtime calls. Bodies are retained syntax, not yet executable
+or advertised as type-checked procedural implementations.
+
+`std.syntax` declares `tokens`, `expr`, `span`, and `binding` via trusted
+`@compiler_type` identities. Application spelling cannot manufacture these
+capabilities. Type aliases may name them, but values are allowed only in the
+initial procedural signature; ordinary runtime storage and construction are
+rejected, including through aliases. The required signature
+is exactly `std::syntax::expr name(std::syntax::tokens input)` without generics,
+defaults, packs, member/operator forms or constraints.
+
+`SyntaxArena` is the compiler-side typed capability foundation. It provides
+immutable token/group inspection, text/adjacency and bounded slices; validated
+span handles; literal/punctuation/definition-context identifier builders;
+fresh binding/reference pairs; token joining; expression parse/splice; located
+failure; and `seal`. Handles carry session, generation, node and category
+identity. Stale/foreign handles fail deterministically. Builders retain source
+attribution separately from `Token::expansion` lookup authority. Context IDs and
+fresh IDs must come from the existing `MacroLookupContext` registry, never from
+generated identifier spelling. Phase 2 binds these operations to verified-MIR
+syntax intrinsics; there is no source-callable executor or AST evaluator here.
+
+Sealing retains an immutable AST and its token/text/origin graph independently
+of the arena. It proves expression syntax only, not semantic legality. The
+frontend must retain the sealed result before executor teardown in phase 2 and
+apply normal semantic checking. Ordinary `ConstantValue` escape fences are
+unchanged. Node, retained spelling, token and depth bounds, cancellation,
+validated diagnostic ranges and generation reset are covered by
+`procedural_syntax`; phase 2 still owns shared interpreter-cost accounting and
+measured public limit defaults.
+
 `semantic_macro.cpp` owns typed `#macro` expansion independently of public
 library names. The declaration's macro identity, not an attribute or public
 spelling, selects that path. Macro/function overload mixtures at one qualified

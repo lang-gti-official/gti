@@ -243,6 +243,12 @@ private:
         copy->setArgumentGeometry(*tok(node.leftParen()),
                                   toks(node.argumentCommas()));
       }
+      if (node.capturedArguments()) {
+        auto input = std::make_shared<SyntaxCapture>(*node.capturedArguments());
+        for (auto &token : input->tokens)
+          token = tok(token);
+        copy->setCapturedArguments(std::move(input));
+      }
       return copy;
     }
     case ExprKind::ConditionalExpr: {

@@ -1677,6 +1677,10 @@ private:
     // `list<First, Rest...>` -> First / `list<Rest...>`.
     MetaListFirst,
     MetaListRest,
+    SyntaxTokens,
+    SyntaxExpression,
+    SyntaxSpan,
+    SyntaxBinding,
   };
 
   struct ClassInfo {
@@ -4371,6 +4375,8 @@ private:
   void validateArrayExtent(const ArrayExtentExprPtr &extent);
 
   void validateType(const TypeRef &type, bool allowNativeFunctionType = false);
+  void validateTypeAliasTarget(const TypeRef &type,
+                               bool allowNativeFunctionType = false);
 
   [[nodiscard]] CompilerCapabilityTypeKind
   compilerCapabilityType(const TypeRef &type,
@@ -5987,6 +5993,9 @@ private:
   void copyRequestSessionForSpeculativeModel(Impl &probe);
   [[nodiscard]] bool
   analyzeMacroCall(const Call &call, const ExpressionStmt *statement = nullptr);
+  bool analyzeCapturedCall(const Call &call);
+  bool allowProceduralSyntaxType = false;
+  std::unordered_map<std::string, bool> proceduralNameKinds;
   [[nodiscard]] std::unique_ptr<Impl> makeMacroProbe(const Call &call);
   struct MacroResultRegion {
     const FunctionDecl *function = nullptr;

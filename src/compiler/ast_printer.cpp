@@ -38,6 +38,11 @@ void AstPrinter::visitBinaryExpr(const Binary &expr) {
 }
 
 void AstPrinter::visitCallExpr(const Call &expr) {
+  if (expr.capturedArguments()) {
+    result = "(proc-call " + printPtr(expr.callee()) + "!" +
+             expr.capturedArguments()->text + ")";
+    return;
+  }
   std::string text = "(call " + printPtr(expr.callee());
   if (!expr.typeArguments().empty()) {
     text += "<";

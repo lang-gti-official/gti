@@ -1,5 +1,12 @@
 # GTI examples
 
+[`procedural-macro-declaration.gti`](procedural-macro-declaration.gti) demonstrates
+the phase-1 `#macro(proc)` declaration boundary alongside an executable existing
+typed macro. It is registered as `procedural_declaration_example` at LLVM O0/O3,
+outside the numbered full-language census. Procedural execution is not available
+yet: an imported `html!({...})` invocation receives an explicit phase-2 diagnostic.
+See [RFC 0001](https://github.com/lang-gti-official/rfcs/pull/1).
+
 [`llvm/native-c-storage.gti`](llvm/native-c-storage.gti) reads and updates
 native library globals, then shows that a loaded native function pointer stays
 selected while argument evaluation replaces the library's next function.
