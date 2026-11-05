@@ -6,9 +6,9 @@ extern "C" {
   void owner_audit_begin();
   void owner_audit_fail_next();
   void owner_audit_event(int32_t value);
-  int32_t owner_audit_event_count(int32_t value);
   void owner_audit_object(const void* address, uint64_t bytes, uint64_t alignment);
-  void owner_audit_cleanup_complete(int32_t attempts, int32_t acquired);
+  void owner_audit_expect_terminal_cleanup(int32_t attempts, int32_t acquired);
+  void owner_audit_unexpected_caller_cleanup();
 }
 
 // Reviewed transfer assertion: the task owns its integer and has no loans.
@@ -27,15 +27,15 @@ public:
 class Audit {
 public:
   Audit() { owner_audit_begin(); }
-  ~Audit() {
-    if (owner_audit_event_count(100) != 0) { std::panic("failed box ran its task"); }
-    owner_audit_cleanup_complete(2, 1);
-  }
+  ~Audit() { owner_audit_unexpected_caller_cleanup(); }
 };
 
 int main() {
   Audit audit{};
   auto task = Work();
+  // The consumed task's child must be released before the existing synchronous
+  // failure boundary terminates. Unrelated caller cleanup is outside it.
+  owner_audit_expect_terminal_cleanup(2, 1);
   owner_audit_fail_next();
   auto failed = std::thread::start(std::move(task));
   return 1;

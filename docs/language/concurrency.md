@@ -467,6 +467,18 @@ results are armed exactly once when join succeeds; extraction transfers that
 obligation to the destination, while an unobserved result is destroyed during
 automatic handle cleanup.
 
+The current synchronous managed-task adapter has a narrower failure boundary
+than ordinary GTI calls. If destroying a consumed task after a failed or occupied
+`start` itself raises a defined failure, a non-worker caller finishes task-owned
+cleanup and terminates with that record; it does not unwind unrelated caller
+locals. Managed workers use their existing task-failure sink. The same caller
+adapter covers automatic-join result abandonment. This is an existing backend
+boundary, not a new allocation-exhaustion policy. The provider integration
+regression checks that failed task-box acquisition releases the task's owned
+allocation before this terminal handoff. General caller unwinding across these
+synchronous adapters remains outside the implemented boundary; see the
+[backend adapter contract](../architecture/backend.md).
+
 ## Scoped Parallel Invocation
 
 `std.thread` provides the synchronous operation

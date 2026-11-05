@@ -21,6 +21,9 @@ int acquired = 0;
 int released = 0;
 bool observing = false;
 bool failNext = false;
+bool terminalRelease = false;
+int terminalAttempts = 0;
+int terminalAcquired = 0;
 
 [[noreturn]] void fail(const char *message) {
   std::fprintf(stderr, "%s (attempts=%d acquired=%d released=%d)\n", message,
@@ -38,6 +41,19 @@ void requireEmpty() {
   for (const auto &region : regions)
     if (region.address && region.identity)
       fail("GTI owner allocation remained live");
+}
+
+void checkCounts(int expectedAttempts, int expectedAcquired) {
+  requireEmpty();
+  if (attempts != expectedAttempts || acquired != expectedAcquired ||
+      released != acquired || failNext)
+    fail("GTI provider count drift");
+}
+
+void cleanupComplete() {
+  std::puts("owner cleanup complete");
+  // The terminal adapter need not flush native C streams.
+  std::fflush(stdout);
 }
 } // namespace
 
@@ -74,6 +90,14 @@ void release(void *address) {
       }
       region = {};
       systemRelease(address);
+      if (terminalRelease) {
+        checkCounts(terminalAttempts, terminalAcquired);
+        for (int index = 0; index < eventCount; ++index)
+          if (events[index] >= 0)
+            fail("failed task box ran its task");
+        terminalRelease = false;
+        cleanupComplete();
+      }
       return;
     }
   }
@@ -86,12 +110,29 @@ extern "C" void owner_audit_begin() {
   requireEmpty();
   observing = true;
   failNext = false;
+  terminalRelease = false;
   attempts = acquired = released = eventCount = 0;
 }
 
 extern "C" void owner_audit_fail_next() {
   std::lock_guard lock(mutex);
   failNext = true;
+}
+
+// Synchronous managed-task cleanup is an existing terminating adapter boundary
+// off a worker. Observe the last owned release before that terminal call; do
+// not rely on unrelated caller locals, atexit, or buffered native output.
+extern "C" void
+owner_audit_expect_terminal_cleanup(std::int32_t expectedAttempts,
+                                    std::int32_t expectedAcquired) {
+  std::lock_guard lock(mutex);
+  terminalRelease = true;
+  terminalAttempts = expectedAttempts;
+  terminalAcquired = expectedAcquired;
+}
+
+extern "C" void owner_audit_unexpected_caller_cleanup() {
+  fail("synchronous task boundary unexpectedly unwound caller locals");
 }
 
 extern "C" void owner_audit_event(std::int32_t value) {
@@ -143,19 +184,12 @@ extern "C" void owner_audit_object(const void *address, std::uint64_t bytes,
 extern "C" void owner_audit_finish(std::int32_t expectedAttempts,
                                    std::int32_t expectedAcquired) {
   std::lock_guard lock(mutex);
-  requireEmpty();
-  if (attempts != expectedAttempts || acquired != expectedAcquired ||
-      released != acquired || failNext) {
-    std::fprintf(stderr,
-                 "provider counts: attempts=%d acquired=%d released=%d\n",
-                 attempts, acquired, released);
-    std::abort();
-  }
+  checkCounts(expectedAttempts, expectedAcquired);
   observing = false;
 }
 
 extern "C" void owner_audit_cleanup_complete(std::int32_t expectedAttempts,
                                              std::int32_t expectedAcquired) {
   owner_audit_finish(expectedAttempts, expectedAcquired);
-  std::puts("owner cleanup complete");
+  cleanupComplete();
 }
