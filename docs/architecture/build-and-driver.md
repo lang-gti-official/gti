@@ -475,13 +475,18 @@ arbitrary PR pass or merge exception still does not.
    ran exactly once. Packaging is a required part of the `Full validation
    verdict`; the merge gate (`CI gate`) proves only build and fast checks.
 2. **Select validated artifacts.** Nightly runs only from main's own definition
-   in `lang-gti-official/gti`. It takes main head, or a dispatched exact 40-hex
-   commit on main. `scripts/resolve_release_source.py select-nightly` requires
-   successful full validation for that exact commit and its retained production
-   artifacts: the `push` run of `.github/workflows/full-validation.yml` on
+   in `lang-gti-official/gti`. It takes the newest commit on main's
+   first-parent history, searching back from main head as far as the published
+   nightly, whose full validation passed, or a dispatched exact 40-hex commit
+   on main. Full validation keeps one run going plus the newest waiting push,
+   so this commit normally trails main by at most one validation cycle and
+   nightly never waits for main to stop moving.
+   `scripts/resolve_release_source.py select-nightly` requires successful full
+   validation for the selected commit and its retained production artifacts: the `push` run of `.github/workflows/full-validation.yml` on
    `main`, or a dispatch of it for commissioning or artifact recovery. PR runs,
    automation-only passes and merge exceptions alone are not release evidence.
-   Scheduled selection skips unchanged main. There is no fallback that stamps
+   Scheduled selection skips when nothing newer than the published nightly is
+   validated. There is no fallback that stamps
    an older compiler with a new commit when the selected source has no artifacts.
 3. **Download and verify.** Nightly downloads the artifacts from the selected
    successful CI run and attempt. Their manifest binds source commit, platform,
@@ -494,8 +499,8 @@ arbitrary PR pass or merge exception still does not.
    cancelled in progress) holds the workflow's only write token. It verifies
    every archive's checksum and stamped `BUILD_ID`, writes the `BUILD_ID`
    asset, and admits the build (`resolve_release_source.py admit-nightly`) only
-   if the commit is still main head and is newer than or equal to the commit
-   the `nightly` tag names. Equality permits a failed publish job or an explicit
+   if the commit is on main and is newer than or equal to the commit the
+   `nightly` tag names, so a slower publication never moves the tag backwards. Equality permits a failed publish job or an explicit
    dispatch to finish interrupted uploads after the tag moved; scheduled
    selection still skips unchanged main. An older commit is skipped, and a
    nightly tag outside main's history is an error. It then attests build provenance, moves
