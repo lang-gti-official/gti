@@ -1,6 +1,7 @@
 #include "gti/formatter.h"
 
 #include "gti/lexer.h"
+#include "gti/syntax_capture.h"
 
 #include "source_text.h"
 
@@ -90,6 +91,9 @@ public:
       }
 
       switch (lexeme.kind) {
+      case Kind::OpaqueSyntax:
+        state.append(lexeme.text);
+        break;
       case Kind::Directive:
         if (state.lineHasContent) {
           state.newline();
@@ -488,6 +492,7 @@ public:
 
 private:
   enum class Kind {
+    OpaqueSyntax,
     Word,
     Number,
     String,
@@ -1824,6 +1829,22 @@ private:
 
   static std::vector<Lexeme> scan(std::string_view source) {
     std::vector<Lexeme> result;
+    Lexer lexer;
+    const auto tokens = lexer.scan(std::string(source));
+    std::unordered_map<std::size_t, std::size_t> opaque;
+    for (std::size_t i = 2; i < tokens.size(); ++i) {
+      if (tokens[i - 2].kind != TokenKind::BANG ||
+          tokens[i - 1].kind != TokenKind::LEFT_PAREN ||
+          tokens[i].kind != TokenKind::LEFT_BRACE)
+        continue;
+      const auto group = balancedSyntax(tokens, i);
+      // Preserve incomplete editor input through EOF as well.
+      opaque.emplace(tokens[i].position,
+                     group.complete ? tokens[group.end].position +
+                                          tokens[group.end].lexeme.size()
+                                    : source.size());
+      i = group.end;
+    }
     std::size_t current =
         source_text::hasUtf8Bom(source) ? source_text::utf8Bom.size() : 0;
 
@@ -1832,6 +1853,12 @@ private:
     };
 
     while (current < source.size()) {
+      if (const auto found = opaque.find(current); found != opaque.end()) {
+        add(Kind::OpaqueSyntax,
+            source.substr(current, found->second - current));
+        current = found->second;
+        continue;
+      }
       const std::size_t start = current;
       const char character = source[current++];
 

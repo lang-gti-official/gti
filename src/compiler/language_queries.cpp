@@ -122,7 +122,8 @@ SignaturePrinter::function(const FunctionInfo &info,
     }
     result += functionName(info);
   } else if (info.macroExpansion) {
-    result += "#macro ";
+    result += declaration && declaration->isProceduralMacro() ? "#macro(proc) "
+                                                              : "#macro ";
     if (declaration == nullptr ||
         !declaration->returnType().name.last().generated)
       result += types.print(returnType) + " ";

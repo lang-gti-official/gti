@@ -118,6 +118,10 @@
         "named": true
       },
       {
+        "type": "procedural_macro_invocation",
+        "named": true
+      },
+      {
         "type": "unary_expression",
         "named": true
       },
@@ -240,6 +244,10 @@
         },
         {
           "type": "primary_expression",
+          "named": true
+        },
+        {
+          "type": "procedural_macro_invocation",
           "named": true
         },
         {
@@ -433,6 +441,10 @@
           "named": true
         },
         {
+          "type": "procedural_macro_invocation",
+          "named": true
+        },
+        {
           "type": "unary_expression",
           "named": true
         },
@@ -473,6 +485,10 @@
           },
           {
             "type": "primary_expression",
+            "named": true
+          },
+          {
+            "type": "procedural_macro_invocation",
             "named": true
           },
           {
@@ -898,6 +914,10 @@
           {
             "type": "primary_expression",
             "named": true
+          },
+          {
+            "type": "procedural_macro_invocation",
+            "named": true
           }
         ]
       }
@@ -941,6 +961,10 @@
           },
           {
             "type": "primary_expression",
+            "named": true
+          },
+          {
+            "type": "procedural_macro_invocation",
             "named": true
           },
           {
@@ -1701,6 +1725,10 @@
             "named": true
           },
           {
+            "type": "procedural_macro_invocation",
+            "named": true
+          },
+          {
             "type": "unary_expression",
             "named": true
           },
@@ -1736,6 +1764,10 @@
           },
           {
             "type": "primary_expression",
+            "named": true
+          },
+          {
+            "type": "procedural_macro_invocation",
             "named": true
           },
           {
@@ -2060,6 +2092,10 @@
           "named": true
         },
         {
+          "type": "procedural_macro_invocation",
+          "named": true
+        },
+        {
           "type": "unary_expression",
           "named": true
         },
@@ -2257,6 +2293,10 @@
           "named": true
         },
         {
+          "type": "procedural_macro_invocation",
+          "named": true
+        },
+        {
           "type": "unary_expression",
           "named": true
         },
@@ -2408,6 +2448,10 @@
             "named": true
           },
           {
+            "type": "procedural_macro_invocation",
+            "named": true
+          },
+          {
             "type": "unary_expression",
             "named": true
           },
@@ -2497,6 +2541,10 @@
         },
         {
           "type": "primary_expression",
+          "named": true
+        },
+        {
+          "type": "procedural_macro_invocation",
           "named": true
         },
         {
@@ -2677,6 +2725,10 @@
           },
           {
             "type": "primary_expression",
+            "named": true
+          },
+          {
+            "type": "procedural_macro_invocation",
             "named": true
           },
           {
@@ -3640,6 +3692,10 @@
           {
             "type": "primary_expression",
             "named": true
+          },
+          {
+            "type": "procedural_macro_invocation",
+            "named": true
           }
         ]
       }
@@ -3738,6 +3794,10 @@
           },
           {
             "type": "primary_expression",
+            "named": true
+          },
+          {
+            "type": "procedural_macro_invocation",
             "named": true
           },
           {
@@ -3928,6 +3988,16 @@
           }
         ]
       },
+      "mode": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "proc",
+            "named": false
+          }
+        ]
+      },
       "name": {
         "multiple": false,
         "required": true,
@@ -4007,6 +4077,10 @@
           {
             "type": "primary_expression",
             "named": true
+          },
+          {
+            "type": "procedural_macro_invocation",
+            "named": true
           }
         ]
       },
@@ -4084,6 +4158,10 @@
           },
           {
             "type": "primary_expression",
+            "named": true
+          },
+          {
+            "type": "procedural_macro_invocation",
             "named": true
           },
           {
@@ -4590,6 +4668,10 @@
             "named": true
           },
           {
+            "type": "procedural_macro_invocation",
+            "named": true
+          },
+          {
             "type": "unary_expression",
             "named": true
           },
@@ -5066,6 +5148,10 @@
             "named": true
           },
           {
+            "type": "procedural_macro_invocation",
+            "named": true
+          },
+          {
             "type": "unary_expression",
             "named": true
           },
@@ -5255,6 +5341,36 @@
     "type": "primitive_type",
     "named": true,
     "fields": {}
+  },
+  {
+    "type": "procedural_macro_invocation",
+    "named": true,
+    "fields": {
+      "input": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "syntax_group",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "scoped_identifier",
+            "named": true
+          }
+        ]
+      }
+    }
   },
   {
     "type": "pure_specifier",
@@ -5486,6 +5602,10 @@
             "named": true
           },
           {
+            "type": "procedural_macro_invocation",
+            "named": true
+          },
+          {
             "type": "unary_expression",
             "named": true
           },
@@ -5701,6 +5821,33 @@
     }
   },
   {
+    "type": "syntax_group",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "character_literal",
+          "named": true
+        },
+        {
+          "type": "string_literal",
+          "named": true
+        },
+        {
+          "type": "syntax_group",
+          "named": true
+        },
+        {
+          "type": "syntax_token",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "target_condition",
     "named": true,
     "fields": {
@@ -5907,6 +6054,10 @@
             "named": true
           },
           {
+            "type": "procedural_macro_invocation",
+            "named": true
+          },
+          {
             "type": "unary_expression",
             "named": true
           }
@@ -6014,6 +6165,10 @@
           },
           {
             "type": "primary_expression",
+            "named": true
+          },
+          {
+            "type": "procedural_macro_invocation",
             "named": true
           }
         ]
@@ -6628,6 +6783,10 @@
     "named": false
   },
   {
+    "type": "proc",
+    "named": false
+  },
+  {
     "type": "protected",
     "named": false
   },
@@ -6670,6 +6829,10 @@
   {
     "type": "switch",
     "named": false
+  },
+  {
+    "type": "syntax_token",
+    "named": true
   },
   {
     "type": "target",

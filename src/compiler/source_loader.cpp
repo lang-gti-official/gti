@@ -4,6 +4,7 @@
 
 #include "configuration_directive_processor.h"
 #include "gti/module_name.h"
+#include "gti/syntax_capture.h"
 #include "loaded_lexical_unit.h"
 
 #include <fstream>
@@ -752,6 +753,38 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
   }
   static const std::vector<Token> noTokens;
   const std::vector<Token> &lexed = lexedTokens ? *lexedTokens : noTokens;
+
+  // This boundary is lexical and independent of callee lookup. Inspect the
+  // original tokens before any directives, module edges or cached replay can
+  // publish effects. Malformed groups are also inspected through their error
+  // boundary; the parser owns the delimiter diagnostic.
+  bool invalidCapture = false;
+  for (std::size_t i = 2; i < lexed.size(); ++i) {
+    if (lexed[i - 2].kind != TokenKind::IDENTIFIER ||
+        lexed[i - 1].kind != TokenKind::BANG ||
+        lexed[i].kind != TokenKind::LEFT_PAREN)
+      continue;
+    const auto group = balancedSyntax(lexed, i);
+    if (!group.complete) {
+      diagnostics.push_back(
+          makeDiagnostic(DiagnosticId::UnbalancedProceduralInput,
+                         lexed[std::min(group.end, lexed.size() - 1)]));
+      invalidCapture = true;
+    }
+    const auto end = std::min(group.end + 1, lexed.size());
+    for (std::size_t j = i; j < end; ++j) {
+      if (!syntaxDirective(lexed[j].kind))
+        continue;
+      diagnostics.push_back(
+          makeDiagnostic(DiagnosticId::CapturedSyntaxDirective, lexed[j]));
+      invalidCapture = true;
+    }
+    i = group.end;
+  }
+  if (invalidCapture) {
+    states[key].state = LoadState::Loaded;
+    return unitId;
+  }
 
   std::optional<Token> moduleDeclaration;
   std::optional<SourceSpan> moduleDeclarationSpan;

@@ -1,0 +1,11 @@
+import std.syntax;
+
+// RFC 0001 phase 1: declaration/capture foundation only. This body is not
+// executed yet. Phase 2 supplies typed construction and verified-MIR execution.
+#macro(proc) std::syntax::expr html(std::syntax::tokens input) {}
+
+// An imported consumer will eventually write html!({ <h1>"Hello"</h1> }).
+// Invoking it in phase 1 deliberately reports that execution is unavailable.
+// Ordinary typed macros and ordinary braced arguments retain their behavior.
+#macro int twice(int value) { return value + value; }
+int main() { return twice(3) == 6 ? 0 : 1; }

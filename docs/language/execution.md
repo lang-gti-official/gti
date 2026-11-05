@@ -74,6 +74,29 @@ and cannot be delegated to a backend language's default-argument mechanism.
 
 #### Typed statement macros
 
+Procedural macro syntax is available as an incomplete, separate phase-1
+foundation:
+
+```gti
+import std.syntax;
+#macro(proc) std::syntax::expr html(std::syntax::tokens input) {
+  // Construction/execution of this body is introduced in phase 2.
+}
+// An imported consumer writes: html!({ <h1>"Hello"</h1> })
+```
+
+The `!` marks opaque input; it is required for procedural calls and does not
+change existing typed macro calls. The first profile accepts a non-generic,
+namespace-scope declaration with one `tokens` parameter and one `expr` result.
+It does not support overloads, defaults, packs or member/operator forms.
+Syntax capabilities cannot be stored or constructed at runtime. Directives and
+imports inside procedural input are rejected before source loading can act on
+them. Ordinary braced arguments retain their existing behavior.
+
+An invocation currently reports that phase 2 is required. The HTML demo and
+end-to-end feature acceptance remain after phase 3 of
+[RFC 0001](https://github.com/lang-gti-official/rfcs/pull/1).
+
 `#macro` declares a source-defined namespace-scope macro with typed
 **expression parameters**, instead of ordinary eager parameter initialization.
 Omitting the result type declares a `void` statement macro. An explicit result
