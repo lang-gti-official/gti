@@ -1,0 +1,55 @@
+import std;
+
+#macro CHECK_RANGE(uint8_t row, uint8_t col, std::source_location loc) {
+  if (row >= 9 || col >= 9) {
+    std::panic("position row({}), col({}), line({}), file({})", row, col,
+               loc.line(), loc.file_name());
+  }
+}
+
+struct Position {
+  uint8_t row;
+  uint8_t col;
+  Position(uint8_t row, uint8_t col,
+           std::source_location loc = std::source_location::current())
+      : row(row), col(col) {
+    CHECK_RANGE(row, col, loc); // panic-site
+  }
+};
+
+struct Holder {
+  int value;
+  Holder(int value) : value(value) {}
+  ~Holder() { std::println("holder"); }
+  int& get() { return this.value; }
+};
+
+struct Payload {
+  int value;
+  Payload(int value) : value(value) {}
+  ~Payload() { std::println("temporary"); }
+  int read() { return this.value; }
+};
+
+int combine(int& a, int& b, int& c, int& d) {
+  return a / b + c / d; // divide-site
+}
+int consume(Payload& payload, int& divisor) {
+  return payload.read() / divisor;
+}
+int later(int divisor) { return 1 / divisor; } // producer-site
+
+int main(int argc, std::vector<std::string> argv) {
+  Holder holder{argc == 2 ? 0 : 2};
+  if (argc == 3) {
+    Position invalid{uint8_t(9), uint8_t(0)}; // location-site
+  }
+  if (argc == 4) {
+    return combine(42, holder.get(), later(0), holder.get());
+  }
+  Position valid{uint8_t(0), uint8_t(0)};
+  int sum = combine(42, holder.get(), 6, holder.get());
+  int owned = consume(Payload(42), holder.get());
+  std::println("{} {}", sum, owned);
+  return sum == 24 && owned == 21 ? 0 : 1;
+}

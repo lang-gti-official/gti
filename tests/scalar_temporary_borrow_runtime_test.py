@@ -18,7 +18,16 @@ if __name__ == "__main__":
              "187-operator-temporary-borrows", "temporary_borrow_library_clients",
              "temporary_borrow_cpp_supported", "noreturn_temporary_borrow",
              "temporary_borrow_symbolic_producers", "borrowed_text_temporary_failure",
-             "call_operator_temporary_borrow")
+             "call_operator_temporary_borrow", "panic_argument_borrow_order")
+    argument_order = root / "tests/fixtures/panic_argument_borrow_order.gti"
+    def argument_order_line(marker):
+        return next(i for i, line in enumerate(argument_order.read_text().splitlines(), 1)
+                    if line.endswith("// " + marker))
+    def argument_order_failure(marker, message):
+        return f"{argument_order.name}:{argument_order_line(marker)}: runtime error{message}\n"
+    argument_order_panic = argument_order_failure(
+        "panic-site", '[GTI-R0017]: panic: "position row(9), col(0), '
+        f'line({argument_order_line("location-site")}), file({argument_order})"')
     terminal = root / "tests/fixtures/noreturn_temporary_borrow.gti"
     terminal_lines = terminal.read_text().splitlines()
     def terminal_site(marker):
@@ -51,6 +60,13 @@ if __name__ == "__main__":
                            (("later",), (70, output, failure(later))),
                            (("body", "fails"), (70, output, failure(inspect))),
                            (("producer", "arg", "fails"), (70, output, failure(producer)))],
+                "panic_argument_borrow_order": [
+                    ((), (0, "temporary\n24 21\nholder\n", "")),
+                    (("divide",), (70, "holder\n", argument_order_failure(
+                        "divide-site", "[GTI-R0002]: division_by_zero in integer_division"))),
+                    (("panic", "position"), (70, "holder\n", argument_order_panic)),
+                    (("later", "producer", "fails"), (70, "holder\n", argument_order_failure(
+                        "producer-site", "[GTI-R0002]: division_by_zero in integer_division")))],
                 "noreturn_temporary_borrow": [
                     ((), (70, "2\n1\n9\n", primary)),
                     (("cleanup-fails",), (70, "2\n", cleanup))],

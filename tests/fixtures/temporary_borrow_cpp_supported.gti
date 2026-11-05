@@ -7,6 +7,7 @@ class Tag {
 public:
   int value;
   Tag(int value) : value(value) {}
+  int& read() { return this.value; }
   bool operator==(Tag& other) { return this.value == other.value; }
 };
 
@@ -21,6 +22,8 @@ Cursor cursor(int& value) { return Cursor(value); }
 [[borrowed_from(source)]]
 int& select(int& source, Tag& ignored) { return source; }
 
+int divide(Tag& temporary, int& divisor) { return temporary.value / divisor; }
+
 int main() {
   Color green = Color::Green;
   if (!is_green(green)) { return 1; }
@@ -31,5 +34,6 @@ int main() {
   if (!(position == cursor(owner))) { return 3; }
   int& selected = select(owner, Tag(0));
   if (selected != owner) { return 4; }
+  if (divide(Tag(14), tag.read()) != 2) { return 5; }
   return 0;
 }

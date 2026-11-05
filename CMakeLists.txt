@@ -192,8 +192,55 @@ if(GTI_BUNDLE_LLVM)
   # and its implementation dependencies build, on demand.
   set(LLVM_ENABLE_PROJECTS "clang" CACHE STRING
       "GTI bindgen links libclang" FORCE)
-  set(GTI_LLVM_SOURCE_URL
+  set(gti_llvm_release_url
       "https://github.com/llvm/llvm-project/releases/download/llvmorg-${GTI_PINNED_LLVM_VERSION}/llvm-project-${GTI_PINNED_LLVM_VERSION}.src.tar.xz")
+  # FetchContent downloads once and gives up, and GitHub's release CDN returns
+  # transient 5xx responses (full validation run 41995172449 lost two Linux
+  # shards and a package to one 504). Download with retries, verify the pinned
+  # hash, and hand FetchContent the verified file; it re-verifies the hash.
+  # GTI_LLVM_SOURCE_CACHE (environment) names a directory kept across build
+  # trees, so local builds download the 179 MB archive once.
+  set(gti_llvm_source_dir "$ENV{GTI_LLVM_SOURCE_CACHE}")
+  if(NOT gti_llvm_source_dir)
+    set(gti_llvm_source_dir "${CMAKE_BINARY_DIR}/_deps/llvm-source")
+  endif()
+  set(GTI_LLVM_SOURCE_URL
+      "${gti_llvm_source_dir}/llvm-project-${GTI_PINNED_LLVM_VERSION}.src.tar.xz")
+  set(gti_llvm_source_ready FALSE)
+  if(EXISTS "${GTI_LLVM_SOURCE_URL}")
+    file(SHA256 "${GTI_LLVM_SOURCE_URL}" gti_llvm_source_hash)
+    if(gti_llvm_source_hash STREQUAL GTI_PINNED_LLVM_SHA256)
+      set(gti_llvm_source_ready TRUE)
+    endif()
+  endif()
+  set(gti_llvm_download_attempts 6)
+  foreach(gti_llvm_attempt RANGE 1 ${gti_llvm_download_attempts})
+    if(gti_llvm_source_ready)
+      break()
+    endif()
+    file(MAKE_DIRECTORY "${gti_llvm_source_dir}")
+    file(DOWNLOAD "${gti_llvm_release_url}" "${GTI_LLVM_SOURCE_URL}.part"
+         STATUS gti_llvm_download_status TLS_VERIFY ON INACTIVITY_TIMEOUT 120)
+    list(GET gti_llvm_download_status 0 gti_llvm_download_code)
+    list(GET gti_llvm_download_status 1 gti_llvm_download_message)
+    if(gti_llvm_download_code EQUAL 0)
+      file(SHA256 "${GTI_LLVM_SOURCE_URL}.part" gti_llvm_source_hash)
+      if(gti_llvm_source_hash STREQUAL GTI_PINNED_LLVM_SHA256)
+        file(RENAME "${GTI_LLVM_SOURCE_URL}.part" "${GTI_LLVM_SOURCE_URL}")
+        set(gti_llvm_source_ready TRUE)
+        break()
+      endif()
+      set(gti_llvm_download_message "SHA-256 ${gti_llvm_source_hash} is not the pinned ${GTI_PINNED_LLVM_SHA256}")
+    endif()
+    file(REMOVE "${GTI_LLVM_SOURCE_URL}.part")
+    if(gti_llvm_attempt LESS gti_llvm_download_attempts)
+      math(EXPR gti_llvm_retry_delay "10 * ${gti_llvm_attempt}")
+      message(STATUS "GTI: LLVM ${GTI_PINNED_LLVM_VERSION} source download attempt ${gti_llvm_attempt} failed (${gti_llvm_download_message}); retrying in ${gti_llvm_retry_delay} s")
+      execute_process(COMMAND "${CMAKE_COMMAND}" -E sleep ${gti_llvm_retry_delay})
+    else()
+      message(FATAL_ERROR "GTI: could not download LLVM ${GTI_PINNED_LLVM_VERSION} from ${gti_llvm_release_url} after ${gti_llvm_download_attempts} attempts (${gti_llvm_download_message})")
+    endif()
+  endforeach()
   if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.28)
     FetchContent_Declare(
       llvm_project
