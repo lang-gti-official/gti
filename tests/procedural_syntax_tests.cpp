@@ -539,9 +539,8 @@ int main(){ return double_value(identity!({21})) - 42; }
         std::cerr << "Reuse: " << d.code << ": " << d.message << '\n';
     check(result.canGenerateCode(),
           "typed/procedural nesting works with reuse on and off");
-    std::cerr << "Procedural reuse=" << reuse
-              << " executions=" << metrics.proceduralExecutions
-              << " hits=" << metrics.proceduralExpansionReuses << '\n';
+    check(metrics.proceduralExecutions > 0,
+          "reuse controls do not bypass procedural execution admission");
   }
   auto constant = accepted(
       "import \"library.gti\"; constexpr int answer = identity!({42}); "
@@ -561,8 +560,8 @@ int main(){ return double_value(identity!({21})) - 42; }
       for (const auto &d : repeated.diagnostics)
         std::cerr << "Default argument: " << d.code << ": " << d.message
                   << '\n';
-    std::cerr << "Default argument executions=" << metrics.proceduralExecutions
-              << " hits=" << metrics.proceduralExpansionReuses << '\n';
+    check(metrics.proceduralExecutions == 1,
+          "one declaration-owned expansion supplies both default evaluations");
   }
   const std::string inspectionLibrary = R"gti(
 export module library;
