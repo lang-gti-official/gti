@@ -371,6 +371,7 @@ enum class IntrinsicKind {
   SyntaxGroup,
   SyntaxSpan,
   SyntaxLiteral,
+  SyntaxStringLiteral,
   SyntaxPunctuation,
   SyntaxIdentifier,
   SyntaxKeyword,

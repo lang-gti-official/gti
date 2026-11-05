@@ -2669,6 +2669,7 @@ private:
       resultType = spanType;
       break;
     case IntrinsicKind::SyntaxLiteral:
+    case IntrinsicKind::SyntaxStringLiteral:
     case IntrinsicKind::SyntaxPunctuation:
     case IntrinsicKind::SyntaxIdentifier:
     case IntrinsicKind::SyntaxKeyword:
@@ -2768,6 +2769,8 @@ private:
       return {.value = syntaxValue(arena.span(tokens(0), index(1), index(2)))};
     case IntrinsicKind::SyntaxLiteral:
       return {.value = syntaxValue(arena.literal(text(0), span(1)))};
+    case IntrinsicKind::SyntaxStringLiteral:
+      return {.value = syntaxValue(arena.stringLiteral(text(0), span(1)))};
     case IntrinsicKind::SyntaxPunctuation:
       return {.value = syntaxValue(arena.punctuation(text(0), span(1)))};
     case IntrinsicKind::SyntaxKeyword:

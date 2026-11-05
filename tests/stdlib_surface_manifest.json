@@ -7447,6 +7447,7 @@
         "std::syntax::fresh",
         "std::syntax::join",
         "std::syntax::keyword",
+        "std::syntax::string_literal",
         "std::syntax::location",
         "std::syntax::parse",
         "std::syntax::punctuation",

@@ -1,0 +1,1 @@
+Procedural macros can implement an imported source-defined HTML library with owned nodes, escaped text and attributes, and ordinary checking of embedded GTI expressions. Syntax construction adds a safely escaped `std::syntax::string_literal` operation and qualified-name punctuation.

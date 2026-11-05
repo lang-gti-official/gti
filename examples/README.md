@@ -1,3 +1,12 @@
+[`procedural-html.gti`](procedural-html.gti) imports the source-defined
+[`demo/html.gti`](demo/html.gti) library and demonstrates `html!({...})`:
+owned nested nodes, keyword attribute names, text/attribute escaping, moved
+children and one evaluation per interpolation in document order. The
+[`procedural-html-project`](procedural-html-project/gti.toml) package uses the
+same library through `import demo.html;`. Run `gti run app` in that directory,
+or compile the standalone example with `gti procedural-html.gti`. This is a
+small token-based markup grammar, not a browser DOM or a sanitizer.
+
 # GTI examples
 
 [`procedural-macros.gti`](procedural-macros.gti) imports

@@ -88,6 +88,7 @@ public:
   [[nodiscard]] bool adjacent(SyntaxTokens input, std::size_t left) const;
   SyntaxSpan span(SyntaxTokens input, std::size_t begin, std::size_t end);
   SyntaxTokens literal(std::string spelling, SyntaxSpan origin);
+  SyntaxTokens stringLiteral(std::string_view value, SyntaxSpan origin);
   SyntaxTokens punctuation(std::string spelling, SyntaxSpan origin);
   SyntaxTokens identifier(std::string spelling, SyntaxSpan origin);
   SyntaxTokens keyword(std::string spelling, SyntaxSpan origin);

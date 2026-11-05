@@ -177,6 +177,7 @@ MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
   case IntrinsicKind::SyntaxGroup:
   case IntrinsicKind::SyntaxSpan:
   case IntrinsicKind::SyntaxLiteral:
+  case IntrinsicKind::SyntaxStringLiteral:
   case IntrinsicKind::SyntaxPunctuation:
   case IntrinsicKind::SyntaxIdentifier:
   case IntrinsicKind::SyntaxKeyword:

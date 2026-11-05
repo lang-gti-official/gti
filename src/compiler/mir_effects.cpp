@@ -171,6 +171,7 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     MirEffectTraits{.mayTrap = true}, // SyntaxGroup
     MirEffectTraits{.mayTrap = true}, // SyntaxSpan
     MirEffectTraits{.mayTrap = true}, // SyntaxLiteral
+    MirEffectTraits{.mayTrap = true}, // SyntaxStringLiteral
     MirEffectTraits{.mayTrap = true}, // SyntaxPunctuation
     MirEffectTraits{.mayTrap = true}, // SyntaxIdentifier
     MirEffectTraits{.mayTrap = true}, // SyntaxKeyword
@@ -623,6 +624,7 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "syntax-group",
     "syntax-span",
     "syntax-literal",
+    "syntax-string-literal",
     "syntax-punctuation",
     "syntax-identifier",
     "syntax-keyword",

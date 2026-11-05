@@ -4097,6 +4097,7 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::SyntaxGroup:
         case IntrinsicKind::SyntaxSpan:
         case IntrinsicKind::SyntaxLiteral:
+        case IntrinsicKind::SyntaxStringLiteral:
         case IntrinsicKind::SyntaxPunctuation:
         case IntrinsicKind::SyntaxKeyword:
         case IntrinsicKind::SyntaxIdentifier:

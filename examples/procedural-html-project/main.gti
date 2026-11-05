@@ -1,0 +1,7 @@
+import demo.html;
+int main() {
+  auto page = html!({<div class="profile"><h1>{"Ada & Lin"}</h1><p>"Welcome!"</p></div>});
+  auto text = demo::render(page);
+  if (text != "<div class=\"profile\"><h1>Ada &amp; Lin</h1><p>Welcome!</p></div>") { return 1; }
+  return 0;
+}

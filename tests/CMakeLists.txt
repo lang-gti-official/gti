@@ -152,6 +152,12 @@ add_test(NAME procedural_declaration_example
 add_test(NAME procedural_execution_example
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
     $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/examples/procedural-macros.gti")
+add_executable(gti_procedural_html_tests procedural_html_tests.cpp)
+target_link_libraries(gti_procedural_html_tests PRIVATE gti_compiler)
+add_test(NAME procedural_html_semantics COMMAND gti_procedural_html_tests)
+add_test(NAME procedural_html_example
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+    $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/examples/procedural-html.gti")
 find_program(GTI_MACRO_SYNTAX_NEOVIM_EXECUTABLE nvim)
 if(GTI_MACRO_SYNTAX_NEOVIM_EXECUTABLE)
   add_test(NAME macro_neovim_syntax

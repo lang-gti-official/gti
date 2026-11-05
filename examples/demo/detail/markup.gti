@@ -1,0 +1,125 @@
+export module markup;
+import std.syntax;
+// This is an ordinary transitive source dependency of the exported library.
+// Markup grammar and generation policy are entirely source-defined.
+namespace demo {
+namespace detail {
+constexpr std::string_view spelling(std::syntax::tokens input, uint64_t at) {
+  if (at >= std::syntax::size(input)) { return ""; }
+  return std::syntax::text(std::syntax::slice(input, at, at + uint64_t(1)));
+}
+constexpr std::syntax::span here(std::syntax::tokens input, uint64_t at) {
+  mut uint64_t position = at;
+  if (position >= std::syntax::size(input)) { position = std::syntax::size(input) - uint64_t(1); }
+  return std::syntax::location(input, position, position + uint64_t(1));
+}
+constexpr std::syntax::tokens reject(std::syntax::tokens input, uint64_t at,
+                                     std::string_view message, uint64_t opener) {
+  return std::syntax::splice(std::syntax::fail_related(here(input, at), message, here(input, opener)));
+}
+constexpr bool name(std::string_view value) {
+  if (value.empty()) { return false; }
+  for (mut uint64_t index = 0; index < value.size(); index++) {
+    uint8_t ch = uint8_t(value[index]);
+    bool letter = (ch >= uint8_t('a') && ch <= uint8_t('z')) || (ch >= uint8_t('A') && ch <= uint8_t('Z')) || ch == uint8_t('_');
+    if (!letter && (index == 0 || ch < uint8_t('0') || ch > uint8_t('9'))) { return false; }
+  }
+  return true;
+}
+constexpr std::syntax::tokens punct(std::string_view text, std::syntax::span origin) {
+  return std::syntax::punctuation(text, origin);
+}
+constexpr std::syntax::tokens call(std::string_view function, std::syntax::tokens arguments,
+                                   std::syntax::span origin) {
+  mut auto output = std::syntax::identifier("demo", origin);
+  output = std::syntax::join(output, punct("::", origin));
+  output = std::syntax::join(output, std::syntax::identifier("detail", origin));
+  output = std::syntax::join(output, punct("::", origin));
+  output = std::syntax::join(output, std::syntax::identifier(function, origin));
+  output = std::syntax::join(output, punct("(", origin));
+  output = std::syntax::join(output, arguments);
+  return std::syntax::join(output, punct(")", origin));
+}
+constexpr std::syntax::tokens value(std::syntax::tokens input, mut uint64_t& position,
+                                    uint64_t opener) {
+  if (spelling(input, position) == "{") {
+    auto group = std::syntax::group(input, position);
+    auto count = std::syntax::size(group);
+    position += count;
+    return std::syntax::splice(std::syntax::parse(std::syntax::slice(group, uint64_t(1), count - uint64_t(1))));
+  }
+  if (position >= std::syntax::size(input)) { return reject(input, position, "HTML value is missing.", opener); }
+  if (std::syntax::kind(input, position) == "STRING_LITERAL") {
+    auto result = std::syntax::slice(input, position, position + uint64_t(1));
+    position++;
+    return result;
+  }
+  return reject(input, position, "HTML requires quoted text or a braced GTI expression.", opener);
+}
+constexpr std::syntax::tokens element_syntax(std::syntax::tokens input, mut uint64_t& position) {
+  uint64_t opener = position;
+  if (spelling(input, position) != "<") {
+    return reject(input, position, "HTML requires one root element.", opener);
+  }
+  position++;
+  uint64_t tag_position = position;
+  auto tag = spelling(input, position);
+  if (!name(tag)) { return reject(input, position, "HTML requires a simple tag name.", opener); }
+  position++;
+  auto origin = here(input, tag_position);
+  auto tag_literal = std::syntax::string_literal(tag, origin);
+  // Keep attributes as operations on the element. Nested argument evaluation is
+  // left-to-right, so each interpolation occurs once in document order.
+  mut auto result = call("element", tag_literal, origin);
+  while (spelling(input, position) != ">" && spelling(input, position) != "/") {
+    uint64_t key_position = position;
+    auto key = spelling(input, position);
+    if (!name(key)) { return reject(input, position, "HTML requires an attribute name or the end of the opening tag.", opener); }
+    position++;
+    if (spelling(input, position) != "=") { return reject(input, position, "HTML attributes require '=' and a value.", opener); }
+    position++;
+    auto argument = value(input, position, opener);
+    auto comma = punct(",", here(input, key_position));
+    auto key_literal = std::syntax::string_literal(key, here(input, key_position));
+    auto tail = std::syntax::join(key_literal, std::syntax::join(comma, argument));
+    result = call("with_attribute", std::syntax::join(result, std::syntax::join(comma, tail)), origin);
+  }
+  if (spelling(input, position) == "/") {
+    position++;
+    if (spelling(input, position) != ">") { return reject(input, position, "HTML self-closing tags end with '/>'.", opener); }
+    position++;
+    return call("close_empty", result, origin);
+  }
+  position++;
+  while (position < std::syntax::size(input)) {
+    if (spelling(input, position) == "<" && spelling(input, position + uint64_t(1)) == "/") {
+      position += uint64_t(2);
+      if (spelling(input, position) != tag) {
+        return reject(input, position, "HTML closing tag does not match its opening tag.", tag_position);
+      }
+      position++;
+      if (spelling(input, position) != ">") { return reject(input, position, "HTML closing tags end with '>'.", opener); }
+      position++;
+      return result;
+    }
+    if (spelling(input, position) == "}" || position >= std::syntax::size(input)) {
+      return reject(input, position, "HTML element is missing its closing tag.", tag_position);
+    }
+    mut auto child = std::syntax::slice(input, uint64_t(0), uint64_t(0));
+    if (spelling(input, position) == "<") { child = element_syntax(input, position); }
+    else { child = value(input, position, opener); }
+    auto arguments = std::syntax::join(result, std::syntax::join(punct(",", origin), child));
+    result = call("with_child", arguments, origin);
+  }
+  return reject(input, position, "HTML element is missing its closing tag.", tag_position);
+}
+export constexpr std::syntax::expr page(std::syntax::tokens input) {
+  mut uint64_t position = 1;
+  auto output = element_syntax(input, position);
+  if (position != std::syntax::size(input) - uint64_t(1)) {
+    return std::syntax::fail(here(input, position), "HTML accepts exactly one root element.");
+  }
+  return std::syntax::parse(output);
+}
+}
+}

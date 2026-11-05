@@ -106,6 +106,21 @@ void arena() {
     check(arena.adjacent(grouped, 0) && !arena.adjacent(input, 0),
           "punctuation adjacency is independent of diagnostic spans");
     const auto origin = arena.span(input, 0, 1);
+    const std::string quoted =
+        "quotes\" backslash\\ newline\n nul" + std::string(1, '\0');
+    const auto quotedSyntax = arena.stringLiteral(quoted, origin);
+    check(arena.size(quotedSyntax) == 1 && arena.token(quotedSyntax, 0).kind ==
+                                               lang::TokenKind::STRING_LITERAL,
+          "text construction produces exactly one escaped string literal");
+    check(std::get<std::string>(arena.token(quotedSyntax, 0).literal) == quoted,
+          "quoted text round trips embedded NUL, escapes and newlines");
+    (void)arena.parse(quotedSyntax);
+    check(arena.token(arena.punctuation("::", origin), 0).kind ==
+              lang::TokenKind::SCOPE,
+          "qualified construction uses an ordinary scope token");
+    const auto injection =
+        arena.stringLiteral("\"; unsafe {evil();} //", origin);
+    check(arena.size(injection) == 1, "text contents cannot inject GTI syntax");
     const auto name = arena.identifier("helper", origin);
     check(arena.token(name, 0).expansion == 10,
           "constructed identifier uses definition context");

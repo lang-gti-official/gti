@@ -213,7 +213,7 @@ SyntaxTokens SyntaxArena::constructed(std::string spelling, SyntaxSpan origin,
             value.kind == TokenKind::RIGHT_BRACE ||
             value.kind == TokenKind::LEFT_BRACKET ||
             value.kind == TokenKind::RIGHT_BRACKET ||
-            value.kind == TokenKind::COMMA ||
+            value.kind == TokenKind::SCOPE || value.kind == TokenKind::COMMA ||
             value.kind == TokenKind::SEMICOLON || value.kind == TokenKind::DOT;
   if (!valid)
     throw SyntaxError("Token does not match the requested syntax category.");
@@ -236,6 +236,54 @@ SyntaxTokens SyntaxArena::constructed(std::string spelling, SyntaxSpan origin,
 SyntaxTokens SyntaxArena::literal(std::string spelling, SyntaxSpan origin) {
   return constructed(std::move(spelling), origin, SyntaxCategory::Expression,
                      definitionContext_);
+}
+SyntaxTokens SyntaxArena::stringLiteral(std::string_view value,
+                                        SyntaxSpan origin) {
+  // Bound escaped storage before allocating, and poll during large operations.
+  // Spelling and diagnostic attribution are separate from lookup authority.
+  std::size_t length = 2;
+  for (char ch : value) {
+    check();
+    const bool escaped = ch == '\n' || ch == '\r' || ch == '\t' || ch == '\0' ||
+                         ch == '\\' || ch == '"';
+    const std::size_t width = escaped ? 2 : 1;
+    if (length > limits_.bytes - budget_->bytes ||
+        width > limits_.bytes - budget_->bytes - length)
+      throw SyntaxLimitError(&CompileLimits::syntaxBytes,
+                             "Procedural syntax-bytes limit exceeded.");
+    length += width;
+  }
+  std::string spelling;
+  spelling.reserve(length);
+  spelling += '"';
+  for (char ch : value) {
+    check();
+    switch (ch) {
+    case '\n':
+      spelling += "\\n";
+      break;
+    case '\r':
+      spelling += "\\r";
+      break;
+    case '\t':
+      spelling += "\\t";
+      break;
+    case '\0':
+      spelling += "\\0";
+      break;
+    case '\\':
+      spelling += "\\\\";
+      break;
+    case '"':
+      spelling += "\\\"";
+      break;
+    default:
+      spelling += ch;
+      break;
+    }
+  }
+  spelling += '"';
+  return literal(std::move(spelling), origin);
 }
 SyntaxTokens SyntaxArena::punctuation(std::string spelling, SyntaxSpan origin) {
   return constructed(std::move(spelling), origin, SyntaxCategory::Tokens,

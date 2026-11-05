@@ -1,0 +1,32 @@
+import "demo/html.gti";
+
+struct User { std::string_view name; User(std::string_view value) : name(value) {} };
+mut int observations = 0;
+std::string_view observe(int order, std::string_view value) {
+  if (observations != order) { return "wrong order"; }
+  observations++;
+  return value;
+}
+int main() {
+  User user{"Ada & Lin"};
+  auto page = html!({
+    <div class="profile">
+      <h1>{user.name}</h1>
+      <p>{"Welcome!"}</p>
+    </div>
+  });
+  auto rendered = demo::render(page);
+  if (rendered != "<div class=\"profile\"><h1>Ada &amp; Lin</h1><p>Welcome!</p></div>") { return 1; }
+  auto nested = demo::html!({<em>"owned child"</em>});
+  auto second = demo::html!({
+    <section title={observe(0, "\"&'")}>
+      {observe(1, "<&>")}
+      {std::move(nested)}
+      <br/>
+      {observe(2, "done")}
+    </section>
+  });
+  auto second_text = demo::render(second);
+  if (observations != 3 || second_text != "<section title=\"&quot;&amp;&#39;\">&lt;&amp;&gt;<em>owned child</em><br/>done</section>") { return 2; }
+  return 0;
+}

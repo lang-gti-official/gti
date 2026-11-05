@@ -377,6 +377,7 @@ LLVM_COVERAGE_ENTRY(SyntaxSlice, 4, VerifiedNonExecuting, MustBeAbsent, "procedu
 LLVM_COVERAGE_ENTRY(SyntaxGroup, 4, VerifiedNonExecuting, MustBeAbsent, "procedural syntax exists only in the MIR compile-time profile")
 LLVM_COVERAGE_ENTRY(SyntaxSpan, 4, VerifiedNonExecuting, MustBeAbsent, "procedural syntax exists only in the MIR compile-time profile")
 LLVM_COVERAGE_ENTRY(SyntaxLiteral, 4, VerifiedNonExecuting, MustBeAbsent, "procedural syntax exists only in the MIR compile-time profile")
+LLVM_COVERAGE_ENTRY(SyntaxStringLiteral, 4, VerifiedNonExecuting, MustBeAbsent, "procedural syntax exists only in the MIR compile-time profile")
 LLVM_COVERAGE_ENTRY(SyntaxPunctuation, 4, VerifiedNonExecuting, MustBeAbsent, "procedural syntax exists only in the MIR compile-time profile")
 LLVM_COVERAGE_ENTRY(SyntaxIdentifier, 4, VerifiedNonExecuting, MustBeAbsent, "procedural syntax exists only in the MIR compile-time profile")
 LLVM_COVERAGE_ENTRY(SyntaxKeyword, 4, VerifiedNonExecuting, MustBeAbsent, "procedural syntax exists only in the MIR compile-time profile")

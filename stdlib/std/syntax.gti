@@ -17,6 +17,8 @@ export tokens slice(tokens input, uint64_t begin, uint64_t end);
 export tokens group(tokens input, uint64_t opening);
 export span location(tokens input, uint64_t begin, uint64_t end);
 export tokens literal(std::string_view spelling, span origin);
+// Quote a text value as one literal, without treating its contents as source.
+export tokens string_literal(std::string_view value, span origin);
 export tokens punctuation(std::string_view spelling, span origin);
 export tokens identifier(std::string_view spelling, span origin);
 export tokens keyword(std::string_view spelling, span origin);
