@@ -16,8 +16,12 @@ def main():
     args = parser.parse_args()
     repository = Path(__file__).resolve().parents[1]
     environment = dict(os.environ)
-    for name in ('GTI_STDLIB_PATH', 'GTI_RUNTIME_PATH', 'GTI_RUNTIME_LIBRARY', 'GTI_RUNTIME_INCLUDE'):
-        environment.pop(name, None)
+    if args.install_build:
+        # The installed toolchain must find its own library and runtime. A
+        # build-tree compiler keeps the source paths CTest supplies, because a
+        # release build compiles in no source-tree fallback.
+        for name in ('GTI_STDLIB_PATH', 'GTI_RUNTIME_PATH', 'GTI_RUNTIME_LIBRARY', 'GTI_RUNTIME_INCLUDE'):
+            environment.pop(name, None)
     with tempfile.TemporaryDirectory(prefix='gti-procedural-library-') as temporary:
         root = Path(temporary)
         compiler = args.compiler.resolve()
