@@ -14,6 +14,9 @@
 
 namespace {
 int failures = 0;
+constexpr std::string_view proceduralDeclaration =
+    "export module library; import std.syntax; export #macro(proc) "
+    "std::syntax::expr html(std::syntax::tokens input) {}";
 void check(bool value, const char *message) {
   if (!value) {
     std::cerr << "FAIL: " << message << '\n';
@@ -160,9 +163,7 @@ void arena() {
 }
 lang::FrontendResult
 analyze(std::string source,
-        std::string macro =
-            "export module library; import std.syntax; export #macro(proc) "
-            "std::syntax::expr html(std::syntax::tokens input) {}") {
+        std::string macro = std::string(proceduralDeclaration)) {
   const auto root = std::filesystem::current_path() / "proc-fixtures";
   const auto library =
       std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
@@ -180,6 +181,36 @@ void diagnostic(const lang::FrontendResult &result, std::string_view message) {
   if (!found)
     for (const auto &d : result.diagnostics)
       std::cerr << d.code << ": " << d.message << '\n';
+}
+const lang::Diagnostic *locatedDiagnostic(const lang::FrontendResult &result,
+                                          std::string_view code,
+                                          lang::DiagnosticPhase phase,
+                                          std::size_t begin, std::size_t end,
+                                          int line = 1) {
+  const auto found =
+      std::find_if(result.diagnostics.begin(), result.diagnostics.end(),
+                   [&](const auto &d) { return d.code == code; });
+  check(found != result.diagnostics.end(), "expected stable diagnostic code");
+  if (found == result.diagnostics.end())
+    return nullptr;
+  const bool matches =
+      found->phase == phase &&
+      found->severity == lang::DiagnosticSeverity::Error &&
+      found->primary.source ==
+          (std::filesystem::current_path() / "proc-fixtures" / "main.gti")
+              .string() &&
+      found->primary.start == begin && found->primary.end == end &&
+      found->primary.line == line;
+  if (!matches)
+    std::cerr << code << " at " << found->primary.source << ':'
+              << found->primary.line << " bytes " << found->primary.start << '-'
+              << found->primary.end << '\n';
+  check(matches,
+        "diagnostic retains exact source identity, byte span, phase and "
+        "severity");
+  check(found->fixes.empty() && found->hints.empty(),
+        "syntax boundary diagnostics do not invent an automatic repair");
+  return &*found;
 }
 void semantics() {
   auto unused = analyze("import \"library.gti\"; int main() { return 0; }");
@@ -245,11 +276,30 @@ void semantics() {
       std::cerr << d.code << ": " << d.message << '\n';
   check(ordinary.canGenerateCode(),
         "ordinary braced calls keep configuration directive behavior");
-  auto selected = analyze("import \"library.gti\"; int main() { html!({ "
-                          "<h1>{unknown}</h1> }); return 0; }");
+  const std::string selectedSource =
+      "import \"library.gti\"; int main() { html!({ "
+      "<h1>{unknown}</h1> }); return 0; }";
+  auto selected = analyze(selectedSource);
   check(selected.sourceValid && selected.syntaxValid,
         "opaque markup reaches semantic name selection");
   diagnostic(selected, "execution requires phase 2");
+  const auto close = selectedSource.find("});") + 1;
+  if (const auto *selectedDiagnostic = locatedDiagnostic(
+          selected, "GTI-S2124", lang::DiagnosticPhase::Semantics, close,
+          close + 1)) {
+    const auto definition = proceduralDeclaration.find("html");
+    check(selectedDiagnostic->related.size() == 1 &&
+              selectedDiagnostic->related[0].span.source ==
+                  (std::filesystem::current_path() / "proc-fixtures" /
+                   "library.gti")
+                      .string() &&
+              selectedDiagnostic->related[0].span.start == definition &&
+              selectedDiagnostic->related[0].span.end == definition + 4 &&
+              selectedDiagnostic->related[0].span.line == 1 &&
+              selectedDiagnostic->related[0].message.find("declared here") !=
+                  std::string::npos,
+          "procedural rejection points to the selected imported declaration");
+  }
   check(std::none_of(selected.diagnostics.begin(), selected.diagnostics.end(),
                      [](const auto &d) {
                        return d.message.find("Unknown variable") !=
@@ -283,9 +333,16 @@ void semantics() {
                      "export module library; import std.syntax; export "
                      "#macro(proc) int html(int x) {}"),
              "exactly one std::syntax::tokens");
-  auto directives =
-      analyze("html!({\n#define STOLEN\nimport \"missing.gti\";\n});");
+  const std::string directiveSource =
+      "html!({\n#define STOLEN\nimport \"missing.gti\";\n});";
+  auto directives = analyze(directiveSource);
   diagnostic(directives, "must be outside procedural macro input");
+  const auto define = directiveSource.find("#define");
+  if (const auto *directiveDiagnostic = locatedDiagnostic(
+          directives, "GTI-I0015", lang::DiagnosticPhase::SourceLoading, define,
+          define + 7, 2))
+    check(directiveDiagnostic->related.empty(),
+          "directive rejection needs no unrelated source locations");
   check(!directives.sourceValid &&
             std::none_of(directives.sourceGraph.imports().begin(),
                          directives.sourceGraph.imports().end(),
@@ -293,9 +350,14 @@ void semantics() {
                            return edge.spelling == "missing.gti";
                          }),
         "rejected input creates no import edges");
-  auto unbalanced =
-      analyze("html!({ ]\n#define STOLEN\nimport \"missing.gti\";\n});");
+  const std::string unbalancedSource =
+      "html!({ ]\n#define STOLEN\nimport \"missing.gti\";\n});";
+  auto unbalanced = analyze(unbalancedSource);
   diagnostic(unbalanced, "Unbalanced delimiters");
+  const auto mismatch = unbalancedSource.find(']');
+  (void)locatedDiagnostic(unbalanced, "GTI-I0016",
+                          lang::DiagnosticPhase::SourceLoading, mismatch,
+                          mismatch + 1);
   check(std::none_of(
             unbalanced.sourceGraph.imports().begin(),
             unbalanced.sourceGraph.imports().end(),
