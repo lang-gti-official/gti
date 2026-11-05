@@ -3,16 +3,22 @@ name: Release train
 # Every 48 hours (scripts/release_train.py admits every other UTC day of the
 # daily schedule) and on manual dispatch:
 # - cut: run scripts/cut_release.py on the published nightly's commit, when it
-#   passed the merge queue and has been on main at least 24 h, and deliver the
+#   passed the merge queue and the daily sanitizers (sanitizers.yml) and has
+#   been on main at least 24 h, and deliver the
 #   `Release-Cut:` commit as a `rollup=never` pull request queued with the
 #   release App token (a GITHUB_TOKEN PR would get no PR checks). The queue
 #   lands it on main; beta.yml then publishes v<VERSION>-beta.1.
 # - promote: republish the newest beta that soaked 48 h with no open
-#   `release-blocker` issue naming its version as the stable v<VERSION>
+#   `release-blocker` issue naming its version, and whose code passed the
+#   sanitizers (a release cut's nightly parent, or the backported line
+#   commit itself), as the stable v<VERSION>
 #   release, byte for byte, behind the protected `stable` environment.
 on:
+  # 09:00 UTC: after nightly (02:00) and the daily sanitizer run on its commit
+  # (02:45, about three hours), so a nightly that moved today already has the
+  # sanitizer verdict the cut and promotion require.
   schedule:
-    - cron: "0 4 * * *"
+    - cron: "0 9 * * *"
   workflow_dispatch:
     inputs:
       stage:
@@ -52,6 +58,8 @@ jobs:
     permissions:
       contents: read
       issues: read
+      # Reads the sanitizers.yml verdicts a promotion requires.
+      actions: read
     outputs:
       cut: ${{ steps.plan.outputs.cut }}
       promote: ${{ steps.promotion.outputs.promote }}
@@ -159,6 +167,7 @@ jobs:
       contents: write
       issues: read
       attestations: read
+      actions: read
     env:
       GH_TOKEN: ${{ github.token }}
       GTI_GITHUB_TOKEN: ${{ github.token }}

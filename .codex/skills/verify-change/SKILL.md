@@ -61,8 +61,9 @@ tooling that consume them. For the changed paths the planner prints:
   locally, because post-integration full validation runs it;
 - **uncovered** paths that no area owns. Add an area, or an `[[unowned]]`
   entry with its reason, in the same change; `tests/ownership_map_test.py`
-  fails while a tracked file under `src/`, `include/`, `runtime/`, `stdlib/`,
-  `scripts/` or `lua/` has neither.
+  warns (advisory; it fails under `GTI_ADVISORY_CHECKS=strict`) while a
+  tracked file under `src/`, `include/`, `runtime/`, `stdlib/`, `scripts/` or
+  `lua/` has neither, and the selection silently misses its checks.
 
 The selection is a lower bound, never a proof of sufficiency. The author
 extends it from their own analysis of the changed invariant: which phases and

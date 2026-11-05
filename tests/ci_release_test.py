@@ -276,8 +276,8 @@ def nightly_contract(root):
     assert "group: full-validation-${{ github.ref }}\n  cancel-in-progress: false" in full_header, \
         "full validation runs queue; a superseded head's verdict is still channel evidence"
     integration = jobs(full)
-    assert list(integration) == ["plan", "package", "integration", "sanitizers", "llvm-sanitizers", "tsan",
-                                 "verdict", "report"], list(integration)
+    # The sanitizers run daily on the nightly commit (sanitizers.yml), not here.
+    assert list(integration) == ["plan", "package", "integration", "verdict", "report"], list(integration)
     assert "merge_group" not in jobs(ci).get("gate", "") or "package" not in jobs(ci)["gate"]
     assert "package" not in jobs(ci) and "integration" not in jobs(ci) and "sanitizers" not in jobs(ci), \
         "the merge gate proves build and fast checks only"
@@ -320,13 +320,9 @@ def nightly_contract(root):
         "the LSP lane is a mode-gated merge-gate job beside source-stdlib"
     assert "validation_checks.py ci-gate" in gate and "--shard-reports" not in gate
     verdict = integration["verdict"]
-    assert "needs: [plan, package, integration, sanitizers, llvm-sanitizers, tsan]" in verdict
-    assert "GTI_ENABLE_THREAD_SANITIZER_TESTS=ON" in integration["tsan"], "TSan is real in full validation"
-    assert "Require every thread-sanitizer test to run" in integration["tsan"] and 'suite.get("skipped"' in integration["tsan"], \
-        "a skipped _tsan test is a missing runtime, never evidence"
-    assert "libclang-rt-20-dev" in (root / "scripts/configure_ci_toolchain.sh").read_text(), "clang's TSan runtime is installed on Linux"
-    assert "GTI_TEST_BACKENDS: llvm" in integration["llvm-sanitizers"]
-    assert "cpp_mir" not in integration["sanitizers"], "the C++ emitter is sanitized only in cpp-backend.yml"
+    assert "needs: [plan, package, integration]\n" in verdict
+    assert "advisories --reports" in verdict and "continue-on-error: true" in verdict, \
+        "advisory census drift is reported, never part of the verdict"
     cpp = (root / ".github/workflows/cpp-backend.yml").read_text()
     assert "GTI_TEST_BACKENDS: cpp" in cpp and "--test-set cpp" in cpp and "cpp_mir_body_emitter" in cpp
     # CTest's per-test ENVIRONMENT property (from the configure-time cache
@@ -364,6 +360,75 @@ def nightly_contract(root):
     assert "refusing to prune" in publish and "tar -xOzf" in publish and "shasum -a 256 -c" in publish
     assert "v${" not in nightly and "GTI_EXPECTED_TAG=v" not in nightly, "stable is not published here"
     assert "upload_url" not in nightly and "GITEA" not in nightly and "gitea." not in nightly
+
+
+def sanitizer_contract(root):
+    """The sanitizers run daily on the nightly commit, keep their job definitions,
+    report to the broken-main issue and name the commit their verdict covers."""
+    text = (root / ".github/workflows/sanitizers.yml").read_text()
+    train_text = (root / ".github/workflows/train.yml").read_text()
+    header = text.split("\njobs:\n", 1)[0]
+    assert "  schedule:\n    - cron: " in header and "  workflow_dispatch:\n" in header
+    assert "push:" not in header and "pull_request" not in text and "merge_group" not in text
+    assert "\npermissions:\n  contents: read\n  actions: read\n" in header
+    assert "cancel-in-progress: false" in header
+    assert not re.search(r"secrets\.[A-Za-z]", text) and text.count("issues: write") == 1
+    assert "--force" not in text and "git push" not in text
+    sections = jobs(text)
+    assert list(sections) == ["source", "sanitizers", "llvm-sanitizers", "tsan", "verdict", "report"], list(sections)
+    for name, body in sections.items():
+        writes = re.findall(r"^      ([a-z-]+): write$", body, re.MULTILINE)
+        assert writes == (["issues"] if name == "report" else []), (name, writes)
+        for line in body.splitlines():
+            if line.lstrip().startswith(("run:", "python3", "git ", "gh ", "cmake", "ctest")):
+                assert "${{" not in line, line
+    # Untrusted dispatch input reaches the resolver only through the environment.
+    assert text.count("${{ inputs.") == 1 and "GTI_REQUESTED_COMMIT: ${{ inputs.commit }}" in sections["source"]
+    assert "release_train.py sanitizer-source" in sections["source"]
+    assert "if: github.repository == 'lang-gti-official/gti'" in sections["source"]
+    for name in ("sanitizers", "llvm-sanitizers", "tsan"):
+        body = sections[name]
+        assert "needs: [source]\n" in body and "if: needs.source.outputs.sanitize == 'true'" in body, name
+        assert "ref: ${{ needs.source.outputs.sha }}" in body and "persist-credentials: false" in body, name
+        assert "bash scripts/configure_ci_toolchain.sh" in body and "bash scripts/configure_ci_resources.sh" in body
+        assert "actions/cache/restore@" in body and "actions/cache/save@" not in body, \
+            "cache.yml owns the sanitizer cache; a sanitizer run only restores it"
+    compiler, llvm, tsan = sections["sanitizers"], sections["llvm-sanitizers"], sections["tsan"]
+    for kind, index, count in (("compiler", 1, 3), ("compiler", 2, 3), ("compiler", 3, 3), ("libraries", 1, 1)):
+        assert f"{{kind: {kind}, index: {index}, count: {count}}}" in compiler
+    assert "bash scripts/free_ci_disk.sh" in compiler and "bash scripts/free_ci_disk.sh" in llvm
+    assert "if: matrix.kind == 'compiler'\n        run: cmake -S . -B build-sanitized -DGTI_TEST_TIMEOUT_SCALE=10" in compiler, \
+        "the compiler partitions re-configure only their timeout, keeping the cached configure"
+    assert '-DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g"\n' in compiler
+    assert '-DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g1"\n' in llvm, "the LLVM sanitizer tree keeps line tables only"
+    assert "-DCMAKE_JOB_POOLS=link=1 -DCMAKE_JOB_POOL_LINK=link" in compiler and \
+        "-DCMAKE_JOB_POOLS=link=1 -DCMAKE_JOB_POOL_LINK=link" in llvm
+    assert "check_ci_sanitizers.py" in compiler and "check_ci_sanitizers.py" in llvm
+    assert "cpp_mir" not in compiler, "the C++ emitter is sanitized only in cpp-backend.yml"
+    assert "GTI_TEST_BACKENDS: llvm" in llvm and "GTI_TEST_BACKENDS: llvm" in tsan
+    assert "GTI_ENABLE_THREAD_SANITIZER_TESTS=ON" in tsan, "TSan is real in the sanitizer run"
+    assert 'suite.get("skipped"' in tsan, "a skipped _tsan test is a missing runtime, never evidence"
+    assert "libclang-rt-20-dev" in (root / "scripts/configure_ci_toolchain.sh").read_text(), \
+        "clang's TSan runtime is installed on Linux"
+    verdict = sections["verdict"]
+    assert "name: Sanitizer verdict (${{ needs.source.outputs.sha }})" in verdict, \
+        "the release train identifies sanitizer evidence by the commit the verdict names"
+    assert "needs: [source, sanitizers, llvm-sanitizers, tsan]" in verdict
+    assert "if: always() && needs.source.outputs.sanitize == 'true'" in verdict
+    assert "release_train.py require-success" in verdict
+    sys.path.insert(0, str(root / "scripts"))
+    train = load_module(root / "scripts/release_train.py", "release_train_contract")
+    report_script = load_module(root / "scripts/full_validation_report.py", "full_validation_report_contract")
+    assert train.SANITIZER_WORKFLOW == ".github/workflows/sanitizers.yml"
+    assert f"name: {train.SANITIZER_VERDICT} (" in verdict
+    report = sections["report"]
+    assert "full_validation_report.py" in report and "--label main-broken" in report
+    assert f'--title "{report_script.SANITIZER_TITLE}"' in report, \
+        "the sanitizer finding has its own main-broken issue, which a green full validation never closes"
+    assert "needs.source.outputs.nightly == 'true'" in report and "needs.verdict.result != 'cancelled'" in report
+    # The release train reads the verdicts, so both of its API jobs may read Actions.
+    train_jobs = jobs(train_text)
+    assert "actions: read" in train_jobs["plan"] and "actions: read" in train_jobs["promote"]
 
 
 def ordered(body, items, message):
@@ -468,7 +533,7 @@ def train_contract(root):
     train = jobs(train_text)
     assert list(train) == ["plan", "cut", "promote"], list(train)
     header = train_text.split("\njobs:\n", 1)[0]
-    assert '  schedule:\n    - cron: "0 4 * * *"\n  workflow_dispatch:' in header
+    assert '  schedule:\n    - cron: "0 9 * * *"\n  workflow_dispatch:' in header
     assert "push:" not in header and "pull_request" not in train_text
     assert "group: gti-release-train\n  cancel-in-progress: false" in header
     assert set(re.findall(r"secrets\.([A-Za-z0-9_]+)", train_text)) == {"GTI_ROLLUP_APP_ID",
@@ -532,7 +597,8 @@ def workflow_contract(root):
     # release workflow stays as written.
     assert sorted(p.name for p in (root / ".github/workflows").glob("*.yml")) == [
         "backport.yml", "beta.yml", "cache.yml", "ci.yml", "cpp-backend.yml", "full-validation.yml",
-        "llvm-prebuilt.yml", "lsp.yml", "nightly.yml", "rollback.yml", "rollup.yml", "train.yml"]
+        "llvm-prebuilt.yml", "lsp.yml", "nightly.yml", "rollback.yml", "rollup.yml",
+        "sanitizers.yml", "train.yml"]
     assert not (root / ".gitea/workflows/ci.yml").exists()
     for workflow in sorted((root / ".github/workflows").glob("*.yml")):
         duplicates = duplicate_mapping_keys(workflow.read_text())
@@ -551,17 +617,15 @@ def workflow_contract(root):
     nightly = release.split("  publish-nightly:\n", 1)[1]
     assert "runs-on: ubuntu-latest" in package and "Linux-X64) platform=linux-x64" in package
     assert "macos-15" not in package and "macOS-ARM64)" not in package, "the frozen workflow stays Linux-only"
-    manual = (root / "docs/architecture/build-and-driver.md").read_text()
-    assert "### GitHub nightly publication" in manual and "host-runtime.json" in manual
-    assert "Manual macOS release publication" not in manual, "manual macOS publication is retired"
     full = (root / ".github/workflows/full-validation.yml").read_text()
+    sanitizers = (root / ".github/workflows/sanitizers.yml").read_text()
     native_ci = ci + full
     assert "documentation-index:" not in native_ci, "documentation must reuse the native compiler"
     assert "build/gti_docgen --stdlib stdlib" in full
     assert "gti-ccache-v2-native-${{ runner.os }}-${{ runner.arch }}-" in ci
-    assert "gti-ccache-v2-sanitizers-${{ runner.os }}-${{ runner.arch }}-" in full
-    assert "gti-ccache-v1" not in ci + full, "per-SHA cache keys are retired"
-    for text in (ci, full):
+    assert "gti-ccache-v2-sanitizers-${{ runner.os }}-${{ runner.arch }}-" in sanitizers
+    assert "gti-ccache-v1" not in ci + full + sanitizers, "per-SHA cache keys are retired"
+    for text in (ci, full, sanitizers):
         assert "actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9" in text
         assert "actions/cache/save@" not in text, "only cache.yml and llvm-prebuilt.yml save caches"
         assert "path: ${{ env.CCACHE_DIR }}" in text and "secrets." not in text
@@ -589,7 +653,7 @@ def change_review_contract(root):
     assert "fetch-depth: 0" in job, "diff-based reviews need the full history"
     ordered(job, ["- name: Find where the candidate forked\n        id: range\n",
                   'python3 scripts/check_release_version.py "${GTI_FORK_SHA}" "${GTI_HEAD_SHA}"',
-                  'python3 scripts/check_stdlib_surface_review.py "${GTI_FORK_SHA}" "${GTI_HEAD_SHA}"'],
+                  'python3 scripts/check_stdlib_surface_review.py "${GTI_FORK_SHA}" "${GTI_HEAD_SHA}" --advisory'],
             "both reviews follow the one fork computation")
     assert job.count("GTI_FORK_SHA: ${{ steps.range.outputs.base }}") == 2
     assert job.count("GTI_HEAD_SHA: ${{ github.sha }}") == 3
@@ -1037,6 +1101,7 @@ def main():
     artifact_contract(root)
     editor_contract(root)
     nightly_contract(root)
+    sanitizer_contract(root)
     train_contract(root)
     source_contract(root)
     suite_contract(root)

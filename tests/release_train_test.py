@@ -101,6 +101,15 @@ def evidence_for(verified):
     return evidence
 
 
+def sanitized_for(passed):
+    def sanitized(repository, sha):
+        assert repository == train.REPOSITORY
+        if sha not in passed:
+            raise ValueError(f"{sha} has no sanitizer verdict")
+        return 11
+    return sanitized
+
+
 def base_history(repo):
     """main at VERSION 0.10.3 with a pending feature fragment: the published nightly N."""
     repo.commit({"VERSION": "0.10.3\n", "CHANGELOG.md": CHANGELOG, "changes/README.md": "Fragments.\n",
@@ -223,10 +232,18 @@ def cut_contract(base):
     head = repo.git("rev-parse", "HEAD")
     verified = evidence_for({nightly})
     publication = nightly_record(nightly)
-    select = partial(train.select_cut, request=lambda path: publication)
+    passed = {nightly}
+    select = partial(train.select_cut, request=lambda path: publication, sanitized=sanitized_for(passed))
     with inside(repo.work):
         selected = quiet(select, train.REPOSITORY, "refs/heads/main", 24, NOW, verified)
         assert selected == {"cut": "true", "sha": nightly, "version": "0.10.3"}
+        # Sanitizers run daily on the nightly commit, outside full validation:
+        # a nightly they have not passed waits for the next train.
+        passed.clear()
+        unsanitized = quiet(select, train.REPOSITORY, "refs/heads/main", 24, NOW, verified)
+        assert unsanitized["cut"] == "false" and "sanitizers" in unsanitized["reason"], unsanitized
+        passed.add(nightly)
+        sanitizer_source_contract(repo, nightly)
         assert quiet(select, train.REPOSITORY, "refs/heads/main", 24, NOW,
                      lambda repository, sha: {"run_id": "23", "run_attempt": "2"}) == selected
         # A tag alone is not publication: uploads may have stopped before BUILD_ID.
@@ -269,6 +286,8 @@ def cut_contract(base):
         assert "## 0.11.0 - First train\n\n- A new thing." in run(["git", "show", f"{commit}:CHANGELOG.md"], repo.work)
         assert sorted(train.changed(nightly, commit)) == ["CHANGELOG.md", "VERSION", "changes/thing.feature.md"]
         assert train.parents(commit) == [nightly]
+        # A metadata-only release cut is covered by its nightly parent's verdict.
+        assert train.sanitized_source(commit) == nightly and train.sanitized_source(nightly) == nightly
         refused(train.prepare_cut, nightly, "Again", base / "cut", contains="already exists")
         # A fix-only, internal-only or empty nightly cuts nothing.
         for name, files in (("fix", {"changes/thing.feature.md": None, "changes/bug.fix.md": "Fixed.\n"}),
@@ -317,7 +336,73 @@ class LocalDelivery(train.Delivery):
         train.run_git("push", "--quiet", "origin", f"{commit}:refs/heads/{branch}", cwd=str(worktree))
 
 
+def sanitizer_source_contract(repo, nightly):
+    """sanitizers.yml checks out the nightly by default, or a dispatched commit on main or a beta line."""
+    source = partial(train.sanitizer_source, train.REPOSITORY)
+    never = sanitized_for(set())
+    assert quiet(source, "schedule", "refs/heads/main", "", never) == \
+        {"sanitize": "true", "sha": nightly, "nightly": "true"}
+    assert quiet(source, "schedule", "refs/heads/main", "", sanitized_for({nightly}))["sanitize"] == "false", \
+        "a scheduled run skips a nightly that already passed"
+    assert quiet(source, "workflow_dispatch", "refs/heads/main", "", sanitized_for({nightly}))["sanitize"] == "true"
+    first = repo.git("rev-parse", f"{nightly}^")
+    assert quiet(source, "workflow_dispatch", "refs/heads/main", first, never) == \
+        {"sanitize": "true", "sha": first, "nightly": "false"}
+    refused(source, "schedule", "refs/heads/main", first, never, contains="dispatch")
+    refused(source, "workflow_dispatch", "refs/heads/main", first[:12], never, contains="full")
+    refused(source, "workflow_dispatch", "refs/heads/feature", "", never, contains="main")
+    refused(source, "push", "refs/heads/main", "", never)
+    repo.checkout(nightly)
+    line = repo.commit({"src/line.txt": "backport\n"}, "Backport onto a line")
+    stray = repo.commit({"src/stray.txt": "x\n"}, "Unpublished")
+    repo.git("checkout", "--quiet", "main")
+    refused(source, "workflow_dispatch", "refs/heads/main", stray, never, contains="not on main")
+    repo.push(f"{line}:refs/heads/beta/0.10")
+    assert quiet(source, "workflow_dispatch", "refs/heads/main", line, never)["sha"] == line
+    refused(source, "workflow_dispatch", "refs/heads/main", stray, never, contains="not on main")
+    repo.git("push", "--quiet", "origin", ":refs/heads/beta/0.10")
+
+
+def sanitizer_evidence_contract():
+    """Only a main-defined sanitizers.yml run whose latest verdict names the exact commit counts."""
+    sha, repository = "a" * 40, train.REPOSITORY
+    good = {"id": 5, "path": train.SANITIZER_WORKFLOW, "head_branch": "main", "event": "schedule",
+            "status": "completed", "head_sha": "b" * 40,
+            "repository": {"full_name": repository}, "head_repository": {"full_name": repository}}
+    verdict = {"name": f"Sanitizer verdict ({sha})", "status": "completed", "conclusion": "success"}
+
+    def evidence(runs=(good,), jobs=(verdict,)):
+        def request(path):
+            if "/actions/workflows/sanitizers.yml/runs?" in path:
+                assert "branch=main" in path and "status=completed" in path, path
+                return {"workflow_runs": list(runs)}
+            if "/actions/runs/5/jobs?" in path:
+                assert "filter=latest" in path, path
+                return {"jobs": list(jobs)}
+            raise AssertionError(path)
+        return train.sanitizer_evidence(repository, sha, request)
+
+    # The run's head_sha is main's tip when it started; the verdict names the commit.
+    assert evidence() == 5
+    assert evidence(runs=[dict(good, event="workflow_dispatch")]) == 5
+    for options in ({"runs": []},
+                    {"runs": [dict(good, path=".github/workflows/fake.yml")]},
+                    {"runs": [dict(good, head_branch="feature")]},
+                    {"runs": [dict(good, event="push")]},
+                    {"runs": [dict(good, status="in_progress")]},
+                    {"runs": [dict(good, head_repository={"full_name": "attacker/gti"})]},
+                    {"jobs": []},
+                    {"jobs": [dict(verdict, conclusion="failure")]},
+                    {"jobs": [dict(verdict, status="in_progress", conclusion=None)]},
+                    {"jobs": [dict(verdict, name=f"Sanitizer verdict ({'c' * 40})")]},
+                    {"jobs": [verdict, verdict]}):
+        refused(evidence, **options)
+    refused(train.sanitizer_evidence, repository, "nightly", lambda path: {}, contains="exact")
+
+
 def delivery_contract(repo, nightly, base, verified):
+    sanitized = sanitized_for({nightly})
+
     def runs(history):
         return lambda path: {"workflow_runs": history}
 
@@ -327,7 +412,7 @@ def delivery_contract(repo, nightly, base, verified):
     delivery = LocalDelivery(api, runs([]), "token", sleep=lambda _: None,
                              monotonic=lambda: next(clock), wait_seconds=600, poll_seconds=60)
     result = quiet(train.run_cut, train.REPOSITORY, "schedule", "refs/heads/main", "", "", base / "deliver",
-                   NOW, verified, delivery, nightly_request(nightly))
+                   NOW, verified, delivery, nightly_request(nightly), sanitized)
     assert result["cut"] == "true" and result["pr"] == "41" and result["queue"] == "enqueued", result
     posted = [call for call in api.calls if call[:2] == ("POST", "/pulls")][0][2]
     assert posted["head"] == "release-cut/0.11.0" and posted["base"] == "main"
@@ -347,12 +432,13 @@ def delivery_contract(repo, nightly, base, verified):
     api = FakeAPI(open_prs=[pending], gate=green)
     delivery = LocalDelivery(api, runs([]), "token", sleep=lambda _: None, monotonic=lambda: 0)
     result = quiet(train.run_cut, train.REPOSITORY, "schedule", "refs/heads/main", "", "", base / "resume",
-                   NOW, verified, delivery, nightly_request(nightly))
+                   NOW, verified, delivery, nightly_request(nightly), sanitized)
     assert result["cut"] == "false" and not (base / "resume").exists()
     assert ("GRAPHQL", "enqueuePullRequest", {"id": "PR_40", "head": "a" * 40}) in api.calls
     api = FakeAPI(open_prs=[pending, dict(pending, number=39)], gate=green)
     refused(train.run_cut, train.REPOSITORY, "schedule", "refs/heads/main", "", "", base / "two", NOW,
-            verified, LocalDelivery(api, runs([]), "token"), nightly_request(nightly), contains="more than one")
+            verified, LocalDelivery(api, runs([]), "token"), nightly_request(nightly), sanitized,
+            contains="more than one")
     failed = [{"head_branch": "gh-readonly-queue/main/pr-40-" + "b" * 40, "status": "completed",
                "conclusion": "failure"}]
     refused(LocalDelivery(FakeAPI(gate=green), runs(failed), "token").enqueue, pending,
@@ -567,13 +653,25 @@ def promotion_contract(base):
     soaked = train.stamp(NOW - timedelta(hours=50))
     fresh = train.stamp(NOW - timedelta(hours=10))
     with inside(repo.work):
+        passed = {first, second, third}
+
         def select(releases, event="schedule", soak=""):
-            return quiet(train.select_promotion, train.REPOSITORY, event, soak, NOW, releases)
+            return quiet(train.select_promotion, train.REPOSITORY, event, soak, NOW, releases,
+                         sanitized_for(passed))
 
         everything = {"v0.11.0-beta.1": soaked, "v0.12.0-beta.1": soaked, "v0.12.0-beta.2": soaked}
         chosen = select(Releases(everything))
         assert chosen == {"promote": "true", "tag": "v0.12.0-beta.2", "version": "0.12.0", "sha": second,
                           "number": "2", "soaked": "50.0", "soak": "48", "override": "false"}, chosen
+        # A beta whose commit never passed the sanitizers is not promoted.
+        passed.discard(second)
+        assert select(Releases(everything))["tag"] == "v0.11.0-beta.1"
+        passed.discard(first)
+        unsanitized = select(Releases(everything))
+        assert unsanitized["promote"] == "false" and "sanitizers" in unsanitized["reason"], unsanitized
+        refused(train.admit_promotion, train.REPOSITORY, "schedule", "", "v0.11.0-beta.1", first, NOW,
+                Releases(everything), sanitized_for(passed), contains="sanitizers")
+        passed.update({first, second})
         # Only the newest beta of a version counts, and an unsoaked one falls back to a lower version.
         assert select(Releases(dict(everything, **{"v0.12.0-beta.2": fresh})))["tag"] == "v0.11.0-beta.1"
         assert select(Releases({"v0.12.0-beta.2": fresh}))["promote"] == "false"
@@ -603,7 +701,8 @@ def promotion_contract(base):
         repo.git("push", "--quiet", "origin", ":refs/tags/v0.13.0", ":refs/tags/v0.11.1-beta.1")
 
         def admit(tag, sha, releases, event="schedule", soak=""):
-            return quiet(train.admit_promotion, train.REPOSITORY, event, soak, tag, sha, NOW, releases)
+            return quiet(train.admit_promotion, train.REPOSITORY, event, soak, tag, sha, NOW, releases,
+                         sanitized_for(passed))
 
         admitted = admit("v0.11.0-beta.1", first, Releases(everything))
         assert admitted == {"publish": "true", "record": "true", "push_tag": "true", "version": "0.11.0",
@@ -754,6 +853,7 @@ def cli_contract(base):
 def main():
     inputs_contract()
     rulesets_contract()
+    sanitizer_evidence_contract()
     with tempfile.TemporaryDirectory(prefix="gti-release-train-") as temporary:
         base = Path(temporary)
         for name, contract in (("status", status_contract), ("cut", cut_contract), ("beta", beta_contract),

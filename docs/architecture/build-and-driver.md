@@ -410,8 +410,10 @@ arbitrary PR pass or merge exception still does not.
    `share/gti/BUILD_ID` naming the exact source commit. Full integration also
    runs the complete suite in cost-balanced shards on the same bundled-release
    configuration, reusing the packaging job's object cache, and retains the
-   separate sanitizer gates and system-LLVM fast checks, including the Linux
-   system-LLVM installed consumers. The coverage gate proves each platform's inventory
+   system-LLVM fast checks, including the Linux system-LLVM installed
+   consumers. The sanitizer gates run daily on the published nightly commit
+   instead (`sanitizers.yml`); the release train requires them, nightly does
+   not. The coverage gate proves each platform's inventory
    ran exactly once. Packaging is a required part of the `Full validation
    verdict`; the merge gate (`CI gate`) proves only build and fast checks.
 2. **Select validated artifacts.** Nightly runs only from main's own definition
@@ -478,7 +480,8 @@ The workflows only pass validated values between those checks and `git push`
 or `gh`. Every train ref is created by a plain push that fails rather than
 overwrites; no tag or branch is ever forced, moved or deleted.
 
-1. **Cut** (`train.yml`, job `cut`). The schedule fires daily at 04:00 UTC and
+1. **Cut** (`train.yml`, job `cut`). The schedule fires daily at 09:00 UTC,
+   after nightly and that day's sanitizer run on the nightly commit, and
    the train admits every other UTC day (epoch-day parity), a 48-hour cadence
    without month-end drift; a dispatch always runs. The source is the commit
    the `nightly` tag names. It must be on main, carry the same successful full CI
@@ -486,7 +489,10 @@ overwrites; no tag or branch is ever forced, moved or deleted.
    release_evidence`), have the complete uploaded nightly asset set with GitHub's
    digest of the final `BUILD_ID` matching that commit, and have been on main
    at least 24 hours, measured from its
-   committer time, which the queue sets when it lands the commit. A dispatch's
+   committer time, which the queue sets when it lands the commit. It must also
+   have a passing `Sanitizer verdict (<commit>)` from a scheduled or
+   main-dispatched `sanitizers.yml` run; until the daily sanitizers pass on
+   that nightly the train skips with a notice. A dispatch's
    `min_age_hours` may lower the age for the owner's bootstrap; nothing lowers
    the full CI evidence requirement. The train skips with a notice when a cut already landed
    after that nightly, when no fragment is pending, or when only fixes are:
@@ -558,7 +564,11 @@ overwrites; no tag or branch is ever forced, moved or deleted.
    must be a published, not withdrawn prerelease that has soaked 48 hours
    since publication, and no open issue labelled `release-blocker` may name
    the version in its title or body (`0.494.0`, `v0.494.0` or any
-   `0.494.0-beta.K`; `10.494.0` or `0.494.0.1` do not count). A dispatch's
+   `0.494.0-beta.K`; `10.494.0` or `0.494.0.1` do not count). The beta's code
+   must have a passing sanitizer verdict: a release cut that changes only
+   release metadata is covered by its nightly parent's verdict, and any other
+   beta commit (a backported line) needs its own, from a `sanitizers.yml`
+   dispatch naming that commit. A dispatch's
    `soak_hours` may lower the soak; the stable notes record it. The job waits
    for the protected `stable` environment's approval and then re-admits the
    beta. That recheck rejects the selected beta if a newer stable release or

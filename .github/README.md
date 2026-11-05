@@ -110,7 +110,7 @@ for the full contract.
 
 | Workflow | Trigger | Does |
 | --- | --- | --- |
-| `workflows/train.yml` job `cut` | 04:00 UTC every other day (the daily schedule admits every second UTC day), dispatch | cuts the published nightly once it has been on `main` 24 h and passed full CI with retained release artifacts; opens and queues a `rollup=never` `Release-Cut:` PR with the App token |
+| `workflows/train.yml` job `cut` | 09:00 UTC every other day, after the daily sanitizer run (the daily schedule admits every second UTC day), dispatch | cuts the published nightly once it has been on `main` 24 h and passed full CI with retained release artifacts; opens and queues a `rollup=never` `Release-Cut:` PR with the App token |
 | `workflows/beta.yml` | `push` to `main` (the queue's merge) or `beta/**` (a merged backport), daily 05:30 fallback, dispatch | builds the release cut (or the line's new tip) with its own bundled build, installed checks and full release-suite shards; publishes prerelease `v<VERSION>-beta.<K>` with provenance; creates `beta/<major>.<minor>` |
 | `workflows/backport.yml` | pull requests into `beta/**` | `Backport provenance` (each commit a `cherry-pick -x` of a `main` commit; an optional final patch release cut), the release suite, `Backport gate` |
 | `workflows/train.yml` job `promote` | with the train, dispatch | behind the `stable` environment: republishes the newest beta that soaked 48 h with no open `release-blocker` issue naming its version as `v<VERSION>`, byte for byte, and marks it latest |

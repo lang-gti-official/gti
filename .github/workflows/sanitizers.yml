@@ -1,0 +1,407 @@
+name: Sanitizers
+
+# The compiler, LLVM-backend and thread sanitizers, run once a day on the
+# commit the `nightly` tag names rather than after every merge to main: they
+# took about three hours of the post-integration run and were its longest
+# jobs. Nightly has already passed full validation on that commit, so a
+# sanitizer failure is a memory, UB or race finding in a published toolchain.
+# It opens (or updates) a `main-broken` issue, and the release train
+# (scripts/release_train.py) cuts and promotes only a commit with a passing
+# `Sanitizer verdict` here; beta and stable are therefore still sanitizer-gated.
+# A dispatch may name another commit on main or a beta/* line (a backported
+# beta awaiting promotion). A scheduled run skips a nightly commit that has
+# already passed. See docs/architecture/verification.md.
+on:
+  schedule:
+    - cron: "45 2 * * *"
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Full commit SHA on main or a beta/* line to sanitize (default - the commit the nightly tag names)
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+# A sanitizer run is never cancelled by a later one: its verdict is release
+# evidence for the commit it names.
+concurrency:
+  group: gti-sanitizers
+  cancel-in-progress: false
+
+jobs:
+  source:
+    name: Sanitizer source
+    if: github.repository == 'lang-gti-official/gti'
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+      sanitize: ${{ steps.source.outputs.sanitize }}
+      nightly: ${{ steps.source.outputs.nightly }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve the commit to sanitize
+        id: source
+        env:
+          GTI_GITHUB_TOKEN: ${{ github.token }}
+          GTI_REPOSITORY: ${{ github.repository }}
+          GTI_EVENT_NAME: ${{ github.event_name }}
+          GTI_REF: ${{ github.ref }}
+          GTI_REQUESTED_COMMIT: ${{ inputs.commit }}
+        run: >-
+          python3 scripts/release_train.py sanitizer-source --repository "${GTI_REPOSITORY}"
+          --event "${GTI_EVENT_NAME}" --ref "${GTI_REF}" --commit "${GTI_REQUESTED_COMMIT}"
+          --output "${GITHUB_OUTPUT}"
+
+  sanitizers:
+    name: Compiler sanitizers (${{ matrix.kind }} ${{ matrix.index }}/${{ matrix.count }})
+    # Every sanitized configure serializes linking (CMAKE_JOB_POOL_LINK):
+    # linking several ASan/UBSan executables at once exhausted the 16 GiB
+    # runner and the VM was shut down mid-build three times on 2026-11-03
+    # ("runner has received a shutdown signal"). Compiles stay parallel.
+    if: needs.source.outputs.sanitize == 'true'
+    needs: [source]
+    # The compiler aggregate exceeded three hours serially. Split its six
+    # suites round-robin across three runners, so the ownership suite (about
+    # three hours instrumented, run 41837802931) shares its runner only with
+    # the short e2e suite. Every compiler partition verifies the complete
+    # manifest census first. Without the C++ emitter suites (now in
+    # cpp-backend.yml) the library partition fits one runner, which saves a
+    # cold instrumented build.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {kind: compiler, index: 1, count: 3}
+          - {kind: compiler, index: 2, count: 3}
+          - {kind: compiler, index: 3, count: 3}
+          - {kind: libraries, index: 1, count: 1}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      # The curated subset; the build compiles only the targets it runs.
+      GTI_SANITIZER_TESTS: 'compiler_library_boundary|driver_library_boundary|driver_pipeline|project_model|compiler_pipeline$|optimizer_foundation|raw_pointer_pipeline|mir_program_initialization|mir_hosted_startup|mir_backend_first_family$|mir_backend_scalar_cfg$|mir_backend_scalar_direct_call$|mir_backend_class_default_cleanup$|mir_backend_owned_lifecycle$|mir_backend_scalar_failure_callgraph$'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+          persist-credentials: false
+      - name: Free hosted runner disk for the sanitized tree
+        run: bash scripts/free_ci_disk.sh
+      - name: Configure runner resources
+        shell: bash
+        env:
+          GTI_CONFIGURED_JOBS: ${{ vars.GTI_JOBS }}
+          GTI_CONFIGURED_TEST_JOBS: ${{ vars.GTI_TEST_JOBS }}
+          # ASan/UBSan instrumentation needs more memory per compile and test:
+          # with 4 GiB per test, compiler_pipeline and the body-emitter
+          # lifecycle suite together exhausted the 16 GiB runner (SIGKILL).
+          GTI_MEMORY_PER_JOB_MIB: 3072
+          GTI_MEMORY_PER_TEST_MIB: 8192
+        run: bash scripts/configure_ci_resources.sh
+      - name: Install the reviewed compiler, Ninja and LLVM
+        run: bash scripts/configure_ci_toolchain.sh
+      - name: Configure compiler object cache
+        env:
+          GTI_CACHE_DIRECTORY: ${{ runner.temp }}/gti-ccache/sanitizers
+        run: bash scripts/configure_ci_cache.sh
+      - name: Restore compiler object cache
+        id: cache
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: gti-ccache-v2-sanitizers-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'scripts/configure_ci_toolchain.sh') }}
+          restore-keys: |
+            gti-ccache-v2-sanitizers-${{ runner.os }}-${{ runner.arch }}-
+      - name: Check compiler sanitizer execution
+        run: python3 scripts/check_ci_sanitizers.py --cxx "${CXX}" --sanitizer address,undefined
+      - name: Configure
+        run: >-
+          cmake -S . -B build-sanitized -G Ninja
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DGTI_BUILD_LSP=OFF
+          -DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF
+          -DGTI_TEST_TIMEOUT_SCALE=6
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+          -DCMAKE_JOB_POOLS=link=1 -DCMAKE_JOB_POOL_LINK=link
+      - name: Scale the compiler partition's timeout
+        # A compiler partition runs only compiler_pipeline, whose
+        # 1800-second bound scales ten times: the ownership partition alone
+        # needs more than three hours instrumented. Re-configuring changes
+        # only test properties, so the configure above stays identical to
+        # cache.yml's warm-up and its objects keep their cache hits.
+        if: matrix.kind == 'compiler'
+        run: cmake -S . -B build-sanitized -DGTI_TEST_TIMEOUT_SCALE=10
+      - name: Build the targets the sanitizer subset runs
+        # Instrumenting the whole tree took longer than the integration shards
+        # while only these tests run; CTestTestfile.cmake names their targets.
+        run: |
+          pattern="${GTI_SANITIZER_TESTS}"
+          if [[ "${{ matrix.kind }}" == "compiler" ]]; then
+            pattern='^compiler_pipeline$'
+          fi
+          targets="$(python3 scripts/validation_checks.py test-targets --build build-sanitized --regex "${pattern}")"
+          read -r -a target_list <<< "${targets}"
+          cmake --build build-sanitized --parallel "${GTI_JOBS}" --target "${target_list[@]}"
+      - name: Test compiler and driver libraries
+        # Instrumented suites run several times slower than plain ones, so
+        # the configure step scales every test's timeout six times (the
+        # 600-second default becomes an hour; ten times for a compiler
+        # partition, as configured above). The whole generated-C++ corpus
+        # and the failure-metadata matrix exceed even that under ASan and
+        # remain the native integration gates.
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: |
+          if [[ "${{ matrix.kind }}" == "compiler" ]]; then
+            GTI_COMPILER_TEST_SHARD_INDEX="${{ matrix.index }}" GTI_COMPILER_TEST_SHARD_COUNT="${{ matrix.count }}" \
+              ctest --test-dir build-sanitized --verbose --output-on-failure --no-tests=error \
+              --output-junit "${RUNNER_TEMP}/sanitizers-${{ matrix.kind }}-${{ matrix.index }}.xml" \
+              -R '^compiler_pipeline$'
+          else
+            ctest --test-dir build-sanitized --verbose --output-on-failure --no-tests=error \
+              --output-junit "${RUNNER_TEMP}/sanitizers-${{ matrix.kind }}-${{ matrix.index }}.xml" \
+              --parallel "${GTI_TEST_JOBS}" -R "${GTI_SANITIZER_TESTS}" \
+              -E '^compiler_pipeline$' -I "${{ matrix.index }},,${{ matrix.count }}"
+          fi
+      - name: Preserve sanitizer test evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sanitizers-${{ matrix.kind }}-${{ matrix.index }}
+          path: |
+            ${{ runner.temp }}/sanitizers-${{ matrix.kind }}-${{ matrix.index }}.xml
+            build-sanitized/Testing/Temporary/LastTest.log
+            build-sanitized/Testing/Temporary/LastTestsFailed.log
+          if-no-files-found: warn
+          retention-days: 30
+      # cache.yml owns the sanitizer cache under its content key; a validation
+      # run only restores it.
+      - name: Report compiler cache statistics
+        if: always()
+        run: ccache --show-stats || true
+
+  llvm-sanitizers:
+    # The shipping backend under ASan/UBSan: the compiler's LLVM unit tests
+    # and the LLVM execution harnesses through an instrumented `gti`. The
+    # system LLVM libraries stay uninstrumented; bugs inside LLVM are out of
+    # scope. This replaced instrumenting the deprecated C++ emitter.
+    name: LLVM backend sanitizers
+    needs: [source]
+    if: needs.source.outputs.sanitize == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      GTI_TEST_BACKENDS: llvm
+      # The LLVM backend's test binaries and its cheap control harnesses. The
+      # execution harnesses compile and run dozens of programs each and cost
+      # 20-30 hours of test time under ASan (measured 2026-11-03), so they stay
+      # native integration gates; see docs/architecture/agent-workflow.md.
+      GTI_LLVM_SANITIZER_TESTS: '^llvm_(admission|atomic_contracts|atomic_wait_service|backend_dependency_controls|backend_foundation|backend_library_boundary|cache_component_mapping|case_context_controls|checked_offsets|checked_ranges|checked_reductions|clang_coexistence|cleanup_composition_execution|coverage_exhaustiveness|debug_info|dispatch_layout|dispatch_plans|embedding_execution|hosted_cleanup_source_contract|instrumentation|link_surface|link_surface_policy|memory_contracts|memory_mechanisms|mutex_contracts|mutex_hierarchy_contracts|native_c_abi|native_c_confined_execution|native_c_counted_input|native_c_outbound_boundary|native_runtime_identity|optimization_pipeline|payload_unique_owner|polymorphic_storage_layout|polymorphic_storage_mechanisms|private_atomics|scalar_context_controls|simd_execution|simd_lowering|target_layout_abi|thread_lifecycle_contracts|tls_contracts)$'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+          persist-credentials: false
+      - name: Free hosted runner disk for the sanitized tree
+        run: bash scripts/free_ci_disk.sh
+      - name: Configure runner resources
+        shell: bash
+        env:
+          GTI_CONFIGURED_JOBS: ${{ vars.GTI_JOBS }}
+          GTI_CONFIGURED_TEST_JOBS: ${{ vars.GTI_TEST_JOBS }}
+          GTI_MEMORY_PER_JOB_MIB: 3072
+          GTI_MEMORY_PER_TEST_MIB: 6144
+        run: bash scripts/configure_ci_resources.sh
+      - name: Install the reviewed compiler, Ninja and LLVM
+        run: bash scripts/configure_ci_toolchain.sh
+      - name: Configure compiler object cache
+        env:
+          GTI_CACHE_DIRECTORY: ${{ runner.temp }}/gti-ccache/sanitizers
+        run: bash scripts/configure_ci_cache.sh
+      - name: Restore compiler object cache
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: gti-ccache-v2-sanitizers-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'scripts/configure_ci_toolchain.sh') }}
+          restore-keys: |
+            gti-ccache-v2-sanitizers-${{ runner.os }}-${{ runner.arch }}-
+      - name: Check compiler sanitizer execution
+        run: python3 scripts/check_ci_sanitizers.py --cxx "${CXX}" --sanitizer address,undefined
+      - name: Configure
+        # About forty instrumented executables each link the static LLVM
+        # libraries. With full debug information they filled the 39 GB left
+        # after free_ci_disk.sh (run 41879816098: "final link failed: No space
+        # left on device"). Line tables (-g1) still symbolize every ASan and
+        # UBSan report with its file and line.
+        run: >-
+          cmake -S . -B build-sanitized -G Ninja
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DGTI_BUILD_LSP=OFF
+          -DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF
+          -DGTI_TEST_TIMEOUT_SCALE=6
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g1"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+          -DCMAKE_JOB_POOLS=link=1 -DCMAKE_JOB_POOL_LINK=link
+      - name: Build the targets the LLVM subset runs
+        run: |
+          targets="$(python3 scripts/validation_checks.py test-targets --build build-sanitized --regex "${GTI_LLVM_SANITIZER_TESTS}")"
+          read -r -a target_list <<< "${targets}"
+          cmake --build build-sanitized --parallel "${GTI_JOBS}" --target gti "${target_list[@]}"
+      - name: Test the LLVM backend under ASan/UBSan
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: >-
+          ctest --test-dir build-sanitized --output-on-failure --no-tests=error
+          --output-junit "${RUNNER_TEMP}/sanitizers-llvm.xml"
+          --parallel "${GTI_TEST_JOBS}" -R "${GTI_LLVM_SANITIZER_TESTS}"
+      - name: Preserve sanitizer test evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sanitizers-llvm
+          path: |
+            ${{ runner.temp }}/sanitizers-llvm.xml
+            build-sanitized/Testing/Temporary/LastTestsFailed.log
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Report compiler cache statistics
+        if: always()
+        run: ccache --show-stats || true
+
+  tsan:
+    # The threads/atomics/TLS runtime under ThreadSanitizer on the shipping
+    # backend. The compiler itself is uninstrumented (it is not what TSan
+    # checks); the `_tsan` harnesses compile the emitted LLVM IR with
+    # -fsanitize=thread. Every earlier CI configure set this OFF, which made
+    # all ten tests no-ops.
+    name: Thread sanitizer
+    needs: [source]
+    if: needs.source.outputs.sanitize == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      GTI_TEST_BACKENDS: llvm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+          persist-credentials: false
+      - name: Configure runner resources
+        shell: bash
+        env:
+          GTI_CONFIGURED_JOBS: ${{ vars.GTI_JOBS }}
+          GTI_CONFIGURED_TEST_JOBS: ${{ vars.GTI_TEST_JOBS }}
+          GTI_MEMORY_PER_JOB_MIB: 2048
+          GTI_MEMORY_PER_TEST_MIB: 3072
+        run: bash scripts/configure_ci_resources.sh
+      - name: Install the reviewed compiler, Ninja and LLVM
+        run: bash scripts/configure_ci_toolchain.sh
+      - name: Configure compiler object cache
+        env:
+          GTI_CACHE_DIRECTORY: ${{ runner.temp }}/gti-ccache/native
+        run: bash scripts/configure_ci_cache.sh
+      - name: Restore compiler object cache
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: gti-ccache-v2-native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'scripts/configure_ci_toolchain.sh') }}
+          restore-keys: |
+            gti-ccache-v2-native-${{ runner.os }}-${{ runner.arch }}-
+      - name: Configure
+        run: >-
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DGTI_ENABLE_THREAD_SANITIZER_TESTS=ON
+          -DGTI_TEST_TIMEOUT_SCALE=3
+      - name: Build
+        run: cmake --build build --parallel "${GTI_JOBS}"
+      - name: Run the thread-sanitizer suite
+        run: >-
+          ctest --test-dir build --output-on-failure --no-tests=error
+          --output-junit "${RUNNER_TEMP}/tsan.xml"
+          --parallel "${GTI_TEST_JOBS}" -R '_tsan$'
+      - name: Require every thread-sanitizer test to run
+        # A harness exits 77 (CTest "skipped") when the native compiler has
+        # no -fsanitize=thread runtime; the first run on main passed 10/10
+        # with five of them skipped. Skips are a missing runtime, not evidence.
+        run: |
+          python3 - "${RUNNER_TEMP}/tsan.xml" <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          root = ET.parse(sys.argv[1]).getroot()
+          suite = root if root.tag == "testsuite" else root.find("testsuite")
+          tests, skipped = int(suite.get("tests", 0)), int(suite.get("skipped", 0))
+          skipped_names = [case.get("name") for case in suite.iter("testcase") if case.find("skipped") is not None]
+          print(f"thread-sanitizer tests: {tests}, skipped: {skipped} {skipped_names}")
+          if tests < 1 or skipped or skipped_names:
+              sys.exit("every registered _tsan test must execute under ThreadSanitizer")
+          PY
+      - name: Preserve TSan evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sanitizers-tsan
+          path: ${{ runner.temp }}/tsan.xml
+          if-no-files-found: warn
+          retention-days: 30
+
+  verdict:
+    # Its name carries the sanitized commit: a scheduled or dispatched run's
+    # own head_sha is main's tip when it started, not the commit it checked
+    # out, so the release train identifies the evidence by this job's name.
+    name: Sanitizer verdict (${{ needs.source.outputs.sha }})
+    if: always() && needs.source.outputs.sanitize == 'true'
+    needs: [source, sanitizers, llvm-sanitizers, tsan]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Require every sanitizer job to pass
+        env:
+          GTI_RESULTS: ${{ toJSON(needs) }}
+        run: python3 scripts/release_train.py require-success --results "${GTI_RESULTS}"
+
+  report:
+    # The same broken-main reporting full validation uses: a failure on the
+    # nightly commit opens or updates a `main-broken` issue (its own title, so
+    # a green full validation never closes a sanitizer finding), and a pass
+    # closes it. A cancelled run, or a dispatch for a beta-line commit,
+    # reports nothing.
+    name: Report sanitizer status
+    if: always() && needs.source.outputs.nightly == 'true' && needs.verdict.result != 'cancelled' && needs.verdict.result != 'skipped'
+    needs: [source, verdict]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Open, update or close the sanitizer main-broken issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GTI_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          GTI_SHA: ${{ needs.source.outputs.sha }}
+          GTI_STATUS: ${{ needs.verdict.result == 'success' && 'passed' || 'failed' }}
+        run: >-
+          python3 scripts/full_validation_report.py --run-url "${GTI_RUN_URL}"
+          --sha "${GTI_SHA}" --status "${GTI_STATUS}" --label main-broken
+          --title "Sanitizers on the nightly commit are failing"

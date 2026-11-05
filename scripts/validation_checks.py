@@ -244,8 +244,9 @@ def ci_mode(event, paths):
 LINT_JOBS = {"plan", "formatting", "release-version", "tree-sitter", "automation-tests"}
 EVENTS = {"pull_request", "merge_group", "full_validation"}
 # Post-integration full validation (full-validation.yml) proves these on each
-# main head; they are not merge-gate jobs.
-FULL_VALIDATION_JOBS = {"package", "integration", "sanitizers", "llvm-sanitizers", "tsan"}
+# main head; they are not merge-gate jobs. The sanitizers run daily on the
+# nightly commit (sanitizers.yml) and gate the release train instead.
+FULL_VALIDATION_JOBS = {"package", "integration"}
 
 
 def admission(mode, results, event="pull_request"):
@@ -655,19 +656,24 @@ DECLARED_LIMIT = 60
 DECLARATION_ITEM = re.compile(r"-\s+([A-Za-z0-9_-]+):\s*(.*)")
 
 
-def declared_tests(body):
-    """The CTest names a pull request declares as its T0 and T1 evidence.
+def parse_declared(body):
+    """(names, problems): the T0/T1 CTest names a pull request body declares.
 
     The PR body's `Validation:` block lists `- <key>: <value>` items. `T0` and
     `T1` items hold comma-separated CTest names only (continued on more-indented
-    lines); every other key is free prose for reviewers. PR CI re-runs exactly
-    these names on both platforms, so the body is untrusted input: anything that
-    is not a plain test name is rejected rather than interpreted.
+    lines); every other key is free prose for reviewers. PR CI re-runs these
+    names on both platforms, so the body is untrusted input: anything that is
+    not a plain test name is dropped (and reported) rather than interpreted.
+    The names never exceed DECLARED_LIMIT; problems list every rule the block
+    breaks, first one first.
     """
     lines = (body or "").splitlines()
     starts = [index for index, line in enumerate(lines) if line.strip() == "Validation:"]
+    problems = []
     if len(starts) != 1:
-        raise ValueError("Add exactly one `Validation:` block naming the T0 and T1 CTest names the change ran")
+        problems.append("Add exactly one `Validation:` block naming the T0 and T1 CTest names the change ran")
+        if not starts:
+            return [], problems
     declared, key = {}, None
     for line in lines[starts[0] + 1:]:
         stripped = line.strip()
@@ -685,13 +691,46 @@ def declared_tests(body):
                 if not name:
                     continue
                 if not NAME.fullmatch(name):
-                    raise ValueError(f"Validation {key} lists CTest names only; move notes such as {name!r} to another key")
+                    problems.append(f"Validation {key} lists CTest names only; move notes such as {name!r} to another key")
+                    continue
                 declared.setdefault(name, key)
     if not declared:
-        raise ValueError("The `Validation:` block must name at least one T0 or T1 CTest test")
+        problems.append("The `Validation:` block must name at least one T0 or T1 CTest test")
     if len(declared) > DECLARED_LIMIT:
-        raise ValueError(f"Declare at most {DECLARED_LIMIT} T0/T1 tests; the merge queue runs the rest")
-    return sorted(declared)
+        problems.append(f"Declare at most {DECLARED_LIMIT} T0/T1 tests; the merge queue runs the rest")
+    return sorted(declared)[:DECLARED_LIMIT], problems
+
+
+def declared_tests(body):
+    """The declared T0/T1 CTest names, strictly: any broken block rule raises.
+
+    The agent workflow uses this to claim only what `verify` ran. PR CI uses
+    parse_declared instead and reports the rules as advisory warnings.
+    """
+    names, problems = parse_declared(body)
+    if problems:
+        raise ValueError(problems[0])
+    return names
+
+
+def advisory(title, messages):
+    """Report self-referential check findings without failing the job.
+
+    Under GitHub Actions each finding becomes a `::warning::` annotation and a
+    job-summary line; elsewhere it is printed. See "Advisory checks" in
+    docs/architecture/verification.md.
+    """
+    for message in messages:
+        text = " ".join(str(message).split())
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            print(f"::warning title={title}::{text}")
+        else:
+            print(f"advisory: {title}: {text}")
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary and messages:
+        with open(summary, "a", encoding="utf-8") as stream:
+            stream.write(f"### {title} (advisory)\n\n" + "".join(f"- {' '.join(str(m).split())}\n"
+                                                                   for m in messages) + "\n")
 
 
 def uncovered_declarations(names, checks, root):
@@ -716,18 +755,58 @@ def uncovered_declarations(names, checks, root):
     return [name for name in names if not covered(name)]
 
 
+# The line tests/advisory_checks.py prints for a drifted census pin.
+ADVISORY_MARKER = "GTI-ADVISORY:"
+
+
+def advisory_findings(reports):
+    """Every `GTI-ADVISORY:` line in a directory of CTest JUnit reports, once each.
+
+    CTest records a passing test's output in <system-out>, so advisory pins
+    stay visible on main without failing their test."""
+    findings = []
+    for report in sorted(Path(reports).rglob("*.xml")):
+        try:
+            cases = ET.parse(report).getroot().iter("testcase")
+        except ET.ParseError:
+            continue
+        for case in cases:
+            for output in case.iter("system-out"):
+                for line in (output.text or "").splitlines():
+                    line = line.strip()
+                    if line.startswith(ADVISORY_MARKER):
+                        findings.append(line[len(ADVISORY_MARKER):].strip())
+    return list(dict.fromkeys(findings))
+
+
+def runnable_declared(document, names):
+    """(selected, problems): the declared names this build can run.
+
+    A declared name that is not a registered, enabled CTest test is a mistake
+    in the PR body, not in the change: it is dropped and reported."""
+    rows = {row["name"]: row for row in document.get("tests", [])}
+    selected, problems = [], []
+    for name in sorted(set(names) - {SMOKE}):
+        row = rows.get(name)
+        if row is None:
+            problems.append(f"Declared test is not a registered CTest test: {name}")
+        elif any(prop["name"] == "DISABLED" and prop["value"] for prop in row.get("properties", [])):
+            problems.append(f"Declared test is disabled in this build: {name}")
+        else:
+            selected.append(name)
+    return selected, problems
+
+
 def run_declared(build, names, jobs=4, log=None):
-    """Re-run declared tests by exact name; every one must be registered and enabled."""
-    selected = sorted(set(names) - {SMOKE})
+    """Re-run the declared tests this build registers by exact name; a failure of one fails.
+
+    Unregistered or disabled names are reported as advisory and skipped."""
+    document = json.loads(subprocess.check_output(["ctest", "--test-dir", str(build), "--show-only=json-v1"], text=True))
+    selected, problems = runnable_declared(document, names)
+    advisory("Declared tests", problems)
     if not selected:
         return []
     pattern = "^(" + "|".join(re.escape(name) for name in selected) + ")$"
-    document = json.loads(subprocess.check_output(["ctest", "--test-dir", str(build), "--show-only=json-v1"], text=True))
-    registered = {row["name"] for row in document.get("tests", [])}
-    missing = [name for name in selected if name not in registered]
-    if missing:
-        raise ValueError("Declared tests are not registered CTest tests: " + ", ".join(missing))
-    inventory(document, selected)
     with tempfile.TemporaryDirectory(prefix="gti-declared-") as directory:
         report = Path(directory) / "ctest.xml"
         subprocess.run(["ctest", "--test-dir", str(build), "--no-tests=error", "--output-on-failure",
@@ -845,6 +924,8 @@ def main(argv=None):
     smoke_parser.add_argument("--root", help="source tree whose stdlib and runtime the compiler uses (default: this checkout)")
     smoke_parser.add_argument("--build", required=True)
     smoke_parser.add_argument("--log")
+    advisories = sub.add_parser("advisories", help="report advisory census findings from JUnit reports")
+    advisories.add_argument("--reports", required=True)
     targets = sub.add_parser("test-targets", help="print the build targets the matching tests run")
     targets.add_argument("--build", required=True)
     targets.add_argument("--regex", required=True)
@@ -882,8 +963,12 @@ def main(argv=None):
         check_durations(Path(args.table))
         return
     if args.command == "declared":
+        # The block's format rules are advisory: a malformed body warns and
+        # re-runs whatever plain names it does declare. A declared test that
+        # runs and fails still fails the job.
         pr = json.loads(Path(args.event).read_text()).get("pull_request") or {}
-        names = declared_tests(pr.get("body"))
+        names, problems = parse_declared(pr.get("body"))
+        advisory("Validation block", problems)
         if args.build:
             names = run_declared(Path(args.build).resolve(), names, args.jobs)
         print("GTI_DECLARED_TESTS=" + json.dumps(names))
@@ -894,6 +979,11 @@ def main(argv=None):
         if {row["head"] for row in summary.values()} != {args.head}:
             raise ValueError("Release suite shards validated a different source")
         print("GTI_RELEASE_SUITE_RESULT=" + json.dumps(summary, sort_keys=True))
+        return
+    if args.command == "advisories":
+        findings = advisory_findings(args.reports)
+        advisory("Advisory check", findings)
+        print(f"GTI_ADVISORY_FINDINGS={len(findings)}")
         return
     if args.command == "test-targets":
         print(" ".join(test_targets(args.build, args.regex)))

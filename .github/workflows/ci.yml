@@ -3,8 +3,9 @@ name: CI
 # One required check, "CI gate". A pull request proves lint and fast checks
 # before it may enter the merge queue; the queue proves the same build and
 # fast checks on the exact candidate that becomes main. The complete suite
-# (production packaging, every integration shard, the compiler sanitizers)
-# runs after integration on each main head in full-validation.yml, the way
+# (production packaging, every integration shard) runs after integration on
+# each main head in full-validation.yml, and the sanitizers daily on the
+# nightly commit in sanitizers.yml, the way
 # rustc and LLVM gate merges on a bounded build-and-test and prove the full
 # matrix post-merge. Contributors run focused checks locally and never repeat
 # the complete suite.
@@ -58,7 +59,8 @@ jobs:
           python3 scripts/source_stdlib_ci.py plan \
             --event "${GTI_EVENT_PATH}" --base "${base}" \
             --repository "${GITHUB_REPOSITORY}" --output "${RUNNER_TEMP}/source-plan.json" >> "${GITHUB_OUTPUT}"
-      - name: Check the declared T0/T1 tests
+      - name: Report the declared T0/T1 tests
+        # Advisory: a malformed Validation block warns; it never fails the plan.
         if: github.event_name == 'pull_request' && steps.plan.outputs.mode == 'full'
         env:
           GTI_EVENT_PATH: ${{ github.event_path }}
@@ -133,11 +135,12 @@ jobs:
           GTI_FORK_SHA: ${{ steps.range.outputs.base }}
           GTI_HEAD_SHA: ${{ github.sha }}
         run: python3 scripts/check_release_version.py "${GTI_FORK_SHA}" "${GTI_HEAD_SHA}"
-      - name: Require a surface review for changed stdlib sources
+      - name: Report the surface review for changed stdlib sources
+        # Advisory: a missing manifest review warns; it never blocks.
         env:
           GTI_FORK_SHA: ${{ steps.range.outputs.base }}
           GTI_HEAD_SHA: ${{ github.sha }}
-        run: python3 scripts/check_stdlib_surface_review.py "${GTI_FORK_SHA}" "${GTI_HEAD_SHA}"
+        run: python3 scripts/check_stdlib_surface_review.py "${GTI_FORK_SHA}" "${GTI_HEAD_SHA}" --advisory
 
   tree-sitter:
     name: Tree-sitter grammar
@@ -220,6 +223,8 @@ jobs:
         if: github.event_name == 'pull_request'
         # The body is untrusted: the script validates every name and passes
         # them to CTest as an escaped, anchored pattern, never through a shell.
+        # Block-format and unregistered-name findings are warnings; a declared
+        # test that runs and fails still fails the job.
         env:
           GTI_EVENT_PATH: ${{ github.event_path }}
         run: >-
