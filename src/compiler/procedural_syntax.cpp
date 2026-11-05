@@ -3,6 +3,7 @@
 #include "gti/lexer.h"
 #include "gti/parser.h"
 
+#include <algorithm>
 #include <atomic>
 #include <limits>
 

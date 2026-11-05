@@ -7462,14 +7462,14 @@
         "std::syntax::fresh",
         "std::syntax::join",
         "std::syntax::keyword",
-        "std::syntax::string_literal",
         "std::syntax::location",
         "std::syntax::parse",
         "std::syntax::punctuation",
         "std::syntax::reference",
         "std::syntax::size",
         "std::syntax::slice",
-        "std::syntax::splice"
+        "std::syntax::splice",
+        "std::syntax::string_literal"
       ],
       "case_ids": [
         "procedural-syntax",
