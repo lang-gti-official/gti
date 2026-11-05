@@ -3135,16 +3135,6 @@ if(Python3_Interpreter_FOUND)
   )
   add_test(NAME rollup
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/rollup_test.py")
-  add_test(NAME preview_workflow
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/preview_workflow_test.py")
-  # Only combined preview candidates register this aggregate gate. Ordinary
-  # PR/main suites and their acceptance requirements are unchanged.
-  if(EXISTS "${PROJECT_SOURCE_DIR}/.gti-preview.json")
-    add_test(NAME preview_admission
-      COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/scripts/preview_examples.py"
-              "${PROJECT_BINARY_DIR}" --pending)
-    set_tests_properties(preview_admission PROPERTIES TIMEOUT 10800 RUN_SERIAL TRUE)
-  endif()
   add_test(
     NAME build_window
     COMMAND "${Python3_EXECUTABLE}"
@@ -3779,8 +3769,6 @@ if(Python3_Interpreter_FOUND)
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lsp_release_test.py")
   add_test(NAME source_stdlib_ci
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_stdlib_ci_test.py")
-  add_test(NAME preview_release
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/preview_release_test.py")
   add_test(
     NAME release_train
     COMMAND "${Python3_EXECUTABLE}"

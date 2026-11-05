@@ -1675,6 +1675,7 @@ paths = [
   ".gitea/",
   "scripts/validation_checks.py",
   "scripts/source_stdlib_ci.py",
+  "scripts/example_gates.py",
   "tests/source_stdlib_ci_test.py",
   "cmake/ReuseToolchain.cmake",
   "scripts/configure_ci_*",
@@ -1696,7 +1697,6 @@ owners = [
 ]
 consumers = [
   "release_version_policy",
-  "preview_workflow",
 ]
 
 [[area]]
@@ -1720,7 +1720,6 @@ owners = [
   "macos_runtime_bundle",
 ]
 consumers = [
-  "preview_workflow",
   "repository_hosting",
 ]
 
@@ -1805,7 +1804,6 @@ owners = [
   "rollup",
 ]
 consumers = [
-  "preview_workflow",
   "repository_hosting",
 ]
 
@@ -1847,20 +1845,6 @@ paths = [
 owners = [
   "remote_runner",
   "gcp_spot_runner",
-]
-consumers = [
-  "agent_workflow",
-]
-
-[[area]]
-area = "preview"
-paths = [
-  "scripts/preview_workflow.py",
-  "scripts/preview_submit.py",
-  "scripts/preview_examples.py",
-]
-owners = [
-  "preview_workflow",
 ]
 consumers = [
   "agent_workflow",
@@ -1939,7 +1923,6 @@ paths = [
 ]
 owners = [
   "neovim_local_installer",
-  "preview_workflow",
 ]
 consumers = []
 
@@ -2025,13 +2008,6 @@ reason = "non-gating diagnostic tools for investigating failures; bugs they find
 [[unowned]]
 paths = ["scripts/highlight-inspector/"]
 reason = "interactive Neovim highlight comparison tool run by hand"
-
-[[area]]
-area = "preview-release"
-paths = ["scripts/preview_release.py", "scripts/preview_build.py", "scripts/preview_remote.py", "scripts/preview-ubuntu24.Dockerfile", ".github/workflows/preview.yml"]
-owners = ["preview_release", "ci_release"]
-consumers = ["preview_workflow", "neovim_gtiup"]
-risk = "system"
 
 [[area]]
 area = "lsp-sdk-publication"

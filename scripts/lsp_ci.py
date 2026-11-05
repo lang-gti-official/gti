@@ -8,8 +8,8 @@ import re
 import shutil
 import subprocess
 
+import example_gates
 import lsp_compatibility
-import preview_examples
 import release_artifacts
 import source_stdlib_ci as source
 import validation_checks
@@ -126,13 +126,13 @@ def run_tests(doc, build, stage, jobs, test_jobs):
     if changed - registered:
         raise ValueError("changed LSP harness is not registered: " + ", ".join(sorted(changed - registered)))
     required.update(row["name"] for row in inventory["tests"] if changed.intersection(row.get("command", [])))
-    preview_examples.validate_inventory(inventory, required)
+    example_gates.validate_inventory(inventory, required)
     pattern = "^(" + "|".join(re.escape(n) for n in sorted(required)) + ")$"
     targets = source.consumer_targets(build, pattern, native_roots=(ROOT / "src/lsp",))
     subprocess.run(["cmake", "--build", str(build), "--parallel", str(jobs), "--target", "gti_lsp", *targets], check=True)
     subprocess.run(["ctest", "--test-dir", str(build), "--output-on-failure", "--no-tests=error",
                     "--parallel", str(test_jobs), "--output-junit", str(build / "lsp.xml"), "-R", pattern], check=True)
-    preview_examples.validate_results(build / "lsp.xml", required)
+    example_gates.validate_results(build / "lsp.xml", required)
     # Check the installed adapter with the exact reused resources, not a build
     # path that might mask missing runtime dependencies or stdlib discovery.
     shutil.copy2(build / "gti_lsp", stage / "bin/gti_lsp")

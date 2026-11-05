@@ -78,7 +78,6 @@ jobs:
           git config --global user.name "GTI CI"
           git config --global user.email "ci@example.invalid"
           python3 tests/agent_workflow_test.py
-          python3 tests/preview_workflow_test.py
           python3 tests/rollup_test.py
           python3 tests/build_window_test.py
           python3 tests/bounded_log_test.py
@@ -87,7 +86,6 @@ jobs:
           python3 tests/cut_release_test.py
           python3 tests/release_train_test.py
           python3 tests/ci_release_test.py .
-          python3 tests/preview_release_test.py
           python3 tests/ci_resources_test.py scripts/configure_ci_resources.sh
           python3 tests/repository_hosting_test.py .
           python3 tests/ownership_map_test.py

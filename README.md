@@ -485,19 +485,20 @@ shell files or replace existing commands. For a custom location set `GTIUP_HOME`
 before bootstrap and keep it set when using that installation.
 
 ```sh
-gtiup install preview       # combined features, before main's full review/CI
 gtiup install beta          # newest published beta
 gtiup install stable        # newest published stable
 gtiup update nightly       # replace this channel's selected build atomically
 gtiup list
 gtiup show
-gti +preview --version
+gti +beta --version
 gtiup run nightly gti_lsp --version
 gtiup which gti             # real executable, useful to editor integrations
 ```
 
 A channel must have a published toolchain before it can be installed. There is
-no fallback to another channel if beta/stable/preview is not yet published.
+no fallback to another channel if beta/stable is not yet published. The former
+`preview` channel is retired: `gtiup install preview` fails and suggests
+`nightly`, and an already installed preview keeps working until you uninstall it.
 `gtiup install 0.12.0` pins a published stable version; a beta can be pinned as
 `0.12.0-beta.1`. Put a channel or version on one line in a project's
 `gti-toolchain` file to select it for that directory and its descendants.
@@ -505,13 +506,10 @@ Selection precedence is command `+channel` (or `gtiup run`),
 `GTIUP_TOOLCHAIN`, the nearest `gti-toolchain`, then the user default.
 Commands never download implicitly; install the selected channel first.
 
-Preview downloads come from the rolling `preview` prerelease. Each includes the
-exact combined commit and feature inclusion manifest; preview is separate from
-nightly's successful full-integration requirement. Published archive checksums
-and embedded source/version identity are checked before activation. A failed
-or interrupted update leaves the previous selection intact. Stable yanks and
-beta withdrawals are checked on install/update; offline invocation uses the
-already installed version. These downloads use HTTPS and checksum verification;
+Published archive checksums and embedded source/version identity are checked
+before activation. A failed or interrupted update leaves the previous selection
+intact. Stable yanks and beta withdrawals are checked on install/update; offline
+invocation uses the already installed version. These downloads use HTTPS and checksum verification;
 `gtiup` does not independently verify GitHub attestations.
 
 `gtiup uninstall <channel-or-version>` removes that selection (choose another
@@ -520,6 +518,22 @@ processes can still access their resources. `gtiup gc` removes unreferenced
 managed directories when you explicitly request it; close running GTI/LSP
 processes before garbage collection. Existing developer builds and Neovim
 configurations are not modified.
+
+### Use your own build through gtiup
+
+To test a compiler you built from this checkout with the same proxies, editor
+integration and project selection as a published channel, install it into a
+prefix and link that prefix as a named toolchain (gtiup 0.5.0 or later):
+
+```sh
+cmake --install build --prefix ~/.local/gti-dev
+gtiup link dev ~/.local/gti-dev
+gtiup default dev           # or gti +dev ..., or `dev` in a gti-toolchain file
+```
+
+Rerun `cmake --install` after each rebuild; the link reads the prefix in place.
+gtiup never updates, garbage-collects or deletes a linked toolchain, and
+`gtiup unlink dev` forgets it without touching the prefix.
 
 ## Neovim and LazyVim
 
@@ -578,7 +592,7 @@ return {
 Run `:Lazy sync`, restart Neovim, and open a `.gti` file. Mason and
 `nvim-lspconfig` are not required. `:GTIInfo` reports the configured channel,
 selected compiler/server/parser paths, and each running server's command and
-version. Available nightly or preview build identities are captured when the
+version. Available nightly build identities are captured when the
 server launches (or a custom server attaches), so changing an install or an override does not hide a server
 still using the previous build. Nightly versions may differ from the plugin
 checkout; compiler/server version or build mismatches still produce a warning.
@@ -646,24 +660,24 @@ python3 scripts/install_neovim_local.py --dry-run --replace-config --replace-bin
 python3 scripts/install_neovim_local.py --replace-config --replace-bin
 ```
 
-These commands select early combined preview by default, once `preview` has been
-published. `--preview` remains an explicit alias. To build this checkout instead:
+These commands build the canonical `nightly` source by default: the commit the
+published nightly toolchain was built from, the newest one that passed full
+validation. To build this checkout instead:
 
 ```sh
 python3 scripts/install_neovim_local.py --local --dry-run
 python3 scripts/install_neovim_local.py --local --replace-config --replace-bin
 ```
 
-Preview may contain PRs still awaiting full validation and review. The script
-pins the canonical preview commit in an isolated, persistent source checkout
-and installs its compiler, LSP and parser together. It reports the source
-commit and preserves your current checkout, including uncommitted edits.
-Preview dry run only resolves/reports the source; it performs no fetch, build
-or destination inspection. A missing preview fails without installing anything;
-there is no silent fallback. Use `--local` to return to this checkout’s toolchain,
-including with `--activate-only`. The
-[preview workflow](docs/architecture/agent-workflow.md#early-combined-preview)
-describes admission checks and the automated examples/platform coverage.
+The script pins the canonical nightly commit in an isolated, persistent source
+checkout and installs its compiler, LSP and parser together, stamped with that
+commit so `:GTIInfo` reports the nightly build. It reports the source commit and
+preserves your current checkout, including uncommitted edits. A nightly dry run
+only resolves/reports the source; it performs no fetch, build or destination
+inspection. A missing nightly fails without installing anything; there is no
+silent fallback. Use `--local` to return to this checkout’s toolchain, including
+with `--activate-only`. The preview channel is retired, so `--preview` now fails
+with that explanation instead of building something else.
 
 Requires Python 3.10+, Neovim 0.11+, CMake, Ninja, a supported installed LLVM
 (including libclang), and the Xcode command-line tools. It discovers Homebrew

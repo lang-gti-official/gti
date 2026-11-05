@@ -116,9 +116,9 @@ class SourceStdlibCI(unittest.TestCase):
                          '<testcase name="other"/>', '<testcase name="case"/><testcase name="case"/>']:
                 report.write_text('<testsuite>' + body + '</testsuite>')
                 with self.assertRaises(ValueError):
-                    source.preview_examples.validate_results(report, {'case'})
+                    source.example_gates.validate_results(report, {'case'})
             report.write_text('<testsuite><testcase name="case"/></testsuite>')
-            source.preview_examples.validate_results(report, {'case'})
+            source.example_gates.validate_results(report, {'case'})
 
     def test_source_release_is_not_a_full_compiler_build(self):
         request = api_fixture(ORIGIN['sha'], source_lane=True)

@@ -21,30 +21,30 @@ TOOLS = ("gti", "gti_lsp")
 CANONICAL = "https://github.com/lang-gti-official/gti.git"
 
 
-def preview_source(root, dry_run=False):
-    """Pin canonical preview in a persistent detached worktree; never reset source."""
+def nightly_source(root, dry_run=False):
+    """Pin canonical nightly in a persistent detached worktree; never reset source.
+
+    The rolling `nightly` tag names the newest commit that passed full
+    validation, the same commit the published nightly toolchain was built from.
+    """
     def git(*arguments):
         return run(["git", "-C", root, *arguments], capture=True).stdout.strip()
 
     # Resolve the fixed canonical repository directly. Local remote aliases,
-    # SSH/HTTPS spelling and push URLs cannot redirect preview installation.
-    fields = git("ls-remote", "--exit-code", CANONICAL, "refs/heads/preview").split()
-    if len(fields) != 2 or fields[1] != "refs/heads/preview" or not re.fullmatch(r"[0-9a-f]{40}", fields[0]):
-        raise ValueError("canonical preview has no published commit")
+    # SSH/HTTPS spelling and push URLs cannot redirect nightly installation.
+    fields = git("ls-remote", "--exit-code", CANONICAL, "refs/tags/nightly").split()
+    if len(fields) != 2 or fields[1] != "refs/tags/nightly" or not re.fullmatch(r"[0-9a-f]{40}", fields[0]):
+        raise ValueError("canonical nightly has no published commit")
     head = fields[0]
     common = pathlib.Path(git("rev-parse", "--path-format=absolute", "--git-common-dir")).resolve()
-    destination = common.parent.parent / "gti-preview-installs" / head
-    print(f"Selected preview source: {head}\nPreview checkout: {destination}")
-    print("Preview can include PRs whose full validation and review are still pending.")
+    destination = common.parent.parent / "gti-nightly-installs" / head
+    print(f"Selected nightly source: {head}\nNightly checkout: {destination}")
     if dry_run:
         print("Dry run: no fetch, checkout, build, configuration or installation performed.")
         return None, head
     git("fetch", CANONICAL, head)
     if git("rev-parse", "FETCH_HEAD") != head:
-        raise ValueError("preview fetch did not resolve the selected commit")
-    manifest = json.loads(git("show", head + ":.gti-preview.json"))
-    if manifest.get("schema") != 1 or not isinstance(manifest.get("features"), list):
-        raise ValueError("preview source has no valid inclusion manifest")
+        raise ValueError("nightly fetch did not resolve the selected commit")
     if destination.exists():
         selected = lambda *args: run(["git", "-C", destination, *args], capture=True).stdout.strip()
         attached = subprocess.run(["git", "-C", str(destination), "symbolic-ref", "-q", "HEAD"],
@@ -52,7 +52,7 @@ def preview_source(root, dry_run=False):
         if (destination.is_symlink() or selected("rev-parse", "--show-toplevel") != str(destination)
                 or selected("rev-parse", "HEAD") != head
                 or selected("status", "--porcelain") or attached.returncode != 1):
-            raise ValueError("existing preview checkout changed; preserve it and resolve manually")
+            raise ValueError("existing nightly checkout changed; preserve it and resolve manually")
     else:
         destination.parent.mkdir(parents=True, exist_ok=True)
         git("worktree", "add", "--detach", str(destination), head)
@@ -266,11 +266,14 @@ def main():
     parser.add_argument("--build-dir", type=pathlib.Path,
                         help="build directory (default: selected source's out/neovim-local-build)")
     source = parser.add_mutually_exclusive_group()
-    source.add_argument("--preview", dest="preview", action="store_true",
-                        help="build canonical preview in an isolated checkout (default)")
-    source.add_argument("--local", dest="preview", action="store_false",
-                        help="build or activate this checkout instead of preview")
-    parser.set_defaults(preview=True)
+    source.add_argument("--nightly", dest="nightly", action="store_true",
+                        help="build canonical nightly in an isolated checkout (default)")
+    source.add_argument("--local", dest="nightly", action="store_false",
+                        help="build or activate this checkout instead of nightly")
+    # The preview channel is retired. Reject the old flag rather than silently
+    # building a different source than the caller asked for.
+    parser.add_argument("--preview", action="store_true", help=argparse.SUPPRESS)
+    parser.set_defaults(nightly=True)
     parser.add_argument("--llvm-dir", type=pathlib.Path,
                         help="directory containing LLVMConfig.cmake")
     parser.add_argument("--config", type=pathlib.Path,
@@ -293,16 +296,19 @@ def main():
     args = parser.parse_args()
     if platform.system() != "Darwin":
         parser.error("this installer is for macOS")
+    if args.preview:
+        parser.error("the preview channel is retired; omit --preview to build nightly "
+                     "(the default), or use --local for this checkout")
     if args.jobs < 1:
         parser.error("--jobs must be a positive integer")
-    if args.preview:
+    if args.nightly:
         if args.activate_only:
-            parser.error("preview selects and builds source; use --local with --activate-only")
-        selected, head = preview_source(ROOT, args.dry_run)
+            parser.error("nightly selects and builds source; use --local with --activate-only")
+        selected, head = nightly_source(ROOT, args.dry_run)
         if selected is None:
             return
         ROOT = selected
-        print(f"Installing CLI, LSP and parser from preview commit {head}")
+        print(f"Installing CLI, LSP and parser from nightly commit {head}")
     prerequisites = ("nvim",) if args.activate_only else ("cmake", "nvim", "tar", "c++")
     for executable in prerequisites:
         if not shutil.which(executable):
@@ -386,8 +392,10 @@ def main():
         scratch = pathlib.Path(directory)
         stage = scratch / "stage"
         run(["cmake", "--install", build, "--prefix", stage, "--component", "gti_toolchain"])
-        if args.preview:
-            (stage / "share/gti/PREVIEW_SOURCE").write_text(head + "\n")
+        if args.nightly:
+            # Match the published nightly's identity stamp so editor status
+            # reports this build as nightly at its source commit.
+            (stage / "share/gti/BUILD_ID").write_text(head + "\n")
         archive = scratch / f"gti-v{version}-{native_platform}.tar.gz"
         run(["cmake", "-E", "tar", "czf", archive, "."], cwd=stage)
         checksum = pathlib.Path(str(archive) + ".sha256")
@@ -409,8 +417,8 @@ def main():
     validate_installed_toolchain(toolchain)
     finish_activation(configuration, content, args.replace_config,
                       bin_dir, toolchain, args.replace_bin, args.no_terminal, version)
-    if args.preview:
-        print(f"Installed preview GTI {version} from {head}")
+    if args.nightly:
+        print(f"Installed nightly GTI {version} from {head}")
 
 
 def finish_activation(configuration, content, replace_config, bin_dir,

@@ -532,7 +532,7 @@ def workflow_contract(root):
     # release workflow stays as written.
     assert sorted(p.name for p in (root / ".github/workflows").glob("*.yml")) == [
         "backport.yml", "beta.yml", "cache.yml", "ci.yml", "cpp-backend.yml", "full-validation.yml",
-        "llvm-prebuilt.yml", "lsp.yml", "nightly.yml", "preview.yml", "rollback.yml", "rollup.yml", "train.yml"]
+        "llvm-prebuilt.yml", "lsp.yml", "nightly.yml", "rollback.yml", "rollup.yml", "train.yml"]
     assert not (root / ".gitea/workflows/ci.yml").exists()
     for workflow in sorted((root / ".github/workflows").glob("*.yml")):
         duplicates = duplicate_mapping_keys(workflow.read_text())
@@ -963,11 +963,8 @@ def archive_contract(root, cmake):
         assert stable_archive.read_bytes() == stable_bytes, "nightly rewrote the immutable archive"
         assert stable["lib/gti/llvm/libclang.so.20"] == ("symlink", "libclang.so.20.1")
         rejected = work / "rejected"
-        preview_directory = work / "preview"
-        package("preview", "preview", preview_directory, sha)
-        preview = contents(preview_directory / "gti-preview-linux-x64.tar.gz")
-        assert preview["share/gti/BUILD_ID"] == (sha + "\n").encode()
-        package("preview", "nightly", rejected, sha, success=False)
+        # The retired preview channel no longer packages.
+        package("preview", "preview", rejected, sha, success=False)
         # The nightly stamp lives in the stage; a stable archive refuses it.
         package("stable", f"v{version}", rejected, success=False)
         assert not rejected.exists(), "a nightly-stamped stage produced a stable archive"
