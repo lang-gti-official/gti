@@ -37,6 +37,12 @@ struct CompileLimits {
   // including every nested expansion it causes. Separate invocations never
   // share this budget.
   std::size_t macroExpansions = 8192;
+  // Procedural syntax resources shared by one outer expansion and its nested
+  // invocations. Discarded construction still consumes the allocation budget.
+  std::size_t syntaxNodes = 65536;
+  std::size_t syntaxBytes = 1048576;
+  std::size_t syntaxTokens = 65536;
+  std::size_t syntaxDepth = 256;
   // Elements of one `constexpr for` statement.
   std::size_t constexprForElements = 1024;
   // `constexpr for` body copies expanded per declaration.

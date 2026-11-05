@@ -1,0 +1,15 @@
+import "procedural-macro-library.gti";
+
+mut int evaluations = 0;
+int next() { evaluations += 1; return 21; }
+
+int main() {
+  int saved = 99;
+  if (twice_once!({next()}) != 42 || evaluations != 1) { return 1; }
+  if (saved != 99) { return 2; }
+  if (identity!({saved + 1}) != 100) { return 3; }
+  if (identity!({twice_once!({next()})}) != 42 || evaluations != 2) {
+    return 4;
+  }
+  return 0;
+}

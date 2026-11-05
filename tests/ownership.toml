@@ -125,6 +125,7 @@ owners = [
   "macro_result_parser",
   "procedural_syntax",
   "procedural_declaration_example",
+  "procedural_execution_example",
   "sum_type_pipeline",
   "generic_enum_declaration",
   "scoped_configuration_defines",

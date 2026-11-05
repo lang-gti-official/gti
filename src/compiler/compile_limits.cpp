@@ -11,7 +11,7 @@ namespace {
 // counters are 64-bit, the evaluator's storage is bounded independently of
 // its step count, and nested work runs on fresh native stack segments
 // (support.h), so the maxima bound time and memory rather than stack use.
-constexpr std::array<CompileLimitInfo, 6> limits{{
+constexpr std::array<CompileLimitInfo, 10> limits{{
     {.key = "constexpr-steps",
      .field = &CompileLimits::constexprSteps,
      .guaranteedMinimum = 1048576,
@@ -32,6 +32,26 @@ constexpr std::array<CompileLimitInfo, 6> limits{{
      .guaranteedMinimum = 4096,
      .maximum = 32768,
      .summary = "Macro bodies expanded by one outermost macro invocation"},
+    {.key = "syntax-nodes",
+     .field = &CompileLimits::syntaxNodes,
+     .guaranteedMinimum = 65536,
+     .maximum = 1048576,
+     .summary = "Procedural syntax nodes per outer expansion"},
+    {.key = "syntax-bytes",
+     .field = &CompileLimits::syntaxBytes,
+     .guaranteedMinimum = 1048576,
+     .maximum = 16777216,
+     .summary = "Procedural syntax spelling bytes per outer expansion"},
+    {.key = "syntax-tokens",
+     .field = &CompileLimits::syntaxTokens,
+     .guaranteedMinimum = 65536,
+     .maximum = 1048576,
+     .summary = "Procedural syntax tokens per outer expansion"},
+    {.key = "syntax-depth",
+     .field = &CompileLimits::syntaxDepth,
+     .guaranteedMinimum = 256,
+     .maximum = 1024,
+     .summary = "Procedural syntax group nesting"},
     {.key = "constexpr-for-elements",
      .field = &CompileLimits::constexprForElements,
      .guaranteedMinimum = 1024,

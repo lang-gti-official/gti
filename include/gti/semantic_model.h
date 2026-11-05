@@ -373,6 +373,7 @@ enum class IntrinsicKind {
   SyntaxLiteral,
   SyntaxPunctuation,
   SyntaxIdentifier,
+  SyntaxKeyword,
   SyntaxFresh,
   SyntaxReference,
   SyntaxJoin,
@@ -923,6 +924,8 @@ struct FunctionInfo {
   bool staticMember = false;
   bool internalLinkage = false;
   bool constexprFunction = false;
+  // The body or its selected closure consumes syntax capabilities.
+  bool proceduralOnly = false;
   bool requiresUnsafe = false;
   bool neverReturns = false;
   bool tracksCaller = false;
@@ -1113,6 +1116,8 @@ struct ClassVirtualDispatch {
                          const ClassVirtualDispatch &) = default;
 };
 
+enum class CompileTimeSyntaxKind { None, Tokens, Expression, Span, Binding };
+
 struct ClassTypeInfo {
   ClassId id = 0;
   SourceUnitId sourceUnit = 0;
@@ -1166,6 +1171,7 @@ struct ClassTypeInfo {
       ComputedTypeProjectionKind::None;
   CompilerCapabilityTypeKind compilerCapability =
       CompilerCapabilityTypeKind::None;
+  CompileTimeSyntaxKind syntaxKind = CompileTimeSyntaxKind::None;
 };
 
 struct EnumConstant {
@@ -2393,6 +2399,7 @@ struct MacroExpansionSite {
   const Stmt *body = nullptr;
   const FunctionDecl *declaration = nullptr;
   const Call *call = nullptr;
+  const Expr *expression = nullptr;
 };
 
 // These anchors are private to the analyzed syntax lifetime. HIR joins them

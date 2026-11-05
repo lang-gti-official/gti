@@ -896,6 +896,17 @@ public:
     return std::move(output);
   }
 
+  std::string print(const Expr &value) {
+    append("// Explanatory procedural expansion; read-only, not executable "
+           "source.\n"
+           "// Caller splices and definition/fresh bindings retain distinct "
+           "contexts.\n");
+    expression(&value, 0);
+    if (truncated_)
+      output += "\n// Expansion display truncated.\n";
+    return std::move(output);
+  }
+
   bool truncated() const { return truncated_; }
 
 private:
@@ -2790,7 +2801,8 @@ LanguageQueries::macroExpansion(const FrontendResult &snapshot,
   SourceSpan selectedSpan;
   bool ambiguous = false;
   for (const auto &site : snapshot.semantics.macroExpansionSites()) {
-    if ((!site.invocation && !site.call) || !site.body || !site.declaration)
+    if ((!site.invocation && !site.call) || (!site.body && !site.expression) ||
+        !site.declaration)
       continue;
     const auto *call = site.call
                            ? site.call
@@ -2811,7 +2823,9 @@ LanguageQueries::macroExpansion(const FrontendResult &snapshot,
       selected = site;
       selectedSpan = std::move(span);
       ambiguous = false;
-    } else if (span == selectedSpan && site.body != selected->body) {
+    } else if (span == selectedSpan &&
+               (site.body != selected->body ||
+                site.expression != selected->expression)) {
       // A written call instantiated with several concrete meanings has no
       // single honest expansion to display. Never select by map/pointer order.
       ambiguous = true;
@@ -2820,7 +2834,8 @@ LanguageQueries::macroExpansion(const FrontendResult &snapshot,
   if (!selected || ambiguous)
     return std::nullopt;
   MacroExpansionDisplay display(snapshot.semantics);
-  std::string text = display.print(*selected->body);
+  std::string text = selected->expression ? display.print(*selected->expression)
+                                          : display.print(*selected->body);
   return MacroExpansionInfo{.invocation = std::move(selectedSpan),
                             .declaration =
                                 tokenSpan(selected->declaration->name()),

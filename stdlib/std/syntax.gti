@@ -11,7 +11,7 @@ export @compiler_type("syntax_binding") struct binding {};
 
 export uint64_t size(tokens input);
 export std::string_view text(tokens input);
-export uint32_t kind(tokens input, uint64_t index);
+export std::string_view kind(tokens input, uint64_t index);
 export bool adjacent(tokens input, uint64_t left);
 export tokens slice(tokens input, uint64_t begin, uint64_t end);
 export tokens group(tokens input, uint64_t opening);
@@ -19,6 +19,7 @@ export span location(tokens input, uint64_t begin, uint64_t end);
 export tokens literal(std::string_view spelling, span origin);
 export tokens punctuation(std::string_view spelling, span origin);
 export tokens identifier(std::string_view spelling, span origin);
+export tokens keyword(std::string_view spelling, span origin);
 export binding fresh(std::string_view spelling, span origin);
 export tokens reference(binding name);
 export tokens join(tokens left, tokens right);

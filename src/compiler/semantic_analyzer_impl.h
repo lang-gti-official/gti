@@ -6000,7 +6000,24 @@ private:
   bool analyzeCapturedCall(const Call &call);
   bool executeProceduralMacro(const Call &call, const FunctionDecl &definition);
   std::shared_ptr<ConstexprWorkBudget> proceduralWork;
-  std::vector<FunctionId> proceduralActive;
+  std::shared_ptr<SyntaxBudget> proceduralSyntaxBudget;
+  struct ProceduralCachedExpansion {
+    std::string key;
+    GenericSubstitution genericContext;
+    SealedSyntaxExpression sealed;
+    std::uint32_t caller = 0, definition = 0;
+    std::vector<std::uint32_t> fresh;
+    SyntaxBudget storage;
+    std::size_t retainedBytes = 0;
+    std::size_t steps = 0;
+    std::vector<Diagnostic> warnings;
+  };
+  // Exact-source/context reuse within this analysis only; no editor-preamble or
+  // process cache retains these frontend contexts. Bound retained cache memory.
+  std::vector<ProceduralCachedExpansion> proceduralExpansions;
+  std::size_t proceduralCacheBytes = 0;
+
+  std::vector<std::pair<FunctionId, std::string>> proceduralActive;
   bool allowProceduralSyntaxType = false;
   std::unordered_map<std::string, bool> proceduralNameKinds;
   [[nodiscard]] std::unique_ptr<Impl> makeMacroProbe(const Call &call);

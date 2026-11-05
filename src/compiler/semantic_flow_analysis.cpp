@@ -4089,6 +4089,24 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::ObjectRelocate:
         case IntrinsicKind::ObjectRelocateRange:
         case IntrinsicKind::ObjectTake:
+        case IntrinsicKind::SyntaxSize:
+        case IntrinsicKind::SyntaxText:
+        case IntrinsicKind::SyntaxKind:
+        case IntrinsicKind::SyntaxAdjacent:
+        case IntrinsicKind::SyntaxSlice:
+        case IntrinsicKind::SyntaxGroup:
+        case IntrinsicKind::SyntaxSpan:
+        case IntrinsicKind::SyntaxLiteral:
+        case IntrinsicKind::SyntaxPunctuation:
+        case IntrinsicKind::SyntaxKeyword:
+        case IntrinsicKind::SyntaxIdentifier:
+        case IntrinsicKind::SyntaxFresh:
+        case IntrinsicKind::SyntaxReference:
+        case IntrinsicKind::SyntaxJoin:
+        case IntrinsicKind::SyntaxParse:
+        case IntrinsicKind::SyntaxSplice:
+        case IntrinsicKind::SyntaxFail:
+        case IntrinsicKind::SyntaxFailRelated:
         case IntrinsicKind::StringViewSize:
         case IntrinsicKind::StringViewEmpty:
         case IntrinsicKind::ArrayRangeBegin:

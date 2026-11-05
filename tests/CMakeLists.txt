@@ -149,6 +149,9 @@ add_test(NAME procedural_syntax COMMAND gti_procedural_syntax_tests)
 add_test(NAME procedural_declaration_example
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
     $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/examples/procedural-macro-declaration.gti")
+add_test(NAME procedural_execution_example
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+    $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/examples/procedural-macros.gti")
 find_program(GTI_MACRO_SYNTAX_NEOVIM_EXECUTABLE nvim)
 if(GTI_MACRO_SYNTAX_NEOVIM_EXECUTABLE)
   add_test(NAME macro_neovim_syntax

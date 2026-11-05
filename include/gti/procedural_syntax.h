@@ -40,6 +40,10 @@ struct SyntaxLimits {
   std::size_t depth = 256;
 };
 
+struct SyntaxBudget {
+  std::size_t nodes = 0, bytes = 0, tokens = 0;
+};
+
 class SyntaxError : public std::runtime_error {
 public:
   using std::runtime_error::runtime_error;
@@ -61,7 +65,9 @@ public:
   SyntaxArena(std::uint32_t definitionContext, std::uint32_t callerContext,
               std::function<std::uint32_t()> freshContext,
               SyntaxLimits limits = {}, std::function<bool()> cancelled = {},
-              std::vector<RelatedDiagnostic> expansionTrace = {});
+              std::vector<RelatedDiagnostic> expansionTrace = {},
+              std::shared_ptr<SyntaxBudget> budget = {},
+              std::function<void(std::size_t)> charge = {});
   ~SyntaxArena();
   SyntaxArena(const SyntaxArena &) = delete;
   SyntaxArena &operator=(const SyntaxArena &) = delete;
@@ -76,6 +82,7 @@ public:
   SyntaxTokens literal(std::string spelling, SyntaxSpan origin);
   SyntaxTokens punctuation(std::string spelling, SyntaxSpan origin);
   SyntaxTokens identifier(std::string spelling, SyntaxSpan origin);
+  SyntaxTokens keyword(std::string spelling, SyntaxSpan origin);
   SyntaxBinding freshBinding(std::string spelling, SyntaxSpan origin);
   SyntaxTokens reference(SyntaxBinding binding);
   SyntaxTokens join(std::span<const SyntaxTokens> parts);
@@ -88,6 +95,9 @@ public:
   // Cancellation/error teardown invalidates every outstanding handle. Sealed
   // output has independent ownership; aborted, unsealed nodes publish nothing.
   void reset();
+  // The MIR executor temporarily installs its own shared logical-work account.
+  std::function<void(std::size_t)>
+  exchangeWorkCharge(std::function<void(std::size_t)> charge);
 
 private:
   struct Node;
@@ -106,7 +116,10 @@ private:
   std::function<std::uint32_t()> freshContext_;
   SyntaxLimits limits_;
   std::function<bool()> cancelled_;
-  std::size_t bytes_ = 0, tokens_ = 0;
+  std::shared_ptr<SyntaxBudget> budget_;
+  std::function<void(std::size_t)> charge_;
+  void charge(std::size_t work) const;
+
   std::vector<Node> nodes_;
   std::unordered_set<std::uint32_t> freshIdentities_;
   std::vector<RelatedDiagnostic> expansionTrace_;

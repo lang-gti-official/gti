@@ -81,7 +81,32 @@ public:
 
   MirProceduralEvaluation runProcedural(HirFunctionInstanceId root) {
     MirProceduralEvaluation output;
+    struct WorkChargeScope {
+      SyntaxArena &arena;
+      std::function<void(std::size_t)> previous;
+      ~WorkChargeScope() { arena.exchangeWorkCharge(std::move(previous)); }
+    } account{procedural->arena,
+              procedural->arena.exchangeWorkCharge([&](std::size_t work) {
+                if (!charge(work))
+                  throw SyntaxError(
+                      "Procedural constexpr-steps limit exceeded.");
+              })};
     try {
+      for (std::size_t i = 0; i < procedural->types.size(); ++i) {
+        const auto *type = record(procedural->types[i]);
+        if (procedural->types[i].kind != SemanticType::Class ||
+            (type &&
+             type->syntaxKind != static_cast<CompileTimeSyntaxKind>(i + 1)))
+          throw SyntaxError("Procedural execution requires exact trusted "
+                            "syntax type identities.");
+      }
+      const auto *entry = program.findFunctionInstance(root);
+      if (!entry || !entry->proceduralFunction ||
+          entry->parameterTypes !=
+              std::vector<SemanticType>{procedural->types[0]} ||
+          entry->returnType != procedural->types[1])
+        throw SyntaxError(
+            "Procedural MIR requires a tokens-to-expression root.");
       const auto input = syntaxValue(procedural->input);
       const std::array<ConstantValue, 1> arguments{input};
       output.execution = run({MirBodyKind::Function, root}, arguments, {});
@@ -206,7 +231,8 @@ private:
       return false;
     if (type.kind == SemanticType::Class) {
       const auto *instance = record(type);
-      if (!instance || instance->requiresActiveCleanup || instance->destructor)
+      if (!instance || instance->syntaxKind != CompileTimeSyntaxKind::None ||
+          instance->requiresActiveCleanup || instance->destructor)
         return false;
       return std::all_of(instance->declaredFields.begin(),
                          instance->declaredFields.end(),
@@ -249,6 +275,9 @@ private:
   }
 
   bool storageType(const SemanticType &type, std::size_t depth = 0) const {
+    if (const auto *instance = record(type);
+        instance && instance->syntaxKind != CompileTimeSyntaxKind::None)
+      return syntaxType(type);
     if (scalarType(type))
       return true;
     if (type.kind == SemanticType::Enum) {
@@ -1882,7 +1911,8 @@ private:
         // Staging keeps only the signature of a callee that cannot run during
         // compilation. Reaching its call, not merely containing it, fails.
         if (callee->definitionKind != MirDefinitionKind::Source ||
-            !callee->constexprFunction ||
+            (!callee->constexprFunction &&
+             !(procedural && callee->proceduralFunction)) ||
             callee->linkage != LanguageLinkage::Gti) {
           auto failed = fail(frame, ConstantEvaluationFailure::RuntimeOnlyCall);
           failed.runtimeCallee = callee->id;
@@ -2031,7 +2061,9 @@ private:
     // A constant view holds its own text, so a by-value view's runtime
     // borrow summary, such as a relayed text field (L-OWN-02), does not
     // constrain its evaluation.
-    if (function == nullptr || !function->constexprFunction ||
+    if (function == nullptr ||
+        (!function->constexprFunction &&
+         !(procedural && function->proceduralFunction)) ||
         function->requiresUnsafe || function->virtualMethod ||
         function->definitionKind != MirDefinitionKind::Source ||
         (function->returnBorrowOrigin != BorrowOriginKind::None &&
@@ -2584,6 +2616,87 @@ private:
   ConstantEvaluation executeSyntax(const MirInstruction &instruction,
                                    const std::vector<ConstantValue> &args) {
     auto &arena = procedural->arena;
+    const auto &types = procedural->types;
+    const SemanticType tokensType = types[0], exprType = types[1],
+                       spanType = types[2], bindingType = types[3];
+    const SemanticType indexType = SemanticType::UInt64;
+    std::vector<SemanticType> parameters;
+    SemanticType resultType = SemanticType::Unknown;
+    switch (instruction.intrinsic) {
+    case IntrinsicKind::SyntaxSize:
+      parameters = {tokensType};
+      resultType = indexType;
+      break;
+    case IntrinsicKind::SyntaxText:
+      parameters = {tokensType};
+      resultType = SemanticType::StringView;
+      break;
+    case IntrinsicKind::SyntaxKind:
+      parameters = {tokensType, indexType};
+      resultType = SemanticType::StringView;
+      break;
+    case IntrinsicKind::SyntaxAdjacent:
+      parameters = {tokensType, indexType};
+      resultType = SemanticType::Bool;
+      break;
+    case IntrinsicKind::SyntaxSlice:
+      parameters = {tokensType, indexType, indexType};
+      resultType = tokensType;
+      break;
+    case IntrinsicKind::SyntaxGroup:
+      parameters = {tokensType, indexType};
+      resultType = tokensType;
+      break;
+    case IntrinsicKind::SyntaxSpan:
+      parameters = {tokensType, indexType, indexType};
+      resultType = spanType;
+      break;
+    case IntrinsicKind::SyntaxLiteral:
+    case IntrinsicKind::SyntaxPunctuation:
+    case IntrinsicKind::SyntaxIdentifier:
+    case IntrinsicKind::SyntaxKeyword:
+      parameters = {SemanticType::StringView, spanType};
+      resultType = tokensType;
+      break;
+    case IntrinsicKind::SyntaxFresh:
+      parameters = {SemanticType::StringView, spanType};
+      resultType = bindingType;
+      break;
+    case IntrinsicKind::SyntaxReference:
+      parameters = {bindingType};
+      resultType = tokensType;
+      break;
+    case IntrinsicKind::SyntaxJoin:
+      parameters = {tokensType, tokensType};
+      resultType = tokensType;
+      break;
+    case IntrinsicKind::SyntaxParse:
+      parameters = {tokensType};
+      resultType = exprType;
+      break;
+    case IntrinsicKind::SyntaxSplice:
+      parameters = {exprType};
+      resultType = tokensType;
+      break;
+    case IntrinsicKind::SyntaxFail:
+      parameters = {spanType, SemanticType::StringView};
+      resultType = exprType;
+      break;
+    case IntrinsicKind::SyntaxFailRelated:
+      parameters = {spanType, SemanticType::StringView, spanType};
+      resultType = exprType;
+      break;
+    default:
+      throw SyntaxError("Unknown procedural operation.");
+    }
+    if (parameters.size() != args.size() ||
+        instruction.arguments.size() != args.size() ||
+        instruction.info.type != resultType)
+      throw SyntaxError("Invalid procedural intrinsic signature.");
+    for (std::size_t i = 0; i < args.size(); ++i)
+      if (instruction.arguments[i].type != parameters[i] ||
+          !exactValue(args[i], parameters[i]))
+        throw SyntaxError("Invalid procedural intrinsic argument type.");
     const auto argument = [&](std::size_t i) -> const ConstantValue & {
       if (i >= args.size())
         throw SyntaxError("Missing syntax argument.");
@@ -2625,8 +2738,8 @@ private:
       return {.value = std::move(value)};
     }
     case IntrinsicKind::SyntaxKind:
-      return integer(
-          static_cast<std::size_t>(arena.token(tokens(0), index(1)).kind));
+      return {.value = std::string(
+                  to_string(arena.token(tokens(0), index(1)).kind))};
     case IntrinsicKind::SyntaxAdjacent:
       return {.value = arena.adjacent(tokens(0), index(1))};
     case IntrinsicKind::SyntaxSlice:
@@ -2639,6 +2752,8 @@ private:
       return {.value = syntaxValue(arena.literal(text(0), span(1)))};
     case IntrinsicKind::SyntaxPunctuation:
       return {.value = syntaxValue(arena.punctuation(text(0), span(1)))};
+    case IntrinsicKind::SyntaxKeyword:
+      return {.value = syntaxValue(arena.keyword(text(0), span(1)))};
     case IntrinsicKind::SyntaxIdentifier:
       return {.value = syntaxValue(arena.identifier(text(0), span(1)))};
     case IntrinsicKind::SyntaxFresh:

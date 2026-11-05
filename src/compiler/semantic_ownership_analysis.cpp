@@ -7249,6 +7249,7 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
         {"literal", IntrinsicKind::SyntaxLiteral},
         {"punctuation", IntrinsicKind::SyntaxPunctuation},
         {"identifier", IntrinsicKind::SyntaxIdentifier},
+        {"keyword", IntrinsicKind::SyntaxKeyword},
         {"fresh", IntrinsicKind::SyntaxFresh},
         {"reference", IntrinsicKind::SyntaxReference},
         {"join", IntrinsicKind::SyntaxJoin},

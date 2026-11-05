@@ -80,6 +80,7 @@ auto SemanticVisitor::Impl::executeProceduralMacro(
   }
   if (macroExpansionDepth == 0) {
     macroExpandedBodies = 0;
+    proceduralSyntaxBudget = std::make_shared<SyntaxBudget>();
     proceduralWork = requestSession.constexprWork
                          ? requestSession.constexprWork
                          : std::make_shared<ConstexprWorkBudget>();
@@ -92,8 +93,10 @@ auto SemanticVisitor::Impl::executeProceduralMacro(
            "macro-expansions limit.");
     return true;
   }
+  const auto activeRequest =
+      std::pair{function->id, call.capturedArguments()->text};
   if (std::find(proceduralActive.begin(), proceduralActive.end(),
-                function->id) != proceduralActive.end()) {
+                activeRequest) != proceduralActive.end()) {
     reject(
         "A recursive procedural expansion requires its own unfinished result.");
     return true;
@@ -107,7 +110,7 @@ auto SemanticVisitor::Impl::executeProceduralMacro(
   } expansionScope{*this};
   ++macroExpansionDepth;
   ++macroExpandedBodies;
-  proceduralActive.push_back(function->id);
+  proceduralActive.push_back(activeRequest);
   MacroLookupContext caller{.namespaceScope = currentNamespace,
                             .sourceUnit = currentSourceUnit,
                             .ownerClass = currentClass,
@@ -138,21 +141,34 @@ auto SemanticVisitor::Impl::executeProceduralMacro(
                                  : currentDeclarationOrder,
                          .invocation = expressionToken(call)});
   try {
+    std::vector<std::uint32_t> freshContexts;
     SyntaxArena arena(
         definitionContext, callerContext,
         [&] {
           const auto fresh = ++nextExpansion;
           macroLookup.emplace(fresh, macroLookup.at(definitionContext));
+          freshContexts.push_back(fresh);
           return fresh;
         },
-        {},
+        {.nodes = compileLimits.syntaxNodes,
+         .bytes = compileLimits.syntaxBytes,
+         .tokens = compileLimits.syntaxTokens,
+         .depth = compileLimits.syntaxDepth},
         [&] {
           throwIfCancelled();
           return false;
         },
         {{tokenSpan(call.paren()),
           "While expanding this procedural invocation."},
-         {tokenSpan(definition.name()), "The procedural definition is here."}});
+         {tokenSpan(definition.name()), "The procedural definition is here."}},
+        proceduralSyntaxBudget,
+        [&](std::size_t work) {
+          if (work >
+              compileLimits.constexprSteps -
+                  std::min(proceduralWork->steps, compileLimits.constexprSteps))
+            throw SyntaxError("Procedural constexpr-steps limit exceeded.");
+          proceduralWork->steps += work;
+        });
     const auto captured = arena.capture(*call.capturedArguments());
     const auto input = arena.group(captured, 1);
     MirProceduralRequest request{
@@ -170,24 +186,147 @@ auto SemanticVisitor::Impl::executeProceduralMacro(
       }
       request.types[i] = openClassType(found->second);
     }
-    auto context = makeConstexprInterpreter();
-    context.work = proceduralWork;
-    context.requireMir = true;
-    context.allowVoidCompletion = true;
-    context.procedural = &request;
-    const auto result =
-        executeStagedConstexpr(&definition, {}, {}, {}, call.paren(), context);
-    if (!result || !context.proceduralResult) {
-      if (context.proceduralDiagnostic)
-        diagnostics.push_back(std::move(*context.proceduralDiagnostic));
-      else
-        reject(result ? result->detail
-                      : "The procedural closure could not be staged as "
-                        "verified MIR.");
-      currentType = SemanticType::Unknown;
-      return true;
+    // Identity is conservative: exact text/origins, incoming hygiene, lexical
+    // declarations and generic substitutions. The immutable analysis itself
+    // supplies definition/helper/module, compiler/profile and target identity.
+    std::string key;
+    const auto part = [&](std::string_view value) {
+      key += std::to_string(value.size()) + ":";
+      key += value;
+    };
+    part(std::to_string(function->id));
+    part(std::to_string(currentSourceUnit));
+    part(std::to_string(currentClass.value_or(0)));
+    part(std::to_string(currentDeclarationOrder));
+    part(compileLimitsIdentity(compileLimits));
+    for (const auto &name : currentNamespace)
+      part(name);
+    part(call.capturedArguments()->text);
+    for (const auto &token : call.capturedArguments()->tokens) {
+      throwIfCancelled();
+      part(token.source);
+      part(std::to_string(token.position));
+      part(std::to_string(token.line));
+      part(std::to_string(token.sourceLength));
+      part(std::to_string(token.expansion));
+      part(std::to_string(static_cast<unsigned>(token.kind)));
+      part(token.lexeme);
     }
-    const auto expression = context.proceduralResult->expression;
+    for (const auto &scope : scopes) {
+      std::vector<std::string> bindings;
+      for (const auto &[name, symbol] : scope)
+        bindings.push_back(name + ":" + symbol.declaration.source + ":" +
+                           std::to_string(symbol.declaration.position) + ":" +
+                           std::to_string(symbol.declaration.expansion) + ":" +
+                           std::to_string(reinterpret_cast<std::uintptr_t>(
+                               symbol.variableDeclaration)) +
+                           ":" +
+                           std::to_string(reinterpret_cast<std::uintptr_t>(
+                               symbol.parameterDeclaration)));
+      std::sort(bindings.begin(), bindings.end());
+      part("scope");
+      for (const auto &binding : bindings)
+        part(binding);
+    }
+    const GenericSubstitution genericContext{
+        .types = instanceTypeSubstitution, .values = instanceValueSubstitution};
+    const auto reused = std::find_if(
+        proceduralExpansions.begin(), proceduralExpansions.end(),
+        [&](const auto &entry) {
+          return reuseConstantEvaluations && entry.key == key &&
+                 entry.genericContext.types == genericContext.types &&
+                 entry.genericContext.values == genericContext.values;
+        });
+    std::optional<ProceduralCachedExpansion> pendingCache;
+    std::optional<SealedSyntaxExpression> sealed;
+    if (reused != proceduralExpansions.end()) {
+      const auto replay = [&](std::size_t cost, std::size_t &used,
+                              std::size_t limit, std::string_view name) {
+        if (cost > limit - std::min(used, limit))
+          throw SyntaxError("Procedural " + std::string(name) +
+                            " limit exceeded during cache replay.");
+        used += cost;
+      };
+      replay(reused->steps, proceduralWork->steps, compileLimits.constexprSteps,
+             "constexpr-steps");
+      replay(reused->storage.nodes, proceduralSyntaxBudget->nodes,
+             compileLimits.syntaxNodes, "syntax-nodes");
+      replay(reused->storage.bytes, proceduralSyntaxBudget->bytes,
+             compileLimits.syntaxBytes, "syntax-bytes");
+      replay(reused->storage.tokens, proceduralSyntaxBudget->tokens,
+             compileLimits.syntaxTokens, "syntax-tokens");
+      std::unordered_map<std::uint32_t, std::uint32_t> contexts{
+          {reused->caller, callerContext},
+          {reused->definition, definitionContext}};
+      for (const auto old : reused->fresh) {
+        const auto fresh = ++nextExpansion;
+        macroLookup.emplace(fresh, macroLookup.at(definitionContext));
+        contexts.emplace(old, fresh);
+      }
+      const auto remap = [&](const Token &original) {
+        throwIfCancelled();
+        Token copy = original;
+        if (const auto found = contexts.find(copy.expansion);
+            found != contexts.end())
+          copy.expansion = found->second;
+        return copy;
+      };
+      auto syntax = std::make_shared<SyntaxCapture>(*reused->sealed.syntax);
+      for (auto &token : syntax->tokens)
+        token = remap(token);
+      sealed = SealedSyntaxExpression{
+          cloneExpr(*reused->sealed.expression, 0, {.token = remap}),
+          std::move(syntax), reused->sealed.expansionTrace};
+      diagnostics.insert(diagnostics.end(), reused->warnings.begin(),
+                         reused->warnings.end());
+    } else {
+      const auto stepsBefore = proceduralWork->steps;
+      const auto storageBefore = *proceduralSyntaxBudget;
+      const auto warningsBefore = diagnostics.size();
+      auto context = makeConstexprInterpreter();
+      context.work = proceduralWork;
+      context.requireMir = true;
+      context.allowVoidCompletion = true;
+      context.procedural = &request;
+      const auto result = executeStagedConstexpr(&definition, {}, {}, {},
+                                                 call.paren(), context);
+      if (!result || !context.proceduralResult) {
+        if (context.proceduralDiagnostic)
+          diagnostics.push_back(std::move(*context.proceduralDiagnostic));
+        else
+          reject(result ? result->detail
+                        : "The procedural closure could not be staged as "
+                          "verified MIR.");
+        currentType = SemanticType::Unknown;
+        return true;
+      }
+      sealed = std::move(context.proceduralResult);
+      const auto storage =
+          SyntaxBudget{proceduralSyntaxBudget->nodes - storageBefore.nodes,
+                       proceduralSyntaxBudget->bytes - storageBefore.bytes,
+                       proceduralSyntaxBudget->tokens - storageBefore.tokens};
+      const auto retainedBytes =
+          storage.bytes + key.size() +
+          sealed->syntax->tokens.size() * sizeof(Token) * 2;
+      if (reuseConstantEvaluations && proceduralExpansions.size() < 256 &&
+          retainedBytes <=
+              8 * 1024 * 1024 - std::min(proceduralCacheBytes,
+                                         std::size_t{8 * 1024 * 1024})) {
+        pendingCache = ProceduralCachedExpansion{
+            .key = std::move(key),
+            .genericContext = genericContext,
+            .sealed = *sealed,
+            .caller = callerContext,
+            .definition = definitionContext,
+            .fresh = std::move(freshContexts),
+            .storage = storage,
+            .retainedBytes = retainedBytes,
+            .steps = proceduralWork->steps - stepsBefore,
+            .warnings = std::vector<Diagnostic>(
+                diagnostics.begin() + warningsBefore, diagnostics.end())};
+      }
+    }
+    const auto expression = sealed->expression;
     const auto diagnosticStart = diagnostics.size();
     const auto resultType = analyze(*expression);
     if (hasErrorDiagnostics(std::span(diagnostics).subspan(diagnosticStart))) {
@@ -201,6 +340,10 @@ auto SemanticVisitor::Impl::executeProceduralMacro(
       synthesizedExpressions.push_back(expression);
       currentType = SemanticType::Unknown;
       return true;
+    }
+    if (pendingCache) {
+      proceduralCacheBytes += pendingCache->retainedBytes;
+      proceduralExpansions.push_back(std::move(*pendingCache));
     }
     semanticModel.recordExpressionAlias(call, expression);
     if (const auto *info = semanticModel.findExpression(*expression))

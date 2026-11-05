@@ -9,7 +9,9 @@
 #include <algorithm>
 #include <array>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
 
 namespace {
@@ -165,13 +167,15 @@ void arena() {
 }
 lang::FrontendResult
 analyze(std::string source,
-        std::string macro = std::string(proceduralDeclaration)) {
+        std::string macro = std::string(proceduralDeclaration),
+        lang::FrontendOptions options = {}) {
   const auto root = std::filesystem::current_path() / "proc-fixtures";
   const auto library =
       std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
-  return lang::Frontend().analyze(
-      root / "main.gti", std::move(source), {library / "prelude.gti"},
-      {{(root / "library.gti").string(), std::move(macro)}}, {library});
+  return lang::Frontend(std::move(options))
+      .analyze(root / "main.gti", std::move(source), {library / "prelude.gti"},
+               {{(root / "library.gti").string(), std::move(macro)}},
+               {library});
 }
 void diagnostic(const lang::FrontendResult &result, std::string_view message) {
   const bool found = std::any_of(
@@ -355,10 +359,92 @@ void semantics() {
             [](const auto &edge) { return edge.spelling == "missing.gti"; }),
         "unbalanced input cannot expose following directives to the loader");
 }
+void execution() {
+  const auto libraryPath =
+      std::filesystem::path(__FILE__).parent_path().parent_path() /
+      "examples/procedural-macro-library.gti";
+  std::ifstream file(libraryPath);
+  std::ostringstream source;
+  source << file.rdbuf();
+  check(file.good() || file.eof(), "procedural library fixture is readable");
+  const std::string library = source.str();
+  const auto accepted = [&](std::string program, std::string macros = {}) {
+    auto result = analyze(std::move(program),
+                          macros.empty() ? library : std::move(macros));
+    if (!result.canGenerateCode())
+      for (const auto &d : result.diagnostics)
+        std::cerr << d.code << ": " << d.message << '\n';
+    check(result.canGenerateCode(),
+          "procedural program reaches verified ordinary MIR");
+    return result;
+  };
+  auto identity = accepted("import \"library.gti\"; int main(){ int value=21; "
+                           "return identity!({value + value}) - 42; }");
+  for (const auto &function : identity.mir.functionInstances()) {
+    check(!function.proceduralFunction,
+          "procedural body never reaches runtime MIR");
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions)
+        check(!lang::syntaxIntrinsic(instruction.intrinsic),
+              "syntax intrinsic never reaches runtime MIR");
+  }
+  accepted("import \"library.gti\"; int main(){ int saved=9; return "
+           "twice_once!({saved}) - 18; }");
+  accepted("import \"library.gti\"; int main(){ return "
+           "identity!({twice_once!({21})}) - 42; }");
+  accepted("import \"library.gti\"; T relay<T>(T value){ return "
+           "identity!({value}); } int main(){ return relay<int>(42)-42; }");
+  diagnostic(
+      analyze(
+          "import \"library.gti\"; int main(){return identity!({missing});}",
+          library),
+      "Unknown");
+  diagnostic(
+      analyze("import \"library.gti\"; int main(){return identity!({1;});}",
+              library),
+      "trailing");
+  diagnostic(analyze("import \"library.gti\"; int main(){int x = "
+                     "identity!({true}); return 0;}",
+                     library),
+             "type");
+  accepted("import \"library.gti\"; int main(){return "
+           "identity!({identity!({1})}) - 1;}");
+  auto limited = lang::FrontendOptions{};
+  limited.limits.syntaxNodes = 1;
+  diagnostic(
+      analyze("import \"library.gti\"; int main(){return identity!({1});}",
+              library, limited),
+      "syntax-nodes");
+  limited = {};
+  limited.limits.constexprSteps = 8;
+  diagnostic(
+      analyze("import \"library.gti\"; int main(){return identity!({1});}",
+              library, limited),
+      "constexpr-steps");
+  const std::string rejected =
+      "export module library; import std.syntax; "
+      "export #macro(proc) std::syntax::expr reject(std::syntax::tokens input) "
+      "{ "
+      "return "
+      "std::syntax::fail(std::syntax::location(input,uint64_t(1),uint64_t(2)), "
+      "\"library rejection\"); }";
+  auto failure = analyze(
+      "import \"library.gti\"; int main(){return reject!({42});}", rejected);
+  diagnostic(failure, "library rejection");
+  const auto found = std::find_if(
+      failure.diagnostics.begin(), failure.diagnostics.end(),
+      [](const auto &d) {
+        return d.message.find("library rejection") != std::string::npos;
+      });
+  check(found != failure.diagnostics.end() && found->related.size() >= 2,
+        "library failure retains definition and invocation traces");
+}
+
 } // namespace
 int main() {
   parserAndFormatter();
   arena();
   semantics();
+  execution();
   return failures ? 1 : 0;
 }

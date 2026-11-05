@@ -513,6 +513,7 @@ private:
          .type = resolvedType,
          .traits = instanceTraits,
          .compilerCapability = declaration->compilerCapability,
+         .syntaxKind = declaration->syntaxKind,
          .lifecycleBoundBorrowCarrier = lifecycleBoundBorrowCarrier,
          .mutexGuardBorrowCarrier = declaration->mutexGuardBorrowCarrier,
          .transferPolicy = declaration->transferPolicy,
@@ -585,6 +586,18 @@ private:
     if (declaration.macroExpansion &&
         !(constantClosure && declaration.declaration &&
           declaration.declaration->isProceduralMacro()))
+      return 0;
+    const auto syntaxType = [&](const SemanticType &type) {
+      const auto *owner = type.kind == SemanticType::Class
+                              ? baseModel->findClassType(type.classId)
+                              : nullptr;
+      return owner && owner->syntaxKind != CompileTimeSyntaxKind::None;
+    };
+    if (!constantClosure &&
+        (declaration.proceduralOnly || syntaxIntrinsic(declaration.intrinsic) ||
+         syntaxType(declaration.returnType) ||
+         std::any_of(declaration.parameterTypes.begin(),
+                     declaration.parameterTypes.end(), syntaxType)))
       return 0;
     // Constant staging is lazy: a callee outside the completed constexpr
     // closure keeps its exact signature but no body, and the MIR evaluator
@@ -700,6 +713,8 @@ private:
          .staticMember = declaration.staticMember,
          .internalLinkage = declaration.internalLinkage,
          .constexprFunction = declaration.constexprFunction,
+         .proceduralFunction = declaration.declaration &&
+                               declaration.declaration->isProceduralMacro(),
          .requiresUnsafe = declaration.requiresUnsafe,
          .neverReturns = declaration.neverReturns,
          .tracksCaller = declaration.tracksCaller,

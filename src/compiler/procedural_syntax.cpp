@@ -27,10 +27,14 @@ SyntaxArena::SyntaxArena(std::uint32_t definitionContext,
                          std::uint32_t callerContext,
                          std::function<std::uint32_t()> freshContext,
                          SyntaxLimits limits, std::function<bool()> cancelled,
-                         std::vector<RelatedDiagnostic> expansionTrace)
+                         std::vector<RelatedDiagnostic> expansionTrace,
+                         std::shared_ptr<SyntaxBudget> budget,
+                         std::function<void(std::size_t)> workCharge)
     : session_(nextSession.fetch_add(1)), definitionContext_(definitionContext),
       callerContext_(callerContext), freshContext_(std::move(freshContext)),
       limits_(limits), cancelled_(std::move(cancelled)),
+      budget_(budget ? std::move(budget) : std::make_shared<SyntaxBudget>()),
+      charge_(std::move(workCharge)),
       expansionTrace_(std::move(expansionTrace)) {
   if (!session_ || !definitionContext_ || !callerContext_ || !freshContext_)
     throw SyntaxError("Syntax requires valid frontend context identities.");
@@ -38,6 +42,15 @@ SyntaxArena::SyntaxArena(std::uint32_t definitionContext,
     throw SyntaxError("Syntax expansion trace limit exceeded.");
 }
 SyntaxArena::~SyntaxArena() = default;
+void SyntaxArena::charge(std::size_t work) const {
+  check();
+  if (charge_)
+    charge_(work);
+}
+std::function<void(std::size_t)>
+SyntaxArena::exchangeWorkCharge(std::function<void(std::size_t)> next) {
+  return std::exchange(charge_, std::move(next));
+}
 void SyntaxArena::check() const {
   if (cancelled_ && cancelled_())
     throw SyntaxError("Syntax request cancelled.");
@@ -56,12 +69,12 @@ std::size_t SyntaxArena::put(Node node) {
   check();
   const auto bytes = node.syntax ? node.syntax->text.size() : 0;
   const auto tokens = node.syntax ? node.syntax->tokens.size() : 0;
-  if (nodes_.size() >= limits_.nodes)
-    throw SyntaxError("Syntax node limit exceeded.");
-  if (bytes > limits_.bytes - bytes_)
-    throw SyntaxError("Syntax byte limit exceeded.");
-  if (tokens > limits_.tokens - tokens_)
-    throw SyntaxError("Syntax token limit exceeded.");
+  if (budget_->nodes >= limits_.nodes)
+    throw SyntaxError("Procedural syntax-nodes limit exceeded.");
+  if (bytes > limits_.bytes - budget_->bytes)
+    throw SyntaxError("Procedural syntax-bytes limit exceeded.");
+  if (tokens > limits_.tokens - budget_->tokens)
+    throw SyntaxError("Procedural syntax-tokens limit exceeded.");
   // Every construction path, including joins of individually shallow pieces,
   // must enforce the output nesting bound before publishing a handle.
   std::size_t depth = 0;
@@ -72,7 +85,7 @@ std::size_t SyntaxArena::put(Node node) {
           token.kind == TokenKind::LEFT_PAREN ||
           token.kind == TokenKind::LEFT_BRACKET) {
         if (++depth > limits_.depth)
-          throw SyntaxError("Syntax group depth limit exceeded.");
+          throw SyntaxError("Procedural syntax-depth limit exceeded.");
       } else if (token.kind == TokenKind::RIGHT_BRACE ||
                  token.kind == TokenKind::RIGHT_PAREN ||
                  token.kind == TokenKind::RIGHT_BRACKET) {
@@ -80,8 +93,10 @@ std::size_t SyntaxArena::put(Node node) {
           --depth;
       }
     }
-  bytes_ += bytes;
-  tokens_ += tokens;
+  charge(1 + bytes + tokens);
+  ++budget_->nodes;
+  budget_->bytes += bytes;
+  budget_->tokens += tokens;
   nodes_.push_back(std::move(node));
   return nodes_.size() - 1;
 }
@@ -169,8 +184,8 @@ SyntaxTokens SyntaxArena::constructed(std::string spelling, SyntaxSpan origin,
                                       SyntaxCategory category,
                                       std::uint32_t context) {
   const SourceSpan where = get(origin).sourceSpan;
-  if (spelling.size() > limits_.bytes - bytes_)
-    throw SyntaxError("Syntax byte limit exceeded.");
+  if (spelling.size() > limits_.bytes - budget_->bytes)
+    throw SyntaxError("Procedural syntax-bytes limit exceeded.");
   Lexer lexer;
   auto tokens = lexer.scan(spelling, where.source);
   if (tokens.size() != 2 || lexer.hadError())
@@ -181,16 +196,26 @@ SyntaxTokens SyntaxArena::constructed(std::string spelling, SyntaxSpan origin,
     valid = value.kind == TokenKind::IDENTIFIER;
   else if (category == SyntaxCategory::Expression)
     valid = literalKind(value.kind);
+  else if (category == SyntaxCategory::Span)
+    valid = (isKeywordToken(value.kind) || isTypeKeywordToken(value.kind)) &&
+            value.kind != TokenKind::UNSAFE && !syntaxDirective(value.kind) &&
+            value.kind != TokenKind::HASH_MACRO;
   else
     valid = isOperatorToken(value.kind) ||
             value.kind == TokenKind::LEFT_PAREN ||
             value.kind == TokenKind::RIGHT_PAREN ||
             value.kind == TokenKind::LEFT_BRACE ||
             value.kind == TokenKind::RIGHT_BRACE ||
+            value.kind == TokenKind::LEFT_BRACKET ||
+            value.kind == TokenKind::RIGHT_BRACKET ||
             value.kind == TokenKind::COMMA ||
             value.kind == TokenKind::SEMICOLON || value.kind == TokenKind::DOT;
   if (!valid)
     throw SyntaxError("Token does not match the requested syntax category.");
+  if (where.end < where.start ||
+      where.end - where.start > std::numeric_limits<std::uint32_t>::max())
+    throw SyntaxError("Syntax diagnostic origin is out of range.");
+  value.sourceLength = static_cast<std::uint32_t>(where.end - where.start);
   value.position = where.start;
   value.line = where.line;
   value.generated = true;
@@ -215,6 +240,10 @@ SyntaxTokens SyntaxArena::identifier(std::string spelling, SyntaxSpan origin) {
   return constructed(std::move(spelling), origin, SyntaxCategory::Binding,
                      definitionContext_);
 }
+SyntaxTokens SyntaxArena::keyword(std::string spelling, SyntaxSpan origin) {
+  return constructed(std::move(spelling), origin, SyntaxCategory::Span,
+                     definitionContext_);
+}
 SyntaxBinding SyntaxArena::freshBinding(std::string spelling,
                                         SyntaxSpan origin) {
   const auto identity = freshContext_();
@@ -237,8 +266,9 @@ SyntaxTokens SyntaxArena::join(std::span<const SyntaxTokens> parts) {
     const auto &syntax = *get(part).syntax;
     // Check before allocation, including discarded construction in the total.
     if (syntax.tokens.size() >
-            limits_.tokens - tokens_ - result->tokens.size() ||
-        syntax.text.size() + 1 > limits_.bytes - bytes_ - result->text.size())
+            limits_.tokens - budget_->tokens - result->tokens.size() ||
+        syntax.text.size() + 1 >
+            limits_.bytes - budget_->bytes - result->text.size())
       throw SyntaxError("Syntax construction limit exceeded.");
     result->tokens.insert(result->tokens.end(), syntax.tokens.begin(),
                           syntax.tokens.end());
@@ -259,6 +289,7 @@ SyntaxExpression SyntaxArena::parse(SyntaxTokens input) {
       syntax->tokens.back().kind == TokenKind::SEMICOLON)
     throw SyntaxError(
         "Expected exactly one expression without trailing tokens.");
+  charge(1 + syntax->text.size() + syntax->tokens.size());
   Parser parser(syntax);
   std::shared_ptr<const Expr> expression = parser.parseExpression();
   check();
@@ -293,8 +324,7 @@ Diagnostic SyntaxArena::failure(SyntaxSpan primary, std::string message,
 }
 void SyntaxArena::reset() {
   nodes_.clear();
-  bytes_ = 0;
-  tokens_ = 0;
+  // Reset invalidates handles, but never refunds the outer request budget.
   freshIdentities_.clear();
   if (generation_ == std::numeric_limits<std::size_t>::max())
     throw SyntaxError("Syntax session generation exhausted.");
