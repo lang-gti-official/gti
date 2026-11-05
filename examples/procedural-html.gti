@@ -1,4 +1,5 @@
 import "demo/html.gti";
+import std.string;
 
 struct User { std::string_view name; User(std::string_view value) : name(value) {} };
 mut int observations = 0;
@@ -7,6 +8,8 @@ std::string_view observe(int order, std::string_view value) {
   observations++;
   return value;
 }
+std::string_view label<T>(T value, std::string_view text) { return text; }
+demo::node card<T>(T value, User& user) { return html!({<h1>{label<T>(value, user.name)}</h1>}); }
 int main() {
   User user{"Ada & Lin"};
   auto page = html!({
@@ -28,5 +31,9 @@ int main() {
   });
   auto second_text = demo::render(second);
   if (observations != 3 || second_text != "<section title=\"&quot;&amp;&#39;\">&lt;&amp;&gt;<em>owned child</em><br/>done</section>") { return 2; }
+  auto generic = card<int>(7, user);
+  auto temporary = html!({<p>{std::string("owned temporary")}</p>});
+  if (demo::render(generic) != "<h1>Ada &amp; Lin</h1>" ||
+      demo::render(temporary) != "<p>owned temporary</p>") { return 3; }
   return 0;
 }

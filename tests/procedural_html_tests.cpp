@@ -50,10 +50,10 @@ import demo.html;
 struct User { std::string_view name; User(std::string_view value) : name(value) {} };
 int main() {
   User user{"Ada & Lin"};
-  int with_child = 9;
+  int child = 9; int root = 8; int children = 7; int with_children = 6;
   auto page = demo::html!({<div class="profile"><h1>{user.name}</h1></div>});
   auto text = demo::render(page);
-  return with_child - 9;
+  return child + root + children + with_children - 30;
 }
 )";
   auto snapshot = analyze(source);
@@ -77,8 +77,7 @@ int main() {
       "helpers");
   auto expansion =
       queries.macroExpansion(snapshot, unit, source.find("demo::html!") + 7);
-  require(expansion &&
-              expansion->text.find("with_child") != std::string::npos &&
+  require(expansion && expansion->text.find("append") != std::string::npos &&
               expansion->text.find("user.name") != std::string::npos,
           "inspection presents checked HTML construction and caller splice");
 
@@ -114,6 +113,35 @@ int main() {
                          "page=html!({<div>{42}</div>}); return 0; }");
   require(!badType.semanticValid,
           "unsupported child types are not implicitly stringified");
+  auto privateAccess = analyze(
+      "import demo.html; class Vault { std::string_view secret=\"hidden\"; }; "
+      "int main(){Vault vault; auto page=html!({<p>{vault.secret}</p>}); "
+      "return 0;}");
+  require(!privateAccess.semanticValid &&
+              std::any_of(privateAccess.diagnostics.begin(),
+                          privateAccess.diagnostics.end(),
+                          [](const auto &d) {
+                            return d.message.find("private") !=
+                                   std::string::npos;
+                          }),
+          "caller interpolation cannot inherit library access privileges");
+  auto escaping = analyze(
+      "import demo.html; import std.string; int main(){ auto page=html!({<p>{"
+      "[]() -> std::string_view {std::string local{\"gone\"}; return "
+      "local.view();}()"
+      "}</p>}); return 0;}");
+  require(!escaping.semanticValid &&
+              std::any_of(escaping.diagnostics.begin(),
+                          escaping.diagnostics.end(),
+                          [&](const auto &d) {
+                            return d.code == "GTI-S2045" &&
+                                   d.message.find("owner dependency") !=
+                                       std::string::npos &&
+                                   d.primary.source == entry.string() &&
+                                   !d.related.empty();
+                          }),
+          "ordinary borrow checking rejects an escaping temporary at its "
+          "mapped origin");
   auto duplicate =
       analyze("import demo.html; int main(){ auto child=html!({<b/>}); auto "
               "page=html!({<div>{std::move(child)}{std::move(child)}</div>}); "

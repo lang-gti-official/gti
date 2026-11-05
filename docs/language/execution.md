@@ -72,7 +72,7 @@ An explicit argument bypasses that parameter's default. Default evaluation is
 caller-side language behavior, remains in the enclosing call full-expression,
 and cannot be delegated to a backend language's default-argument mechanism.
 
-#### Typed statement macros
+#### Procedural expression macros
 
 Procedural macros are a separate expression-producing facility. A library can
 export a non-generic macro whose input is an opaque braced token group:
@@ -108,8 +108,39 @@ access, ownership and borrowing checks and lowers normally to LLVM; macro bodies
 and syntax operations do not execute at runtime. Nested expansion shares the
 outer request's work and storage limits. See the runnable
 [`procedural-macros.gti`](../../examples/procedural-macros.gti) identity and
-evaluate-once examples. The HTML demonstration and final feature acceptance
-remain after phase 3 of [RFC 0001](https://github.com/lang-gti-official/rfcs/pull/1).
+evaluate-once examples, and the imported
+[`procedural-html.gti`](../../examples/procedural-html.gti) library demonstration
+from [RFC 0001](https://github.com/lang-gti-official/rfcs/pull/1).
+
+The demo accepts one root element, nested elements, explicit self-closing tags,
+quoted text, braced expression children and quoted/expression attributes:
+
+```gti
+import demo.html;
+auto page = html!({<div class="profile"><h1>{user.name}</h1></div>});
+auto text = demo::render(page);
+```
+
+The external package example is
+[`procedural-html-project`](../../examples/procedural-html-project/gti.toml).
+Its library owns all node/text storage. Text and attribute values are copied or
+moved; interpolations execute once, left-to-right in document order. Text escapes
+`&`, `<`, `>`; attributes also escape quotes and apostrophes. There is no implicit
+stringification, raw HTML insertion or runtime markup parser. This is a small
+owned tree, not a browser DOM or a security sanitizer. Names use ASCII letters,
+underscores and subsequent digits; keyword spellings such as `class` work.
+Unquoted text, HTML comments/entities, hyphenated names, spreads and framework
+features are outside this library grammar. Ordinary GTI comments are trivia.
+
+The library emits ordinary constructors and small append calls. Sibling
+collections reserve once and consume owned elements in batches of at most eight. Depth still follows actual
+nesting and the ordinary parser and compile-time limits remain applicable. Its
+private helpers and generated declaration types use the definition's imports;
+caller interpolations retain caller access and borrow checks. `std::syntax::literal`
+validates one existing literal spelling; `string_literal(value, origin)` instead
+quotes text (including embedded zeroes) into one literal without source injection.
+
+#### Typed statement macros
 
 `#macro` declares a source-defined namespace-scope macro with typed
 **expression parameters**, instead of ordinary eager parameter initialization.

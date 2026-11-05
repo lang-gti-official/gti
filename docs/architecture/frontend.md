@@ -17,8 +17,12 @@ The parser retains capture ownership in `Call`, and AST cloning remaps token
 expansion identities without losing source/trivia. The formatter preserves
 opaque groups, including incomplete editor input. Semantics executes completed
 imported bodies through verified MIR and checks their sealed expression output.
-See [RFC 0001](https://github.com/lang-gti-official/rfcs/pull/1) for the remaining
-phase-3 acceptance gate.
+The external HTML package exercises this path with transitive helper imports.
+Processed-unit reuse preserves exact source/configuration identity; semantic
+expansion reuse never crosses a new target/configuration snapshot. The project
+cache includes the library and transitive helper source graph, so body, input,
+trivia and helper edits cannot reuse a stale executable. See
+[RFC 0001](https://github.com/lang-gti-official/rfcs/pull/1).
 
 The frontend converts one entry source and its dependency graph into a
 syntax-preserving `Program`, then hands that owned tree to semantic analysis.

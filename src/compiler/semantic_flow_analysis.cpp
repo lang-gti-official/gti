@@ -3049,41 +3049,48 @@ auto SemanticVisitor::Impl::finalizeProgramInitialization(
 
 auto SemanticVisitor::Impl::statementSourceUnit(const Stmt &statement) const
     -> SourceUnitId {
+  // Generated declaration tokens retain caller spans for diagnostics, but
+  // their imports belong to their hygiene domain. Do not overwrite the
+  // enclosing expansion's lookup unit with its diagnostic source file.
+  const auto lookupUnit = [&](const Token &token) {
+    const auto *context = macroContext(token);
+    return context ? context->sourceUnit : sourceUnitFor(token);
+  };
   if (const auto *conditional = stmtAs<ConditionalStmt>(&statement)) {
-    return sourceUnitFor(conditional->directive());
+    return lookupUnit(conditional->directive());
   }
   if (const auto *classDecl = stmtAs<ClassDecl>(&statement)) {
-    return sourceUnitFor(classDecl->name());
+    return lookupUnit(classDecl->name());
   }
   if (const auto *enumDecl = stmtAs<EnumDecl>(&statement)) {
-    return sourceUnitFor(enumDecl->name());
+    return lookupUnit(enumDecl->name());
   }
   if (const auto *function = stmtAs<FunctionDecl>(&statement)) {
-    return sourceUnitFor(function->name());
+    return lookupUnit(function->name());
   }
   if (const auto *alias = stmtAs<NamespaceAliasDecl>(&statement)) {
-    return sourceUnitFor(alias->name());
+    return lookupUnit(alias->name());
   }
   if (const auto *namespaceDecl = stmtAs<NamespaceDecl>(&statement)) {
-    return sourceUnitFor(namespaceDecl->name());
+    return lookupUnit(namespaceDecl->name());
   }
   if (const auto *alias = stmtAs<TypeAliasDecl>(&statement)) {
-    return sourceUnitFor(alias->name());
+    return lookupUnit(alias->name());
   }
   if (const auto *variable = stmtAs<VariableDecl>(&statement)) {
-    return sourceUnitFor(variable->name());
+    return lookupUnit(variable->name());
   }
   if (const auto *assertion = stmtAs<StaticAssertDecl>(&statement)) {
-    return sourceUnitFor(assertion->keyword());
+    return lookupUnit(assertion->keyword());
   }
   if (const auto *binding = stmtAs<StructuredBindingDecl>(&statement)) {
-    return sourceUnitFor(binding->autoKeyword());
+    return lookupUnit(binding->autoKeyword());
   }
   if (const auto *empty = stmtAs<EmptyStmt>(&statement)) {
-    return sourceUnitFor(empty->semicolon());
+    return lookupUnit(empty->semicolon());
   }
   if (const auto *externC = stmtAs<ExternCDecl>(&statement)) {
-    return sourceUnitFor(externC->keyword());
+    return lookupUnit(externC->keyword());
   }
   return 0;
 }

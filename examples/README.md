@@ -1,3 +1,5 @@
+# GTI examples
+
 [`procedural-html.gti`](procedural-html.gti) imports the source-defined
 [`demo/html.gti`](demo/html.gti) library and demonstrates `html!({...})`:
 owned nested nodes, keyword attribute names, text/attribute escaping, moved
@@ -7,16 +9,13 @@ same library through `import demo.html;`. Run `gti run app` in that directory,
 or compile the standalone example with `gti procedural-html.gti`. This is a
 small token-based markup grammar, not a browser DOM or a sanitizer.
 
-# GTI examples
-
 [`procedural-macros.gti`](procedural-macros.gti) imports
 [`procedural-macro-library.gti`](procedural-macro-library.gti) and demonstrates
 identity, nested expansion, hygienic generated bindings and evaluating an input
 once. `procedural_execution_example` runs it through LLVM O0/O3.
 [`procedural-macro-declaration.gti`](procedural-macro-declaration.gti) also keeps
 an ordinary typed macro alongside a procedural declaration. These focused
-examples are outside the numbered full-language census. The HTML demonstration
-and final feature acceptance remain in phase 3 of
+examples are outside the numbered full-language census. The imported HTML library and these examples implement the bounded design in
 [RFC 0001](https://github.com/lang-gti-official/rfcs/pull/1).
 
 [`llvm/native-c-storage.gti`](llvm/native-c-storage.gti) reads and updates

@@ -9,6 +9,11 @@ related location. Library failures use a validated input span as primary and
 retain invocation/definition traces. Resource exhaustion names the limit and its
 configuration hint. Opaque embedded names are checked only if the macro emits
 them into its result; resulting ordinary diagnostics retain expansion traces.
+The source HTML library uses `fail_related` for mismatched tags and invalid
+markup; it owns those messages. Normal unknown-name, private-access, type, move
+and borrow errors in emitted interpolations keep their ordinary diagnostic codes
+and written spans. Safely quoting a string never interprets its contents as
+source or grants a new lookup context.
 
 `GTI-I0016` stops source loading at an unbalanced procedural group before any
 following directive can be interpreted outside a broken capture boundary.

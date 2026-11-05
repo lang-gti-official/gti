@@ -1,6 +1,7 @@
 #include "gti/ast_clone.h"
 #include "gti/formatter.h"
 #include "gti/frontend.h"
+#include "gti/frontend_cache.h"
 #include "gti/frontend_work.h"
 #include "gti/language_queries.h"
 #include "gti/lexer.h"
@@ -379,6 +380,45 @@ void semantics() {
             [](const auto &edge) { return edge.spelling == "missing.gti"; }),
         "unbalanced input cannot expose following directives to the loader");
 }
+void sharedSyntaxConstruction() {
+  std::uint32_t identity = 100;
+  auto budget = std::make_shared<lang::SyntaxBudget>();
+  std::size_t work = 0;
+  lang::SyntaxArena arena(
+      10, 20, [&] { return ++identity; }, {}, {}, {}, budget,
+      [&](std::size_t amount) { work += amount; });
+  const auto atom = arena.capture(capture("x"));
+  const auto empty = arena.slice(atom, 0, 0);
+  auto joined = atom;
+  for (int i = 0; i < 1024; ++i) {
+    const std::array parts{empty, joined};
+    joined = arena.join(parts);
+  }
+  check(arena.size(joined) == 1 && budget->tokens == 1,
+        "joins retain shared pieces rather than copied growing token tables");
+  check(arena.text(joined) == "x" && budget->tokens == 2 && work < 10000,
+        "materialization preserves spelling with bounded linear work");
+  const auto before = budget->tokens;
+  check(arena.text(joined) == "x" && budget->tokens == before,
+        "repeated inspection reuses its retained flat table");
+  auto doubling = atom;
+  rejects(
+      [&] {
+        for (int i = 0; i < 32; ++i) {
+          const std::array parts{doubling, doubling};
+          doubling = arena.join(parts);
+        }
+      },
+      "shared DAG cannot conceal exponentially large output");
+  auto nothing = empty;
+  for (int i = 0; i < 64; ++i) {
+    const std::array parts{nothing, nothing};
+    nothing = arena.join(parts);
+  }
+  const auto beforeEmpty = work;
+  check(arena.text(nothing).empty() && work - beforeEmpty < 10,
+        "an empty shared DAG cannot require exponential traversal");
+}
 void execution() {
   const auto libraryPath =
       std::filesystem::path(__FILE__).parent_path().parent_path() /
@@ -398,6 +438,20 @@ void execution() {
           "procedural program reaches verified ordinary MIR");
     return result;
   };
+  accepted("import \"library.gti\"; int main(){auto value=quoted!({word}); "
+           "return value == \"word\" ? 0 : 1;}",
+           R"(
+export module library;
+import std.syntax;
+constexpr std::string_view inspected(std::syntax::tokens input) {
+  return std::syntax::text(input);
+}
+export #macro(proc) std::syntax::expr quoted(std::syntax::tokens input) {
+  auto token = std::syntax::slice(input, uint64_t(1), uint64_t(2));
+  return std::syntax::parse(std::syntax::string_literal(inspected(token),
+      std::syntax::location(input, uint64_t(1), uint64_t(2))));
+}
+)");
   auto identity = accepted("import \"library.gti\"; int main(){ int value=21; "
                            "return identity!({value + value}) - 42; }");
   for (const auto &function : identity.mir.functionInstances()) {
@@ -476,11 +530,13 @@ export #macro(proc) std::syntax::expr target_value(std::syntax::tokens input) {
 })gti";
   const std::string targetConsumer =
       "import \"library.gti\"; int main(){return target_value!({});}";
+  auto targetCache = std::make_shared<lang::FrontendCache>();
   for (const auto &[triple, value] :
        std::array{std::pair{"arm64-apple-macos", "42"},
                   std::pair{"x86_64-unknown-linux-gnu", "7"}}) {
     lang::FrontendOptions options;
     options.target = *lang::parseTargetTriple(triple);
+    options.cache = targetCache;
     auto result = analyze(targetConsumer, targetMacro, options);
     check(result.canGenerateCode(),
           "procedural target selection is independent of host");
@@ -691,6 +747,104 @@ export #macro(proc) std::syntax::expr fresh_pair(std::syntax::tokens input){
         "library failure retains definition and invocation traces");
 }
 
+void generatedDeclarationContext() {
+  std::string library = R"gti(
+export module library;
+import std.syntax;
+namespace library_detail {
+struct State { int answer; State() : answer(42) {} };
+export #macro(proc) std::syntax::expr state(std::syntax::tokens input) {
+  auto origin = std::syntax::location(input, uint64_t(0), uint64_t(1));
+  auto binding = std::syntax::reference(std::syntax::fresh("saved", origin));
+  mut auto result = std::syntax::punctuation("[", origin);
+)gti";
+  for (const auto &[kind, spelling] :
+       std::vector<std::pair<std::string, std::string>>{
+           {"punctuation", "]"},
+           {"punctuation", "("},
+           {"punctuation", ")"},
+           {"punctuation", "->"},
+           {"keyword", "int"},
+           {"punctuation", "{"},
+           {"identifier", "State"},
+           {"binding", ""},
+           {"punctuation", "{"},
+           {"punctuation", "}"},
+           {"punctuation", ";"},
+           {"keyword", "return"},
+           {"binding", ""},
+           {"punctuation", "."},
+           {"identifier", "answer"},
+           {"punctuation", ";"},
+           {"punctuation", "}"},
+           {"punctuation", "("},
+           {"punctuation", ")"}}) {
+    library += "result=std::syntax::join(result,";
+    library += kind == "binding"
+                   ? "binding"
+                   : "std::syntax::" + kind + "(\"" + spelling + "\",origin)";
+    library += ");\n";
+  }
+  library += "return std::syntax::parse(result); } }";
+  auto result =
+      analyze("import \"library.gti\"; struct State {std::string_view "
+              "answer=\"caller\";}; "
+              "int main(){int saved=7;return library_detail::state!({})-42;}",
+              library);
+  if (!result.canGenerateCode())
+    for (const auto &d : result.diagnostics)
+      std::cerr << d.code << ": " << d.message << '\n';
+  check(result.canGenerateCode(), "generated local type uses definition "
+                                  "imports and namespace, not caller span");
+  diagnostic(analyze("import \"library.gti\"; int main(){"
+                     "library_detail::State hidden{};return 0;}",
+                     library),
+             "private");
+}
+
+void snapshotIdentity() {
+  const std::string library = R"(
+export module library;
+import std.syntax;
+export #macro(proc) std::syntax::expr selected(std::syntax::tokens input) {
+  auto origin = std::syntax::location(input, uint64_t(0), uint64_t(1));
+#ifdef SELECT
+  return std::syntax::parse(std::syntax::literal("17", origin));
+#else
+  return std::syntax::parse(std::syntax::literal("23", origin));
+#endif
+}
+)";
+  const std::string consumer =
+      "import \"library.gti\"; int main(){return selected!({});}";
+  auto cache = std::make_shared<lang::FrontendCache>();
+  for (bool selected : {false, true, false}) {
+    std::string expected;
+    for (bool reuse : {false, true}) {
+      lang::FrontendOptions options;
+      options.cache = cache;
+      options.reuseConstantEvaluations = reuse;
+      if (selected)
+        options.configurationFlags = {"SELECT"};
+      auto result = analyze(consumer, library, options);
+      check(result.canGenerateCode(),
+            "cached source respects procedural configuration");
+      auto view = lang::LanguageQueries().macroExpansion(
+          result, result.sourceGraph.entryUnit(),
+          consumer.find("selected!") + 2);
+      check(view &&
+                view->text.find(selected ? "17" : "23") != std::string::npos,
+            "configuration changes cannot reuse a stale expansion");
+      if (!reuse && view)
+        expected = view->text;
+      else
+        check(view && view->text == expected,
+              "cold/warm expansion is identical");
+      options.limits.syntaxTokens = 1;
+      diagnostic(analyze(consumer, library, options), "syntax-tokens");
+    }
+  }
+}
 void executionCancellation() {
   // Build a verified body independently of frontend cancellation, then stop
   // the procedural profile after execution has begun. The patched descriptors
@@ -752,8 +906,11 @@ int main(){return 0;}
 int main() {
   parserAndFormatter();
   arena();
+  sharedSyntaxConstruction();
   semantics();
   execution();
   executionCancellation();
+  generatedDeclarationContext();
+  snapshotIdentity();
   return failures ? 1 : 0;
 }

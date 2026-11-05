@@ -30,7 +30,8 @@ Procedural bodies and syntax-dependent helpers are omitted from runtime HIR/MIR.
 `@compiler_type` identities. Its intrinsic declarations are recognized only in
 the trusted `std/syntax` unit and namespace, never by application spelling. The
 syntax API supplies token count, text, kind and adjacency inspection; slices and
-groups; validated locations; literal, punctuation, keyword and definition-context
+groups; validated locations; literal and safely quoted string-literal builders;
+punctuation, keyword and definition-context
 identifier builders; fresh binding/reference pairs; joining; expression
 parse/splice; and located failures. Syntax values are available in procedural
 bodies and constexpr helpers, but cannot be constructed or stored at runtime.
@@ -42,7 +43,17 @@ predictably. Executor carriers are private transient values, checked against the
 request's exact syntax types and handle table. Builders retain diagnostic spans
 separately from lookup authority. Call-site tokens keep caller lookup, generated
 identifiers use definition lookup, and fresh binding/reference pairs receive
-unique contexts from the existing `MacroLookupContext` registry.
+unique contexts from the existing `MacroLookupContext` registry. Generated local
+declarations retain their lookup unit independently of their caller-facing
+source span, including types used inside generated lambda bodies.
+
+Joins retain immutable backwards edges instead of repeatedly copying prefixes.
+Node and edge allocation is charged immediately; flattening for text, slicing,
+groups or parsing charges actual stored tokens/bytes before allocating. Virtual
+output size and composed delimiter depth are bounded before flattening. An
+iterative, cancellation-aware traversal avoids recursive host-stack growth;
+empty shared subgraphs do not expand exponentially. This representation changes
+no spelling, origin, lookup authority or configurable limit.
 
 Sealing retains the expression AST and its token/text/origin graph before
 executor teardown. It proves syntax only. The expression then enters ordinary
@@ -60,8 +71,11 @@ generic substitutions and limits; module/configuration/target identities belong
 to that snapshot. Reuse replays logical work/storage charges and clones the
 retained syntax with fresh expansion/binding identities. The bounded cache stores
 sealed syntax, never raw arena handles; it is cleared on a new analysis. Failed
-expansions are not cached. See [RFC 0001](https://github.com/lang-gti-official/rfcs/pull/1)
-for the remaining phase-3 library/editor acceptance gate.
+expansions are not cached. The HTML library in `examples/demo` exercises ordinary
+module scheduling, source dependency invalidation and installed external imports.
+Its grammar, owned node model, escaping and collection policy are GTI source;
+no HTML spelling selects a compiler path. See
+[RFC 0001](https://github.com/lang-gti-official/rfcs/pull/1) for its acceptance contract.
 
 `semantic_macro.cpp` owns typed `#macro` expansion independently of public
 library names. The declaration's macro identity, not an attribute or public

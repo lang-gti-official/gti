@@ -7,11 +7,29 @@
 #include <limits>
 
 namespace lang {
+namespace {
+// A delimiter stream's maximum nonnegative walk is its largest subarray sum.
+// This composable summary checks every intermediate join without flattening it.
+struct SyntaxDepth {
+  std::int64_t delta = 0, prefix = 0, suffix = 0, maximum = 0;
+  void append(const SyntaxDepth &next) {
+    maximum = std::max({maximum, next.maximum, suffix + next.prefix});
+    prefix = std::max(prefix, delta + next.prefix);
+    suffix = std::max(next.suffix, next.delta + suffix);
+    delta += next.delta;
+  }
+};
+} // namespace
 struct SyntaxArena::Node {
   SyntaxCategory category = SyntaxCategory::Tokens;
-  std::shared_ptr<const SyntaxCapture> syntax;
+  mutable std::shared_ptr<const SyntaxCapture> syntax;
   std::shared_ptr<const Expr> expression;
   SourceSpan sourceSpan;
+  // Arena-local backwards edges form an immutable DAG, never a raw exported
+  // capability. Captures and parsed/sealed expressions own flat source tables.
+  std::vector<std::size_t> parts;
+  std::size_t tokenCount = 0, textBytes = 0;
+  SyntaxDepth depth;
 };
 namespace {
 std::atomic<std::uint64_t> nextSession{1};
@@ -78,27 +96,30 @@ std::size_t SyntaxArena::put(Node node) {
   if (tokens > limits_.tokens - budget_->tokens)
     throw SyntaxLimitError(&CompileLimits::syntaxTokens,
                            "Procedural syntax-tokens limit exceeded.");
-  // Every construction path, including joins of individually shallow pieces,
-  // must enforce the output nesting bound before publishing a handle.
-  std::size_t depth = 0;
-  if (node.syntax)
+  if (node.syntax) {
+    node.tokenCount = tokens;
+    node.textBytes = bytes;
     for (const auto &token : node.syntax->tokens) {
       check();
       if (token.kind == TokenKind::LEFT_BRACE ||
           token.kind == TokenKind::LEFT_PAREN ||
-          token.kind == TokenKind::LEFT_BRACKET) {
-        if (++depth > limits_.depth)
-          throw SyntaxLimitError(&CompileLimits::syntaxDepth,
-                                 "Procedural syntax-depth limit exceeded.");
-      } else if (token.kind == TokenKind::RIGHT_BRACE ||
-                 token.kind == TokenKind::RIGHT_PAREN ||
-                 token.kind == TokenKind::RIGHT_BRACKET) {
-        if (depth)
-          --depth;
-      }
+          token.kind == TokenKind::LEFT_BRACKET)
+        node.depth.append({1, 1, 1, 1});
+      else if (token.kind == TokenKind::RIGHT_BRACE ||
+               token.kind == TokenKind::RIGHT_PAREN ||
+               token.kind == TokenKind::RIGHT_BRACKET)
+        node.depth.append({-1, 0, 0, 0});
     }
-  charge(1 + bytes + tokens);
-  ++budget_->nodes;
+  }
+  if (node.depth.maximum > static_cast<std::int64_t>(limits_.depth))
+    throw SyntaxLimitError(&CompileLimits::syntaxDepth,
+                           "Procedural syntax-depth limit exceeded.");
+  // Charge DAG edges as nodes so a variadic join cannot hide unbounded storage.
+  if (node.parts.size() >= limits_.nodes - budget_->nodes)
+    throw SyntaxLimitError(&CompileLimits::syntaxNodes,
+                           "Procedural syntax-nodes limit exceeded.");
+  charge(1 + node.parts.size() + bytes + tokens);
+  budget_->nodes += 1 + node.parts.size();
   budget_->bytes += bytes;
   budget_->tokens += tokens;
   nodes_.push_back(std::move(node));
@@ -124,20 +145,20 @@ SyntaxTokens SyntaxArena::capture(SyntaxCapture input) {
           put({.syntax = std::make_shared<SyntaxCapture>(std::move(input))})};
 }
 std::size_t SyntaxArena::size(SyntaxTokens input) const {
-  return get(input).syntax->tokens.size();
+  return get(input).tokenCount;
 }
 Token SyntaxArena::token(SyntaxTokens input, std::size_t index) const {
-  const auto &tokens = get(input).syntax->tokens;
+  const auto &tokens = materialize(get(input))->tokens;
   if (index >= tokens.size())
     throw SyntaxError("Syntax token index is out of range.");
   return tokens[index];
 }
 std::string SyntaxArena::text(SyntaxTokens input) const {
-  return get(input).syntax->text;
+  return materialize(get(input))->text;
 }
 SyntaxTokens SyntaxArena::slice(SyntaxTokens input, std::size_t begin,
                                 std::size_t end) {
-  const auto syntax = get(input).syntax;
+  const auto syntax = materialize(get(input));
   if (begin > end || end > syntax->tokens.size())
     throw SyntaxError("Syntax slice is out of range.");
   SyntaxCapture result;
@@ -158,21 +179,21 @@ SyntaxTokens SyntaxArena::slice(SyntaxTokens input, std::size_t begin,
           put({.syntax = std::make_shared<SyntaxCapture>(std::move(result))})};
 }
 SyntaxTokens SyntaxArena::group(SyntaxTokens input, std::size_t opening) {
-  const auto &syntax = *get(input).syntax;
+  const auto &syntax = *materialize(get(input));
   const auto found = balancedSyntax(syntax.tokens, opening);
   if (!found.complete)
     throw SyntaxError("Expected a balanced syntax group.");
   return slice(input, opening, found.end + 1);
 }
 bool SyntaxArena::adjacent(SyntaxTokens input, std::size_t left) const {
-  const auto &syntax = *get(input).syntax;
+  const auto &syntax = *materialize(get(input));
   if (left >= syntax.tokens.size() || syntax.tokens.size() - left < 2)
     throw SyntaxError("Syntax adjacency index is out of range.");
   return syntax.textRanges[left].second == syntax.textRanges[left + 1].first;
 }
 SyntaxSpan SyntaxArena::span(SyntaxTokens input, std::size_t begin,
                              std::size_t end) {
-  const auto &tokens = get(input).syntax->origins;
+  const auto &tokens = materialize(get(input))->origins;
   if (begin >= tokens.size() || end <= begin || end > tokens.size())
     throw SyntaxError("Syntax span is out of range.");
   const auto &first = tokens[begin];
@@ -305,42 +326,100 @@ SyntaxBinding SyntaxArena::freshBinding(std::string spelling,
     throw SyntaxError("Fresh binding requires a new frontend identity.");
   const auto value = constructed(std::move(spelling), origin,
                                  SyntaxCategory::Binding, identity);
-  const auto syntax = get(value).syntax;
+  const auto syntax = materialize(get(value));
   return {session_, generation_,
           put({.category = SyntaxCategory::Binding, .syntax = syntax})};
 }
 SyntaxTokens SyntaxArena::reference(SyntaxBinding binding) {
-  const auto syntax = get(binding).syntax;
+  const auto syntax = materialize(get(binding));
   return {session_, generation_, put({.syntax = syntax})};
 }
 SyntaxTokens SyntaxArena::join(std::span<const SyntaxTokens> parts) {
-  auto result = std::make_shared<SyntaxCapture>();
+  Node node;
+  if (parts.size() >= limits_.nodes - budget_->nodes)
+    throw SyntaxLimitError(&CompileLimits::syntaxNodes,
+                           "Procedural syntax-nodes limit exceeded.");
+  node.parts.reserve(parts.size());
   for (auto part : parts) {
-    const auto &syntax = *get(part).syntax;
-    // Check before allocation, including discarded construction in the total.
-    if (syntax.tokens.size() >
-        limits_.tokens - budget_->tokens - result->tokens.size())
+    const auto &child = get(part);
+    if (child.tokenCount > limits_.tokens - node.tokenCount)
       throw SyntaxLimitError(&CompileLimits::syntaxTokens,
                              "Procedural syntax-tokens limit exceeded.");
-    if (syntax.text.size() + 1 >
-        limits_.bytes - budget_->bytes - result->text.size())
+    const auto separator = node.textBytes ? 1u : 0u;
+    if (separator > limits_.bytes - node.textBytes ||
+        child.textBytes > limits_.bytes - node.textBytes - separator)
       throw SyntaxLimitError(&CompileLimits::syntaxBytes,
                              "Procedural syntax-bytes limit exceeded.");
-    result->tokens.insert(result->tokens.end(), syntax.tokens.begin(),
-                          syntax.tokens.end());
-    result->origins.insert(result->origins.end(), syntax.origins.begin(),
-                           syntax.origins.end());
-    if (!result->text.empty())
-      result->text += ' ';
-    const auto offset = result->text.size();
-    for (const auto &[begin, end] : syntax.textRanges)
-      result->textRanges.emplace_back(offset + begin, offset + end);
-    result->text += syntax.text;
+    node.tokenCount += child.tokenCount;
+    node.textBytes += separator + child.textBytes;
+    node.depth.append(child.depth);
+    node.parts.push_back(part.node_);
   }
-  return {session_, generation_, put({.syntax = std::move(result)})};
+  return {session_, generation_, put(std::move(node))};
+}
+std::shared_ptr<const SyntaxCapture>
+SyntaxArena::materialize(const Node &node) const {
+  check();
+  if (node.syntax)
+    return node.syntax;
+  if (node.tokenCount > limits_.tokens - budget_->tokens)
+    throw SyntaxLimitError(&CompileLimits::syntaxTokens,
+                           "Procedural syntax-tokens limit exceeded.");
+  if (node.textBytes > limits_.bytes - budget_->bytes)
+    throw SyntaxLimitError(&CompileLimits::syntaxBytes,
+                           "Procedural syntax-bytes limit exceeded.");
+  charge(1 + node.tokenCount + node.textBytes);
+  // Reserve before allocation, including any materialization later cancelled.
+  budget_->tokens += node.tokenCount;
+  budget_->bytes += node.textBytes;
+  auto result = std::make_shared<SyntaxCapture>();
+  result->tokens.reserve(node.tokenCount);
+  result->origins.reserve(node.tokenCount);
+  result->textRanges.reserve(node.tokenCount);
+  result->text.reserve(node.textBytes);
+  struct Piece {
+    const Node *node;
+    bool separator;
+  };
+  std::vector<Piece> pending{{&node, false}};
+  while (!pending.empty()) {
+    charge(1);
+    const auto piece = pending.back();
+    pending.pop_back();
+    if (piece.separator)
+      result->text += ' ';
+    if (piece.node->tokenCount == 0 && piece.node->textBytes == 0)
+      continue;
+    if (piece.node->syntax) {
+      const auto &syntax = *piece.node->syntax;
+      const auto offset = result->text.size();
+      result->text += syntax.text;
+      result->tokens.insert(result->tokens.end(), syntax.tokens.begin(),
+                            syntax.tokens.end());
+      result->origins.insert(result->origins.end(), syntax.origins.begin(),
+                             syntax.origins.end());
+      for (const auto &[begin, end] : syntax.textRanges) {
+        check();
+        result->textRanges.emplace_back(offset + begin, offset + end);
+      }
+    } else {
+      const auto start = pending.size();
+      bool nonempty = false;
+      for (auto index : piece.node->parts) {
+        const auto &child = nodes_[index];
+        pending.push_back({&child, nonempty});
+        nonempty = nonempty || child.textBytes != 0;
+      }
+      std::reverse(pending.begin() + start, pending.end());
+    }
+  }
+  if (!result->tokens.empty())
+    result->start = result->tokens.front().position;
+  node.syntax = result;
+  return result;
 }
 SyntaxExpression SyntaxArena::parse(SyntaxTokens input) {
-  const auto syntax = get(input).syntax;
+  const auto syntax = materialize(get(input));
   if (syntax->tokens.empty() ||
       syntax->tokens.back().kind == TokenKind::SEMICOLON)
     throw SyntaxError(
@@ -357,7 +436,7 @@ SyntaxExpression SyntaxArena::parse(SyntaxTokens input) {
                .expression = std::move(expression)})};
 }
 SyntaxTokens SyntaxArena::splice(SyntaxExpression expression) {
-  const auto syntax = get(expression).syntax;
+  const auto syntax = materialize(get(expression));
   return {session_, generation_, put({.syntax = syntax})};
 }
 SealedSyntaxExpression SyntaxArena::seal(SyntaxExpression expression) const {

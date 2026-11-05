@@ -1,5 +1,6 @@
 export module markup;
 import std.syntax;
+import std.vector;
 // This is an ordinary transitive source dependency of the exported library.
 // Markup grammar and generation policy are entirely source-defined.
 namespace demo {
@@ -39,6 +40,30 @@ constexpr std::syntax::tokens call(std::string_view function, std::syntax::token
   output = std::syntax::join(output, punct("(", origin));
   output = std::syntax::join(output, arguments);
   return std::syntax::join(output, punct(")", origin));
+}
+constexpr std::syntax::tokens number(uint64_t value, std::syntax::span origin) {
+  auto last = std::syntax::literal(value % uint64_t(2) == 0 ? "0" : "1", origin);
+  if (value < 2) { return last; }
+  mut auto head = std::syntax::join(punct("(", origin), number(value / uint64_t(2), origin));
+  head = std::syntax::join(head, punct("*", origin));
+  head = std::syntax::join(head, std::syntax::literal("2", origin));
+  head = std::syntax::join(head, punct("+", origin));
+  return std::syntax::join(head, std::syntax::join(last, punct(")", origin)));
+}
+constexpr std::syntax::tokens collect(std::syntax::tokens parent, std::syntax::tokens batches,
+                                     uint64_t count, std::syntax::span origin) {
+  auto count_value = std::syntax::join(std::syntax::keyword("uint64_t", origin), std::syntax::join(punct("(", origin), std::syntax::join(number(count, origin), punct(")", origin))));
+  auto reservation = std::syntax::join(parent, std::syntax::join(punct(",", origin), count_value));
+  mut auto output = call("reserve_children", reservation, origin);
+  mut uint64_t position = 0;
+  while (position < std::syntax::size(batches)) {
+    auto batch = std::syntax::group(batches, position);
+    auto length = std::syntax::size(batch);
+    auto arguments = std::syntax::slice(batch, uint64_t(1), length - uint64_t(1));
+    output = call("append", std::syntax::join(output, arguments), origin);
+    position += length;
+  }
+  return output;
 }
 constexpr std::syntax::tokens value(std::syntax::tokens input, mut uint64_t& position,
                                     uint64_t opener) {
@@ -91,6 +116,13 @@ constexpr std::syntax::tokens element_syntax(std::syntax::tokens input, mut uint
     return call("close_empty", result, origin);
   }
   position++;
+  // Reserve once, then append small batches in source order. Avoid a large
+  // generated closure or one nested call per sibling; helpers remain ordinary
+  // source functions with bounded ownership/cleanup graphs.
+  mut auto children = std::syntax::slice(input, uint64_t(0), uint64_t(0));
+  mut auto batch = children;
+  mut uint64_t child_count = 0;
+  mut uint64_t batch_count = 0;
   while (position < std::syntax::size(input)) {
     if (spelling(input, position) == "<" && spelling(input, position + uint64_t(1)) == "/") {
       position += uint64_t(2);
@@ -100,16 +132,29 @@ constexpr std::syntax::tokens element_syntax(std::syntax::tokens input, mut uint
       position++;
       if (spelling(input, position) != ">") { return reject(input, position, "HTML closing tags end with '>'.", opener); }
       position++;
-      return result;
+      if (child_count == 0) { return result; }
+      if (batch_count != 0) {
+        children = std::syntax::join(children, std::syntax::join(punct("(", origin), std::syntax::join(batch, punct(")", origin))));
+      }
+      return collect(result, children, child_count, origin);
     }
     if (spelling(input, position) == "}" || position >= std::syntax::size(input)) {
       return reject(input, position, "HTML element is missing its closing tag.", tag_position);
     }
+    uint64_t child_position = position;
     mut auto child = std::syntax::slice(input, uint64_t(0), uint64_t(0));
     if (spelling(input, position) == "<") { child = element_syntax(input, position); }
     else { child = value(input, position, opener); }
-    auto arguments = std::syntax::join(result, std::syntax::join(punct(",", origin), child));
-    result = call("with_child", arguments, origin);
+    auto child_origin = here(input, child_position);
+    batch = std::syntax::join(batch, punct(",", child_origin));
+    batch = std::syntax::join(batch, call("child", child, child_origin));
+    child_count++;
+    batch_count++;
+    if (batch_count == 8) {
+      children = std::syntax::join(children, std::syntax::join(punct("(", origin), std::syntax::join(batch, punct(")", origin))));
+      batch = std::syntax::slice(input, uint64_t(0), uint64_t(0));
+      batch_count = 0;
+    }
   }
   return reject(input, position, "HTML element is missing its closing tag.", tag_position);
 }

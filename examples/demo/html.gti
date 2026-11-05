@@ -30,15 +30,74 @@ node with_attribute(mut node parent, std::string_view key, std::string_view valu
   parent.attributes.push_back(attribute(key, value));
   return std::move(parent);
 }
-node with_child(mut node parent, node child) {
-  parent.children.push_back(std::move(child));
+node child(node value) { return std::move(value); }
+node child(std::string_view text) { return node(text); }
+node child(std::string text) { return node(std::move(text)); }
+node reserve_children(mut node parent, uint64_t count) {
+  parent.children.reserve(count);
   return std::move(parent);
 }
-node with_child(node parent, std::string_view text) {
-  return with_child(std::move(parent), node(text));
+// Bounded append overloads keep generated ownership graphs small. They do not
+// interpret markup or perform allocation once the parent has reserved capacity.
+node append(mut node parent, node child0) {
+  parent.children.push_back(std::move(child0));
+  return std::move(parent);
 }
-node with_child(node parent, std::string text) {
-  return with_child(std::move(parent), node(std::move(text)));
+node append(mut node parent, node child0, node child1) {
+  parent.children.push_back(std::move(child0));
+  parent.children.push_back(std::move(child1));
+  return std::move(parent);
+}
+node append(mut node parent, node child0, node child1, node child2) {
+  parent.children.push_back(std::move(child0));
+  parent.children.push_back(std::move(child1));
+  parent.children.push_back(std::move(child2));
+  return std::move(parent);
+}
+node append(mut node parent, node child0, node child1, node child2, node child3) {
+  parent.children.push_back(std::move(child0));
+  parent.children.push_back(std::move(child1));
+  parent.children.push_back(std::move(child2));
+  parent.children.push_back(std::move(child3));
+  return std::move(parent);
+}
+node append(mut node parent, node child0, node child1, node child2, node child3, node child4) {
+  parent.children.push_back(std::move(child0));
+  parent.children.push_back(std::move(child1));
+  parent.children.push_back(std::move(child2));
+  parent.children.push_back(std::move(child3));
+  parent.children.push_back(std::move(child4));
+  return std::move(parent);
+}
+node append(mut node parent, node child0, node child1, node child2, node child3, node child4, node child5) {
+  parent.children.push_back(std::move(child0));
+  parent.children.push_back(std::move(child1));
+  parent.children.push_back(std::move(child2));
+  parent.children.push_back(std::move(child3));
+  parent.children.push_back(std::move(child4));
+  parent.children.push_back(std::move(child5));
+  return std::move(parent);
+}
+node append(mut node parent, node child0, node child1, node child2, node child3, node child4, node child5, node child6) {
+  parent.children.push_back(std::move(child0));
+  parent.children.push_back(std::move(child1));
+  parent.children.push_back(std::move(child2));
+  parent.children.push_back(std::move(child3));
+  parent.children.push_back(std::move(child4));
+  parent.children.push_back(std::move(child5));
+  parent.children.push_back(std::move(child6));
+  return std::move(parent);
+}
+node append(mut node parent, node child0, node child1, node child2, node child3, node child4, node child5, node child6, node child7) {
+  parent.children.push_back(std::move(child0));
+  parent.children.push_back(std::move(child1));
+  parent.children.push_back(std::move(child2));
+  parent.children.push_back(std::move(child3));
+  parent.children.push_back(std::move(child4));
+  parent.children.push_back(std::move(child5));
+  parent.children.push_back(std::move(child6));
+  parent.children.push_back(std::move(child7));
+  return std::move(parent);
 }
 void escaped(mut std::string& output, std::string_view text, bool attribute_value) {
   for (mut uint64_t index = 0; index < text.size(); index++) {

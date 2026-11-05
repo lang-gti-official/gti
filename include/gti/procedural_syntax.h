@@ -116,6 +116,7 @@ private:
     return get(handle.session_, handle.generation_, handle.node_, C);
   }
   std::size_t put(Node node);
+  std::shared_ptr<const SyntaxCapture> materialize(const Node &node) const;
   void check() const;
   SyntaxTokens constructed(std::string spelling, SyntaxSpan origin,
                            SyntaxCategory category, std::uint32_t context);
