@@ -50,11 +50,9 @@ def main():
             assert (result.returncode, result.stderr) == (0, "") and result.stdout in accepted, (
                 mode, result)
             print(f"Process allocation elision: {mode} passed", flush=True)
-        # LLVM-backed owners allocate through the runtime owner pair, which
-        # reaches the same replaceable nothrow operator new the companion
-        # counts. Elision of the non-escaping owner is permitted but not
-        # required; the escaping owner must allocate and release exactly once.
-        # O2 is where the shipped backend's owner elision is observed.
+        # LLVM owners use the sealed GTI process allocation contract. Count
+        # its calls independently of C++ new; an escaping owner still needs
+        # exactly one allocation and release. Non-escaping elision is permitted.
         for label, flags, _native in native_modes(levels=("O0", "O2")):
             if is_cpp_mode(flags):
                 continue

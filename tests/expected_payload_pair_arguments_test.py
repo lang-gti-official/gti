@@ -12,13 +12,14 @@ from lambda_pack_invocation_runtime_test import main
 if __name__ == "__main__":
     fixtures = pathlib.Path(__file__).parent / "fixtures"
     rejected = fixtures / "expected_payload_pair_partial_move.gti"
-    with tempfile.TemporaryDirectory(prefix="gti-expected-pair-negative-") as temporary:
-        result = subprocess.run(
-            [str(pathlib.Path(sys.argv[1]).resolve()), str(rejected), "--emit-cpp",
-             "-o", str(pathlib.Path(temporary) / "rejected.cpp")],
-            text=True, capture_output=True, timeout=120)
-        assert result.returncode != 0 and "GTI-S2018" in result.stderr, result
-        assert "GTI-B0001" not in result.stderr, result
+    if "--list-modes" not in sys.argv:
+        with tempfile.TemporaryDirectory(prefix="gti-expected-pair-negative-") as temporary:
+            result = subprocess.run(
+                [str(pathlib.Path(sys.argv[1]).resolve()), str(rejected), "--emit-cpp",
+                 "-o", str(pathlib.Path(temporary) / "rejected.cpp")],
+                text=True, capture_output=True, timeout=120)
+            assert result.returncode != 0 and "GTI-S2018" in result.stderr, result
+            assert "GTI-B0001" not in result.stderr, result
 
     cleanup = fixtures / "expected_payload_pair_cleanup.gti"
     lines = cleanup.read_text().splitlines()

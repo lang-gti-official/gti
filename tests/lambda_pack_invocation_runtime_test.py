@@ -25,7 +25,8 @@ def main(names=None, cases=None, execution_profile=None, stdin_by_name=None,
     diagnostic the backend must report, or the symptom of a filed backend bug
     that must still reproduce (tests/backend_modes.py). A declared fixture
     keeps the other backend's modes as its execution evidence. `--list-modes`
-    prints the fixture/mode plan without compiling.
+    prints the fixture/mode plan without compiling, then exits the CLI so a
+    wrapper cannot continue into its additional runtime checks.
     """
     fixtures = pathlib.Path(__file__).parent / "fixtures"
     if names is None:
@@ -56,7 +57,7 @@ def main(names=None, cases=None, execution_profile=None, stdin_by_name=None,
         modes = [mode for mode in modes if mode[0] in arguments.mode]
     if arguments.list_modes:
         print_mode_plan(mode_plan(names, modes, llvm_unsupported, cpp_unsupported))
-        return
+        raise SystemExit(0)
     environment = dict(os.environ, ASAN_OPTIONS="halt_on_error=1",
                        UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1")
     with tempfile.TemporaryDirectory(prefix="gti-lambda-pack-") as temporary:

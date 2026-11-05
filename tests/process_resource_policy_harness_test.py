@@ -2,6 +2,7 @@
 """Installed provider evidence must not silently use a source/build checkout."""
 
 import pathlib
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -12,6 +13,24 @@ from process_resource_policy_test import installed_resources
 
 
 class InstalledResourcesTests(unittest.TestCase):
+    def test_storage_oracle_requires_the_selected_backend_contract(self):
+        class CapturedStorageCompile(Exception):
+            pass
+
+        for backend, expected in (("llvm", "1"), ("cpp", "0")):
+            def capture(command, environment, expected_status=0):
+                if len(command) > 1 and command[1].endswith("/process_storage_policy.gti"):
+                    self.assertIn(f"-DGTI_TEST_PROCESS_OWNERS={expected}", command)
+                    raise CapturedStorageCompile
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            with self.subTest(backend=backend), \
+                    mock.patch("sys.argv", ["process_resource_policy_test.py", "/selected/build/gti"]), \
+                    mock.patch.dict("os.environ", {"GTI_TEST_BACKENDS": backend}), \
+                    mock.patch.object(policy, "run", side_effect=capture):
+                with self.assertRaises(CapturedStorageCompile):
+                    policy.main()
+
     def test_build_tree_keeps_explicit_runtime_archive(self):
         class CapturedCompile(Exception):
             pass

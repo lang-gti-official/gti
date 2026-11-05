@@ -150,7 +150,8 @@ int main() { mut int value = 1; Bad bad{value}; bad.write(); return 0; }
 if __name__ == "__main__":
     repository = pathlib.Path(__file__).resolve().parent.parent
     os.environ["GTI_STDLIB_PATH"] = str(repository / "stdlib")
-    reject_invalid_sources(pathlib.Path(sys.argv[1]).resolve())
+    if "--list-modes" not in sys.argv:
+        reject_invalid_sources(pathlib.Path(sys.argv[1]).resolve())
     run_runtime_matrix(names=("nested_borrow_fields", "nested_borrow_fields_mutable",
                               "nested_borrow_owned_sibling", "borrowed_arrow_compound",
                               "fallible_nested_borrow"))

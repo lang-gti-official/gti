@@ -780,6 +780,7 @@ consumers = [
   "thread_local_end_to_end",
   "hosted_exit_status_runtime",
   "panic_runtime",
+  "process_resource_policy",
 ]
 
 # ---------------------------------------------------------------------------
@@ -911,8 +912,10 @@ area = "runtime-memory"
 risk = "system"
 paths = [
   "runtime/src/memory.cpp",
-  "runtime/src/owner_memory.cpp",
   "runtime/include/gti/memory.h",
+  "tests/fixtures/process_allocation_test_provider.h",
+  "tests/fixtures/owner_provider_*",
+  "tests/llvm_owner_provider_integration_test.py",
 ]
 owners = [
   "resource_memory_runtime",
@@ -925,11 +928,13 @@ owners = [
   "unique_scalar_allocation_runtime",
   "unique_class_allocation_runtime",
   "inherited_unique_allocation_runtime",
+  "llvm_owner_provider_integration",
   "llvm_memory_execution",
   "llvm_memory_contracts",
 ]
 consumers = [
   "process_allocation_elision",
+  "process_resource_policy",
   "runtime_performance_workloads",
 ]
 

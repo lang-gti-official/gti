@@ -62,5 +62,6 @@ int main() { int32_t key = 1; if (invoke(Bad(), key, key)) { return 0; } return 
 if __name__ == "__main__":
     repository = pathlib.Path(__file__).resolve().parent.parent
     os.environ["GTI_STDLIB_PATH"] = str(repository / "stdlib")
-    reject_bad_contracts(pathlib.Path(sys.argv[1]).resolve())
+    if "--list-modes" not in sys.argv:
+        reject_bad_contracts(pathlib.Path(sys.argv[1]).resolve())
     run_runtime_matrix(llvm_modes=True, names=("associative_hash_contracts",))

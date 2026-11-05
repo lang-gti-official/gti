@@ -127,7 +127,9 @@ if __name__ == "__main__":
     repository = pathlib.Path(__file__).resolve().parent.parent
     os.environ["GTI_STDLIB_PATH"] = str(repository / "stdlib")
     compiler = pathlib.Path(sys.argv[1]).resolve()
-    reject_invalid(compiler)
-    cleanup_matrix(compiler)
-    run_runtime_matrix(names=("complete_list", "complete_list_differential", "complete_deque", "complete_sets", "complete_containers_ownership", "owned_constructor_policy_forwarding"))
-    run_runtime_matrix(names=("vector_contains",), llvm_modes=True)
+    if "--list-modes" not in sys.argv:
+        reject_invalid(compiler)
+        cleanup_matrix(compiler)
+    # One complete plan: listing exits before execution and must retain the
+    # vector cases that used to live in a second shared-main invocation.
+    run_runtime_matrix(names=("complete_list", "complete_list_differential", "complete_deque", "complete_sets", "complete_containers_ownership", "owned_constructor_policy_forwarding", "vector_contains"))

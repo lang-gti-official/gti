@@ -2290,6 +2290,12 @@ set_tests_properties(llvm_polymorphic_storage_layout PROPERTIES TIMEOUT 120)
 add_test(NAME llvm_payload_unique_owner
   COMMAND gti_llvm_session_tests --payload-unique-owner "${PROJECT_SOURCE_DIR}")
 set_tests_properties(llvm_payload_unique_owner PROPERTIES TIMEOUT 120)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME llvm_owner_provider_integration
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_owner_provider_integration_test.py"
+            "$<TARGET_FILE:gti>")
+  set_tests_properties(llvm_owner_provider_integration PROPERTIES TIMEOUT 900)
+endif()
 
 add_executable(gti_llvm_hosted_contract_tests llvm_hosted_contract_tests.cpp)
 target_include_directories(gti_llvm_hosted_contract_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})

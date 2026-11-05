@@ -524,23 +524,30 @@ private:
   }
 
   void verifyReleaseProvider() {
-    // Generated owner storage is released through the runtime owner pair
-    // (address, alignment), never the source-owned process provider.
-    auto *function = session.module().getFunction("gti_rt_owner_release_v1");
+    const bool windows = session.program().mir().target().os == "windows";
+    auto *function = session.module().getFunction(processMemoryRuntimeSymbol(
+        windows ? ProcessMemoryRuntimeOperation::AlignedRelease
+                : ProcessMemoryRuntimeOperation::PosixRelease));
     auto &context = session.context();
-    auto *expected = llvm::FunctionType::get(
-        llvm::Type::getVoidTy(context),
-        {llvm::PointerType::get(context, 0), llvm::Type::getInt64Ty(context)},
-        false);
+    auto *expected =
+        llvm::FunctionType::get(llvm::Type::getVoidTy(context),
+                                {llvm::PointerType::get(context, 0)}, false);
     if (!function || function->getFunctionType() != expected ||
         !function->hasExternalLinkage() || !function->isDeclaration() ||
         function->getCallingConv() != llvm::CallingConv::C)
-      throw std::runtime_error("cleanup release declaration changed ABI");
-    for (const auto operation : {ProcessMemoryRuntimeOperation::PosixRelease,
-                                 ProcessMemoryRuntimeOperation::AlignedRelease})
-      if (session.module().getFunction(processMemoryRuntimeSymbol(operation)))
-        throw std::runtime_error(
-            "cleanup released generated storage through the process provider");
+      throw std::runtime_error(
+          "cleanup process release declaration changed ABI");
+    // The oracle observes release of independently allocated live objects.
+    // Its event writes are stronger than the production removable-allocation
+    // contract, so do not optimize this deliberately instrumented edge away.
+    for (auto *user : function->users())
+      if (auto *call = llvm::dyn_cast<llvm::CallBase>(user)) {
+        call->removeFnAttr(llvm::Attribute::AllocKind);
+        call->removeFnAttr("alloc-family");
+        call->setMemoryEffects(llvm::MemoryEffects::unknown());
+      }
+    if (session.module().getFunction("gti_rt_owner_release_v1"))
+      throw std::runtime_error("cleanup retained the retired owner pair");
   }
 
   void observeCleanupEntry(llvm::Function &cleanup) {

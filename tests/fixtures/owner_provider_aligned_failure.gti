@@ -1,0 +1,51 @@
+import std.memory;
+import std.panic;
+import std.polymorphic;
+
+extern "C" {
+  void owner_audit_begin();
+  void owner_audit_event(int32_t value);
+  int32_t owner_audit_event_at(int32_t index);
+  int32_t owner_audit_event_count(int32_t value);
+  void owner_audit_object(const void* address, uint64_t bytes, uint64_t alignment);
+  void owner_audit_cleanup_complete(int32_t attempts, int32_t acquired);
+}
+
+interface Meter { int read(); };
+using Slot = std::inline_polymorphic<Meter, 32, 16>;
+class Child {
+public:
+  Child() {}
+  ~Child() { owner_audit_event(10); }
+};
+class Aligned {
+  Slot alignment{};
+  std::unique_ptr<Child> child;
+public:
+  Aligned() : child(std::make_unique<Child>()) {
+    unsafe {
+      owner_audit_object(std::erase_address(&this), std::layout_of<Aligned>().bytes,
+                         std::layout_of<Aligned>().alignment);
+      owner_audit_object(std::erase_address(&*this.child), std::layout_of<Child>().bytes,
+                         std::layout_of<Child>().alignment);
+    }
+    std::panic("aligned owner constructor failed");
+  }
+  ~Aligned() { owner_audit_event(20); }
+};
+class Audit {
+public:
+  Audit() { owner_audit_begin(); }
+  ~Audit() {
+    if (owner_audit_event_count(10) != 1 || owner_audit_event_count(20) != 0 ||
+        owner_audit_event_at(0) != 10 || owner_audit_event_at(1) != -2 ||
+        owner_audit_event_at(2) != -1) { std::panic("aligned rollback trace drift"); }
+    owner_audit_cleanup_complete(2, 2);
+  }
+};
+
+int main() {
+  Audit audit{};
+  auto failed = std::make_unique<Aligned>();
+  return 1;
+}

@@ -1,3 +1,4 @@
+#include "process_allocation_test_provider.h"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -7,9 +8,9 @@
 #include <sys/resource.h>
 #endif
 
-// Counts the two no-throw allocation seams GTI owners use, tracks which of
-// those blocks are still live, and can fail the next one. No real resource
-// exhaustion is needed for these oracles.
+// Counts the GTI provider on LLVM and native new on the legacy C++ backend,
+// tracks live blocks, and can fail the next acquisition without real resource
+// exhaustion.
 namespace {
 // Abort deliberately does not flush streams. Make cleanup markers observable
 // before any program I/O, so an empty capture proves cleanup did not execute.
@@ -98,3 +99,17 @@ extern "C" std::uint64_t inline_polymorphic_allocations() {
 }
 extern "C" std::uint64_t inline_polymorphic_live() { return liveCount; }
 extern "C" void inline_polymorphic_fail_next() { failNext = true; }
+
+namespace gti_test_process_provider {
+void *acquire(std::size_t bytes, std::size_t alignment) {
+  if (counting && failNext) {
+    failNext = false;
+    return nullptr;
+  }
+  return track(systemAllocate(bytes, alignment));
+}
+void release(void *address) {
+  forget(address);
+  systemRelease(address);
+}
+} // namespace gti_test_process_provider
