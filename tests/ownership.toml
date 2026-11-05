@@ -768,6 +768,7 @@ consumers = [
   "thread_local_end_to_end",
   "hosted_exit_status_runtime",
   "panic_runtime",
+  "process_resource_policy",
 ]
 
 # ---------------------------------------------------------------------------
@@ -919,6 +920,7 @@ owners = [
 ]
 consumers = [
   "process_allocation_elision",
+  "process_resource_policy",
   "runtime_performance_workloads",
 ]
 

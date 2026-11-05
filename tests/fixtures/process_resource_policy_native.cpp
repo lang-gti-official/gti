@@ -96,6 +96,15 @@ extern "C" std::int32_t provider_test_event_at(std::int32_t index) {
     std::abort();
   return events[index];
 }
+#if defined(GTI_TEST_PROCESS_OWNERS)
+extern "C" std::int32_t provider_test_process_owners() {
+  return GTI_TEST_PROCESS_OWNERS;
+}
+extern "C" void provider_test_observe_storage(const void *address) {
+  if (!address)
+    std::abort();
+}
+#endif
 extern "C" std::uint64_t gti_rt_native_size_max_v1() {
   if (observing)
     ++size_queries;

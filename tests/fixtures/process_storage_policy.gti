@@ -12,6 +12,8 @@ extern "C" {
   void provider_test_event(int32_t value);
   int32_t provider_test_events();
   int32_t provider_test_event_at(int32_t index);
+  int32_t provider_test_process_owners();
+  void provider_test_observe_storage(const void* address);
 }
 
 // An owning, immovable payload proves that moving the storage owner preserves
@@ -28,6 +30,8 @@ public:
 };
 
 int main() {
+  // Fixed by the harness's backend contract, not inferred from provider counts.
+  bool process_owners = provider_test_process_owners() != 0;
   std::allocator allocator{};
   provider_test_mode(0);
   {
@@ -66,22 +70,42 @@ int main() {
     first.emplace(std::size_t(2), 20);
     second.emplace(std::size_t(0), 30);
     const Fixed* address = &first.get(std::size_t(0));
+    // Expose the storage and its reachable owners to an ordinary foreign call;
+    // legal allocation elision must not erase the operations being measured.
+    provider_test_observe_storage(address);
+    provider_test_observe_storage(&first.get(std::size_t(2)));
     mut auto moved = std::move(first);
     if (&moved.get(std::size_t(0)) != address || moved.get(std::size_t(2)).value() != 20) { return 8; }
     moved.destroy(std::size_t(2));
     moved.emplace(std::size_t(2), 21);
-    if (provider_test_releases() != 0 || provider_test_events() != 1 || provider_test_event_at(0) != 20) { return 9; }
+    provider_test_observe_storage(&moved.get(std::size_t(2)));
+    if (provider_test_calls() != (process_owners ? 7 : 4) ||
+        provider_test_releases() != (process_owners ? 1 : 0) ||
+        provider_test_events() != (process_owners ? 2 : 1) ||
+        provider_test_event_at(0) != 20) { return 9; }
+    if (process_owners && provider_test_event_at(1) != -6) { return 20; }
     moved.release();
-    if (moved.capacity() != std::size_t(0) || provider_test_releases() != 2) { return 10; }
-    // All objects die first, then metadata (region 2), then objects (region 1).
-    if (provider_test_events() != 5 || provider_test_event_at(1) != 21 ||
-        provider_test_event_at(2) != 10 || provider_test_event_at(3) != -2 ||
-        provider_test_event_at(4) != -1) { return 11; }
+    if (moved.capacity() != std::size_t(0) ||
+        provider_test_releases() != (process_owners ? 5 : 2)) { return 10; }
+    // Each payload's destructor precedes its nested owner's release. All
+    // payloads die before metadata (region 2) and object storage (region 1).
+    if (process_owners) {
+      if (provider_test_events() != 8 || provider_test_event_at(2) != 21 ||
+          provider_test_event_at(3) != -7 || provider_test_event_at(4) != 10 ||
+          provider_test_event_at(5) != -5 || provider_test_event_at(6) != -2 ||
+          provider_test_event_at(7) != -1) { return 11; }
+    } else {
+      if (provider_test_events() != 5 || provider_test_event_at(1) != 21 ||
+          provider_test_event_at(2) != 10 || provider_test_event_at(3) != -2 ||
+          provider_test_event_at(4) != -1) { return 11; }
+    }
     if (second.get(std::size_t(0)) != 30) { return 12; }
   }
-  if (provider_test_calls() != 4 || provider_test_releases() != 4 ||
-      provider_test_events() != 7 || provider_test_event_at(5) != -4 ||
-      provider_test_event_at(6) != -3) { return 13; }
+  if (provider_test_calls() != (process_owners ? 7 : 4) ||
+      provider_test_releases() != (process_owners ? 7 : 4) ||
+      provider_test_events() != (process_owners ? 10 : 7) ||
+      provider_test_event_at(process_owners ? 8 : 5) != -4 ||
+      provider_test_event_at(process_owners ? 9 : 6) != -3) { return 13; }
   provider_test_mode(0); // Independently rejects any remaining live native region.
   // Prefix allocation and both sparse regions share one observation per
   // operation. A later operation must still observe a newly selected limit.
