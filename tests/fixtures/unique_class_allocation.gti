@@ -65,7 +65,7 @@ int main(int argc, std::vector<std::string> argv) {
   Marker outer = Marker(1);
   auto previously = std::make_unique<Marker>(3);
   // Prepare allocating arguments before arming owner-allocation exhaustion.
-  std::string input("value");
+  std::string input{"value"};
   if (argc == 2) {
     unsafe { gti_test_fail_scalar_allocation(1); }
   }
