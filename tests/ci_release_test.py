@@ -399,8 +399,9 @@ def sanitizer_contract(root):
     assert "bash scripts/free_ci_disk.sh" in compiler and "bash scripts/free_ci_disk.sh" in llvm
     assert "if: matrix.kind == 'compiler'\n        run: cmake -S . -B build-sanitized -DGTI_TEST_TIMEOUT_SCALE=10" in compiler, \
         "the compiler partitions re-configure only their timeout, keeping the cached configure"
-    assert '-DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g"\n' in compiler
-    assert '-DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g1"\n' in llvm, "the LLVM sanitizer tree keeps line tables only"
+    assert '-DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g1"\n' in compiler and \
+        '-DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g1"\n' in llvm, \
+        "sanitizer trees keep line tables only; full debug information exhausted runner disk"
     assert "-DCMAKE_JOB_POOLS=link=1 -DCMAKE_JOB_POOL_LINK=link" in compiler and \
         "-DCMAKE_JOB_POOLS=link=1 -DCMAKE_JOB_POOL_LINK=link" in llvm
     assert "check_ci_sanitizers.py" in compiler and "check_ci_sanitizers.py" in llvm

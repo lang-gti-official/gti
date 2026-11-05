@@ -139,7 +139,7 @@ def main():
            and "macos-26" in ci and "macos-26" in full and "macos-15" not in native,
            "native CI jobs must use the reviewed compiler from configure_ci_toolchain.sh")
     expect("-DCMAKE_BUILD_TYPE=Debug" not in native and "-DCMAKE_BUILD_TYPE=RelWithDebInfo" in sanitizers
-           and '-DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g"' in sanitizers
+           and '-DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g1"' in sanitizers
            and "check_ci_sanitizers.py" in sanitizers and "--sanitizer address,undefined" in sanitizers,
            "sanitizer verification must retain an optimized compiler with symbols")
     expect("permissions:\n  contents: read" in ci and "pull_request_target" not in ci
