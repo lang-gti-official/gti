@@ -2,8 +2,11 @@
 
 """Hold every example's MIR body census within its reviewed budget.
 
-The test recomputes the per-example census. Every example must still
-compile. A recorded example whose count leaves the census budget
+The test recomputes the per-example census from sealed LoweredProgram bodies
+under the default LLVM profile. Every example must still pass frontend/MIR
+verification; the corpus oracle proves native execution. C++ emission is queried
+only when the scheduled C++ profile is explicitly selected. A recorded example
+whose count leaves the census budget
 (tests/census_budget.py: the larger of five bodies or five percent) is an
 advisory finding (tests/advisory_checks.py): it prints a `GTI-ADVISORY:` line
 and passes unless GTI_ADVISORY_CHECKS=strict. Drift inside the budget,
@@ -36,6 +39,7 @@ import census_budget as budget
 import census_store as store
 import example_case_context as examples
 import mir_census_baseline as reviewed
+from backend_modes import selected_backends
 
 MARKER = "GTI verified-MIR body"
 MARKER_PATTERN = re.compile(
@@ -60,10 +64,12 @@ def emitted_body_count(text: str) -> int:
     return len(set(MARKER_PATTERN.findall(text)))
 
 
-def census(gti: Path, root: Path, lowered_census: Path | None = None) -> dict[str, int | None]:
+def census(gti: Path, root: Path, lowered_census: Path | None = None,
+           backend: str | None = None) -> dict[str, int | None]:
     """Per-example MIR-emitted body counts. None means the example failed."""
     counts: dict[str, int | None] = {}
     target = reviewed.host_target()
+    native_inventory = (backend or selected_backends()) != "cpp"
     # A release-configured gti discovers only the installed stdlib layout;
     # point it at the repository stdlib so the census is build-flavor
     # independent.
@@ -73,8 +79,9 @@ def census(gti: Path, root: Path, lowered_census: Path | None = None) -> dict[st
         for case in examples.cases(root):
             source = root / case.source
             out.unlink(missing_ok=True)
-            if source.name in examples.LLVM_ONLY_EXAMPLES:
-                examples.require_cpp_limitation(gti, source, out, env)
+            if native_inventory or source.name in examples.LLVM_ONLY_EXAMPLES:
+                if not native_inventory:
+                    examples.require_cpp_limitation(gti, source, out, env)
                 # Inventory comes from the sealed LoweredProgram, independently
                 # of target emission. Native execution remains the corpus oracle.
                 inventory = subprocess.run(

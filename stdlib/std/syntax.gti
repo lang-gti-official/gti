@@ -1,12 +1,33 @@
 export module syntax;
 
-// Phase 1 declaration identities. These capabilities have no runtime storage
-// or executable source API yet. The verified-MIR bridge is phase 2 of RFC 0001.
+// Immutable, request-local syntax capabilities for verified-MIR procedural
+// execution. No syntax value can be stored or called at runtime.
 namespace std {
 namespace syntax {
 export @compiler_type("syntax_tokens") struct tokens {};
 export @compiler_type("syntax_expr") struct expr {};
 export @compiler_type("syntax_span") struct span {};
 export @compiler_type("syntax_binding") struct binding {};
+
+export uint64_t size(tokens input);
+export std::string_view text(tokens input);
+export std::string_view kind(tokens input, uint64_t index);
+export bool adjacent(tokens input, uint64_t left);
+export tokens slice(tokens input, uint64_t begin, uint64_t end);
+export tokens group(tokens input, uint64_t opening);
+export span location(tokens input, uint64_t begin, uint64_t end);
+export tokens literal(std::string_view spelling, span origin);
+// Quote a text value as one literal, without treating its contents as source.
+export tokens string_literal(std::string_view value, span origin);
+export tokens punctuation(std::string_view spelling, span origin);
+export tokens identifier(std::string_view spelling, span origin);
+export tokens keyword(std::string_view spelling, span origin);
+export binding fresh(std::string_view spelling, span origin);
+export tokens reference(binding name);
+export tokens join(tokens left, tokens right);
+export expr parse(tokens input);
+export tokens splice(expr input);
+export expr fail(span primary, std::string_view message);
+export expr fail_related(span primary, std::string_view message, span related);
 }
 }

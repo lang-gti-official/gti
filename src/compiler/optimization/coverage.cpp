@@ -169,6 +169,27 @@ MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
                      "pointee value/address unknown; loan schedule unchanged");
   case IntrinsicKind::None:
     return inapplicable("ordinary instruction/call effects");
+  case IntrinsicKind::SyntaxSize:
+  case IntrinsicKind::SyntaxText:
+  case IntrinsicKind::SyntaxKind:
+  case IntrinsicKind::SyntaxAdjacent:
+  case IntrinsicKind::SyntaxSlice:
+  case IntrinsicKind::SyntaxGroup:
+  case IntrinsicKind::SyntaxSpan:
+  case IntrinsicKind::SyntaxLiteral:
+  case IntrinsicKind::SyntaxStringLiteral:
+  case IntrinsicKind::SyntaxPunctuation:
+  case IntrinsicKind::SyntaxIdentifier:
+  case IntrinsicKind::SyntaxKeyword:
+  case IntrinsicKind::SyntaxFresh:
+  case IntrinsicKind::SyntaxReference:
+  case IntrinsicKind::SyntaxJoin:
+  case IntrinsicKind::SyntaxParse:
+  case IntrinsicKind::SyntaxSplice:
+  case IntrinsicKind::SyntaxFail:
+  case IntrinsicKind::SyntaxFailRelated:
+    return inapplicable(
+        "procedural staging only; invalid in executable runtime MIR");
   case IntrinsicKind::SourceExpressionText:
     return inapplicable("semantic written metadata normalized to a literal; "
                         "invalid as an executable intrinsic");

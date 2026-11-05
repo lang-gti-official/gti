@@ -182,7 +182,7 @@ def main() -> None:
 
     census.subprocess.run = fake_compiler
     try:
-        counts = census.census(Path("/controlled/compiler"), root)
+        counts = census.census(Path("/controlled/compiler"), root, backend="cpp")
         assert len(calls) == len(contexts) and len(counts) == len(contexts)
         assert counts[selected[1].name] is None and counts[selected[3].name] is None
         assert census.FAILURES[selected[1].name] == "missing artifact"

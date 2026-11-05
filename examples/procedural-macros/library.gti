@@ -1,0 +1,41 @@
+export module procedural_macro_library;
+import std.syntax;
+
+// Input includes the outer braces. Parsing the interior retains the caller's
+// names and source spans; it does not evaluate the expression.
+constexpr std::syntax::tokens contents(std::syntax::tokens input) {
+  return std::syntax::slice(input, uint64_t(1),
+                            std::syntax::size(input) - uint64_t(1));
+}
+
+export #macro(proc) std::syntax::expr identity(std::syntax::tokens input) {
+  return std::syntax::parse(contents(input));
+}
+
+// A non-HTML example: build an immediately invoked lambda whose argument runs
+// once. Its parameter has a fresh identity independent of caller spellings.
+export #macro(proc) std::syntax::expr twice_once(std::syntax::tokens input) {
+  auto origin = std::syntax::location(input, uint64_t(0), uint64_t(1));
+  auto binding = std::syntax::fresh("saved", origin);
+  auto saved = std::syntax::reference(binding);
+  mut auto output = std::syntax::punctuation("[", origin);
+  output = std::syntax::join(output, std::syntax::punctuation("]", origin));
+  output = std::syntax::join(output, std::syntax::punctuation("(", origin));
+  output = std::syntax::join(output, std::syntax::keyword("int", origin));
+  output = std::syntax::join(output, saved);
+  output = std::syntax::join(output, std::syntax::punctuation(")", origin));
+  output = std::syntax::join(output, std::syntax::punctuation("->", origin));
+  output = std::syntax::join(output, std::syntax::keyword("int", origin));
+  output = std::syntax::join(output, std::syntax::punctuation("{", origin));
+  output = std::syntax::join(output, std::syntax::keyword("return", origin));
+  output = std::syntax::join(output, saved);
+  output = std::syntax::join(output, std::syntax::punctuation("+", origin));
+  output = std::syntax::join(output, saved);
+  output = std::syntax::join(output, std::syntax::punctuation(";", origin));
+  output = std::syntax::join(output, std::syntax::punctuation("}", origin));
+  output = std::syntax::join(output, std::syntax::punctuation("(", origin));
+  output = std::syntax::join(output,
+                            std::syntax::splice(std::syntax::parse(contents(input))));
+  output = std::syntax::join(output, std::syntax::punctuation(")", origin));
+  return std::syntax::parse(output);
+}
