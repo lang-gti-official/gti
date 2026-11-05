@@ -776,7 +776,8 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
       else if (kind == TokenKind::LESS) {
         if (--depth == 0)
           return cursor != 0 && lexed[cursor - 1].kind == TokenKind::IDENTIFIER;
-      } else if (kind == TokenKind::SEMICOLON || kind == TokenKind::LEFT_BRACE ||
+      } else if (kind == TokenKind::SEMICOLON ||
+                 kind == TokenKind::LEFT_BRACE ||
                  kind == TokenKind::RIGHT_BRACE) {
         return false;
       }
@@ -785,8 +786,7 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
   };
   bool invalidCapture = false;
   for (std::size_t i = 2; i < lexed.size(); ++i) {
-    if (!macroNameBefore(i - 2) ||
-        lexed[i - 1].kind != TokenKind::BANG ||
+    if (!macroNameBefore(i - 2) || lexed[i - 1].kind != TokenKind::BANG ||
         lexed[i].kind != TokenKind::LEFT_PAREN)
       continue;
     const auto group = balancedSyntax(lexed, i);

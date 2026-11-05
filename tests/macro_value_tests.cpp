@@ -67,8 +67,8 @@ std::string macroTree(std::size_t height) {
   std::string source = "#macro int32_t t0(int32_t v) { return v + 1; }\n";
   for (std::size_t level = 1; level <= height; ++level)
     source += "#macro int32_t t" + std::to_string(level) +
-              "(int32_t v) { return t" + std::to_string(level - 1) + "!(v) + t" +
-              std::to_string(level - 1) + "!(v); }\n";
+              "(int32_t v) { return t" + std::to_string(level - 1) +
+              "!(v) + t" + std::to_string(level - 1) + "!(v); }\n";
   return source + "int main() { return t" + std::to_string(height) + "!(0) - " +
          std::to_string(std::size_t{1} << height) + "; }\n";
 }
@@ -1173,17 +1173,17 @@ struct Value { int number; Value(int number) : number(number) {} };
 )gti";
   diagnostic(prefix + R"gti(
 int change(mut Value& value) { value.number = 3; return value.number; }
-int main() { return change(fresh(1)); }
+int main() { return change(fresh!(1)); }
 )gti",
              "cannot bind a mutable reference to a temporary");
   diagnostic(prefix + R"gti(
 Value& escape(Value& value) { return value; }
-int main() { Value& value = escape(fresh(1)); return value.number; }
+int main() { Value& value = escape(fresh!(1)); return value.number; }
 )gti",
              "may retain this argument");
   diagnostic(prefix + R"gti(
 int observe(Value& value);
-int main() { return observe(fresh(1)); }
+int main() { return observe(fresh!(1)); }
 )gti",
              "declaration-only call target");
   diagnostic(R"gti(

@@ -11,6 +11,18 @@ auto SemanticVisitor::Impl::analyzeCapturedCall(const Call &call) -> bool {
   // Resolution selects one syntax alternative before argument analysis.
   // Procedural definitions receive raw tokens; typed definitions use the
   // parser's expressions, preserving substitution and ordinary lexical scope.
+  // A partial marked callee still uses the normal name-completion machinery;
+  // failed macro lookup must not swallow an editor's completion request.
+  if (const auto *name = exprAs<Variable>(call.callee().get());
+      name && name->name().completion) {
+    visitVariableExpr(*name);
+    return true;
+  }
+  if (const auto *name = exprAs<QualifiedName>(call.callee().get());
+      name && name->name().last().completion) {
+    visitQualifiedNameExpr(*name);
+    return true;
+  }
   const auto symbol = resolveExpressionSymbol(call.callee());
   const FunctionDecl *procedural = nullptr;
   if (symbol && symbol->type == SemanticType::Function) {
@@ -59,7 +71,9 @@ auto SemanticVisitor::Impl::analyzeCapturedCall(const Call &call) -> bool {
     return false;
   if (symbol && symbol->type == SemanticType::Function &&
       std::any_of(symbol->overloads.begin(), symbol->overloads.end(),
-                  [](const auto &candidate) { return candidate.record().macroExpansion; })) {
+                  [](const auto &candidate) {
+                    return candidate.record().macroExpansion;
+                  })) {
     if (call.macroArgumentErrors().empty())
       return false;
     diagnostics.insert(diagnostics.end(), call.macroArgumentErrors().begin(),
@@ -934,15 +948,17 @@ auto SemanticVisitor::Impl::analyzeMacroCall(const Call &writtenCall,
     if (call->leftParen()) {
       auto insertion = tokenSpan(*call->leftParen());
       insertion.end = insertion.start;
-      diagnostic.fixes.push_back({.span = std::move(insertion),
-                                 .replacement = "!",
-                                 .message = "Mark this macro invocation with '!'.",
-                                 .preferred = true,
-                                 .applicability = RepairApplicability::MachineApplicable});
+      diagnostic.fixes.push_back(
+          {.span = std::move(insertion),
+           .replacement = "!",
+           .message = "Mark this macro invocation with '!'.",
+           .preferred = true,
+           .applicability = RepairApplicability::MachineApplicable});
     }
     if (symbol->overloads.front().declaration)
-      diagnostic.related.push_back({tokenSpan(symbol->overloads.front().declaration->name()),
-                                    "The macro is declared here."});
+      diagnostic.related.push_back(
+          {tokenSpan(symbol->overloads.front().declaration->name()),
+           "The macro is declared here."});
     return true;
   }
   if (currentFunctionDeclaration && currentFunctionDeclaration->isMacro())

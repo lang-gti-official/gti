@@ -32,19 +32,27 @@ analyze(std::string_view source, lang::ConfigurationFlags flags = {},
 }
 
 void explicitInvocation() {
-  for (const std::string call : {"identity(7)", "identity<int> /* gap */ (7)"}) {
+  for (const std::string call :
+       {"identity(7)", "identity<int> /* gap */ (7)"}) {
     const std::string source =
         "#macro T identity<T>(T value) { return value; }\n"
-        "int main() { return " + call + "; }\n";
+        "int main() { return " +
+        call + "; }\n";
     const auto rejected = analyze(source);
-    const auto diagnostic = std::find_if(rejected.diagnostics.begin(), rejected.diagnostics.end(),
-        [](const auto &d) { return d.code == "GTI-S2124" &&
-                                  d.message.find("require '!'") != std::string::npos; });
-    check(diagnostic != rejected.diagnostics.end(), "legacy macro calls get a migration diagnostic");
-    if (diagnostic == rejected.diagnostics.end()) continue;
+    const auto diagnostic = std::find_if(
+        rejected.diagnostics.begin(), rejected.diagnostics.end(),
+        [](const auto &d) {
+          return d.code == "GTI-S2124" &&
+                 d.message.find("require '!'") != std::string::npos;
+        });
+    check(diagnostic != rejected.diagnostics.end(),
+          "legacy macro calls get a migration diagnostic");
+    if (diagnostic == rejected.diagnostics.end())
+      continue;
     check(diagnostic->fixes.size() == 1 && !diagnostic->related.empty(),
           "migration identifies declaration and provides one insertion");
-    if (diagnostic->fixes.size() != 1) continue;
+    if (diagnostic->fixes.size() != 1)
+      continue;
     const auto &fix = diagnostic->fixes.front();
     check(fix.replacement == "!" && fix.span.start == fix.span.end &&
               fix.span.start == source.rfind('(') &&
@@ -52,16 +60,27 @@ void explicitInvocation() {
           "migration inserts only ! directly before the argument list");
     auto repaired = source;
     repaired.insert(fix.span.start, fix.replacement);
-    check(analyze(repaired).canGenerateCode(), "applying the migration fix compiles");
+    check(analyze(repaired).canGenerateCode(),
+          "applying the migration fix compiles");
   }
-  const auto function = analyze("int ordinary(int x) { return x; } int main() { return ordinary!(7); }");
-  check(std::any_of(function.diagnostics.begin(), function.diagnostics.end(), [](const auto &d) {
-    return d.code == "GTI-S2124" && d.message.find("must resolve to a typed or procedural macro") != std::string::npos;
-  }), "ordinary functions cannot be called with a macro marker");
-  const auto malformed = analyze("#macro take(int x) {} int main() { take!(1 +); return 0; }");
-  check(!malformed.canGenerateCode() && std::any_of(malformed.diagnostics.begin(), malformed.diagnostics.end(),
-       [](const auto &d) { return d.code.starts_with("GTI-P"); }),
-       "typed macros report malformed expression arguments");
+  const auto function = analyze(
+      "int ordinary(int x) { return x; } int main() { return ordinary!(7); }");
+  check(
+      std::any_of(function.diagnostics.begin(), function.diagnostics.end(),
+                  [](const auto &d) {
+                    return d.code == "GTI-S2124" &&
+                           d.message.find(
+                               "must resolve to a typed or procedural macro") !=
+                               std::string::npos;
+                  }),
+      "ordinary functions cannot be called with a macro marker");
+  const auto malformed =
+      analyze("#macro take(int x) {} int main() { take!(1 +); return 0; }");
+  check(!malformed.canGenerateCode() &&
+            std::any_of(
+                malformed.diagnostics.begin(), malformed.diagnostics.end(),
+                [](const auto &d) { return d.code.starts_with("GTI-P"); }),
+        "typed macros report malformed expression arguments");
 }
 
 void positive() {

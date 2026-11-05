@@ -1,7 +1,7 @@
-#include "gti/language_queries.h"
-#include "gti/lexer.h"
 #include "gti/ast_clone.h"
 #include "gti/formatter.h"
+#include "gti/language_queries.h"
+#include "gti/lexer.h"
 #include "gti/parser.h"
 
 #include <algorithm>
@@ -62,23 +62,26 @@ int main() { return choose!(true, 1, 2); }
 
 void markedCalls() {
   lang::Lexer lexer;
-  for (const std::string source : {"choose!(true, 1, 2)",
-                                  "policy::choose<int>!(true, 1, 2)",
-                                  "outer!(inner!(1), 2, 3)"}) {
+  for (const std::string source :
+       {"choose!(true, 1, 2)", "policy::choose<int>!(true, 1, 2)",
+        "outer!(inner!(1), 2, 3)"}) {
     lang::Parser parser(lexer.scan(source, "marked.gti"), source);
     const auto expression = parser.parseExpression();
     const auto *call = lang::exprAs<lang::Call>(expression.get());
     check(!parser.hadError() && call && call->macroBang(),
           "typed invocations retain the explicit call marker");
-    if (!call) continue;
+    if (!call)
+      continue;
     check(call->arguments().size() == 3 && call->macroArgumentErrors().empty(),
           "typed call arguments remain structured expressions");
-    check(call->capturedArguments() &&
-              call->capturedArguments()->text == source.substr(source.find('(')),
-          "the same call retains exact raw input for declaration-kind resolution");
+    check(call->capturedArguments() && call->capturedArguments()->text ==
+                                           source.substr(source.find('(')),
+          "the same call retains exact raw input for declaration-kind "
+          "resolution");
     const auto cloned = lang::cloneExpr(*call, 71);
     const auto *copy = lang::exprAs<lang::Call>(cloned.get());
-    check(copy && copy->macroBang()->expansion == 71 && copy->arguments().size() == 3,
+    check(copy && copy->macroBang()->expansion == 71 &&
+              copy->arguments().size() == 3,
           "hygienic AST clones retain marker and typed arguments");
   }
   for (const std::string source : {"f(1)", "!f(1)", "!(true)", "a != b"}) {
@@ -87,30 +90,39 @@ void markedCalls() {
           "ordinary calls and negation keep their grammar");
   }
   const lang::Formatter formatter;
-  const auto formatted = formatter.format(
-      "int main(){return scope::choose<int>!(true,1,2);}");
+  const auto formatted =
+      formatter.format("int main(){return scope::choose<int>!(true,1,2);}");
   check(formatted.find("choose<int>!(true, 1, 2)") != std::string::npos,
         "formatter keeps the generic macro call marker adjacent");
-  check(formatter.format(formatted) == formatted, "macro call formatting is idempotent");
+  check(formatter.format(formatted) == formatted,
+        "macro call formatting is idempotent");
 }
 
 void macroCompletion() {
   const lang::LanguageQueries queries;
-  for (const std::string suffix : {"", "!(true, 1, 2)", "(true, 1, 2)",
-                                   " /* comment */ !(true, 1, 2)", "<int>!(true, 1, 2)"}) {
-    const std::string source = "#macro T choose<T>(bool enabled, T first, T second) { return first; }\n"
-                               "int main() { return choo" + suffix + "; }\n";
+  for (const std::string suffix :
+       {"", "!(true, 1, 2)", "(true, 1, 2)", " /* comment */ !(true, 1, 2)",
+        "<int>!(true, 1, 2)"}) {
+    const std::string source = "#macro T choose<T>(bool enabled, T first, T "
+                               "second) { return first; }\n"
+                               "int main() { return choo" +
+                               suffix + "; }\n";
     const auto offset = source.rfind("choo") + 4;
     const auto result = queries.complete({.entryPath = "macro-completion.gti",
-                                          .source = source, .byteOffset = offset});
-    const auto found = std::find_if(result.candidates.begin(), result.candidates.end(),
-                                   [](const auto &c) { return c.label == "choose"; });
-    check(found != result.candidates.end(), "typed macro completion is available");
-    if (found == result.candidates.end()) continue;
+                                          .source = source,
+                                          .byteOffset = offset});
+    const auto found =
+        std::find_if(result.candidates.begin(), result.candidates.end(),
+                     [](const auto &c) { return c.label == "choose"; });
+    check(found != result.candidates.end(),
+          "typed macro completion is available");
+    if (found == result.candidates.end())
+      continue;
     const bool existingMarker = suffix.find('!') != std::string::npos;
     check(found->insertion == (existingMarker ? "choose" : "choose!"),
           "completion inserts exactly one marker");
-    check(suffix.empty() ? found->snippet == "choose!(${1:enabled}, ${2:first}, ${3:second})"
+    check(suffix.empty() ? found->snippet ==
+                               "choose!(${1:enabled}, ${2:first}, ${3:second})"
                          : !found->snippet,
           "completion avoids duplicating an existing argument list");
   }

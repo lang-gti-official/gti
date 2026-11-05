@@ -285,7 +285,7 @@ namespace std {
 }
 int main() {
   mut int counter = 0;
-  std::string_view text = std::expression_text!(++counter);
+  std::string_view text = std::expression_text(++counter);
   return counter;
 }
 )gti");

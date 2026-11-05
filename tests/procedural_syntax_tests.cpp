@@ -305,14 +305,17 @@ void semantics() {
       std::cerr << d.code << ": " << d.message << '\n';
   check(ordinary.canGenerateCode(),
         "ordinary braced calls keep configuration directive behavior");
-  auto negation = analyze(
-      "int main(){ bool result = !(\n#define NEGATED_FLAG\nfalse);\n"
-      "#ifndef NEGATED_FLAG\n#error \"flag lost\"\n#endif\nreturn result ? 0 : 1; }");
-  check(negation.canGenerateCode(), "ordinary negation is not a macro-input boundary");
+  auto negation =
+      analyze("int main(){ bool result = !(\n#define NEGATED_FLAG\nfalse);\n"
+              "#ifndef NEGATED_FLAG\n#error \"flag lost\"\n#endif\nreturn "
+              "result ? 0 : 1; }");
+  check(negation.canGenerateCode(),
+        "ordinary negation is not a macro-input boundary");
   for (const std::string name : {"typed!", "typed<int>!"}) {
     auto input = analyze("#macro typed<T>(T value) {} int main(){ " + name +
                          "(\n#define HIDDEN_FLAG\n1); return 0; }");
-    check(!input.sourceValid, "typed and generic macro input reject loader effects");
+    check(!input.sourceValid,
+          "typed and generic macro input reject loader effects");
     diagnostic(input, "must be outside macro input");
   }
   const std::string selectedSource =

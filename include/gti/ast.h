@@ -1114,7 +1114,9 @@ public:
   // Explicit macro syntax retains raw input and the parser's typed-argument
   // alternative. Resolution selects typed expressions or opaque procedural
   // tokens; speculative argument errors apply only to the typed alternative.
-  [[nodiscard]] const std::optional<Token> &macroBang() const { return macroBang_; }
+  [[nodiscard]] const std::optional<Token> &macroBang() const {
+    return macroBang_;
+  }
   void setMacroBang(Token bang) { macroBang_ = std::move(bang); }
   [[nodiscard]] const std::vector<Diagnostic> &macroArgumentErrors() const {
     return macroArgumentErrors_;

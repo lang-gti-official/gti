@@ -3699,11 +3699,13 @@ private:
             std::move(path), TypeRef(std::move(owner), std::move(arguments)));
       } else if (isExplicitGenericCallStart()) {
         std::vector<TypeRef> typeArguments = typeArgumentList();
-        const std::optional<Token> bang =
-            match({TokenKind::BANG}) ? std::optional<Token>(previous()) : std::nullopt;
+        const std::optional<Token> bang = match({TokenKind::BANG})
+                                              ? std::optional<Token>(previous())
+                                              : std::nullopt;
         consume(TokenKind::LEFT_PAREN,
                 "Expect '(' after explicit generic arguments.");
-        expr = bang ? finishMacroCall(std::move(expr), std::move(typeArguments), *bang)
+        expr = bang ? finishMacroCall(std::move(expr), std::move(typeArguments),
+                                      *bang)
                     : finishCall(std::move(expr), std::move(typeArguments));
       } else if (isConceptTestStart() && (exprAs<Variable>(expr.get()) ||
                                           exprAs<QualifiedName>(expr.get()))) {
@@ -3814,8 +3816,9 @@ private:
       consumedCompletion = savedConsumedCompletion;
       missingTokenError = savedMissingTokenError;
       generatedNameCounter = savedGeneratedNames;
-      parsed = std::make_unique<Call>(std::move(callee), std::move(typeArguments),
-                                      tokens[group.end], ExprList{});
+      parsed =
+          std::make_unique<Call>(std::move(callee), std::move(typeArguments),
+                                 tokens[group.end], ExprList{});
       static_cast<Call &>(*parsed).setArgumentGeometry(leftParen, {});
     }
     current = group.end + 1;

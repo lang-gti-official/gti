@@ -1034,6 +1034,8 @@ private:
         }
         append(">");
       }
+      if (node->macroBang())
+        append("!");
       append("(");
       arguments(node->arguments(), depth);
       append(")");
@@ -1910,10 +1912,11 @@ public:
           .replacementRange = context->replacementRange,
           .documentationMarkdown =
               symbol == nullptr ? std::nullopt : symbol->documentationMarkdown};
-      const FunctionInfo *function = record.function == 0
-                                         ? nullptr
-                                         : semantics.findFunction(record.function);
-      if (function && function->declaration && function->declaration->isMacro()) {
+      const FunctionInfo *function =
+          record.function == 0 ? nullptr
+                               : semantics.findFunction(record.function);
+      if (function && function->declaration &&
+          function->declaration->isMacro()) {
         // Classification comes from semantics. Inspect following punctuation
         // only to avoid inserting a second call marker or argument list.
         std::size_t next = context->replacementRange.end;
@@ -1922,15 +1925,18 @@ public:
             ++next;
           } else if (input.source.substr(next, 2) == "/*") {
             const auto end = input.source.find("*/", next + 2);
-            next = end == std::string_view::npos ? input.source.size() : end + 2;
+            next =
+                end == std::string_view::npos ? input.source.size() : end + 2;
           } else if (input.source.substr(next, 2) == "//") {
             const auto end = input.source.find('\n', next + 2);
-            next = end == std::string_view::npos ? input.source.size() : end + 1;
+            next =
+                end == std::string_view::npos ? input.source.size() : end + 1;
           } else {
             break;
           }
         }
-        const char following = next < input.source.size() ? input.source[next] : '\0';
+        const char following =
+            next < input.source.size() ? input.source[next] : '\0';
         if (following != '!' && following != '<')
           candidate.insertion += '!';
         if (following == '!' || following == '<' || following == '(')
@@ -2818,8 +2824,8 @@ private:
     }
     if (function->declaration->isProceduralMacro())
       return record.name + "!({${1:input}})";
-    std::string result = record.name +
-                         (function->declaration->isMacro() ? "!(" : "(");
+    std::string result =
+        record.name + (function->declaration->isMacro() ? "!(" : "(");
     const std::vector<Parameter> &parameters =
         function->declaration->parameters();
     for (std::size_t index = 0; index < parameters.size(); ++index) {
