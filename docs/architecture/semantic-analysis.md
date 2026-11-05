@@ -58,7 +58,15 @@ no spelling, origin, lookup authority or configurable limit.
 Sealing retains the expression AST and its token/text/origin graph before
 executor teardown. It proves syntax only. The expression then enters ordinary
 caller semantics, including type, access, ownership, borrowing and cleanup; only
-successful analysis publishes an expression alias. Nested procedural and typed
+successful analysis publishes an expression alias.
+Borrow-provenance walkers follow that same retained expression alias when
+proving parameter/receiver origins, stable storage and exact stored-carrier
+referents. Loan retention follows the checked producer too, including closure
+captures and carriers with several external owners. Grouping and expansion do
+not erase those dependencies. This preserves references and borrowed returns
+without granting a macro-specific escape rule; temporary/local storage,
+carrier-shell returns and conflicting owner mutations still fail the ordinary
+source-level checks. Nested procedural and typed
 expansions share the outer macro limits. Procedural MIR work and syntax copying
 share the request's `constexpr-steps`; syntax nodes, bytes, tokens and nesting
 have separate configurable bounds. Cancellation is checked at instruction and

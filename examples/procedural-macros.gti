@@ -5,6 +5,13 @@ int next() { evaluations += 1; return 21; }
 constexpr int compile_time_answer = identity!({42});
 static_assert(compile_time_answer == 42);
 int defaulted(int value = identity!({42})) { return value; }
+int& relay(int& value) { return identity!({identity!({value})}); }
+struct Reference {
+  int& value;
+  Reference(int& source) : value(source) {}
+};
+Reference relay_carrier(Reference value) { return identity!({value}); }
+int& relay_referent(Reference value) { return identity!({value.value}); }
 
 mut int drops = 0;
 class Owner {
@@ -15,6 +22,7 @@ public:
   Owner(Owner&& other) = default;
   ~Owner() { drops += 1; }
   int read() { return this.value; }
+  int& view() { return identity!({this.value}); }
 };
 int main() {
   int saved = 99;
@@ -26,9 +34,26 @@ int main() {
   }
   {
     Owner owner = identity!({Owner(7)});
-    if (owner.read() != 7 || drops != 0) { return 5; }
+    if (owner.read() != 7 || owner.view() != 7 || drops != 0) { return 5; }
   }
   if (drops != 1) { return 6; }
   if (defaulted() + defaulted() != 84) { return 7; }
+  int& borrowed = identity!({saved});
+  Reference reference{borrowed};
+  auto carried = relay_carrier(reference);
+  if (relay(borrowed) != 99 || relay_referent(carried) != 99) { return 8; }
+  mut int counter = 40;
+  identity!({counter}) += 1;
+  ++identity!({counter});
+  auto callable = identity!({[](int value) -> int { return value; }});
+  int values[2] = {7, 42};
+  if (identity!({callable})(identity!({values})[1]) != counter) { return 9; }
+  {
+    auto borrowed_callable = identity!({[&counter]() -> int { return counter; }});
+    if (borrowed_callable() != 42) { return 10; }
+  }
+  // The expansion's borrow ends normally; it does not freeze the owner forever.
+  counter += 1;
+  if (counter != 43) { return 11; }
   return 0;
 }

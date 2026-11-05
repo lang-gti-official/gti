@@ -2956,6 +2956,8 @@ private:
 
   [[nodiscard]] std::optional<SemanticBorrowDependencySet>
   completeBorrowDependencySet(const ExprPtr &expression) const;
+  [[nodiscard]] std::optional<SemanticBorrowDependencySet>
+  completeBorrowDependencySet(const Expr *expression) const;
 
   [[nodiscard]] std::optional<SemanticBorrowDependencySet>
   payloadBorrowDependencySet(const Call &call,
@@ -3086,9 +3088,13 @@ private:
   [[nodiscard]] const ExprPtr *
   operatorBorrowSource(const ExprPtr &expression,
                        const ResolvedOperatorInfo &resolved) const;
+  [[nodiscard]] const ExprPtr *
+  operatorBorrowSource(const Expr *expression,
+                       const ResolvedOperatorInfo &resolved) const;
 
   [[nodiscard]] const ExprPtr *
   storedBorrowSource(const ExprPtr &expression) const;
+  [[nodiscard]] const ExprPtr *storedBorrowSource(const Expr *expression) const;
 
   [[nodiscard]] const Symbol *
   resolvedBorrowVariable(const Variable &variable) const;
@@ -3096,13 +3102,20 @@ private:
   [[nodiscard]] std::vector<SemanticLoanDependency>
   storedBorrowDependencies(const ExprPtr &expression);
   [[nodiscard]] std::vector<SemanticLoanDependency>
+  storedBorrowDependencies(const Expr *expression);
+  [[nodiscard]] std::vector<SemanticLoanDependency>
   storedBorrowDependencies(const AnalyzedCallArgument &argument);
 
   [[nodiscard]] const Variable *
   borrowedOwnerVariable(const ExprPtr &expression) const;
+  [[nodiscard]] const Variable *
+  borrowedOwnerVariable(const Expr *expression) const;
 
   [[nodiscard]] const Variable *
   borrowedOwnerVariable(const ExprPtr &expression,
+                        std::unordered_set<const Expr *> &visiting) const;
+  [[nodiscard]] const Variable *
+  borrowedOwnerVariable(const Expr *expression,
                         std::unordered_set<const Expr *> &visiting) const;
 
   [[nodiscard]] const Variable *
@@ -3112,6 +3125,8 @@ private:
 
   [[nodiscard]] std::optional<RetainedLoanSource>
   retainedLoanSource(const ExprPtr &expression) const;
+  [[nodiscard]] std::optional<RetainedLoanSource>
+  retainedLoanSource(const Expr *expression) const;
 
   [[nodiscard]] std::optional<SemanticLoanDependency>
   projectedStoredDependency(const SemanticLoanInfo &loan,
@@ -3126,6 +3141,7 @@ private:
   loanPlace(const BorrowOriginPlace &place) const;
 
   [[nodiscard]] SemanticLoanPlace loanPlace(const ExprPtr &expression);
+  [[nodiscard]] SemanticLoanPlace loanPlace(const Expr *expression);
 
   // A selected stored reference has one runtime address but may retain
   // several possible external owners after a control-flow join. Snapshot
@@ -3190,11 +3206,15 @@ private:
 
   [[nodiscard]] std::optional<TransientBorrowProduction>
   transientBorrowProduction(const ExprPtr &expression);
+  [[nodiscard]] std::optional<TransientBorrowProduction>
+  transientBorrowProduction(const Expr *expression);
 
   [[nodiscard]] SemanticLoanPlace transientLoanPlace(const ExprPtr &expression);
 
   [[nodiscard]] SemanticLoanPlace retainedLoanPlace(const ExprPtr &expression);
+  [[nodiscard]] SemanticLoanPlace retainedLoanPlace(const Expr *expression);
   [[nodiscard]] bool receiverStorageBorrow(const ExprPtr &expression) const;
+  [[nodiscard]] bool receiverStorageBorrow(const Expr *expression) const;
 
   static const ExprPtr *operatorReceiverExpression(const ExprPtr &expression);
 
@@ -3275,6 +3295,8 @@ private:
 
   void recordRetainedBorrow(const VariableDecl &binding,
                             const ExprPtr &expression);
+  void recordRetainedBorrow(const VariableDecl &binding,
+                            const Expr *expression);
 
   void recordSemanticLoanUseForLoan(SemanticLoanId loan);
 
@@ -3452,9 +3474,11 @@ private:
   typeAliasForCallee(const ExprPtr &callee) const;
 
   [[nodiscard]] static const Call *directCall(const ExprPtr &expression);
+  [[nodiscard]] static const Call *directCall(const Expr *expression);
 
   [[nodiscard]] const ExprPtr *
   explicitMoveSource(const ExprPtr &expression) const;
+  [[nodiscard]] const ExprPtr *explicitMoveSource(const Expr *expression) const;
 
   [[nodiscard]] bool isExplicitMoveReceiver(const ExprPtr &expression) const;
 
@@ -4448,8 +4472,14 @@ private:
                                          std::string_view description,
                                          std::string code);
 
+  // Provenance queries borrow syntax. The model also owns immutable expression
+  // aliases, so these walkers must not require unique AST ownership or clone a
+  // generated expression and lose its checked identity.
   [[nodiscard]] StoredCarrierReturnProvenance storedCarrierReturnProvenance(
       const ExprPtr &expression, const Parameter &parameter,
+      std::unordered_set<const Expr *> &visiting) const;
+  [[nodiscard]] StoredCarrierReturnProvenance storedCarrierReturnProvenance(
+      const Expr *expression, const Parameter &parameter,
       std::unordered_set<const Expr *> &visiting) const;
 
   void validateStoredCarrierReturnSource(const FunctionInfo &function,
@@ -4464,17 +4494,28 @@ private:
   isParameterDerivedBorrow(const ExprPtr &expression,
                            const Parameter &parameter,
                            std::unordered_set<const Expr *> &visiting) const;
+  [[nodiscard]] bool
+  isParameterDerivedBorrow(const Expr *expression, const Parameter &parameter,
+                           std::unordered_set<const Expr *> &visiting) const;
 
   [[nodiscard]] bool isReceiverDerivedBorrow(const ExprPtr &expression) const;
+  [[nodiscard]] bool isReceiverDerivedBorrow(const Expr *expression) const;
 
   [[nodiscard]] bool
   isReceiverDerivedBorrow(const ExprPtr &expression,
                           std::unordered_set<const Expr *> &visiting) const;
+  [[nodiscard]] bool
+  isReceiverDerivedBorrow(const Expr *expression,
+                          std::unordered_set<const Expr *> &visiting) const;
 
   [[nodiscard]] bool hasStableBorrowStorage(const ExprPtr &expression) const;
+  [[nodiscard]] bool hasStableBorrowStorage(const Expr *expression) const;
 
   [[nodiscard]] bool
   hasStableBorrowStorage(const ExprPtr &expression,
+                         std::unordered_set<const Expr *> &visiting) const;
+  [[nodiscard]] bool
+  hasStableBorrowStorage(const Expr *expression,
                          std::unordered_set<const Expr *> &visiting) const;
 
   std::vector<GenericParameterInfo>

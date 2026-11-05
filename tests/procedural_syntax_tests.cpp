@@ -468,6 +468,79 @@ export #macro(proc) std::syntax::expr quoted(std::syntax::tokens input) {
            "identity!({twice_once!({21})}) - 42; }");
   accepted("import \"library.gti\"; T relay<T>(T value){ return "
            "identity!({value}); } int main(){ return relay<int>(42)-42; }");
+  // Expansion must preserve the ordinary expression's place and provenance,
+  // not merely its result type. These cases are independent of the HTML DSL.
+  accepted("import \"library.gti\"; int& relay(int& value){return "
+           "identity!({identity!({value})});} int main(){int value=42; "
+           "int& borrowed=identity!({value}); return relay(borrowed)-42;}");
+  accepted("import \"library.gti\"; mut int& relay(mut int& value){return "
+           "identity!({value});} int main(){mut int value=41; "
+           "mut int& borrowed=identity!({value}); relay(borrowed)+=1; "
+           "return value-42;}");
+  accepted(
+      "import \"library.gti\"; struct Box{int value; "
+      "Box(int v):value(v){} int& get(){return identity!({this.value});}}; "
+      "int main(){Box box{42};return box.get()-42;}");
+  accepted("import \"library.gti\"; struct Ref{int& value; "
+           "Ref(int& v):value(v){}}; Ref relay(Ref input){return "
+           "identity!({input});} int& referent(Ref input){return "
+           "identity!({input.value});} int main(){int value=42;Ref ref{value}; "
+           "auto result=relay(ref);return referent(result)-42;}");
+  accepted(
+      "import \"library.gti\"; int main(){mut int value=40; "
+      "identity!({value})+=1; ++identity!({value}); "
+      "int values[2]={7,42}; auto fn=identity!({[](int x)->int{return x;}});"
+      "return identity!({fn})(identity!({values})[1])-value;}");
+  diagnostic(analyze("import \"library.gti\"; struct Ref{int& value; "
+                     "int own=7;Ref(int& v):value(v){}}; int& bad(Ref input){"
+                     "return identity!({input.own});}int main(){return 0;}",
+                     library),
+             "carrier shell");
+  diagnostic(analyze("import \"library.gti\"; struct Ref{int& value; "
+                     "Ref(int& v):value(v){}}; Ref bad(int& input){int local=7;"
+                     "return identity!({Ref(local)});}int main(){return 0;}",
+                     library),
+             "must derive");
+  diagnostic(analyze("import \"library.gti\"; mut int& bad(int& value){"
+                     "return identity!({value});}int main(){return 0;}",
+                     library),
+             "mutable");
+  // Invalid retained loans must fail in semantics, not fall through to the
+  // MIR verifier. Compare ordinary and expanded producers, including captures
+  // and multiple external owners rather than one particular library wrapper.
+  for (const std::string producer :
+       {"Ref(value)", "relay(value)", "[&value]()->int{return value;}"}) {
+    for (const bool expanded : {false, true}) {
+      const std::string expression =
+          expanded ? "identity!({" + producer + "})" : "(" + producer + ")";
+      const bool closure = producer.front() == '[';
+      auto result = analyze(
+          "import \"library.gti\"; struct Ref{int& value;"
+          "Ref(int& v):value(v){}};Ref relay(int& value){return Ref(value);}"
+          "int main(){mut int value=42;auto borrowed=" +
+              expression + ";value=1;return " +
+              (closure ? "borrowed();}" : "borrowed.value;}"),
+          library);
+      diagnostic(result, "overlapping borrow");
+      check(std::none_of(result.diagnostics.begin(), result.diagnostics.end(),
+                         [](const auto &d) { return d.code == "GTI-B0001"; }),
+            "retained macro loans produce source diagnostics, never an ICE");
+    }
+  }
+  diagnostic(analyze("import \"library.gti\"; import std.string;"
+                     "int main(){mut std::string owner{\"hello\"};"
+                     "auto view=identity!({owner.view()});owner.append(\"!\");"
+                     "return int(view.size());}",
+                     library),
+             "borrowed from it may still be live");
+  for (const std::string mutated : {"first", "second"})
+    diagnostic(analyze("import \"library.gti\"; struct Pair{int& a;int& b;"
+                       "Pair(int& x,int& y):a(x),b(y){}};int main(){"
+                       "mut int first=20;mut int second=22;"
+                       "auto pair=identity!({Pair(first,second)});" +
+                           mutated + "=0;return pair.a+pair.b;}",
+                       library),
+               "overlapping borrow");
   diagnostic(
       analyze(
           "import \"library.gti\"; int main(){return identity!({missing});}",

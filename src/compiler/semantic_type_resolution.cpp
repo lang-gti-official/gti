@@ -5909,10 +5909,19 @@ auto SemanticVisitor::Impl::storedCarrierReturnProvenance(
     const ExprPtr &expression, const Parameter &parameter,
     std::unordered_set<const Expr *> &visiting) const
     -> StoredCarrierReturnProvenance {
-  if (!expression || !visiting.insert(expression.get()).second) {
+  return storedCarrierReturnProvenance(expression.get(), parameter, visiting);
+}
+
+auto SemanticVisitor::Impl::storedCarrierReturnProvenance(
+    const Expr *expression, const Parameter &parameter,
+    std::unordered_set<const Expr *> &visiting) const
+    -> StoredCarrierReturnProvenance {
+  if (!expression || !visiting.insert(expression).second) {
     return StoredCarrierReturnProvenance::None;
   }
-  if (const auto *variable = exprAs<Variable>(expression.get())) {
+  if (const auto *alias = semanticModel.findExpressionAlias(*expression))
+    return storedCarrierReturnProvenance(alias, parameter, visiting);
+  if (const auto *variable = exprAs<Variable>(expression)) {
     const Symbol *symbol = resolve(variable->name());
     if (symbol != nullptr && symbol->parameterDeclaration == &parameter) {
       return StoredCarrierReturnProvenance::CarrierValue;
@@ -5922,15 +5931,15 @@ auto SemanticVisitor::Impl::storedCarrierReturnProvenance(
     }
     return StoredCarrierReturnProvenance::None;
   }
-  if (const auto *grouping = exprAs<Grouping>(expression.get())) {
+  if (const auto *grouping = exprAs<Grouping>(expression)) {
     return storedCarrierReturnProvenance(grouping->expression(), parameter,
                                          visiting);
   }
-  if (const auto *binary = exprAs<Binary>(expression.get());
+  if (const auto *binary = exprAs<Binary>(expression);
       binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
     return storedCarrierReturnProvenance(binary->right(), parameter, visiting);
   }
-  if (const auto *member = exprAs<Get>(expression.get())) {
+  if (const auto *member = exprAs<Get>(expression)) {
     const StoredCarrierReturnProvenance object =
         storedCarrierReturnProvenance(member->object(), parameter, visiting);
     const SemanticType objectType = memberAccessObjectType(*member);
@@ -5957,7 +5966,7 @@ auto SemanticVisitor::Impl::storedCarrierReturnProvenance(
     }
     return StoredCarrierReturnProvenance::None;
   }
-  if (const auto *index = exprAs<Index>(expression.get())) {
+  if (const auto *index = exprAs<Index>(expression)) {
     const StoredCarrierReturnProvenance object =
         storedCarrierReturnProvenance(index->object(), parameter, visiting);
     if (object == StoredCarrierReturnProvenance::CarrierValue ||
@@ -5970,7 +5979,7 @@ auto SemanticVisitor::Impl::storedCarrierReturnProvenance(
     }
     return StoredCarrierReturnProvenance::None;
   }
-  if (const auto *unary = exprAs<Unary>(expression.get());
+  if (const auto *unary = exprAs<Unary>(expression);
       unary != nullptr && unary->oper().kind == TokenKind::STAR) {
     const StoredCarrierReturnProvenance operand =
         storedCarrierReturnProvenance(unary->right(), parameter, visiting);
@@ -5989,12 +5998,11 @@ auto SemanticVisitor::Impl::storedCarrierReturnProvenance(
       construction != nullptr &&
       construction->borrowOrigin == BorrowOriginKind::Argument) {
     const ExprPtr *source = nullptr;
-    if (const auto *call = exprAs<Call>(expression.get());
+    if (const auto *call = exprAs<Call>(expression);
         call != nullptr &&
         construction->borrowArgument < call->arguments().size()) {
       source = &call->arguments()[construction->borrowArgument];
-    } else if (const auto *initializer =
-                   exprAs<DirectInitializer>(expression.get());
+    } else if (const auto *initializer = exprAs<DirectInitializer>(expression);
                initializer != nullptr &&
                construction->borrowArgument < initializer->arguments().size()) {
       source = &initializer->arguments()[construction->borrowArgument];
@@ -6024,7 +6032,7 @@ auto SemanticVisitor::Impl::storedCarrierReturnProvenance(
     }
     return StoredCarrierReturnProvenance::None;
   }
-  if (const auto *call = exprAs<Call>(expression.get())) {
+  if (const auto *call = exprAs<Call>(expression)) {
     if (resolvedIntrinsicKind(*call) == IntrinsicKind::Move) {
       return call->arguments().size() == 1
                  ? storedCarrierReturnProvenance(call->arguments().front(),
@@ -6148,10 +6156,18 @@ auto SemanticVisitor::Impl::isParameterDerivedBorrow(
 auto SemanticVisitor::Impl::isParameterDerivedBorrow(
     const ExprPtr &expression, const Parameter &parameter,
     std::unordered_set<const Expr *> &visiting) const -> bool {
-  if (!expression || !visiting.insert(expression.get()).second) {
+  return isParameterDerivedBorrow(expression.get(), parameter, visiting);
+}
+
+auto SemanticVisitor::Impl::isParameterDerivedBorrow(
+    const Expr *expression, const Parameter &parameter,
+    std::unordered_set<const Expr *> &visiting) const -> bool {
+  if (!expression || !visiting.insert(expression).second) {
     return false;
   }
-  if (const auto *variable = exprAs<Variable>(expression.get())) {
+  if (const auto *alias = semanticModel.findExpressionAlias(*expression))
+    return isParameterDerivedBorrow(alias, parameter, visiting);
+  if (const auto *variable = exprAs<Variable>(expression)) {
     const Symbol *symbol = resolve(variable->name());
     if (symbol != nullptr && symbol->parameterDeclaration == &parameter) {
       return true;
@@ -6205,26 +6221,26 @@ auto SemanticVisitor::Impl::isParameterDerivedBorrow(
            loan->conditions.empty() && loan->additionalDependencies.empty() &&
            !loan->place.receiver && loan->place.root == binding->symbol;
   }
-  if (const auto *grouping = exprAs<Grouping>(expression.get())) {
+  if (const auto *grouping = exprAs<Grouping>(expression)) {
     return isParameterDerivedBorrow(grouping->expression(), parameter,
                                     visiting);
   }
   // A forwarded pack element derives from the pack parameter it expands.
-  if (const auto *expansion = exprAs<PackExpansion>(expression.get())) {
+  if (const auto *expansion = exprAs<PackExpansion>(expression)) {
     const Symbol *symbol = resolve(expansion->name());
     return symbol != nullptr && symbol->parameterDeclaration == &parameter;
   }
-  if (const auto *binary = exprAs<Binary>(expression.get());
+  if (const auto *binary = exprAs<Binary>(expression);
       binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
     return isParameterDerivedBorrow(binary->right(), parameter, visiting);
   }
-  if (const auto *index = exprAs<Index>(expression.get())) {
+  if (const auto *index = exprAs<Index>(expression)) {
     return isParameterDerivedBorrow(index->object(), parameter, visiting);
   }
-  if (const auto *member = exprAs<Get>(expression.get())) {
+  if (const auto *member = exprAs<Get>(expression)) {
     return isParameterDerivedBorrow(member->object(), parameter, visiting);
   }
-  if (const auto *unary = exprAs<Unary>(expression.get());
+  if (const auto *unary = exprAs<Unary>(expression);
       unary != nullptr && unary->oper().kind == TokenKind::STAR) {
     return isParameterDerivedBorrow(unary->right(), parameter, visiting);
   }
@@ -6249,6 +6265,11 @@ auto SemanticVisitor::Impl::isParameterDerivedBorrow(
 
 auto SemanticVisitor::Impl::isReceiverDerivedBorrow(
     const ExprPtr &expression) const -> bool {
+  return isReceiverDerivedBorrow(expression.get());
+}
+
+auto SemanticVisitor::Impl::isReceiverDerivedBorrow(
+    const Expr *expression) const -> bool {
   std::unordered_set<const Expr *> visiting;
   return isReceiverDerivedBorrow(expression, visiting);
 }
@@ -6256,13 +6277,21 @@ auto SemanticVisitor::Impl::isReceiverDerivedBorrow(
 auto SemanticVisitor::Impl::isReceiverDerivedBorrow(
     const ExprPtr &expression, std::unordered_set<const Expr *> &visiting) const
     -> bool {
-  if (!expression || !visiting.insert(expression.get()).second) {
+  return isReceiverDerivedBorrow(expression.get(), visiting);
+}
+
+auto SemanticVisitor::Impl::isReceiverDerivedBorrow(
+    const Expr *expression, std::unordered_set<const Expr *> &visiting) const
+    -> bool {
+  if (!expression || !visiting.insert(expression).second) {
     return false;
   }
-  if (exprAs<This>(expression.get()) != nullptr) {
+  if (const auto *alias = semanticModel.findExpressionAlias(*expression))
+    return isReceiverDerivedBorrow(alias, visiting);
+  if (exprAs<This>(expression) != nullptr) {
     return true;
   }
-  if (const auto *variable = exprAs<Variable>(expression.get())) {
+  if (const auto *variable = exprAs<Variable>(expression)) {
     const Symbol *symbol = resolve(variable->name());
     if (symbol != nullptr && symbol->retainedLoan != 0) {
       const SemanticLoanInfo *loan =
@@ -6301,24 +6330,24 @@ auto SemanticVisitor::Impl::isReceiverDerivedBorrow(
     }
     return false;
   }
-  if (const auto *grouping = exprAs<Grouping>(expression.get())) {
+  if (const auto *grouping = exprAs<Grouping>(expression)) {
     return isReceiverDerivedBorrow(grouping->expression(), visiting);
   }
-  if (const auto *binary = exprAs<Binary>(expression.get());
+  if (const auto *binary = exprAs<Binary>(expression);
       binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
     return isReceiverDerivedBorrow(binary->right(), visiting);
   }
-  if (const auto *index = exprAs<Index>(expression.get())) {
+  if (const auto *index = exprAs<Index>(expression)) {
     return isReceiverDerivedBorrow(index->object(), visiting);
   }
-  if (const auto *member = exprAs<Get>(expression.get())) {
+  if (const auto *member = exprAs<Get>(expression)) {
     return isReceiverDerivedBorrow(member->object(), visiting);
   }
-  if (const auto *unary = exprAs<Unary>(expression.get());
+  if (const auto *unary = exprAs<Unary>(expression);
       unary != nullptr && unary->oper().kind == TokenKind::STAR) {
     return isReceiverDerivedBorrow(unary->right(), visiting);
   }
-  if (const auto *call = exprAs<Call>(expression.get())) {
+  if (const auto *call = exprAs<Call>(expression)) {
     const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
     if (resolved != nullptr &&
         resolved->borrowOrigin == BorrowOriginKind::Receiver &&
@@ -6334,6 +6363,11 @@ auto SemanticVisitor::Impl::isReceiverDerivedBorrow(
 
 auto SemanticVisitor::Impl::hasStableBorrowStorage(
     const ExprPtr &expression) const -> bool {
+  return hasStableBorrowStorage(expression.get());
+}
+
+auto SemanticVisitor::Impl::hasStableBorrowStorage(const Expr *expression) const
+    -> bool {
   std::unordered_set<const Expr *> visiting;
   return hasStableBorrowStorage(expression, visiting);
 }
@@ -6341,7 +6375,13 @@ auto SemanticVisitor::Impl::hasStableBorrowStorage(
 auto SemanticVisitor::Impl::hasStableBorrowStorage(
     const ExprPtr &expression, std::unordered_set<const Expr *> &visiting) const
     -> bool {
-  if (!expression || !visiting.insert(expression.get()).second) {
+  return hasStableBorrowStorage(expression.get(), visiting);
+}
+
+auto SemanticVisitor::Impl::hasStableBorrowStorage(
+    const Expr *expression, std::unordered_set<const Expr *> &visiting) const
+    -> bool {
+  if (!expression || !visiting.insert(expression).second) {
     return false;
   }
   if (const auto *construction =
@@ -6354,17 +6394,19 @@ auto SemanticVisitor::Impl::hasStableBorrowStorage(
                dependencies.begin(), dependencies.end(),
                [](const auto &dependency) { return dependency.place.valid(); });
   }
-  if (exprAs<Variable>(expression.get()) != nullptr) {
+  if (const auto *alias = semanticModel.findExpressionAlias(*expression))
+    return hasStableBorrowStorage(alias, visiting);
+  if (exprAs<Variable>(expression) != nullptr) {
     if (const ExprPtr *source = storedBorrowSource(expression)) {
       return hasStableBorrowStorage(*source, visiting);
     }
     return true;
   }
-  if (exprAs<QualifiedName>(expression.get()) != nullptr ||
-      exprAs<This>(expression.get()) != nullptr) {
+  if (exprAs<QualifiedName>(expression) != nullptr ||
+      exprAs<This>(expression) != nullptr) {
     return true;
   }
-  if (const auto *grouping = exprAs<Grouping>(expression.get())) {
+  if (const auto *grouping = exprAs<Grouping>(expression)) {
     return hasStableBorrowStorage(grouping->expression(), visiting);
   }
   // A moved value's text relays still view its owner's storage (L-OWN-02);
@@ -6382,7 +6424,7 @@ auto SemanticVisitor::Impl::hasStableBorrowStorage(
         dependencies.begin(), dependencies.end(), [](const auto &dependency) {
           return dependency.place.root != 0 || dependency.place.receiver;
         });
-  if (const auto *binary = exprAs<Binary>(expression.get());
+  if (const auto *binary = exprAs<Binary>(expression);
       binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
     return hasStableBorrowStorage(binary->right(), visiting);
   }
@@ -6404,19 +6446,19 @@ auto SemanticVisitor::Impl::hasStableBorrowStorage(
     // extracting it does not depend on retaining a temporary cursor shell.
     return source != nullptr && hasStableBorrowStorage(*source, visiting);
   }
-  if (const auto *index = exprAs<Index>(expression.get())) {
+  if (const auto *index = exprAs<Index>(expression)) {
     return hasStableBorrowStorage(index->object(), visiting);
   }
-  if (const auto *member = exprAs<Get>(expression.get())) {
+  if (const auto *member = exprAs<Get>(expression)) {
     return hasStableBorrowStorage(member->object(), visiting);
   }
-  if (const auto *unary = exprAs<Unary>(expression.get());
+  if (const auto *unary = exprAs<Unary>(expression);
       unary != nullptr && unary->oper().kind == TokenKind::STAR) {
     const ExpressionInfo *owner = semanticModel.findExpression(*unary->right());
     return owner != nullptr && owner->category == ValueCategory::Place &&
            hasStableBorrowStorage(unary->right(), visiting);
   }
-  if (const auto *call = exprAs<Call>(expression.get())) {
+  if (const auto *call = exprAs<Call>(expression)) {
     const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
     if (resolved != nullptr &&
         resolved->borrowOrigin == BorrowOriginKind::Global &&

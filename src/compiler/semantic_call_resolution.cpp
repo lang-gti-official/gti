@@ -144,7 +144,11 @@ auto SemanticVisitor::Impl::typeAliasForCallee(const ExprPtr &callee) const
 
 auto SemanticVisitor::Impl::directCall(const ExprPtr &expression)
     -> const Call * {
-  const Expr *candidate = expression.get();
+  return directCall(expression.get());
+}
+
+auto SemanticVisitor::Impl::directCall(const Expr *expression) -> const Call * {
+  const Expr *candidate = expression;
   while (candidate != nullptr && candidate->exprKind() == ExprKind::Grouping) {
     candidate = static_cast<const Grouping *>(candidate)->expression().get();
   }
@@ -154,6 +158,11 @@ auto SemanticVisitor::Impl::directCall(const ExprPtr &expression)
 }
 
 auto SemanticVisitor::Impl::explicitMoveSource(const ExprPtr &expression) const
+    -> const ExprPtr * {
+  return explicitMoveSource(expression.get());
+}
+
+auto SemanticVisitor::Impl::explicitMoveSource(const Expr *expression) const
     -> const ExprPtr * {
   const Call *call = directCall(expression);
   if (call == nullptr || resolvedIntrinsicKind(*call) != IntrinsicKind::Move ||
