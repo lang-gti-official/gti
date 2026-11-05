@@ -112,6 +112,10 @@
 (macro_declaration
   "#macro" @keyword.type
   name: (identifier) @function.macro)
+(procedural_macro_invocation
+  name: (identifier) @function.macro)
+(procedural_macro_invocation
+  name: (scoped_identifier name: (identifier) @function.macro))
 (function_declaration
   name: (scoped_identifier
     name: (identifier) @function.method))

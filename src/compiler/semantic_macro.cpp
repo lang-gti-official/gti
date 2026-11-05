@@ -6,6 +6,61 @@
 // The single typed statement-expansion engine, selected by #macro syntax.
 
 namespace lang {
+
+auto SemanticVisitor::Impl::analyzeCapturedCall(const Call &call) -> bool {
+  // Name lookup precedes any inspection/type-probe of the opaque argument.
+  // Ordinary lexical shadowing is therefore the same as other calls.
+  const auto symbol = resolveExpressionSymbol(call.callee());
+  const FunctionDecl *procedural = nullptr;
+  if (symbol && symbol->type == SemanticType::Function) {
+    for (const auto &candidate : symbol->overloads)
+      if (candidate.declaration && candidate.declaration->isProceduralMacro())
+        procedural = candidate.declaration;
+  }
+  if (procedural) {
+    currentType = SemanticType::Unknown;
+    semanticModel.recordMacroDeclaration(call, *procedural);
+    std::string message;
+    if (symbol->overloads.size() != 1)
+      message = "A procedural macro name cannot have overloads or mix with "
+                "functions or typed macros.";
+    else if (!call.typeArguments().empty() || !call.capturedArguments())
+      message = "A procedural macro invocation requires name!({...}) with "
+                "exactly one braced syntax group.";
+    else {
+      const auto &tokens = call.capturedArguments()->tokens;
+      const auto group = balancedSyntax(tokens, 1);
+      if (tokens.size() < 4 || tokens[1].kind != TokenKind::LEFT_BRACE ||
+          !group.complete || group.end + 2 != tokens.size())
+        message = "A procedural macro invocation requires exactly one braced "
+                  "syntax group.";
+      else if (std::any_of(tokens.begin(), tokens.end(), [](const auto &token) {
+                 return syntaxDirective(token.kind);
+               }))
+        message = "Directives are forbidden in procedural macro input.";
+      else if (sourceUnitFor(procedural->name()) == currentSourceUnit)
+        message = "The initial procedural macro profile requires an imported "
+                  "definition.";
+      else
+        message = "Procedural macro syntax is available, but execution "
+                  "requires phase 2.";
+    }
+    diagnostics.push_back(
+        makeDiagnostic(DiagnosticId::MacroExpansion, call.paren(), {message}));
+    diagnostics.back().related.push_back(
+        {tokenSpan(procedural->name()),
+         "The procedural macro is declared here."});
+    return true;
+  }
+  if (!call.capturedArguments())
+    return false;
+  currentType = SemanticType::Unknown;
+  diagnostics.push_back(makeDiagnostic(
+      DiagnosticId::MacroExpansion, call.paren(),
+      {"The name before '!' must resolve to one imported procedural macro."}));
+  return true;
+}
+
 namespace {
 
 void macroRelated(Diagnostic &diagnostic, SourceSpan span,
@@ -525,6 +580,12 @@ auto SemanticVisitor::Impl::analyzeMacroCall(const Call &writtenCall,
     diagnostics.push_back(
         makeDiagnostic(DiagnosticId::MacroExpansion, call->paren(), {message}));
   };
+  if (std::any_of(symbol->overloads.begin(), symbol->overloads.end(),
+                  [](const CallableCandidate &candidate) {
+                    return candidate.declaration &&
+                           candidate.declaration->isProceduralMacro();
+                  }))
+    return analyzeCapturedCall(*call);
   // An outermost written invocation starts its own expansion budget; every
   // expansion it causes, including forced written arguments, shares it.
   // Separate invocations never accumulate toward one limit.

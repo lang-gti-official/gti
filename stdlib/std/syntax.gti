@@ -1,0 +1,12 @@
+export module syntax;
+
+// Phase 1 declaration identities. These capabilities have no runtime storage
+// or executable source API yet. The verified-MIR bridge is phase 2 of RFC 0001.
+namespace std {
+namespace syntax {
+export @compiler_type("syntax_tokens") struct tokens {};
+export @compiler_type("syntax_expr") struct expr {};
+export @compiler_type("syntax_span") struct span {};
+export @compiler_type("syntax_binding") struct binding {};
+}
+}
