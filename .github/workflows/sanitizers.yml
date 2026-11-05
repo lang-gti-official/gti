@@ -124,6 +124,11 @@ jobs:
       - name: Check compiler sanitizer execution
         run: python3 scripts/check_ci_sanitizers.py --cxx "${CXX}" --sanitizer address,undefined
       - name: Configure
+        # Line tables (-g1) as in the LLVM job: with full debug information the
+        # library partition's instrumented executables filled the 42 GB left
+        # after free_ci_disk.sh (run 41956557131: "final link failed: No space
+        # left on device"). ASan and UBSan reports still carry file and line.
+        # cache.yml's warm-up repeats this configure exactly.
         run: >-
           cmake -S . -B build-sanitized -G Ninja
           -DCMAKE_BUILD_TYPE=RelWithDebInfo
@@ -131,7 +136,7 @@ jobs:
           -DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF
           -DGTI_TEST_TIMEOUT_SCALE=6
           -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
-          -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g"
+          -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g1"
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
           -DCMAKE_JOB_POOLS=link=1 -DCMAKE_JOB_POOL_LINK=link
       - name: Scale the compiler partition's timeout
