@@ -11,6 +11,13 @@ rehosting, focused validation, merge-queue integration, degraded-mode batches,
 bounded logs, waiting, sidebar titles and cleanup. Do not maintain a competing
 lifecycle here.
 
+For new feature-planning requests, invoke the `plan-feature` skill before
+starting a compiler task. `AGENTS.md` authorizes a draft RFC and draft proposal
+PR in `lang-gti-official/rfcs`, using that repository's document workflow. This
+does not authorize merging the proposal or implementing it. Discussion-only,
+local-only, and no-publication requests override that default; ordinary bug-fix
+plans and execution plans for accepted designs do not create new RFCs.
+
 The short version: run focused checks (reproducer, owning tests, affected
 cross-phase consumers, `compiler_pipeline`, smoke), record them with `verify`,
 and `finish`: it labels the PR for a rollup (phase `rollup`) or, for Risk-system

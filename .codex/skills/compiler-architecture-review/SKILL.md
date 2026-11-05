@@ -95,10 +95,18 @@ Classify findings as:
 - **defer** — no identified correctness, runtime-efficiency or readiness need;
   absence of benchmark evidence alone is not a reason.
 
+For a request to plan or design a new capability or architectural boundary, use
+[$plan-feature](../plan-feature/SKILL.md) to create or update a draft RFC and
+publish its draft proposal PR in `lang-gti-official/rfcs`. Apply this skill's
+architecture review to the design; do not start implementation or place the new
+proposal in `docs/plans/`. Honor discussion-only/local-only instructions.
+
 For an implementation request, make the smallest coherent change and update
 the canonical architecture doc. For a review-only request, cite concrete
-files/types/functions and keep proposed work under `docs/plans/`. Create an ADR
-only when the rationale is significant and durable.
+files/types/functions and report findings without publishing a proposal by
+default. Existing implementation plans may track accepted follow-up work and
+link the RFC. Create an ADR only when the rationale is significant and durable,
+linking its proposal rather than duplicating it.
 
 Validate architectural changes with focused structural tests plus the relevant
 matrix in
