@@ -11,6 +11,7 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   macroExpansionDepth = 0;
   macroExpandedBodies = 0;
   macroActiveBodies.clear();
+  proceduralNameKinds.clear();
   diagnostics.clear();
   catalog.clear();
   valueFlow.clear();
@@ -3469,7 +3470,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
                      "A typed macro requires a defined, safe, non-constexpr "
                      "namespace-scope template with typed expression "
                      "parameters.");
-    } else if (!validMacroBody(*stmt.body())) {
+    } else if (!stmt.isProceduralMacro() && !validMacroBody(*stmt.body())) {
       reportContract(keyword,
                      "A macro body supports automatic locals, expressions, "
                      "blocks, if and local loops. Break and continue must "
@@ -3484,6 +3485,26 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
           !expressionParameters.insert(parameter.name.lexeme).second)
         reportContract(parameter.name,
                        "Macro expression parameter names must be unique.");
+    if (stmt.isProceduralMacro()) {
+      const auto hasKind = [&](const SemanticType &type,
+                               CompilerTypeKind kind) {
+        return type.kind == SemanticType::Class && type.classId != 0 &&
+               classInfo(type.classId).compilerType == kind;
+      };
+      if (!functionInfo || !stmt.genericParameters().empty() ||
+          stmt.requiresClause() || stmt.parameters().size() != 1 ||
+          stmt.parameters().front().pack ||
+          stmt.parameters().front().hasDefault() ||
+          !hasKind(functionInfo->returnType,
+                   CompilerTypeKind::SyntaxExpression) ||
+          functionInfo->parameterTypes.size() != 1 ||
+          !hasKind(functionInfo->parameterTypes.front(),
+                   CompilerTypeKind::SyntaxTokens))
+        reportContract(keyword, "A procedural macro requires exactly one "
+                                "std::syntax::tokens parameter and "
+                                "a std::syntax::expr result, without generics, "
+                                "defaults, packs or constraints.");
+    }
   }
   for (const auto &contract : stmt.functionAttributes()) {
     const Token &attribute = contract.name;
@@ -3621,7 +3642,9 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   validateRuntimeBinding(stmt);
   const bool enclosingPackTypeReference = allowPackTypeReference;
   allowPackTypeReference = true;
+  allowProceduralSyntaxType = stmt.isProceduralMacro();
   validateType(stmt.returnType());
+  allowProceduralSyntaxType = false;
   allowPackTypeReference = enclosingPackTypeReference;
   const bool methodDeclaration = currentClass && functionDepth == 0;
   const bool polymorphic =
@@ -3727,7 +3750,9 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   for (const Parameter &parameter : stmt.parameters()) {
     const bool enclosingParameterPackTypeReference = allowPackTypeReference;
     allowPackTypeReference = true;
+    allowProceduralSyntaxType = stmt.isProceduralMacro();
     validateType(parameter.type);
+    allowProceduralSyntaxType = false;
     allowPackTypeReference = enclosingParameterPackTypeReference;
     if (!intrinsicDeclaration) {
       validateReferencePlacement(parameter.type, true, "function parameter");
@@ -7616,6 +7641,8 @@ auto SemanticVisitor::Impl::visitBinaryExpr(const Binary &expr) -> void {
 }
 
 auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
+  if (expr.capturedArguments() && analyzeCapturedCall(expr))
+    return;
   if (analyzeMacroCall(expr, macroStatementCall == &expr ? macroStatementContext
                                                          : nullptr))
     return;

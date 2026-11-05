@@ -3218,7 +3218,14 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
               classDecl->compilerTypeBinding()) {
         const std::optional<CompilerTypeKind> kind =
             compilerTypeKind(binding->name);
-        if (!kind || !isMetaLibraryUnit(currentSourceUnit)) {
+        const SourceUnit *unit =
+            sourceGraph ? sourceGraph->findUnit(currentSourceUnit) : nullptr;
+        const bool syntaxKind = kind && *kind >= CompilerTypeKind::SyntaxTokens;
+        const bool trustedSyntax =
+            unit && unit->role == SourceUnitRole::StandardLibrary &&
+            unit->standardLibraryName == "std/syntax";
+        if (!kind || (syntaxKind ? !trustedSyntax
+                                 : !isMetaLibraryUnit(currentSourceUnit))) {
           report(binding->attribute,
                  "@compiler_type is reserved for compiler-owned classes "
                  "declared in their trusted standard-library unit.",
@@ -3381,6 +3388,14 @@ auto SemanticVisitor::Impl::selectClassDefinition(
 
 auto SemanticVisitor::Impl::compilerTypeKind(std::string_view binding)
     -> std::optional<CompilerTypeKind> {
+  if (binding == "syntax_tokens")
+    return CompilerTypeKind::SyntaxTokens;
+  if (binding == "syntax_expr")
+    return CompilerTypeKind::SyntaxExpression;
+  if (binding == "syntax_span")
+    return CompilerTypeKind::SyntaxSpan;
+  if (binding == "syntax_binding")
+    return CompilerTypeKind::SyntaxBinding;
   if (binding == "meta_list") {
     return CompilerTypeKind::MetaList;
   }
@@ -5017,6 +5032,18 @@ auto SemanticVisitor::Impl::registerFunctionGenericParameters(
       functionGenericParameters.insert_or_assign(function, genericParameters);
       const IntrinsicKind intrinsic = trustedIntrinsicKind(
           currentSourceUnit, scope, function->name().lexeme);
+      const std::string macroNameKey =
+          std::to_string(currentSourceUnit) + ":" +
+          qualifiedName(scope, function->name().lexeme);
+      const auto [previousKind, firstName] = proceduralNameKinds.emplace(
+          macroNameKey, function->isProceduralMacro());
+      if (!firstName && (previousKind->second || function->isProceduralMacro()))
+        diagnostics.push_back(
+            makeDiagnostic(DiagnosticId::MacroExpansion, function->name(),
+                           {"A procedural macro name cannot have overloads or "
+                            "mix with functions or typed macros."}));
+      previousKind->second =
+          previousKind->second || function->isProceduralMacro();
       (void)catalog.registerCallable(CallableDeclaration{
           .id = nextFunctionId++,
           .sourceUnit = currentSourceUnit,
@@ -5488,7 +5515,8 @@ auto SemanticVisitor::Impl::bindNamespaceFunctionDefinition(
         declaration.unsafeKeyword().has_value() !=
             definition.unsafeKeyword().has_value() ||
         declaration.isStatic() != definition.isStatic() ||
-        declaration.isMacro() != definition.isMacro()) {
+        declaration.isMacro() != definition.isMacro() ||
+        declaration.isProceduralMacro() != definition.isProceduralMacro()) {
       fail("The definition must match its declaration's return type and "
            "constexpr, unsafe, static and macro qualifiers.");
       return true;

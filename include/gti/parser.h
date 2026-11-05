@@ -30,6 +30,9 @@ public:
   // diagnostic offer an edit that keeps text between tokens, such as comments.
   // The parser borrows it for the duration of parse().
   explicit Parser(std::vector<Token> tokens, std::string_view source = {});
+  // Owned, possibly spliced syntax retains trivia independently of source
+  // spans.
+  explicit Parser(std::shared_ptr<const SyntaxCapture> syntax);
   ~Parser();
 
   Parser(const Parser &) = delete;

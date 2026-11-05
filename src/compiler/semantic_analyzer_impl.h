@@ -1677,6 +1677,10 @@ private:
     // `list<First, Rest...>` -> First / `list<Rest...>`.
     MetaListFirst,
     MetaListRest,
+    SyntaxTokens,
+    SyntaxExpression,
+    SyntaxSpan,
+    SyntaxBinding,
   };
 
   struct ClassInfo {
@@ -5987,6 +5991,9 @@ private:
   void copyRequestSessionForSpeculativeModel(Impl &probe);
   [[nodiscard]] bool
   analyzeMacroCall(const Call &call, const ExpressionStmt *statement = nullptr);
+  bool analyzeCapturedCall(const Call &call);
+  bool allowProceduralSyntaxType = false;
+  std::unordered_map<std::string, bool> proceduralNameKinds;
   [[nodiscard]] std::unique_ptr<Impl> makeMacroProbe(const Call &call);
   struct MacroResultRegion {
     const FunctionDecl *function = nullptr;

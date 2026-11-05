@@ -1,5 +1,13 @@
 # Diagnostics
 
+`GTI-I0015` rejects compiler directives/imports inside explicit procedural
+macro input before the loader commits effects. `GTI-S2124` reports procedural
+selection, input-category, syntax-capability and phase-2 execution boundaries;
+declaration profile errors use the existing function-contract diagnostic.
+The invocation carries the primary location and the selected definition is a
+related location. Opaque embedded names are not type-probed to produce these
+diagnostics.
+
 `GTI-S2009` retains the non-discardable-by-default call rule and its explicit
 `[[discard]]` fix-it. A selected `[[discardable]]` declaration suppresses that
 requirement, not other diagnostics or call analysis. Duplicate discardable

@@ -561,6 +561,8 @@ add_library(
   "src/compiler/optimization/sccp.cpp"
   "src/compiler/optimizer.cpp"
   "src/compiler/parser.cpp"
+  "src/compiler/syntax_capture.cpp"
+  "src/compiler/procedural_syntax.cpp"
   "src/compiler/process_memory_runtime.cpp"
   "src/compiler/semantic_model.cpp"
   "src/compiler/persistent_declaration.cpp"

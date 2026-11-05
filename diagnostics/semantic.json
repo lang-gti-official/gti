@@ -1,5 +1,14 @@
 [
   {
+    "id": "CapturedSyntaxDirective",
+    "code": "GTI-I0015",
+    "phase": "SourceLoading",
+    "severity": "Error",
+    "group": "macro-input",
+    "format": "Compiler directives and imports must be outside procedural macro input.",
+    "arguments": 0
+  },
+  {
     "id": "RemovedInclude",
     "code": "GTI-I0014",
     "phase": "SourceLoading",
