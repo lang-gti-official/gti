@@ -1322,7 +1322,8 @@ private:
         (info != nullptr && source.requiresUnsafe != info->requiresUnsafe) ||
         (info != nullptr && source.neverReturns != info->neverReturns) ||
         (info != nullptr && source.tracksCaller != info->tracksCaller) ||
-        (info != nullptr && source.codegenAttributes != info->codegenAttributes) ||
+        (info != nullptr &&
+         source.codegenAttributes != info->codegenAttributes) ||
         (info != nullptr &&
          source.threadConfinedCallback != info->threadConfinedCallback) ||
         source.linkage != lowered.linkage ||

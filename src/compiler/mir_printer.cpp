@@ -753,8 +753,8 @@ public:
       output << " may-raise-defined-failure=" << instance.mayRaiseDefinedFailure
              << " requires-unsafe=" << instance.requiresUnsafe
              << " noreturn=" << instance.neverReturns
-             << " track-caller=" << instance.tracksCaller
-             << " codegen-inline=" << static_cast<int>(instance.codegenAttributes.inlining)
+             << " track-caller=" << instance.tracksCaller << " codegen-inline="
+             << static_cast<int>(instance.codegenAttributes.inlining)
              << " codegen-cold=" << instance.codegenAttributes.cold
              << " thread-confined-callback=" << instance.threadConfinedCallback
              << " cthread-operation="
