@@ -135,7 +135,19 @@ endif()
 # independent native backend additionally owns the exact Core/native-codegen/Passes
 # closure recorded below. LLVM headers stay private to compiled implementation
 # targets and never become a public-header dependency.
-set(GTI_PINNED_LLVM_VERSION "20.1.0")
+#
+# One LLVM for everyone: releases bundle exactly GTI_PINNED_LLVM_VERSION, and
+# every other build (local development, CI's system-LLVM jobs) must use the
+# same major version, so what is measured and tested is what ships.
+# Distribution packages follow the release branch's point releases, so only
+# the major is enforced there. GTI_ALLOW_UNPINNED_LLVM is an explicit,
+# warned opt-out for trying a future LLVM; CI never sets it.
+set(GTI_PINNED_LLVM_VERSION "23.1.4")
+set(GTI_PINNED_LLVM_SHA256
+    "819ecf7351f1a66f76b2d701d8942faaf5faeb324cb90c9d5b090de142434bb2")
+string(REGEX MATCH "^[0-9]+" GTI_PINNED_LLVM_MAJOR "${GTI_PINNED_LLVM_VERSION}")
+option(GTI_ALLOW_UNPINNED_LLVM
+       "Allow an installed LLVM whose major version is not GTI's pinned one" OFF)
 if(GTI_BUNDLE_LLVM)
   include(FetchContent)
   set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build static bundled dependencies" FORCE)
@@ -187,7 +199,7 @@ if(GTI_BUNDLE_LLVM)
       llvm_project
       URL "${GTI_LLVM_SOURCE_URL}"
       URL_HASH
-        SHA256=4579051e3c255fb4bb795d54324f5a7f3ef79bd9181e44293d7ee9a7f62aad9a
+        SHA256=${GTI_PINNED_LLVM_SHA256}
       DOWNLOAD_EXTRACT_TIMESTAMP TRUE
       SOURCE_SUBDIR llvm
       EXCLUDE_FROM_ALL
@@ -198,7 +210,7 @@ if(GTI_BUNDLE_LLVM)
       llvm_project
       URL "${GTI_LLVM_SOURCE_URL}"
       URL_HASH
-        SHA256=4579051e3c255fb4bb795d54324f5a7f3ef79bd9181e44293d7ee9a7f62aad9a
+        SHA256=${GTI_PINNED_LLVM_SHA256}
       DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     )
     FetchContent_GetProperties(llvm_project)
@@ -218,16 +230,26 @@ if(GTI_BUNDLE_LLVM)
       "${llvm_project_BINARY_DIR}/tools/clang/include")
   message(STATUS "GTI: bundled LLVM ${GTI_LLVM_VERSION} support libraries enabled")
 else()
-  find_package(LLVM CONFIG QUIET)
+  # Without LLVM_DIR, look first where the pinned major is normally installed.
+  find_package(LLVM CONFIG QUIET
+    HINTS "/opt/homebrew/opt/llvm@${GTI_PINNED_LLVM_MAJOR}/lib/cmake/llvm"
+          "/usr/local/opt/llvm@${GTI_PINNED_LLVM_MAJOR}/lib/cmake/llvm"
+          "/usr/lib/llvm-${GTI_PINNED_LLVM_MAJOR}/lib/cmake/llvm")
+  set(gti_llvm_install_hint
+      "Install LLVM ${GTI_PINNED_LLVM_MAJOR} (macOS: brew install llvm@${GTI_PINNED_LLVM_MAJOR}; Ubuntu: llvm-${GTI_PINNED_LLVM_MAJOR}-dev libclang-${GTI_PINNED_LLVM_MAJOR}-dev from apt.llvm.org) and set LLVM_DIR to its lib/cmake/llvm, or configure with -DGTI_BUNDLE_LLVM=ON to build the pinned LLVM ${GTI_PINNED_LLVM_VERSION}.")
   if(NOT LLVM_FOUND)
-    message(
-      FATAL_ERROR
-        "GTI requires LLVM 18 or newer. Set LLVM_DIR to an LLVM CMake package or configure with -DGTI_BUNDLE_LLVM=ON.")
+    message(FATAL_ERROR "GTI requires LLVM ${GTI_PINNED_LLVM_MAJOR}. ${gti_llvm_install_hint}")
   endif()
-  if(LLVM_PACKAGE_VERSION VERSION_LESS 18)
-    message(
-      FATAL_ERROR
-        "GTI requires LLVM 18 or newer, but found LLVM ${LLVM_PACKAGE_VERSION}. Set LLVM_DIR to a compatible installation or configure with -DGTI_BUNDLE_LLVM=ON.")
+  if(NOT LLVM_VERSION_MAJOR EQUAL GTI_PINNED_LLVM_MAJOR)
+    if(GTI_ALLOW_UNPINNED_LLVM)
+      message(
+        WARNING
+          "GTI pins LLVM ${GTI_PINNED_LLVM_MAJOR}, but GTI_ALLOW_UNPINNED_LLVM selected LLVM ${LLVM_PACKAGE_VERSION} at ${LLVM_DIR}. Results from this build, including benchmarks, do not describe shipped GTI.")
+    else()
+      message(
+        FATAL_ERROR
+          "GTI pins LLVM ${GTI_PINNED_LLVM_MAJOR} (releases bundle ${GTI_PINNED_LLVM_VERSION}), but LLVM_DIR selects LLVM ${LLVM_PACKAGE_VERSION} at ${LLVM_DIR}. ${gti_llvm_install_hint}")
+    endif()
   endif()
   # Without this check the mismatch surfaces as an undefined `typeinfo for
   # llvm::ErrorInfoBase` at link time, which does not name its own cause.
@@ -455,7 +477,7 @@ extern \"C\" int LLVMFuzzerTestOneInput(const uint8_t *, size_t) { return 0; }
     message(FATAL_ERROR "This Clang cannot link -fsanitize=fuzzer (Apple "
                         "CommandLineTools omits libclang_rt.fuzzer). Use a "
                         "full LLVM toolchain, e.g. "
-                        "-DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm/bin/clang++.")
+                        "-DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm@23/bin/clang++.")
   endif()
   if(GTI_RELEASE_BUILD)
     message(FATAL_ERROR "GTI_BUILD_FUZZERS and GTI_RELEASE_BUILD are mutually "

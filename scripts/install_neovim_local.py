@@ -13,7 +13,11 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import llvm_pin  # noqa: E402  (sibling module)
 
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -203,35 +207,12 @@ def cache_values(build):
 
 
 def supported_llvm(directory):
-    version_file = directory / "LLVMConfigVersion.cmake"
-    if not (directory / "LLVMConfig.cmake").is_file() or not version_file.is_file():
-        return False
-    version = re.search(r'set\(PACKAGE_VERSION\s+"(\d+)\.', version_file.read_text())
-    return version is not None and int(version.group(1)) >= 18
+    """Whether directory is an LLVM CMake package of GTI's pinned major."""
+    return llvm_pin.matches_pin(pathlib.Path(directory))
 
 
 def discover_llvm():
-    if not shutil.which("brew"):
-        return None
-    for formula in ("llvm", "llvm@23", "llvm@22", "llvm@21", "llvm@20", "llvm@19",
-                    "llvm@18"):
-        result = subprocess.run(["brew", "--prefix", formula], capture_output=True, text=True)
-        if result.returncode != 0:
-            continue
-        prefix = pathlib.Path(result.stdout.strip())
-        candidate = prefix / "lib/cmake/llvm"
-        if supported_llvm(candidate):
-            return candidate.resolve()
-        # Homebrew can retain a supported version after upgrading the opt alias.
-        # Ask brew for its Cellar rather than assuming Apple Silicon's prefix.
-        cellar = subprocess.run(["brew", "--cellar", formula], capture_output=True, text=True)
-        if cellar.returncode == 0 and cellar.stdout.strip():
-            candidates = sorted(pathlib.Path(cellar.stdout.strip()).glob("*/lib/cmake/llvm"),
-                                reverse=True)
-            for candidate in candidates:
-                if supported_llvm(candidate):
-                    return candidate.resolve()
-    return None
+    return llvm_pin.discover()
 
 
 def configure_command(build, llvm_dir):
@@ -348,7 +329,8 @@ def main():
     if llvm_dir:
         llvm_dir = pathlib.Path(llvm_dir).expanduser().resolve()
         if not supported_llvm(llvm_dir):
-            parser.error("--llvm-dir/LLVM_DIR must select LLVM 18 or newer")
+            parser.error(f"--llvm-dir/LLVM_DIR must select LLVM {llvm_pin.pinned_major()}, "
+                         "GTI's pinned LLVM")
     else:
         values = cache_values(build)
         cached = (pathlib.Path(values["LLVM_DIR"])
@@ -358,8 +340,9 @@ def main():
         llvm_dir = (cached.resolve() if cached and supported_llvm(cached)
                     else discover_llvm())
         if llvm_dir is None:
-            parser.error("no LLVM 18 or newer found; install a compatible "
-                         "LLVM (including libclang), for example brew install llvm, "
+            major = llvm_pin.pinned_major()
+            parser.error(f"no LLVM {major} found; GTI pins LLVM {major}. Install it "
+                         f"(including libclang), for example brew install llvm@{major}, "
                          "then pass --llvm-dir. To restore commands from an already "
                          "installed toolchain without rebuilding, use --activate-only")
     configure = configure_command(build, llvm_dir)
