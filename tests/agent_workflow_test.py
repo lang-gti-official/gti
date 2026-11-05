@@ -1402,21 +1402,38 @@ class ValidationChecks(unittest.TestCase):
         with self.assertRaises(ValueError):
             validation.shard_inventory(registered, "nightly")
 
-    def test_durations_refresh_keeps_the_maximum_and_ignores_unknown_names(self):
+    def test_durations_refresh_averages_each_run_and_ignores_unknown_names(self):
         with tempfile.TemporaryDirectory() as directory:
             table = Path(directory) / "durations.json"
-            table.write_text(json.dumps({"schema": 1, "default_seconds": 30, "seconds": {"a": 50.0, "b": 10.0}}))
+            table.write_text(json.dumps({"schema": 1, "default_seconds": 30,
+                                         "seconds": {"a": 50.0, "b": 10.0, "kept": 7.0}}))
             reports = Path(directory) / "reports"
             reports.mkdir()
             (reports / "one.xml").write_text(
-                '<testsuite><testcase name="a" time="20.4"/><testcase name="b" time="33.3"/>'
+                '<testsuite><testcase name="a" time="20.4"/><testcase name="b" time="33.4"/>'
                 '<testcase name="c" time="1.0"/><testcase name="bad name" time="9"/></testsuite>')
+            # One run's second report of the same test counts its larger time once.
+            (reports / "two.xml").write_text('<testsuite><testcase name="b" time="12.0"/></testsuite>')
             validation.update_durations(table, reports)
             seconds = json.loads(table.read_text())["seconds"]
-            self.assertEqual(seconds, {"a": 50.0, "b": 33.3, "c": 1.0})
+            self.assertEqual(seconds, {"a": 35.2, "b": 21.7, "c": 1.0, "kept": 7.0})
             (reports / "broken.xml").write_text("<testsuite>")
             with self.assertRaises(ValueError):
                 validation.update_durations(table, reports)
+
+    def test_fetched_duration_tables_must_be_well_formed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            table = Path(directory) / "durations.json"
+            table.write_text(json.dumps({"schema": 1, "default_seconds": 30, "seconds": {"a": 1.5}}))
+            validation.check_durations(table)
+            for bad in ("{", json.dumps([]), json.dumps({"seconds": {}}),
+                        json.dumps({"seconds": {"a": -1}}), json.dumps({"seconds": {"bad name": 1}}),
+                        json.dumps({"seconds": {"a": True}}), json.dumps({"seconds": {"a": 1}, "default_seconds": 0})):
+                table.write_text(bad)
+                with self.assertRaises(ValueError, msg=bad):
+                    validation.check_durations(table)
+            with self.assertRaises(ValueError):
+                validation.check_durations(Path(directory) / "missing.json")
 
     def test_shards_partition_deterministically_and_merge_only_complete_coverage(self):
         names = ["a", "b", "c", "d", "e"]
