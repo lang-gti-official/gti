@@ -14,8 +14,11 @@ name: Release train
 #   commit itself), as the stable v<VERSION>
 #   release, byte for byte, behind the protected `stable` environment.
 on:
+  # 09:00 UTC: after nightly (02:00) and the daily sanitizer run on its commit
+  # (02:45, about three hours), so a nightly that moved today already has the
+  # sanitizer verdict the cut and promotion require.
   schedule:
-    - cron: "0 4 * * *"
+    - cron: "0 9 * * *"
   workflow_dispatch:
     inputs:
       stage:

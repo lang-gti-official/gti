@@ -480,7 +480,8 @@ The workflows only pass validated values between those checks and `git push`
 or `gh`. Every train ref is created by a plain push that fails rather than
 overwrites; no tag or branch is ever forced, moved or deleted.
 
-1. **Cut** (`train.yml`, job `cut`). The schedule fires daily at 04:00 UTC and
+1. **Cut** (`train.yml`, job `cut`). The schedule fires daily at 09:00 UTC,
+   after nightly and that day's sanitizer run on the nightly commit, and
    the train admits every other UTC day (epoch-day parity), a 48-hour cadence
    without month-end drift; a dispatch always runs. The source is the commit
    the `nightly` tag names. It must be on main, carry the same successful full CI

@@ -533,7 +533,7 @@ def train_contract(root):
     train = jobs(train_text)
     assert list(train) == ["plan", "cut", "promote"], list(train)
     header = train_text.split("\njobs:\n", 1)[0]
-    assert '  schedule:\n    - cron: "0 4 * * *"\n  workflow_dispatch:' in header
+    assert '  schedule:\n    - cron: "0 9 * * *"\n  workflow_dispatch:' in header
     assert "push:" not in header and "pull_request" not in train_text
     assert "group: gti-release-train\n  cancel-in-progress: false" in header
     assert set(re.findall(r"secrets\.([A-Za-z0-9_]+)", train_text)) == {"GTI_ROLLUP_APP_ID",
