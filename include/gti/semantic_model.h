@@ -874,6 +874,18 @@ struct PublishedTextField {
                           const PublishedTextField &) = default;
 };
 
+// Resolved source optimization requests. They affect code-generation policy,
+// never control flow, ownership, failure behavior or the function's ABI.
+enum class FunctionInlining { Default, Hint, Never };
+
+struct FunctionCodegenAttributes {
+  FunctionInlining inlining = FunctionInlining::Default;
+  bool cold = false;
+
+  friend auto operator<=>(const FunctionCodegenAttributes &,
+                          const FunctionCodegenAttributes &) = default;
+};
+
 struct FunctionInfo {
   FunctionId id = 0;
   SourceUnitId sourceUnit = 0;
@@ -903,6 +915,7 @@ struct FunctionInfo {
   bool requiresUnsafe = false;
   bool neverReturns = false;
   bool tracksCaller = false;
+  FunctionCodegenAttributes codegenAttributes;
   bool discardableResult = false;
   bool macroExpansion = false;
   bool threadConfinedCallback = false;

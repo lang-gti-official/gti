@@ -2257,6 +2257,11 @@ add_executable(gti_llvm_private_atomic_tests llvm_private_atomic_tests.cpp)
 target_include_directories(gti_llvm_private_atomic_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
 target_link_libraries(gti_llvm_private_atomic_tests PRIVATE gti_llvm_backend)
 add_test(NAME llvm_private_atomics COMMAND gti_llvm_private_atomic_tests)
+add_executable(gti_codegen_attribute_tests codegen_attribute_tests.cpp)
+target_include_directories(gti_codegen_attribute_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_codegen_attribute_tests PRIVATE gti_llvm_backend)
+add_test(NAME codegen_attribute_contract COMMAND gti_codegen_attribute_tests)
+
 add_executable(gti_llvm_session_tests llvm_session_tests.cpp)
 target_include_directories(gti_llvm_session_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
 target_link_libraries(gti_llvm_session_tests PRIVATE gti_llvm_backend gti_driver gti_runtime)
@@ -4894,6 +4899,14 @@ if(Python3_Interpreter_FOUND)
                    "$<TARGET_FILE:gti>")
   set_tests_properties(generic_contract_runtime PROPERTIES TIMEOUT 300)
   add_test(
+    NAME codegen_attribute_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/generic_symbolic_auto_local_runtime_test.py"
+            $<TARGET_FILE:gti>
+            "${PROJECT_SOURCE_DIR}/examples/llvm/codegen-attributes.gti")
+  set_tests_properties(codegen_attribute_runtime PROPERTIES TIMEOUT 180)
+
+  add_test(
     NAME function_signature_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/generic_symbolic_auto_local_runtime_test.py"
@@ -6286,6 +6299,12 @@ if(Python3_Interpreter_FOUND)
               "$<TARGET_FILE:gti_lsp>"
     )
     set_tests_properties(lsp_configuration PROPERTIES TIMEOUT 120)
+    add_test(NAME codegen_attribute_lsp
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/lsp_smoke_test.py"
+              "$<TARGET_FILE:gti_lsp>" function-contracts)
+    set_tests_properties(codegen_attribute_lsp PROPERTIES TIMEOUT 180)
+
     add_test(
       NAME lsp_test_target
       COMMAND "${Python3_EXECUTABLE}"

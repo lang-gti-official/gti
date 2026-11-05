@@ -991,6 +991,7 @@ private:
             .controlContract = semantics_.functionControlContract(info->id),
             .neverReturns = info->neverReturns,
             .tracksCaller = info->tracksCaller,
+            .codegenAttributes = info->codegenAttributes,
             .threadConfinedCallback = info->threadConfinedCallback,
             .cThreadOperation = info->cThreadOperation,
             .processMemoryOperation = info->processMemoryOperation,
@@ -1310,6 +1311,7 @@ private:
         source.requiresUnsafe != lowered.requiresUnsafe ||
         source.neverReturns != lowered.neverReturns ||
         source.tracksCaller != lowered.tracksCaller ||
+        source.codegenAttributes != lowered.codegenAttributes ||
         source.threadConfinedCallback != lowered.threadConfinedCallback ||
         source.cThreadOperation != lowered.cThreadOperation ||
         (info != nullptr &&
@@ -1320,6 +1322,7 @@ private:
         (info != nullptr && source.requiresUnsafe != info->requiresUnsafe) ||
         (info != nullptr && source.neverReturns != info->neverReturns) ||
         (info != nullptr && source.tracksCaller != info->tracksCaller) ||
+        (info != nullptr && source.codegenAttributes != info->codegenAttributes) ||
         (info != nullptr &&
          source.threadConfinedCallback != info->threadConfinedCallback) ||
         source.linkage != lowered.linkage ||

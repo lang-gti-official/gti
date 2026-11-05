@@ -638,6 +638,11 @@ The native, polymorphic, operator and bodyless restrictions apply to
 `[[noreturn]]`/`[[track_caller]]`, not to every function attribute.
 `[[discardable]]` may describe non-void native, polymorphic or operator results;
 `[[borrowed_from(...)]]` has its own checked GTI reference-return boundary.
+`[[inline]]`, `[[cold]]` and `[[noinline]]` require source-defined GTI functions
+or methods. Duplicate hints, contradictory `inline`/`noinline` and unsupported
+declaration shapes use `GTI-S2099` at the annotation name, without an automatic
+fix that could discard the author's policy. Arguments and non-function syntax
+use `GTI-P0001`; `inline` is accepted contextually inside the attribute list.
 The following typed declaration determines function-attribute context even
 when the list contains no recognized attribute; unknown plain names therefore
 reach semantic validation rather than a misleading class-attribute parse error.

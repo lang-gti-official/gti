@@ -12706,7 +12706,7 @@ Release compiler evidence on macOS arm64:
   fresh ID mapping, missing/wrong owner rejection and conflicting unit mappings.
   `compiled_scalar_library` mutates the sealed ownership bindings and proves that
   deleting every binding cannot reopen a called import. The latter also checks
-  ownership serialization in `lowered-program-v31`.
+  ownership serialization in `lowered-program-v32`.
 - Twenty-three affected regressions passed without skips in 219.14 seconds before
   the final empty-binding verifier guard. That guard changes only a compiled
   context with interface units and no callable bindings; paths with bindings or
@@ -12757,3 +12757,18 @@ over 65,536 vector elements and cleanup of every owner on predicate failure.
 The full mixed generic ownership fixture currently exceeds the C++ emitter's
 consistent `uninitialized_storage` trait representation; its LLVM lifecycle
 checks remain mandatory and the scalar/string comparator is retained.
+
+### Function optimization annotation verification
+
+`codegen_attribute_contract` checks source acceptance and rejection, formatter
+round trips, declaration/method/generic instance preservation, MIR mutation
+rejection, sealed lowering, editor hover signatures and exact LLVM
+`inlinehint`/`noinline`/`cold` attributes (never `alwaysinline`).
+`codegen_attribute_runtime` runs `examples/llvm/codegen-attributes.gti` on LLVM
+O0 and O3, including recursive call boundaries, normal return from a cold
+function, generic/member calls and exactly-once destructor cleanup.
+`codegen_attribute_lsp` exercises diagnostic ranges, repair publication, hover
+and contextual annotation tokens through the protocol. Tree-sitter's function
+contract corpus and highlight fixture cover the same three spellings.
+These checks establish requests and semantics; they do not claim a universal
+performance improvement from user annotations.

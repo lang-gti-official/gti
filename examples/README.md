@@ -1,5 +1,13 @@
 # GTI examples
 
+[`llvm/codegen-attributes.gti`](llvm/codegen-attributes.gti) demonstrates advisory
+`[[inline]]`, `[[noinline]]` call boundaries and a returning `[[cold]]` function,
+including generic/member functions and deterministic cleanup. Run it with
+`gti examples/llvm/codegen-attributes.gti --backend llvm -O3 -o codegen-attributes`
+and then `./codegen-attributes`. The `codegen_attribute_runtime` gate executes it
+at LLVM O0 and O3. Like the other bounded LLVM examples below, it is outside the
+numbered full-language census.
+
 [`procedural-macro-declaration.gti`](procedural-macro-declaration.gti) demonstrates
 the phase-1 `#macro(proc)` declaration boundary alongside an executable existing
 typed macro. It is registered as `procedural_declaration_example` at LLVM O0/O3,

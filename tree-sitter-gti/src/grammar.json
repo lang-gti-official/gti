@@ -4765,6 +4765,18 @@
               "value": "thread_confined_callback"
             },
             {
+              "type": "STRING",
+              "value": "inline"
+            },
+            {
+              "type": "STRING",
+              "value": "cold"
+            },
+            {
+              "type": "STRING",
+              "value": "noinline"
+            },
+            {
               "type": "SYMBOL",
               "name": "borrow_origin_attribute"
             }
@@ -4801,6 +4813,18 @@
                   {
                     "type": "STRING",
                     "value": "thread_confined_callback"
+                  },
+                  {
+                    "type": "STRING",
+                    "value": "inline"
+                  },
+                  {
+                    "type": "STRING",
+                    "value": "cold"
+                  },
+                  {
+                    "type": "STRING",
+                    "value": "noinline"
                   },
                   {
                     "type": "SYMBOL",

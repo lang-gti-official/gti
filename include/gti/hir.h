@@ -781,6 +781,7 @@ struct HirFunctionInstance {
   bool requiresUnsafe = false;
   bool neverReturns = false;
   bool tracksCaller = false;
+  FunctionCodegenAttributes codegenAttributes;
   CThreadRuntimeOperation cThreadOperation = CThreadRuntimeOperation::None;
   bool threadConfinedCallback = false;
   ProcessMemoryRuntimeOperation processMemoryOperation =

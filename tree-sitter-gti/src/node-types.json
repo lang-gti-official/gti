@@ -6578,6 +6578,10 @@
     "named": false
   },
   {
+    "type": "cold",
+    "named": false
+  },
+  {
     "type": "comment",
     "named": true,
     "extra": true
@@ -6695,6 +6699,10 @@
     "named": false
   },
   {
+    "type": "inline",
+    "named": false
+  },
+  {
     "type": "int",
     "named": false
   },
@@ -6748,6 +6756,10 @@
   },
   {
     "type": "namespace",
+    "named": false
+  },
+  {
+    "type": "noinline",
     "named": false
   },
   {

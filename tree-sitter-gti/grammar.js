@@ -761,8 +761,8 @@ module.exports = grammar({
     function_contract_attribute: ($) =>
       seq(
         "[[",
-        choice("test", "noreturn", "track_caller", "discardable", "thread_confined_callback", $.borrow_origin_attribute),
-        repeat(seq(",", choice("test", "noreturn", "track_caller", "discardable", "thread_confined_callback", $.borrow_origin_attribute))),
+        choice("test", "noreturn", "track_caller", "discardable", "thread_confined_callback", "inline", "cold", "noinline", $.borrow_origin_attribute),
+        repeat(seq(",", choice("test", "noreturn", "track_caller", "discardable", "thread_confined_callback", "inline", "cold", "noinline", $.borrow_origin_attribute))),
         "]]",
       ),
 

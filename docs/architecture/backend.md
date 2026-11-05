@@ -6128,7 +6128,7 @@ cleanup ownership is independent of whether the representation needs a byte.
 MIR independently follows the destructor with that field known null and requires
 a terminating path containing only the field observation, inert scalar operations
 and empty lifecycle boundaries. Effects, calls, failure, uncertain branches and
-cycles invalidate the witness. The witness is serialized in `mir-v119`.
+cycles invalidate the witness. The witness is serialized in `mir-v120`.
 
 LLVM omits the separate byte for this witness, uses the pointer for cleanup
 observation, and nulls it after transferring all fields to a move destination.
@@ -6514,6 +6514,23 @@ storage and externally observes addresses/values; it does not substitute for
 ordinary source construction, publication, transfer and cleanup integration.
 Cleanup-bearing structural relocation, boxed dynamic cleanup, and full callable
 execution remain prerequisites before admitting existing source wrappers.
+
+### Source function optimization policy
+
+Semantics resolves function attributes to `FunctionCodegenAttributes`, containing
+an independent cold hint and a default/hint/never inlining policy. HIR concrete
+instances, MIR instances and sealed lowered declarations retain the same record;
+phase-boundary verification rejects divergence, invalid policy values, or policy
+on a non-source/native declaration. AST cloning keeps the original attributes;
+instantiation therefore neither drops policy nor re-derives it from a name.
+The deterministic MIR and lowered-program formats include the record.
+
+LLVM ABI declaration emits `cold`, `inlinehint` and `noinline` directly from
+verified MIR. `inlinehint` is advisory, never `alwaysinline`; coldness adds no
+failure, termination or ownership facts. Other lowering and optimization paths
+must preserve explicit policy and avoid conflicting LLVM attributes. This
+initial slice changes no calling convention or runtime representation and adds
+no C++ backend optimization implementation.
 
 ### LLVM Function Values And Closure Environments
 
