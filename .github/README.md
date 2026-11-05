@@ -285,21 +285,13 @@ runner conditions. Every sample is logged; the fourfold workload increase and
 8x growth limit are unchanged. `single_body_scaling_measurement` checks transient
 baseline noise, persistent excessive growth, and quadratic/cubic rejection.
 
-## Preview toolchains and gtiup
+## Toolchain channels and gtiup
 
-`preview.yml` responds to the canonical preview source branch, with an explicit
-main dispatch for commissioning/recovery. It builds both supported production
-platforms, runs combined preview admission and installed consumers, and publishes
-only their matching source/run/attempt artifacts to the rolling `preview`
-prerelease. Both package jobs must run in the same workflow attempt. This
-channel does not satisfy nightly's full-main-CI gate or promote into main.
-Successful snapshots can publish after the source branch advances. The rolling
-release moves forward by preview source ancestry; older completed builds leave
-a newer release untouched, divergent histories fail, and explicit feature
-withdrawals remain enforced. Publishers are serialized and use an exact tag
-lease; retries of the same source may finish interrupted asset uploads.
+The preview channel and its `preview.yml` publisher are retired. Nothing builds
+or admits preview any longer; the frozen `preview` branch and release remain
+only until the owner deletes them.
 The standalone C++ manager [gtiup](https://github.com/lang-gti-official/gtiup)
 has separate CI and manager downloads; this repository builds only its compiler
-toolchain payloads and editor integration. It downloads and selects complete toolchains for preview, nightly, beta and
-stable; managed Neovim uses the selected LSP/parser. See the root README and
-[managed toolchains](../docs/architecture/build-and-driver.md#managed-toolchains-and-preview-distribution).
+toolchain payloads and editor integration. It downloads and selects complete toolchains for nightly, beta and
+stable, and selects linked local builds; managed Neovim uses the selected LSP/parser. See the root README and
+[managed toolchains](../docs/architecture/build-and-driver.md#managed-toolchains).

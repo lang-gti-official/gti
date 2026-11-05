@@ -744,7 +744,6 @@
   "prefix_constructor_contract": 17.4,
   "prefix_generated_transport_runtime": 42.8,
   "prefix_storage_native_evidence": 84.5,
-  "preview_workflow": 65.2,
   "private_constructor_placement": 8.0,
   "private_constructor_placement_runtime": 20.0,
   "process_allocation_elision": 5.1,

@@ -235,27 +235,30 @@ retained versions without assuming
 an Intel or Apple Silicon installation prefix. Existing build generators are
 preserved while configuration/install rules are refreshed.
 
-The default (also explicitly `--preview`) selects the canonical GitHub `preview` commit directly and builds
-CLI, LSP and parser together in a persistent detached worktree under the
-primary checkout's sibling `gti-preview-installs/<full-commit>`. It never
-switches or resets the calling checkout or incorporates its uncommitted work.
-An existing source worktree must remain clean, detached and at that exact
-commit; modifications or new commits cause refusal. The complete installation
-and Lazy config point at that selected source. The staged archive includes
-`share/gti/PREVIEW_SOURCE`, and output reports commit and version. This selects
-the user's active ordinary tool commands using the existing backup/activation
-rules; it does not create a second set of executable names.
+The default (also explicitly `--nightly`) selects the canonical GitHub `nightly`
+tag directly: the commit the published nightly toolchain was built from, the
+newest commit that passed full validation. It builds CLI, LSP and parser
+together in a persistent detached worktree under the primary checkout's
+sibling `gti-nightly-installs/<full-commit>`. It never switches or resets the
+calling checkout or incorporates its uncommitted work. An existing source
+worktree must remain clean, detached and at that exact commit; modifications or
+new commits cause refusal. The complete installation and Lazy config point at
+that selected source. The staged archive includes `share/gti/BUILD_ID` (the
+same identity stamp as the published nightly archive), and output reports
+commit and version. This selects the user's active ordinary tool commands using
+the existing backup/activation rules; it does not create a second set of
+executable names.
 
-`--local` builds this checkout instead. Preview with `--activate-only` is rejected
-because source selection requires a new build; use `--local --activate-only`
-to activate this checkout. The default dry run (also `--preview --dry-run`) only
-resolves and reports the remote source (no fetch or local writes); unlike the
-`--local --dry-run`, it cannot inspect the selected checkout's build/prerequisites
-until that checkout exists. A missing preview branch fails without installing
-anything. The preview branch is populated only by the separate
-[combined preview workflow](agent-workflow.md#early-combined-preview), and can
-contain PRs still awaiting full validation/review. Preview is not a release
-channel and never publishes stable/nightly packages. Installation is opt-in.
+`--local` builds this checkout instead. Nightly with `--activate-only` is
+rejected because source selection requires a new build; use
+`--local --activate-only` to activate this checkout. The default dry run only
+resolves and reports the remote source (no fetch or local writes); unlike
+`--local --dry-run`, it cannot inspect the selected checkout's
+build/prerequisites until that checkout exists. A missing nightly tag fails
+without installing anything. The preview channel is retired: `--preview` fails
+with that explanation rather than silently building another source, and local
+installs made before the retirement keep reporting their `PREVIEW_SOURCE`
+until replaced. Installation is opt-in.
 
 There is no maximum-major admission check: system packages must provide the
 required APIs, RTTI, approved support targets, and an exactly matching Clang
@@ -285,7 +288,7 @@ Builds default to all detected logical CPUs (one if detection is unavailable),
 at normal process priority. `--jobs N` overrides the job count; the dry-run and
 normal output both report the selected parallelism.
 
-### Managed toolchains and preview distribution
+### Managed toolchains
 
 [`gtiup`](https://github.com/lang-gti-official/gtiup) is a standalone C++
 toolchain manager maintained, tested and released in its own repository. Its
@@ -300,8 +303,8 @@ selections. The selected compiler and language server resolve to real paths in
 one immutable, checksum-named directory with their matching packaged resources.
 
 Downloads use fixed canonical GitHub release URLs. The manager checks archive
-checksums, source identity (`BUILD_ID` for rolling channels), packaged VERSION,
-and preview inclusion metadata before atomically updating settings under a
+checksums, source identity (`BUILD_ID` for rolling channels) and packaged
+VERSION before atomically updating settings under a
 process lock. Extraction rejects path traversal, special files, hard links,
 symlink-parent writes and symlink targets containing parent traversal. Install
 and update fail closed on absent or revoked releases; they never substitute an
@@ -312,80 +315,17 @@ boundary is HTTPS downloads plus published checksums and embedded identity.
 Updates retain old immutable directories; explicit `gc` removes unreferenced
 managed directories after the user has stopped processes using them.
 
-`.github/workflows/preview.yml` builds downloadable packages after a canonical
-`preview` branch push, or an explicit dispatch from main. It selects the exact
-current preview source with `.gti-preview.json`, uses the reviewed production
-configuration on Linux x64 and macOS arm64, runs combined `preview_admission`
-(included feature checks and automated examples) and installed-toolchain checks
-on each platform, then packages that validated stage. The publisher requests
-CMake's file-API metadata and builds only targets referenced by those checks
-and the complete `gti_toolchain` install component, including bundled LLVM
-archives installed as files. Native dependencies remain CMake-owned. It does
-not build unrelated test executables. Candidate-owned example and manifest
-selection remain unchanged; missing registered checks fail admission.
+`gtiup link NAME PREFIX` registers an existing install prefix, such as one
+produced by `cmake --install build --prefix <dir>`, as a named toolchain that
+every selection mechanism accepts. The prefix is used in place; gtiup validates
+that `bin/gti` (and `bin/gti_lsp` when present) are executables inside it, and
+never downloads, updates, garbage-collects or deletes a linked toolchain.
 
-The nested admission CTest inherits `CTEST_PARALLEL_LEVEL` from the runner's
-CPU/memory-bounded `GTI_TEST_JOBS`, preserving CTest resource locks and serial
-tests. One shared suite reservation covers the aggregate. Selection, build
-scope and nested timings are retained in `preview-checks-<platform>-<attempt>`
-artifacts, including on failure. The separate `preview`
-prerelease uses `gti-preview-<platform>.tar.gz` names, checksums, embedded and
-release `BUILD_ID`, `PREVIEW_SOURCE`, inclusion metadata and run/attempt-bound
-provenance. Publication verifies both platforms, attests archives, and requires
-the candidate to remain in the admitted preview branch's ancestry, with its
-packaged inclusion manifest equal to the committed source manifest. Branch
-advancement alone does not invalidate a successful build. An explicit, unrestored
-feature withdrawal still blocks candidates containing that feature.
-
-The rolling tag advances only to a descendant of its existing source commit;
-an older candidate is a successful no-op, and divergent history is rejected.
-An exact tag lease prevents a concurrent tag update from being overwritten.
-The workflow serializes publishers with `cancel-in-progress: false`, retaining
-the running build while pending submissions consolidate into the next build.
-Same-commit retries may complete an interrupted upload after the tag moved.
-BUILD_ID is uploaded last so a racing installer rejects inconsistent assets.
-
-Maintainer-operated preview consolidation can use `scripts/preview_remote.py`
-instead of repeating production builds in GitHub Actions. Its generated remote
-plan configures the same optimized bundled-LLVM release profile, builds the
-installed/test target closure, runs combined admission and installed consumers,
-and exports the resulting packages. Each platform must have a successful,
-clean, exact-source remote-runner report executing that complete known plan.
-Linux uses Ubuntu 24.04, either directly or through an immutable Docker image
-ID built from `scripts/preview-ubuntu24.Dockerfile`; newer host distributions
-cannot silently raise the package's runtime requirements. The macOS compiler
-and runtime build targets 26.0 explicitly through CMake. GTI program checks,
-including installed consumers, use the supported implicit native host policy;
-the build's deployment-target environment must not leak into their invocations.
-Both platforms use the same
-checksum-pinned Neovim setup as CI. Receipts bind the production environment
-and any container image ID as well as source and package identities.
-`record` binds package hashes to those reports; `check` verifies both platforms
-and embedded inclusion records; `admit` records that evidence through the preview
-helper and publishes the append-only source candidate. `publish` uses the same
-withdrawal checks, source ordering, exact tag lease and BUILD_ID-last upload as
-the Actions publisher. The operator may cancel the duplicate Actions packaging
-run for that admitted commit after retaining both production receipts.
-
-Remote preview provenance is schema 2 with `executor: remote-runner`, real
-remote run IDs, source snapshot hashes and report/request hashes. It never
-claims a GitHub Actions run or build attestation. Publication requires the
-retained reports again; checksums alone cannot admit manually supplied archives.
-The schema-1 CI artifact path is unchanged and rejects remote preview receipts
-for nightly or release-train admission. This facility does not install or
-activate a toolchain, merge preview into main, or waive any original PR gate.
-
-This does not qualify preview artifacts for nightly or advance main. Preview
-can include features whose original PR review and complete integration are
-pending. Nightly still requires successful full CI on its selected main source;
-beta/stable promotion is unchanged. Preview source admission and package
-publication are asynchronous: a source branch can advance before downloadable
-packages finish. A completed build may publish while newer source is pending,
-but cannot replace a newer published snapshot. Thus steady submissions do not
-starve publication. Publication order follows source ancestry, not run IDs or
-completion times.
-A workflow retry must rerun both package jobs in the same attempt. Initial
-commissioning requires this orchestration on main and a published preview source.
+The former preview channel is retired. Its `preview.yml` publisher, combined
+admission (`preview_admission`), submission queue and remote packaging scripts
+were removed; the frozen `preview` branch and GitHub release are left for the
+owner to delete. gtiup refuses to install or update preview and suggests
+nightly, while an already installed preview keeps working until uninstalled.
 Neovim managed mode delegates compiler/LSP/parser selection to gtiup; it installs
 only editor configuration and never an independent language-server version.
 
