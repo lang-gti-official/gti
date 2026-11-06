@@ -1,0 +1,1330 @@
+{
+  "schema": 2,
+  "status": "bounded phase-one and phase-two manual acceptance passed; not a CI budget or whole-checker soundness proof",
+  "ci_registered": false,
+  "platform": "macOS arm64",
+  "compiler_profile": "Release",
+  "notes": [
+    "Single observations with concurrent work, not controlled performance benchmarks.",
+    "All mandatory source, MIR mutation and core witnesses passed. Unsupported exploratory cases are counted separately.",
+    "Runner/waited-child RSS are high-water marks, not summed concurrent memory. Retained bytes exclude the final report.",
+    "The complete suite remains deferred to integration validation. The lab has no CI registration.",
+    "Known findings #286 and #293 remain classified open gaps; #288 is fixed in this change.",
+    "Historical results below retain their original source identities and failures.",
+    "The native compiler was rebuilt at dfbf5333d; changes through acceptance head 48e35d281 are confined to the lab. The later commit only records these measurements."
+  ],
+  "runs": {
+    "phase1": {
+      "identity": {
+        "schema": 1,
+        "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+        "python": "3.14.8",
+        "source": "48e35d2815cc9a51e8ef8f0804c2b169456373e2",
+        "dirty": false,
+        "lab_hashes": {
+          "lab_tests.py": "fea8a8b1c73b318ad5b6841d7bd18b0b4efddc2db0d90312d3e631396c020721",
+          "runner.py": "33e19f394882f59111b04938e2a1c13d3a04ca56a89794815833faa72426c2dc",
+          "generation.py": "38dbfabd62d3b38cb2cd04fa2ac2ffeaac3c1436e84565565b76c802b99526c5",
+          "model_tests.py": "70ac53a05e99ad11e1b0cbdc78de40a0d3600c363dd8f4df2b1723d7cae872b4",
+          "lsp_probe.py": "c15c4781e440db8c33a24fa6c3e4a942e1ad2259a7d685eafa56d7e68d1aee6f",
+          "proof_route.py": "21ac3f9dc97fa93a01014c8e08f01a085bcd0d8f4eaefcb62e3c7fd50e7cb13a",
+          "compiler_mutation.py": "5eddce7c16b8a7bc6b422601bb825cb357ea7733142299a1ab790eb06b7e61cd",
+          "mir_adapter.py": "80e216de53665f308b92d43666ca436808f7104e51d6db70d8a6745bb19557c8",
+          "model.py": "c2c0e1196df793d760c901a6285ebaa5d03021a00fa690307970e7e271ab13c6",
+          "campaign.py": "62a6509c74376a281e1f6f9c07fba22fbcb3d02c4e2087b3b5183edec5dce7dd",
+          "build_probe.py": "a0d5dba02b2f552230993eae50fd9dbea2929436ce1049e957d08b3a36484c6d",
+          "replay.py": "6a610f0f216b46c948e16f90ec5d3da4f380ce1426a711cbbbadbbd8d1fa213e",
+          "source_bridge.py": "e027af67e4ca4c18ebd720d7d456a5d3a15cd3efd20aef00b23c856bb6fd80d2",
+          "core_campaign.py": "945c8803810d94fcc2f572e45e632c4560dda71f614f9fb9ef6c8648855c9a54",
+          "corpus.py": "6f10f4afeaa3d5f83091fe3ba377baf0894df457f803fce2fc8f3c4f29e58011"
+        },
+        "compiler": "/private/tmp/gti-borrow-lab-build/gti",
+        "compiler_sha256": "5d6f8d03243fb2594cd802ca63248c337c778b3091c8ad834346668f3bb16ac8",
+        "compiler_profile": "Release",
+        "probe_sha256": "dbe3f84359d7548b5be7e1c6a65f84e2b0d12eb361fad6c35b45fd96868cbad5"
+      },
+      "phase": "phase1",
+      "arguments": {
+        "phase": "phase1",
+        "build": "/private/tmp/gti-borrow-lab-build",
+        "probe": "/private/tmp/gti-borrow-lab-tools-v5/borrow_probe",
+        "out": "/private/tmp/gti-borrow-lab-acceptance-2/phase1",
+        "timeout": 30,
+        "case": null,
+        "no_native": false,
+        "seed": 20261106,
+        "count": 100,
+        "max_length": 2,
+        "structured_length": 1,
+        "reduce_compiler": 0,
+        "compiler_samples": 10
+      },
+      "results": {
+        "passed": 41,
+        "total": 41,
+        "mandatory_mutations": [
+          {
+            "case": "shared_aliases",
+            "mutation": "missing_endpoint",
+            "status": "intended-kill",
+            "expected_reason": "remains active|loan.*end",
+            "observation": {
+              "errors": [
+                "non-escaping loan 1 remains active at a body exit"
+              ],
+              "mutation": "missing_endpoint",
+              "status": "rejected"
+            }
+          },
+          {
+            "case": "shared_aliases",
+            "mutation": "wrong_origin",
+            "status": "intended-kill",
+            "expected_reason": "conflicts with active",
+            "observation": {
+              "errors": [
+                "write of a place conflicts with active read-only loan 1 in an instruction destination"
+              ],
+              "mutation": "wrong_origin",
+              "status": "rejected"
+            }
+          },
+          {
+            "case": "shared_aliases",
+            "mutation": "permission_upgrade",
+            "status": "intended-kill",
+            "expected_reason": "conflicts with active",
+            "observation": {
+              "errors": [
+                "read of a place conflicts with active mutable loan 1 in an instruction operand"
+              ],
+              "mutation": "permission_upgrade",
+              "status": "rejected"
+            }
+          },
+          {
+            "case": "temporary_non_escape",
+            "mutation": "temporary_escape",
+            "status": "intended-kill",
+            "expected_reason": "non-escaping temporary",
+            "observation": {
+              "errors": [
+                "call-argument loan 1 must be one exact non-escaping temporary input loan with its required stored dependency"
+              ],
+              "mutation": "temporary_escape",
+              "status": "rejected"
+            }
+          },
+          {
+            "case": "multiple_temporary_endpoints",
+            "mutation": "failure_end_order",
+            "status": "intended-kill",
+            "expected_reason": "temporary argument loans.*reverse order",
+            "observation": {
+              "errors": [
+                "temporary argument loans must end in reverse order at the start of both invocation successors"
+              ],
+              "mutation": "failure_end_order",
+              "status": "rejected"
+            }
+          },
+          {
+            "case": "shared_aliases",
+            "mutation": "missing_initialization",
+            "status": "intended-kill",
+            "expected_reason": "place access requires a definitely initialized scalar place",
+            "observation": {
+              "errors": [
+                "place access requires a definitely initialized scalar place"
+              ],
+              "mutation": "missing_initialization",
+              "status": "rejected"
+            }
+          }
+        ],
+        "failures": 0,
+        "scope": "complete-source-corpus",
+        "native_requested": true
+      },
+      "seconds": 59.85938879195601,
+      "resources": {
+        "runner_peak_rss_bytes": 54116352,
+        "waited_children_peak_rss_bytes": 1098563584,
+        "runner_cpu_seconds": 0.749206,
+        "waited_children_cpu_seconds": 45.933033,
+        "retained_artifact_bytes": 85861217,
+        "scope": "getrusage high-water marks; child maximum is not concurrent total RSS; artifacts exclude final report"
+      },
+      "local_raw_report": "/private/tmp/gti-borrow-lab-acceptance-2/phase1/report.json",
+      "raw_report_sha256": "10f482e3a496f5484d3a1b0d2f2b5dadf1e19e497d6e0404946187370a09c72e"
+    },
+    "phase2": {
+      "identity": {
+        "schema": 1,
+        "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+        "python": "3.14.8",
+        "source": "48e35d2815cc9a51e8ef8f0804c2b169456373e2",
+        "dirty": false,
+        "lab_hashes": {
+          "lab_tests.py": "fea8a8b1c73b318ad5b6841d7bd18b0b4efddc2db0d90312d3e631396c020721",
+          "runner.py": "33e19f394882f59111b04938e2a1c13d3a04ca56a89794815833faa72426c2dc",
+          "generation.py": "38dbfabd62d3b38cb2cd04fa2ac2ffeaac3c1436e84565565b76c802b99526c5",
+          "model_tests.py": "70ac53a05e99ad11e1b0cbdc78de40a0d3600c363dd8f4df2b1723d7cae872b4",
+          "lsp_probe.py": "c15c4781e440db8c33a24fa6c3e4a942e1ad2259a7d685eafa56d7e68d1aee6f",
+          "proof_route.py": "21ac3f9dc97fa93a01014c8e08f01a085bcd0d8f4eaefcb62e3c7fd50e7cb13a",
+          "compiler_mutation.py": "5eddce7c16b8a7bc6b422601bb825cb357ea7733142299a1ab790eb06b7e61cd",
+          "mir_adapter.py": "80e216de53665f308b92d43666ca436808f7104e51d6db70d8a6745bb19557c8",
+          "model.py": "c2c0e1196df793d760c901a6285ebaa5d03021a00fa690307970e7e271ab13c6",
+          "campaign.py": "62a6509c74376a281e1f6f9c07fba22fbcb3d02c4e2087b3b5183edec5dce7dd",
+          "build_probe.py": "a0d5dba02b2f552230993eae50fd9dbea2929436ce1049e957d08b3a36484c6d",
+          "replay.py": "6a610f0f216b46c948e16f90ec5d3da4f380ce1426a711cbbbadbbd8d1fa213e",
+          "source_bridge.py": "e027af67e4ca4c18ebd720d7d456a5d3a15cd3efd20aef00b23c856bb6fd80d2",
+          "core_campaign.py": "945c8803810d94fcc2f572e45e632c4560dda71f614f9fb9ef6c8648855c9a54",
+          "corpus.py": "6f10f4afeaa3d5f83091fe3ba377baf0894df457f803fce2fc8f3c4f29e58011"
+        },
+        "compiler": "/private/tmp/gti-borrow-lab-build/gti",
+        "compiler_sha256": "5d6f8d03243fb2594cd802ca63248c337c778b3091c8ad834346668f3bb16ac8",
+        "compiler_profile": "Release",
+        "probe_sha256": "dbe3f84359d7548b5be7e1c6a65f84e2b0d12eb361fad6c35b45fd96868cbad5"
+      },
+      "phase": "phase2",
+      "arguments": {
+        "phase": "phase2",
+        "build": "/private/tmp/gti-borrow-lab-build",
+        "probe": "/private/tmp/gti-borrow-lab-tools-v5/borrow_probe",
+        "out": "/private/tmp/gti-borrow-lab-acceptance-2/phase2",
+        "timeout": 30,
+        "case": null,
+        "no_native": false,
+        "seed": 20261106,
+        "count": 300,
+        "max_length": 3,
+        "structured_length": 2,
+        "reduce_compiler": 40,
+        "compiler_samples": 25
+      },
+      "results": {
+        "processed": 6847,
+        "expectation_matches": 6847,
+        "model_safety_checked": 473,
+        "failures": 0,
+        "model_counts": {
+          "accepted": 473,
+          "rejected": 6352,
+          "unsupported": 22
+        },
+        "model_seconds": 2.1717335419962183,
+        "concrete_execution_counts": {
+          "accepted": 5440,
+          "rejected": 21860,
+          "unsupported": 88
+        },
+        "syntactic_operation_program_counts": {
+          "alloc": 6777,
+          "borrow": 5822,
+          "end": 2532,
+          "read": 6162,
+          "write": 2457,
+          "drop": 2455,
+          "move": 346,
+          "init": 310,
+          "if": 5397,
+          "loop": 155,
+          "call": 94,
+          "return": 68,
+          "scope": 42,
+          "fail": 16,
+          "raw_load": 8
+        },
+        "syntactic_cooccurrence_program_counts": {
+          "alloc+borrow": 5814,
+          "alloc+end": 2525,
+          "alloc+read": 6132,
+          "borrow+end": 2089,
+          "borrow+read": 5358,
+          "end+read": 2316,
+          "alloc+write": 2453,
+          "borrow+write": 2013,
+          "end+write": 787,
+          "read+write": 2256,
+          "alloc+drop": 2449,
+          "borrow+drop": 2021,
+          "drop+read": 2256,
+          "alloc+move": 343,
+          "move+read": 149,
+          "alloc+init": 309,
+          "init+move": 70,
+          "init+read": 122,
+          "alloc+if": 5383,
+          "drop+if": 2098,
+          "if+read": 5383,
+          "if+write": 2096,
+          "alloc+loop": 145,
+          "borrow+loop": 95,
+          "end+loop": 57,
+          "loop+read": 129,
+          "loop+move": 18,
+          "alloc+call": 46,
+          "alloc+return": 50,
+          "call+end": 37,
+          "call+read": 45,
+          "call+return": 61,
+          "end+return": 38,
+          "read+return": 28,
+          "call+write": 18,
+          "return+write": 18,
+          "alloc+scope": 39,
+          "borrow+call": 23,
+          "borrow+return": 21,
+          "borrow+scope": 42,
+          "call+scope": 18,
+          "end+scope": 42,
+          "read+scope": 24,
+          "return+scope": 18,
+          "scope+write": 15,
+          "drop+end": 775,
+          "drop+scope": 24,
+          "alloc+fail": 16,
+          "borrow+fail": 16,
+          "drop+fail": 16,
+          "drop+write": 746,
+          "end+fail": 16,
+          "fail+read": 7,
+          "fail+scope": 16,
+          "fail+write": 7,
+          "borrow+move": 153,
+          "borrow+init": 154,
+          "end+move": 58,
+          "end+init": 58,
+          "move+write": 58,
+          "init+write": 57,
+          "drop+move": 60,
+          "drop+init": 57,
+          "borrow+if": 4914,
+          "end+if": 2102,
+          "loop+write": 34,
+          "drop+loop": 30,
+          "fail+if": 4,
+          "if+scope": 6,
+          "call+loop": 17,
+          "loop+return": 12,
+          "fail+loop": 4,
+          "loop+scope": 8,
+          "if+move": 9,
+          "call+drop": 5,
+          "call+if": 18,
+          "if+return": 7,
+          "move+raw_load": 2,
+          "drop+return": 3,
+          "loop+raw_load": 2,
+          "call+init": 1,
+          "init+return": 1,
+          "if+loop": 6,
+          "init+loop": 4,
+          "if+init": 2,
+          "init+raw_load": 1,
+          "borrow+raw_load": 1,
+          "fail+move": 1,
+          "move+scope": 1,
+          "fail+init": 1,
+          "init+scope": 1,
+          "if+raw_load": 1
+        },
+        "named_case_operations": {
+          "shared_read": [
+            "alloc",
+            "borrow",
+            "end",
+            "read"
+          ],
+          "mutable_write": [
+            "alloc",
+            "borrow",
+            "end",
+            "read",
+            "write"
+          ],
+          "overlapping_mutable": [
+            "alloc",
+            "borrow",
+            "read"
+          ],
+          "shared_write": [
+            "alloc",
+            "borrow",
+            "write"
+          ],
+          "disjoint_fields": [
+            "alloc",
+            "borrow",
+            "end",
+            "read"
+          ],
+          "reborrow_restore": [
+            "alloc",
+            "borrow",
+            "end",
+            "read",
+            "write"
+          ],
+          "parent_suspended": [
+            "alloc",
+            "borrow",
+            "read"
+          ],
+          "child_before_parent": [
+            "alloc",
+            "borrow",
+            "end"
+          ],
+          "borrowed_drop": [
+            "alloc",
+            "borrow",
+            "drop",
+            "read"
+          ],
+          "move_then_read": [
+            "alloc",
+            "move",
+            "read"
+          ],
+          "whole_move_reinitialize": [
+            "alloc",
+            "init",
+            "move",
+            "read"
+          ],
+          "use_after_move": [
+            "alloc",
+            "move",
+            "read"
+          ],
+          "partial_move_reinitialize": [
+            "alloc",
+            "init",
+            "move",
+            "read"
+          ],
+          "partial_move_read": [
+            "alloc",
+            "move",
+            "read"
+          ],
+          "branch_owner_dead": [
+            "alloc",
+            "drop",
+            "if",
+            "read"
+          ],
+          "branch_reinitialize": [
+            "alloc",
+            "if",
+            "read",
+            "write"
+          ],
+          "loop_borrow_end": [
+            "alloc",
+            "borrow",
+            "end",
+            "loop",
+            "read"
+          ],
+          "loop_repeated_move": [
+            "alloc",
+            "loop",
+            "move"
+          ],
+          "returned_reference": [
+            "alloc",
+            "call",
+            "end",
+            "read",
+            "return"
+          ],
+          "returned_mutable_reference": [
+            "alloc",
+            "call",
+            "end",
+            "read",
+            "return",
+            "write"
+          ],
+          "return_through_cleanup": [
+            "alloc",
+            "borrow",
+            "call",
+            "end",
+            "read",
+            "return",
+            "scope"
+          ],
+          "return_cleanup_conflict": [
+            "alloc",
+            "borrow",
+            "call",
+            "end",
+            "return",
+            "scope",
+            "write"
+          ],
+          "callee_local_escape": [
+            "alloc",
+            "call",
+            "return"
+          ],
+          "temporary_call": [
+            "call",
+            "read"
+          ],
+          "temporary_return": [
+            "call",
+            "return"
+          ],
+          "temporary_mutable": [
+            "call",
+            "return"
+          ],
+          "normal_cleanup": [
+            "alloc",
+            "borrow",
+            "drop",
+            "end",
+            "read",
+            "scope"
+          ],
+          "failure_cleanup": [
+            "alloc",
+            "borrow",
+            "drop",
+            "end",
+            "fail",
+            "read",
+            "scope",
+            "write"
+          ],
+          "failure_cleanup_wrong_order": [
+            "alloc",
+            "borrow",
+            "drop",
+            "end",
+            "fail",
+            "scope"
+          ],
+          "allocation_reuse": [
+            "alloc",
+            "borrow",
+            "drop",
+            "end",
+            "read"
+          ],
+          "freed_reference": [
+            "alloc",
+            "borrow",
+            "drop",
+            "read"
+          ],
+          "unknown_call": [
+            "call"
+          ],
+          "recursive_call": [
+            "call"
+          ],
+          "raw_pointer": [
+            "raw_load"
+          ]
+        },
+        "linear_grammar_alphabet": 10,
+        "linear_max_length": 3,
+        "linear_exact_count": 1111,
+        "structured_max_body_length": 2,
+        "structured_exact_count": 5402,
+        "structured_seed": 20261106,
+        "structured_count": 300,
+        "concrete_inputs": [
+          {
+            "choice": false,
+            "count": 0
+          },
+          {
+            "choice": true,
+            "count": 0
+          },
+          {
+            "choice": false,
+            "count": 2
+          },
+          {
+            "choice": true,
+            "count": 2
+          }
+        ],
+        "compiler_requested": true,
+        "native_sampled_inputs": [
+          {
+            "choice": true,
+            "count": 2
+          }
+        ],
+        "compiler_samples": 25,
+        "generated_source_unsupported_before_samples": 27,
+        "compiler_counts": {
+          "agreement-accept": 28,
+          "agreement-reject": 20,
+          "unsupported-source": 8,
+          "unsupported-model": 3
+        },
+        "assurance": "experimental bounded evidence; not a proof or complete RFC phase acceptance"
+      },
+      "seconds": 244.07712416700087,
+      "resources": {
+        "runner_peak_rss_bytes": 95928320,
+        "waited_children_peak_rss_bytes": 1104052224,
+        "runner_cpu_seconds": 3.1305169999999998,
+        "waited_children_cpu_seconds": 225.21233999999998,
+        "retained_artifact_bytes": 235001805,
+        "scope": "getrusage high-water marks; child maximum is not concurrent total RSS; artifacts exclude final report"
+      },
+      "local_raw_report": "/private/tmp/gti-borrow-lab-acceptance-2/phase2/report.json",
+      "raw_report_sha256": "c62beb51ae8c625bbdd2d6e6acf647887c76f6d1cc136c69665a910b3d490508"
+    },
+    "core": {
+      "identity": {
+        "schema": 1,
+        "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+        "python": "3.14.8",
+        "source": "48e35d2815cc9a51e8ef8f0804c2b169456373e2",
+        "dirty": false,
+        "lab_hashes": {
+          "lab_tests.py": "fea8a8b1c73b318ad5b6841d7bd18b0b4efddc2db0d90312d3e631396c020721",
+          "runner.py": "33e19f394882f59111b04938e2a1c13d3a04ca56a89794815833faa72426c2dc",
+          "generation.py": "38dbfabd62d3b38cb2cd04fa2ac2ffeaac3c1436e84565565b76c802b99526c5",
+          "model_tests.py": "70ac53a05e99ad11e1b0cbdc78de40a0d3600c363dd8f4df2b1723d7cae872b4",
+          "lsp_probe.py": "c15c4781e440db8c33a24fa6c3e4a942e1ad2259a7d685eafa56d7e68d1aee6f",
+          "proof_route.py": "21ac3f9dc97fa93a01014c8e08f01a085bcd0d8f4eaefcb62e3c7fd50e7cb13a",
+          "compiler_mutation.py": "5eddce7c16b8a7bc6b422601bb825cb357ea7733142299a1ab790eb06b7e61cd",
+          "mir_adapter.py": "80e216de53665f308b92d43666ca436808f7104e51d6db70d8a6745bb19557c8",
+          "model.py": "c2c0e1196df793d760c901a6285ebaa5d03021a00fa690307970e7e271ab13c6",
+          "campaign.py": "62a6509c74376a281e1f6f9c07fba22fbcb3d02c4e2087b3b5183edec5dce7dd",
+          "build_probe.py": "a0d5dba02b2f552230993eae50fd9dbea2929436ce1049e957d08b3a36484c6d",
+          "replay.py": "6a610f0f216b46c948e16f90ec5d3da4f380ce1426a711cbbbadbbd8d1fa213e",
+          "source_bridge.py": "e027af67e4ca4c18ebd720d7d456a5d3a15cd3efd20aef00b23c856bb6fd80d2",
+          "core_campaign.py": "945c8803810d94fcc2f572e45e632c4560dda71f614f9fb9ef6c8648855c9a54",
+          "corpus.py": "6f10f4afeaa3d5f83091fe3ba377baf0894df457f803fce2fc8f3c4f29e58011"
+        },
+        "compiler": "/private/tmp/gti-borrow-lab-build/gti",
+        "compiler_sha256": "5d6f8d03243fb2594cd802ca63248c337c778b3091c8ad834346668f3bb16ac8",
+        "compiler_profile": "Release",
+        "probe_sha256": "dbe3f84359d7548b5be7e1c6a65f84e2b0d12eb361fad6c35b45fd96868cbad5"
+      },
+      "phase": "core",
+      "arguments": {
+        "phase": "core",
+        "build": "/private/tmp/gti-borrow-lab-build",
+        "probe": "/private/tmp/gti-borrow-lab-tools-v5/borrow_probe",
+        "out": "/private/tmp/gti-borrow-lab-acceptance-2/core",
+        "timeout": 30,
+        "case": null,
+        "no_native": false,
+        "seed": 20261106,
+        "count": 100,
+        "max_length": 2,
+        "structured_length": 1,
+        "reduce_compiler": 0,
+        "compiler_samples": 10
+      },
+      "results": {
+        "passed": 64,
+        "total": 64,
+        "failures": 0,
+        "scope": "mandatory-core-witnesses",
+        "witness_count": 16,
+        "inputs": [
+          {
+            "choice": false,
+            "count": 0
+          },
+          {
+            "choice": true,
+            "count": 0
+          },
+          {
+            "choice": false,
+            "count": 2
+          },
+          {
+            "choice": true,
+            "count": 2
+          }
+        ],
+        "covered_features": [
+          "allocation-generation",
+          "conditional",
+          "defined-failure",
+          "direct-call",
+          "disjoint-field-borrow",
+          "failure-cleanup",
+          "field-reinitialize",
+          "free",
+          "loop",
+          "move",
+          "mutable-borrow",
+          "mutable-reference-result",
+          "named-field",
+          "normal-cleanup",
+          "owned-allocation",
+          "parent-restoration",
+          "partial-move",
+          "reallocate",
+          "reborrow",
+          "record",
+          "reference-result",
+          "return-cleanup",
+          "return-reborrow",
+          "shared-borrow",
+          "temporary-cleanup",
+          "temporary-read-argument",
+          "whole-reinitialize"
+        ],
+        "assurance": "finite source/MIR/native correspondence for these witnesses, not a soundness proof"
+      },
+      "seconds": 99.0822493750602,
+      "resources": {
+        "runner_peak_rss_bytes": 34488320,
+        "waited_children_peak_rss_bytes": 268910592,
+        "runner_cpu_seconds": 6.05801,
+        "waited_children_cpu_seconds": 61.366313999999996,
+        "retained_artifact_bytes": 195960267,
+        "scope": "getrusage high-water marks; child maximum is not concurrent total RSS; artifacts exclude final report"
+      },
+      "local_raw_report": "/private/tmp/gti-borrow-lab-acceptance-2/core/report.json",
+      "raw_report_sha256": "07aeb86a1a0095da8849761d1cb4a2516f9621ac56816ac84ac8d414843a7e23"
+    },
+    "compiler-mutation": {
+      "mutation": "disable-reportBorrowConflict",
+      "source_sha256": "6bdcc2401eef32e5742c0575ed35c756147b887f42ad1f6947cfd383cf44eadd",
+      "mutant_source_sha256": "51eff1931289a826bdac65982a461cdf3f32513a48eabb08ab4a7ff9aee71a06",
+      "build_seconds": 14.441031791968271,
+      "required_witnesses": [
+        "shared_write_conflict",
+        "mutable_alias_conflict",
+        "move_while_borrowed"
+      ],
+      "killed": true,
+      "production_source_unchanged": true,
+      "witnesses": [
+        {
+          "name": "shared_write_conflict",
+          "killed": true
+        },
+        {
+          "name": "mutable_alias_conflict",
+          "killed": true
+        },
+        {
+          "name": "move_while_borrowed",
+          "killed": true
+        },
+        {
+          "name": "call_overlap",
+          "killed": false
+        }
+      ],
+      "local_raw_report": "/private/tmp/gti-borrow-lab-acceptance-2/compiler-mutation/report.json",
+      "raw_report_sha256": "753193aa7e26902a529d72ad9b55194ef748a002982ea6534eccb1e7746fc69a"
+    },
+    "lsp": {
+      "identity": {
+        "schema": 1,
+        "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+        "python": "3.14.8",
+        "source": "48e35d2815cc9a51e8ef8f0804c2b169456373e2",
+        "dirty": false,
+        "lab_hashes": {
+          "lab_tests.py": "fea8a8b1c73b318ad5b6841d7bd18b0b4efddc2db0d90312d3e631396c020721",
+          "runner.py": "33e19f394882f59111b04938e2a1c13d3a04ca56a89794815833faa72426c2dc",
+          "generation.py": "38dbfabd62d3b38cb2cd04fa2ac2ffeaac3c1436e84565565b76c802b99526c5",
+          "model_tests.py": "70ac53a05e99ad11e1b0cbdc78de40a0d3600c363dd8f4df2b1723d7cae872b4",
+          "lsp_probe.py": "c15c4781e440db8c33a24fa6c3e4a942e1ad2259a7d685eafa56d7e68d1aee6f",
+          "proof_route.py": "21ac3f9dc97fa93a01014c8e08f01a085bcd0d8f4eaefcb62e3c7fd50e7cb13a",
+          "compiler_mutation.py": "5eddce7c16b8a7bc6b422601bb825cb357ea7733142299a1ab790eb06b7e61cd",
+          "mir_adapter.py": "80e216de53665f308b92d43666ca436808f7104e51d6db70d8a6745bb19557c8",
+          "model.py": "c2c0e1196df793d760c901a6285ebaa5d03021a00fa690307970e7e271ab13c6",
+          "campaign.py": "62a6509c74376a281e1f6f9c07fba22fbcb3d02c4e2087b3b5183edec5dce7dd",
+          "build_probe.py": "a0d5dba02b2f552230993eae50fd9dbea2929436ce1049e957d08b3a36484c6d",
+          "replay.py": "6a610f0f216b46c948e16f90ec5d3da4f380ce1426a711cbbbadbbd8d1fa213e",
+          "source_bridge.py": "e027af67e4ca4c18ebd720d7d456a5d3a15cd3efd20aef00b23c856bb6fd80d2",
+          "core_campaign.py": "945c8803810d94fcc2f572e45e632c4560dda71f614f9fb9ef6c8648855c9a54",
+          "corpus.py": "6f10f4afeaa3d5f83091fe3ba377baf0894df457f803fce2fc8f3c4f29e58011"
+        },
+        "compiler": "/private/tmp/gti-borrow-lab-build/gti",
+        "compiler_sha256": "5d6f8d03243fb2594cd802ca63248c337c778b3091c8ad834346668f3bb16ac8",
+        "compiler_profile": "Release",
+        "probe_sha256": "dbe3f84359d7548b5be7e1c6a65f84e2b0d12eb361fad6c35b45fd96868cbad5"
+      },
+      "passed": true,
+      "seconds": 2.249245958053507,
+      "document_versions": 15,
+      "case_count": 7,
+      "local_raw_report": "/private/tmp/gti-borrow-lab-acceptance-2/lsp/report.json",
+      "raw_report_sha256": "2841107d0d6bae3122b4394af1d34d11bd7f2d6da1c6a8ec4f222c6b5fc17872"
+    },
+    "proof-route": {
+      "source_sha256": "d27fe5f5bfd334216f263ca520335b7fc575b11bd33e9be49c44e5a4f5f00b44",
+      "lean_sha256": "d1d9c26a539f54fe839d2aa7760bf1ac1dd76a30b26e2c9684bebf2900038fcf",
+      "scope": "four feasibility lemmas only; no executable-model correspondence or core soundness theorem",
+      "checks": [
+        {
+          "argv": [
+            "/private/tmp/gti-borrow-lean-4.35.0/lean-4.35.0-darwin_aarch64/bin/lean",
+            "/Users/lucas/.codex/worktrees/borrow-verification-lab/gti/experiments/borrow_verification/proof_route.lean"
+          ],
+          "status": "completed",
+          "exit_code": 0,
+          "seconds": 0.6248983750119805,
+          "stdout_bytes": 290,
+          "stderr_bytes": 0
+        },
+        {
+          "argv": [
+            "/private/tmp/gti-borrow-lean-4.35.0/lean-4.35.0-darwin_aarch64/bin/lean",
+            "/private/tmp/gti-borrow-lab-acceptance-2/proof-route/uninitialized-read.lean"
+          ],
+          "status": "completed",
+          "exit_code": 1,
+          "seconds": 0.3307817500317469,
+          "stdout_bytes": 1106,
+          "stderr_bytes": 0
+        },
+        {
+          "argv": [
+            "/private/tmp/gti-borrow-lean-4.35.0/lean-4.35.0-darwin_aarch64/bin/lean",
+            "/private/tmp/gti-borrow-lab-acceptance-2/proof-route/join-loses-predecessor.lean"
+          ],
+          "status": "completed",
+          "exit_code": 1,
+          "seconds": 0.326247249962762,
+          "stdout_bytes": 909,
+          "stderr_bytes": 0
+        }
+      ],
+      "passed": true,
+      "version": "Lean (version 4.35.0, arm64-apple-darwin24.6.0, commit eb6cafb7290e8bd5f2937522d8d804f58f02bafc, Release)",
+      "seconds": 1.5539582920027897,
+      "resources": {
+        "runner_peak_rss_bytes": 24215552,
+        "waited_children_peak_rss_bytes": 653885440,
+        "runner_cpu_seconds": 0.04986399999999999,
+        "waited_children_cpu_seconds": 1.045578,
+        "retained_artifact_bytes": 6971,
+        "scope": "getrusage high-water marks; child maximum is not concurrent total RSS; artifacts exclude final report"
+      },
+      "local_raw_report": "/private/tmp/gti-borrow-lab-acceptance-2/proof-route/report.json",
+      "raw_report_sha256": "c95dfaf86032891155e868f75366c035a27ba9de39ca3acb2f938839f4b0607f"
+    }
+  },
+  "focused_compiler_validation": {
+    "local_raw_report": "/private/tmp/gti-borrow-lab-mir-reconciled/report.json",
+    "raw_report_sha256": "0539898592094335896dbc99c9a1d10a51389083ad13d4bcb659aac98cd142b3",
+    "report": {
+      "id": "run-ba9e73271c924a178381fb993e118a3b",
+      "runner": {
+        "host": "lukeh@100.103.38.120",
+        "name": "mini"
+      },
+      "state": "passed",
+      "pid": null,
+      "child_pid": null,
+      "created": 1793940766.264033,
+      "started": 1793940766.264033,
+      "steps": [
+        {
+          "name": "configure",
+          "argv": [
+            "python3",
+            "-c",
+            "import sys,subprocess; sys.path.insert(0,'scripts'); import llvm_pin; p=llvm_pin.discover(); print('Pinned LLVM discovery:',p,flush=True); assert p, 'No installed pinned LLVM'; subprocess.run(['cmake','-S','/Users/lukeh/Library/Caches/gti-remote-runner/runs/run-ba9e73271c924a178381fb993e118a3b/source','-B','/Users/lukeh/Library/Caches/gti-remote-runner/runs/run-ba9e73271c924a178381fb993e118a3b/build','-G','Ninja','-DCMAKE_BUILD_TYPE=Release','-DBUILD_TESTING=ON','-DGTI_TEST_BACKENDS=llvm','-DLLVM_DIR='+str(p)],check=True)"
+          ],
+          "exit_code": 0,
+          "seconds": 3.054351806640625
+        },
+        {
+          "name": "build",
+          "argv": [
+            "cmake",
+            "--build",
+            "/Users/lukeh/Library/Caches/gti-remote-runner/runs/run-ba9e73271c924a178381fb993e118a3b/build",
+            "--parallel",
+            "6",
+            "--target",
+            "gti",
+            "gti_borrow_origin_publication_tests",
+            "gti_borrowing_callbacks_mir_tests",
+            "gti_cleanup_bound_borrow_mutation_tests",
+            "gti_complete_borrow_summary_tests",
+            "gti_ephemeral_carrier_mir_tests",
+            "gti_llvm_coverage_evidence",
+            "gti_lowered_program_census",
+            "gti_lowered_program_tests",
+            "gti_lsp",
+            "gti_mir_backend_class_default_cleanup_tests",
+            "gti_mir_backend_owned_lifecycle_tests",
+            "gti_mir_backend_scalar_cfg_tests",
+            "gti_mir_backend_scalar_direct_call_tests",
+            "gti_mir_backend_scalar_failure_callgraph_tests",
+            "gti_mir_backend_tests",
+            "gti_mir_full_expression_tests",
+            "gti_mir_header_smoke",
+            "gti_mir_hosted_startup_tests",
+            "gti_mir_persistent_storage_tests",
+            "gti_mir_program_initialization_tests",
+            "gti_mir_shared_failure_cleanup_tests",
+            "gti_mir_thread_local_tests",
+            "gti_object_lifetime_tests",
+            "gti_optimizer_conformance_tests",
+            "gti_optimizer_safety_tests",
+            "gti_raw_access_tests",
+            "gti_reference_parameter_pack_mir_tests",
+            "gti_resource_protocol_tests",
+            "gti_scalar_temporary_borrow_tests",
+            "gti_source_sparse_storage_tests",
+            "gti_storage_adoption_tests",
+            "gti_tests",
+            "gti_text_address_bridge_tests",
+            "gti_uninitialized_carrier_tests"
+          ],
+          "exit_code": 0,
+          "seconds": 127.17638301849365
+        },
+        {
+          "name": "focused-tests",
+          "argv": [
+            "ctest",
+            "--test-dir",
+            "/Users/lukeh/Library/Caches/gti-remote-runner/runs/run-ba9e73271c924a178381fb993e118a3b/build",
+            "--output-on-failure",
+            "--no-tests=error",
+            "--parallel",
+            "6",
+            "-LE",
+            "cpp-backend",
+            "-R",
+            "^(borrow_origin_publication|borrow_origin_publication_runtime|borrowing_callback_alias_proof|borrowing_callback_relay_proof|borrowing_callback_restoration_return|borrowing_callbacks_mir|cleanup_bound_borrow_mutations|compiler_pipeline|complete_borrow_summaries|concept_conditions|conditional_member_operators|cut_release_policy|ephemeral_carrier_mir|language_coverage_corpus|llvm_class_execution|llvm_coverage_evidence|llvm_scalar_execution|lowered_program_contract|mir_associative_determinism|mir_backend_class_default_cleanup|mir_backend_class_default_cleanup_runtime|mir_backend_first_family|mir_backend_first_family_runtime|mir_backend_owned_lifecycle|mir_backend_owned_lifecycle_runtime|mir_backend_scalar_cfg|mir_backend_scalar_cfg_runtime|mir_backend_scalar_direct_call|mir_backend_scalar_direct_call_runtime|mir_backend_scalar_failure_callgraph|mir_backend_scalar_failure_callgraph_runtime_1of3|mir_backend_scalar_failure_callgraph_runtime_2of3|mir_backend_scalar_failure_callgraph_runtime_3of3|mir_census_profile_controls|mir_census_regression|mir_class_value_lifecycle_runtime|mir_cutover_corpus_oracle|mir_field_determinism|mir_full_expression|mir_header_boundary|mir_header_self_containment|mir_hosted_startup|mir_persistent_storage|mir_program_initialization|mir_shared_failure_cleanup|mir_thread_local|object_lifetime_contract|optimizer_conformance|optimizer_safety|protocol_requirements_runtime|raw_access_contract|reference_parameter_pack_mir|reference_parameter_packs|release_version_policy|repository_hosting|resource_protocol_contract|scalar_temporary_borrow|scalar_temporary_borrow_lsp|source_sparse_storage_contract|storage_adoption_contract|text_address_bridge_contract|typed_differential_smoke|uninitialized_carrier_contract)$"
+          ],
+          "exit_code": 0,
+          "seconds": 446.070987701416
+        }
+      ],
+      "source": {
+        "bytes": 60300374,
+        "excluded": [],
+        "files": 5273,
+        "head": "dfbf5333dabbc9a0b18dd0ac688f87f469b6442b",
+        "snapshot_sha256": "430cc16111bfb0834b5cbb20bf393c876ef43a3e39458db38297952e0dad4a0a",
+        "status": ""
+      },
+      "exit_code": 0,
+      "phase": "finished",
+      "finished": 1793941346.344203,
+      "final_source": {
+        "head": "dfbf5333dabbc9a0b18dd0ac688f87f469b6442b",
+        "status": ""
+      }
+    }
+  },
+  "historical_development": {
+    "schema": 1,
+    "status": "incomplete; developmental measurements, not a CI budget",
+    "compiler_source": "6eb44d2ef1fcabf31a488a3bd2177c9bdadcfd6d",
+    "platform": "macOS arm64",
+    "compiler_profile": "Release",
+    "ci_registered": false,
+    "notes": [
+      "Single observations with concurrent local work; not controlled performance benchmarks.",
+      "Checkout was dirty with lab-only files during runs. Compiler native inputs were unchanged.",
+      "Peak memory and total retained artifact footprint have not been measured.",
+      "Known failing mandatory mutation is not waived.",
+      "The compiler-comparison run predates the final MIR loop-adapter correction; its recorded tool hashes differ from the reviewed phase-one run. It is developmental evidence, not a claim of exact-head phase-two acceptance."
+    ],
+    "runs": {
+      "phase1": {
+        "identity": {
+          "schema": 1,
+          "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+          "python": "3.14.8",
+          "source": "6eb44d2ef1fcabf31a488a3bd2177c9bdadcfd6d",
+          "dirty": true,
+          "lab_hashes": {
+            "lab_tests.py": "c151ee12fc290021badb6c706550ce9e725726ae67abc4a6e34307f2fd6e3bee",
+            "runner.py": "521ab94791b13258e2d12209694ee0935525dae1f280b32933c33a283691e4a7",
+            "generation.py": "842210846dab8bb4b8413a283b4f5b3240e7e093d8c9e4f7ebf709ec5b799bb8",
+            "model_tests.py": "7cb246f7d762e979daccd9fbe7bd58609cbf10201ac6f528f2b0d4aa08924a0d",
+            "compiler_mutation.py": "fb0ce4bc87820c4e2c7ab3eaae05606010cc0bd4bd082c52f45aedef4e5a455e",
+            "mir_adapter.py": "b7effe8ef0e29d51c7c5f0098a2b667245a203264793553bd7ddf2784062bacf",
+            "model.py": "c2c0e1196df793d760c901a6285ebaa5d03021a00fa690307970e7e271ab13c6",
+            "campaign.py": "cf9e6360b0d720b6f1be3ce2a7b6ad95ff24ab044943edd04c0801617598e271",
+            "build_probe.py": "a0d5dba02b2f552230993eae50fd9dbea2929436ce1049e957d08b3a36484c6d",
+            "source_bridge.py": "e519a28283bf276db310ebb239c20df5de04a5385535141619d9fb82d796d17a",
+            "corpus.py": "77c7fec428671878fd752f499f7f0a66d89bc4aed1e92fcf61cdc75a7425fdee"
+          },
+          "compiler": "/private/tmp/gti-borrow-lab-build/gti",
+          "compiler_sha256": "1edb368a1e1829bc7d8c0b38664ddc3d6b629c854955dcf036c0b033c477b557",
+          "compiler_profile": "Release",
+          "probe_sha256": "32d7022adf7de66822ef59851120f63dcc209f46831be51a1d6378b03aa447c5"
+        },
+        "arguments": {
+          "phase": "phase1",
+          "build": "/private/tmp/gti-borrow-lab-build",
+          "probe": "/private/tmp/gti-borrow-lab-tools-v3/borrow_probe",
+          "out": "/private/tmp/gti-borrow-lab-phase1-reviewed",
+          "timeout": 30,
+          "case": null,
+          "no_native": false,
+          "seed": 20261106,
+          "count": 100,
+          "max_length": 2,
+          "structured_length": 1,
+          "reduce_compiler": 0,
+          "compiler_samples": 10
+        },
+        "seconds": 51.41151870798785,
+        "results": {
+          "passed": 38,
+          "total": 38,
+          "mandatory_mutations": [
+            {
+              "case": "shared_aliases",
+              "mutation": "missing_endpoint",
+              "status": "intended-kill",
+              "expected_reason": "remains active|loan.*end",
+              "observation": {
+                "errors": [
+                  "non-escaping loan 1 remains active at a body exit"
+                ],
+                "mutation": "missing_endpoint",
+                "status": "rejected"
+              }
+            },
+            {
+              "case": "shared_aliases",
+              "mutation": "wrong_origin",
+              "status": "intended-kill",
+              "expected_reason": "conflicts with active",
+              "observation": {
+                "errors": [
+                  "write of a place conflicts with active read-only loan 1 in an instruction destination"
+                ],
+                "mutation": "wrong_origin",
+                "status": "rejected"
+              }
+            },
+            {
+              "case": "shared_aliases",
+              "mutation": "permission_upgrade",
+              "status": "intended-kill",
+              "expected_reason": "conflicts with active",
+              "observation": {
+                "errors": [
+                  "read of a place conflicts with active mutable loan 1 in an instruction operand"
+                ],
+                "mutation": "permission_upgrade",
+                "status": "rejected"
+              }
+            },
+            {
+              "case": "temporary_non_escape",
+              "mutation": "temporary_escape",
+              "status": "intended-kill",
+              "expected_reason": "non-escaping temporary",
+              "observation": {
+                "errors": [
+                  "call-argument loan 1 must be one exact non-escaping temporary input loan with its required stored dependency"
+                ],
+                "mutation": "temporary_escape",
+                "status": "rejected"
+              }
+            },
+            {
+              "case": "multiple_temporary_endpoints",
+              "mutation": "failure_end_order",
+              "status": "intended-kill",
+              "expected_reason": "temporary argument loans.*reverse order",
+              "observation": {
+                "errors": [
+                  "temporary argument loans must end in reverse order at the start of both invocation successors"
+                ],
+                "mutation": "failure_end_order",
+                "status": "rejected"
+              }
+            },
+            {
+              "case": "shared_aliases",
+              "mutation": "missing_initialization",
+              "status": "survived",
+              "expected_reason": "uninitialized|unavailable|before initialization",
+              "observation": {
+                "errors": [],
+                "mutation": "missing_initialization",
+                "status": "survived"
+              }
+            }
+          ],
+          "failures": 1,
+          "scope": "complete-source-corpus",
+          "native_requested": true
+        },
+        "local_raw_report": "/private/tmp/gti-borrow-lab-phase1-reviewed/report.json"
+      },
+      "phase2_model": {
+        "identity": {
+          "schema": 1,
+          "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+          "python": "3.14.8",
+          "source": "6eb44d2ef1fcabf31a488a3bd2177c9bdadcfd6d",
+          "dirty": true,
+          "lab_hashes": {
+            "lab_tests.py": "c151ee12fc290021badb6c706550ce9e725726ae67abc4a6e34307f2fd6e3bee",
+            "runner.py": "521ab94791b13258e2d12209694ee0935525dae1f280b32933c33a283691e4a7",
+            "generation.py": "842210846dab8bb4b8413a283b4f5b3240e7e093d8c9e4f7ebf709ec5b799bb8",
+            "model_tests.py": "1d07f32b031bcf6a31d5cde67d24203bc5a27e32ab3a067842c79acb4ef8de35",
+            "compiler_mutation.py": "6be9226657e1d90d3409ab36d913a4ecfce8f8e0c6fe4cb8f302b6b2161e59d9",
+            "mir_adapter.py": "cf67e1cb99247d1f4355480f733b61e09bfb9f036e5416e95430e8988661077c",
+            "model.py": "c2c0e1196df793d760c901a6285ebaa5d03021a00fa690307970e7e271ab13c6",
+            "campaign.py": "cf9e6360b0d720b6f1be3ce2a7b6ad95ff24ab044943edd04c0801617598e271",
+            "build_probe.py": "a0d5dba02b2f552230993eae50fd9dbea2929436ce1049e957d08b3a36484c6d",
+            "source_bridge.py": "e519a28283bf276db310ebb239c20df5de04a5385535141619d9fb82d796d17a",
+            "corpus.py": "77c7fec428671878fd752f499f7f0a66d89bc4aed1e92fcf61cdc75a7425fdee"
+          }
+        },
+        "arguments": {
+          "phase": "phase2",
+          "build": null,
+          "probe": null,
+          "out": "/private/tmp/gti-borrow-lab-model-final",
+          "timeout": 30,
+          "case": null,
+          "no_native": false,
+          "seed": 20261106,
+          "count": 300,
+          "max_length": 3,
+          "structured_length": 2,
+          "reduce_compiler": 0,
+          "compiler_samples": 10
+        },
+        "seconds": 2.1135253329994157,
+        "results": {
+          "processed": 6847,
+          "expectation_matches": 6847,
+          "model_safety_checked": 473,
+          "failures": 0,
+          "model_counts": {
+            "accepted": 473,
+            "rejected": 6352,
+            "unsupported": 22
+          },
+          "model_seconds": 1.974276166060008,
+          "linear_grammar_alphabet": 10,
+          "linear_max_length": 3,
+          "linear_exact_count": 1111,
+          "structured_max_body_length": 2,
+          "structured_exact_count": 5402,
+          "structured_seed": 20261106,
+          "structured_count": 300,
+          "concrete_inputs": [
+            {
+              "choice": false,
+              "count": 0
+            },
+            {
+              "choice": true,
+              "count": 0
+            },
+            {
+              "choice": false,
+              "count": 2
+            },
+            {
+              "choice": true,
+              "count": 2
+            }
+          ],
+          "compiler_requested": false,
+          "compiler_samples": 0,
+          "generated_source_unsupported_before_samples": 0,
+          "compiler_counts": {},
+          "assurance": "experimental bounded evidence; not a proof or complete RFC phase acceptance"
+        },
+        "local_raw_report": "/private/tmp/gti-borrow-lab-model-final/report.json"
+      },
+      "compiler_mutation": {
+        "mutation": "disable-reportBorrowConflict",
+        "build_seconds": 16.413442375021987,
+        "killed": true,
+        "production_source_unchanged": true,
+        "witnesses": [
+          {
+            "name": "shared_write_conflict",
+            "killed": true
+          },
+          {
+            "name": "mutable_alias_conflict",
+            "killed": true
+          },
+          {
+            "name": "move_while_borrowed",
+            "killed": true
+          },
+          {
+            "name": "call_overlap",
+            "killed": false
+          }
+        ],
+        "local_raw_report": "/private/tmp/gti-borrow-lab-compiler-mutant/report.json"
+      },
+      "phase2_compiler_comparison": {
+        "identity": {
+          "schema": 1,
+          "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+          "python": "3.14.8",
+          "source": "6eb44d2ef1fcabf31a488a3bd2177c9bdadcfd6d",
+          "dirty": true,
+          "lab_hashes": {
+            "lab_tests.py": "c151ee12fc290021badb6c706550ce9e725726ae67abc4a6e34307f2fd6e3bee",
+            "runner.py": "521ab94791b13258e2d12209694ee0935525dae1f280b32933c33a283691e4a7",
+            "generation.py": "842210846dab8bb4b8413a283b4f5b3240e7e093d8c9e4f7ebf709ec5b799bb8",
+            "model_tests.py": "1d07f32b031bcf6a31d5cde67d24203bc5a27e32ab3a067842c79acb4ef8de35",
+            "compiler_mutation.py": "6be9226657e1d90d3409ab36d913a4ecfce8f8e0c6fe4cb8f302b6b2161e59d9",
+            "mir_adapter.py": "cf67e1cb99247d1f4355480f733b61e09bfb9f036e5416e95430e8988661077c",
+            "model.py": "c2c0e1196df793d760c901a6285ebaa5d03021a00fa690307970e7e271ab13c6",
+            "campaign.py": "cf9e6360b0d720b6f1be3ce2a7b6ad95ff24ab044943edd04c0801617598e271",
+            "build_probe.py": "a0d5dba02b2f552230993eae50fd9dbea2929436ce1049e957d08b3a36484c6d",
+            "source_bridge.py": "e519a28283bf276db310ebb239c20df5de04a5385535141619d9fb82d796d17a",
+            "corpus.py": "77c7fec428671878fd752f499f7f0a66d89bc4aed1e92fcf61cdc75a7425fdee"
+          },
+          "compiler": "/private/tmp/gti-borrow-lab-build/gti",
+          "compiler_sha256": "1edb368a1e1829bc7d8c0b38664ddc3d6b629c854955dcf036c0b033c477b557",
+          "compiler_profile": "Release",
+          "probe_sha256": "32d7022adf7de66822ef59851120f63dcc209f46831be51a1d6378b03aa447c5"
+        },
+        "arguments": {
+          "phase": "phase2",
+          "build": "/private/tmp/gti-borrow-lab-build",
+          "probe": "/private/tmp/gti-borrow-lab-tools-v3/borrow_probe",
+          "out": "/private/tmp/gti-borrow-lab-comparison-final",
+          "timeout": 30,
+          "case": null,
+          "no_native": false,
+          "seed": 20261106,
+          "count": 300,
+          "max_length": 3,
+          "structured_length": 1,
+          "reduce_compiler": 0,
+          "compiler_samples": 25
+        },
+        "seconds": 238.46395095798653,
+        "results": {
+          "processed": 1535,
+          "expectation_matches": 1535,
+          "model_safety_checked": 289,
+          "failures": 0,
+          "model_counts": {
+            "accepted": 289,
+            "rejected": 1224,
+            "unsupported": 22
+          },
+          "model_seconds": 0.2694570840103552,
+          "linear_grammar_alphabet": 10,
+          "linear_max_length": 3,
+          "linear_exact_count": 1111,
+          "structured_max_body_length": 1,
+          "structured_exact_count": 90,
+          "structured_seed": 20261106,
+          "structured_count": 300,
+          "concrete_inputs": [
+            {
+              "choice": false,
+              "count": 0
+            },
+            {
+              "choice": true,
+              "count": 0
+            },
+            {
+              "choice": false,
+              "count": 2
+            },
+            {
+              "choice": true,
+              "count": 2
+            }
+          ],
+          "compiler_requested": true,
+          "compiler_samples": 25,
+          "generated_source_unsupported_before_samples": 27,
+          "compiler_counts": {
+            "agreement-accept": 28,
+            "agreement-reject": 20,
+            "unsupported-source": 8,
+            "unsupported-model": 3
+          },
+          "assurance": "experimental bounded evidence; not a proof or complete RFC phase acceptance"
+        },
+        "local_raw_report": "/private/tmp/gti-borrow-lab-comparison-final/report.json"
+      }
+    },
+    "other_checks": {
+      "lab_selftests": {
+        "tests": 40,
+        "seconds": 2.679,
+        "result": "passed",
+        "log": "/private/tmp/gti-borrow-lab-reviewed-selftests.log"
+      },
+      "existing_focused_ctest": {
+        "names": [
+          "compiler_pipeline",
+          "scalar_temporary_borrow",
+          "scalar_temporary_borrow_lsp"
+        ],
+        "seconds": 482.83,
+        "result": "passed",
+        "log": "/private/tmp/gti-borrow-lab-owning.log"
+      },
+      "native_smoke": {
+        "modes": [
+          "scalar-O0",
+          "scalar-O3",
+          "owners-O0",
+          "owners-O3"
+        ],
+        "result": "passed",
+        "log": "/private/tmp/gti-borrow-lab-native-smoke.log"
+      }
+    }
+  },
+  "compiler_native_source": "dfbf5333dabbc9a0b18dd0ac688f87f469b6442b",
+  "compiler_build_log": "/private/tmp/gti-borrow-lab-reconciled-build.log",
+  "acceptance_source": "48e35d2815cc9a51e8ef8f0804c2b169456373e2",
+  "other_checks": {
+    "lab_selftests": {
+      "tests": 59,
+      "result": "passed"
+    },
+    "existing_focused_ctest": {
+      "names": [
+        "scalar_temporary_borrow",
+        "scalar_temporary_borrow_lsp"
+      ],
+      "result": "passed"
+    },
+    "native_smoke": {
+      "result": "passed"
+    },
+    "release_version": {
+      "result": "passed"
+    },
+    "stdlib_surface_review": {
+      "result": "passed"
+    },
+    "log": "/private/tmp/gti-borrow-lab-reconciled-acceptance.log",
+    "checks_plan": "/private/tmp/gti-borrow-lab-reconciled-checks.json"
+  }
+}

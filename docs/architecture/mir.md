@@ -3136,6 +3136,14 @@ IDs are body-local and start at one.
 
 ## Lowering And Verification
 
+Scalar-initialization dataflow checks a local checked `Borrow` at reference
+formation, as well as staged and direct call inputs. Its referent must be
+definitely initialized on every reachable predecessor. Later reads through a
+reference's projected place cannot substitute for checking the scalar source:
+removing its `Initialize` must fail even when operand-use indexes remain valid.
+Initially available parameters retain their existing entry-state contract;
+full-expression temporaries retain the lifecycle verifier's producer protocol.
+
 Read-only body verification uses a scoped index of HIR source values and MIR
 instruction definitions. Call-input validation also groups value drop obligations
 by HIR source identity once per body, retaining every duplicate for its existing
