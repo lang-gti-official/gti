@@ -3548,12 +3548,23 @@ auto SemanticVisitor::Impl::genericTypeParameterCount(
     const std::vector<GenericParameterInfo> &parameters) -> std::size_t {
   return static_cast<std::size_t>(std::count_if(
       parameters.begin(), parameters.end(),
-      [](const GenericParameterInfo &parameter) { return !parameter.value; }));
+      [](const GenericParameterInfo &parameter) {
+        return !parameter.value && !parameter.lifetime;
+      }));
 }
 
 auto SemanticVisitor::Impl::genericValueParameterCount(
     const std::vector<GenericParameterInfo> &parameters) -> std::size_t {
-  return parameters.size() - genericTypeParameterCount(parameters);
+  return static_cast<std::size_t>(std::count_if(
+      parameters.begin(), parameters.end(),
+      [](const GenericParameterInfo &parameter) { return parameter.value; }));
+}
+
+auto SemanticVisitor::Impl::genericLifetimeParameterCount(
+    const std::vector<GenericParameterInfo> &parameters) -> std::size_t {
+  return static_cast<std::size_t>(std::count_if(
+      parameters.begin(), parameters.end(),
+      [](const GenericParameterInfo &parameter) { return parameter.lifetime; }));
 }
 
 auto SemanticVisitor::Impl::constantFor(const Symbol &symbol) const
@@ -6808,6 +6819,11 @@ auto SemanticVisitor::Impl::applyGenericDefaults(
     -> bool {
   bool valid = true;
   for (const GenericParameterInfo &parameter : parameters) {
+    if (parameter.lifetime) {
+      substitution.lifetimes.try_emplace(
+          parameter.id, inferredLifetime(site, parameter.id));
+      continue;
+    }
     if (parameter.value) {
       if (substitution.values.contains(parameter.id) ||
           !parameter.defaultValue) {
@@ -6900,8 +6916,23 @@ auto SemanticVisitor::Impl::makeGenericParameters(
     }
     if (!names.insert(parameter.name.lexeme).second) {
       report(parameter.name, std::string("Duplicate generic ") +
-                                 (parameter.valueType ? "value" : "type") +
+                                 (parameter.lifetimeKeyword ? "lifetime"
+                                  : parameter.valueType ? "value" : "type") +
                                  " parameter '" + parameter.name.lexeme + "'.");
+      continue;
+    }
+    if (lifetimeOf(parameter.name).specified()) {
+      report(parameter.name,
+             "Generic parameter '" + parameter.name.lexeme +
+                 "' shadows an active lifetime binder.",
+             "GTI-S2126");
+    }
+    if (parameter.lifetimeKeyword) {
+      GenericParameterInfo info{.id = nextGenericParameterId++,
+                                .name = parameter.name,
+                                .lifetime = true};
+      recordLifetimeParameter(info, declarationName.lexeme);
+      result.push_back(std::move(info));
       continue;
     }
     const bool valueParameter = parameter.valueType.has_value();
@@ -7060,6 +7091,10 @@ auto SemanticVisitor::Impl::resolveGenericParameterDefaults(
     if (found == result.end()) {
       continue;
     }
+    if (found->lifetime) {
+      available.push_back(*found);
+      continue;
+    }
     const bool hasDefault = parameter.equal.has_value();
     if (hasDefault) {
       sawDefault = true;
@@ -7207,9 +7242,18 @@ auto SemanticVisitor::Impl::beginTypeParameterScope(
     const std::vector<GenericParameterInfo> &parameters) -> void {
   auto &scope = typeParameterScopes.emplace_back();
   auto &values = valueParameterScopes.emplace_back();
+  auto &lifetimes = lifetimeParameterScopes.emplace_back();
   auto &packs = typePackScopes.emplace_back();
   auto &requirements = requirementScopes.emplace_back();
   for (const GenericParameterInfo &parameter : parameters) {
+    if (parameter.lifetime) {
+      const auto concrete = instanceLifetimeSubstitution.find(parameter.id);
+      lifetimes.emplace(parameter.name.lexeme,
+                        concrete == instanceLifetimeSubstitution.end()
+                            ? Lifetime::parameter(parameter.id)
+                            : concrete->second);
+      continue;
+    }
     if (parameter.value) {
       const auto concrete = instanceValueSubstitution.find(parameter.id);
       values.emplace(parameter.name.lexeme,
@@ -7245,6 +7289,7 @@ auto SemanticVisitor::Impl::beginTypeParameterScope(
 auto SemanticVisitor::Impl::endTypeParameterScope() -> void {
   typeParameterScopes.pop_back();
   valueParameterScopes.pop_back();
+  lifetimeParameterScopes.pop_back();
   typePackScopes.pop_back();
   requirementScopes.pop_back();
 }
@@ -7333,6 +7378,173 @@ auto SemanticVisitor::Impl::resolveTypeParameter(const NamePath &name) const
     }
   }
   return std::nullopt;
+}
+
+auto SemanticVisitor::Impl::lifetimeSyntaxKey(const Token &token,
+                                             std::size_t slot) const
+    -> LifetimeSyntaxKey {
+  return {sourceUnitFor(token), token.position, token.expansion, slot};
+}
+
+auto SemanticVisitor::Impl::inferredLifetime(const Token &site,
+                                             std::size_t slot) const
+    -> Lifetime {
+  const auto [entry, inserted] =
+      lifetimeInferences.try_emplace(lifetimeSyntaxKey(site, slot));
+  if (inserted)
+    entry->second = Lifetime::inference(nextLifetimeInferenceId++);
+  return entry->second;
+}
+
+auto SemanticVisitor::Impl::lifetimeOf(const Token &name) const -> Lifetime {
+  if (name.kind == TokenKind::STATIC)
+    return Lifetime::staticLifetime();
+  if (name.kind == TokenKind::THIS)
+    return currentReceiverLifetime;
+  if (name.kind != TokenKind::IDENTIFIER)
+    return {};
+  if (name.lexeme == "_" || name.completion)
+    return inferredLifetime(name);
+  for (auto scope = lifetimeParameterScopes.rbegin();
+       scope != lifetimeParameterScopes.rend(); ++scope) {
+    if (const auto found = scope->find(name.lexeme); found != scope->end())
+      return found->second;
+  }
+  return {};
+}
+
+auto SemanticVisitor::Impl::recordLifetimeParameter(
+    const GenericParameterInfo &parameter, std::string_view owner) -> void {
+  semanticModel.recordGenericParameter(parameter);
+  const SymbolId symbol = recordToolingSymbol(
+      parameter.name, SymbolKind::LifetimeParameter,
+      owner.empty() ? parameter.name.lexeme
+                    : std::string(owner) + "::" + parameter.name.lexeme,
+      SemanticType::Unknown, false, true, AccessModifier::Public, false, false,
+      false, false, parameter.id);
+  semanticModel.recordOccurrence(
+      {.sourceUnit = sourceUnitFor(parameter.name),
+       .span = tokenSpan(parameter.name),
+       .kind = SemanticOccurrenceKind::LifetimeParameter,
+       .symbol = symbol,
+       .roles = OccurrenceRole::Declaration | OccurrenceRole::Definition,
+       .name = parameter.name.lexeme});
+}
+
+auto SemanticVisitor::Impl::recordLifetimeUse(const Token &name,
+                                             Lifetime lifetime) -> void {
+  if (lifetime.kind != Lifetime::Kind::Parameter)
+    return;
+  const auto *parameter = genericParameterInfo(lifetime.id);
+  if (!parameter)
+    parameter = semanticModel.findGenericParameter(lifetime.id);
+  if (!parameter)
+    return;
+  const SymbolId symbol = symbolForDeclaration(parameter->name);
+  if (!symbol)
+    return;
+  semanticModel.recordOccurrence(
+      {.sourceUnit = sourceUnitFor(name),
+       .span = tokenSpan(name),
+       .kind = SemanticOccurrenceKind::LifetimeParameter,
+       .symbol = symbol,
+       .roles = OccurrenceRole::Reference | OccurrenceRole::TypeUse,
+       .name = name.lexeme});
+}
+
+auto SemanticVisitor::Impl::resolveLifetimeArgument(const Token &name)
+    -> Lifetime {
+  if (name.completion) {
+    SemanticCompletionContext context{
+        .kind = SemanticCompletionKind::Unqualified,
+        .sourceUnit = sourceUnitFor(name),
+        .replacementRange = tokenSpan(name),
+        .prefix = name.lexeme};
+    std::unordered_set<std::string> seen;
+    std::size_t distance = 0;
+    for (auto scope = lifetimeParameterScopes.rbegin();
+         scope != lifetimeParameterScopes.rend(); ++scope, ++distance) {
+      for (const auto &[spelling, lifetime] : *scope) {
+        if (!seen.insert(spelling).second)
+          continue;
+        const auto *parameter = genericParameterInfo(lifetime.id);
+        if (!parameter)
+          parameter = semanticModel.findGenericParameter(lifetime.id);
+        context.candidates.push_back(
+            {.kind = SemanticCompletionCandidateKind::LifetimeParameter,
+             .name = spelling,
+             .qualifiedName = spelling,
+             .detail = "lifetime " + spelling,
+             .scopeDistance = distance,
+             .symbol = parameter ? symbolForDeclaration(parameter->name) : 0});
+      }
+    }
+    semanticModel.recordCompletion(std::move(context));
+    return inferredLifetime(name);
+  }
+  const Lifetime lifetime = lifetimeOf(name);
+  if (lifetime.specified()) {
+    recordLifetimeUse(name, lifetime);
+    return lifetime;
+  }
+  if (name.kind == TokenKind::THIS) {
+    report(name, "The lifetime 'this' requires a non-static method receiver.",
+           "GTI-S2126");
+  } else if (resolveTypeParameter(NamePath(name))) {
+    report(name, "Type parameter '" + name.lexeme +
+                     "' cannot be used as a lifetime argument.",
+           "GTI-S2126");
+  } else if (resolveValueParameter(name)) {
+    report(name, "Value parameter '" + name.lexeme +
+                     "' cannot be used as a lifetime argument.",
+           "GTI-S2126");
+  } else {
+    report(name, "Unknown lifetime '" + name.lexeme +
+                     "'; declare it with 'lifetime " + name.lexeme + "'.",
+           "GTI-S2126");
+  }
+  return {};
+}
+
+auto SemanticVisitor::Impl::lifetimeParametersFor(
+    const LifetimeBinder &binder) const
+    -> const std::vector<GenericParameterInfo> & {
+  const auto [entry, inserted] =
+      lifetimeBinders.try_emplace(lifetimeSyntaxKey(binder.keyword));
+  if (inserted) {
+    auto &parameters = entry->second;
+    parameters.reserve(binder.parameters.size());
+    for (const auto &syntax : binder.parameters) {
+      const auto *symbol = semanticModel.database().findSymbol(
+          symbolForDeclaration(syntax.name));
+      const GenericParameterId id =
+          symbol && symbol->kind == SymbolKind::LifetimeParameter &&
+                  symbol->genericParameter
+              ? symbol->genericParameter
+              : nextGenericParameterId++;
+      parameters.push_back(
+          {.id = id, .name = syntax.name, .lifetime = true});
+    }
+  }
+  return entry->second;
+}
+
+auto SemanticVisitor::Impl::validateLifetimeBinder(const LifetimeBinder &binder)
+    -> void {
+  std::unordered_set<std::string> names;
+  for (const auto &parameter : lifetimeParametersFor(binder)) {
+    if (!names.insert(parameter.name.lexeme).second) {
+      report(parameter.name,
+             "Duplicate lifetime parameter '" + parameter.name.lexeme + "'.",
+             "GTI-S2126");
+    } else if (lifetimeOf(parameter.name).specified()) {
+      report(parameter.name,
+             "Lifetime parameter '" + parameter.name.lexeme +
+                 "' shadows an active lifetime binder.",
+             "GTI-S2126");
+    }
+    recordLifetimeParameter(parameter, "");
+  }
 }
 
 auto SemanticVisitor::Impl::resolveValueParameter(const Token &name) const
@@ -7948,6 +8160,9 @@ auto SemanticVisitor::Impl::prepareInstanceAnalysis() -> void {
   scopes.clear();
   typeParameterScopes.clear();
   valueParameterScopes.clear();
+  lifetimeParameterScopes.clear();
+  lifetimeInferences.clear();
+  currentReceiverLifetime = {};
   typePackScopes.clear();
   requirementScopes.clear();
   currentNamespace.clear();
@@ -7955,6 +8170,7 @@ auto SemanticVisitor::Impl::prepareInstanceAnalysis() -> void {
   currentClass.reset();
   instanceTypeSubstitution.clear();
   instanceValueSubstitution.clear();
+  instanceLifetimeSubstitution.clear();
   instanceClassContextActive = false;
   instanceAnalysisActive = false;
   instanceBaseModel = nullptr;

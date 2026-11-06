@@ -56,7 +56,8 @@ public:
   [[nodiscard]] std::string qualifiedName(const SemanticType &) const;
   [[nodiscard]] SemanticType
   resolve(std::string_view key, std::vector<SemanticType> arguments = {},
-          std::vector<CompileTimeValue> values = {}) const;
+          std::vector<CompileTimeValue> values = {},
+          std::vector<Lifetime> lifetimes = {}) const;
 
 private:
   void bindKey(std::string key, SemanticType type);
@@ -67,6 +68,15 @@ private:
 persistentClassKey(const ClassTypeInfo &, const PersistentDeclarationOwner &);
 [[nodiscard]] std::string persistentEnumKey(const EnumTypeInfo &,
                                             const PersistentDeclarationOwner &);
+// Snapshot-local IDs supplied by the owner of the imported declaration.
+// Wire recipes encode binder positions, never these IDs. Quantified IDs are
+// supplied in structural preorder when reading; writing can discover them
+// from the type itself. Every supplied ID must be nonzero and distinct.
+struct PersistentLifetimeBindings {
+  std::vector<GenericParameterId> parameters;
+  std::vector<GenericParameterId> quantifiedParameters;
+};
+
 // Canonical scalar, concrete primary nominal, reference, raw-pointer and
 // fixed-array recipes. Nominal references require an explicit registered
 // declaration at both ends. All other profiles and noncanonical semantic
@@ -75,4 +85,21 @@ persistentClassKey(const ClassTypeInfo &, const PersistentDeclarationOwner &);
                                               const PersistentTypeRegistry &);
 [[nodiscard]] SemanticType readPersistentType(std::string_view,
                                               const PersistentTypeRegistry &);
+// Parameter-bearing recipes require explicit declaration bindings. Reading
+// a quantified callable also requires all of its local binder IDs; decoding
+// never invents semantic identities or imports a declaration.
+[[nodiscard]] std::string
+writePersistentType(const SemanticType &, const PersistentTypeRegistry &,
+                    const PersistentLifetimeBindings &);
+[[nodiscard]] SemanticType
+readPersistentType(std::string_view, const PersistentTypeRegistry &,
+                   const PersistentLifetimeBindings &);
+// Public contracts must be complete, valid, and declaration-local. Bounds are
+// normalized by binder position; alpha-renaming preserves the bytes.
+[[nodiscard]] std::string
+writePersistentLifetimeContract(const LifetimeSignatureContract &,
+                                const PersistentLifetimeBindings &);
+[[nodiscard]] LifetimeSignatureContract
+readPersistentLifetimeContract(std::string_view,
+                               const PersistentLifetimeBindings &);
 } // namespace lang

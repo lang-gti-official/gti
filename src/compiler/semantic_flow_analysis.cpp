@@ -5618,7 +5618,8 @@ auto SemanticVisitor::Impl::recordToolingSymbol(
     const Token &name, SymbolKind kind, std::string qualified,
     const SemanticType &type, bool mutableBinding, bool definition,
     AccessModifier access, bool staticMember, bool internalLinkage,
-    bool compilerPrivate, bool instanceDependentType) -> SymbolId {
+    bool compilerPrivate, bool instanceDependentType,
+    GenericParameterId genericParameter) -> SymbolId {
   const SourceUnitId sourceUnit = sourceUnitFor(name);
   const SourceSpan span = tokenSpan(name);
   const std::string resolvedQualified = qualified;
@@ -5634,6 +5635,7 @@ auto SemanticVisitor::Impl::recordToolingSymbol(
            definition ? std::optional<SourceSpan>(span) : std::nullopt,
        .type = type,
        .traits = typeTraits(type),
+       .genericParameter = genericParameter,
        .access = access,
        .mutableBinding = mutableBinding,
        .defaultLibrary = isDefaultLibraryUnit(sourceUnit),

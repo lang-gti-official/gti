@@ -939,6 +939,7 @@ private:
     std::vector<std::size_t> defaultArgumentEffectOwners;
     std::vector<GenericParameterInfo> genericParameters;
     std::vector<AppliedConceptRequirement> requirements;
+    LifetimeSignatureContract lifetimeContract;
     bool parameterPack = false;
     ClassId ownerClass = 0;
     bool entryPoint = false;
@@ -987,6 +988,7 @@ private:
     std::vector<SemanticType> parameterTypes;
     std::size_t requiredParameterCount = 0;
     std::vector<AppliedConceptRequirement> requirements;
+    LifetimeSignatureContract lifetimeContract;
     bool parameterPack = false;
     ClassId ownerClass = 0;
     ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly;
@@ -4386,6 +4388,9 @@ private:
   [[nodiscard]] static std::size_t genericValueParameterCount(
       const std::vector<GenericParameterInfo> &parameters);
 
+  [[nodiscard]] static std::size_t genericLifetimeParameterCount(
+      const std::vector<GenericParameterInfo> &parameters);
+
   [[nodiscard]] const ConstantValue *constantFor(const Symbol &symbol) const;
 
   [[nodiscard]] std::optional<CompileTimeValue>
@@ -4586,6 +4591,36 @@ private:
   beginTypeParameterScope(const std::vector<GenericParameterInfo> &parameters);
 
   void endTypeParameterScope();
+
+  using LifetimeSyntaxKey =
+      std::tuple<SourceUnitId, std::size_t, std::uint32_t, std::size_t>;
+  [[nodiscard]] LifetimeSyntaxKey lifetimeSyntaxKey(const Token &token,
+                                                   std::size_t slot = 0) const;
+  [[nodiscard]] Lifetime inferredLifetime(const Token &site,
+                                         std::size_t slot = 0) const;
+  [[nodiscard]] Lifetime lifetimeOf(const Token &name) const;
+  Lifetime resolveLifetimeArgument(const Token &name);
+  [[nodiscard]] const std::vector<GenericParameterInfo> &
+  lifetimeParametersFor(const LifetimeBinder &binder) const;
+  void validateLifetimeBinder(const LifetimeBinder &binder);
+  void recordLifetimeParameter(const GenericParameterInfo &parameter,
+                               std::string_view owner);
+  void recordLifetimeUse(const Token &name, Lifetime lifetime);
+
+  struct LifetimeBinderScope {
+    std::vector<std::unordered_map<std::string, Lifetime>> &scopes;
+    LifetimeBinderScope(
+        std::vector<std::unordered_map<std::string, Lifetime>> &scopes,
+        const std::vector<GenericParameterInfo> &parameters)
+        : scopes(scopes) {
+      auto &scope = scopes.emplace_back();
+      for (const auto &parameter : parameters)
+        scope.emplace(parameter.name.lexeme, Lifetime::parameter(parameter.id));
+    }
+    ~LifetimeBinderScope() { scopes.pop_back(); }
+    LifetimeBinderScope(const LifetimeBinderScope &) = delete;
+    LifetimeBinderScope &operator=(const LifetimeBinderScope &) = delete;
+  };
 
   bool beginRequirementScope(const FunctionInfo *function);
 
@@ -6117,7 +6152,8 @@ private:
       const SemanticType &type, bool mutableBinding = false,
       bool definition = true, AccessModifier access = AccessModifier::Public,
       bool staticMember = false, bool internalLinkage = false,
-      bool compilerPrivate = false, bool instanceDependentType = false);
+      bool compilerPrivate = false, bool instanceDependentType = false,
+      GenericParameterId genericParameter = 0);
 
   [[nodiscard]] SymbolId symbolForDeclaration(const Token &name) const;
 
@@ -7347,6 +7383,11 @@ private:
         typeParameterScopes;
     std::vector<std::unordered_map<std::string, CompileTimeValue>>
         valueParameterScopes;
+    std::vector<std::unordered_map<std::string, Lifetime>> lifetimeParameterScopes;
+    std::map<LifetimeSyntaxKey, Lifetime> lifetimeInferences;
+    std::map<LifetimeSyntaxKey, std::vector<GenericParameterInfo>> lifetimeBinders;
+    std::uint64_t nextLifetimeInferenceId = 1;
+    Lifetime currentReceiverLifetime;
     std::vector<std::unordered_map<std::string, GenericParameterId>>
         typePackScopes;
     std::vector<std::vector<AppliedConceptRequirement>> requirementScopes;
@@ -7357,6 +7398,7 @@ private:
     std::unordered_set<const Token *> usedUnsafeBlocks;
     TypeSubstitution instanceTypeSubstitution;
     ValueSubstitution instanceValueSubstitution;
+    LifetimeSubstitution instanceLifetimeSubstitution;
     std::vector<std::string> currentNamespace;
     SourceUnitId currentSourceUnit = 0;
     std::unordered_set<const VariableDecl *> structuredBindingElements;
@@ -7646,6 +7688,14 @@ private:
       &typeParameterScopes = requestSession.typeParameterScopes;
   std::vector<std::unordered_map<std::string, CompileTimeValue>>
       &valueParameterScopes = requestSession.valueParameterScopes;
+  std::vector<std::unordered_map<std::string, Lifetime>> &lifetimeParameterScopes =
+      requestSession.lifetimeParameterScopes;
+  std::map<LifetimeSyntaxKey, Lifetime> &lifetimeInferences =
+      requestSession.lifetimeInferences;
+  std::map<LifetimeSyntaxKey, std::vector<GenericParameterInfo>> &lifetimeBinders =
+      requestSession.lifetimeBinders;
+  std::uint64_t &nextLifetimeInferenceId = requestSession.nextLifetimeInferenceId;
+  Lifetime &currentReceiverLifetime = requestSession.currentReceiverLifetime;
   std::vector<std::unordered_map<std::string, GenericParameterId>>
       &typePackScopes = requestSession.typePackScopes;
   std::vector<std::vector<AppliedConceptRequirement>> &requirementScopes =
@@ -7654,6 +7704,8 @@ private:
       requestSession.instanceTypeSubstitution;
   ValueSubstitution &instanceValueSubstitution =
       requestSession.instanceValueSubstitution;
+  LifetimeSubstitution &instanceLifetimeSubstitution =
+      requestSession.instanceLifetimeSubstitution;
   std::vector<std::string> &currentNamespace = requestSession.currentNamespace;
   SourceUnitId &currentSourceUnit = requestSession.currentSourceUnit;
   std::unordered_set<const VariableDecl *> &predeclaredVariables =
@@ -7787,6 +7839,9 @@ private:
     ScopeStack scopes;
     decltype(RequestSessionState::typeParameterScopes) typeParameterScopes;
     decltype(RequestSessionState::valueParameterScopes) valueParameterScopes;
+    decltype(RequestSessionState::lifetimeParameterScopes) lifetimeParameterScopes;
+    decltype(RequestSessionState::lifetimeInferences) lifetimeInferences;
+    Lifetime currentReceiverLifetime;
     decltype(RequestSessionState::typePackScopes) typePackScopes;
     decltype(RequestSessionState::requirementScopes) requirementScopes;
     decltype(RequestSessionState::currentNamespace) currentNamespace;

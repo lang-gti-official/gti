@@ -79,6 +79,17 @@ std::uint64_t hashSemanticType(const SemanticType &type, std::uint64_t seed) {
   result = combine(result, static_cast<std::uint64_t>(type.nativeCScalar));
   result = hashSemanticTypes(type.arguments, result);
   result = hashCompileTimeValues(type.valueArguments, result);
+  result = combine(result, static_cast<std::uint64_t>(type.referenceLifetime.kind));
+  result = combine(result, type.referenceLifetime.id);
+  result = combine(result, type.lifetimeArguments.size());
+  for (Lifetime region : type.lifetimeArguments) {
+    result = combine(result, static_cast<std::uint64_t>(region.kind));
+    result = combine(result, region.id);
+  }
+  result = combine(result, type.quantifiedLifetimes.size());
+  for (GenericParameterId parameter : type.quantifiedLifetimes)
+    result = combine(result, parameter);
+  result = combine(result, static_cast<std::uint64_t>(type.signatureReceiver));
   result = combine(result, type.classId);
   result = combine(result, type.enumId);
   result = combine(result, type.genericParameterId);

@@ -1469,6 +1469,7 @@ struct MirFunctionInstance {
   std::optional<HirClassInstanceId> owner;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
+  LifetimeSignatureContract lifetimeContract;
   std::vector<std::size_t> ownerlessTextParameters;
   std::vector<OwnerlessTextField> ownerlessTextFields;
   // Formals a returned fresh value holds in a direct text field (L-OWN-02).

@@ -10954,6 +10954,7 @@ auto SemanticVisitor::Impl::projectCallableDeclaration(
       .defaultArgumentEffectOwners = declaration.defaultArgumentEffectOwners,
       .genericParameters = declaration.genericParameters,
       .requirements = declaration.requirements,
+      .lifetimeContract = declaration.lifetimeContract,
       .parameterPack = declaration.parameterPack,
       .ownerClass = declaration.ownerClass,
       .entryPoint = declaration.entryPoint,
@@ -11023,6 +11024,7 @@ auto SemanticVisitor::Impl::publishCallableDeclaration(
   declaration->returnType = candidate.returnType;
   declaration->parameterTypes = candidate.parameterTypes;
   declaration->requirements = candidate.requirements;
+  declaration->lifetimeContract = candidate.lifetimeContract;
   declaration->ownerClass = ownerClass;
   declaration->staticMember = candidate.staticMember;
   declaration->virtualMethod = candidate.virtualMethod;

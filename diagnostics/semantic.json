@@ -162,6 +162,15 @@
     "arguments": 2
   },
   {
+    "id": "LifetimeBinder",
+    "code": "GTI-S2126",
+    "phase": "Semantics",
+    "severity": "Error",
+    "group": "lifetime",
+    "format": "{0}",
+    "arguments": 1
+  },
+  {
     "id": "CheckedLiteralOverloadShadow",
     "code": "GTI-S2125",
     "phase": "Semantics",

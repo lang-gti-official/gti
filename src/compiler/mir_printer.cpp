@@ -651,7 +651,9 @@ public:
         type(instance.parameterTypes[index]);
         output << '}';
       }
-      output << "] parameter-bindings=[";
+      output << "] lifetime-contract=";
+      lifetimeContract(instance.lifetimeContract);
+      output << " parameter-bindings=[";
       for (std::size_t index = 0; index < instance.parameterBindings.size();
            ++index) {
         separator(index);
@@ -1172,6 +1174,29 @@ private:
         value);
   }
 
+  void lifetime(Lifetime value) {
+    output << '{' << number(value.kind) << ':' << value.id << '}';
+  }
+
+  void lifetimeContract(const LifetimeSignatureContract &value) {
+    output << "{complete=" << value.complete << ",origin=" << number(value.origin)
+           << ",parameters=[";
+    for (std::size_t index = 0; index < value.parameters.size(); ++index) {
+      separator(index);
+      lifetime(value.parameters[index]);
+    }
+    output << "],bounds=[";
+    for (std::size_t index = 0; index < value.bounds.size(); ++index) {
+      separator(index);
+      lifetime(value.bounds[index].longer);
+      output << ':';
+      lifetime(value.bounds[index].shorter);
+    }
+    output << "],receiver=";
+    lifetime(value.receiver);
+    output << '}';
+  }
+
   void type(const SemanticType &value) {
     output << "type(" << number(value.kind) << ";class=" << value.classId
            << ";enum=" << value.enumId
@@ -1180,6 +1205,27 @@ private:
     if (value.functionId != 0) {
       output << ";function=" << value.functionId;
     }
+    if (value.referenceLifetime != Lifetime{}) {
+      output << ";reference-region=";
+      lifetime(value.referenceLifetime);
+    }
+    if (!value.lifetimeArguments.empty()) {
+      output << ";regions=[";
+      for (std::size_t index = 0; index < value.lifetimeArguments.size(); ++index) {
+        separator(index);
+        lifetime(value.lifetimeArguments[index]);
+      }
+      output << ']';
+    }
+    if (!value.quantifiedLifetimes.empty()) {
+      output << ";quantified-regions=[";
+      for (std::size_t index = 0; index < value.quantifiedLifetimes.size(); ++index) {
+        separator(index);
+        output << value.quantifiedLifetimes[index];
+      }
+      output << ']';
+    }
+
     output << ";lambda=" << value.lambdaId
            << ";lambda-parameters=" << value.lambdaParameterCount
            << ";lambda-captures=" << value.lambdaCaptureCount

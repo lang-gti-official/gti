@@ -42,9 +42,15 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   requestSession.usedUnsafeBlocks.clear();
   typeParameterScopes.clear();
   valueParameterScopes.clear();
+  lifetimeParameterScopes.clear();
+  lifetimeInferences.clear();
+  lifetimeBinders.clear();
+  nextLifetimeInferenceId = 1;
+  currentReceiverLifetime = {};
   typePackScopes.clear();
   instanceTypeSubstitution.clear();
   instanceValueSubstitution.clear();
+  instanceLifetimeSubstitution.clear();
   nextLambdaId = 1;
   requestSession.sourceLambdaIdentities.clear();
   nextSemanticLoanId = 1;
@@ -4241,6 +4247,9 @@ auto SemanticVisitor::Impl::captureBodyLocalState() -> BodyLocalState {
       .scopes = std::move(scopes),
       .typeParameterScopes = std::move(typeParameterScopes),
       .valueParameterScopes = std::move(valueParameterScopes),
+      .lifetimeParameterScopes = std::move(lifetimeParameterScopes),
+      .lifetimeInferences = std::move(lifetimeInferences),
+      .currentReceiverLifetime = currentReceiverLifetime,
       .typePackScopes = std::move(typePackScopes),
       .requirementScopes = std::move(requirementScopes),
       .currentNamespace = std::move(currentNamespace),
@@ -4295,6 +4304,9 @@ auto SemanticVisitor::Impl::captureBodyLocalState() -> BodyLocalState {
   scopes.clear();
   typeParameterScopes.clear();
   valueParameterScopes.clear();
+  lifetimeParameterScopes.clear();
+  lifetimeInferences.clear();
+  currentReceiverLifetime = {};
   typePackScopes.clear();
   requirementScopes.clear();
   currentNamespace.clear();
@@ -4347,6 +4359,9 @@ auto SemanticVisitor::Impl::restoreBodyLocalState(BodyLocalState state)
   scopes = std::move(state.scopes);
   typeParameterScopes = std::move(state.typeParameterScopes);
   valueParameterScopes = std::move(state.valueParameterScopes);
+  lifetimeParameterScopes = std::move(state.lifetimeParameterScopes);
+  lifetimeInferences = std::move(state.lifetimeInferences);
+  currentReceiverLifetime = state.currentReceiverLifetime;
   typePackScopes = std::move(state.typePackScopes);
   requirementScopes = std::move(state.requirementScopes);
   currentNamespace = std::move(state.currentNamespace);
@@ -4528,6 +4543,7 @@ auto SemanticVisitor::Impl::rebuildLexicalEnvironment() -> void {
   scopes.clear();
   typeParameterScopes.clear();
   valueParameterScopes.clear();
+  lifetimeParameterScopes.clear();
   typePackScopes.clear();
   requirementScopes.clear();
   currentNamespace.clear();

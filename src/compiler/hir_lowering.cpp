@@ -693,6 +693,7 @@ private:
          .valueArguments = std::move(functionValueArguments),
          .returnType = std::move(returnType),
          .parameterTypes = std::move(parameterTypes),
+         .lifetimeContract = declaration.lifetimeContract,
          .ownerlessTextParameters = declaration.ownerlessTextParameters,
          .ownerlessTextFields = declaration.ownerlessTextFields,
          .publishedTextFields = declaration.publishedTextFields,

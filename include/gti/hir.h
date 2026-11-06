@@ -753,6 +753,7 @@ struct HirFunctionInstance {
   std::vector<CompileTimeValue> valueArguments;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
+  LifetimeSignatureContract lifetimeContract;
   std::vector<std::size_t> ownerlessTextParameters;
   std::vector<OwnerlessTextField> ownerlessTextFields;
   std::vector<PublishedTextField> publishedTextFields;
