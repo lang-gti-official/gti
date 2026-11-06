@@ -1285,6 +1285,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         instance.requiresUnsafe != declaration->requiresUnsafe ||
         instance.neverReturns != declaration->neverReturns ||
         instance.tracksCaller != declaration->tracksCaller ||
+        instance.codegenAttributes != declaration->codegenAttributes ||
         instance.cThreadOperation != declaration->cThreadOperation ||
         instance.processMemoryOperation !=
             declaration->processMemoryOperation) {
@@ -1762,8 +1763,18 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                 parameter.defaultArgument
                     ? parameter.defaultArgument->expression.get()
                     : nullptr;
-            exact = input && expression && input->source == expression &&
-                    input->kind != HirValueKind::PackExpansion;
+            // Lowering retains a checked expression alias as an exact source
+            // mapping. A generated default need not keep the invocation as
+            // the executable value's source (e.g. a macro emits a literal).
+            const bool sourceMatches =
+                input && expression &&
+                (input->source == expression ||
+                 std::any_of(body.sourceAliases.begin(),
+                             body.sourceAliases.end(), [&](const auto &alias) {
+                               return alias.source == expression &&
+                                      alias.value == input->id;
+                             }));
+            exact = sourceMatches && input->kind != HirValueKind::PackExpansion;
           }
         }
         if (!exact)

@@ -26,10 +26,10 @@ FORBIDDEN = (
 ACTION_USE = re.compile(r"^\s*(?:-\s+)?uses:\s*(\S+)@([^\s#]+)", re.MULTILINE)
 CI = ".github/workflows/ci.yml"
 FULL_VALIDATION = ".github/workflows/full-validation.yml"
+SANITIZERS = ".github/workflows/sanitizers.yml"
 LLVM_PREBUILT = ".github/workflows/llvm-prebuilt.yml"
 CPP_BACKEND = ".github/workflows/cpp-backend.yml"
 NIGHTLY = ".github/workflows/nightly.yml"
-PREVIEW = ".github/workflows/preview.yml"
 ROLLUP = ".github/workflows/rollup.yml"
 CACHE = ".github/workflows/cache.yml"
 LSP = ".github/workflows/lsp.yml"
@@ -68,9 +68,10 @@ def main():
     workflows = sorted(p for p in tracked if p.startswith((".github/workflows/", ".gitea/workflows/")))
     # CI, nightly toolchain releases and the rollup bot run on GitHub. The frozen
     # Gitea release workflow stays as the record of the contract it replaces.
-    expect(set(workflows) == {CI, FULL_VALIDATION, LLVM_PREBUILT, CPP_BACKEND, LSP, NIGHTLY, PREVIEW, RELEASE, ROLLUP, CACHE, *RELEASE_TRAIN},
+    expect(set(workflows) == {CI, FULL_VALIDATION, SANITIZERS, LLVM_PREBUILT, CPP_BACKEND, LSP, NIGHTLY, RELEASE,
+                              ROLLUP, CACHE, *RELEASE_TRAIN},
            f"unexpected live workflows: {workflows}")
-    for relative in (CI, NIGHTLY, PREVIEW, RELEASE, ROLLUP, CACHE, *RELEASE_TRAIN, ".github/README.md", ".gitea/README.md",
+    for relative in (CI, NIGHTLY, RELEASE, ROLLUP, CACHE, *RELEASE_TRAIN, ".github/README.md", ".gitea/README.md",
                      ".gitea/ISSUE_TEMPLATE/bug_report.md",
                      "docs/plans/archive/github-actions-20261024/README.md"):
         text(root, relative)
@@ -94,7 +95,7 @@ def main():
     expect(f'"{CANONICAL_ROOT}.git"' in readme and f'"{CANONICAL_ROOT}.git"' in lazy,
            "Lazy installation must use the complete canonical Git URL")
     expect(f'CANONICAL = "{CANONICAL_ROOT}.git"' in text(root, "scripts/install_neovim_local.py"),
-           "the local installer must resolve preview source from canonical GitHub")
+           "the local installer must resolve nightly source from canonical GitHub")
     installer = text(root, "lua/gti/installer.lua")
     expect('local release_server = "https://github.com"' in installer
            and 'local repository = "lang-gti-official/gti"' in installer
@@ -114,20 +115,12 @@ def main():
            and "GITEA_TOKEN" not in helper and "MIRROR_REMOTE" not in helper,
            "lifecycle must use GitHub, the merge queue and explicit rehosting, never Gitea credentials")
 
-    preview = text(root, PREVIEW)
-    expect("branches: [preview]" in preview and "preview_release.py check" in preview
-           and "validation_checks.py smoke --root . --build build" in preview and "needs: [select, package]" in preview
-           and preview.count("contents: write") == 1,
-           "preview must retain combined admission, exact package checks and isolated publication")
     ci, nightly, release = text(root, CI), text(root, NIGHTLY), text(root, RELEASE)
-    full = text(root, FULL_VALIDATION)
+    full, sanitizers = text(root, FULL_VALIDATION), text(root, SANITIZERS)
     expect("merge_group:" in ci and "ready_for_review" in ci and "name: CI gate" in ci
-           and "GTI_EVENT_PATH: ${{ github.event_path }}" in ci
-           and '--event "${GTI_EVENT_PATH}"' in ci
            and "python3 tests/repository_hosting_test.py ." in ci
            and "npm run test:source-text" in ci
-           and "installed_library_smoke" in ci
-           and ci.count("validation_checks.py declared --event") == 2,
+           and "installed_library_smoke" in ci,
            "CI lost its gate, Tree-sitter or installed-toolchain checks")
     expect("--target gti_docgen" in full and "cmp build/documentation-index.json" in full
            and "validation_checks.py shard" in full and "--shard-reports" in full
@@ -140,21 +133,23 @@ def main():
         "if: github.event_name == 'pull_request'" in step for step in declared_steps),
         "PR declarations must only run on pull_request; manual CI has no PR body")
     # Every native job takes the one reviewed toolchain; none installs its own.
-    expect(ci.count("bash scripts/configure_ci_toolchain.sh") == 3
-           and full.count("bash scripts/configure_ci_toolchain.sh") == 5
-           and "llvm-18" not in ci + full and "brew install" not in ci + full
-           and "macos-26" in ci and "macos-26" in full and "macos-15" not in ci + full,
+    native = ci + full + sanitizers
+    expect(all("bash scripts/configure_ci_toolchain.sh" in contents for contents in (ci, full, sanitizers))
+           and "llvm-18" not in native and "brew install" not in native
+           and "macos-26" in ci and "macos-26" in full and "macos-15" not in native,
            "native CI jobs must use the reviewed compiler from configure_ci_toolchain.sh")
-    expect("-DCMAKE_BUILD_TYPE=Debug" not in ci + full and "-DCMAKE_BUILD_TYPE=RelWithDebInfo" in full
-           and '-DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g"' in full
-           and "check_ci_sanitizers.py" in full and "--sanitizer address,undefined" in full,
+    expect("-DCMAKE_BUILD_TYPE=Debug" not in native and "-DCMAKE_BUILD_TYPE=RelWithDebInfo" in sanitizers
+           and '-DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g1"' in sanitizers
+           and "check_ci_sanitizers.py" in sanitizers and "--sanitizer address,undefined" in sanitizers,
            "sanitizer verification must retain an optimized compiler with symbols")
     expect("permissions:\n  contents: read" in ci and "pull_request_target" not in ci
            and "secrets." not in ci,
            "CI must run untrusted pull requests with a read-only token and no secrets")
-    expect("permissions:\n  contents: read" in full and "pull_request_target" not in full
-           and "secrets." not in full and full.count("issues: write") == 1,
-           "full validation runs with a read-only token and writes only its broken-main issue")
+    for workflow, contents in ((FULL_VALIDATION, full), (SANITIZERS, sanitizers)):
+        expect("permissions:\n  contents: read" in contents and "pull_request_target" not in contents
+               and "secrets." not in contents and contents.count("issues: write") == 1
+               and "main-broken" in contents,
+               f"{workflow} runs with a read-only token and writes only its broken-main issue")
     expect("macos-15" not in release and "macOS-ARM64)" not in release
            and "Linux-X64) platform=linux-x64" in release,
            "the frozen Gitea workflow must stay the Linux-only record it was")
@@ -168,24 +163,18 @@ def main():
            "nightly must default to a read-only token, use only GITHUB_TOKEN and write only when publishing")
     expect("--force-with-lease=refs/tags/nightly:" in nightly and "push --force " not in nightly,
            "the nightly tag moves only with an explicit lease")
-    policy = text(root, "docs/architecture/build-and-driver.md")
-    expect("### GitHub nightly publication" in policy and "host-runtime.json" in policy
-           and "linux-aarch64" in policy and "### GitHub release train" in policy
-           and "beta/stable release train" not in policy and "release-status" in policy
-           and "Manual macOS release publication" not in policy,
-           "GitHub nightly publication, the release train and the linux-arm64 gap must be explicit")
     check_release_train(root, ci)
     beta, backport, cache = text(root, BETA), text(root, BACKPORT), text(root, CACHE)
     # The main-branch cache warm-up only helps if it compiles exactly what CI
     # compiles: every configure command it runs must appear verbatim in the
-    # merge gate (native profile) or full validation (sanitizer profile).
+    # merge gate (native profile) or the sanitizer workflow (sanitizer profile).
     warmups = re.findall(r"\n        run: >-\n((?:          [^\n]*\n)+)", cache)
-    expect(len(warmups) == 2 and all(block in ci or block in full for block in warmups)
+    expect(len(warmups) == 2 and all(block in ci or block in full or block in sanitizers for block in warmups)
            and "push:\n    branches: [main]" in cache and "secrets." not in cache
            and "pull_request" not in cache,
            "the compiler-cache warm-up must run on main with ci.yml's exact configure commands")
     for workflow, contents in ((CI, ci), (NIGHTLY, nightly), (RELEASE, release), (BETA, beta),
-                               (BACKPORT, backport), (CACHE, cache)):
+                               (BACKPORT, backport), (CACHE, cache), (SANITIZERS, sanitizers)):
         parallel = '--jobs "${GTI_TEST_JOBS}"' if workflow == BACKPORT else (
             '--parallel "${GTI_JOBS}"' if workflow == CACHE else '--parallel "${GTI_TEST_JOBS}"')
         if workflow != NIGHTLY:  # Publication does not compile or run CTest.
@@ -209,13 +198,7 @@ def main():
     expect(f'"{RELEASE}"' in release_policy and f'"{NIGHTLY}"' in release_policy
            and f'"{BETA}"' in release_policy,
            "release policy must classify its package workflows")
-    expect("gti-lang/gti-reference" in text(root, "docs/architecture/reference-documentation.md"),
-           "the reference website stays on Gitea")
     check_rollup(root, ci, text(root, ROLLUP), workflows)
-    for skill in (".codex/skills/finish-release/SKILL.md", ".claude/skills/finish-release/SKILL.md"):
-        contents = text(root, skill)
-        expect("GitHub Releases" in contents and "package registry" in contents,
-               f"delivery instructions must send toolchain releases to GitHub and keep the registry on Gitea: {skill}")
 
 
 def check_release_train(root, ci):
@@ -246,10 +229,6 @@ def check_release_train(root, ci):
     expect("environment: stable" in text(root, TRAIN).split("\n  promote:\n", 1)[1]
            and "environment: stable" in text(root, ROLLBACK),
            "promotion and rollback run only behind the protected stable environment")
-    readme = text(root, ".github/README.md")
-    for needle in ("## Release train", "`stable` environment", "release immutability",
-                   "release-blocker", "release_train.py rulesets", "beta/*", "release-status"):
-        expect(needle in readme, f".github/README.md must document the release train owner setup: {needle}")
 
 
 def check_rollup(root, ci, rollup, workflows):

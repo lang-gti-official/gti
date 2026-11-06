@@ -13,18 +13,6 @@ llvm::Function *declareRuntimeService(Session &session,
   bool noUnwind = false;
   bool cold = false;
   switch (service) {
-  case RuntimeService::OwnerAllocate:
-    // Generated owner storage, never the source-owned process provider. Like
-    // the provider call it replaces, it promises only a fresh nullable result.
-    name = "gti_rt_owner_allocate_v1";
-    parameters = {llvm::Type::getInt64Ty(context),
-                  llvm::Type::getInt64Ty(context)};
-    result = ptr;
-    break;
-  case RuntimeService::OwnerRelease:
-    name = "gti_rt_owner_release_v1";
-    parameters = {ptr, llvm::Type::getInt64Ty(context)};
-    break;
   case RuntimeService::AtomicNotifyRegistered:
     noUnwind = true;
     name = "gti_rt_atomic_notify_registered_v1";

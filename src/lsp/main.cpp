@@ -1118,6 +1118,20 @@ basicSemanticType(const std::vector<lang::Token> &tokens, std::size_t index) {
   if (lang::isDirectiveToken(token.kind)) {
     return SemanticClassification{Macro, 0};
   }
+  // `inline` remains a reserved word outside a declaration attribute. Recognize
+  // its attribute context before keyword coloring, including comma lists.
+  if (token.lexeme == "inline" || token.lexeme == "cold" ||
+      token.lexeme == "noinline") {
+    std::size_t begin = index;
+    while (begin > 0 && (tokens[begin - 1].kind == IDENTIFIER ||
+                         tokens[begin - 1].kind == COMMA ||
+                         (tokens[begin - 1].kind == CPP_RESERVED &&
+                          tokens[begin - 1].lexeme == "inline")))
+      --begin;
+    if (begin >= 2 && tokens[begin - 2].kind == LEFT_BRACKET &&
+        tokens[begin - 1].kind == LEFT_BRACKET)
+      return SemanticClassification{Decorator, 0};
+  }
   if (lang::isKeywordToken(token.kind)) {
     return SemanticClassification{Keyword, 0};
   }
@@ -2334,6 +2348,13 @@ private:
       std::vector<AnalysisRequest> requests;
       {
         const std::lock_guard lock(stateMutex);
+        // Full-sync notifications may arrive late. Never replace a newer
+        // document or invalidate its snapshot for an equal/older version.
+        if (version) {
+          const auto current = documentVersions.find(uri);
+          if (current != documentVersions.end() && *version <= current->second)
+            return;
+        }
         clientUris[uri] = clientUri;
         openClientUris[uri].insert(clientUri);
         documents[uri] = source;

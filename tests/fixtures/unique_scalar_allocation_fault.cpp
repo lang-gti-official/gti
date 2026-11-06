@@ -1,3 +1,4 @@
+#include "process_allocation_test_provider.h"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -25,6 +26,11 @@ extern "C" void gti_test_fail_scalar_allocation(std::int32_t enabled) {
   failScalarAllocation = enabled != 0;
 }
 
+extern "C" void gti_test_observe_owner(const void *value) {
+  if (!value)
+    std::abort();
+}
+
 // The fault tests require a real allocation, not an optimizable owner. This
 // external observation makes its address escape without modifying the value.
 extern "C" std::int32_t
@@ -50,3 +56,10 @@ void *operator new(std::size_t size, const std::nothrow_t &) noexcept {
     return nullptr;
   }
 }
+
+namespace gti_test_process_provider {
+void *acquire(std::size_t bytes, std::size_t alignment) {
+  return failScalarAllocation ? nullptr : systemAllocate(bytes, alignment);
+}
+void release(void *address) { systemRelease(address); }
+} // namespace gti_test_process_provider

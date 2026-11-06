@@ -43,8 +43,11 @@ void salvageScalarDebugValue(llvm::DbgVariableRecord &record) {
 }
 // A debug record emitted at a block's end. Once the block is terminated the
 // record precedes its terminator, which must stay the block's last entry.
+// The block may still be under construction: LLVM 23's getTerminator()
+// requires a well-formed block (it asserts, and otherwise returns the last
+// instruction whatever it is), so ask for the terminator only if it exists.
 llvm::InsertPosition recordPosition(llvm::BasicBlock *block) {
-  if (auto *terminator = block->getTerminator())
+  if (auto *terminator = block->getTerminatorOrNull())
     return terminator->getIterator();
   return block->end();
 }

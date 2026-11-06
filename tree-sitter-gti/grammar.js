@@ -749,6 +749,7 @@ module.exports = grammar({
       seq(
         repeat(field("attribute", $.function_contract_attribute)),
         "#macro",
+        optional(seq("(", field("mode", "proc"), ")")),
         optional(field("return_type", $.type)),
         field("name", $.identifier),
         optional(field("type_parameters", $.generic_parameter_clause)),
@@ -760,8 +761,8 @@ module.exports = grammar({
     function_contract_attribute: ($) =>
       seq(
         "[[",
-        choice("test", "noreturn", "track_caller", "discardable", "thread_confined_callback", $.borrow_origin_attribute),
-        repeat(seq(",", choice("test", "noreturn", "track_caller", "discardable", "thread_confined_callback", $.borrow_origin_attribute))),
+        choice("test", "noreturn", "track_caller", "discardable", "thread_confined_callback", "inline", "cold", "noinline", $.borrow_origin_attribute),
+        repeat(seq(",", choice("test", "noreturn", "track_caller", "discardable", "thread_confined_callback", "inline", "cold", "noinline", $.borrow_origin_attribute))),
         "]]",
       ),
 
@@ -1325,6 +1326,19 @@ module.exports = grammar({
         ")",
       ),
 
+    procedural_macro_invocation: ($) => prec(PREC.postfix, seq(
+      field("name", $._qualified_identifier), "!", "(",
+      field("input", $.syntax_group), ")")),
+    // Lexical nesting only; the macro library owns its input grammar.
+    syntax_group: ($) => seq("{", repeat($._syntax_item), "}"),
+    _syntax_item: ($) => choice(
+      $.syntax_group,
+      seq("(", repeat($._syntax_item), ")"),
+      seq("[", repeat($._syntax_item), "]"),
+      $.string_literal, $.character_literal,
+      alias(token(prec(-1, /[^\s{}()\[\]"']+/)), $.syntax_token),
+    ),
+
     payload_reference_pattern: ($) =>
       seq(optional(field("mutable", "mut")), "auto", "&",
           field("name", $.identifier)),
@@ -1376,6 +1390,7 @@ module.exports = grammar({
 
     _postfix_expression: ($) =>
       choice(
+        $.procedural_macro_invocation,
         $.call_expression,
         $.member_expression,
         $.index_expression,
@@ -1599,6 +1614,7 @@ function nonAssignmentExpression($) {
     $.binary_expression,
     $.unary_expression,
     $.call_expression,
+    $.procedural_macro_invocation,
     $.member_expression,
     $.index_expression,
     $.update_expression,

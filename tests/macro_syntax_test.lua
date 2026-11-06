@@ -6,9 +6,10 @@ vim.api.nvim_buf_set_lines(0, 0, -1, false, {
   "#macro int choose(bool enabled, int first, int second) { return first; }",
   "[[track_caller]] #macro T generic<T>(T value) { return value; }",
   "#macro std::optional<T> maybe<T>(T value) { return value; }",
+  "#macro(proc) std::syntax::expr html(std::syntax::tokens input) {}",
 })
 vim.bo.syntax = "gti"
-for row, name in ipairs({ "statement", "choose", "generic", "maybe" }) do
+for row, name in ipairs({ "statement", "choose", "generic", "maybe", "html" }) do
   local line = vim.api.nvim_buf_get_lines(0, row - 1, row, false)[1]
   for token, expected in pairs({ ["#macro"] = "gtiMacroKeyword", [name] = "gtiMacroName" }) do
     local column = assert(line:find(token, 1, true))

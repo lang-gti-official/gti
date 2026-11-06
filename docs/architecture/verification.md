@@ -7606,26 +7606,12 @@ holds exactly one build-window `suite` slot for them, reclaims a slot whose
 owner exited, reports a live holder when the window is full, and lets a peer
 task checkpoint while validation is in progress.
 
-`preview_workflow` uses disposable Git repositories to exercise combined
-candidate admission, focused-check replay, mandatory example-gate dispatch,
-failed/dirty/stale publication refusal, append-only removal, and original-PR
-preservation. It also checks preview installer pinning, dirty-checkout
-preservation, unavailable-source failure and read-only source selection.
-Detached submission coverage checks copied worker tooling, duplicate submission,
-remembered focused tests, exact-head pinning, stale retry bounds, interrupted
-status, default remote-runner dispatch, successful checkout cleanup, and normal
-PR integration after failed preview admission. Installer coverage checks default
-preview selection without activation on dry run; `neovim_local_installer` retains
-explicit `--local` installation and activation behavior. These orchestration tests fake compiler builds; actual
-preview admission separately requires its optimized build and automated
-example gates on the combined source. Workflow changes do not themselves
-claim that a preview candidate or installed toolchain has been validated.
-`preview_release` also configures a small real CMake project, builds the exact
-installed/test target closure, installs its component, and confirms unrelated
-test binaries stay unbuilt. A nested CTest rendezvous verifies that the bounded
-parallel budget reaches the inner tests even when the aggregate is RUN_SERIAL.
-The production preview still runs every included feature and example gate;
-these orchestration fixtures do not replace candidate validation.
+`neovim_local_installer` covers the installer's default nightly source
+selection (only the canonical `nightly` tag is read, and a dry run fetches
+nothing), refusal of a missing nightly, rejection of the retired `--preview`
+flag, and explicit `--local` installation and activation behavior. The former
+`preview_workflow` and `preview_release` orchestration tests were removed with
+the preview channel.
 
 `build_window` exercises `scripts/build_window.py` in a temporary directory:
 slot files record owner pid, time, kind and command and disappear on release;
@@ -9493,7 +9479,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `backend_lowered_program_rejection` | C++, MIR, and native-header backends accept one valid lowered value and reject construction-seal and generated-inventory mutations before emission |
 | `backend_lowered_program_boundary` | structural prohibition on frontend includes/types, `BackendInput`, source-MIR/optimizer inputs, and builder leakage across production backend files and the standalone contract client |
 | `cpp_mir_control_flow` | deterministic backend-private direct-CFG plans; canonical block labels and edge slots; complete terminal vocabulary; repeated-target switch edges; and missing, duplicate, reordered, relabelled, retargeted, malformed-entry, and invalid-MIR rejection |
-| `lowered_program_corpus_census` | per-example body, generated-item, and generated-family counts held within the census budget (`tests/census_budget.py`) of `tests/census/` (`lowered`) across the complete shipped corpus for explicit macOS arm64 and Linux x86_64 targets, independently of the executing host; other inventory consumers default to the canonical macOS profile. Linux variants retain exact C ABI identity differences (four examples share one `layout_of<unsigned long>` instantiation there) rather than ignoring count drift |
+| `lowered_program_corpus_census` | per-example body, generated-item, and generated-family counts compared with the census budget (`tests/census_budget.py`) of `tests/census/` (`lowered`); drift outside it is an advisory finding ("Advisory checks") across the complete shipped corpus for explicit macOS arm64 and Linux x86_64 targets, independently of the executing host; other inventory consumers default to the canonical macOS profile. Linux variants retain exact C ABI identity differences (four examples share one `layout_of<unsigned long>` instantiation there) rather than ignoring count drift |
 | `mir_backend_first_family` | verified source/optimized MIR handoff, ordinary and failure-form general emission, optimized instruction control, and missing, stale, duplicated, or unauthorized snapshot rejection |
 | `mir_backend_first_family_runtime` | general verified-MIR execution at O0/O1/O3 under C++20/C++23, including body-identity markers and optimized-MIR artifact differences |
 | `mir_backend_scalar_cfg` | exact `scalar-cfg-v1` selection across scalar computations, places, assignment, branch, switch, short-circuit, and loop CFG; direct-label/goto spelling without mutable block dispatch; checked/call/reference near-miss fallback; optimized-literal control; and fail-closed same-domain operation and branch-routing mutations with unchanged source MIR |
@@ -9509,9 +9495,9 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `mir_backend_owned_lifecycle_runtime` | exact nested-scope construction, move-by-value, first-close ordering, and explicit cleanup at O0/O1/O3 under C++20/C++23, including emitted family markers and lifetime-slot schedule evidence |
 | `mir_backend_scalar_failure_callgraph` | atomic hosted `scalar-failure-callgraph-v1` selection; exact hidden bool/out-result/record ABI; local-site creation and unchanged call propagation; Return-only publication; reverse failure drops; unique terminal/firewall shape; complete HIR-body reverse-edge and selected-class representation closure; native/virtual/lambda/dynamic-initializer/checked-lifecycle/normal-ABI/cycle near misses; and fail-closed metadata, target, record, cleanup, and source-MIR mutations |
 | `mir_backend_scalar_failure_callgraph_runtime` | normal execution plus every admitted signed/unsigned fixed-integer detector outcome at O0/O1/O3 under C++20/C++23, with exact selected-body counts, reports, original source sites, status 70, stdout silence, one terminal call, and the immediate native-exception firewall |
-| `mir_census_regression` | every example compiles and its MIR body count stays within the census budget (`tests/census_budget.py`) of `tests/census/` (`mir`) |
+| `mir_census_regression` | every example compiles; a MIR body count outside the census budget (`tests/census_budget.py`) of `tests/census/` (`mir`) is an advisory finding ("Advisory checks") |
 | `compiler_debug_tooling` | portable failure capture/replay plus decline-census body segmentation, body-kind-local spellability, deterministic generation, backend-only classification, and argument validation |
-| `mir_cutover_corpus_oracle` | every example builds and runs at `-O0`/C++20 and `-O3`/C++23 with identical exit status, stdout, and stderr, and recorded examples keep their body count within the census budget |
+| `mir_cutover_corpus_oracle` | every example builds and runs at `-O0`/C++20 and `-O3`/C++23 with identical exit status, stdout, and stderr; a recorded example's body count outside the census budget is an advisory finding |
 | `cpp_mir_body_emitter_preflight` / `cpp_mir_body_emitter_text` / `cpp_mir_body_emitter_lifecycle` / `cpp_mir_body_emitter_census` / `cpp_mir_body_emitter_corpus` / `cpp_mir_body_emitter_corpus_protocol` | Manifest-backed tests split into preflight/representation, ordinary text, lifecycle/failure, and corpus-protocol executables; classification, immutable-plan lifetime, typed-edge, initializer, ownership, array, virtual-family, inline-capture, Expected, and reference-transfer assertions remain owned by focused suites; the census rejects missing or duplicate registrations, while the four-processor coordinator runs both corpus sweeps once per exact lowered-program census source and re-aggregates readiness floors, feature witnesses, determinism, direct control flow, and byte agreement; protocol tests reject malformed or mismatched worker evidence |
 | `issue_144_class_array_field_runtime` | trivial, cleanup-owning, move-only, passive-polymorphic, and destructor-bearing polymorphic fixed-array fields at O0/O2 under C++20/C++23; concrete interface dispatch and constant element-field projections; exact construction and destruction totals; and move-only element-copy rejection with `GTI-S2003` |
 | `issue_146_class_value_positions_runtime` | generated-copy and explicit-move class parameter field initialization, passive and move-only lambda move-capture, and owning `Expected` payload return/extraction at O0/O3 under C++20/C++23, with no output and exact zero-status completion |
@@ -9762,17 +9748,77 @@ and the helper scripts and their gates (`ci_resources`, `ci_cache`,
 runs formatting, release-version, Tree-sitter and workflow regressions before
 heavy jobs. Full integration retains the system-LLVM fast checks and Linux
 system-LLVM installed consumers, and requires production packaging, its installed
-consumer checks, bundled-release suite shards and the separate sanitizer
-matrix. Packaging precedes the release shards so they can reuse its object
-cache. Sanitizer jobs have their own runner budgets; one job's successful build
-does not satisfy another job's test gate. A failure in any required job keeps
-the CI gate red and prevents its artifacts from qualifying for nightly.
+consumer checks and bundled-release suite shards. Packaging precedes the
+release shards so they can reuse its object cache. A failure in any required
+job keeps the CI gate red and prevents its artifacts from qualifying for
+nightly.
+
+The sanitizer matrix (the three compiler partitions and the library job under
+ASan/UBSan, the LLVM-backend ASan/UBSan job and the thread-sanitizer job) runs
+in `sanitizers.yml`, once a day on the commit the `nightly` tag names and on
+dispatch for a named commit on main or a `beta/*` line, not after every merge:
+it took about three hours of each post-integration run. Its job definitions,
+runner budgets and cache restores are the ones full validation used. A
+scheduled run skips a nightly commit that already passed. The
+`Sanitizer verdict (<commit>)` job names the commit it covers, because a
+scheduled run's own head is main's tip when it started. A failure opens or
+updates a `main-broken` issue titled "Sanitizers on the nightly commit are
+failing" through `scripts/full_validation_report.py`, and the next pass closes
+it; full validation keeps its own issue, so neither closes the other's
+finding. The release train cuts a nightly only when that exact commit has a
+passing verdict and promotes a beta only when its code commit has one (a
+metadata-only release cut is covered by its nightly parent), so beta and
+stable stay sanitizer-gated while main pushes no longer wait three hours for
+evidence. Sanitizer jobs have their own runner budgets; one job's successful
+build does not satisfy another job's test gate.
+
+**Advisory checks.** Some checks guard the repository's own bookkeeping rather than the product:
+a pull request's `Validation:` block, the stdlib surface manifest review,
+reviewed census counts, and ownership-map coverage. Each broke on
+legitimate changes far more often than it caught a defect, so each now reports
+without blocking:
+
+- `validation_checks.py declared` parses the PR body's `Validation:` block in
+  the plan and fast jobs. A second block, a non-name token, an empty block or
+  more than 60 names become `::warning::` annotations and job-summary lines;
+  the plain names still re-run (at most 60), and a declared test that fails
+  still fails the fast job. Unregistered or disabled names are warnings and
+  are skipped. The agent workflow's own `declared_tests` stays strict, so
+  `finish` claims only names `verify` ran.
+- `check_stdlib_surface_review.py --advisory` (the `release-version` job)
+  prints a missing surface review as warnings and passes; without the flag it
+  still exits 1 for local use.
+- `mir_census_regression`, `lowered_program_corpus_census` and the body
+  count in `mir_cutover_corpus_oracle` treat a count outside the census budget
+  as a finding (`tests/advisory_checks.py`). The test still fails when an
+  example stops compiling, a program fails or behaviours differ. A finding is
+  a `GTI-ADVISORY:` line that the test prints ahead of its other output,
+  because CTest keeps only the first KiB of a passing test's output in its
+  JUnit report (a test killed by its timeout loses that held output). Full
+  validation's verdict runs `validation_checks.py advisories` over the shard
+  reports and turns each line into a warning. `GTI_ADVISORY_CHECKS=strict`
+  makes the drift fail again, for refreshing a baseline.
+- `tests/ownership_map_test.py` reports a path pattern that matches no
+  tracked file and a covered file no area owns as warnings, also failing
+  under `GTI_ADVISORY_CHECKS=strict`. Schema errors, a file both owned and
+  unowned, a SHARED-floor file without shared or system risk, and (in CTest
+  `test_ownership_map`) an owner naming no registered test still fail, since
+  they change which checks are selected.
+
+These stay blocking: `check_release_version.py` (changelog fragments and
+`Release-Impact` trailers), clang-format, and every test of compiler,
+runtime, library or tool behaviour. The LLVM readiness provider inventories
+were already derived from the tree (`llvm_coverage_evidence`), so no pin
+remains there to relax. An advisory check is never deleted: a finding is a
+prompt to update the record in a later change, not permission to ignore it.
 
 Hosted CI provisions checksum-pinned Neovim 0.11.5 before CMake configuration
 through `configure_ci_editor.py`, so editor tests are registered on both supported
 platforms. T0/T1 declarations name checks available on both platforms; record
 platform-specific checks such as `macos_installed_runtime` separately in the PR
-evidence. Missing or disabled declared tests remain a hard failure.
+evidence. A declared test that runs and fails fails the job; a malformed
+`Validation:` block and a declared name that is missing or disabled are
+advisory warnings (see "Advisory checks" above).
 
 CI and release jobs use the job's detected available processor count for both
 compilation and CTest. `scripts/configure_ci_resources.sh` uses `nproc` (not
@@ -9791,7 +9837,10 @@ compile job and 4096 MiB per test worker, since an instrumented compiler
 suite grows several times larger than its plain run (six workers on a 12 GiB
 runner had the ownership suite OOM-killed). The sanitizer job also scales
 every test timeout six times (`-DGTI_TEST_TIMEOUT_SCALE=6`, so the 600-second
-default becomes an hour) and runs
+default becomes an hour). Its three compiler partitions run only
+`compiler_pipeline`, split round-robin by suite, and scale its 1800-second
+bound ten times: the instrumented ownership suite alone took more than three
+hours on 2026-11-04 (run 41837802931). The job runs
 the emitter's preflight, text, lifecycle, census and corpus-protocol checks
 rather than the whole generated-C++ corpus, and omits `failure_metadata`:
 both exceeded an hour under ASan on the 6-core runner and remain the plain
@@ -9801,7 +9850,7 @@ a killed compile can be read against them. A small ASan/UBSan preflight
 fails early when that mandatory capability is broken. ThreadSanitizer execution
 is an explicit host capability controlled by
 `GTI_ENABLE_THREAD_SANITIZER_TESTS`, which defaults to enabled; the hosted
-`tsan` job of `full-validation.yml` configures it on and runs every `_tsan`
+`tsan` job of `sanitizers.yml` configures it on and runs every `_tsan`
 CTest. Docker/host environments that cannot reserve the required
 shadow-memory mapping have not passed the dedicated TSAN preflight. Mixed runtime matrices keep
 their ordinary and ASan/UBSan modes; dedicated TSAN CTests report an explicit
@@ -11158,16 +11207,19 @@ the fallback that the hard cutover removed.
 Two complementary gates replace it:
 
 - `tests/mir_census_test.py` recompiles every `examples/*.gti` source and
-  requires the exact per-example body-identity counts recorded in
-  `tests/census/` (`mir`) for the host target. The macOS arm64 base and
+  compares the per-example body-identity counts with those recorded in
+  `tests/census/` (`mir`) for the host target; a count outside the census
+  budget is an advisory finding ("Advisory checks"). The macOS arm64 base and
   Linux x86_64 variant differ in four container examples by one
   `std::layout_of<c_size_t>()` body: on Linux, `c_size_t` and `uint64_t` have
   the same native C type identity and share an existing specialization; on
   macOS they have distinct identities. Added, removed, failed, or changed
-  examples require review; a body-count increase is not accepted automatically.
+  examples require review; a failed example fails the test, while a
+  body-count change is reported for review rather than failed.
 - `tests/mir_cutover_corpus_oracle_test.py` builds and runs every example at
-  the two boundary configurations `-O0`/C++20 and `-O3`/C++23. It requires the
-  reviewed host-target marker count, rejects unknown or retired marker forms,
+  the two boundary configurations `-O0`/C++20 and `-O3`/C++23. It reports a
+  marker count outside the reviewed budget as advisory, rejects unknown or
+  retired marker forms,
   requires identical body ownership at both endpoints, and compares exit
   status, stdout, and stderr.
 
@@ -12669,7 +12721,7 @@ Release compiler evidence on macOS arm64:
   fresh ID mapping, missing/wrong owner rejection and conflicting unit mappings.
   `compiled_scalar_library` mutates the sealed ownership bindings and proves that
   deleting every binding cannot reopen a called import. The latter also checks
-  ownership serialization in `lowered-program-v31`.
+  ownership serialization in `lowered-program-v32`.
 - Twenty-three affected regressions passed without skips in 219.14 seconds before
   the final empty-binding verifier guard. That guard changes only a compiled
   context with interface units and no callable bindings; paths with bindings or
@@ -12720,3 +12772,20 @@ over 65,536 vector elements and cleanup of every owner on predicate failure.
 The full mixed generic ownership fixture currently exceeds the C++ emitter's
 consistent `uninitialized_storage` trait representation; its LLVM lifecycle
 checks remain mandatory and the scalar/string comparator is retained.
+
+### Function optimization annotation verification
+
+`codegen_attribute_contract` checks source acceptance and rejection, formatter
+round trips, declaration/method/generic instance preservation, MIR mutation
+rejection, sealed lowering, editor hover signatures, constexpr/defined-virtual compatibility and exact LLVM
+`inlinehint`/`noinline`/`cold` attributes (never `alwaysinline`). A body-lowered
+`[[noreturn, inline]]` panic wrapper retains its explicit hint without conflicting
+`noinline` or an invalid LLVM `noreturn` on the failure-status ABI.
+`codegen_attribute_runtime` runs `examples/llvm/codegen-attributes.gti` on LLVM
+O0 and O3, including recursive call boundaries, normal return from a cold
+function, generic/member calls and exactly-once destructor cleanup.
+`codegen_attribute_lsp` exercises diagnostic ranges, repair publication, hover
+and contextual annotation tokens through the protocol. Tree-sitter's function
+contract corpus and highlight fixture cover the same three spellings.
+These checks establish requests and semantics; they do not claim a universal
+performance improvement from user annotations.

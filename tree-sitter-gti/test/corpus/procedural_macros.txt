@@ -1,0 +1,70 @@
+==================
+Procedural declaration and opaque invocation
+==================
+#macro(proc) std::syntax::expr html(std::syntax::tokens input) {}
+void show() { web::html!({ <div class="x"> {name[0]} </div> }); }
+
+---
+
+(source_file
+  (macro_declaration
+    (type
+      (user_type
+        (scoped_identifier
+          (scoped_identifier
+            (identifier)
+            (identifier))
+          (identifier))))
+    (identifier)
+    (parameter_clause
+      (parameter
+        (type
+          (user_type
+            (scoped_identifier
+              (scoped_identifier
+                (identifier)
+                (identifier))
+              (identifier))))
+        (identifier)))
+    (block))
+  (function_declaration
+    (type)
+    (identifier)
+    (parameter_clause)
+    (block
+      (expression_statement
+        (procedural_macro_invocation
+          (scoped_identifier
+            (identifier)
+            (identifier))
+          (syntax_group
+            (syntax_token)
+            (syntax_token)
+            (string_literal)
+            (syntax_token)
+            (syntax_group
+              (syntax_token)
+              (syntax_token))
+            (syntax_token)))))))
+
+==================
+Nested lexical groups in procedural input
+==================
+void show() { inspect!({ name([value]) { nested } }); }
+
+---
+
+(source_file
+  (function_declaration
+    (type)
+    (identifier)
+    (parameter_clause)
+    (block
+      (expression_statement
+        (procedural_macro_invocation
+          (identifier)
+          (syntax_group
+            (syntax_token)
+            (syntax_token)
+            (syntax_group
+              (syntax_token))))))))

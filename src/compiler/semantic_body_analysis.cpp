@@ -11,6 +11,12 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   macroExpansionDepth = 0;
   macroExpandedBodies = 0;
   macroActiveBodies.clear();
+  proceduralNameKinds.clear();
+  proceduralExpansions.clear();
+  proceduralCacheBytes = 0;
+  proceduralActive.clear();
+  proceduralWork.reset();
+  proceduralSyntaxBudget.reset();
   diagnostics.clear();
   catalog.clear();
   valueFlow.clear();
@@ -796,7 +802,7 @@ auto SemanticVisitor::Impl::analyzeClassFieldInitializers(
           self(self, *branch);
         }
       } else if (const auto *alias = stmtAs<TypeAliasDecl>(member.get())) {
-        validateType(alias->target());
+        validateTypeAliasTarget(alias->target());
         if (const TypeAliasInfo *primary =
                 semanticModel.findTypeAlias(*alias)) {
           TypeAliasInfo concrete = *primary;
@@ -3465,11 +3471,16 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
                       return parameter.mutability == Mutability::Mutable ||
                              parameter.type.reference;
                     })) {
-      reportContract(keyword,
-                     "A typed macro requires a defined, safe, non-constexpr "
-                     "namespace-scope template with typed expression "
-                     "parameters.");
-    } else if (!validMacroBody(*stmt.body())) {
+      reportContract(
+          keyword,
+          stmt.isProceduralMacro()
+              ? "A procedural macro requires a defined, safe, "
+                "non-constexpr namespace-scope function with "
+                "immutable value parameters."
+              : "A typed macro requires a defined, safe, non-constexpr "
+                "namespace-scope template with typed expression "
+                "parameters.");
+    } else if (!stmt.isProceduralMacro() && !validMacroBody(*stmt.body())) {
       reportContract(keyword,
                      "A macro body supports automatic locals, expressions, "
                      "blocks, if and local loops. Break and continue must "
@@ -3484,6 +3495,26 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
           !expressionParameters.insert(parameter.name.lexeme).second)
         reportContract(parameter.name,
                        "Macro expression parameter names must be unique.");
+    if (stmt.isProceduralMacro()) {
+      const auto hasKind = [&](const SemanticType &type,
+                               CompilerTypeKind kind) {
+        return type.kind == SemanticType::Class && type.classId != 0 &&
+               classInfo(type.classId).compilerType == kind;
+      };
+      if (!functionInfo || !stmt.genericParameters().empty() ||
+          stmt.requiresClause() || stmt.parameters().size() != 1 ||
+          stmt.parameters().front().pack ||
+          stmt.parameters().front().hasDefault() ||
+          !hasKind(functionInfo->returnType,
+                   CompilerTypeKind::SyntaxExpression) ||
+          functionInfo->parameterTypes.size() != 1 ||
+          !hasKind(functionInfo->parameterTypes.front(),
+                   CompilerTypeKind::SyntaxTokens))
+        reportContract(keyword, "A procedural macro requires exactly one "
+                                "std::syntax::tokens parameter and "
+                                "a std::syntax::expr result, without generics, "
+                                "defaults, packs or constraints.");
+    }
   }
   for (const auto &contract : stmt.functionAttributes()) {
     const Token &attribute = contract.name;
@@ -3494,6 +3525,26 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
       diagnostics.back().hints.emplace_back(
           "Write '#macro name(typed parameters) { ... }' without a return "
           "type.");
+      continue;
+    }
+    if (attribute.lexeme == "inline" || attribute.lexeme == "noinline" ||
+        attribute.lexeme == "cold") {
+      if (!functionAttributeNames.insert(attribute.lexeme).second) {
+        reportContract(attribute, "Duplicate function attribute '" +
+                                      attribute.lexeme + "'.");
+      } else if (stmt.hasFunctionAttribute("inline") &&
+                 stmt.hasFunctionAttribute("noinline") &&
+                 attribute.lexeme == "noinline") {
+        reportContract(attribute, "[[inline]] and [[noinline]] cannot be "
+                                  "combined on the same function.");
+      } else if (contract.argument || functionInfo == nullptr ||
+                 stmt.hasCLinkage() || stmt.runtimeBinding() ||
+                 stmt.isMacro() || stmt.isPure() ||
+                 functionInfo->bodyDeclaration() == nullptr ||
+                 functionInfo->bodyDeclaration()->body() == nullptr) {
+        reportContract(attribute, "Code-generation attributes require a "
+                                  "source-defined GTI function or method.");
+      }
       continue;
     }
     if (attribute.lexeme == "test") {
@@ -3621,7 +3672,11 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   validateRuntimeBinding(stmt);
   const bool enclosingPackTypeReference = allowPackTypeReference;
   allowPackTypeReference = true;
+  allowProceduralSyntaxType =
+      stmt.isProceduralMacro() || stmt.isConstexpr() ||
+      (functionInfo && syntaxIntrinsic(functionInfo->intrinsic));
   validateType(stmt.returnType());
+  allowProceduralSyntaxType = false;
   allowPackTypeReference = enclosingPackTypeReference;
   const bool methodDeclaration = currentClass && functionDepth == 0;
   const bool polymorphic =
@@ -3727,7 +3782,11 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   for (const Parameter &parameter : stmt.parameters()) {
     const bool enclosingParameterPackTypeReference = allowPackTypeReference;
     allowPackTypeReference = true;
+    allowProceduralSyntaxType =
+        stmt.isProceduralMacro() || stmt.isConstexpr() ||
+        (functionInfo && syntaxIntrinsic(functionInfo->intrinsic));
     validateType(parameter.type);
+    allowProceduralSyntaxType = false;
     allowPackTypeReference = enclosingParameterPackTypeReference;
     if (!intrinsicDeclaration) {
       validateReferencePlacement(parameter.type, true, "function parameter");
@@ -3860,7 +3919,8 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
              "GTI-S2022");
     }
   }
-  if (!stmt.body() || !requirementsValid || stmt.isMacro()) {
+  if (!stmt.body() || !requirementsValid ||
+      (stmt.isMacro() && !stmt.isProceduralMacro())) {
     // A typed macro is a statement template, not a callable value.
     // Its signature and body shape are checked here; actual substituted
     // expressions are checked in caller flow at each concrete invocation.
@@ -3908,6 +3968,12 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
 auto SemanticVisitor::Impl::analyzeFunctionBody(
     const FunctionDecl &stmt, const FunctionInfo *functionInfo,
     bool declarationErrors, bool constexprDeclarationValid) -> void {
+  struct SyntaxTypeScope {
+    bool &flag;
+    bool saved;
+    ~SyntaxTypeScope() { flag = saved; }
+  } syntaxScope{allowProceduralSyntaxType, allowProceduralSyntaxType};
+  allowProceduralSyntaxType = stmt.isProceduralMacro() || stmt.isConstexpr();
   // While a preamble is built, a body that bounded analysis would defer is
   // analysed now but reported only once an analysis resumed from the
   // preamble reaches it: its diagnostics and the functions it consulted are
@@ -4066,7 +4132,8 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
     }
   }
   endScope();
-  if (stmt.isConstexpr() && constexprDeclarationValid && !functionErrors()) {
+  if ((stmt.isConstexpr() || stmt.isProceduralMacro()) &&
+      constexprDeclarationValid && !functionErrors()) {
     constexprDefinitionsAnalyzed.insert(&stmt);
   }
   --functionDepth;
@@ -6224,7 +6291,7 @@ auto SemanticVisitor::Impl::visitTypeAliasDecl(const TypeAliasDecl &stmt)
   // execute constexpr predicates. Check them at this declaration's lexical
   // position, after preceding definitions have been analyzed, even if the
   // alias is never used. Registration cannot supply those body-derived facts.
-  validateType(stmt.target(), stmt.target().isNativeFunction());
+  validateTypeAliasTarget(stmt.target(), stmt.target().isNativeFunction());
   const TypeAliasInfo *info = semanticModel.findTypeAlias(stmt);
   const SemanticType type =
       info == nullptr ? SemanticType::Unknown : info->type;
@@ -7616,6 +7683,8 @@ auto SemanticVisitor::Impl::visitBinaryExpr(const Binary &expr) -> void {
 }
 
 auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
+  if (expr.capturedArguments() && analyzeCapturedCall(expr))
+    return;
   if (analyzeMacroCall(expr, macroStatementCall == &expr ? macroStatementContext
                                                          : nullptr))
     return;
@@ -7655,8 +7724,11 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     analyzePayloadConstruction(expr, *enumerator);
     return;
   }
+  // Syntax capabilities use ordinary exact signature/argument checking. Only
+  // their execution is intrinsic, under the explicit procedural MIR profile.
   if (const std::optional<CallableCandidate> intrinsic =
-          intrinsicCandidate(expr.callee())) {
+          intrinsicCandidate(expr.callee());
+      intrinsic && !syntaxIntrinsic(intrinsic->record().intrinsic)) {
     if (intrinsic->record().intrinsic == IntrinsicKind::Move) {
       analyzeMoveCall(expr, &*intrinsic, immediateReceiver);
     } else {
@@ -14250,6 +14322,12 @@ auto SemanticVisitor::Impl::evaluateConstexprNode(const Expr &source,
   if (&source != context.immediateRoot)
     if (const auto *immediate = semanticModel.findImmediateInvocation(source))
       return {.value = immediate->value};
+
+  // Generated expressions use the same constant rules as their handwritten
+  // form. The procedural body has already executed through verified MIR.
+  if (const auto *alias = semanticModel.findExpressionAlias(source);
+      alias && !semanticModel.findExpressionAliasPrelude(source))
+    return evaluateConstexprExpression(*alias, context);
 
   const SemanticType sourceType =
       constexprType(semanticModel.typeOf(source), context);

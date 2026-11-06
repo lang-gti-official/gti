@@ -4635,6 +4635,35 @@
           "type": "CHOICE",
           "members": [
             {
+              "type": "SEQ",
+              "members": [
+                {
+                  "type": "STRING",
+                  "value": "("
+                },
+                {
+                  "type": "FIELD",
+                  "name": "mode",
+                  "content": {
+                    "type": "STRING",
+                    "value": "proc"
+                  }
+                },
+                {
+                  "type": "STRING",
+                  "value": ")"
+                }
+              ]
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
               "type": "FIELD",
               "name": "return_type",
               "content": {
@@ -4736,6 +4765,18 @@
               "value": "thread_confined_callback"
             },
             {
+              "type": "STRING",
+              "value": "inline"
+            },
+            {
+              "type": "STRING",
+              "value": "cold"
+            },
+            {
+              "type": "STRING",
+              "value": "noinline"
+            },
+            {
               "type": "SYMBOL",
               "name": "borrow_origin_attribute"
             }
@@ -4772,6 +4813,18 @@
                   {
                     "type": "STRING",
                     "value": "thread_confined_callback"
+                  },
+                  {
+                    "type": "STRING",
+                    "value": "inline"
+                  },
+                  {
+                    "type": "STRING",
+                    "value": "cold"
+                  },
+                  {
+                    "type": "STRING",
+                    "value": "noinline"
                   },
                   {
                     "type": "SYMBOL",
@@ -7592,6 +7645,10 @@
             },
             {
               "type": "SYMBOL",
+              "name": "procedural_macro_invocation"
+            },
+            {
+              "type": "SYMBOL",
               "name": "member_expression"
             },
             {
@@ -7666,6 +7723,10 @@
                 {
                   "type": "SYMBOL",
                   "name": "call_expression"
+                },
+                {
+                  "type": "SYMBOL",
+                  "name": "procedural_macro_invocation"
                 },
                 {
                   "type": "SYMBOL",
@@ -8436,6 +8497,136 @@
         }
       ]
     },
+    "procedural_macro_invocation": {
+      "type": "PREC",
+      "value": 15,
+      "content": {
+        "type": "SEQ",
+        "members": [
+          {
+            "type": "FIELD",
+            "name": "name",
+            "content": {
+              "type": "SYMBOL",
+              "name": "_qualified_identifier"
+            }
+          },
+          {
+            "type": "STRING",
+            "value": "!"
+          },
+          {
+            "type": "STRING",
+            "value": "("
+          },
+          {
+            "type": "FIELD",
+            "name": "input",
+            "content": {
+              "type": "SYMBOL",
+              "name": "syntax_group"
+            }
+          },
+          {
+            "type": "STRING",
+            "value": ")"
+          }
+        ]
+      }
+    },
+    "syntax_group": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "{"
+        },
+        {
+          "type": "REPEAT",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_syntax_item"
+          }
+        },
+        {
+          "type": "STRING",
+          "value": "}"
+        }
+      ]
+    },
+    "_syntax_item": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "syntax_group"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "STRING",
+              "value": "("
+            },
+            {
+              "type": "REPEAT",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_syntax_item"
+              }
+            },
+            {
+              "type": "STRING",
+              "value": ")"
+            }
+          ]
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "STRING",
+              "value": "["
+            },
+            {
+              "type": "REPEAT",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_syntax_item"
+              }
+            },
+            {
+              "type": "STRING",
+              "value": "]"
+            }
+          ]
+        },
+        {
+          "type": "SYMBOL",
+          "name": "string_literal"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "character_literal"
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "TOKEN",
+            "content": {
+              "type": "PREC",
+              "value": -1,
+              "content": {
+                "type": "PATTERN",
+                "value": "[^\\s{}()\\[\\]\"']+"
+              }
+            }
+          },
+          "named": true,
+          "value": "syntax_token"
+        }
+      ]
+    },
     "payload_reference_pattern": {
       "type": "SEQ",
       "members": [
@@ -8647,6 +8838,10 @@
     "_postfix_expression": {
       "type": "CHOICE",
       "members": [
+        {
+          "type": "SYMBOL",
+          "name": "procedural_macro_invocation"
+        },
         {
           "type": "SYMBOL",
           "name": "call_expression"
@@ -9613,6 +9808,10 @@
                 },
                 {
                   "type": "SYMBOL",
+                  "name": "procedural_macro_invocation"
+                },
+                {
+                  "type": "SYMBOL",
                   "name": "member_expression"
                 },
                 {
@@ -9678,6 +9877,10 @@
                     {
                       "type": "SYMBOL",
                       "name": "call_expression"
+                    },
+                    {
+                      "type": "SYMBOL",
+                      "name": "procedural_macro_invocation"
                     },
                     {
                       "type": "SYMBOL",

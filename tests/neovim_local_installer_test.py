@@ -2,6 +2,7 @@
 """Local setup safely activates terminal commands and editor configuration."""
 
 import importlib.util
+import io
 import os
 import pathlib
 import subprocess
@@ -159,34 +160,36 @@ def main():
         llvm = root / "llvm/lib/cmake/llvm"
         llvm.mkdir(parents=True)
         (llvm / "LLVMConfig.cmake").write_text("")
-        (llvm / "LLVMConfigVersion.cmake").write_text('set(PACKAGE_VERSION "22.1.8")')
+        major = installer.llvm_pin.pinned_major()
+        (llvm / "LLVMConfigVersion.cmake").write_text(f'set(PACKAGE_VERSION "{major}.1.2")')
         assert installer.supported_llvm(llvm)
         with cache.open("a") as output:
             output.write(f"LLVM_DIR:PATH={llvm}\n")
         switched = installer.configure_command(build, root / "other-llvm")
         assert "-G" not in switched and f"-DLLVM_DIR={root / 'other-llvm'}" in switched
-        (llvm / "LLVMConfigVersion.cmake").write_text('set(PACKAGE_VERSION "23.1.2")')
-        assert installer.supported_llvm(llvm)
-        (llvm / "LLVMConfigVersion.cmake").write_text('set(PACKAGE_VERSION "24.0.0")')
-        assert installer.supported_llvm(llvm), "new majors must not hit an arbitrary ceiling"
-        (llvm / "LLVMConfigVersion.cmake").write_text('set(PACKAGE_VERSION "17.0.6")')
-        assert not installer.supported_llvm(llvm), "the required minimum remains enforced"
+        # Only GTI's pinned major is accepted: neither an older nor a newer LLVM.
+        for other in (major - 1, major + 1, 17):
+            (llvm / "LLVMConfigVersion.cmake").write_text(f'set(PACKAGE_VERSION "{other}.0.0")')
+            assert not installer.supported_llvm(llvm), other
         assert "-G" not in installer.configure_command(build, root / "other-llvm")
-        retained = root / "Cellar/llvm/22.1.8/lib/cmake/llvm"
+        # Homebrew's opt alias moved to another major; a retained pinned one is found.
+        retained = root / f"Cellar/llvm/{major}.1.4/lib/cmake/llvm"
         retained.mkdir(parents=True)
         (retained / "LLVMConfig.cmake").write_text("")
-        (retained / "LLVMConfigVersion.cmake").write_text('set(PACKAGE_VERSION "22.1.8")')
+        (retained / "LLVMConfigVersion.cmake").write_text(f'set(PACKAGE_VERSION "{major}.1.4")')
         def brew(arguments, **kwargs):
             if arguments == ["brew", "--prefix", "llvm"]:
                 return mock.Mock(returncode=0, stdout=str(root / "llvm"))
             if arguments == ["brew", "--cellar", "llvm"]:
                 return mock.Mock(returncode=0, stdout=str(root / "Cellar/llvm"))
             return mock.Mock(returncode=1, stdout="")
-        with mock.patch.object(installer.shutil, "which", return_value="brew"), \
-                mock.patch.object(installer.subprocess, "run", side_effect=brew):
+        pin = installer.llvm_pin
+        with mock.patch.object(pin.shutil, "which", side_effect=lambda name: "brew" if name == "brew" else None), \
+                mock.patch.object(pin.subprocess, "run", side_effect=brew), \
+                mock.patch.object(pin, "standard_paths", return_value=[]):
             assert installer.discover_llvm() == retained.resolve()
-            (llvm / "LLVMConfigVersion.cmake").write_text('set(PACKAGE_VERSION "23.1.2")')
-            assert installer.discover_llvm() == llvm.resolve(), "prefer installed current LLVM"
+            (llvm / "LLVMConfigVersion.cmake").write_text(f'set(PACKAGE_VERSION "{major}.1.2")')
+            assert installer.discover_llvm() == llvm.resolve(), "prefer the installed pinned LLVM"
         clang = llvm.parent / "clang"
         clang.mkdir()
         (clang / "ClangConfig.cmake").write_text("")
@@ -225,6 +228,36 @@ def main():
         assert not (project / "gti.lua").exists(), "dry run must not activate configuration"
         cache.write_text("CMAKE_HOME_DIRECTORY:INTERNAL=/different/source\n")
         rejected(lambda: installer.configure_command(build, None))
+        # The retired preview flag fails clearly rather than building another source.
+        with mock.patch.object(installer.platform, "system", return_value="Darwin"), \
+                mock.patch.object(installer, "run", side_effect=AssertionError("retired preview ran a command")), \
+                mock.patch.object(sys, "argv", ["installer", "--preview", "--dry-run"]), \
+                mock.patch.object(sys, "stderr", io.StringIO()) as stderr:
+            try:
+                installer.main()
+            except SystemExit as exit:
+                assert exit.code == 2, exit.code
+            else:
+                raise AssertionError("--preview was accepted")
+            assert "preview channel is retired" in stderr.getvalue(), stderr.getvalue()
+        # The default resolves only the canonical nightly tag; a dry run fetches nothing.
+        nightly = "c" * 40
+        calls = []
+        def canonical(command, **kwargs):
+            calls.append(command[3:])
+            if command[3] == "ls-remote":
+                return mock.Mock(stdout=f"{nightly}\trefs/tags/nightly\n")
+            if command[3] == "rev-parse":
+                return mock.Mock(stdout=str(root / ".git") + "\n")
+            raise AssertionError(command)
+        with mock.patch.object(installer.platform, "system", return_value="Darwin"), \
+                mock.patch.object(installer, "run", side_effect=canonical), \
+                mock.patch.object(sys, "argv", ["installer", "--dry-run"]):
+            installer.main()
+        assert calls[0] == ["ls-remote", "--exit-code", installer.CANONICAL, "refs/tags/nightly"], calls
+        assert all(call[0] in ("ls-remote", "rev-parse") for call in calls), calls
+        with mock.patch.object(installer, "run", return_value=mock.Mock(stdout="")):
+            rejected(lambda: installer.nightly_source(root))
     print("Local terminal activation, Neovim configuration and build safety passed")
     if len(sys.argv) > 2:
         real_toolchain_smoke(installer, pathlib.Path(sys.argv[2]).resolve())

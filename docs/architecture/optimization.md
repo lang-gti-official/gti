@@ -1815,6 +1815,25 @@ successful execution. Performance remains a measured acceptance obligation:
 this preference is not a claim about the frequency or speed of every
 application's failure path.
 
+Before LLVM inlining, native body lowering also preserves a cold, non-inlined
+boundary for source-terminal failure helpers. The structural rule requires a
+source `[[noreturn]]` void function with defined-failure effects, the private
+boolean status-result ABI, an acyclic reachable native CFG, at least one return,
+and only constant-false status returns. Direct self-recursion is excluded.
+This keeps formatting and diagnostic cleanup in the failure helper instead of
+making a small checked caller too large to inline. Ordinary fallible functions
+with successful returns and non-returning worker loops do not qualify. Existing
+explicit LLVM inline hints take precedence over this automatic cost policy.
+
+These functions receive LLVM `cold` and `noinline`, never LLVM `noreturn`:
+their source-terminal failure still returns through the private status ABI.
+The rule changes neither the failure record nor its propagation and cleanup.
+`llvm_optimization_pipeline` checks the structural boundary and optimized
+checked-constructor calls; `llvm_hosted_contracts` executes successful
+construction and formatted failure with constructor rollback, local and TLS
+cleanup at native O0/O3. This is a backend cost policy, not a language promise
+that all source-terminal functions are rare.
+
 At O2/O3, one late LLVM hot/cold splitting pass separates profitable cold
 regions after ordinary inlining has exposed and simplified their cleanup state.
 If outlining, bounded recursive specialization or inductive pointer folding

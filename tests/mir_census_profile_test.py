@@ -4,6 +4,7 @@ from copy import deepcopy
 from contextlib import redirect_stderr, redirect_stdout
 import io
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -119,9 +120,39 @@ class ProfileControls(unittest.TestCase):
             return census.subprocess.CompletedProcess(command, 0,
                 "generated_kinds\n" + name + "\t10\t7\t0\n", "")
         with patch.object(reviewed, "host_target", return_value=reviewed.TARGETS[1]), patch.object(census.examples, "cases", return_value=[case]), patch.object(census.examples, "require_cpp_limitation") as rejection, patch.object(census.subprocess, "run", side_effect=inventory):
-            self.assertEqual(census.census(Path("/unused/gti"), ROOT), {name: 7})
+            self.assertEqual(census.census(Path("/unused/gti"), ROOT, backend="cpp"), {name: 7})
             rejection.assert_called_once()
             self.assertEqual(len(observed), 1)
+
+    def test_primary_inventory_never_requires_cpp_emission(self):
+        # Both legacy examples and new LLVM features use the same sealed MIR
+        # inventory. A C++ emitter failure cannot reject a valid LLVM example.
+        cases = census.examples.cases(ROOT)
+        selected = [cases[0], next(case for case in cases
+                    if Path(case.source).name == "procedural-html.gti")]
+        def inventory(command, **options):
+            self.assertEqual(command[0], "/unused/gti_lowered_program_census")
+            name = command[-1]
+            return census.subprocess.CompletedProcess(command, 0,
+                "generated_kinds\n" + name + "\t10\t7\t0\n", "")
+        with patch.object(census.examples, "cases", return_value=selected), \
+                patch.object(census, "selected_backends", return_value="llvm"), \
+                patch.object(census.examples, "require_cpp_limitation") as rejection, \
+                patch.object(census.subprocess, "run", side_effect=inventory) as run:
+            self.assertEqual(census.census(Path("/unused/gti"), ROOT),
+                             {Path(case.source).name: 7 for case in selected})
+            rejection.assert_not_called()
+            self.assertEqual(run.call_count, 2)
+
+    def test_corpus_endpoints_follow_shared_backend_policy(self):
+        for selected, expected in {
+            "llvm": [("O0", "native", "llvm"), ("O3", "native", "llvm")],
+            "cpp": [("O3", "c++23", "cpp")],
+            "both": [("O0", "native", "llvm"), ("O3", "native", "llvm"),
+                     ("O3", "c++23", "cpp")],
+        }.items():
+            with patch.dict(os.environ, {"GTI_TEST_BACKENDS": selected}):
+                self.assertEqual(oracle.configurations(), expected)
 
     def test_cli_rejects_invalid_or_nonhost_targets_before_observation(self):
         for module, extra in [(census, []), (oracle, ["/unused/runtime"])]:
@@ -148,10 +179,31 @@ class ProfileControls(unittest.TestCase):
             with patch.object(reviewed, "host_target", return_value=reviewed.TARGETS[1]), redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
                 with patch.object(sys, "argv", ["census", "/unused/gti", str(ROOT), str(baseline)]), patch.object(census, "census", return_value=linux):
                     self.assertEqual(census.main(), 0)
-                argv = ["oracle", "/unused/gti", str(ROOT), str(baseline), "/unused/runtime", "--case", "087-associative-containers.gti", "--case", "089-library-workflow.gti"]
+                argv = ["oracle", "/unused/gti", str(ROOT), str(baseline), "/unused/runtime", "--backend", "cpp", "--case", "087-associative-containers.gti", "--case", "089-library-workflow.gti"]
                 with patch.object(sys, "argv", argv), patch.object(oracle, "build_and_run", side_effect=emitted) as run:
                     self.assertEqual(oracle.main(), 0)
-                    self.assertEqual(run.call_count, 4)  # Both endpoints for each selected example.
+                    self.assertEqual(run.call_count, 2)  # One scheduled C++ profile per example.
+                # A body-identity count outside the budget is advisory; a
+                # program that exits nonzero still fails.
+                def drifted(*arguments):
+                    case = emitted(*arguments)
+                    extra = frozenset(("function-instance", 10000 + i) for i in range(400))
+                    return oracle.CaseResult(case.source, case.optimization, case.standard,
+                                             case.markers | extra, case.marker_rows, 0, "ok", "")
+                report = io.StringIO()
+                with patch.object(sys, "argv", argv), patch.object(oracle, "build_and_run", side_effect=drifted), \
+                        patch.dict(os.environ, {"GTI_ADVISORY_CHECKS": ""}), redirect_stdout(report):
+                    self.assertEqual(oracle.main(), 0)
+                self.assertIn("GTI-ADVISORY: mir_cutover_corpus_oracle: 087-associative-containers.gti", report.getvalue())
+                with patch.object(sys, "argv", argv), patch.object(oracle, "build_and_run", side_effect=drifted), \
+                        patch.dict(os.environ, {"GTI_ADVISORY_CHECKS": "strict"}), redirect_stdout(io.StringIO()):
+                    self.assertEqual(oracle.main(), 1)
+                def crashed(*arguments):
+                    case = emitted(*arguments)
+                    return oracle.CaseResult(case.source, case.optimization, case.standard,
+                                             case.markers, case.marker_rows, 3, "", "boom")
+                with patch.object(sys, "argv", argv), patch.object(oracle, "build_and_run", side_effect=crashed):
+                    self.assertEqual(oracle.main(), 1)
                 # An example the baseline has not recorded still runs, and the
                 # summary must not read its missing count.
                 unrecorded = deepcopy(DOCUMENT)
@@ -193,14 +245,21 @@ class BudgetControls(unittest.TestCase):
                 code = census.main()
             return code, out.getvalue() + err.getvalue()
 
-    def test_census_fails_only_outside_the_budget(self):
+    def test_census_reports_budget_drift_and_fails_only_on_broken_examples(self):
         mac = reviewed.select(DOCUMENT, reviewed.TARGETS[0])
         name = next(n for n, c in mac.items() if c >= 200)
         broken = dict(mac, **{name: None})
         self.assertEqual(self.run_census(dict(mac, **{name: mac[name] + 9}))[0], 0)
-        code, text = self.run_census(dict(mac, **{name: mac[name] + 9 + budget.allowance(mac[name])}))
-        self.assertEqual(code, 1)
+        outside = dict(mac, **{name: mac[name] + 9 + budget.allowance(mac[name])})
+        # Leaving the budget is an advisory finding: reported, not failed,
+        # unless GTI_ADVISORY_CHECKS=strict asks for the old failure.
+        with patch.dict(os.environ, {"GTI_ADVISORY_CHECKS": ""}):
+            code, text = self.run_census(outside)
+        self.assertEqual(code, 0)
         self.assertIn("left its budget", text)
+        self.assertIn(f"GTI-ADVISORY: mir_census_regression: {name}:", text)
+        with patch.dict(os.environ, {"GTI_ADVISORY_CHECKS": "strict"}):
+            self.assertEqual(self.run_census(outside)[0], 1)
         code, text = self.run_census(broken)
         self.assertEqual(code, 1)
         self.assertIn("no longer compile", text)
@@ -259,6 +318,21 @@ class LoweredBudgetControls(unittest.TestCase):
         kinds = dict(self.ROW, generated_kinds=dict(self.ROW["generated_kinds"], callable_adapter=9))
         self.assertEqual(lowered_census.outside_budget(self.ROW, kinds),
                          ["generated_kinds.callable_adapter 0 -> 9"])
+
+    def test_census_drift_is_advisory_unless_strict(self):
+        document = store.load(CENSUS, "lowered")
+        observed = {target: deepcopy(lowered_census.profile(document, target)) for target in lowered_census.TARGETS}
+        name = sorted(observed[lowered_census.TARGETS[0]])[0]
+        observed[lowered_census.TARGETS[0]][name]["bodies"] += 500
+        argv = ["lowered", "/unused/tool", str(ROOT), str(CENSUS)]
+        for mode, expected in (("", 0), ("strict", 1)):
+            out = io.StringIO()
+            with patch.object(sys, "argv", argv), patch.dict(os.environ, {"GTI_ADVISORY_CHECKS": mode}), \
+                    patch.object(lowered_census, "collect", side_effect=lambda tool, root, names, target:
+                                 observed[target]), redirect_stdout(out), redirect_stderr(io.StringIO()):
+                self.assertEqual(lowered_census.main(), expected, mode)
+            self.assertIn(f"GTI-ADVISORY: lowered_program_corpus_census: {lowered_census.TARGETS[0]} {name}:",
+                          out.getvalue())
 
     def test_partial_refresh_rewrites_only_named_rows(self):
         base = {"a.gti": self.ROW, "b.gti": self.ROW}

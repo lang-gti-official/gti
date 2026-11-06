@@ -36,7 +36,7 @@ def api_fixture(sha, source_lane=False, **changes):
                    head_sha=sha, path='.github/workflows/full-validation.yml', status='completed',
                    conclusion='success', repository={'full_name': REPO}, head_repository={'full_name': REPO})
         names = ['Full validation verdict'] + [f'Release package ({p})' for p in artifacts.PLATFORMS] + \
-                [f'Integration ({p} {i}/{n})' for p, n in [('linux', 6), ('darwin', 5)] for i in range(n)]
+                [f'Integration ({p} {i}/{n})' for p, n in artifacts.integration_shards().items() for i in range(n)]
     jobs = [dict(name=n, head_sha=sha, status='completed', conclusion='success') for n in names]
     assets = [dict(name=f'gti-nightly-{p}-2', expired=False) for p in artifacts.PLATFORMS]
     run.update(changes.get('run', {}))
@@ -116,9 +116,9 @@ class SourceStdlibCI(unittest.TestCase):
                          '<testcase name="other"/>', '<testcase name="case"/><testcase name="case"/>']:
                 report.write_text('<testsuite>' + body + '</testsuite>')
                 with self.assertRaises(ValueError):
-                    source.preview_examples.validate_results(report, {'case'})
+                    source.example_gates.validate_results(report, {'case'})
             report.write_text('<testsuite><testcase name="case"/></testsuite>')
-            source.preview_examples.validate_results(report, {'case'})
+            source.example_gates.validate_results(report, {'case'})
 
     def test_source_release_is_not_a_full_compiler_build(self):
         request = api_fixture(ORIGIN['sha'], source_lane=True)

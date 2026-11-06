@@ -1,5 +1,31 @@
 # GTI examples
 
+[`llvm/codegen-attributes.gti`](llvm/codegen-attributes.gti) demonstrates advisory
+`[[inline]]`, `[[noinline]]` call boundaries and a returning `[[cold]]` function,
+including generic/member functions and deterministic cleanup. Run it with
+`gti examples/llvm/codegen-attributes.gti --backend llvm -O3 -o codegen-attributes`
+and then `./codegen-attributes`. The `codegen_attribute_runtime` gate executes it
+at LLVM O0 and O3. Like the other bounded LLVM examples below, it is outside the
+numbered full-language census.
+
+[`procedural-html.gti`](procedural-html.gti) imports the source-defined
+[`demo/html.gti`](demo/html.gti) library and demonstrates `html!({...})`:
+owned nested nodes, keyword attribute names, text/attribute escaping, moved
+children and one evaluation per interpolation in document order. The
+[`procedural-html-project`](procedural-html-project/gti.toml) package uses the
+same library through `import demo.html;`. Run `gti run app` in that directory,
+or compile the standalone example with `gti procedural-html.gti`. This is a
+small token-based markup grammar, not a browser DOM or a sanitizer.
+
+[`procedural-macros.gti`](procedural-macros.gti) imports
+[`procedural-macros/library.gti`](procedural-macros/library.gti) and demonstrates
+identity, nested expansion, hygienic generated bindings and evaluating an input
+once. `procedural_execution_example` runs it through LLVM O0/O3.
+[`procedural-macro-declaration.gti`](procedural-macro-declaration.gti) also keeps
+an ordinary typed macro alongside a procedural declaration. These focused
+examples are outside the numbered full-language census. The imported HTML library and these examples implement the bounded design in
+[RFC 0001](https://github.com/lang-gti-official/rfcs/pull/1).
+
 [`llvm/native-c-storage.gti`](llvm/native-c-storage.gti) reads and updates
 native library globals, then shows that a loaded native function pointer stays
 selected while argument evaluation replaces the library's next function.
@@ -392,7 +418,7 @@ is a teaching helper, not a production server.
 | [183-immediate-functions.gti](183-immediate-functions.gti) | Immediate functions, checked literal arguments, standalone void validation, and implicit bare-return construction composed with runtime arguments (LLVM). |
 | [184-payload-borrow-chains.gti](184-payload-borrow-chains.gti) | Return nested payload references through a parameter and receiver, and copy a sibling before a mutable payload borrow. |
 | `185-reflected-method-dispatch.gti` | a generic compile-time metadata binder calling overload-selected methods on two unrelated runtime values; LLVM execution |
-| [186-literal-call-arguments.gti](186-literal-call-arguments.gti) | Fitting integer literal arguments in constructors, methods and lambdas, with exact-overload preference and documented rejection boundaries (LLVM). |
+| [186-literal-call-arguments.gti](186-literal-call-arguments.gti) | Fitting integer literal arguments in constructors, methods, lambdas and typed macros, with exact-overload preference and documented rejection boundaries (LLVM). |
 | `186-scalar-temporary-borrows.gti` | Scalar and plain-enum temporary arguments, explicit move and lazy evaluation (LLVM). |
 | `187-operator-temporary-borrows.gti` | Read-only operator arguments and stable external cursor dependencies (LLVM). |
 | `188-concept-conditions.gti` | Named structural and protocol concept conditions, constexpr selection and Boolean composition. |

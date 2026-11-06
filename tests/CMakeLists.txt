@@ -143,6 +143,37 @@ set_tests_properties(macro_result_failures PROPERTIES TIMEOUT 1200)
 add_executable(gti_macro_result_parser_tests macro_result_parser_tests.cpp)
 target_link_libraries(gti_macro_result_parser_tests PRIVATE gti_compiler)
 add_test(NAME macro_result_parser COMMAND gti_macro_result_parser_tests)
+add_executable(gti_procedural_syntax_tests procedural_syntax_tests.cpp)
+target_link_libraries(gti_procedural_syntax_tests PRIVATE gti_compiler)
+add_test(NAME procedural_syntax COMMAND gti_procedural_syntax_tests)
+add_test(NAME procedural_declaration_example
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+    $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/examples/procedural-macro-declaration.gti")
+add_test(NAME procedural_execution_example
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+    $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/examples/procedural-macros.gti")
+add_executable(gti_procedural_html_tests procedural_html_tests.cpp)
+target_link_libraries(gti_procedural_html_tests PRIVATE gti_compiler)
+add_test(NAME procedural_html_semantics COMMAND gti_procedural_html_tests)
+add_test(NAME procedural_html_example
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+    $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/examples/procedural-html.gti")
+add_test(NAME procedural_html_workflow
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/procedural_html_workflow_test.py"
+    $<TARGET_FILE:gti>)
+set_tests_properties(procedural_html_workflow PROPERTIES
+  ENVIRONMENT "GTI_STDLIB_PATH=${PROJECT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${PROJECT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>")
+add_test(NAME procedural_html_installed
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/procedural_html_workflow_test.py"
+    $<TARGET_FILE:gti> --install-build "${PROJECT_BINARY_DIR}")
+add_test(NAME procedural_html_cost
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/procedural_html_cost_test.py"
+    $<TARGET_FILE:gti>)
+if(TARGET gti_lsp)
+  add_test(NAME procedural_html_lsp
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/procedural_html_lsp_test.py"
+      $<TARGET_FILE:gti_lsp> $<TARGET_FILE:gti>)
+endif()
 find_program(GTI_MACRO_SYNTAX_NEOVIM_EXECUTABLE nvim)
 if(GTI_MACRO_SYNTAX_NEOVIM_EXECUTABLE)
   add_test(NAME macro_neovim_syntax
@@ -2251,6 +2282,11 @@ add_executable(gti_llvm_private_atomic_tests llvm_private_atomic_tests.cpp)
 target_include_directories(gti_llvm_private_atomic_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
 target_link_libraries(gti_llvm_private_atomic_tests PRIVATE gti_llvm_backend)
 add_test(NAME llvm_private_atomics COMMAND gti_llvm_private_atomic_tests)
+add_executable(gti_codegen_attribute_tests codegen_attribute_tests.cpp)
+target_include_directories(gti_codegen_attribute_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_codegen_attribute_tests PRIVATE gti_llvm_backend)
+add_test(NAME codegen_attribute_contract COMMAND gti_codegen_attribute_tests)
+
 add_executable(gti_llvm_session_tests llvm_session_tests.cpp)
 target_include_directories(gti_llvm_session_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
 target_link_libraries(gti_llvm_session_tests PRIVATE gti_llvm_backend gti_driver gti_runtime)
@@ -2261,6 +2297,12 @@ set_tests_properties(llvm_polymorphic_storage_layout PROPERTIES TIMEOUT 120)
 add_test(NAME llvm_payload_unique_owner
   COMMAND gti_llvm_session_tests --payload-unique-owner "${PROJECT_SOURCE_DIR}")
 set_tests_properties(llvm_payload_unique_owner PROPERTIES TIMEOUT 120)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME llvm_owner_provider_integration
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_owner_provider_integration_test.py"
+            "$<TARGET_FILE:gti>")
+  set_tests_properties(llvm_owner_provider_integration PROPERTIES TIMEOUT 900)
+endif()
 
 add_executable(gti_llvm_hosted_contract_tests llvm_hosted_contract_tests.cpp)
 target_include_directories(gti_llvm_hosted_contract_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
@@ -3135,16 +3177,6 @@ if(Python3_Interpreter_FOUND)
   )
   add_test(NAME rollup
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/rollup_test.py")
-  add_test(NAME preview_workflow
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/preview_workflow_test.py")
-  # Only combined preview candidates register this aggregate gate. Ordinary
-  # PR/main suites and their acceptance requirements are unchanged.
-  if(EXISTS "${PROJECT_SOURCE_DIR}/.gti-preview.json")
-    add_test(NAME preview_admission
-      COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/scripts/preview_examples.py"
-              "${PROJECT_BINARY_DIR}" --pending)
-    set_tests_properties(preview_admission PROPERTIES TIMEOUT 10800 RUN_SERIAL TRUE)
-  endif()
   add_test(
     NAME build_window
     COMMAND "${Python3_EXECUTABLE}"
@@ -3779,8 +3811,6 @@ if(Python3_Interpreter_FOUND)
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lsp_release_test.py")
   add_test(NAME source_stdlib_ci
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_stdlib_ci_test.py")
-  add_test(NAME preview_release
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/preview_release_test.py")
   add_test(
     NAME release_train
     COMMAND "${Python3_EXECUTABLE}"
@@ -4899,6 +4929,14 @@ if(Python3_Interpreter_FOUND)
                    "${PROJECT_SOURCE_DIR}/tests/generic_contract_runtime_test.py"
                    "$<TARGET_FILE:gti>")
   set_tests_properties(generic_contract_runtime PROPERTIES TIMEOUT 300)
+  add_test(
+    NAME codegen_attribute_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/generic_symbolic_auto_local_runtime_test.py"
+            $<TARGET_FILE:gti>
+            "${PROJECT_SOURCE_DIR}/examples/llvm/codegen-attributes.gti")
+  set_tests_properties(codegen_attribute_runtime PROPERTIES TIMEOUT 180)
+
   add_test(
     NAME function_signature_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -6292,6 +6330,12 @@ if(Python3_Interpreter_FOUND)
               "$<TARGET_FILE:gti_lsp>"
     )
     set_tests_properties(lsp_configuration PROPERTIES TIMEOUT 120)
+    add_test(NAME codegen_attribute_lsp
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/lsp_smoke_test.py"
+              "$<TARGET_FILE:gti_lsp>" function-contracts)
+    set_tests_properties(codegen_attribute_lsp PROPERTIES TIMEOUT 180)
+
     add_test(
       NAME lsp_test_target
       COMMAND "${Python3_EXECUTABLE}"

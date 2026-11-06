@@ -2,6 +2,28 @@
 
 Status: Current implementation.
 
+The procedural macro frontend recognizes `#macro(proc)` and the explicit
+`name!({...})` invocation. This spelling was selected by the owner during RFC
+0001 implementation; ordinary calls and typed macros keep their grammar.
+`SyntaxCapture` retains immutable tokens, exact input text, source spans and
+text-relative token ranges. Brackets, braces and parentheses balance using GTI
+lexical rules; embedded-language structure is not a frontend grammar.
+
+Before directive processing or processed-unit replay, the source loader rejects
+directives/imports inside an explicit procedural invocation (`GTI-I0015`). A
+rejected unit publishes no directive effects or dependency edges. Ordinary
+braced calls and ordinary configuration directives keep their existing behavior.
+The parser retains capture ownership in `Call`, and AST cloning remaps token
+expansion identities without losing source/trivia. The formatter preserves
+opaque groups, including incomplete editor input. Semantics executes completed
+imported bodies through verified MIR and checks their sealed expression output.
+The external HTML package exercises this path with transitive helper imports.
+Processed-unit reuse preserves exact source/configuration identity; semantic
+expansion reuse never crosses a new target/configuration snapshot. The project
+cache includes the library and transitive helper source graph, so body, input,
+trivia and helper edits cannot reuse a stale executable. See
+[RFC 0001](https://github.com/lang-gti-official/rfcs/pull/1).
+
 The frontend converts one entry source and its dependency graph into a
 syntax-preserving `Program`, then hands that owned tree to semantic analysis.
 
@@ -354,6 +376,14 @@ exhaustiveness unchanged.
 form, or a layout query directly inside the deliberately smaller array-extent
 grammar. Supported layout categories and the resulting constant belong to
 semantics, not this syntax node.
+
+Function optimization annotations `[[inline]]`, `[[noinline]]` and `[[cold]]`
+reuse the function-attribute AST list. The parser accepts the otherwise reserved
+`inline` token only as an annotation name, and rejects attribute arguments.
+Semantics validates eligible source-defined function/method declarations,
+duplicates and conflicting requests, then publishes `FunctionCodegenAttributes`
+independently of return-flow, ownership and ABI contracts. Concrete HIR and MIR
+instances preserve that record; the LLVM backend consumes verified policy.
 
 Class-declaration attributes are retained as written syntax before the class
 kind. The bounded native-record form is `[[c_abi]] struct`; the parser records

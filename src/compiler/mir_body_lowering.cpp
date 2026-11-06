@@ -2941,6 +2941,33 @@ private:
           {.kind = MirInstructionKind::EndBorrow, .loan = failedLoan->id});
       failureEndedLoans.push_back(failedLoan->id);
     }
+    // Call-scoped temporary inputs end before the surrounding expression's
+    // loans. A later argument can create a returned reference, so draining
+    // lexical loans in reverse creation order alone does not preserve the
+    // invocation's exact reverse-argument epilogue.
+    std::vector<MirLoanId> temporaryInputLoans;
+    if (failedProducer && failedProducer->callSite != 0) {
+      for (const auto &operand : failedProducer->operands) {
+        const auto *input =
+            operand.kind == MirOperandKind::Value
+                ? mir_detail::definitionFor(output, operand.value)
+                : nullptr;
+        if (input && input->kind == MirInstructionKind::CallInput &&
+            input->callSite == failedProducer->callSite &&
+            input->callInputRole == MirCallInputRole::Argument &&
+            input->callInputKind == HirCallInputKind::ReadTemporaryBorrow &&
+            input->loan)
+          temporaryInputLoans.push_back(*input->loan);
+      }
+    }
+    for (auto loan = temporaryInputLoans.rbegin();
+         loan != temporaryInputLoans.rend(); ++loan) {
+      if (!containsLoan(failureEndedLoans, *loan)) {
+        (void)appendInstruction(
+            {.kind = MirInstructionKind::EndBorrow, .loan = *loan});
+        failureEndedLoans.push_back(*loan);
+      }
+    }
     // A fresh constructor argument has already transferred its owning slot to
     // the callee before this Invoke. On failure the callee has drained that
     // parameter, so its caller-local dependency must end before any external
@@ -9234,13 +9261,15 @@ private:
     // its final storage, but its obligation still starts only on success.
     // Arm their value obligation on the Invoke
     // success edge; the normal successor then owns the temporary until a
-    // later CallInput reparents it or full-expression cleanup drops it.
+    // later CallInput reparents it or full-expression cleanup drops it. A
+    // receiver read that leaves its place available, such as dereferencing a
+    // cursor, does not change when the result exists.
     const bool successEdgeResult =
         resultDrop != 0 && routeFailureEdgesHere() &&
         call.definedFailure.mayUnwind() && !call.destination &&
         (!call.loan || borrowedValueResult ||
          borrowedTemporaryTransfers.contains(value.id)) &&
-        !value.ownership;
+        isStatePreservingOwnership(value.ownership);
     if (successEdgeResult) {
       call.successResultDrop = resultDrop;
     } else if (!detachedBorrowResult) {

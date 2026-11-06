@@ -55,9 +55,11 @@ traceability, not a prerequisite chain to re-enact.
 **Stage 0 and Stage 1 were implemented** (first execution pass, on top of the
 exclusive-reborrow checkpoint). The initial optional-dependency probation used
 both a portable configuration and LLVM 20.1.0. GTI 0.90.0 ended that probation:
-there is now one mandatory LLVM-backed compiler, supplied either by a compatible
-system installation or the pinned bundle
-(`llvm-project-20.1.0.src.tar.xz`, sha256 `4579051e…aad9a`).
+there is now one mandatory LLVM-backed compiler, supplied either by a system
+installation of the pinned major or the pinned bundle. The pin moved from
+LLVM 20.1.0 (`llvm-project-20.1.0.src.tar.xz`, sha256 `4579051e…aad9a`) to
+LLVM 23.1.4 (`llvm-project-23.1.4.src.tar.xz`, sha256 `819ecf73…34bb2`) in
+November 2026, when every build was required to use LLVM 23.
 
 | Item | Status | Notes |
 | --- | --- | --- |

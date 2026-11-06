@@ -2255,6 +2255,36 @@
       }
     },
     {
+      "id": "procedural-html",
+      "mode": "run",
+      "source": "examples/procedural-html.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "backend": "llvm"
+    },
+    {
+      "id": "procedural-syntax",
+      "mode": "run",
+      "source": "examples/procedural-macros.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "backend": "llvm"
+    },
+    {
       "id": "process",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_process.gti",
@@ -7422,6 +7452,41 @@
       "evidence": [
         "tests/fixtures/container_swap.gti",
         "tests/container_swap_runtime_test.py"
+      ]
+    },
+    {
+      "id": "syntax",
+      "source": "stdlib/std/syntax.gti",
+      "status": "executable",
+      "operations": [
+        "std::syntax::fresh",
+        "std::syntax::join",
+        "std::syntax::keyword",
+        "std::syntax::location",
+        "std::syntax::parse",
+        "std::syntax::punctuation",
+        "std::syntax::reference",
+        "std::syntax::size",
+        "std::syntax::slice",
+        "std::syntax::splice",
+        "std::syntax::string_literal"
+      ],
+      "case_ids": [
+        "procedural-syntax",
+        "procedural-html"
+      ],
+      "required_instantiations": [
+        "caller expression",
+        "fresh generated local",
+        "move-only destructor-bearing expression"
+      ],
+      "evidence": [
+        "examples/procedural-macros/library.gti",
+        "examples/procedural-macros.gti",
+        "tests/procedural_syntax_tests.cpp",
+        "examples/procedural-html.gti",
+        "tests/procedural_html_tests.cpp",
+        "tests/procedural_html_workflow_test.py"
       ]
     },
     {

@@ -12,10 +12,90 @@ consumption and cleanup in HIR/MIR; no backend ownership-name rule is added.
 
 ## Typed statement macro expansion
 
+Procedural declarations are a distinct `FunctionDecl` mode. `name!({...})`
+resolves the name without probing captured expressions. It requires one imported,
+non-overloaded namespace-scope declaration and one braced group. Local shadowing
+applies normally; an ordinary callable never gains procedural behavior from its
+spelling. The signature is exactly `std::syntax::expr name(std::syntax::tokens
+input)`, without generics, defaults, packs, member/operator forms or constraints.
+
+Completed procedural bodies and their constexpr helpers are type-checked and
+lazily staged through the existing constant HIR/MIR closure service. An explicit
+procedural request enables syntax intrinsics in the same MIR interpreter; there
+is no AST fallback or host plugin. The ordinary constant profile still rejects
+syntax capabilities, including capabilities nested inside persistent aggregates.
+Procedural bodies and syntax-dependent helpers are omitted from runtime HIR/MIR.
+
+`std.syntax` declares `tokens`, `expr`, `span`, and `binding` through trusted
+`@compiler_type` identities. Its intrinsic declarations are recognized only in
+the trusted `std/syntax` unit and namespace, never by application spelling. The
+syntax API supplies token count, text, kind and adjacency inspection; slices and
+groups; validated locations; literal and safely quoted string-literal builders;
+punctuation, keyword and definition-context
+identifier builders; fresh binding/reference pairs; joining; expression
+parse/splice; and located failures. Syntax values are available in procedural
+bodies and constexpr helpers, but cannot be constructed or stored at runtime.
+A helper that uses syntax is callable only in this compile-time closure.
+
+`SyntaxArena` owns immutable request-local capabilities. Handles carry session,
+generation, node and category identities; stale/foreign handles fail
+predictably. Executor carriers are private transient values, checked against the
+request's exact syntax types and handle table. Builders retain diagnostic spans
+separately from lookup authority. Call-site tokens keep caller lookup, generated
+identifiers use definition lookup, and fresh binding/reference pairs receive
+unique contexts from the existing `MacroLookupContext` registry. Generated local
+declarations retain their lookup unit independently of their caller-facing
+source span, including types used inside generated lambda bodies.
+
+Joins retain immutable backwards edges instead of repeatedly copying prefixes.
+Node and edge allocation is charged immediately; flattening for text, slicing,
+groups or parsing charges actual stored tokens/bytes before allocating. Virtual
+output size and composed delimiter depth are bounded before flattening. An
+iterative, cancellation-aware traversal avoids recursive host-stack growth;
+empty shared subgraphs do not expand exponentially. This representation changes
+no spelling, origin, lookup authority or configurable limit.
+
+Sealing retains the expression AST and its token/text/origin graph before
+executor teardown. It proves syntax only. The expression then enters ordinary
+caller semantics, including type, access, ownership, borrowing and cleanup; only
+successful analysis publishes an expression alias.
+Borrow-provenance walkers follow that same retained expression alias when
+proving parameter/receiver origins, stable storage and exact stored-carrier
+referents. Loan retention follows the checked producer too, including closure
+captures and carriers with several external owners. Grouping and expansion do
+not erase those dependencies. This preserves references and borrowed returns
+without granting a macro-specific escape rule; temporary/local storage,
+carrier-shell returns and conflicting owner mutations still fail the ordinary
+source-level checks. Nested procedural and typed
+expansions share the outer macro limits. Procedural MIR work and syntax copying
+share the request's `constexpr-steps`; syntax nodes, bytes, tokens and nesting
+have separate configurable bounds. Cancellation is checked at instruction and
+syntax traversal boundaries. A library failure retains invocation and definition
+traces, and a resource failure identifies its configurable limit.
+
+Successful expansions may be reused only inside the same immutable semantic
+snapshot. The key includes declaration, exact input and origins, caller lookup,
+generic substitutions and limits; module/configuration/target identities belong
+to that snapshot. Reuse replays logical work/storage charges and clones the
+retained syntax with fresh expansion/binding identities. The bounded cache stores
+sealed syntax, never raw arena handles; it is cleared on a new analysis. Failed
+expansions are not cached. The HTML library in `examples/demo` exercises ordinary
+module scheduling, source dependency invalidation and installed external imports.
+Its grammar, owned node model, escaping and collection policy are GTI source;
+no HTML spelling selects a compiler path. See
+[RFC 0001](https://github.com/lang-gti-official/rfcs/pull/1) for its acceptance contract.
+
 `semantic_macro.cpp` owns typed `#macro` expansion independently of public
 library names. The declaration's macro identity, not an attribute or public
 spelling, selects that path. Macro/function overload mixtures at one qualified
-name are rejected; macro-only overload sets use ordinary exact selection.
+name are rejected; macro-only overload sets use ordinary exact-first selection
+with the shared representable-integer-literal fallback. The selected integer
+type is a semantic fact on each cloned literal argument root. Nested argument
+cloning and model deltas preserve that fact; expression analysis applies it
+through the existing contextual-literal path, including signed minima. It is
+not a runtime cast and does not introduce eager argument evaluation. A failed
+signature probe leaves an unknown result type, preventing secondary unused-result
+errors from an unrelated preceding expression.
 Signature selection and argument diagnostics use an isolated
 semantic probe; its speculative flow, loans and syntax never enter caller
 execution. The probe forks request context separately from semantic facts,

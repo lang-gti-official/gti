@@ -1207,6 +1207,65 @@ int main() {
              "overlapping borrow");
 }
 
+void contextualMacroLiterals() {
+  const auto result = analyze(R"gti(
+int select(int value) { return 1; }
+int select(uint8_t value) { return 2; }
+#macro int choose(int value) { return 1; }
+#macro int choose(uint8_t value) { return 2; }
+#macro uint8_t narrow(uint8_t value) { return value; }
+#macro int selected(uint8_t value) { return select(value); }
+#macro int nested(uint8_t value) { return selected(value); }
+#macro int expression(uint8_t value) { return select(narrow(value)); }
+#macro T generic<T>(T value) { return value; }
+#macro int8_t signed_min(int8_t value) { return value; }
+#macro int64_t wide_min(int64_t value) { return value; }
+#macro unused(uint8_t value) {}
+#macro int defaulted(uint8_t value = 33) { return select(value); }
+int instantiate<T>(T value) { return nested(33); }
+int main() {
+  unused(33);
+  auto a = narrow((+(255)));
+  auto b = signed_min((-(128)));
+  auto c = wide_min(-((9223372036854775808)));
+  auto d = generic<uint8_t>(33);
+  auto e = generic(33);
+  return selected(33) + nested(33) + expression(33) + choose(33) + defaulted() + instantiate(0) - 11;
+}
+)gti");
+  if (!result.canGenerateCode())
+    for (const auto &value : result.diagnostics)
+      std::cerr << value.code << ": " << value.message << '\n';
+  check(result.canGenerateCode(),
+        "typed macro literals retain selected types through verified MIR");
+  diagnostic(
+      "#macro accept(uint8_t value) {}\nint main() { accept(256); return 0; }",
+      "Argument 1");
+  diagnostic(
+      "#macro accept(uint8_t value) {}\nint main() { accept(-1); return 0; }",
+      "Argument 1");
+  diagnostic("#macro accept(uint8_t value) {}\nint main() { int value = 33; "
+             "accept(value); return 0; }",
+             "Argument 1");
+  diagnostic("#macro accept(uint8_t value) {}\nint main() { constexpr int "
+             "value = 33; accept(value); return 0; }",
+             "Argument 1");
+  diagnostic(
+      "#macro accept(float value) {}\nint main() { accept(33); return 0; }",
+      "Argument 1");
+  diagnostic("#macro accept(uint8_t value) {}\n#macro accept(uint16_t value) "
+             "{}\nint main() { accept(33); return 0; }",
+             "ambiguous");
+  // A parameter has already fixed this literal's type: expansion must not
+  // turn it back into an untyped literal for another call or macro.
+  diagnostic("void sink(uint16_t value) {}\n#macro forward(uint8_t value) { "
+             "sink(value); }\nint main() { forward(33); return 0; }",
+             "Argument 1");
+  diagnostic("#macro sink(uint16_t value) {}\n#macro forward(uint8_t value) { "
+             "sink(value); }\nint main() { forward(33); return 0; }",
+             "Argument 1");
+}
+
 void callerConversionsAndPropagation() {
   const auto result = analyze(R"gti(
 import std.source_location;
@@ -1275,7 +1334,9 @@ int main() {
 int main(int argc, char **argv) {
   if (argc == 3 && std::string_view(argv[1]) == "--test") {
     const std::string_view name = argv[2];
-    if (name == "receiverResultLivenessMutations")
+    if (name == "contextualMacroLiterals")
+      contextualMacroLiterals();
+    else if (name == "receiverResultLivenessMutations")
       receiverResultLivenessMutations();
     else if (name == "programInitializerLocalMetadataMutations")
       programInitializerLocalMetadataMutations();
@@ -1295,6 +1356,7 @@ int main(int argc, char **argv) {
   }
   if (argc != 1)
     return 2;
+  contextualMacroLiterals();
   positiveAndMutation();
   owningResults();
   receiverResultLivenessMutations();

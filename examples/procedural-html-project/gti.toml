@@ -1,0 +1,9 @@
+manifest-version = 1
+[package]
+name = "procedural-html-client"
+version = "0.1.0"
+[dependencies]
+demo = { path = "../demo" }
+[targets.app]
+kind = "executable"
+root = "main.gti"

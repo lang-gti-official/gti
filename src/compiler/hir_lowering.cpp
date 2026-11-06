@@ -32,7 +32,8 @@ public:
     // Only callees stage lazily: the requested root must itself be a
     // completed constexpr definition.
     if (function == nullptr || function->declaration == nullptr ||
-        !function->declaration->isConstexpr() ||
+        (!function->declaration->isConstexpr() &&
+         !function->declaration->isProceduralMacro()) ||
         std::find(constantFunctions.begin(), constantFunctions.end(), root) ==
             constantFunctions.end()) {
       output.program.valid_ = false;
@@ -512,6 +513,7 @@ private:
          .type = resolvedType,
          .traits = instanceTraits,
          .compilerCapability = declaration->compilerCapability,
+         .syntaxKind = declaration->syntaxKind,
          .lifecycleBoundBorrowCarrier = lifecycleBoundBorrowCarrier,
          .mutexGuardBorrowCarrier = declaration->mutexGuardBorrowCarrier,
          .transferPolicy = declaration->transferPolicy,
@@ -581,7 +583,21 @@ private:
                   SemanticType returnType,
                   std::vector<SemanticType> parameterTypes,
                   std::optional<SourceSpan> site = std::nullopt) {
-    if (declaration.macroExpansion)
+    if (declaration.macroExpansion &&
+        !(constantClosure && declaration.declaration &&
+          declaration.declaration->isProceduralMacro()))
+      return 0;
+    const auto syntaxType = [&](const SemanticType &type) {
+      const auto *owner = type.kind == SemanticType::Class
+                              ? baseModel->findClassType(type.classId)
+                              : nullptr;
+      return owner && owner->syntaxKind != CompileTimeSyntaxKind::None;
+    };
+    if (!constantClosure &&
+        (declaration.proceduralOnly || syntaxIntrinsic(declaration.intrinsic) ||
+         syntaxType(declaration.returnType) ||
+         std::any_of(declaration.parameterTypes.begin(),
+                     declaration.parameterTypes.end(), syntaxType)))
       return 0;
     // Constant staging is lazy: a callee outside the completed constexpr
     // closure keeps its exact signature but no body, and the MIR evaluator
@@ -590,7 +606,8 @@ private:
     const bool constantUnavailable =
         constantClosure &&
         (declaration.declaration == nullptr ||
-         !declaration.declaration->isConstexpr() ||
+         (!declaration.declaration->isConstexpr() &&
+          !declaration.declaration->isProceduralMacro()) ||
          std::find(constantFunctions.begin(), constantFunctions.end(),
                    declaration.id) == constantFunctions.end());
     // Calls can discover an instance through individual arguments or through
@@ -696,9 +713,12 @@ private:
          .staticMember = declaration.staticMember,
          .internalLinkage = declaration.internalLinkage,
          .constexprFunction = declaration.constexprFunction,
+         .proceduralFunction = declaration.declaration &&
+                               declaration.declaration->isProceduralMacro(),
          .requiresUnsafe = declaration.requiresUnsafe,
          .neverReturns = declaration.neverReturns,
          .tracksCaller = declaration.tracksCaller,
+         .codegenAttributes = declaration.codegenAttributes,
          .cThreadOperation = declaration.cThreadOperation,
          .threadConfinedCallback = declaration.threadConfinedCallback,
          .processMemoryOperation = declaration.processMemoryOperation,
@@ -7421,10 +7441,16 @@ private:
                          value.operands.end());
       }
       const ResolvedCallInfo *resolved = model.findCall(*call);
+      // A selected operator() records its call-scoped temporary arguments on
+      // the operator resolution, as every overloaded operator does.
+      const ResolvedOperatorInfo *selectedOperator = model.findOperator(*call);
       const std::span<const std::size_t> ephemeralBorrowArguments =
-          resolved == nullptr ? std::span<const std::size_t>{}
-                              : std::span<const std::size_t>{
-                                    resolved->ephemeralBorrowArguments};
+          selectedOperator != nullptr
+              ? std::span<const std::size_t>{selectedOperator
+                                                 ->ephemeralBorrowArguments}
+          : resolved == nullptr ? std::span<const std::size_t>{}
+                                : std::span<const std::size_t>{
+                                      resolved->ephemeralBorrowArguments};
       const std::optional<std::vector<HirCallArgument>> plannedArguments =
           exactOperands
               ? orderedArguments(arguments, value.parameterTypes, body,

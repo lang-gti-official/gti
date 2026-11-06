@@ -55,6 +55,11 @@ public:
     }
   }
 
+  explicit Impl(std::shared_ptr<const SyntaxCapture> syntax)
+      : Impl(syntax->tokens, {}) {
+    syntaxInput = std::move(syntax);
+  }
+
   Program parse() {
     reset();
     StmtList declarations;
@@ -960,8 +965,13 @@ private:
                                 std::nullopt, std::nullopt, std::move(keyword),
                                 std::move(functionAttributes));
       }
-      Token first = consume(TokenKind::IDENTIFIER,
-                            "Expect an attribute name after '[['.");
+      const auto attributeName = [&]() {
+        if (check(TokenKind::CPP_RESERVED) && peek().lexeme == "inline")
+          return advance();
+        return consume(TokenKind::IDENTIFIER,
+                       "Expect an attribute name after '[['.");
+      };
+      Token first = attributeName();
       if (first.lexeme == "c_array" || first.lexeme == "link_name") {
         if (std::any_of(functionAttributes.begin(), functionAttributes.end(),
                         [](const FunctionAttribute &attribute) {
@@ -1052,6 +1062,12 @@ private:
           consume(TokenKind::RIGHT_PAREN,
                   "Expect ')' after the capability condition.");
         } else if (check(TokenKind::LEFT_PAREN)) {
+          if (attribute.name.lexeme == "inline" ||
+              attribute.name.lexeme == "noinline" ||
+              attribute.name.lexeme == "cold") {
+            throw error(attribute.name, "[[" + attribute.name.lexeme +
+                                            "]] takes no arguments.");
+          }
           if (attribute.name.lexeme == "test") {
             throw error(attribute.name, "[[test]] takes no arguments; annotate "
                                         "a zero-argument void function.");
@@ -1064,8 +1080,7 @@ private:
       std::vector<FunctionAttribute> attributes;
       attributes.emplace_back(parseAttribute(std::move(first)));
       while (match({TokenKind::COMMA})) {
-        attributes.emplace_back(parseAttribute(consume(
-            TokenKind::IDENTIFIER, "Expect an attribute name after '[['.")));
+        attributes.emplace_back(parseAttribute(attributeName()));
       }
       consume(TokenKind::RIGHT_BRACKET,
               "Expect ']]' after declaration attributes.");
@@ -1121,6 +1136,9 @@ private:
         functionAttributeList =
             functionAttributeList || attribute.name.lexeme == "noreturn" ||
             attribute.name.lexeme == "test" ||
+            attribute.name.lexeme == "inline" ||
+            attribute.name.lexeme == "noinline" ||
+            attribute.name.lexeme == "cold" ||
             attribute.name.lexeme == "track_caller" ||
             attribute.name.lexeme == "thread_confined_callback" ||
             attribute.name.lexeme == "discardable" ||
@@ -1503,6 +1521,13 @@ private:
 
   StmtPtr macroDeclaration(Token keyword,
                            std::vector<FunctionAttribute> attributes = {}) {
+    std::optional<Token> mode;
+    if (match({TokenKind::LEFT_PAREN})) {
+      mode = consume(TokenKind::IDENTIFIER, "Expect 'proc' in '#macro(proc)'.");
+      if (mode->lexeme != "proc")
+        throw error(*mode, "The supported macro mode is 'proc'.");
+      consume(TokenKind::RIGHT_PAREN, "Expect ')' after macro mode.");
+    }
     Token implicitVoid = keyword;
     implicitVoid.kind = TokenKind::VOID;
     implicitVoid.lexeme = "void";
@@ -1524,6 +1549,8 @@ private:
         std::nullopt, std::nullopt, std::move(attributes));
     auto &declaration = static_cast<FunctionDecl &>(*result);
     declaration.setMacroKeyword(keyword);
+    if (mode)
+      declaration.setProceduralMacro(*mode);
     if (!declaration.body()) {
       throw error(keyword, "A #macro declaration requires a body.");
     }
@@ -3698,6 +3725,13 @@ private:
             ConceptApplication{.name = std::move(name),
                                .arguments = std::move(arguments)},
             previous());
+      } else if (match({TokenKind::BANG})) {
+        if (!exprAs<Variable>(expr.get()) && !exprAs<QualifiedName>(expr.get()))
+          throw error(previous(), "A procedural macro requires a "
+                                  "namespace-qualified or unqualified name.");
+        consume(TokenKind::LEFT_PAREN,
+                "Expect '(' after the procedural macro '!'.");
+        expr = finishProceduralCall(std::move(expr));
       } else if (match({TokenKind::LEFT_PAREN})) {
         expr = finishCall(std::move(expr), {});
       } else if (match({TokenKind::DOT})) {
@@ -3724,6 +3758,38 @@ private:
     }
 
     return expr;
+  }
+
+  ExprPtr finishProceduralCall(ExprPtr callee) {
+    Token leftParen = previous();
+    const std::size_t begin = current - 1;
+    const auto group = balancedSyntax(tokens, begin);
+    if (!group.complete)
+      throw error(tokens[std::min(group.end, tokens.size() - 1)],
+                  "Unbalanced delimiters in captured call arguments.");
+    auto input = std::make_shared<SyntaxCapture>(captureSyntax(
+        std::span<const Token>(tokens).subspan(begin, group.end - begin + 1),
+        source));
+    if (syntaxInput && group.end < syntaxInput->textRanges.size()) {
+      const auto first = syntaxInput->textRanges[begin].first;
+      const auto last = syntaxInput->textRanges[group.end].second;
+      input->text = syntaxInput->text.substr(first, last - first);
+      input->textRanges.clear();
+      input->origins.clear();
+      for (std::size_t i = begin; i <= group.end; ++i) {
+        input->textRanges.emplace_back(syntaxInput->textRanges[i].first - first,
+                                       syntaxInput->textRanges[i].second -
+                                           first);
+        input->origins.push_back(syntaxInput->origins[i]);
+      }
+    }
+    current = group.end + 1;
+    auto call =
+        std::make_unique<Call>(std::move(callee), std::vector<TypeRef>{},
+                               tokens[group.end], ExprList{});
+    call->setArgumentGeometry(std::move(leftParen), {});
+    call->setCapturedArguments(std::move(input));
+    return call;
   }
 
   ExprPtr finishCall(ExprPtr callee, std::vector<TypeRef> typeArguments) {
@@ -4905,6 +4971,7 @@ private:
   std::optional<SyntaxCompletionContext> syntaxCompletion;
   std::vector<Token> tokens;
   std::string_view source;
+  std::shared_ptr<const SyntaxCapture> syntaxInput;
   std::vector<ParseDiagnostic> diagnostics;
   std::size_t current = 0;
   std::size_t nestingDepth = 0;
@@ -4935,6 +5002,9 @@ Parser &Parser::operator=(Parser &&) noexcept = default;
 Program Parser::parse() { return impl->parse(); }
 
 ExprPtr Parser::parseExpression() { return impl->parseExpression(); }
+
+Parser::Parser(std::shared_ptr<const SyntaxCapture> syntax)
+    : impl(std::make_unique<Impl>(std::move(syntax))) {}
 
 bool Parser::hadError() const { return impl->hadError(); }
 

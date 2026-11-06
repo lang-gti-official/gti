@@ -11,6 +11,8 @@ public:
 };
 int choose(int value) { return 1; }
 int choose(uint64_t value) { return 2; }
+// Typed macros share the rule and keep the selected type at every use.
+#macro uint8_t border_width(uint8_t columns) { return columns; }
 int main() {
   Window window{640, 480};
   if (window.area() != 307200 || !window.contains(639, 479)) { return 1; }
@@ -19,5 +21,6 @@ int main() {
   if (increment(41) != 42) { return 3; }
   // A named int would need an explicit conversion to uint16_t here.
   // window.contains(-1, 0) and Window{65536, 1} are rejected as out of range.
+  if (border_width(33) != 33) { return 4; }
   return 0;
 }

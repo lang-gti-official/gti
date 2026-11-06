@@ -1,5 +1,23 @@
 # Diagnostics
 
+`GTI-I0015` rejects compiler directives/imports inside explicit procedural
+macro input before the loader commits effects. `GTI-S2124` reports procedural
+selection, input-category, syntax-capability and execution failures;
+declaration profile errors use the existing function-contract diagnostic.
+The invocation carries the primary location and the selected definition is a
+related location. Library failures use a validated input span as primary and
+retain invocation/definition traces. Resource exhaustion names the limit and its
+configuration hint. Opaque embedded names are checked only if the macro emits
+them into its result; resulting ordinary diagnostics retain expansion traces.
+The source HTML library uses `fail_related` for mismatched tags and invalid
+markup; it owns those messages. Normal unknown-name, private-access, type, move
+and borrow errors in emitted interpolations keep their ordinary diagnostic codes
+and written spans. Safely quoting a string never interprets its contents as
+source or grants a new lookup context.
+
+`GTI-I0016` stops source loading at an unbalanced procedural group before any
+following directive can be interpreted outside a broken capture boundary.
+
 `GTI-S2009` retains the non-discardable-by-default call rule and its explicit
 `[[discard]]` fix-it. A selected `[[discardable]]` declaration suppresses that
 requirement, not other diagnostics or call analysis. Duplicate discardable
@@ -627,6 +645,11 @@ The native, polymorphic, operator and bodyless restrictions apply to
 `[[noreturn]]`/`[[track_caller]]`, not to every function attribute.
 `[[discardable]]` may describe non-void native, polymorphic or operator results;
 `[[borrowed_from(...)]]` has its own checked GTI reference-return boundary.
+`[[inline]]`, `[[cold]]` and `[[noinline]]` require source-defined GTI functions
+or methods. Duplicate hints, contradictory `inline`/`noinline` and unsupported
+declaration shapes use `GTI-S2099` at the annotation name, without an automatic
+fix that could discard the author's policy. Arguments and non-function syntax
+use `GTI-P0001`; `inline` is accepted contextually inside the attribute list.
 The following typed declaration determines function-attribute context even
 when the list contains no recognized attribute; unknown plain names therefore
 reach semantic validation rather than a misleading class-attribute parse error.

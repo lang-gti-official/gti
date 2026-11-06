@@ -135,7 +135,19 @@ endif()
 # independent native backend additionally owns the exact Core/native-codegen/Passes
 # closure recorded below. LLVM headers stay private to compiled implementation
 # targets and never become a public-header dependency.
-set(GTI_PINNED_LLVM_VERSION "20.1.0")
+#
+# One LLVM for everyone: releases bundle exactly GTI_PINNED_LLVM_VERSION, and
+# every other build (local development, CI's system-LLVM jobs) must use the
+# same major version, so what is measured and tested is what ships.
+# Distribution packages follow the release branch's point releases, so only
+# the major is enforced there. GTI_ALLOW_UNPINNED_LLVM is an explicit,
+# warned opt-out for trying a future LLVM; CI never sets it.
+set(GTI_PINNED_LLVM_VERSION "23.1.4")
+set(GTI_PINNED_LLVM_SHA256
+    "819ecf7351f1a66f76b2d701d8942faaf5faeb324cb90c9d5b090de142434bb2")
+string(REGEX MATCH "^[0-9]+" GTI_PINNED_LLVM_MAJOR "${GTI_PINNED_LLVM_VERSION}")
+option(GTI_ALLOW_UNPINNED_LLVM
+       "Allow an installed LLVM whose major version is not GTI's pinned one" OFF)
 if(GTI_BUNDLE_LLVM)
   include(FetchContent)
   set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build static bundled dependencies" FORCE)
@@ -180,14 +192,61 @@ if(GTI_BUNDLE_LLVM)
   # and its implementation dependencies build, on demand.
   set(LLVM_ENABLE_PROJECTS "clang" CACHE STRING
       "GTI bindgen links libclang" FORCE)
-  set(GTI_LLVM_SOURCE_URL
+  set(gti_llvm_release_url
       "https://github.com/llvm/llvm-project/releases/download/llvmorg-${GTI_PINNED_LLVM_VERSION}/llvm-project-${GTI_PINNED_LLVM_VERSION}.src.tar.xz")
+  # FetchContent downloads once and gives up, and GitHub's release CDN returns
+  # transient 5xx responses (full validation run 41995172449 lost two Linux
+  # shards and a package to one 504). Download with retries, verify the pinned
+  # hash, and hand FetchContent the verified file; it re-verifies the hash.
+  # GTI_LLVM_SOURCE_CACHE (environment) names a directory kept across build
+  # trees, so local builds download the 179 MB archive once.
+  set(gti_llvm_source_dir "$ENV{GTI_LLVM_SOURCE_CACHE}")
+  if(NOT gti_llvm_source_dir)
+    set(gti_llvm_source_dir "${CMAKE_BINARY_DIR}/_deps/llvm-source")
+  endif()
+  set(GTI_LLVM_SOURCE_URL
+      "${gti_llvm_source_dir}/llvm-project-${GTI_PINNED_LLVM_VERSION}.src.tar.xz")
+  set(gti_llvm_source_ready FALSE)
+  if(EXISTS "${GTI_LLVM_SOURCE_URL}")
+    file(SHA256 "${GTI_LLVM_SOURCE_URL}" gti_llvm_source_hash)
+    if(gti_llvm_source_hash STREQUAL GTI_PINNED_LLVM_SHA256)
+      set(gti_llvm_source_ready TRUE)
+    endif()
+  endif()
+  set(gti_llvm_download_attempts 6)
+  foreach(gti_llvm_attempt RANGE 1 ${gti_llvm_download_attempts})
+    if(gti_llvm_source_ready)
+      break()
+    endif()
+    file(MAKE_DIRECTORY "${gti_llvm_source_dir}")
+    file(DOWNLOAD "${gti_llvm_release_url}" "${GTI_LLVM_SOURCE_URL}.part"
+         STATUS gti_llvm_download_status TLS_VERIFY ON INACTIVITY_TIMEOUT 120)
+    list(GET gti_llvm_download_status 0 gti_llvm_download_code)
+    list(GET gti_llvm_download_status 1 gti_llvm_download_message)
+    if(gti_llvm_download_code EQUAL 0)
+      file(SHA256 "${GTI_LLVM_SOURCE_URL}.part" gti_llvm_source_hash)
+      if(gti_llvm_source_hash STREQUAL GTI_PINNED_LLVM_SHA256)
+        file(RENAME "${GTI_LLVM_SOURCE_URL}.part" "${GTI_LLVM_SOURCE_URL}")
+        set(gti_llvm_source_ready TRUE)
+        break()
+      endif()
+      set(gti_llvm_download_message "SHA-256 ${gti_llvm_source_hash} is not the pinned ${GTI_PINNED_LLVM_SHA256}")
+    endif()
+    file(REMOVE "${GTI_LLVM_SOURCE_URL}.part")
+    if(gti_llvm_attempt LESS gti_llvm_download_attempts)
+      math(EXPR gti_llvm_retry_delay "10 * ${gti_llvm_attempt}")
+      message(STATUS "GTI: LLVM ${GTI_PINNED_LLVM_VERSION} source download attempt ${gti_llvm_attempt} failed (${gti_llvm_download_message}); retrying in ${gti_llvm_retry_delay} s")
+      execute_process(COMMAND "${CMAKE_COMMAND}" -E sleep ${gti_llvm_retry_delay})
+    else()
+      message(FATAL_ERROR "GTI: could not download LLVM ${GTI_PINNED_LLVM_VERSION} from ${gti_llvm_release_url} after ${gti_llvm_download_attempts} attempts (${gti_llvm_download_message})")
+    endif()
+  endforeach()
   if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.28)
     FetchContent_Declare(
       llvm_project
       URL "${GTI_LLVM_SOURCE_URL}"
       URL_HASH
-        SHA256=4579051e3c255fb4bb795d54324f5a7f3ef79bd9181e44293d7ee9a7f62aad9a
+        SHA256=${GTI_PINNED_LLVM_SHA256}
       DOWNLOAD_EXTRACT_TIMESTAMP TRUE
       SOURCE_SUBDIR llvm
       EXCLUDE_FROM_ALL
@@ -198,7 +257,7 @@ if(GTI_BUNDLE_LLVM)
       llvm_project
       URL "${GTI_LLVM_SOURCE_URL}"
       URL_HASH
-        SHA256=4579051e3c255fb4bb795d54324f5a7f3ef79bd9181e44293d7ee9a7f62aad9a
+        SHA256=${GTI_PINNED_LLVM_SHA256}
       DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     )
     FetchContent_GetProperties(llvm_project)
@@ -218,16 +277,26 @@ if(GTI_BUNDLE_LLVM)
       "${llvm_project_BINARY_DIR}/tools/clang/include")
   message(STATUS "GTI: bundled LLVM ${GTI_LLVM_VERSION} support libraries enabled")
 else()
-  find_package(LLVM CONFIG QUIET)
+  # Without LLVM_DIR, look first where the pinned major is normally installed.
+  find_package(LLVM CONFIG QUIET
+    HINTS "/opt/homebrew/opt/llvm@${GTI_PINNED_LLVM_MAJOR}/lib/cmake/llvm"
+          "/usr/local/opt/llvm@${GTI_PINNED_LLVM_MAJOR}/lib/cmake/llvm"
+          "/usr/lib/llvm-${GTI_PINNED_LLVM_MAJOR}/lib/cmake/llvm")
+  set(gti_llvm_install_hint
+      "Install LLVM ${GTI_PINNED_LLVM_MAJOR} (macOS: brew install llvm@${GTI_PINNED_LLVM_MAJOR}; Ubuntu: llvm-${GTI_PINNED_LLVM_MAJOR}-dev libclang-${GTI_PINNED_LLVM_MAJOR}-dev from apt.llvm.org) and set LLVM_DIR to its lib/cmake/llvm, or configure with -DGTI_BUNDLE_LLVM=ON to build the pinned LLVM ${GTI_PINNED_LLVM_VERSION}.")
   if(NOT LLVM_FOUND)
-    message(
-      FATAL_ERROR
-        "GTI requires LLVM 18 or newer. Set LLVM_DIR to an LLVM CMake package or configure with -DGTI_BUNDLE_LLVM=ON.")
+    message(FATAL_ERROR "GTI requires LLVM ${GTI_PINNED_LLVM_MAJOR}. ${gti_llvm_install_hint}")
   endif()
-  if(LLVM_PACKAGE_VERSION VERSION_LESS 18)
-    message(
-      FATAL_ERROR
-        "GTI requires LLVM 18 or newer, but found LLVM ${LLVM_PACKAGE_VERSION}. Set LLVM_DIR to a compatible installation or configure with -DGTI_BUNDLE_LLVM=ON.")
+  if(NOT LLVM_VERSION_MAJOR EQUAL GTI_PINNED_LLVM_MAJOR)
+    if(GTI_ALLOW_UNPINNED_LLVM)
+      message(
+        WARNING
+          "GTI pins LLVM ${GTI_PINNED_LLVM_MAJOR}, but GTI_ALLOW_UNPINNED_LLVM selected LLVM ${LLVM_PACKAGE_VERSION} at ${LLVM_DIR}. Results from this build, including benchmarks, do not describe shipped GTI.")
+    else()
+      message(
+        FATAL_ERROR
+          "GTI pins LLVM ${GTI_PINNED_LLVM_MAJOR} (releases bundle ${GTI_PINNED_LLVM_VERSION}), but LLVM_DIR selects LLVM ${LLVM_PACKAGE_VERSION} at ${LLVM_DIR}. ${gti_llvm_install_hint}")
+    endif()
   endif()
   # Without this check the mismatch surfaces as an undefined `typeinfo for
   # llvm::ErrorInfoBase` at link time, which does not name its own cause.
@@ -455,7 +524,7 @@ extern \"C\" int LLVMFuzzerTestOneInput(const uint8_t *, size_t) { return 0; }
     message(FATAL_ERROR "This Clang cannot link -fsanitize=fuzzer (Apple "
                         "CommandLineTools omits libclang_rt.fuzzer). Use a "
                         "full LLVM toolchain, e.g. "
-                        "-DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm/bin/clang++.")
+                        "-DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm@23/bin/clang++.")
   endif()
   if(GTI_RELEASE_BUILD)
     message(FATAL_ERROR "GTI_BUILD_FUZZERS and GTI_RELEASE_BUILD are mutually "
@@ -561,6 +630,8 @@ add_library(
   "src/compiler/optimization/sccp.cpp"
   "src/compiler/optimizer.cpp"
   "src/compiler/parser.cpp"
+  "src/compiler/syntax_capture.cpp"
+  "src/compiler/procedural_syntax.cpp"
   "src/compiler/process_memory_runtime.cpp"
   "src/compiler/semantic_model.cpp"
   "src/compiler/persistent_declaration.cpp"
@@ -731,7 +802,6 @@ add_library(
   "runtime/src/io.cpp"
   "runtime/src/math.cpp"
   "runtime/src/memory.cpp"
-  "runtime/src/owner_memory.cpp"
   "runtime/src/c_string.cpp"
   "runtime/src/process.cpp"
   "runtime/src/random.cpp"

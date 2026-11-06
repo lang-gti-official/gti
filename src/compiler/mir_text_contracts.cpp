@@ -850,6 +850,27 @@ private:
         (std::holds_alternative<std::string>(*instruction->literal) ||
          std::holds_alternative<std::nullptr_t>(*instruction->literal))) {
       answer.known = true;
+    } else if (instruction && instruction->kind == MirInstructionKind::Call &&
+               (instruction->intrinsic == IntrinsicKind::SyntaxText ||
+                instruction->intrinsic == IntrinsicKind::SyntaxKind) &&
+               instruction->info.type == SemanticType::StringView &&
+               instruction->operands.size() ==
+                   (instruction->intrinsic == IntrinsicKind::SyntaxText ? 1
+                                                                        : 2)) {
+      // Syntax inspection copies text into an owning ConstantValue in the
+      // verified-MIR executor. It lends no view into its input arena. These
+      // operations are forbidden at the runtime backend boundary; this is not
+      // an ownerless result rule for ordinary runtime string-producing calls.
+      const auto &input = instruction->operands.front().type;
+      answer.known =
+          std::any_of(program.classInstances().begin(),
+                      program.classInstances().end(),
+                      [&](const auto &type) {
+                        return type.type == input &&
+                               type.syntaxKind == CompileTimeSyntaxKind::Tokens;
+                      }) &&
+          (instruction->intrinsic == IntrinsicKind::SyntaxText ||
+           instruction->operands[1].type == SemanticType::UInt64);
     } else if (instruction &&
                instruction->kind == MirInstructionKind::Compute &&
                instruction->operation == MirOperation::PayloadExtract &&

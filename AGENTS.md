@@ -77,6 +77,27 @@ wrapper, and neither backend defines its semantics.
 - Use repository skills under [`.codex/skills/`](.codex/skills/) for repeatable
   workflows. Skills describe how to work; they do not replace canonical docs.
 
+## Feature Proposals And Planning
+
+- When the owner asks to plan, design, or propose a new GTI feature, use
+  [plan-feature](.codex/skills/plan-feature/SKILL.md) to create or update a draft
+  in [lang-gti-official/rfcs](https://github.com/lang-gti-official/rfcs).
+  This includes language, standard-library, compiler, and tooling features.
+- The owner's standing authorization covers saving the proposal and publishing
+  a draft proposal PR in that repository. Do not stop at a chat-only plan unless
+  requested. Discussion-only, local-only, no-publication, or another explicitly
+  requested destination overrides this default.
+- Search existing RFCs and open proposal PRs first. Link relevant GTI plans,
+  ADRs, source, and tests; preserve historical records rather than migrating or
+  duplicating them. Follow the RFC repository's own instructions and checks.
+- A planning request does not accept a design, authorize implementation, or
+  authorize merging its proposal PR. Keep draft, accepted, implemented, and
+  released status distinct. Report the proposal and PR links with open questions.
+- Bug-fix plans, implementation checklists for accepted designs, and read-only
+  reviews do not create new RFCs by default. Use the
+  [planning contract](docs/architecture/agent-workflow.md#feature-proposals-and-planning)
+  to select the right workflow; RFC documentation does not run compiler CI.
+
 ## Implementation Task Lifecycle
 
 - At the start of each new task, rename your own chat's sidebar title to a
@@ -129,9 +150,11 @@ wrapper, and neither backend defines its semantics.
   inventory on Linux in cost-balanced bundled-release shards, the `darwin`
   set on macOS (what differs on the platform: the AArch64 LLVM backend,
   Apple-only tests, threads/TLS/atomics, debug info, install/bundle/link,
-  ABI/layout; `tests/ci_darwin_tests.json`), the compiler, LLVM-backend and
-  thread sanitizers, and installed-toolchain checks, produces the production
-  archives, and proves each platform's shards covered its inventory. Explicitly allowlisted orchestration-only changes run lint and workflow
+  ABI/layout; `tests/ci_darwin_tests.json`) and installed-toolchain checks,
+  produces the production archives, and proves each platform's shards covered
+  its inventory. The compiler, LLVM-backend and thread sanitizers run daily on
+  the nightly commit (`sanitizers.yml`), and the release train cuts and
+  promotes only sanitizer-verified commits. Explicitly allowlisted orchestration-only changes run lint and workflow
   regressions instead; compiler/runtime, build/packaging, validation selection,
   mixed and unknown changes retain full integration coverage. A source-only
   `stdlib/std/*.gti` candidate with allowed source tests/docs/metadata may reuse
@@ -148,23 +171,10 @@ wrapper, and neither backend defines its semantics.
   designated integrator may validate one combined candidate with `batch` on a
   remote runner and record that evidence on the PR. Agents never fall back to
   per-PR local full suites.
-- Every completed implementation task must be submitted to the `preview` source branch through
-  `python3 scripts/agent_workflow.py preview submit <task> --tests <focused-ctest-names>`
-  after focused validation passes and its PR is published, unless the user explicitly
-  requests no preview or no publication. No additional permission is needed.
-  Original PRs continue full validation and review. Submission is
-  detached: do not wait for it before normal integration, merge,
-  or task cleanup. Preview failure/conflict/staleness is not a main-PR blocker.
-  The helper owns the preview queue, candidate checkout, validation and publication;
-  use `preview status` only when its outcome is relevant. Select tasks explicitly; never sweep unrelated open
-  PRs into preview. Admission rebuilds the combined source and requires every
-  included feature's registered focused tests plus the automated example gate.
-  Follow [the preview contract](docs/architecture/agent-workflow.md#early-combined-preview),
-  including its platform/interactive coverage, exact inclusion records and
-  append-only removal. Preview is never merged wholesale into main and never
-  weakens the original PR's acceptance.
-  `install_neovim_local.py` defaults to preview; `--local` selects the calling
-  checkout. Running the installer still requires an installation request.
+- `install_neovim_local.py` builds the commit published as `nightly` by
+  default; `--local` selects the calling checkout. The preview channel is
+  retired, so `--preview` fails with that explanation. Running the installer
+  still requires an installation request.
 - GitHub at `https://github.com/lang-gti-official/gti.git` (remote `origin`)
   is canonical for branches, PRs, issues and CI. The helper authenticates
   through the GitHub CLI (`gh auth login`) or `GH_TOKEN`, never a stored
@@ -292,8 +302,12 @@ Detailed procedures live in the
 - `docs/language/` describes implemented/current language semantics and the
   working specification.
 - `docs/decisions/` records significant architectural and language rationale.
-- `docs/plans/` describes proposed or incomplete work and is not evidence that
-  a feature is implemented.
+- [GTI RFCs](https://github.com/lang-gti-official/rfcs) stores new feature
+  proposals and their design decisions; it is not an implementation claim.
+- `docs/plans/` retains implementation roadmaps, work ledgers, and historical
+  proposals. Update existing execution plans and link their RFCs; new feature
+  designs belong in the RFC repository. Plans are not evidence that a feature
+  is implemented.
 
 Prefer updating an existing canonical document over creating a new architecture
 document. Before adding Markdown, decide whether the information belongs in an
@@ -344,16 +358,12 @@ publish toolchain releases to Gitea. The `gti add` package registry stays
 on Gitea and is unaffected. See "Published Toolchain Channels" in
 `docs/architecture/build-and-driver.md`.
 
-- **Preview** distributes the separately admitted combined `preview` source through
-  `preview.yml`, which builds the admitted source, proves the compiler runs,
-  smoke-tests the installed toolchain and packages it with source and
-  inclusion identity on both platforms; focused admission of each submitted
-  feature happens once, on the submitting host, before the source reaches
-  the branch. Preview is an early snapshot that builds and runs, not full-main
-  CI or nightly evidence, and never promotes into main. `gtiup` manages preview,
-  nightly, beta and stable toolchains; Neovim managed mode uses the selected
-  matching compiler/LSP/parser without downloading its own tools. Installation
-  remains opt-in. Never move the rolling preview tag by hand.
+- **Preview is retired.** Nothing builds, admits or publishes it, and agents no
+  longer submit tasks to it. The frozen `preview` branch and GitHub release stay
+  only until the owner deletes them. `gtiup` manages nightly, beta and stable
+  toolchains plus linked local builds (`gtiup link`); Neovim managed mode uses
+  the selected matching compiler/LSP/parser without downloading its own tools.
+  Installation remains opt-in.
 - **Nightly** republishes one rolling `nightly` prerelease, daily, from the
   selected `main` commit with successful release-producing integration CI and retained production
   artifacts. It verifies exact source/run/attempt, platform, configuration and

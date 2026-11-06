@@ -3,6 +3,7 @@
 """Throwaway-repository controls for scripts/check_stdlib_surface_review.py."""
 
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -113,6 +114,21 @@ def main():
         unreviewed = repo.commit("edit alpha and prelude")
         expect_unreviewed(repo.check(baseline, unreviewed, 1),
                           "stdlib/std/alpha.gti", "stdlib/prelude.gti")
+        # CI's --advisory mode reports the same finding as warnings and passes.
+        local = {key: value for key, value in os.environ.items() if key != "GITHUB_ACTIONS"}
+        advisory = subprocess.run([sys.executable, checker, baseline, unreviewed, "--advisory"],
+                                  cwd=repo.root, capture_output=True, text=True, check=True, env=local)
+        assert not advisory.stderr, advisory.stderr
+        for needle in ("advisory: stdlib/std/alpha.gti", "advisory: stdlib/prelude.gti",
+                       "Stdlib-Surface: unchanged"):
+            assert needle in advisory.stdout, advisory.stdout
+        annotated = subprocess.run([sys.executable, checker, baseline, unreviewed, "--advisory"],
+                                   cwd=repo.root, capture_output=True, text=True, check=True,
+                                   env={**os.environ, "GITHUB_ACTIONS": "true"})
+        assert "::warning title=Stdlib surface review::stdlib/std/alpha.gti" in annotated.stdout, annotated.stdout
+        broken = subprocess.run([sys.executable, checker, "no-such-revision", unreviewed, "--advisory"],
+                                cwd=repo.root, capture_output=True, text=True, check=True, env=local)
+        assert broken.stdout.startswith("advisory: stdlib surface review check could not run"), broken.stdout
 
         # Changing an entry for that source reviews it, even in a later commit;
         # a review of a different source does not.

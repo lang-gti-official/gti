@@ -225,6 +225,64 @@ void verifierProofs() {
            "obligation");
   }
 }
+
+void mixedArgumentLoanOrder() {
+  const std::string declarations = R"gti(
+struct Holder {
+  int value;
+  Holder(int value) : value(value) {}
+  int& get() { return this.value; }
+};
+int divide(int& left, int& right) { return left / right; }
+int combine(int& a, int& b, int& c, int& d) { return a / b + c / d; }
+)gti";
+  auto result = analyze(declarations + R"gti(
+int main() { Holder h{2}; return divide(42, h.get()); }
+)gti");
+  expect(
+      result.canGenerateCode(),
+      "later reference argument cannot precede temporary-input failure ends");
+  if (!result.canGenerateCode()) {
+    for (const auto &diagnostic : result.diagnostics)
+      std::cerr << diagnostic.message << '\n';
+    return;
+  }
+  bool mutated = false;
+  for (auto &function : const_cast<std::vector<lang::MirFunctionInstance> &>(
+           result.mir.functionInstances())) {
+    for (const auto &block : function.body.blocks) {
+      if (block.terminator.kind != lang::MirTerminatorKind::Invoke ||
+          block.instructions.empty())
+        continue;
+      const auto &call = block.instructions.back();
+      if (call.kind != lang::MirInstructionKind::Call ||
+          call.operands.size() != 2)
+        continue;
+      auto &failure =
+          function.body.blocks[block.terminator.elseTarget - 1].instructions;
+      if (failure.size() < 2 ||
+          failure[0].kind != lang::MirInstructionKind::EndBorrow ||
+          failure[1].kind != lang::MirInstructionKind::EndBorrow)
+        continue;
+      std::swap(failure[0], failure[1]);
+      expect(!lang::verifyMirProgram(result.mir).valid(),
+             "failure cleanup cannot retire a later reference before the "
+             "invocation's temporary input");
+      std::swap(failure[0], failure[1]);
+      mutated = true;
+    }
+  }
+  expect(mutated, "mixed argument failure epilogue was independently checked");
+  accepted(declarations + R"gti(
+struct Use {
+  int result;
+  Use(Holder& h) : result(combine(42, h.get(), 6, h.get())) {}
+};
+int main() { Holder h{2}; Use result{h}; return result.result - 24; }
+)gti",
+           "constructor initializer interleaves multiple temporary and "
+           "reference arguments");
+}
 } // namespace
 int main() {
   scalarValues();
@@ -233,5 +291,6 @@ int main() {
   carrierBoundaries();
   libraryClients();
   verifierProofs();
+  mixedArgumentLoanOrder();
   return failures ? 1 : 0;
 }

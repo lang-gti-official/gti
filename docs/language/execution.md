@@ -72,6 +72,74 @@ An explicit argument bypasses that parameter's default. Default evaluation is
 caller-side language behavior, remains in the enclosing call full-expression,
 and cannot be delegated to a backend language's default-argument mechanism.
 
+#### Procedural expression macros
+
+Procedural macros are a separate expression-producing facility. A library can
+export a non-generic macro whose input is an opaque braced token group:
+
+```gti
+export module expression_macros;
+import std.syntax;
+export #macro(proc) std::syntax::expr identity(std::syntax::tokens input) {
+  return std::syntax::parse(std::syntax::slice(
+      input, uint64_t(1), std::syntax::size(input) - uint64_t(1)));
+}
+// An importing consumer writes: identity!({value + 1})
+```
+
+The `!` marks opaque input; it is required for procedural calls and does not
+change existing typed macro calls. Input includes the outer braces; the example
+slices those off before parsing an expression. Parsing does not evaluate the
+input. The initial profile accepts one imported namespace-scope declaration,
+exactly one `tokens` parameter and an `expr` result. Overloads, defaults, packs,
+generics, member/operator forms and same-module invocation are not supported.
+
+The completed body and constexpr helpers execute through the bounded MIR
+constant engine. `std::syntax` provides inspection, token construction,
+parse/splice, source locations and diagnostics. Generated identifiers resolve in
+the definition context; spliced caller tokens preserve caller lookup. `fresh`
+and `reference` create a binding independent of similarly spelled caller names.
+Syntax capabilities cannot be constructed or stored at runtime. Directives and
+imports inside procedural input are rejected before source loading can act on
+them. Ordinary braced arguments retain their existing behavior.
+
+The sealed result must be one expression. It undergoes ordinary caller type,
+access, ownership and borrowing checks and lowers normally to LLVM; macro bodies
+and syntax operations do not execute at runtime. Nested expansion shares the
+outer request's work and storage limits. See the runnable
+[`procedural-macros.gti`](../../examples/procedural-macros.gti) identity and
+evaluate-once examples, and the imported
+[`procedural-html.gti`](../../examples/procedural-html.gti) library demonstration
+from [RFC 0001](https://github.com/lang-gti-official/rfcs/pull/1).
+
+The demo accepts one root element, nested elements, explicit self-closing tags,
+quoted text, braced expression children and quoted/expression attributes:
+
+```gti
+import demo.html;
+auto page = html!({<div class="profile"><h1>{user.name}</h1></div>});
+auto text = demo::render(page);
+```
+
+The external package example is
+[`procedural-html-project`](../../examples/procedural-html-project/gti.toml).
+Its library owns all node/text storage. Text and attribute values are copied or
+moved; interpolations execute once, left-to-right in document order. Text escapes
+`&`, `<`, `>`; attributes also escape quotes and apostrophes. There is no implicit
+stringification, raw HTML insertion or runtime markup parser. This is a small
+owned tree, not a browser DOM or a security sanitizer. Names use ASCII letters,
+underscores and subsequent digits; keyword spellings such as `class` work.
+Unquoted text, HTML comments/entities, hyphenated names, spreads and framework
+features are outside this library grammar. Ordinary GTI comments are trivia.
+
+The library emits ordinary constructors and small append calls. Sibling
+collections reserve once and consume owned elements in batches of at most eight. Depth still follows actual
+nesting and the ordinary parser and compile-time limits remain applicable. Its
+private helpers and generated declaration types use the definition's imports;
+caller interpolations retain caller access and borrow checks. `std::syntax::literal`
+validates one existing literal spelling; `string_literal(value, origin)` instead
+quotes text (including embedded zeroes) into one literal without source injection.
+
 #### Typed statement macros
 
 `#macro` declares a source-defined namespace-scope macro with typed
@@ -95,7 +163,12 @@ int selected = choose(use_cache, cached_value(), expensive_value());
 
 Generic parameters follow the macro name (`#macro when<T>(bool enabled, T value)`),
 and signatures may have final packs, trailing defaults and `requires` clauses.
-Typed macro overloads share ordinary exact overload selection. A qualified name
+Typed macro overloads share ordinary exact-first overload selection, including
+fitting written integer literals when one fallback candidate remains. The
+selected integer parameter type is retained at each substituted use, including
+nested expansions; a macro parameter does not become an untyped literal again.
+Named values keep their types, out-of-range literals are rejected even when
+unused, and literal adaptation does not participate in generic inference. A qualified name
 cannot mix macro and ordinary-function overloads: a caller must not have its
 evaluation policy silently selected by an argument type. `[[track_caller]]`
 may precede the declaration. Macros participate in ordinary namespace, source
@@ -852,6 +925,46 @@ generated active state ensures that cleanup obligations execute exactly once
 across movement.
 
 ## 4.5 Control Flow
+
+### Function optimization attributes
+
+`[[inline]]`, `[[noinline]]` and `[[cold]]` annotate a source-defined GTI
+function or method, including generic functions and methods after concrete
+instantiation. They are optimization requests, not type, ownership, ABI,
+constant-evaluation, failure or return-flow contracts.
+
+| Attribute | LLVM behavior | What it does not promise |
+| --- | --- | --- |
+| `[[inline]]` | Adds `inlinehint`, advising the optimizer to inline | Forced inlining, a speedup, or removal of a call at O0 |
+| `[[noinline]]` | Adds `noinline`, preventing function inlining | An externally visible symbol or protection from all other optimizations |
+| `[[cold]]` | Adds `cold`, indicating the function is rarely executed | Non-returning behavior, no allocation, or automatic suppression of inlining |
+
+```gti
+[[inline]] int increment(int value) { return value + 1; }
+[[cold, noinline]] int uncommon_result() { return 7; }
+```
+
+Lists may be combined or repeated, but each attribute appears at most once.
+`inline` and `noinline` conflict; `cold` can combine with either. No attribute
+accepts arguments. Apply an out-of-class method's attributes to its declaration
+inside the class; its definition inherits them. A defined virtual method may
+carry these hints on its own implementation, without changing dispatch rules.
+These hints do not make a function terminate: a cold function may return
+normally, and all checks and cleanup remain required. Inlining is independent
+of `constexpr` evaluation. The deprecated C++ backend does not implement these
+optimization requests.
+
+Native declarations, runtime bindings, bodyless functions, pure interface
+requirements, macros, constructors, destructors, lambdas and call-site
+annotations are outside this first slice. `inline` remains reserved outside
+attribute syntax. See the runnable
+[`codegen-attributes.gti`](../../examples/llvm/codegen-attributes.gti) example.
+
+Future extensions require their own semantic and lowering evidence: forced
+inlining with recursive/unavailable-body diagnostics; profile-guided hot/cold
+regions and outlining; constructor/lambda and call-site policy; cross-module
+propagation through compiled interfaces. None is implied by these three
+function attributes.
 
 ### Function contracts
 

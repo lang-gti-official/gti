@@ -34,7 +34,7 @@ if __name__ == "__main__":
              f"-I{fixture.parents[2] / 'runtime/src'}"],
              "scoped_parallel_allocations": [
                  str(fixture.with_name("scoped_parallel_allocations.cpp"))]},
-         # The allocation oracle replaces nothrow operator new, which both the
-         # C++ text and the runtime's owner allocation entry (LLVM task boxes)
-         # call, so every mode observes the same transport allocations.
+         # The oracle observes both GTI process-provider calls (LLVM task boxes)
+         # and native nothrow new (C++ boxes and runtime worker state), so each
+         # profile measures the same transport costs without conflating families.
          execution_profile="concurrent")

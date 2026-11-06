@@ -86,7 +86,7 @@ def artifact_contract(root):
     sha, repository = "c" * 40, "lang-gti-official/gti"
     run = full_run(sha, status="completed", conclusion="success", run_attempt=2)
     names = ["Full validation verdict", *(f"Release package ({p})" for p in artifacts.PLATFORMS),
-             *(f"Integration ({p} {i}/{n})" for p, n in (("linux", 6), ("darwin", 5)) for i in range(n))]
+             *(f"Integration ({p} {i}/{n})" for p, n in artifacts.integration_shards().items() for i in range(n))]
     jobs = [gate_job(sha, name=n) for n in names]
     assets = [{"name": f"gti-nightly-{p}-2", "expired": False} for p in artifacts.PLATFORMS]
 
@@ -102,6 +102,13 @@ def artifact_contract(root):
             return {"artifacts": assets, "total_count": len(assets)}
         return artifacts.release_evidence(repository, sha, request)
 
+    # The required shards are the ones full validation actually runs.
+    full_text = (root / artifacts.FULL_VALIDATION_WORKFLOW).read_text()
+    shards = artifacts.integration_shards()
+    assert all(f"name: Integration (${{{{ matrix.platform }}}} ${{{{ matrix.index }}}}/${{{{ matrix.shards }}}})" in full_text
+               and f"platform: {p}, shards: {n}, index: {n - 1}}}" in full_text
+               and f"platform: {p}, shards: {n}, index: {n}}}" not in full_text
+               for p, n in shards.items()), shards
     assert evidence() == {"run_id": "7", "run_attempt": "2"}
     assert evidence(run={**run, "event": "workflow_dispatch"})["run_id"] == "7"
     rejected = [
@@ -119,6 +126,7 @@ def artifact_contract(root):
         {"jobs": jobs[1:]},
         {"jobs": [*jobs, jobs[0]]},
         {"jobs": [{**j, "conclusion": "skipped"} if j["name"].startswith("Integration") else j for j in jobs]},
+        {"jobs": [j for j in jobs if j["name"] != f"Integration (darwin {shards['darwin'] - 1}/{shards['darwin']})"]},
         {"assets": assets[:1]},
         {"assets": [{**a, "expired": True} for a in assets]},
         {"assets": [{**a, "name": a["name"].replace("-2", "-1")} for a in assets]},
@@ -217,6 +225,27 @@ def editor_contract(root):
                 pass
             else:
                 raise AssertionError("a persistent network failure must still fail")
+        # A server error is retried with doubling waits; a client error is not.
+        def error(code):
+            return editor.urllib.error.HTTPError("https://example.invalid/a", code, "status", {}, None)
+        calls, naps = [], []
+        def gateway(url, timeout):
+            calls.append(url)
+            if len(calls) < 4:
+                raise error(504)
+            return io.BytesIO(b"bytes")
+        with patch.object(editor.urllib.request, "urlopen", side_effect=gateway):
+            editor.download("https://example.invalid/a", archive, sleep=naps.append)
+        assert len(calls) == 4 and naps == [5.0, 10.0, 20.0], naps
+        calls.clear()
+        with patch.object(editor.urllib.request, "urlopen", side_effect=lambda url, timeout: calls.append(url) or (_ for _ in ()).throw(error(404))):
+            try:
+                editor.download("https://example.invalid/a", archive, sleep=naps.append)
+            except editor.urllib.error.HTTPError:
+                pass
+            else:
+                raise AssertionError("a missing editor release must fail at once")
+        assert len(calls) == 1, "a 404 is not retried"
     toolchain = (root / "scripts/configure_ci_toolchain.sh").read_text()
     assert 'python3 "${repository}/scripts/configure_ci_editor.py"' in toolchain
 
@@ -268,8 +297,8 @@ def nightly_contract(root):
     assert "group: full-validation-${{ github.ref }}\n  cancel-in-progress: false" in full_header, \
         "full validation runs queue; a superseded head's verdict is still channel evidence"
     integration = jobs(full)
-    assert list(integration) == ["plan", "package", "integration", "sanitizers", "llvm-sanitizers", "tsan",
-                                 "verdict", "report"], list(integration)
+    # The sanitizers run daily on the nightly commit (sanitizers.yml), not here.
+    assert list(integration) == ["plan", "package", "integration", "verdict", "report"], list(integration)
     assert "merge_group" not in jobs(ci).get("gate", "") or "package" not in jobs(ci)["gate"]
     assert "package" not in jobs(ci) and "integration" not in jobs(ci) and "sanitizers" not in jobs(ci), \
         "the merge gate proves build and fast checks only"
@@ -312,13 +341,9 @@ def nightly_contract(root):
         "the LSP lane is a mode-gated merge-gate job beside source-stdlib"
     assert "validation_checks.py ci-gate" in gate and "--shard-reports" not in gate
     verdict = integration["verdict"]
-    assert "needs: [plan, package, integration, sanitizers, llvm-sanitizers, tsan]" in verdict
-    assert "GTI_ENABLE_THREAD_SANITIZER_TESTS=ON" in integration["tsan"], "TSan is real in full validation"
-    assert "Require every thread-sanitizer test to run" in integration["tsan"] and 'suite.get("skipped"' in integration["tsan"], \
-        "a skipped _tsan test is a missing runtime, never evidence"
-    assert "libclang-rt-20-dev" in (root / "scripts/configure_ci_toolchain.sh").read_text(), "clang's TSan runtime is installed on Linux"
-    assert "GTI_TEST_BACKENDS: llvm" in integration["llvm-sanitizers"]
-    assert "cpp_mir" not in integration["sanitizers"], "the C++ emitter is sanitized only in cpp-backend.yml"
+    assert "needs: [plan, package, integration]\n" in verdict
+    assert "advisories --reports" in verdict and "continue-on-error: true" in verdict, \
+        "advisory census drift is reported, never part of the verdict"
     cpp = (root / ".github/workflows/cpp-backend.yml").read_text()
     assert "GTI_TEST_BACKENDS: cpp" in cpp and "--test-set cpp" in cpp and "cpp_mir_body_emitter" in cpp
     # CTest's per-test ENVIRONMENT property (from the configure-time cache
@@ -356,6 +381,109 @@ def nightly_contract(root):
     assert "refusing to prune" in publish and "tar -xOzf" in publish and "shasum -a 256 -c" in publish
     assert "v${" not in nightly and "GTI_EXPECTED_TAG=v" not in nightly, "stable is not published here"
     assert "upload_url" not in nightly and "GITEA" not in nightly and "gitea." not in nightly
+
+
+def llvm_pin_contract(root):
+    """One LLVM for releases, CI and local builds (CMakeLists.txt's pin)."""
+    pin = load_module(root / "scripts/llvm_pin.py", "llvm_pin")
+    version, major = pin.pinned_version(root), pin.pinned_major(root)
+    assert re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version) and version.startswith(f"{major}."), version
+    cmake = (root / "CMakeLists.txt").read_text()
+    assert cmake.count('set(GTI_PINNED_LLVM_VERSION "') == 1, "exactly one LLVM pin"
+    assert re.search(r'set\(GTI_PINNED_LLVM_SHA256\s+"[0-9a-f]{64}"\)', cmake), "the bundled source is hash-pinned"
+    assert cmake.count("SHA256=${GTI_PINNED_LLVM_SHA256}") == 2, "both fetch paths verify the pinned hash"
+    assert "llvmorg-${GTI_PINNED_LLVM_VERSION}/llvm-project-${GTI_PINNED_LLVM_VERSION}.src.tar.xz" in cmake
+    assert "if(NOT LLVM_VERSION_MAJOR EQUAL GTI_PINNED_LLVM_MAJOR)" in cmake, \
+        "a system LLVM of another major is refused"
+    refusal = cmake.split("if(NOT LLVM_VERSION_MAJOR EQUAL GTI_PINNED_LLVM_MAJOR)", 1)[1].split("endif()\n  endif()", 1)[0]
+    assert "FATAL_ERROR" in refusal and "GTI_ALLOW_UNPINNED_LLVM" in refusal
+    toolchain = (root / "scripts/configure_ci_toolchain.sh").read_text()
+    assert 'sed -n \'s/^set(GTI_PINNED_LLVM_VERSION' in toolchain, "CI reads the pin, not its own version"
+    assert not re.search(r"llvm-[0-9]{2}-dev|llvm@[0-9]{2}|clang-[0-9]{2}\b|llvm-[0-9]{2}/", toolchain), \
+        "CI names LLVM only through the pinned major"
+    assert "llvm_apt_key_fingerprint=6084F3CF814B57C1CF12EFD515CF4D18AF4F7421" in toolchain and \
+        '"${fingerprint}" != "${llvm_apt_key_fingerprint}"' in toolchain and "signed-by=" in toolchain, \
+        "the apt.llvm.org key is trusted only by fingerprint, and only for its repository"
+    assert '"llvm@${llvm_major}"' in toolchain, "macOS CI installs the pinned major's formula"
+    for workflow in sorted((root / ".github/workflows").glob("*.yml")):
+        assert "GTI_ALLOW_UNPINNED_LLVM" not in workflow.read_text(), f"{workflow.name} must not unpin LLVM"
+    with tempfile.TemporaryDirectory() as temporary:
+        directory = pathlib.Path(temporary)
+        assert pin.package_major(directory) is None
+        (directory / "LLVMConfig.cmake").write_text("")
+        for found, expected in ((f"{major}.1.0", True), (f"{major - 1}.1.8", False), (f"{major + 1}.0.0", False)):
+            (directory / "LLVMConfigVersion.cmake").write_text(f'set(PACKAGE_VERSION "{found}")\n')
+            assert pin.matches_pin(directory, root) is expected, found
+
+
+def sanitizer_contract(root):
+    """The sanitizers run daily on the nightly commit, keep their job definitions,
+    report to the broken-main issue and name the commit their verdict covers."""
+    text = (root / ".github/workflows/sanitizers.yml").read_text()
+    train_text = (root / ".github/workflows/train.yml").read_text()
+    header = text.split("\njobs:\n", 1)[0]
+    assert "  schedule:\n    - cron: " in header and "  workflow_dispatch:\n" in header
+    assert "push:" not in header and "pull_request" not in text and "merge_group" not in text
+    assert "\npermissions:\n  contents: read\n  actions: read\n" in header
+    assert "cancel-in-progress: false" in header
+    assert not re.search(r"secrets\.[A-Za-z]", text) and text.count("issues: write") == 1
+    assert "--force" not in text and "git push" not in text
+    sections = jobs(text)
+    assert list(sections) == ["source", "sanitizers", "llvm-sanitizers", "tsan", "verdict", "report"], list(sections)
+    for name, body in sections.items():
+        writes = re.findall(r"^      ([a-z-]+): write$", body, re.MULTILINE)
+        assert writes == (["issues"] if name == "report" else []), (name, writes)
+        for line in body.splitlines():
+            if line.lstrip().startswith(("run:", "python3", "git ", "gh ", "cmake", "ctest")):
+                assert "${{" not in line, line
+    # Untrusted dispatch input reaches the resolver only through the environment.
+    assert text.count("${{ inputs.") == 1 and "GTI_REQUESTED_COMMIT: ${{ inputs.commit }}" in sections["source"]
+    assert "release_train.py sanitizer-source" in sections["source"]
+    assert "if: github.repository == 'lang-gti-official/gti'" in sections["source"]
+    for name in ("sanitizers", "llvm-sanitizers", "tsan"):
+        body = sections[name]
+        assert "needs: [source]\n" in body and "if: needs.source.outputs.sanitize == 'true'" in body, name
+        assert "ref: ${{ needs.source.outputs.sha }}" in body and "persist-credentials: false" in body, name
+        assert "bash scripts/configure_ci_toolchain.sh" in body and "bash scripts/configure_ci_resources.sh" in body
+        assert "actions/cache/restore@" in body and "actions/cache/save@" not in body, \
+            "cache.yml owns the sanitizer cache; a sanitizer run only restores it"
+    compiler, llvm, tsan = sections["sanitizers"], sections["llvm-sanitizers"], sections["tsan"]
+    for kind, index, count in (("compiler", 1, 3), ("compiler", 2, 3), ("compiler", 3, 3), ("libraries", 1, 1)):
+        assert f"{{kind: {kind}, index: {index}, count: {count}}}" in compiler
+    assert "bash scripts/free_ci_disk.sh" in compiler and "bash scripts/free_ci_disk.sh" in llvm
+    assert "if: matrix.kind == 'compiler'\n        run: cmake -S . -B build-sanitized -DGTI_TEST_TIMEOUT_SCALE=10" in compiler, \
+        "the compiler partitions re-configure only their timeout, keeping the cached configure"
+    assert '-DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g1"\n' in compiler and \
+        '-DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g1"\n' in llvm, \
+        "sanitizer trees keep line tables only; full debug information exhausted runner disk"
+    assert "-DCMAKE_JOB_POOLS=link=1 -DCMAKE_JOB_POOL_LINK=link" in compiler and \
+        "-DCMAKE_JOB_POOLS=link=1 -DCMAKE_JOB_POOL_LINK=link" in llvm
+    assert "check_ci_sanitizers.py" in compiler and "check_ci_sanitizers.py" in llvm
+    assert "cpp_mir" not in compiler, "the C++ emitter is sanitized only in cpp-backend.yml"
+    assert "GTI_TEST_BACKENDS: llvm" in llvm and "GTI_TEST_BACKENDS: llvm" in tsan
+    assert "GTI_ENABLE_THREAD_SANITIZER_TESTS=ON" in tsan, "TSan is real in the sanitizer run"
+    assert 'suite.get("skipped"' in tsan, "a skipped _tsan test is a missing runtime, never evidence"
+    assert '"libclang-rt-${llvm_major}-dev"' in (root / "scripts/configure_ci_toolchain.sh").read_text(), \
+        "clang's TSan runtime is installed on Linux"
+    verdict = sections["verdict"]
+    assert "name: Sanitizer verdict (${{ needs.source.outputs.sha }})" in verdict, \
+        "the release train identifies sanitizer evidence by the commit the verdict names"
+    assert "needs: [source, sanitizers, llvm-sanitizers, tsan]" in verdict
+    assert "if: always() && needs.source.outputs.sanitize == 'true'" in verdict
+    assert "release_train.py require-success" in verdict
+    sys.path.insert(0, str(root / "scripts"))
+    train = load_module(root / "scripts/release_train.py", "release_train_contract")
+    report_script = load_module(root / "scripts/full_validation_report.py", "full_validation_report_contract")
+    assert train.SANITIZER_WORKFLOW == ".github/workflows/sanitizers.yml"
+    assert f"name: {train.SANITIZER_VERDICT} (" in verdict
+    report = sections["report"]
+    assert "full_validation_report.py" in report and "--label main-broken" in report
+    assert f'--title "{report_script.SANITIZER_TITLE}"' in report, \
+        "the sanitizer finding has its own main-broken issue, which a green full validation never closes"
+    assert "needs.source.outputs.nightly == 'true'" in report and "needs.verdict.result != 'cancelled'" in report
+    # The release train reads the verdicts, so both of its API jobs may read Actions.
+    train_jobs = jobs(train_text)
+    assert "actions: read" in train_jobs["plan"] and "actions: read" in train_jobs["promote"]
 
 
 def ordered(body, items, message):
@@ -460,7 +588,7 @@ def train_contract(root):
     train = jobs(train_text)
     assert list(train) == ["plan", "cut", "promote"], list(train)
     header = train_text.split("\njobs:\n", 1)[0]
-    assert '  schedule:\n    - cron: "0 4 * * *"\n  workflow_dispatch:' in header
+    assert '  schedule:\n    - cron: "0 9 * * *"\n  workflow_dispatch:' in header
     assert "push:" not in header and "pull_request" not in train_text
     assert "group: gti-release-train\n  cancel-in-progress: false" in header
     assert set(re.findall(r"secrets\.([A-Za-z0-9_]+)", train_text)) == {"GTI_ROLLUP_APP_ID",
@@ -524,7 +652,8 @@ def workflow_contract(root):
     # release workflow stays as written.
     assert sorted(p.name for p in (root / ".github/workflows").glob("*.yml")) == [
         "backport.yml", "beta.yml", "cache.yml", "ci.yml", "cpp-backend.yml", "full-validation.yml",
-        "llvm-prebuilt.yml", "lsp.yml", "nightly.yml", "preview.yml", "rollback.yml", "rollup.yml", "train.yml"]
+        "llvm-prebuilt.yml", "lsp.yml", "nightly.yml", "rollback.yml", "rollup.yml",
+        "sanitizers.yml", "train.yml"]
     assert not (root / ".gitea/workflows/ci.yml").exists()
     for workflow in sorted((root / ".github/workflows").glob("*.yml")):
         duplicates = duplicate_mapping_keys(workflow.read_text())
@@ -543,17 +672,15 @@ def workflow_contract(root):
     nightly = release.split("  publish-nightly:\n", 1)[1]
     assert "runs-on: ubuntu-latest" in package and "Linux-X64) platform=linux-x64" in package
     assert "macos-15" not in package and "macOS-ARM64)" not in package, "the frozen workflow stays Linux-only"
-    manual = (root / "docs/architecture/build-and-driver.md").read_text()
-    assert "### GitHub nightly publication" in manual and "host-runtime.json" in manual
-    assert "Manual macOS release publication" not in manual, "manual macOS publication is retired"
     full = (root / ".github/workflows/full-validation.yml").read_text()
+    sanitizers = (root / ".github/workflows/sanitizers.yml").read_text()
     native_ci = ci + full
     assert "documentation-index:" not in native_ci, "documentation must reuse the native compiler"
     assert "build/gti_docgen --stdlib stdlib" in full
     assert "gti-ccache-v2-native-${{ runner.os }}-${{ runner.arch }}-" in ci
-    assert "gti-ccache-v2-sanitizers-${{ runner.os }}-${{ runner.arch }}-" in full
-    assert "gti-ccache-v1" not in ci + full, "per-SHA cache keys are retired"
-    for text in (ci, full):
+    assert "gti-ccache-v2-sanitizers-${{ runner.os }}-${{ runner.arch }}-" in sanitizers
+    assert "gti-ccache-v1" not in ci + full + sanitizers, "per-SHA cache keys are retired"
+    for text in (ci, full, sanitizers):
         assert "actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9" in text
         assert "actions/cache/save@" not in text, "only cache.yml and llvm-prebuilt.yml save caches"
         assert "path: ${{ env.CCACHE_DIR }}" in text and "secrets." not in text
@@ -581,7 +708,7 @@ def change_review_contract(root):
     assert "fetch-depth: 0" in job, "diff-based reviews need the full history"
     ordered(job, ["- name: Find where the candidate forked\n        id: range\n",
                   'python3 scripts/check_release_version.py "${GTI_FORK_SHA}" "${GTI_HEAD_SHA}"',
-                  'python3 scripts/check_stdlib_surface_review.py "${GTI_FORK_SHA}" "${GTI_HEAD_SHA}"'],
+                  'python3 scripts/check_stdlib_surface_review.py "${GTI_FORK_SHA}" "${GTI_HEAD_SHA}" --advisory'],
             "both reviews follow the one fork computation")
     assert job.count("GTI_FORK_SHA: ${{ steps.range.outputs.base }}") == 2
     assert job.count("GTI_HEAD_SHA: ${{ github.sha }}") == 3
@@ -712,8 +839,9 @@ def source_contract(root):
         invalid = commit("1.2.0\nBAD=value", "invalid version")
         query(invalid, before=downgraded, success=False)
 
-        # Nightly admission is read-only, latest-main-only, and a stale source is
-        # an ordinary skip rather than a false release failure.
+        # Nightly admission is read-only and newer-wins. A validated commit that
+        # main has moved past still publishes; one older than the published
+        # nightly is an ordinary skip rather than a false release failure.
         latest = commit("1.2.0", "latest")
         remote = work / "remote.git"
         run(["git", "init", "--bare", "--quiet", str(remote)], work)
@@ -723,7 +851,8 @@ def source_contract(root):
         assert query(latest, event="nightly")["stable"] == "false", "nightly never cuts stable"
         run(["git", "checkout", "--quiet", "--detach", advanced], work)
         tags = run(["git", "show-ref", "--tags"], work)
-        assert query(advanced, mode="admit-nightly") == {"publish": "false", "lease": ""}
+        assert query(advanced, mode="admit-nightly") == {"publish": "true", "lease": ""}, \
+            "a validated commit behind main's head is admitted"
         assert run(["git", "show-ref", "--tags"], work) == tags
 
         # A current-main retry may finish uploads after the tag already moved.
@@ -731,6 +860,10 @@ def source_contract(root):
         run(["git", "checkout", "--quiet", "main"], work)
         run(["git", "push", "--quiet", "origin", f"{latest}:refs/tags/nightly"], work)
         assert query(latest, mode="admit-nightly") == {"publish": "true", "lease": latest}
+        run(["git", "checkout", "--quiet", "--detach", advanced], work)
+        assert query(advanced, mode="admit-nightly") == {"publish": "false", "lease": ""}, \
+            "a commit older than the published nightly never moves the tag back"
+        run(["git", "checkout", "--quiet", "main"], work)
         newest = commit("1.2.0", "newest")
         run(["git", "push", "--quiet", "origin", "main"], work)
         assert query(newest, mode="admit-nightly") == {"publish": "true", "lease": latest}
@@ -863,8 +996,16 @@ def selection_contract(script, work, head, published, older, stray):
         raise AssertionError(("selection accepted", arguments))
 
     run(["git", "push", "--quiet", "--force", "origin", f"{published}:refs/tags/nightly"], work)
-    refused()  # head has no merge-queue evidence
-    verified.update({head, published, older})
+    # Nothing newer than the published nightly is validated, and its own
+    # packages are not retained: the walk stops there and builds nothing.
+    assert select() == {"sha": published, "version": "1.2.0", "build": "false", "head": "false"}
+    # The newest validated commit publishes even after main has moved past it.
+    run(["git", "push", "--quiet", "--force", "origin", f"{older}:refs/tags/nightly"], work)
+    verified.add(published)
+    assert select() == {"sha": published, "version": "1.2.0", "build": "true", "head": "false"}
+    run(["git", "push", "--quiet", "--force", "origin", f"{published}:refs/tags/nightly"], work)
+    assert select()["build"] == "false", "an already-published newest validated commit does not rebuild"
+    verified.update({head, older})
     assert select() == {"sha": head, "version": "1.2.0", "build": "true", "head": "true"}
     refused(ref="refs/heads/feature")
     refused(requested=published)  # only a dispatch selects a commit
@@ -941,11 +1082,8 @@ def archive_contract(root, cmake):
         assert stable_archive.read_bytes() == stable_bytes, "nightly rewrote the immutable archive"
         assert stable["lib/gti/llvm/libclang.so.20"] == ("symlink", "libclang.so.20.1")
         rejected = work / "rejected"
-        preview_directory = work / "preview"
-        package("preview", "preview", preview_directory, sha)
-        preview = contents(preview_directory / "gti-preview-linux-x64.tar.gz")
-        assert preview["share/gti/BUILD_ID"] == (sha + "\n").encode()
-        package("preview", "nightly", rejected, sha, success=False)
+        # The retired preview channel no longer packages.
+        package("preview", "preview", rejected, sha, success=False)
         # The nightly stamp lives in the stage; a stable archive refuses it.
         package("stable", f"v{version}", rejected, success=False)
         assert not rejected.exists(), "a nightly-stamped stage produced a stable archive"
@@ -1018,6 +1156,8 @@ def main():
     artifact_contract(root)
     editor_contract(root)
     nightly_contract(root)
+    llvm_pin_contract(root)
+    sanitizer_contract(root)
     train_contract(root)
     source_contract(root)
     suite_contract(root)

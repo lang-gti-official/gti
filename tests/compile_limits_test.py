@@ -22,6 +22,10 @@ LIMIT_KEYS = (
     "constexpr-depth",
     "macro-depth",
     "macro-expansions",
+    "syntax-nodes",
+    "syntax-bytes",
+    "syntax-tokens",
+    "syntax-depth",
     "constexpr-for-elements",
     "constexpr-for-copies",
 )

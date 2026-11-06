@@ -57,5 +57,6 @@ int main() {
 
 
 if __name__ == "__main__":
-    check_rejections()
+    if "--list-modes" not in sys.argv:
+        check_rejections()
     main(("http_url_operators",))

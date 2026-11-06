@@ -755,6 +755,8 @@ private:
     output << ";definition=" << number(value.definitionKind)
            << ";never-returns=" << value.neverReturns
            << ";tracks-caller=" << value.tracksCaller
+           << ";codegen-inline=" << number(value.codegenAttributes.inlining)
+           << ";codegen-cold=" << value.codegenAttributes.cold
            << ";thread-confined-callback=" << value.threadConfinedCallback
            << ";linkage=" << number(value.linkage)
            << ";external=" << std::quoted(value.externalSymbol) << ";c-array=";
@@ -896,7 +898,7 @@ std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
 
 void LoweredProgramPrinter::print(const LoweredProgram &program,
                                   std::ostream &output) const {
-  output << "lowered-program-v31\n";
+  output << "lowered-program-v32\n";
   for (const auto &unit : program.compiledInterfaceUnits())
     output << "compiled-interface-unit " << unit.sourceUnit
            << " package=" << std::quoted(unit.owner.package)

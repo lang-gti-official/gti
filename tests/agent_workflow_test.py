@@ -204,6 +204,54 @@ class DeclaredTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "at most"):
             validation.declared_tests(many)
 
+    def test_pull_request_ci_reports_block_rules_and_keeps_runnable_names(self):
+        # PR CI warns about a malformed block instead of failing; it still
+        # re-runs the plain names, never an untrusted token.
+        names, problems = validation.parse_declared("Validation:\n- T0: good_test, $(id)\n- T1: other_test")
+        self.assertEqual(names, ["good_test", "other_test"])
+        self.assertEqual(len(problems), 1)
+        self.assertIn("'$(id)'", problems[0])
+        self.assertEqual(validation.parse_declared(""), ([], [unittest.mock.ANY]))
+        names, problems = validation.parse_declared(
+            "Validation:\n- T1: " + ", ".join(f"t{i:03}" for i in range(validation.DECLARED_LIMIT + 5)))
+        self.assertEqual(len(names), validation.DECLARED_LIMIT)
+        self.assertTrue(any("at most" in problem for problem in problems))
+        document = {"tests": [{"name": "registered"}, {"name": "compiler_pipeline"},
+                              {"name": "off", "properties": [{"name": "DISABLED", "value": True}]}]}
+        selected, problems = validation.runnable_declared(document, ["registered", "compiler_pipeline",
+                                                                     "off", "missing"])
+        self.assertEqual(selected, ["registered"])
+        self.assertEqual(len(problems), 2)
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as directory:
+            summary = Path(directory) / "summary.md"
+            with unittest.mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true",
+                                                       "GITHUB_STEP_SUMMARY": str(summary)}), \
+                    contextlib.redirect_stdout(output):
+                validation.advisory("Validation block", ["first\nline", "second"])
+            self.assertIn("- first line\n- second\n", summary.read_text())
+        self.assertEqual(output.getvalue().splitlines(),
+                         ["::warning title=Validation block::first line", "::warning title=Validation block::second"])
+
+    def test_advisory_census_findings_are_read_from_passing_junit_output(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import advisory_checks
+        self.assertEqual(advisory_checks.MARKER, validation.ADVISORY_MARKER)
+        with tempfile.TemporaryDirectory() as directory:
+            shard = Path(directory) / "shard-linux-0"
+            shard.mkdir()
+            (shard / "linux-0.xml").write_text(
+                '<testsuite><testcase name="mir_census_regression" status="run"><system-out>'
+                "GTI-ADVISORY: mir_census_regression: 001.gti: 10 -> 40\nRECORDED noise\n"
+                '</system-out></testcase><testcase name="other" status="run"><system-out>ok'
+                "</system-out></testcase></testsuite>")
+            (shard / "linux-1.xml").write_text(
+                '<testsuite><testcase name="mir_census_regression"><system-out>'
+                "GTI-ADVISORY: mir_census_regression: 001.gti: 10 -> 40\n</system-out></testcase></testsuite>")
+            (shard / "broken.xml").write_text("<testsuite")
+            self.assertEqual(validation.advisory_findings(directory),
+                             ["mir_census_regression: 001.gti: 10 -> 40"])
+
     def test_coverage_reads_wrapped_ctest_patterns_and_focused_plans(self):
         with tempfile.TemporaryDirectory() as directory:
             plan = {"tier": "T1", "rationale": "local", "regressions": ["planned_regression"],
@@ -667,6 +715,23 @@ class Lifecycle(unittest.TestCase):
         state = self.flow.finish("task", "description", rollup=False)
         self.assertEqual(state["phase"], "synced")
         self.assertNotIn("mirror", state)
+
+    def test_records_from_the_retired_preview_lifecycle_still_work(self):
+        self.ready()
+        state = self.flow.load("task")
+        state.update(preview_attention={"task": "task", "phase": "failed"}, preview={"submission": "old"})
+        self.flow.save(state)
+        submission = self.flow.state_dir / "preview/submissions/old"
+        submission.mkdir(parents=True)
+        (submission / "state.json").write_text(json.dumps(
+            {"task": "task", "created": "2026-11-01T00:00:00+00:00", "phase": "failed"}))
+        self.assertEqual(self.flow.status("task")[0]["preview"], {"submission": "old"})
+        self.assertEqual(self.flow.finish("task", "description", rollup=False)["phase"], "synced")
+        stderr = io.StringIO()
+        with unittest.mock.patch.object(sys, "argv", ["agent_workflow.py", "preview", "status"]), \
+                contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit):
+            module.main()
+        self.assertIn("invalid choice: 'preview'", stderr.getvalue())
 
     def test_legacy_record_steps_aside_for_adoption(self):
         old = self.root / "old"
@@ -1402,21 +1467,38 @@ class ValidationChecks(unittest.TestCase):
         with self.assertRaises(ValueError):
             validation.shard_inventory(registered, "nightly")
 
-    def test_durations_refresh_keeps_the_maximum_and_ignores_unknown_names(self):
+    def test_durations_refresh_averages_each_run_and_ignores_unknown_names(self):
         with tempfile.TemporaryDirectory() as directory:
             table = Path(directory) / "durations.json"
-            table.write_text(json.dumps({"schema": 1, "default_seconds": 30, "seconds": {"a": 50.0, "b": 10.0}}))
+            table.write_text(json.dumps({"schema": 1, "default_seconds": 30,
+                                         "seconds": {"a": 50.0, "b": 10.0, "kept": 7.0}}))
             reports = Path(directory) / "reports"
             reports.mkdir()
             (reports / "one.xml").write_text(
-                '<testsuite><testcase name="a" time="20.4"/><testcase name="b" time="33.3"/>'
+                '<testsuite><testcase name="a" time="20.4"/><testcase name="b" time="33.4"/>'
                 '<testcase name="c" time="1.0"/><testcase name="bad name" time="9"/></testsuite>')
+            # One run's second report of the same test counts its larger time once.
+            (reports / "two.xml").write_text('<testsuite><testcase name="b" time="12.0"/></testsuite>')
             validation.update_durations(table, reports)
             seconds = json.loads(table.read_text())["seconds"]
-            self.assertEqual(seconds, {"a": 50.0, "b": 33.3, "c": 1.0})
+            self.assertEqual(seconds, {"a": 35.2, "b": 21.7, "c": 1.0, "kept": 7.0})
             (reports / "broken.xml").write_text("<testsuite>")
             with self.assertRaises(ValueError):
                 validation.update_durations(table, reports)
+
+    def test_fetched_duration_tables_must_be_well_formed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            table = Path(directory) / "durations.json"
+            table.write_text(json.dumps({"schema": 1, "default_seconds": 30, "seconds": {"a": 1.5}}))
+            validation.check_durations(table)
+            for bad in ("{", json.dumps([]), json.dumps({"seconds": {}}),
+                        json.dumps({"seconds": {"a": -1}}), json.dumps({"seconds": {"bad name": 1}}),
+                        json.dumps({"seconds": {"a": True}}), json.dumps({"seconds": {"a": 1}, "default_seconds": 0})):
+                table.write_text(bad)
+                with self.assertRaises(ValueError, msg=bad):
+                    validation.check_durations(table)
+            with self.assertRaises(ValueError):
+                validation.check_durations(Path(directory) / "missing.json")
 
     def test_shards_partition_deterministically_and_merge_only_complete_coverage(self):
         names = ["a", "b", "c", "d", "e"]
@@ -1715,7 +1797,7 @@ class CIEnvironment(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="gti-ci-context-") as temporary:
             root = Path(temporary) / "runner workspace"
             (root / "scripts").mkdir(parents=True)
-            for name in ("validation_checks.py", "source_stdlib_ci.py", "release_artifacts.py", "preview_examples.py"):
+            for name in ("validation_checks.py", "source_stdlib_ci.py", "release_artifacts.py", "example_gates.py"):
                 shutil.copy2(ROOT / "scripts" / name, root / "scripts" / name)
             git(root, "init", "-b", "main")
             git(root, "config", "user.name", "CI Test")

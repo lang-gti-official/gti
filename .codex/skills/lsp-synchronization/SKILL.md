@@ -8,6 +8,13 @@ description: Synchronize or implement GTI LSP and editor behavior after compiler
 Keep the compiler frontend as the semantic source of truth and the LSP as a
 versioned protocol adapter.
 
+For a request to plan a new LSP or editor capability, use
+[$plan-feature](../plan-feature/SKILL.md) to create or update a draft RFC and
+publish its draft proposal PR in `lang-gti-official/rfcs`, unless publication is
+restricted. A planning request does not authorize implementation. Ordinary
+synchronization fixes and execution plans for accepted designs do not need a
+new RFC by default.
+
 ## Workflow
 
 1. Run `git status --short`. Read
@@ -42,9 +49,10 @@ versioned protocol adapter.
   structure changes; keep structural and semantic highlighting roles distinct.
 
 Do not add a project index, document-service extraction, or richer concurrency
-unless the feature has a concrete need. Record future work in
-[`docs/plans/lsp-evolution.md`](../../../docs/plans/lsp-evolution.md) and update
-the current architecture doc when behavior lands.
+unless the feature has a concrete need. Track remaining accepted implementation
+work in [`docs/plans/lsp-evolution.md`](../../../docs/plans/lsp-evolution.md),
+linking its RFC. New capability designs use `$plan-feature` in the RFC
+repository. Update the current architecture doc when behavior lands.
 
 After local validation, use `$agent-workflow` and `$finish-release` for PR
 integration, local-main sync and version policy. Respect required PR checks;

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Plan a GTI Feature"
+  short_description: "Draft and publish GTI feature proposals as RFCs"
+  default_prompt: "Use $plan-feature to design this GTI feature and publish a draft proposal PR in lang-gti-official/rfcs."

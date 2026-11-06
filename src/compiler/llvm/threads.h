@@ -135,7 +135,7 @@ private:
                   const std::function<llvm::Value *()> &region);
   [[nodiscard]] llvm::Function *captureCallback();
   [[nodiscard]] llvm::StructType *captureBuffer();
-  void freeBox(llvm::IRBuilder<> &ir, llvm::Value *box, llvm::Type *boxType);
+  void freeBox(llvm::IRBuilder<> &ir, llvm::Value *box);
   void require(llvm::IRBuilder<> &ir, llvm::Value *condition);
   void storeValue(llvm::IRBuilder<> &ir, llvm::Value *destination,
                   llvm::Value *source, const SemanticType &type);

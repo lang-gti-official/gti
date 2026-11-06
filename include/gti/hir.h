@@ -679,6 +679,7 @@ struct HirClassInstance {
   SemanticTypeTraits traits;
   CompilerCapabilityTypeKind compilerCapability =
       CompilerCapabilityTypeKind::None;
+  CompileTimeSyntaxKind syntaxKind = CompileTimeSyntaxKind::None;
   bool lifecycleBoundBorrowCarrier = false;
   bool mutexGuardBorrowCarrier = false;
   ConcurrencyCapabilityPolicy transferPolicy =
@@ -778,9 +779,11 @@ struct HirFunctionInstance {
   bool staticMember = false;
   bool internalLinkage = false;
   bool constexprFunction = false;
+  bool proceduralFunction = false;
   bool requiresUnsafe = false;
   bool neverReturns = false;
   bool tracksCaller = false;
+  FunctionCodegenAttributes codegenAttributes;
   CThreadRuntimeOperation cThreadOperation = CThreadRuntimeOperation::None;
   bool threadConfinedCallback = false;
   ProcessMemoryRuntimeOperation processMemoryOperation =

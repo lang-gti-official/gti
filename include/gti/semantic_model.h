@@ -363,6 +363,26 @@ struct CallableParameterContract {
 
 enum class IntrinsicKind {
   None,
+  SyntaxSize,
+  SyntaxText,
+  SyntaxKind,
+  SyntaxAdjacent,
+  SyntaxSlice,
+  SyntaxGroup,
+  SyntaxSpan,
+  SyntaxLiteral,
+  SyntaxStringLiteral,
+  SyntaxPunctuation,
+  SyntaxIdentifier,
+  SyntaxKeyword,
+  SyntaxFresh,
+  SyntaxReference,
+  SyntaxJoin,
+  SyntaxParse,
+  SyntaxSplice,
+  SyntaxFail,
+  SyntaxFailRelated,
+
   NumericTypeParameterConversion,
   NumericAliasConversion,
   DefaultTypeParameterConstruction,
@@ -539,6 +559,11 @@ enum class IntrinsicKind {
 };
 
 // Terminal failure identity is separate from message capture and owner policy.
+[[nodiscard]] constexpr bool syntaxIntrinsic(IntrinsicKind kind) {
+  return kind >= IntrinsicKind::SyntaxSize &&
+         kind <= IntrinsicKind::SyntaxFailRelated;
+}
+
 [[nodiscard]] inline bool intrinsicTracksCaller(IntrinsicKind intrinsic) {
   return intrinsic == IntrinsicKind::Panic ||
          intrinsic == IntrinsicKind::FailInactiveValue ||
@@ -874,6 +899,18 @@ struct PublishedTextField {
                           const PublishedTextField &) = default;
 };
 
+// Resolved source optimization requests. They affect code-generation policy,
+// never control flow, ownership, failure behavior or the function's ABI.
+enum class FunctionInlining { Default, Hint, Never };
+
+struct FunctionCodegenAttributes {
+  FunctionInlining inlining = FunctionInlining::Default;
+  bool cold = false;
+
+  friend auto operator<=>(const FunctionCodegenAttributes &,
+                          const FunctionCodegenAttributes &) = default;
+};
+
 struct FunctionInfo {
   FunctionId id = 0;
   SourceUnitId sourceUnit = 0;
@@ -900,9 +937,12 @@ struct FunctionInfo {
   bool staticMember = false;
   bool internalLinkage = false;
   bool constexprFunction = false;
+  // The body or its selected closure consumes syntax capabilities.
+  bool proceduralOnly = false;
   bool requiresUnsafe = false;
   bool neverReturns = false;
   bool tracksCaller = false;
+  FunctionCodegenAttributes codegenAttributes;
   bool discardableResult = false;
   bool macroExpansion = false;
   bool threadConfinedCallback = false;
@@ -1090,6 +1130,8 @@ struct ClassVirtualDispatch {
                          const ClassVirtualDispatch &) = default;
 };
 
+enum class CompileTimeSyntaxKind { None, Tokens, Expression, Span, Binding };
+
 struct ClassTypeInfo {
   ClassId id = 0;
   SourceUnitId sourceUnit = 0;
@@ -1143,6 +1185,7 @@ struct ClassTypeInfo {
       ComputedTypeProjectionKind::None;
   CompilerCapabilityTypeKind compilerCapability =
       CompilerCapabilityTypeKind::None;
+  CompileTimeSyntaxKind syntaxKind = CompileTimeSyntaxKind::None;
 };
 
 struct EnumConstant {
@@ -2370,6 +2413,7 @@ struct MacroExpansionSite {
   const Stmt *body = nullptr;
   const FunctionDecl *declaration = nullptr;
   const Call *call = nullptr;
+  const Expr *expression = nullptr;
 };
 
 // These anchors are private to the analyzed syntax lifetime. HIR joins them
@@ -2654,6 +2698,10 @@ public:
   findMacroDeclaration(const Call &call) const;
   [[nodiscard]] std::vector<MacroExpansionSite> macroExpansionSites() const;
   [[nodiscard]] const Token *findMacroDefault(const Expr &expression) const;
+  // A substituted integer literal keeps the selected macro parameter's type
+  // through repeated expansion and concrete reanalysis, without a conversion.
+  [[nodiscard]] const SemanticType *
+  findMacroIntegerLiteralType(const Expr &expression) const;
   // The declared attributes of a field or class-like declaration; nullptr
   // when none were recorded.
   [[nodiscard]] const std::vector<ResolvedDeclarationAttribute> *
@@ -3116,6 +3164,7 @@ private:
   void recordMacroDeclaration(const Call &call,
                               const FunctionDecl &declaration);
   void recordMacroDefault(const Expr &expression, Token caller);
+  void recordMacroIntegerLiteralType(const Expr &expression, SemanticType type);
   void recordDeclarationAttributes(
       const Stmt &declaration,
       std::vector<ResolvedDeclarationAttribute> attributes);
@@ -3360,6 +3409,7 @@ private:
   std::unordered_map<const ExpressionStmt *, const FunctionDecl *>
       macroDeclarations;
   std::unordered_map<const Expr *, Token> macroDefaults;
+  std::unordered_map<const Expr *, SemanticType> macroIntegerLiteralTypes;
   std::unordered_map<const Stmt *, std::vector<ResolvedDeclarationAttribute>>
       declarationAttributes;
   struct ExpressionAlias {

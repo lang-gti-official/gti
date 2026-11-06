@@ -284,7 +284,7 @@ public:
     const bool classAliases = std::any_of(
         program.classInstances().begin(), program.classInstances().end(),
         [](const auto &instance) { return !instance.typeAliases.empty(); });
-    output << "mir-v119 valid=" << program.valid() << '\n';
+    output << "mir-v120 valid=" << program.valid() << '\n';
     if (program.requiresNativeObjectLayout())
       output << "native-object-layout\n";
     for (const auto &storage : program.foreignStorageDeclarations()) {
@@ -476,6 +476,7 @@ public:
       }
       output << " kind=" << number(instance.kind)
              << " compiler-capability=" << number(instance.compilerCapability)
+             << " syntax-kind=" << number(instance.syntaxKind)
              << " lifecycle-bound-borrow-carrier="
              << instance.lifecycleBoundBorrowCarrier
              << " mutex-guard-borrow-carrier="
@@ -727,6 +728,7 @@ public:
              << (instance.linkage == LanguageLinkage::C ? "c" : "gti")
              << " symbol=" << instance.externalSymbol << " c-array-count=";
       optional(instance.cArrayCountParameter);
+      output << " procedural=" << instance.proceduralFunction;
       output << " receiver=" << number(instance.receiverMutability)
              << " operator=";
       if (instance.overloadedOperator) {
@@ -751,7 +753,9 @@ public:
       output << " may-raise-defined-failure=" << instance.mayRaiseDefinedFailure
              << " requires-unsafe=" << instance.requiresUnsafe
              << " noreturn=" << instance.neverReturns
-             << " track-caller=" << instance.tracksCaller
+             << " track-caller=" << instance.tracksCaller << " codegen-inline="
+             << static_cast<int>(instance.codegenAttributes.inlining)
+             << " codegen-cold=" << instance.codegenAttributes.cold
              << " thread-confined-callback=" << instance.threadConfinedCallback
              << " cthread-operation="
              << static_cast<unsigned>(instance.cThreadOperation)

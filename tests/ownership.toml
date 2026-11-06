@@ -89,6 +89,11 @@ area = "syntax"
 paths = [
   "src/compiler/lexer.cpp",
   "src/compiler/parser.cpp",
+  "src/compiler/syntax_capture.cpp",
+  "src/compiler/procedural_syntax.cpp",
+  "include/gti/syntax_capture.h",
+  "include/gti/procedural_syntax.h",
+  "stdlib/std/syntax.gti",
   "src/compiler/token.cpp",
   "src/compiler/ast_clone.cpp",
   "src/compiler/ast_printer.cpp",
@@ -118,6 +123,9 @@ owners = [
   "pack_fold_syntax",
   "thread_local_syntax",
   "macro_result_parser",
+  "procedural_syntax",
+  "procedural_declaration_example",
+  "procedural_execution_example",
   "sum_type_pipeline",
   "generic_enum_declaration",
   "scoped_configuration_defines",
@@ -272,6 +280,8 @@ paths = [
   "tests/semantic_call_regression_tests.cpp",
   "tests/semantic_call_regressions*_test.py",
   "tests/fixtures/semantic_call_regressions.gti",
+  "tests/scalar_temporary_borrow*_test.py",
+  "tests/fixtures/call_operator_temporary_borrow.gti",
   "src/compiler/semantic_*",
   "include/gti/semantic_*",
   "include/gti/generic_constraint.h",
@@ -359,6 +369,10 @@ owners = [
   "shared_ownership_pipeline",
 ]
 consumers = [
+  "procedural_syntax",
+  "procedural_execution_example",
+  "procedural_html_semantics",
+  "procedural_html_lsp",
   "mir_cutover_corpus_oracle",
   "language_coverage_corpus",
   "lowered_program_corpus_census",
@@ -766,6 +780,7 @@ consumers = [
   "thread_local_end_to_end",
   "hosted_exit_status_runtime",
   "panic_runtime",
+  "process_resource_policy",
 ]
 
 # ---------------------------------------------------------------------------
@@ -897,8 +912,10 @@ area = "runtime-memory"
 risk = "system"
 paths = [
   "runtime/src/memory.cpp",
-  "runtime/src/owner_memory.cpp",
   "runtime/include/gti/memory.h",
+  "tests/fixtures/process_allocation_test_provider.h",
+  "tests/fixtures/owner_provider_*",
+  "tests/llvm_owner_provider_integration_test.py",
 ]
 owners = [
   "resource_memory_runtime",
@@ -911,11 +928,13 @@ owners = [
   "unique_scalar_allocation_runtime",
   "unique_class_allocation_runtime",
   "inherited_unique_allocation_runtime",
+  "llvm_owner_provider_integration",
   "llvm_memory_execution",
   "llvm_memory_contracts",
 ]
 consumers = [
   "process_allocation_elision",
+  "process_resource_policy",
   "runtime_performance_workloads",
 ]
 
@@ -1673,11 +1692,13 @@ paths = [
   ".gitea/",
   "scripts/validation_checks.py",
   "scripts/source_stdlib_ci.py",
+  "scripts/example_gates.py",
   "tests/source_stdlib_ci_test.py",
   "cmake/ReuseToolchain.cmake",
   "scripts/configure_ci_*",
   "scripts/check_ci_sanitizers.py",
   "scripts/free_ci_disk.sh",
+  "scripts/llvm_pin.py",
   "scripts/named_test_shards.py",
   "tests/named_test_shards_test.py",
 ]
@@ -1691,10 +1712,11 @@ owners = [
   "source_stdlib_ci",
   "lsp_release",
   "named_test_shards",
+  "neovim_local_installer",
+  "remote_runner",
 ]
 consumers = [
   "release_version_policy",
-  "preview_workflow",
 ]
 
 [[area]]
@@ -1718,7 +1740,6 @@ owners = [
   "macos_runtime_bundle",
 ]
 consumers = [
-  "preview_workflow",
   "repository_hosting",
 ]
 
@@ -1803,7 +1824,6 @@ owners = [
   "rollup",
 ]
 consumers = [
-  "preview_workflow",
   "repository_hosting",
 ]
 
@@ -1845,20 +1865,6 @@ paths = [
 owners = [
   "remote_runner",
   "gcp_spot_runner",
-]
-consumers = [
-  "agent_workflow",
-]
-
-[[area]]
-area = "preview"
-paths = [
-  "scripts/preview_workflow.py",
-  "scripts/preview_submit.py",
-  "scripts/preview_examples.py",
-]
-owners = [
-  "preview_workflow",
 ]
 consumers = [
   "agent_workflow",
@@ -1937,7 +1943,6 @@ paths = [
 ]
 owners = [
   "neovim_local_installer",
-  "preview_workflow",
 ]
 consumers = []
 
@@ -2025,13 +2030,6 @@ paths = ["scripts/highlight-inspector/"]
 reason = "interactive Neovim highlight comparison tool run by hand"
 
 [[area]]
-area = "preview-release"
-paths = ["scripts/preview_release.py", "scripts/preview_build.py", "scripts/preview_remote.py", "scripts/preview-ubuntu24.Dockerfile", ".github/workflows/preview.yml"]
-owners = ["preview_release", "ci_release"]
-consumers = ["preview_workflow", "neovim_gtiup"]
-risk = "system"
-
-[[area]]
 area = "lsp-sdk-publication"
 risk = "system"
 paths = [
@@ -2044,3 +2042,10 @@ paths = [
 ]
 owners = ["lsp_release", "lsp_sdk"]
 consumers = ["source_stdlib_ci", "ci_release", "lsp_protocol", "neovim_lsp_configuration"]
+
+[[area]]
+area = "function-codegen-attributes"
+paths = ["tests/codegen_attribute_tests.cpp", "examples/llvm/codegen-attributes.gti"]
+owners = ["codegen_attribute_contract", "codegen_attribute_runtime"]
+consumers = ["codegen_attribute_lsp", "tree_sitter_queries"]
+risk = "shared"

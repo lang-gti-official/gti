@@ -1,11 +1,13 @@
+#include "process_allocation_test_provider.h"
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <new>
 
-// Count the exact no-throw C++ allocation seam used by managed task boxes and
-// runtime worker state. Host thread-library and libc allocations are excluded;
+// Count GTI-provider task boxes and the native no-throw C++ allocation seam
+// used by runtime worker state and C++ backend boxes. Host thread-library and
+// libc allocations are excluded;
 // this is a transport-allocation oracle, not total process heap accounting.
 namespace {
 std::atomic<std::uint64_t> allocations{0};
@@ -37,3 +39,13 @@ extern "C" void gti_scoped_alloc_reset() {
 extern "C" std::uint64_t gti_scoped_allocations() {
   return allocations.load(std::memory_order_relaxed);
 }
+
+// LLVM task boxes use the GTI provider; native worker implementation state
+// still uses its native C++ allocation family. Observe both transport costs.
+namespace gti_test_process_provider {
+void *acquire(std::size_t bytes, std::size_t alignment) {
+  allocations.fetch_add(1, std::memory_order_relaxed);
+  return systemAllocate(bytes, alignment);
+}
+void release(void *address) { systemRelease(address); }
+} // namespace gti_test_process_provider

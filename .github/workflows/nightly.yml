@@ -1,15 +1,17 @@
 name: Nightly toolchain
 
-# Publishes the exact production archives retained by successful release-producing integration CI on
-# current main. No compiler build or full suite runs here. Missing/expired
-# artifacts require a fresh full CI dispatch on main, never a validation bypass.
+# Publishes the exact production archives retained by the newest main commit
+# whose full validation passed, which may trail main's head by one validation
+# cycle; newer wins, so the tag never moves backwards. No compiler build or
+# full suite runs here. Missing/expired artifacts require a fresh full CI
+# dispatch on main, never a validation bypass.
 on:
   schedule:
     - cron: "0 2 * * *"
   workflow_dispatch:
     inputs:
       commit:
-        description: Full 40-hex main commit to publish (default main head). Only main head publishes.
+        description: Full 40-hex main commit to publish (default the newest validated main commit). Never older than the published nightly.
         required: false
         default: ""
         type: string
@@ -121,7 +123,7 @@ jobs:
             printf 'Unexpected nightly asset set:\n%s\n' "${actual}" >&2
             exit 1
           fi
-      - name: Admit current main, including a retry of interrupted publication
+      - name: Admit a main commit no older than the published nightly, including a retry
         id: admission
         run: >-
           python3 scripts/resolve_release_source.py admit-nightly
