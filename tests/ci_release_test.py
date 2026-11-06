@@ -397,6 +397,19 @@ def llvm_pin_contract(root):
         "a system LLVM of another major is refused"
     refusal = cmake.split("if(NOT LLVM_VERSION_MAJOR EQUAL GTI_PINNED_LLVM_MAJOR)", 1)[1].split("endif()\n  endif()", 1)[0]
     assert "FATAL_ERROR" in refusal and "GTI_ALLOW_UNPINNED_LLVM" in refusal
+    # ccache with empty sloppiness cannot cache a compile that consumes a PCH,
+    # so the bundled LLVM/Clang (both fetch paths) is configured without them,
+    # and the setting is restored before GTI's own targets exist.
+    assert "set(CMAKE_DISABLE_PRECOMPILE_HEADERS ON)" in cmake and \
+        "unset(CMAKE_DISABLE_PRECOMPILE_HEADERS)" in cmake, "the bundled LLVM must not build PCH"
+    disable = cmake.index("set(CMAKE_DISABLE_PRECOMPILE_HEADERS ON)")
+    fetches = [match.start() for match in re.finditer(r"FetchContent_Declare\(\s*llvm_project", cmake)]
+    restore = cmake.index("unset(CMAKE_DISABLE_PRECOMPILE_HEADERS)")
+    assert len(fetches) == 2 and disable < min(fetches) and max(fetches) < restore, \
+        "the bundled LLVM is configured without precompiled headers"
+    assert restore < cmake.index('set(GTI_LLVM_VERSION "${GTI_PINNED_LLVM_VERSION}")') < \
+        cmake.index("target_precompile_headers("), "GTI's own precompiled headers stay enabled"
+    assert cmake.count("CMAKE_DISABLE_PRECOMPILE_HEADERS ON") == 1
     toolchain = (root / "scripts/configure_ci_toolchain.sh").read_text()
     assert 'sed -n \'s/^set(GTI_PINNED_LLVM_VERSION' in toolchain, "CI reads the pin, not its own version"
     assert not re.search(r"llvm-[0-9]{2}-dev|llvm@[0-9]{2}|clang-[0-9]{2}\b|llvm-[0-9]{2}/", toolchain), \
