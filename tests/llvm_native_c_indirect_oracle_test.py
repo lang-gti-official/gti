@@ -134,9 +134,13 @@ def main():
         run([args.emitter.resolve(), fixture / "native_function_borrows.gti",
              output / "borrow-contracts.o", output / "borrow-contracts.ll", 0,
              "--borrow-contracts"], "borrow-contracts")
-        run([args.emitter.resolve(), root / SOURCE_PATHS["native_result_borrows"],
+        run([args.emitter.resolve(), root / SOURCE_PATHS["existing_indirect"],
              output / "result-contracts.o", output / "result-contracts.ll", 0,
              "--result-contracts"], "result-contracts")
+        run([args.emitter.resolve(), root / SOURCE_PATHS["native_result_borrows"],
+             output / "result-borrow-contracts.o",
+             output / "result-borrow-contracts.ll", 0,
+             "--result-borrow-contracts"], "result-borrow-contracts")
     for source, mode in root_checks:
         run([args.emitter.resolve(), fixture / (source + ".gti"),
              output / (source + ".o"), output / (source + ".ll"), 0, mode],
