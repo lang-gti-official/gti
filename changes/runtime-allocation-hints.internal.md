@@ -1,1 +1,0 @@
-Expose existing allocation and failure-status facts to LLVM, simplify empty-vector initialization, and reconcile validation inventories for each supported host. Language semantics, failure handling, runtime ABI, and CLI behavior are unchanged.

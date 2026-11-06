@@ -1,1 +1,0 @@
-Add `[[inline]]`, `[[noinline]]` and `[[cold]]` optimization attributes for source-defined GTI functions and methods. LLVM preserves advisory inlining, explicit no-inlining and coldness through concrete generic instances; contradictory, duplicate and unsupported annotations are rejected.

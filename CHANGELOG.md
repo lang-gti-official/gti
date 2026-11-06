@@ -10,6 +10,319 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.494.0 - Release train 2026-11-06
+
+- **Breaking:** Constant arguments can initialize by-value class parameters through exact implicit consteval constructors, after ordinary overload tiers. Checked values forward through ordinary generic functions; hover names the conversion. Immediate validation retains library panic messages and uses a deterministic larger budget with request-local reuse.
+
+  Formatting patterns are checked at compilation through `std::format_pattern<Args...>`. Dynamic patterns now use `std::runtime_format`, `std::runtime_format_to`, `std::runtime_print`, `std::runtime_println`, `std::runtime_panic`, or the recoverable `std::try_runtime_*` counterparts. Raw text output remains unchanged. Custom formatters may opt into constant presentation validation with a constexpr `validate(format_spec&)` method. The checked aggregate path requires LLVM; C++ retains explicit runtime formatting and reports GTI-B0003 for checked aggregate publication.
+- **Breaking:** LLVM-compiled GTI owners now use GTI's process allocation provider, including
+  unique pointees, private shared-owner storage and task boxes. Replacement C++
+  `new`/`delete` functions no longer observe those GTI allocations; use GTI provider
+  hooks for allocation observation or fault injection. Explicit C++ interoperability
+  retains matching native allocation and deletion. Alignment, allocation-failure
+  behavior, construction rollback and deterministic cleanup are preserved.
+- **Breaking:** GTI now uses one LLVM everywhere: LLVM 23. Release, nightly and beta toolchains
+  bundle LLVM 23.1.4 (previously 20.1.0). Building GTI from source requires an
+  installed LLVM 23 (macOS: `brew install llvm@23`; Ubuntu: `llvm-23-dev` and
+  `libclang-23-dev` from apt.llvm.org), and CMake now refuses other LLVM major
+  versions instead of accepting LLVM 18 or newer. `-DGTI_ALLOW_UNPINNED_LLVM=ON`
+  keeps an experimental build on another major, with a warning.
+- **Breaking:** Automatic unordered-container hashing now requires `std::hashing<K>`.
+  For an existing exact `std::hash<K>` specialization, write
+  `std::unordered_map<K, V, std::hash<K>>` or
+  `std::unordered_set<K, std::hash<K>>`; an implicit legacy-only default reports
+  `GTI-S2029` with this migration. Explicit policies retain their instance state,
+  including seeds and owned resources, through lookup, moves and destruction.
+  Pair keys with legacy-only elements require element hashing protocols or an
+  explicit composite hasher that retains its component policy instances.
+- **Breaking:** Retire the `preview` toolchain channel. Nothing publishes it any more, so
+  `gtiup install preview` stops receiving updates; switch to `nightly`, which
+  publishes the newest commit that passed full validation. The local macOS
+  installer (`scripts/install_neovim_local.py`) now builds the published nightly
+  commit by default, `--local` still builds the current checkout, and `--preview`
+  fails with an explanation instead of building another source. To use your own
+  build through gtiup, run `cmake --install build --prefix <dir>`, then
+  `gtiup link dev <dir>` and `gtiup default dev` (gtiup 0.5.0 or later).
+- Fixed-size arrays can be borrowed with `T[N]&`, `mut T[N]&`, and inferred
+  `auto&` bindings. Exact extents survive generic calls and checked reference
+  returns, with ordinary lifetime, exclusive-access, and checked-index rules.
+- Readonly reference parameters now accept scalar and plain-enum temporaries, and member operators use the same call-scoped borrowing rules as ordinary functions. Stable borrowed cursor and text-view temporaries preserve their external owners; result-origin checks reject only loans that could escape from the temporary argument. Existing exact overloads retain priority; ordinary function ranking is unchanged and operator named-place ambiguity remains explicit.
+- Concept requirements can name a borrow-carrying value result with a checked
+  origin: `{ e } -> View [[borrowed_from(x)]];`, or `-> auto [[borrowed_from(x)]]`
+  to infer the view type. The view must borrow only from the named borrowed
+  parameter, so protocol concepts over `as_span()`, `view()` and cursor-style APIs
+  no longer fall back to a simple `{ e };` requirement.
+- Add `[[inline]]`, `[[noinline]]` and `[[cold]]` optimization attributes for source-defined GTI functions and methods. LLVM preserves advisory inlining, explicit no-inlining and coldness through concrete generic instances; contradictory, duplicate and unsupported annotations are rejected.
+- Compile-time limits are now per-request implementation quantities with
+  guaranteed minimums, each configurable with a flag (`--constexpr-steps`,
+  `--constexpr-depth`, `--macro-depth`, `--macro-expansions`,
+  `--constexpr-for-elements`, `--constexpr-for-copies`) or the same key in the
+  root package's `gti.toml` `[limits]` table; the command line wins and
+  dependency tables are not applied. Defaults rise to 1048576 constant-evaluation
+  steps and 512 nested constexpr calls per request (formerly 4096 and 64, now
+  Clang's defaults), 1024 nested macro invocations (formerly 64) and 8192 macro
+  bodies per outermost macro invocation, so longer literal format patterns
+  validate at compile time. An exhausted limit names the request, the executing
+  function, the limit and the flag and key that raise it. Repeated compile-time
+  calls no longer re-lower their callee: 50 identical immediate calls compile in
+  about the time of one. gti_lsp applies the same `[limits]`, and build reports
+  record the limits.
+- `std::panic` in compile-time code now fails with its own message, and every
+  compile-time context follows one lazy rule. When a panic runs during a
+  `consteval` call, a `constexpr` binding, `static_assert` or `if constexpr`, the
+  compile error quotes the message at your `std::panic` call and shows how
+  evaluation reached it. Only the code that actually runs during compilation must
+  be `constexpr`: a panic, a non-`constexpr` call, `std::assert` or a macro on a
+  branch that isn't taken no longer rejects the call. A non-`constexpr` call that
+  does run is reported by name, the same way in every context. Formatted
+  messages such as `std::panic("odd {}", v)` still can't run during compilation.
+  A `static_assert` that reads a parameter now points to the
+  `if (!condition) { std::panic("..."); }` pattern.
+- Compiled libraries can expose dependency-owned records and enums through chains and diamonds of dependencies while preserving nominal type identity, private layouts, and whole-reference borrowing contracts. Consumers can build from distributed compiled artifacts without dependency implementation sources.
+- Concept applications such as `std::integral<T>` and user-defined `has_size<T>`
+    are constant Boolean expressions. `if constexpr` selects an implementation
+    using the existing constraint guarantees, including protocol dispatch;
+    conjunction combines branch facts, while disjunction and negation add none.
+- Non-polymorphic member operators can declare trailing `requires` clauses.
+  `std::map` and `std::unordered_map` now provide mutable indexing for
+  default-initializable mapped types, and `std::pair` provides equality when
+  both element types support it. Requirements affect availability, never
+  overload ranking; map indexing acquires an exact owned key and returns an
+  exclusive reference.
+  The existing C++ emitter handles conditional operators using their resolved
+  identities. Fresh class-valued subscript arguments require LLVM and receive
+  `GTI-B0003` on C++; named keys and explicit moves retain existing support.
+- Protocols can declare generic associated type families with checked concrete
+    mappings, aliases and dependent uses.
+- Nested payload patterns can return checked references into a receiver or
+    reference parameter, and mutable payload bindings can coexist with by-value
+    siblings. Fresh assignment and conditional class results support call-scoped
+    read-only reference arguments while retaining distinct snapshots. Carrier
+    construction, relayed text views and returned borrowed resource owners retain
+    their checked dependencies. Fresh, moved and class-field fixed arrays support
+    verified indexing; qualified static calls on generic instances report the
+    intended diagnostic.
+- Compiled GTI libraries support primitive values, generated value records,
+    integral enums, checked reference contracts, exported overloads and failure
+    propagation. Consumers can use multiple independent libraries without their
+    implementation sources. Namespace-qualified APIs preserve exports, privacy
+    and distinct type identities. Same-manifest dependencies build in order and
+    reuse compatible artifacts.
+- `consteval` requires immediate execution through the staged MIR evaluator,
+    including standalone void calls and implicit bare-return construction.
+- LLVM supports guarded scan bounds-check elimination, checked reductions and
+    load reuse. Source-library sorting, string and allocation paths avoid
+    unnecessary work while preserving their checked behavior.
+- Reflected method descriptors can invoke selected instance methods with
+    ordinary receiver, argument, borrowing and cleanup rules.
+- Add explicit consuming range iteration on LLVM. `std::move(values).into_range()`
+  transfers a vector and yields owned, potentially move-only elements without
+  cloning or exposing vacant slots. Early exit cleans up all remaining elements.
+  User-defined ranges can implement the same structural `has_next`/`take_next`
+  protocol; unsafe `std::take_at` transfers a live raw object into an owned value.
+- `std::copy` returns its advanced output cursor, allowing successive copies to
+    continue writing while preserving checked destination ownership. Existing
+    calls that discard the result remain valid.
+  - Fix an internal compiler error when discarding a returned borrowed carrier
+    after moving a named carrier into a forwarding function.
+- Add owned dynamic JSON values for documents whose keys and value kinds are known only at runtime. Build objects and arrays, inspect and update checked values, explicitly clone trees, and parse or serialize them with the existing JSON APIs, including dynamic subtrees inside reflected structs.
+- Development automation adds an opt-in, single-worker Google Spot runner around
+  the existing remote executor. Disabled-by-default owner policy, durable cost
+  reservations, provider-enforced expiry/deletion and private IAP SSH keep the
+  pilot bounded. Live cloud commissioning and owner-reviewed pricing/billing
+  configuration are required before use; existing runner defaults do not change.
+- The Neovim plugin downloads toolchains from GitHub Releases on
+  `lang-gti-official/gti`. The rolling `nightly` release is rebuilt daily from
+  `main` for Linux x64 and Apple Silicon macOS; select it with
+  `vim.g.gti_channel = "nightly"`. When the plugin's version has no stable
+  `v<VERSION>` release yet, the default stable channel stops with an error naming
+  the missing release and the nightly channel, and never installs another
+  version.
+- Integrate the standalone gtiup manager from lang-gti-official/gtiup with matching project-specific Neovim language-server/parser selection.
+- Lambdas can return a mutable reference to one explicit reference parameter, or a read-only reborrow of a mutable parameter. Local reference aliases preserve that caller-owned origin, including through generic callable relays. Returned references retain the usual lifetime and conflicting-access checks; captured state and local objects cannot supply an escaping reference.
+- Integer literal arguments adopt the integer parameter type of the unique
+  fitting function, method, constructor, base-initializer, operator or lambda
+  candidate when no candidate matches exactly, so `twice(4)`, `values[0]`,
+  `values.push_back(1)` and `Counter{3}` need no explicit `uint64_t(...)` cast.
+  Exact candidates always win first, a literal that fits several candidates
+  stays ambiguous, named values keep their types, and an out-of-range literal
+  is rejected with a hint naming its value.
+- Return caller-owned references through local reborrow chains without lifetime annotations. Receiver and reference-parameter origins, access permissions, and cleanup boundaries remain checked, including chains through generic helpers and accessor results.
+- Publish compatible LSP components independently and build protocol-only changes against a validated compiler SDK. Managed editors can use explicit `gtiup update lsp` updates while retaining their selected compiler and resources.
+- Add `std::max_element(first, last, compare)` for selecting maxima by a custom
+  ordering, including mapped values and fields of records without `operator<`.
+  Comparators can be stateful or move-only; ties retain the first maximum and
+  empty ranges return the end position.
+- Project builds discover source module interfaces and implementations under the
+  package source root by default. Optional discovery roots and exclusions, plus
+  explicit module overrides, remove per-file manifest bookkeeping while retaining
+  GTI's existing module syntax and package boundaries.
+  Discovery reads headers without loading unused bodies, reports both conflicting
+  declarations, and refreshes editor membership on save even without file watchers.
+- Add consuming invocation through owned inline storage, including `inline_polymorphic::invoke_once<R>`. Eligible small once-invoked callbacks avoid heap allocation; larger or cleanup-bearing targets remain boxed. Immediate named-method calls on consumed fields now retain cleanup in their enclosing owner, matching call operators.
+- Procedural macros can implement an imported source-defined HTML library with owned nodes, escaped text and attributes, and ordinary checking of embedded GTI expressions. Syntax construction adds a safely escaped `std::syntax::string_literal` operation and qualified-name punctuation. Syntax joins share bounded immutable storage, generated local declarations retain definition-site imports, and the LSP ignores stale document versions.
+- Execute imported `#macro(proc)` bodies and constexpr helpers through verified MIR. The `std::syntax` API constructs one hygienic, checked expression for `name!({...})`, with shared work/storage limits and source diagnostics.
+- Add the phase-1 procedural macro frontend: `#macro(proc)` declarations, explicit
+  `name!({...})` syntax capture, trusted compile-time syntax type identities, and
+  opaque-input editor formatting. Existing typed macros and ordinary
+  braced calls retain their behavior.
+- Conformance blocks accept trailing requirements, including recursive protocol
+  requirements, with bounded cycle diagnostics. `std::formatting` and
+  `std::hashing` let generic types opt in once; pairs format as `(first, second)`
+  and work as unordered keys when their elements support the required operations.
+  Exact formatter specializations retain a compatibility adapter; legacy hash
+  specializations remain available as direct or explicitly selected policies.
+- Explicit read-only (`Args&...`) and mutable (`mut Args&...`) parameter packs borrow each argument through ordinary checked calls, including forwarding and bounded comma folds. Formatting entry points now borrow named values, so move-only strings and custom formattable owners no longer require `.view()` or an ownership transfer. Temporary arguments live through the caller's full expression. Plain value packs retain their copy/move behavior.
+- Stable `v<VERSION>` toolchain releases are published again, now on GitHub
+  Releases. Every 48 hours the release train cuts the published nightly into a
+  `v<VERSION>-beta.<K>` prerelease for Linux x64 and Apple Silicon macOS, and
+  promotes a beta that has run for 48 hours without a reported release blocker
+  to the stable `v<VERSION>` release with the identical archives. Lazy's
+  `version = "*"` picks up only stable tags. The stable channel of the Neovim
+  installer now refuses a version that has been yanked, names the reason and the
+  newest stable release that is not yanked, and never installs another version
+  in its place.
+- Add stable `std::remove` and `std::remove_if` compaction for checked indexed
+  sequences, returning the retained prefix length. Add `std::erase` and
+  `std::erase_if` for vector, deque, string, list, and forward_list, plus
+  predicate erasure for ordered/unordered maps and sets. Erasure returns the
+  number destroyed, preserves retained order, and supports owned elements
+  without implicit copying. Linked-list `remove_if` and checked deque/string
+  `swap_elements` complete the source-defined implementation.
+- Faster standard-library hot paths with unchanged results:
+    `print`/`println` of a `std::string` make one counted write; string
+    `append`, `insert` and `replace` grow geometrically instead of
+    reallocating on every append; `std::advance`, `next`, `prev` and `distance`
+    jump random-access cursors, so `lower_bound`, `upper_bound`,
+    `partition_point` and `binary_search` move in O(log n); `std::io` readers
+    and writers copy bytes in bulk; integer `std::midpoint` vectorizes.
+    `std::io::buffered_reader` exposes its read-ahead window through
+    `fill_buffer()`, `buffered()` and `consume(n)` and the new
+    `std::io::buffered_source` concept, which `std::io::getline` uses to scan
+    whole windows. `std::stoi`, `stol`, `stoll`, `stoul` and `stoull` over a
+    `string_view` are `constexpr`.
+- Add `std::vector<T>::contains(T& value)`, a read-only linear membership search
+  that stops at the first equal element without copying elements. Equality is
+  required only when this method is called, so vectors of non-comparable elements
+  remain supported.
+- Add `std::vector::swap_elements_unchecked` for restoring element exchanges when an unsafe caller has proved both indices live. Sorting uses its existing range proofs to avoid repeating bounds checks at each exchange; checked swaps retain their diagnostics and cleanup guarantees.
+- Fix C++ move assignment into an owning field reached through an indexed mutable reference, LLVM vector storage of mutex-containing values, and caller-location propagation from explicitly tracked trusted intrinsics.
+- Fix internal compiler errors when creating checked text views owned by a
+  reference to a borrowed carrier, reborrowing a mutable view field for reading,
+  or returning a carrier that references independent fields of its receiver.
+  Preserve the owner of checked text returned through immutable local aliases,
+  and reject reuse of a stored exclusive reference while its shared child is live.
+  Temporary cursors retain cleanup-bound owners without duplicating their
+  external dependency, including when a later argument fails.
+- Fix copies and by-value relays of text read through stored references, and C++
+  emission of mutable reference-field writes, generic deferred carrier fields,
+  and scalar argument assignments evaluated after a callable is prepared.
+- Reject heap allocation of values containing checked borrows with an ownership
+  diagnostic, including borrowing captures passed to owning callable wrappers,
+  instead of reporting an internal compiler error.
+- Call-scoped temporary borrows now work for `operator()`: passing a function
+  result, an arithmetic expression or an iterator dereference to a call
+  operator's read-only reference parameter (including through `std::for_each`)
+  compiles and runs, where it previously stopped with an internal compiler error
+  or `GTI-B0003`. A temporary produced by a call that can fail, such as a checked
+  cursor dereference, now reports that failure instead of failing to compile.
+- Calling a member on a view returned by a class that holds a `mut`
+    reference field, such as `reader.pending().empty()`, no longer stops with
+    internal compiler error GTI-B0001; the view keeps the class's exclusive
+    borrow alive for the expression, as a named view already did.
+- Deeply nested macro expansion (about 60 levels) or nested constexpr staging no
+  longer crashes `gti` and `gti_lsp` with a native stack overflow: compile-time
+  recursion continues on fresh stack segments, so its depth is bounded only by
+  the configured limits. The macro body limit, which applied to a whole
+  compilation (programs with more than 4096 macro invocations in total were
+  rejected with `GTI-S2124`), now applies per outermost invocation, and nested
+  macro expansion uses memory linear rather than quadratic in its depth.
+- Correct compiler type-replacement and cached semantic-instance lifetimes,
+    including source-debug rebasing across requests. MIR worklist containers
+    avoid incompatible instrumentation identities when linked with prebuilt LLVM.
+- Fix an internal compiler error when runtime `size()` or `empty()` calls observe
+  namespace or static-member constexpr string views, including grouped receivers
+  and comma expressions with side effects.
+- Accept parenthesized `int64_t` minimum literals consistently and preserve parenthesized signed-minimum literals through MIR optimization, including narrow integer arguments, without introducing a runtime conversion or weakening integer-range verification.
+- Fix C++ backend construction of owning reference carriers after earlier fields,
+  and of nested classes containing deferred reference fields. Preserve source
+  initialization order, rollback cleanup, and moved reference bindings without
+  requiring an invalid default value or assignment through a reference member.
+- Fix C++ backend rejection of callable templates whose different generic parameters select the same concrete type, including lambda-based std::inner_product with matching iterator types.
+- Debug-info builds (`-g`) on the LLVM backend no longer ask LLVM 23 for the
+  terminator of an unfinished block. LLVM 23 changed that query to assume a
+  complete block, so a debug record placed at an unfinished block's end could
+  land before its last instruction, or read past an empty block.
+- Stop exposing conformance-block operations under compiler-generated namespaces in the standard-library documentation index. Concepts and ordinary namespace functions remain available.
+- Fix an internal compiler error (`derived loan ... conflicts with active sibling
+  loan`) when iterating or reading through a local reborrow of a `mut` reference
+  parameter that holds an exclusive view, such as a range-for over a
+  `mut std::mutable_span<T>&` parameter or a `T& alias = parameter;` binding.
+- Passing the scalar or plain-enum result of a closure call or of a built-in
+  method such as `std::string_view::size()` to a read-only reference parameter,
+  including a formatting argument such as `std::format("{}", text.size())`, no
+  longer causes an internal compiler error.
+- Passing the result of an interface method call or a foreign (`extern "C"`) function call directly to a read-only scalar reference parameter, such as a `std::runtime_format` argument, no longer stops compilation with an internal compiler error. `gti test` with the C++ backend builds again: `std::testing` assertion messages format their operands through runtime formatting.
+- Fix an internal compiler error when a function returns a C string or view read
+  through a raw pointer held in a local binding, such as
+  `c_string* base = items; return base[index];`; the result is ownerless text.
+- Constructing an immovable class that holds a reference, such as one with a
+  non-movable field and a `mut int&` member, no longer causes an internal
+  compiler error on the LLVM backend when the constructor can fail. A failure
+  during that construction now propagates and unwinds the fields already built,
+  instead of being routed through a later operation's failure path.
+- Speed up missing-import suggestions in `gti_lsp`. Repeated discoveries reuse
+  candidate interface scans while their source text and module registrations
+  are unchanged. A qualified name such as `api::value` no longer triggers a trial
+  compile of every standard-library module that declares `value`. A discovery
+  that took about 9 s now takes under 0.5 s, and suggestions are unchanged.
+- Fix LLVM rejecting construction and exchanged results of inline polymorphic
+  owners in lambda-local variables, including once-only `std::transfer_function`
+  callbacks taken from a threaded work queue.
+- Fix LLVM compilation of forwarded plain base references and retained owned
+  receivers invoking readonly or mutable virtual call operators, including
+  `std::inline_polymorphic::invoke_once`. Preserve the selected base address and
+  the owner's cleanup on success and failure.
+- The LLVM backend now matches the C++ profile in two places. A constructor
+  whose body-local destructor fails still destroys its already-completed fields
+  before propagating the failure; the field rollback was previously retired one
+  step too early in MIR, so LLVM skipped it. Unique-owner, shared-owner and task
+  storage on LLVM now allocates through the same replaceable nothrow
+  `operator new`/`delete` as generated C++, instead of the injectable process
+  provider, so a native companion that replaces either observes the same
+  allocations on both backends.
+- Publish LSP diagnostics and semantic queries before searching for missing-import fixes, and cancel obsolete import searches when source changes so repairing errors does not wait for their speculative analysis.
+- Make editor completion reuse standard-library analysis and cancel obsolete work,
+  including cold preamble construction. Share parsed module syntax when switching
+  between executable and library files, reject completions from changed imports,
+  and make Neovim toolchain/parser selection and running-server reporting consistent.
+- Typed macros now accept fitting integer literals such as `PRINT_BORDER(33)` for a `uint8_t` parameter, matching ordinary calls. Exact overloads remain preferred, ambiguous and out-of-range calls are rejected, and expanded arguments retain their selected type without changing lazy evaluation.
+- Fix owning constructor-pack results passed to another call, preserving their
+  single transfer and cleanup on argument failure. Fix discarded conditional
+  assignment lowering so it does not create an extra owner or destroy a stored
+  value twice; preserve move-only assignment through comma and conditional forms
+  in the C++ backend.
+- A named move-only argument passed by value to one overload of an overloaded
+  function, including an element of a by-value parameter pack, now reports
+  `GTI-S2018` at the argument with the by-value parameter (or parameter pack),
+  the `std::move(...)` remedy and a `value.view()` hint where applicable,
+  instead of a generic `GTI-S2012` listing every overload.
+- Preserve ordinary reference and stored-borrow provenance through procedural
+  macro expansion, including parameter and receiver returns, reference binding,
+  and exact carried referents. Retain closure captures and every borrowed owner
+  through grouping and expansion, so conflicting mutations receive normal source
+  diagnostics instead of an internal compiler error. Invalid local, temporary,
+  read-only-to-mutable and carrier-shell escapes remain rejected.
+- Fix generic owned-value borrowing and constrained callable results inside expressions. Preserve deleted-copy causes for by-value argument packs, and explain nonconstant immediate arguments at their caller.
+- Check every formatting argument against `formattable` at the public formatting, printing, or panic call. Set swaps now state their relocatable comparator/hash/equality requirements at the API boundary, avoiding errors inside container implementation methods.
+- Fix an internal compiler error when a temporary read-only argument is followed
+  by a returned reference in a fallible call, including formatted panics that
+  pass `source_location::line()` and `source_location::file_name()` directly.
+- Indexing a view returned by a method, such as `window.view()[position(i)]`,
+    no longer stops with internal compiler error GTI-B0001 when the index
+    expression can fail; the view's owner stays borrowed until the view is
+    destroyed on that failure path too.
+
 ## 0.493.3 - Source moves to GitHub
 
 - GTI's source, pull requests, issues and CI now live at
