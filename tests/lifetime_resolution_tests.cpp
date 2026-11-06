@@ -1037,6 +1037,81 @@ int main() { return 0; }
          "a structural profile match cannot replace a fixed static lifetime with a caller region");
 }
 
+void testEnumInitializerLifetimeComposition() {
+  const auto result = analyze(R"(
+enum Choice { first(int& value), second(int& value), missing(int code) };
+enum Wrapped<T> { present(T value), missing(int code) };
+struct Selected {
+  Choice state;
+  Selected(int& value) : state(Choice::first(value)) {}
+};
+struct Nested {
+  Wrapped<Choice> state;
+  Nested(int& value) : state(Wrapped<Choice>::present(Choice::second(value))) {}
+  Nested(int code) : state(Wrapped<Choice>::missing(code)) {}
+};
+struct Copied {
+  Choice state;
+  Copied(Choice value) : state(value) {}
+};
+struct ThroughConstructor {
+  Copied state;
+  ThroughConstructor(int& value) : state(Copied(Choice::second(value))) {}
+  ThroughConstructor(int code) : state(Copied(Choice::missing(code))) {}
+};
+enum Named<lifetime a> { present(int&<a> value), missing(int code) };
+struct Explicit<lifetime a> {
+  Named<a> state;
+  Explicit(int&<a> value) : state(Named<a>::present(value)) {}
+};
+int main() { return 0; }
+)");
+  expectValid(result, "explicit enum initializer trees compose active payload dependencies and exact nested guards");
+  for (const auto name : {"Selected", "Nested", "ThroughConstructor"}) {
+    const auto *owner = record(result, name);
+    const auto *lifecycle = owner && owner->declaration
+                                ? result.semantics.findClassLifecycle(*owner->declaration)
+                                : nullptr;
+    bool connected = false;
+    if (lifecycle)
+      for (const auto &constructor : lifecycle->constructors) {
+        if (constructor.parameterTypes.size() != 1 ||
+            constructor.parameterTypes.front().kind != lang::SemanticType::Reference)
+          continue;
+        const auto input = constructor.parameterTypes.front().referenceLifetime;
+        connected |= std::any_of(constructor.lifetimeContract.bounds.begin(),
+                                 constructor.lifetimeContract.bounds.end(),
+                                 [&](const auto &bound) {
+          return bound.longer == input &&
+                 std::any_of(owner->genericParameters.begin(), owner->genericParameters.end(),
+                             [&](const auto &parameter) {
+            return parameter.lifetime && parameter.implicit &&
+                   bound.shorter == lang::Lifetime::parameter(parameter.id);
+          });
+        });
+      }
+    expect(connected, "the active enum payload contributes a declared input-to-anonymous-storage relation");
+  }
+  const auto named = analyze(R"(
+enum Named<lifetime a> { present(int&<a> value), missing(int code) };
+struct Fixed<lifetime a> {
+  Named<a> state;
+  Fixed(int& value) : state(Named<a>::present(value)) {}
+};
+int main() { return 0; }
+)");
+  expect(!named.semanticValid,
+         "enum initializer summaries do not invent relationships into named owner lifetimes");
+  const auto wrong = analyze(R"(
+enum Left { present(int& value) };
+enum Right { present(int& value) };
+struct Holder { Left state; Holder(int& value) : state(Right::present(value)) {} };
+int main() { return 0; }
+)");
+  expect(!wrong.semanticValid,
+         "matching payload spelling does not substitute a different enum declaration");
+}
+
 void testNamedProjectedPatternLifetimes() {
   const std::string declarations = R"(
 class Borrowed<T&<source>> {
@@ -1264,6 +1339,7 @@ int main() {
   testExecutableLifetimeIdentity();
   testInferredCarrierRegions();
   testProjectedPatternLifetimes();
+  testEnumInitializerLifetimeComposition();
   testNamedProjectedPatternLifetimes();
   testNominalFormation();
   testCStringRegions();

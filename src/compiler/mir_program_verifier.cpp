@@ -1,4 +1,5 @@
 #include "gti/mir.h"
+#include "gti/borrow_conditions.h"
 #include "gti/compiled_scalar_signature.h"
 #include "gti/mir_dominance.h"
 #include "gti/mir_editor.h"
@@ -4524,7 +4525,11 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
       }
 
       std::vector<MirLoanDependency> mappedCallSources;
+      // One formal field can be supplied by several alternatives of an
+      // intermediate reference. Keep each mapping's complete source set.
+      std::vector<std::vector<MirLoanDependency>> mappedCallSourceGroups;
       for (const auto &mapping : instruction.borrowFields) {
+        auto &mappedGroup = mappedCallSourceGroups.emplace_back();
         // Static storage is no call input. The global-origin check below and
         // the complete-set flow verify its exact storage place.
         if (mapping.origin == BorrowOriginKind::Global)
@@ -4574,95 +4579,93 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
           return prefix.size() <= fields.size() &&
                  std::equal(prefix.begin(), prefix.end(), fields.begin());
         };
-        auto selected = std::find_if(
-            sources.begin(), sources.end(), [&](const auto &source) {
-              return !source.designatedFields.empty() &&
-                     prefixOf(source.designatedFields, mapping.sourceFields);
-            });
-        std::size_t prefixLength =
-            selected == sources.end() ? 0 : selected->designatedFields.size();
-        // A mapping of the whole input takes its single dependency as it is,
-        // whatever carrier path that dependency was reached through.
-        if (selected == sources.end() && sources.size() == 1 &&
-            (sources.front().designatedFields.empty() ||
-             mapping.sourceFields.empty())) {
-          const auto &paths = inputPaths;
-          const auto inventory =
-              findStoredCarrierReferenceInventory(program, carrierType);
-          if (mapping.sourceFields.empty() ||
-              (paths.size() == 1 &&
-               prefixOf(paths.front().fields, mapping.sourceFields))) {
-            selected = sources.begin();
-            prefixLength =
-                mapping.sourceFields.empty() ? 0 : paths.front().fields.size();
-          } else if (inventory && inventory->size() == 1 &&
-                     prefixOf(inventory->front().fields,
-                              mapping.sourceFields) &&
-                     inventory->front().conditions ==
-                         mapping.sourceConditions) {
-            // A compact dependency covers its carrier's sole stored
-            // reference, including one inside a payload alternative whose
-            // guard the mapping selects exactly.
-            selected = sources.begin();
-            prefixLength = inventory->front().fields.size();
-          } else if (inventory && inventory->empty()) {
-            // An input that stores no reference, in any alternative, is
-            // itself the borrowed owner: its selected fields project its own
-            // storage.
-            const auto alternatives =
-                findStoredCarrierAlternativeInventory(program, carrierType);
-            if (alternatives && alternatives->empty()) {
-              selected = sources.begin();
+        for (const auto &source : sources) {
+          std::optional<std::size_t> prefixLength;
+          if (!source.designatedFields.empty() &&
+              prefixOf(source.designatedFields, mapping.sourceFields))
+            prefixLength = source.designatedFields.size();
+          // Every alternative of a reference to the whole input is a
+          // supplier. A pathless dependency may also compactly describe the
+          // carrier's sole stored-reference path; the typed inventory proves
+          // which path, independently of the number of possible origins.
+          if (!prefixLength &&
+              (source.designatedFields.empty() ||
+               (sources.size() == 1 && mapping.sourceFields.empty()))) {
+            const auto inventory =
+                findStoredCarrierReferenceInventory(program, carrierType);
+            if (mapping.sourceFields.empty()) {
               prefixLength = 0;
+            } else if (inputPaths.size() == 1 &&
+                       prefixOf(inputPaths.front().fields,
+                                mapping.sourceFields)) {
+              prefixLength = inputPaths.front().fields.size();
+            } else if (inventory && inventory->size() == 1 &&
+                       prefixOf(inventory->front().fields,
+                                mapping.sourceFields) &&
+                       inventory->front().conditions ==
+                           mapping.sourceConditions) {
+              prefixLength = inventory->front().fields.size();
+            } else if (inventory && inventory->empty()) {
+              const auto alternatives =
+                  findStoredCarrierAlternativeInventory(program, carrierType);
+              if (alternatives && alternatives->empty())
+                prefixLength = 0;
             }
           }
+          // A dependency may name the enclosing carrier's path while the
+          // actual input is its sole reference-bearing subobject.
+          if (!prefixLength && inputPaths.size() == 1 &&
+              !inputPaths.front().fields.empty() &&
+              inputPaths.front().fields.size() < source.designatedFields.size() &&
+              std::equal(inputPaths.front().fields.rbegin(),
+                         inputPaths.front().fields.rend(),
+                         source.designatedFields.rbegin()) &&
+              prefixOf(inputPaths.front().fields, mapping.sourceFields))
+            prefixLength = inputPaths.front().fields.size();
+          if (!prefixLength)
+            continue;
+          if (source.source == 0)
+            return verificationFailure(
+                body, owner, "returned field loses its selected input field",
+                block.id, instruction.id);
+          auto access = source.access;
+          if (mapping.origin == BorrowOriginKind::Argument &&
+              mapping.parameter < instruction.parameterTypes.size() &&
+              instruction.parameterTypes[mapping.parameter].kind ==
+                  SemanticType::Reference &&
+              mapping.sourceFields.empty())
+            access =
+                instruction.parameterTypes[mapping.parameter].referenceAccess;
+          if (mapping.access == AccessMode::Mutable &&
+              access != AccessMode::Mutable)
+            return verificationFailure(
+                body, owner,
+                "returned field upgrades its selected input permission", block.id,
+                instruction.id);
+          const auto projected =
+              *prefixLength == mapping.sourceFields.size()
+                  ? source.source
+                  : projectedFieldSource(
+                        source.source,
+                        {mapping.sourceFields.begin() + *prefixLength,
+                         mapping.sourceFields.end()});
+          if (projected == 0)
+            return verificationFailure(
+                body, owner, "returned field has no exact referent projection",
+                block.id, instruction.id);
+          const MirLoanDependency mapped{.source = projected,
+                                         .designatedFields = mapping.resultFields,
+                                         .access = mapping.access};
+          if (std::find(mappedGroup.begin(), mappedGroup.end(), mapped) ==
+              mappedGroup.end())
+            mappedGroup.push_back(mapped);
         }
-        // A single dependency that names its carrier's one stored reference
-        // also covers an input that is the subobject holding that reference:
-        // the input's own sole path is the tail of the carrier's path.
-        if (selected == sources.end() && sources.size() == 1 &&
-            inputPaths.size() == 1 && !inputPaths.front().fields.empty() &&
-            inputPaths.front().fields.size() <
-                sources.front().designatedFields.size() &&
-            std::equal(inputPaths.front().fields.rbegin(),
-                       inputPaths.front().fields.rend(),
-                       sources.front().designatedFields.rbegin()) &&
-            prefixOf(inputPaths.front().fields, mapping.sourceFields)) {
-          selected = sources.begin();
-          prefixLength = inputPaths.front().fields.size();
-        }
-        if (selected == sources.end() || selected->source == 0)
+        if (mappedGroup.empty())
           return verificationFailure(
               body, owner, "returned field loses its selected input field",
               block.id, instruction.id);
-        auto access = selected->access;
-        if (mapping.origin == BorrowOriginKind::Argument &&
-            mapping.parameter < instruction.parameterTypes.size() &&
-            instruction.parameterTypes[mapping.parameter].kind ==
-                SemanticType::Reference &&
-            mapping.sourceFields.empty())
-          access =
-              instruction.parameterTypes[mapping.parameter].referenceAccess;
-        if (mapping.access == AccessMode::Mutable &&
-            access != AccessMode::Mutable)
-          return verificationFailure(
-              body, owner,
-              "returned field upgrades its selected input permission", block.id,
-              instruction.id);
-        const auto projected =
-            prefixLength == mapping.sourceFields.size()
-                ? selected->source
-                : projectedFieldSource(
-                      selected->source,
-                      {mapping.sourceFields.begin() + prefixLength,
-                       mapping.sourceFields.end()});
-        if (projected == 0)
-          return verificationFailure(
-              body, owner, "returned field has no exact referent projection",
-              block.id, instruction.id);
-        mappedCallSources.push_back({.source = projected,
-                                     .designatedFields = mapping.resultFields,
-                                     .access = mapping.access});
+        mappedCallSources.insert(mappedCallSources.end(),
+                                 mappedGroup.begin(), mappedGroup.end());
       }
       std::optional<MirPlaceId> expectedSource;
       if (instruction.borrowOrigin == BorrowOriginKind::Receiver) {
@@ -5119,7 +5122,8 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
                 body, owner, "stored field mapping has no constructor",
                 block.id, instruction.id);
           std::vector<MirLoanDependency> mapped;
-          for (const auto &path : resultPaths) {
+          for (std::size_t fieldIndex = 0; fieldIndex < resultPaths.size(); ++fieldIndex) {
+            const auto &path = resultPaths[fieldIndex];
             const auto origin = constructorFieldOrigin(program, *callee, path, 0,
                                                        &instruction.lifetimeApplication);
             if (!origin || origin->parameter >= instruction.operands.size())
@@ -5127,7 +5131,7 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
                   body, owner,
                   "stored field mapping has no exact formal origin", block.id,
                   instruction.id);
-            const auto &mapping = instruction.borrowFields[mapped.size()];
+            const auto &mapping = instruction.borrowFields[fieldIndex];
             if (mapping != *origin)
               return verificationFailure(body, owner,
                                          "constructor field contract disagrees "
@@ -5139,19 +5143,21 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
             // field place instead of preserving that opaque entry identity.
             // The independent constructor proof still binds every mapping to
             // its exact initializer and result layout.
-            if (mapped.size() >= mappedCallSources.size() ||
-                mappedCallSources[mapped.size()].source == 0 ||
-                mappedCallSources[mapped.size()].designatedFields !=
-                    path.fields ||
-                mappedCallSources[mapped.size()].access !=
-                    path.reference.referenceAccess)
+            if (fieldIndex >= mappedCallSourceGroups.size() ||
+                mappedCallSourceGroups[fieldIndex].empty())
               return verificationFailure(
                   body, owner,
                   "stored field mapping loses a nested formal path", block.id,
                   instruction.id);
-            mapped.push_back({.source = mappedCallSources[mapped.size()].source,
-                              .designatedFields = path.fields,
-                              .access = path.reference.referenceAccess});
+            for (const auto &source : mappedCallSourceGroups[fieldIndex]) {
+              if (source.source == 0 || source.designatedFields != path.fields ||
+                  source.access != path.reference.referenceAccess)
+                return verificationFailure(
+                    body, owner,
+                    "stored field mapping loses a nested formal path", block.id,
+                    instruction.id);
+              mapped.push_back(source);
+            }
           }
           if (mapped.size() != actualSources.size())
             return verificationFailure(
@@ -5455,19 +5461,20 @@ findStoredCarrierAlternativeInventory(const MirProgram &program,
       complete = traits.has_value();
       if (traits && traits->containsBorrowedState) {
         if (current.kind == SemanticType::Lambda) {
-          const auto instance = std::find_if(
-              program.lambdaInstances().begin(),
-              program.lambdaInstances().end(),
-              [&](const auto &row) { return row.type == current; });
-          complete =
-              instance != program.lambdaInstances().end() &&
-              instance->captureSymbols.size() == instance->captureTypes.size();
+          const MirLambdaInstance *instance = nullptr;
+          for (const auto &candidate : program.lambdaInstances())
+            if (mirLambdaLifetimeView(candidate, current)) {
+              if (instance && candidate.captureSymbols != instance->captureSymbols)
+                complete = false;
+              instance = &candidate;
+            }
+          const auto captures = mirLambdaCaptureTypes(program, current);
+          complete &= instance && captures &&
+                      instance->captureSymbols.size() == captures->size();
           if (complete)
-            for (std::size_t index = 0; index < instance->captureTypes.size();
-                 ++index)
-              complete &=
-                  appendChildren(instance->captureTypes[index],
-                                 instance->captureSymbols[index], nullptr);
+            for (std::size_t index = 0; index < captures->size(); ++index)
+              complete &= appendChildren((*captures)[index],
+                                         instance->captureSymbols[index], nullptr);
         } else if (const auto view = mirClassLifetimeView(program, current)) {
           for (const auto &field : view->instance->declaredFields) {
             const auto actual = view->instantiate(field.type);
@@ -13801,6 +13808,30 @@ completeBorrowSetHasTypedShape(const MirProgram &program,
       });
 }
 
+// A produced value keeps the original supplier places, parents and access.
+// Only its exact enum guard types move to the independently proved target
+// shape, by typed subobject path. A shared source region can become different
+// target slots, so a global region-ID replacement would be incorrect here.
+[[nodiscard]] CompleteBorrowFact transportCompleteBorrowFact(
+    const MirProgram &program, const MirBody &body, std::size_t owner,
+    const SemanticType &source, const SemanticType &target,
+    const MirBorrowDependencySet &fact) {
+  if (source == target ||
+      (fact.possibleAlternatives.empty() &&
+       std::all_of(fact.dependencies.begin(), fact.dependencies.end(),
+                   [](const auto &dependency) { return dependency.conditions.empty(); })))
+    return fact;
+  if (!mirLifetimeValueConversion(program, body, owner, source, target) ||
+      !completeBorrowSetHasTypedShape(program, source, fact))
+    return std::nullopt;
+  const auto from = findStoredCarrierAlternativeInventory(program, source);
+  const auto to = findStoredCarrierAlternativeInventory(program, target);
+  if (!from || !to)
+    return std::nullopt;
+  const auto transport = BorrowConditionTransport::between(*from, *to);
+  return transport ? transportBorrowDependencyConditions(fact, *transport) : std::nullopt;
+}
+
 // Project the exact selected payload's complete dependency set. The source
 // must come from independent executable flow; attached extraction annotations
 // are never an origin. Tag dominance and reference transfer/liveness remain
@@ -14832,24 +14863,11 @@ completeBorrowSourcePath(const MirProgram &program,
         return std::nullopt;
       target.ownerType = *actual;
     }
-    auto summary = universalSummary;
-    const auto instantiateConditions = [&](auto &conditions) {
-      for (auto &condition : conditions) {
-        const auto actual = substituteTypeLifetimes(condition.enumeration,
-                                                    instruction.lifetimeApplication.bindings);
-        if (!actual)
-          return false;
-        condition.enumeration = *actual;
-      }
-      return true;
-    };
-    for (auto &mapping : summary.dependencies)
-      if (!instantiateConditions(mapping.sourceConditions) ||
-          !instantiateConditions(mapping.resultConditions))
-        return std::nullopt;
-    for (auto &alternative : summary.possibleAlternatives)
-      if (!instantiateConditions(alternative.conditions))
-        return std::nullopt;
+    const auto instantiatedSummary = instantiateBorrowSummaryLifetimes(
+        universalSummary, instruction.lifetimeApplication.bindings);
+    if (!instantiatedSummary)
+      return std::nullopt;
+    const auto &summary = *instantiatedSummary;
     using Availability = BorrowSupplierAvailability;
     std::vector<Availability> availability(summary.dependencies.size(),
                                            Availability::Unknown);
@@ -14896,16 +14914,20 @@ completeBorrowSourcePath(const MirProgram &program,
         continue;
       }
       const MirOperand *argument = nullptr;
+      SemanticType inputType = SemanticType::Unknown;
       bool referenceInput = false;
       if (mapping.origin == BorrowOriginKind::Argument &&
           mapping.parameter < instruction.operands.size() &&
           mapping.parameter < target.parameterTypes.size()) {
         argument = &instruction.operands[mapping.parameter];
-        referenceInput = target.parameterTypes[mapping.parameter].kind ==
-                         SemanticType::Reference;
+        inputType = target.parameterTypes[mapping.parameter];
+        referenceInput = inputType.kind == SemanticType::Reference;
+        if (referenceInput && inputType.arguments.size() == 1)
+          inputType = SemanticType(inputType.arguments.front());
       } else if (mapping.origin == BorrowOriginKind::Receiver &&
                  instruction.receiver) {
         argument = &*instruction.receiver;
+        inputType = target.ownerType;
         referenceInput =
             target.receiverMutability != ReceiverMutability::Consuming;
       }
@@ -14972,6 +14994,9 @@ completeBorrowSourcePath(const MirProgram &program,
                 group && group->kind == MirLoanKind::Stored) {
               retainedContents = retainedCarrierInput(state, copied->id);
               if (retainedContents)
+                retainedContents = transportCompleteBorrowFact(
+                    program, body, owner, copied->type, inputType, *retainedContents);
+              if (retainedContents)
                 retainedGroup = group;
             }
       }
@@ -14995,14 +15020,25 @@ completeBorrowSourcePath(const MirProgram &program,
             continue;
           address = &stage->operands.front();
         }
+        const MirPlace *contents = nullptr;
         if (address->kind == MirOperandKind::BorrowRead ||
-            address->kind == MirOperandKind::BorrowWrite)
+            address->kind == MirOperandKind::BorrowWrite) {
           input = retainedCarrierInput(state, address->place);
-        else if (address->kind == MirOperandKind::Loan) {
+          contents = body.findPlace(address->place);
+        } else if (address->kind == MirOperandKind::Loan) {
           const auto *loan = body.findLoan(address->loan);
           if (loan && loan->additionalDependencies.empty() &&
-              !loan->referenceSelection)
+              !loan->referenceSelection) {
             input = retainedCarrierInput(state, loan->source);
+            contents = body.findPlace(loan->source);
+          }
+        }
+        if (input && contents) {
+          const auto &sourceType = contents->type.kind == SemanticType::Reference &&
+                                          contents->type.arguments.size() == 1
+              ? contents->type.arguments.front() : contents->type;
+          input = transportCompleteBorrowFact(program, body, owner,
+                                              sourceType, inputType, *input);
         }
       }
       std::vector<BorrowDependencyCondition> inputGuard;
@@ -15407,6 +15443,11 @@ completeBorrowSourcePath(const MirProgram &program,
                  instruction.operation == MirOperation::Identity &&
                  instruction.info.type == instruction.operands.front().type))) {
       result = fromOperand(state, instruction.operands.front());
+      if (result && instruction.info.type.kind != SemanticType::Reference &&
+          instruction.operands.front().type.kind != SemanticType::Reference)
+        result = transportCompleteBorrowFact(
+            program, body, owner, instruction.operands.front().type,
+            instruction.info.type, *result);
       if (result && instruction.kind == MirInstructionKind::CallInput &&
           instruction.info.type.kind == SemanticType::Reference) {
         const auto access = instruction.info.type.referenceAccess;
@@ -15729,12 +15770,18 @@ completeBorrowSourcePath(const MirProgram &program,
     // A function with no reachable normal return has no result evidence. Do
     // not turn the absence of returning paths into a vacuous empty set.
     if (flow.incoming[block.id - 1] &&
-        block.terminator.kind == MirTerminatorKind::Return)
+        block.terminator.kind == MirTerminatorKind::Return) {
+      auto returned = block.terminator.value
+          ? fromOperand(state, *block.terminator.value) : constructedObject(state);
+      if (returned && block.terminator.value && callableFormal &&
+          callableFormal->returnType.kind != SemanticType::Reference &&
+          block.terminator.value->type.kind != SemanticType::Reference)
+        returned = transportCompleteBorrowFact(
+            program, body, owner, block.terminator.value->type,
+            callableFormal->returnType, *returned);
       observations.normalReturns.push_back(
-          {.block = block.id,
-           .dependencies = block.terminator.value
-                               ? fromOperand(state, *block.terminator.value)
-                               : constructedObject(state)});
+          {.block = block.id, .dependencies = std::move(returned)});
+    }
   }
   return observations;
 }

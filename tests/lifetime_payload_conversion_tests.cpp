@@ -156,6 +156,42 @@ void checkOwningTransferMutations(const MirProgram &program) {
     }
 }
 
+void checkGuardMutations(const MirProgram &program) {
+  std::optional<MirBodyAddress> selected;
+  MirValueId valueId = 0;
+  for (const auto address : enumerateMirBodyAddresses(program)) {
+    const auto *body = findMirBody(program, address);
+    if (!body)
+      continue;
+    for (const auto &value : body->values)
+      if (value.info.type.kind == SemanticType::Enum && value.borrowDependencies &&
+          !value.borrowDependencies->dependencies.empty() &&
+          !value.borrowDependencies->dependencies.front().conditions.empty() &&
+          !value.borrowDependencies->possibleAlternatives.empty()) {
+        selected = address;
+        valueId = value.id;
+      }
+  }
+  expect(selected.has_value(), "guard fixture retains complete typed enum producer evidence");
+  if (!selected)
+    return;
+  for (int mutation = 0; mutation != 5; ++mutation) {
+    auto broken = program;
+    auto *body = findMirBody(broken, *selected);
+    auto &fact = *body->values[valueId - 1].borrowDependencies;
+    auto &guard = fact.dependencies.front().conditions.front();
+    switch (mutation) {
+    case 0: guard.enumeration.lifetimeArguments = {Lifetime::staticLifetime()}; break;
+    case 1: guard.variant = 99; break;
+    case 2: guard.subobject.push_back(9999); break;
+    case 3: fact.possibleAlternatives.clear(); break;
+    case 4: fact.dependencies.front().parent = body->loans.size() + 1; break;
+    }
+    expect(!verifyMirProgram(broken).valid(),
+           "MIR rejects stale guard types, forged paths/variants, omitted alternatives and foreign parents");
+  }
+}
+
 void checkMutations(const MirProgram &program) {
   std::optional<MirBodyAddress> address;
   for (const auto candidate : enumerateMirBodyAddresses(program)) {
@@ -182,7 +218,8 @@ void checkMutations(const MirProgram &program) {
   const auto missingProof = verifyMirLifetimeApplications(missingEdges, *body, address->owner);
   expect(!missingProof.valid() &&
              std::any_of(missingProof.errors.begin(), missingProof.errors.end(), [](const auto &error) {
-               return error.message.find("payload") != std::string::npos;
+               return error.message.find("payload") != std::string::npos ||
+                      error.message.find("call-input stage") != std::string::npos;
              }),
          "MIR must reconstruct a payload conversion after its recorded edges are removed");
 
@@ -342,6 +379,49 @@ int main() {
 }
 )gti");
 
+  const auto factory = positive("returned-enum-guard-instantiation", R"gti(
+enum Reading<lifetime a> { empty, value(int&<a> owner, int sequence) };
+Reading<a> make<lifetime a>(int&<a> owner, bool present) {
+  if (present) { return Reading<a>::value(owner, 7); }
+  return Reading<a>::empty;
+}
+int inspect<lifetime a>(Reading<a>& reading) {
+  switch (reading) {
+  case Reading<a>::empty: return 0;
+  case Reading<a>::value(auto& value, sequence): return value + sequence;
+  }
+}
+int main() {
+  int first = 3; int second = 5;
+  Reading<_> left = make(first, true);
+  Reading<_> right = make(second, true);
+  return inspect(left) + inspect(right) - 22;
+}
+)gti");
+  if (factory.canGenerateCode())
+    checkGuardMutations(factory.mir);
+
+  (void)positive("nested-enum-field-guard-conversion", R"gti(
+enum Reading<lifetime a> { empty, value(int&<a> owner) };
+struct Pair<lifetime a, lifetime b> {
+  Reading<a> first;
+  Reading<b> second;
+  Pair(Reading<a> left, Reading<b> right) : first(left), second(right) {}
+};
+int inspect<lifetime a>(Reading<a>& reading) {
+  switch (reading) {
+  case Reading<a>::empty: return 0;
+  case Reading<a>::value(auto& value): return value;
+  }
+}
+int main() {
+  int number = 7;
+  auto reading = Reading<_>::value(number);
+  Pair<_, _> pair{reading, reading};
+  return inspect(pair.first) + inspect(pair.second) - 14;
+}
+)gti");
+
   const auto owning = positive("owning-region-transfer", R"gti(
 mut int destroyed = 0;
 struct View<lifetime a> {
@@ -349,10 +429,10 @@ struct View<lifetime a> {
   View(int&<a> input) : value(input) {}
   ~View() { destroyed += this.value; }
 };
-View<a> make<lifetime a>(int&<a> input) { return View<a>{input}; }
+View<a> make<lifetime a>(int&<a> input) { return View<a>(input); }
 int read<lifetime a>(View<a> view) { return view.value; }
 int forward<lifetime a>(int&<a> input) {
-  return read(View<a>{input}) + read(make(input));
+  return read(View<a>(input)) + read(make(input));
 }
 int main() { int value = 7; return forward(value) - 14; }
 )gti");
@@ -366,7 +446,7 @@ struct View<lifetime a> {
   ~View() {}
 };
 int read(View<static> view) { return view.value; }
-int forward<lifetime a>(int&<a> input) { return read(View<a>{input}); }
+int forward<lifetime a>(int&<a> input) { return read(View<a>(input)); }
 int main() { int value = 7; return forward(value); }
 )gti");
 

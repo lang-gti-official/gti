@@ -3051,6 +3051,12 @@ private:
   [[nodiscard]] std::optional<SemanticBorrowDependencySet>
   completeBorrowDependencySet(const Expr *expression) const;
 
+  // Preserve a complete fact across an already proved value conversion;
+  // enum guard types follow exact subobject paths, never a global region map.
+  [[nodiscard]] std::optional<SemanticBorrowDependencySet>
+  completeBorrowDependencySetForType(const Expr *expression,
+                                     const SemanticType &target);
+
   [[nodiscard]] std::optional<SemanticBorrowDependencySet>
   payloadBorrowDependencySet(const Call &call,
                              const EnumeratorRecord &enumerator);

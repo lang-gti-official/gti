@@ -617,6 +617,17 @@ with no normal return cannot prove this contract. A program-local memoized
 query treats recursive/in-progress callees as unknown; declarations cannot
 justify one another cyclically. Exact direct calls use only independently
 verified target contracts, and failure successors receive no result fact.
+Complete-summary queries cache the universal type/value instance. A call
+instantiates every guard with its checked lifetime application after matching
+the canonical signature. Value conversions instead transport guard types by
+exact subobject and variant paths between complete source and target type
+inventories. The original guard must occur in the source inventory; each path
+has one target counterpart. This preserves the active subset and every source
+place, parent loan, designated field and access mode, including when one source
+region shortens differently in two fields. MIR first proves the value conversion
+from body lifetime facts, then reconstructs this same transport for stages,
+carrier inputs, stores and returns. A global replacement of region IDs is not
+an equivalent proof. Missing inventories or ambiguous paths remain unknown.
 Value-annotation and return-contract checks share the same producer/storage
 dataflow reconstruction. These facts neither establish nor replace ordinary
 loan, access, escape, movement or cleanup proofs.

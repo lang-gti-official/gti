@@ -1,4 +1,5 @@
 #include "gti/lifetime_types.h"
+#include "gti/borrow_conditions.h"
 #include "gti/callable_lifetimes.h"
 
 #include <array>
@@ -17,6 +18,77 @@ lang::SemanticType reference(lang::Lifetime region,
   auto type = lang::SemanticType::referenceTo(lang::SemanticType::Int32, access);
   type.referenceLifetime = region;
   return type;
+}
+
+void testBorrowConditionTransport() {
+  using namespace lang;
+  const auto a = Lifetime::parameter(501);
+  const auto x = Lifetime::inference(601);
+  const auto y = Lifetime::inference(602);
+  const auto enumeration = [](Lifetime region) {
+    auto type = SemanticType::enumType(51);
+    type.lifetimeArguments = {region};
+    return type;
+  };
+  std::vector<BorrowAlternativePath> from;
+  std::vector<BorrowAlternativePath> to;
+  for (const SymbolId field : {SymbolId{10}, SymbolId{20}})
+    for (std::size_t variant = 0; variant != 2; ++variant) {
+      from.push_back({.conditions = {{.subobject = {field},
+          .enumeration = enumeration(a), .variant = variant}}});
+      to.push_back({.conditions = {{.subobject = {field},
+          .enumeration = enumeration(field == 10 ? x : y), .variant = variant}}});
+    }
+  const auto transport = BorrowConditionTransport::between(from, to);
+  expect(transport.has_value(), "guard transport derives exact typed paths");
+  SemanticBorrowDependencySet source{
+      .dependencies = {{.place = {.root = 7}, .designatedFields = {10, 30},
+          .access = AccessMode::Mutable, .protectsStorage = true, .parent = 9,
+          .conditions = from[0].conditions}},
+      .possibleAlternatives = {from[0], from[2]}};
+  const auto actual = transportBorrowDependencyConditions(source, *transport);
+  expect(actual && actual->dependencies.front().place == source.dependencies.front().place &&
+             actual->dependencies.front().parent == 9 &&
+             actual->dependencies.front().access == AccessMode::Mutable &&
+             actual->dependencies.front().protectsStorage &&
+             actual->dependencies.front().designatedFields == std::vector<SymbolId>({10, 30}) &&
+             actual->dependencies.front().conditions == to[0].conditions &&
+             actual->possibleAlternatives == std::vector<BorrowAlternativePath>({to[0], to[2]}),
+         "one source region maps by field path while every origin and active subset stays exact");
+  auto reordered = to;
+  std::reverse(reordered.begin(), reordered.end());
+  expect(BorrowConditionTransport::between(from, reordered).has_value(),
+         "typed inventory order does not change guard identity");
+  for (int mutation = 0; mutation != 5; ++mutation) {
+    auto broken = to;
+    switch (mutation) {
+    case 0: broken[0].conditions.front().enumeration.enumId = 52; break;
+    case 1: broken[0].conditions.front().variant = 9; break;
+    case 2: broken[0].conditions.front().subobject = {99}; break;
+    case 3: broken.pop_back(); break;
+    case 4: broken[1] = broken[0]; break;
+    }
+    expect(!BorrowConditionTransport::between(from, broken),
+           "guard transport rejects changed declarations, variants, paths and incomplete inventories");
+  }
+  source.dependencies.front().conditions.front().enumeration = enumeration(x);
+  expect(!transportBorrowDependencyConditions(source, *transport),
+         "a stale or forged source guard cannot become target evidence");
+  FunctionBorrowDependencySummary summary{
+      .dependencies = {{.resultFields = {30}, .origin = BorrowOriginKind::Argument,
+                        .parameter = 2, .sourceFields = {40}, .access = AccessMode::Mutable,
+                        .resultConditions = from[0].conditions,
+                        .sourceConditions = from[2].conditions}},
+      .possibleAlternatives = {from[0]}};
+  const auto instantiated = instantiateBorrowSummaryLifetimes(
+      summary, std::array{LifetimeBinding{a, x}});
+  expect(instantiated && instantiated->dependencies.front().parameter == 2 &&
+             instantiated->dependencies.front().resultFields == std::vector<SymbolId>{30} &&
+             instantiated->dependencies.front().sourceFields == std::vector<SymbolId>{40} &&
+             instantiated->dependencies.front().sourceConditions.front().enumeration == enumeration(x) &&
+             instantiated->dependencies.front().resultConditions.front().enumeration == enumeration(x) &&
+             instantiated->possibleAlternatives.front().conditions.front().enumeration == enumeration(x),
+         "canonical summary instantiation preserves suppliers and all typed guards");
 }
 
 void testLifetimeConversionShapes() {
@@ -192,6 +264,7 @@ void testContextualLifetimeInference() {
 }
 
 int main() {
+  testBorrowConditionTransport();
   testLifetimeConversionShapes();
   using namespace lang;
   testScopedCallableFormation();

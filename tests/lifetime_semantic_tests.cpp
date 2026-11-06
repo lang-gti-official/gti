@@ -33,7 +33,8 @@ int main(int argc, char **argv) {
       if (mir && internal && argc > 2 &&
           (name == "stored-external-reference-keeps-its-declared-region" ||
            name == "borrowed-value-parameter-publishes-stored-suppliers")) {
-        const std::size_t owner = 2;
+        const std::size_t owner =
+            name == "borrowed-value-parameter-publishes-stored-suppliers" ? 1 : 2;
         const auto directory = std::filesystem::path(argv[2]);
         std::filesystem::create_directories(directory);
         const auto path = directory / (std::string(name) + ".mir.txt");
@@ -95,6 +96,14 @@ int main(int argc, char **argv) {
       }
     }
   };
+  check("text-equality-with-independent-storage-regions", R"gti(
+bool same(std::string_view left, std::string_view right) { return left == right; }
+bool different(std::string_view left, std::string_view right) { return left != right; }
+int main() { std::string_view text = "hello"; return same(text, "hello") ? 0 : 1; }
+)gti", true);
+  check("text-equality-does-not-admit-other-scalar-shapes", R"gti(
+bool wrong(std::string_view text, int number) { return text == number; }
+)gti", false, "GTI-S2000");
   check("explicit-identity", R"gti(
 int&<a> identity<lifetime a>(int&<a> value) { return value; }
 int main() { int value = 7; int& result = identity(value); return result - 7; }

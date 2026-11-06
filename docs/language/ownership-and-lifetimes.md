@@ -460,6 +460,11 @@ relationships from their bodies, including mutually recursive helpers; exported
 contracts do not depend on inspecting the implementation. Inference does not
 upgrade read-only access or manufacture an owner for a raw pointer.
 
+Built-in text equality reads both operands during the expression and returns
+only a boolean. Two valid text views can therefore have independent storage
+regions; neither region must outlive the other. This comparison rule does not
+permit assigning one view to an incompatible lifetime or extending its storage.
+
 In a payload-enum switch label, omitted lifetime arguments and `_` use the
 switched value's exact regions, including holes nested inside type arguments.
 Explicit named regions, ordinary type and value arguments, and reference access
@@ -472,6 +477,11 @@ when its source covers that region and its type permits the conversion. An
 inferred payload region can cover the common usable part of several inputs;
 all of their storage dependencies remain live. Conversion preserves the exact
 variant, ordinary type and value arguments, reference access, and cleanup.
+The converted value retains the same possible active alternatives and all of
+their owner dependencies. Guard types follow each exact field path, so two
+fields can shorten a shared source lifetime independently without confusing
+their variant evidence. Returned enum contracts are instantiated for the call;
+a prior call's regions do not become part of a cached function-body summary.
 
 A stored reference with omitted region receives an anonymous declaration slot.
 Distinct fields have distinct slots; constructor binding determines their actual

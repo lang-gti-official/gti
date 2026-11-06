@@ -394,7 +394,9 @@ llvm::Value *Scalars::literal(const Literal &literal,
 
 llvm::Value *Scalars::convert(llvm::Value *value, const SemanticType &from,
                               const SemanticType &to, bool checked) {
-  if (from == to)
+  // Lowered admission has already proved the semantic conversion. Lifetimes
+  // do not change a scalar's runtime representation (including counted text).
+  if (session.representations().sameType(from, to))
     return value;
   auto source = domain(from), target = domain(to);
   auto *output = session.layouts().get(target).value;

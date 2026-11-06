@@ -14818,6 +14818,13 @@ auto SemanticVisitor::Impl::isComparable(SemanticType left, SemanticType right,
     return numericResult(left, right, leftExpression, rightExpression) !=
            SemanticType::Unknown;
   }
+  // Equality observes both operands during this expression and returns no
+  // borrow. Their independent storage regions need not outlive one another.
+  // This is comparison permission, not an assignment/conversion relation.
+  if ((left.kind == SemanticType::StringView ||
+       left.kind == SemanticType::CString) &&
+      left.kind == right.kind && sameLifetimeConversionShape(left, right))
+    return true;
   if ((left.kind == SemanticType::CString && right == SemanticType::NullPtr) ||
       (right.kind == SemanticType::CString && left == SemanticType::NullPtr)) {
     return true;

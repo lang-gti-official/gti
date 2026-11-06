@@ -14,6 +14,17 @@ from backend_modes import native_modes
 
 
 CASES = {
+    "independent_text_storage_regions": """
+bool same(std::string_view left, std::string_view right) { return left == right; }
+bool different(std::string_view left, std::string_view right) { return left != right; }
+int main() {
+  std::string_view text = "hello";
+  if (text.size() != 5) { return 1; }
+  if (!same(text, "hello")) { return 2; }
+  if (!different("other", text)) { return 3; }
+  return 0;
+}
+""",
     "explicit_identity": """
 int&<region> identity<lifetime region>(int&<region> value) { return value; }
 int main() { int value = 7; return identity(value) - 7; }
@@ -31,6 +42,22 @@ int main() {
   int left = 3; int right = 8;
   if (choose(left, right, true) != 3) { return 1; }
   return choose(left, right, false) - 8;
+}
+""",
+    "selected_sources_in_multiple_fields": """
+int&<a> choose<lifetime a>(int&<a> left, int&<a> right, bool first) {
+  if (first) { return left; }
+  return right;
+}
+struct Pair<lifetime a> {
+  int&<a> first; int&<a> second;
+  Pair(int&<a> left, int&<a> right) : first(left), second(right) {}
+};
+int main() {
+  int left = 3; int right = 9;
+  int& selected = choose(left, right, false);
+  Pair pair{selected, selected};
+  return pair.first + pair.second - 18;
 }
 """,
     "subobject": """
@@ -94,10 +121,10 @@ struct View<lifetime a> {
   View(int&<a> input) : value(input) {}
   ~View() { cleanup_trace += this.value; }
 };
-View<a> make<lifetime a>(int&<a> input) { return View<a>{input}; }
+View<a> make<lifetime a>(int&<a> input) { return View<a>(input); }
 int read<lifetime a>(View<a> view) { return view.value; }
 int observe<lifetime a>(int&<a> input) {
-  int value = read(View<a>{input}) + read(make(input));
+  int value = read(View<a>(input)) + read(make(input));
   return value - 14;
 }
 int main() {
@@ -122,6 +149,28 @@ int main() {
   int number = 7;
   observe(number);
   return cleanup_trace - 7;
+}
+""",
+    "borrowed_prepared_argument_failure": """
+struct Outer {
+  Outer() = default;
+  ~Outer() { std::println("outer"); }
+};
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+  ~View() {
+    if (this.value != 7) { gti_internal::panic("wrong cleanup owner"); }
+    std::println("borrowed");
+  }
+};
+View<a> make_view<lifetime a>(int&<a> input) { return View<a>(input); }
+int later() { gti_internal::panic("later argument failed"); }
+int consume<lifetime a>(View<a> view, int unused) { return view.value; }
+int main() {
+  Outer outer{};
+  int number = 7;
+  return consume(make_view(number), later());
 }
 """,
     "lambda_suppliers": """
@@ -341,8 +390,16 @@ def main():
             def execute():
                 binary = output / (label + "-" + mode)
                 run([compiler, path, *flags, "-o", binary], label + "-" + mode + "-build", measure_build=True)
-                executed = run([binary], label + "-" + mode + "-run")
-                if executed.stdout or executed.stderr:
+                failure_case = label == "borrowed_prepared_argument_failure"
+                executed = run([binary], label + "-" + mode + "-run", expect_success=not failure_case)
+                if failure_case:
+                    site = source.index('gti_internal::panic("later argument failed")')
+                    line = source[:site].count("\n") + 1
+                    expected = (f'{path.name}:{line}: runtime error[GTI-R0017]: '
+                                'panic: "later argument failed"\n')
+                    if executed.returncode != 70 or executed.stdout != "borrowed\nouter\n" or executed.stderr != expected:
+                        raise RuntimeError(f"{label}/{mode}: prepared owner must clean up exactly once before outer cleanup")
+                elif executed.stdout or executed.stderr:
                     raise RuntimeError(f"{label}/{mode}: unexpected runtime output")
                 observations[mode] = {"binary_bytes": binary.stat().st_size}
                 save()

@@ -409,6 +409,15 @@ declarations that would expand anonymous arity require explicit lifetime
 parameters and arguments. Callable type elision has its own higher-ranked
 scope and does not add parameters to the containing record.
 
+Constructor initializer summaries connect inputs to anonymous stored regions
+through exact field and enum-payload identities. Explicit variant construction
+retains its guard at each nested enum subobject; only a contradictory selected
+guard excludes an inactive dependency path. A missing source dependency does
+not prove an alternative inactive. These declaration summaries supply input
+relationships to the existing lifetime normalizer, while ordinary body
+analysis still proves initialization, access, movement and conversion. Named
+owner lifetimes continue to require declared relationships.
+
 The shared callable contract derivation obtains each nominal application's
 formation formula from the owning phase. Semantics supplies the instantiated
 declaration contract; MIR supplies its verified nominal view. Inputs and

@@ -7013,9 +7013,8 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
     target->rawPointerOrigins = rawOrigins;
     target->rawPointerFields = rawFields;
     if (target->bindingKind == SemanticBindingKind::LocalVariable &&
-        target->type.kind != SemanticType::Reference &&
-        initializerType == declaredType) {
-      const auto complete = completeBorrowDependencySet(initializer);
+        target->type.kind != SemanticType::Reference) {
+      const auto complete = completeBorrowDependencySetForType(initializer.get(), declaredType);
       if (complete && !complete->possibleAlternatives.empty())
         target->completeBorrowSet = complete;
     }
@@ -7456,10 +7455,9 @@ auto SemanticVisitor::Impl::visitAssignExpr(const Assign &expr) -> void {
                      .after = ValueState::Available});
         }
         reinitializePlace(placeForSymbol(*target));
-        const auto complete = completeBorrowDependencySet(expr.value());
+        const auto complete = completeBorrowDependencySetForType(expr.value().get(), targetType);
         target->completeBorrowSet =
-            target->type.kind != SemanticType::Reference &&
-                    targetType == valueType && complete &&
+            target->type.kind != SemanticType::Reference && complete &&
                     !complete->possibleAlternatives.empty()
                 ? complete
                 : std::nullopt;
@@ -16862,10 +16860,9 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
     }
     target->rawPointerOrigins = rawOrigins;
     target->rawPointerFields = rawFields;
-    if (local && target->type.kind != SemanticType::Reference &&
-        inferredType == initializerType) {
-      const auto complete =
-          completeBorrowDependencySet(declaration.initializer());
+    if (local && target->type.kind != SemanticType::Reference) {
+      const auto complete = completeBorrowDependencySetForType(
+          declaration.initializer().get(), inferredType);
       if (complete && !complete->possibleAlternatives.empty())
         target->completeBorrowSet = complete;
     }

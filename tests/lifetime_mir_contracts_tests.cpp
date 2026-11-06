@@ -406,6 +406,43 @@ int main() {
     expect(changed && !verifyMirProgram(brokenSelection).valid(),
            "a stored selection cannot lose its field mapping or one permitted supplier");
   }
+  const auto retainedSelectionPair = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "retained-selection-pair.gti", R"gti(
+int&<a> choose<lifetime a>(int&<a> left, int&<a> right, bool first) {
+  if (first) { return left; }
+  return right;
+}
+struct Pair<lifetime a> {
+  int&<a> first; int&<a> second;
+  Pair(int&<a> left, int&<a> right) : first(left), second(right) {}
+};
+int main() {
+  int left = 3; int right = 9;
+  int& selected = choose(left, right, false);
+  Pair pair{selected, selected};
+  return pair.first + pair.second - 18;
+}
+)gti");
+  expect(retainedSelectionPair.canGenerateCode(),
+         "each constructed field must preserve every supplier of its selected input");
+  bool checkedSelectedPair = false;
+  for (const auto &function : retainedSelectionPair.mir.functionInstances())
+    for (const auto &loan : function.body.loans)
+      if (loan.kind == MirLoanKind::Stored && !loan.entry &&
+          loan.additionalDependencies.size() == 3) {
+        const auto firstField = loan.designatedFields;
+        expect(firstField.size() == 1,
+               "the first selected supplier must identify its result field");
+        std::size_t sameField = 1;
+        for (const auto &dependency : loan.additionalDependencies)
+          if (dependency.designatedFields == firstField)
+            ++sameField;
+        expect(sameField == 2,
+               "two possible origins must be retained separately for each of two fields");
+        checkedSelectedPair = true;
+      }
+  expect(checkedSelectedPair,
+         "the two-field fixture must publish all four field/source alternatives");
   auto wrongCopiedCarrier = copiedCarrier.mir;
   bool changedCopySource = false;
   for (const auto &immutable : wrongCopiedCarrier.functionInstances()) {

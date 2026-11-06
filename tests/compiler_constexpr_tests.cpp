@@ -1,5 +1,6 @@
 #include "compiler_test_fixture.h"
 #include "gti/lowered_program_builder.h"
+#include "gti/lifetime_types.h"
 #include "gti/mir_constant_evaluator.h"
 #include "gti/mir_lowering.h"
 
@@ -8,6 +9,23 @@ namespace {
 // Exhaustion cases written against a 4096-step request budget keep that
 // budget explicitly; the default is far larger (see testCompileLimits).
 constexpr std::size_t smallStepBudget = 4096;
+
+void diagnoseRequiredConstantFixture(const lang::FrontendResult &result,
+                                     std::string_view name) {
+  if (result.canGenerateCode())
+    return;
+  std::cerr << "constexpr fixture " << name << ": semantic="
+            << result.semanticValid << ", HIR=" << result.hir.valid()
+            << ", diagnostics=" << result.diagnostics.size() << '\n';
+  const auto count = std::min<std::size_t>(6, result.diagnostics.size());
+  for (std::size_t index = 0; index < count; ++index) {
+    const auto &diagnostic = result.diagnostics[index];
+    std::cerr << "  " << diagnostic.code << " line " << diagnostic.primary.line
+              << ": " << diagnostic.message.substr(0, 400) << '\n';
+    if (!diagnostic.hints.empty())
+      std::cerr << "    " << diagnostic.hints.front().substr(0, 400) << '\n';
+  }
+}
 
 lang::FrontendOptions stepLimited(std::size_t steps = smallStepBudget) {
   lang::FrontendOptions options;
@@ -543,6 +561,7 @@ int main() {
 }
 )",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  diagnoseRequiredConstantFixture(valid, "characters and string views");
   expect(valid.canGenerateCode() && valid.diagnostics.empty(),
          "character values and literal-backed string views should validate");
 
@@ -560,7 +579,9 @@ int main() {
           ? nullptr
           : valid.semantics.findBinding(*textDeclaration);
   expect(textBinding != nullptr &&
-             textBinding->type == lang::SemanticType::StringView &&
+             lang::eraseTypeLifetimes(textBinding->type) == lang::SemanticType::StringView &&
+             textBinding->type.lifetimeArguments.size() == 1 &&
+             textBinding->type.lifetimeArguments.front().specified() &&
              textBinding->traits.drop == lang::DropKind::Trivial &&
              textBinding->traits.copyable,
          "string views should remain trivial copyable values in semantics");
@@ -6677,6 +6698,7 @@ void testCompileLimits() {
   };
   const auto longPattern = withLibrary({});
   const auto longPatternOldBudget = withLibrary(stepLimited(4096));
+  diagnoseRequiredConstantFixture(longPattern, "long literal pattern");
   expect(longPattern.canGenerateCode() &&
              !longPatternOldBudget.canGenerateCode() &&
              hasDiagnosticHint(longPatternOldBudget.diagnostics,
@@ -7027,6 +7049,7 @@ int choose(Value& value) { return value.n; }
 int choose(Checked value) { return value.n; }
 int main() { return choose(Value(3)) - 3; }
 )");
+  diagnoseRequiredConstantFixture(temporaryTier, "temporary-borrow argument tier");
   expect(temporaryTier.canGenerateCode(),
          "temporary-borrow tier precedes checked construction");
   const auto nestedReference =
@@ -7398,6 +7421,7 @@ struct Validator {
 };
 int main() { Validator(5).check(5); return 0; }
 )");
+  diagnoseRequiredConstantFixture(method, "immediate receiver method");
   expect(method.canGenerateCode() && lang::verifyMirProgram(method.mir).valid(),
          "immediate void methods use their exact constant receiver in the "
          "statement completion profile");
