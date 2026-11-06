@@ -4,6 +4,7 @@
 #include "gti/generic_instantiation_limits.h"
 #include "gti/instance_analysis_cache.h"
 #include "gti/lifetime_types.h"
+#include "gti/callable_lifetimes.h"
 #include "gti/semantic_analyzer.h"
 #include "gti/support.h"
 
@@ -957,21 +958,20 @@ private:
     }
     const FunctionInfo *target = baseModel->findFunction(conversion.function);
     const SemanticType *returnType = conversion.type.nativeFunctionReturnType();
-    const std::span<const SemanticType> parameters =
-        conversion.type.nativeFunctionParameterTypes();
+    const auto &callable = conversion.lifetimeApplication.callableSignature;
     if (target == nullptr || target->declaration != conversion.declaration ||
         target->ownerClass != 0 || target->linkage != LanguageLinkage::Gti ||
-        !target->genericParameters.empty() || target->parameterPack ||
-        returnType == nullptr || target->returnType != *returnType ||
-        target->parameterTypes.size() != parameters.size() ||
-        !std::equal(target->parameterTypes.begin(),
-                    target->parameterTypes.end(), parameters.begin())) {
+        std::any_of(target->genericParameters.begin(), target->genericParameters.end(),
+                    [](const auto &parameter) { return !parameter.lifetime; }) ||
+        target->parameterPack || returnType == nullptr || !callable ||
+        !conversion.lifetimeApplication.complete ||
+        !callableLifetimeTargetBindings(target->returnType, target->parameterTypes,
+                                         target->lifetimeContract, callable->signature)) {
       lifecycleValid = false;
       return 0;
     }
     const HirFunctionInstanceId function = enqueueFunction(
-        *target, {}, {}, {}, {}, *returnType,
-        std::vector<SemanticType>(parameters.begin(), parameters.end()));
+        *target, {}, {}, {}, {}, target->returnType, target->parameterTypes);
     if (function == 0) {
       lifecycleValid = false;
       return 0;
@@ -2194,9 +2194,18 @@ private:
                           snapshot.typeArguments, snapshot.valueArguments);
     SemanticInstanceAnalysis analysis;
     const SemanticModel *model = baseModel;
+    // An early checked-source constant closure may precede the lexical class
+    // body pass as well as the function pass. Its declaration recipe is known,
+    // but field binding identities/defaults must come from checked reanalysis.
+    const bool missingStagedFields = constantClosure &&
+        (constantSourceAuthority.function || constantSourceAuthority.constructor) &&
+        std::any_of(declaration->fields.begin(), declaration->fields.end(),
+                    [&](const auto &field) {
+          return field.declaration && !baseModel->findBinding(*field.declaration);
+        });
     // An empty concrete pack is still an instance. Its recorded field and
     // alias bindings must come from concrete reanalysis, not the open primary.
-    if (!declaration->genericParameters.empty() ||
+    if (missingStagedFields || !declaration->genericParameters.empty() ||
         !snapshot.typeArguments.empty() || !snapshot.valueArguments.empty()) {
       analysis = instanceProvider->analyzeClassFieldInitializers(
           snapshot.declaration, snapshot.typeArguments,
@@ -6963,6 +6972,8 @@ private:
                    .enumValue = enumValue,
                    .enumVariant = enumVariant,
                    .payloadIndex = payloadIndex};
+    if (const auto *conversion = model.findNativeFunctionConversion(*raw))
+      value.lifetimeApplication = lowerLifetimeApplication(conversion->lifetimeApplication, body);
     if (const auto *complete = model.findBorrowDependencySet(*raw)) {
       value.borrowDependencies = *complete;
       value.borrowDependencies->dependencies.clear();

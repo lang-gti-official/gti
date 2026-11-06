@@ -1,6 +1,7 @@
 #include "semantic_analyzer_impl.h"
 #include "gti/lifetime_types.h"
 #include "gti/lifetime_requirements.h"
+#include "gti/callable_lifetimes.h"
 #include <array>
 
 namespace lang {
@@ -379,7 +380,7 @@ auto SemanticVisitor::Impl::normalizeCallableLifetimeType(
     return implicitSyntaxLifetime(site, slot, "_input" + std::to_string(slot));
   };
   const auto normalize = [&](auto &&self, SemanticType &current) -> bool {
-    if (current.kind == SemanticType::FunctionSignature) {
+    if (isLifetimeInvocationSignature(current)) {
       SemanticType unused = SemanticType::Void;
       std::vector<SemanticType> parameters{current};
       auto result = normalizeLifetimeSignature(unused, parameters, {}, {}, fresh);
@@ -419,7 +420,7 @@ auto SemanticVisitor::Impl::normalizeLifetimeSignature(
   const auto normalize = [&](auto &&self, SemanticType &type, bool input,
                              Lifetime resultRegion,
                              std::vector<GenericParameterId> *quantified) -> void {
-    if (type.kind == SemanticType::FunctionSignature ||
+    if (isLifetimeInvocationSignature(type) ||
         type.kind == SemanticType::FunctionItem) {
       if (type.arguments.empty()) {
         valid = false;
@@ -553,7 +554,7 @@ auto SemanticVisitor::Impl::lifetimeBoundsForContract(
     };
     if (type.kind == SemanticType::TypeParameter ||
         type.kind == SemanticType::RawPointer ||
-        type.kind == SemanticType::FunctionSignature)
+        isLifetimeInvocationSignature(type))
       continue; // Opaque types and raw pointees imply no checked storage facts.
     if (type.kind == SemanticType::Reference) {
       (void)result.assume(type.referenceLifetime, bound.region);
@@ -960,7 +961,7 @@ auto SemanticVisitor::Impl::constrainLifetimeType(
             target.referenceAccess == AccessMode::Mutable) ||
            target.kind == SemanticType::RawPointer))
         direction = TypeVariance::Invariant;
-      else if (target.kind == SemanticType::FunctionSignature && index != 0)
+      else if (isLifetimeInvocationSignature(target) && index != 0)
         direction = TypeVariance::Contravariant;
       if (direction == TypeVariance::Bivariant) {
         // Ignored parameters may vary in their regions, never in their
@@ -1399,7 +1400,7 @@ auto SemanticVisitor::Impl::proveLifetimeTypeOutlives(
             return false;
       return true;
     }
-    if ((type.kind == SemanticType::FunctionSignature || type.kind == SemanticType::FunctionItem) &&
+    if ((isLifetimeInvocationSignature(type) || type.kind == SemanticType::FunctionItem) &&
         !type.quantifiedLifetimes.empty()) {
       for (const auto lifetime : freeTypeLifetimes(type))
         if (!constraints.proves(lifetime, region))

@@ -1,6 +1,7 @@
 #include "gti/hir.h"
 #include "gti/instance_analysis_cache.h"
 #include "gti/lifetime_types.h"
+#include "gti/callable_lifetimes.h"
 
 #include <algorithm>
 #include <functional>
@@ -2008,10 +2009,10 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         target->owner.has_value() || target->source == nullptr ||
         target->requiresUnsafe || target->linkage != LanguageLinkage::Gti ||
         declaration == nullptr || declaration->ownerClass != 0 ||
-        returnType == nullptr || target->returnType != *returnType ||
+        returnType == nullptr || !sameLifetimeConversionShape(target->returnType, *returnType) ||
         target->parameterTypes.size() != parameterTypes.size() ||
-        !std::equal(target->parameterTypes.begin(),
-                    target->parameterTypes.end(), parameterTypes.begin()) ||
+        !std::equal(target->parameterTypes.begin(), target->parameterTypes.end(),
+                    parameterTypes.begin(), sameLifetimeConversionShape) ||
         adapter.cThreadCallback !=
             (program.executionProfile() == ExecutionProfile::Concurrent
                  ? (target->threadConfinedCallback
@@ -2054,7 +2055,14 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           conversion->type != adapter->type ||
           conversion->cThreadCallback != adapter->cThreadCallback ||
           conversion->function != target->declaration ||
-          conversion->declaration != target->source) {
+          conversion->declaration != target->source ||
+          value.lifetimeApplication.callableSignature != conversion->lifetimeApplication.callableSignature ||
+          !value.lifetimeApplication.complete || !value.lifetimeApplication.callableSignature ||
+          !value.lifetimeApplication.bindings.empty() || !value.lifetimeApplication.variables.empty() ||
+          !value.lifetimeApplication.obligations.empty() || !value.lifetimeApplication.typeObligations.empty() ||
+          !value.lifetimeApplication.origins.empty() ||
+          !callableLifetimeTargetBindings(target->returnType, target->parameterTypes,
+              target->lifetimeContract, value.lifetimeApplication.callableSignature->signature)) {
         result.errors.emplace_back(
             "native callback HIR value differs from semantic conversion");
       }

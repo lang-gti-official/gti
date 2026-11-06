@@ -10,6 +10,63 @@
 
 namespace lang {
 namespace {
+// Rank dependency SCCs with callees before callers. Iterative Kosaraju keeps
+// analysis-stack usage independent of source recursion depth. Members of one
+// SCC share a rank and retain deterministic declaration order in the worklist.
+std::vector<std::size_t> lifetimeDependencyRanks(
+    const std::vector<std::set<std::size_t>> &dependencies,
+    const std::vector<std::set<std::size_t>> &callers) {
+  const auto count = dependencies.size();
+  std::vector<bool> visited(count);
+  std::vector<std::size_t> order;
+  struct Visit {
+    std::size_t node;
+    std::set<std::size_t>::const_iterator next;
+  };
+  std::vector<Visit> stack;
+  for (std::size_t root = 0; root < count; ++root) {
+    if (visited[root])
+      continue;
+    visited[root] = true;
+    stack.push_back({root, dependencies[root].begin()});
+    while (!stack.empty()) {
+      auto &visit = stack.back();
+      if (visit.next == dependencies[visit.node].end()) {
+        order.push_back(visit.node);
+        stack.pop_back();
+        continue;
+      }
+      const auto child = *visit.next++;
+      if (!visited[child]) {
+        visited[child] = true;
+        stack.push_back({child, dependencies[child].begin()});
+      }
+    }
+  }
+  std::vector<std::size_t> component(count, count);
+  std::vector<std::size_t> pending;
+  std::size_t components = 0;
+  for (auto root = order.rbegin(); root != order.rend(); ++root) {
+    if (component[*root] != count)
+      continue;
+    component[*root] = components;
+    pending.push_back(*root);
+    while (!pending.empty()) {
+      const auto node = pending.back();
+      pending.pop_back();
+      for (const auto caller : callers[node])
+        if (component[caller] == count) {
+          component[caller] = components;
+          pending.push_back(caller);
+        }
+    }
+    ++components;
+  }
+  for (auto &rank : component)
+    rank = components - rank - 1;
+  return component;
+}
+
 // Temporary, opt-in investigation support for the three failing owning test
 // fixtures. Remove this trace once their missing prerequisite/body fact is
 // identified; it never changes admission or the inferred contract.
@@ -92,7 +149,7 @@ auto SemanticVisitor::Impl::privateLifetimeInferenceEligible(
 
 auto SemanticVisitor::Impl::prepareInferredLifetimeResult(
     SemanticType &type, const std::function<Lifetime()> &fresh) const -> void {
-  if (type.kind == SemanticType::FunctionSignature ||
+  if (type.kind == SemanticType::FunctionSignature || type.kind == SemanticType::NativeFunction ||
       type.kind == SemanticType::FunctionItem)
     return; // Callable types keep their own stable quantified boundary.
   const auto fill = [&](Lifetime &region) {
@@ -434,6 +491,11 @@ auto SemanticVisitor::Impl::inferPrivateLifetimeContracts(
     if (const auto *function = semanticModel.findFunction(*pending[index]))
       indices.emplace(function->id, index);
   std::vector<std::set<std::size_t>> callers(pending.size());
+  std::vector<std::set<std::size_t>> callees(pending.size());
+  std::vector<std::size_t> dependencyRanks;
+  bool dependencyRanksDirty = true;
+  std::vector<bool> initiallyProbed(pending.size());
+  std::size_t initialRemaining = pending.size();
   std::deque<std::size_t> queue;
   std::vector<bool> queued(pending.size());
   const auto enqueue = [&](std::size_t index) {
@@ -446,9 +508,24 @@ auto SemanticVisitor::Impl::inferPrivateLifetimeContracts(
     enqueue(index);
   std::size_t work = 0;
   while (!queue.empty()) {
-    const auto index = queue.front();
-    queue.pop_front();
+    auto selected = queue.begin();
+    if (initialRemaining == 0) {
+      if (dependencyRanksDirty) {
+        dependencyRanks = lifetimeDependencyRanks(callees, callers);
+        dependencyRanksDirty = false;
+      }
+      selected = std::min_element(queue.begin(), queue.end(), [&](auto left, auto right) {
+        return dependencyRanks[left] == dependencyRanks[right]
+                   ? left < right : dependencyRanks[left] < dependencyRanks[right];
+      });
+    }
+    const auto index = *selected;
+    queue.erase(selected);
     queued[index] = false;
+    if (!initiallyProbed[index]) {
+      initiallyProbed[index] = true;
+      --initialRemaining;
+    }
     const auto *syntax = pending[index];
     if (++work > 4096) {
       report(syntax->name(),
@@ -534,8 +611,12 @@ auto SemanticVisitor::Impl::inferPrivateLifetimeContracts(
     }
     for (const auto dependency : dependencies->functions)
       if (const auto selected = indices.find(dependency); selected != indices.end())
-        if (callers[selected->second].insert(index).second && workMetrics)
-          ++workMetrics->semanticPrivateLifetimeDependencyEdges;
+        if (callers[selected->second].insert(index).second) {
+          callees[index].insert(selected->second);
+          dependencyRanksDirty = true;
+          if (workMetrics)
+            ++workMetrics->semanticPrivateLifetimeDependencyEdges;
+        }
     const auto *body = analysis.model.findLifetimeBody(*syntax->body());
     if (trace) {
       privateTrace("probe " + syntax->name().lexeme +

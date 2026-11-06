@@ -156,6 +156,82 @@ void checkOwningTransferMutations(const MirProgram &program) {
     }
 }
 
+void checkOwningPayloadMutations(const MirProgram &program) {
+  std::optional<MirBodyAddress> selected;
+  MirInstructionId producerId = 0;
+  for (const auto address : enumerateMirBodyAddresses(program)) {
+    const auto *body = findMirBody(program, address);
+    if (!body)
+      continue;
+    for (const auto &block : body->blocks)
+      for (const auto &instruction : block.instructions) {
+        const auto *loan = instruction.loan ? body->findLoan(*instruction.loan) : nullptr;
+        if (instruction.kind == MirInstructionKind::Compute &&
+            instruction.operation == MirOperation::PayloadConstruct && loan &&
+            loan->lifecycleBound) {
+          selected = address;
+          producerId = instruction.id;
+        }
+      }
+  }
+  expect(selected.has_value(), "owning payload has an exact cleanup-bound producer");
+  if (!selected)
+    return;
+  for (int mutation = 0; mutation != 7; ++mutation) {
+    auto broken = program;
+    auto *body = findMirBody(broken, *selected);
+    MirInstruction *producer = nullptr;
+    for (auto &block : body->blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.id == producerId)
+          producer = &instruction;
+    auto *loan = &body->loans[*producer->loan - 1];
+    const auto activation = std::find_if(producer->lifecycle.begin(), producer->lifecycle.end(),
+        [](const auto &event) { return event.kind == MirLifecycleEventKind::Initialize; });
+    expect(activation != producer->lifecycle.end(), "payload activates its exact aggregate obligation");
+    if (activation == producer->lifecycle.end())
+      continue;
+    auto *drop = &body->dropObligations[activation->target - 1];
+    switch (mutation) {
+    case 0: loan->lifecycleBound = false; break;
+    case 1: loan->producedBy = 0; break;
+    case 2:
+      std::erase_if(producer->lifecycle, [](const auto &event) {
+        return event.kind == MirLifecycleEventKind::TransferOut;
+      });
+      break;
+    case 3: producer->lifecycle.erase(activation); break;
+    case 4:
+      expect(!drop->dropType.aggregate.empty(), "owning enum cleanup names its selected payload child");
+      if (!drop->dropType.aggregate.empty())
+        drop->dropType.aggregate.front().payloadField = 999;
+      break;
+    case 5: drop->initiallyActive = true; break;
+    case 6: {
+      bool relocated = false;
+      for (auto &block : body->blocks) {
+        const auto end = std::find_if(block.instructions.begin(), block.instructions.end(),
+            [&](const auto &instruction) {
+              return instruction.kind == MirInstructionKind::EndBorrow &&
+                     instruction.loan == producer->loan;
+            });
+        const auto cleanup = std::find_if(block.instructions.begin(), block.instructions.end(),
+            [](const auto &instruction) { return instruction.kind == MirInstructionKind::Drop; });
+        if (end != block.instructions.end() && cleanup != block.instructions.end() && cleanup < end) {
+          std::rotate(cleanup, end, end + 1);
+          relocated = true;
+          break;
+        }
+      }
+      expect(relocated, "owning enum dependency normally ends after its cleanup");
+      break;
+    }
+    }
+    expect(!verifyMirProgram(broken).valid(),
+           "owning payload cannot forge carrier classification, handoff, child cleanup or loan endpoint");
+  }
+}
+
 void checkGuardMutations(const MirProgram &program) {
   std::optional<MirBodyAddress> selected;
   MirValueId valueId = 0;
@@ -438,6 +514,43 @@ int main() { int value = 7; return forward(value) - 14; }
 )gti");
   if (owning.canGenerateCode())
     checkOwningTransferMutations(owning.mir);
+
+  const auto owningEnum = positive("owning-enum-payload-handoff", R"gti(
+mut int destroyed = 0;
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+  ~View() { destroyed += this.value; }
+};
+enum Box<T> { item(T value) };
+void wrap<lifetime a>(int&<a> input) {
+  auto box = Box<View<_>>::item(View<a>(input));
+}
+int main() { int number = 7; wrap(number); return destroyed - 7; }
+)gti");
+  if (owningEnum.canGenerateCode())
+    checkOwningPayloadMutations(owningEnum.mir);
+
+  (void)positive("temporary-read-applies-declared-region", R"gti(
+struct Value { int n; Value(int n) : n(n) {} };
+int read(Value& value) { return value.n; }
+int main() { return read(Value(3)) - 3; }
+)gti");
+
+  negative("owning-enum-retains-borrow-until-drop", R"gti(
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+  ~View() { int observed = this.value; }
+};
+enum Box<T> { item(T value) };
+int main() {
+  mut int number = 7;
+  auto box = Box<View<_>>::item(View<_>(number));
+  number = 9;
+  return 0;
+}
+)gti");
 
   negative("owning-carrier-cannot-extend-region", R"gti(
 struct View<lifetime a> {

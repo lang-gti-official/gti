@@ -1090,7 +1090,30 @@ int main() { return 0; }
           });
         });
       }
-    expect(connected, "the active enum payload contributes a declared input-to-anonymous-storage relation");
+    if (!connected) {
+      std::cerr << "Enum initializer " << name << " owner slots:";
+      if (owner)
+        for (const auto &parameter : owner->genericParameters)
+          if (parameter.lifetime)
+            std::cerr << ' ' << parameter.id << (parameter.implicit ? "i" : "e");
+      std::cerr << '\n';
+      if (lifecycle)
+        for (const auto &constructor : lifecycle->constructors) {
+          std::cerr << "  ctor " << constructor.id << " inputs:";
+          for (const auto &type : constructor.parameterTypes)
+            for (const auto region : lang::freeTypeLifetimes(type))
+              std::cerr << ' ' << static_cast<unsigned>(region.kind) << ':' << region.id;
+          std::cerr << " bounds:";
+          for (std::size_t index = 0;
+               index < std::min<std::size_t>(8, constructor.lifetimeContract.bounds.size()); ++index) {
+            const auto bound = constructor.lifetimeContract.bounds[index];
+            std::cerr << ' ' << static_cast<unsigned>(bound.longer.kind) << ':' << bound.longer.id
+                      << "->" << static_cast<unsigned>(bound.shorter.kind) << ':' << bound.shorter.id;
+          }
+          std::cerr << '\n';
+        }
+    }
+    expect(connected, std::string("active enum input-to-anonymous-storage relation for ") + name);
   }
   const auto named = analyze(R"(
 enum Named<lifetime a> { present(int&<a> value), missing(int code) };
@@ -1192,6 +1215,58 @@ int main() { return 0; }
              std::any_of(invalid.diagnostics.begin(), invalid.diagnostics.end(),
                          [](const auto &diagnostic) { return diagnostic.code == "GTI-S2127"; }),
          "even an uninitialized pointer target must satisfy its nominal lifetime formation requirements");
+}
+
+void testNativeInvocationLifetimes() {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto prelude = std::filesystem::weakly_canonical(root / "prelude.gti");
+  const std::string declarations = R"(
+namespace gti_internal { class text_view<lifetime storage> {}; }
+namespace std { using string_view<lifetime storage> = gti_internal::text_view<storage>; }
+)";
+  const auto native = [&](std::string source) {
+    return lang::Frontend({.stopAfter = lang::FrontendPhase::Semantics}).analyze(
+        "native-invocation-lifetimes.gti", std::move(source), {prelude},
+        {{prelude.string(), declarations}}, {root});
+  };
+  const auto result = native(R"(
+using Count = (std::string_view) -> int32_t;
+using Pair = (std::string_view, std::string_view) -> int32_t;
+int32_t length(std::string_view value) { return 0; }
+int32_t named<lifetime a>(std::string_view<a> value) { return 0; }
+Count selected() { return length; }
+Count namedTarget() { return named; }
+struct Holder { Count callback; Holder(Count value) : callback(value) {} };
+int32_t invoke<lifetime a>(Count callback, std::string_view<a> value) {
+  unsafe { return callback(value); }
+}
+int main() { Count callback = length; unsafe { return callback("text"); } }
+)");
+  expectValid(result, "native callback invocation lifetimes normalize and apply without becoming pointer storage");
+  const auto *count = alias(result, "Count");
+  const auto *pair = alias(result, "Pair");
+  const auto *owner = record(result, "Holder");
+  expect(count && count->type.kind == lang::SemanticType::NativeFunction &&
+             count->type.quantifiedLifetimes.size() == 1 &&
+             lang::freeTypeLifetimes(count->type).empty(),
+         "one elided native parameter introduces one invocation universal");
+  expect(pair && pair->type.quantifiedLifetimes.size() == 2 &&
+             pair->type.arguments[1].lifetimeArguments != pair->type.arguments[2].lifetimeArguments,
+         "independent native input annotations remain distinct invocation slots");
+  expect(owner && owner->genericParameters.empty(),
+         "a stored native pointer does not add anonymous owner regions for its future inputs");
+  for (const auto source : {
+           R"(using Count = (std::string_view) -> int32_t;
+int32_t fixed(std::string_view<static> value) { return 0; }
+Count invalid() { return fixed; } int main() { return 0; })",
+           R"(using Count = (std::string_view<static>) -> int32_t;
+int32_t invalid<lifetime a>(Count callback, std::string_view<a> value) {
+  unsafe { return callback(value); }
+} int main() { return 0; })"}) {
+    const auto rejected = native(source);
+    expect(!rejected.semanticValid,
+           "native target adaptation and invocation preserve fixed static storage requirements");
+  }
 }
 
 void testCStringRegions() {
@@ -1343,6 +1418,7 @@ int main() {
   testNamedProjectedPatternLifetimes();
   testNominalFormation();
   testCStringRegions();
+  testNativeInvocationLifetimes();
   testPrivateLifetimeInference();
   testPrivateLifetimeWorklist();
   testInstantiatedReferenceIdentity();

@@ -263,12 +263,54 @@ void testContextualLifetimeInference() {
          "a contextual hole cannot capture a nested quantified lifetime");
 }
 
+void testNativeInvocationScopes() {
+  using namespace lang;
+  const auto input = Lifetime::parameter(4001);
+  auto text = SemanticType(SemanticType::StringView);
+  text.lifetimeArguments = {input};
+  auto native = SemanticType::nativeFunctionType(SemanticType::Int32, std::array{text});
+  native.quantifiedLifetimes = {input.id};
+  const auto contract = callableLifetimeContract(native);
+  expect(contract && contract->parameters == std::vector{input} &&
+             freeTypeLifetimes(native).empty(),
+         "a native pointer scopes its invocation lifetimes separately from pointer storage");
+  auto returned = SemanticType::functionSignature(native, {});
+  const auto outer = callableLifetimeContract(returned);
+  expect(outer && outer->parameters.empty() && outer->typeBounds.empty(),
+         "returning a native invocation pointer does not expose its input universals");
+  GenericParameterId fresh = 4100;
+  const auto proof = makeCallableLifetimeSignature(native, {},
+      [&] { return Lifetime::parameter(fresh++); });
+  expect(proof && proof->signature.kind == SemanticType::NativeFunction &&
+             proof->signatureBindings.empty() &&
+             callableLifetimeCarrierMatches(*proof, native),
+         "native callable proof preserves ABI kind and exact quantifier scope");
+  if (!contract)
+    return;
+  auto staticText = text;
+  staticText.lifetimeArguments = {Lifetime::staticLifetime()};
+  LifetimeSignatureContract staticTarget;
+  staticTarget.complete = true;
+  expect(!callableLifetimeTargetBindings(SemanticType::Int32, std::array{staticText},
+                                         staticTarget, native),
+         "a fixed-static callback cannot implement a universally callable text input");
+  auto renamed = native;
+  renamed.quantifiedLifetimes = {4200};
+  renamed.arguments[1].lifetimeArguments = {Lifetime::parameter(4200)};
+  expect(equivalentLifetimeTypes(native, renamed),
+         "native invocation binder spelling is alpha-equivalent");
+  renamed.arguments[1].lifetimeArguments = {input};
+  expect(!equivalentLifetimeTypes(native, renamed),
+         "native invocation types reject an escaped binder occurrence");
+}
+
 int main() {
   testBorrowConditionTransport();
   testLifetimeConversionShapes();
   using namespace lang;
   testScopedCallableFormation();
   testContextualLifetimeInference();
+  testNativeInvocationScopes();
   const auto a = Lifetime::parameter(1);
   const auto b = Lifetime::parameter(2);
   const auto x = Lifetime::parameter(31);

@@ -425,29 +425,38 @@ mirNominalFormationRequirements(const MirProgram &program, const SemanticType &t
 
 const CallableLifetimeSignature *checkedMirCallableLifetimeSignature(
     const MirProgram &program, const MirInstruction &instruction) {
-  const bool forming = instruction.intrinsic == IntrinsicKind::FunctionPointerFromItem;
-  if ((!forming && instruction.intrinsic != IntrinsicKind::FunctionPointerInvoke) ||
+  const bool nativeForming = instruction.kind == MirInstructionKind::Compute &&
+                            instruction.operation == MirOperation::NativeCallback;
+  const bool nativeInvoke = instruction.kind == MirInstructionKind::Call &&
+                            instruction.nativeCalleeType.has_value();
+  const bool forming = nativeForming || instruction.intrinsic == IntrinsicKind::FunctionPointerFromItem;
+  if ((!forming && !nativeInvoke && instruction.intrinsic != IntrinsicKind::FunctionPointerInvoke) ||
       !instruction.lifetimeApplication.callableSignature)
     return nullptr;
-  const SemanticType *carrier = nullptr;
-  if (forming) {
-    carrier = &instruction.info.type;
-  } else if (!instruction.parameterTypes.empty()) {
-    const auto &parameter = instruction.parameterTypes.front();
-    if (parameter.kind == SemanticType::Reference && parameter.arguments.size() == 1 &&
-        parameter.referenceAccess == AccessMode::ReadOnly &&
-        parameter.referenceLifetime == Lifetime{})
-      carrier = &parameter.arguments.front();
+  const SemanticType *signature = nullptr;
+  if (nativeForming || nativeInvoke) {
+    signature = nativeForming ? &instruction.info.type : &*instruction.nativeCalleeType;
+    if (!signature->hasNativeFunctionShape())
+      return nullptr;
+  } else {
+    const SemanticType *carrier = forming ? &instruction.info.type : nullptr;
+    if (!forming && !instruction.parameterTypes.empty()) {
+      const auto &parameter = instruction.parameterTypes.front();
+      if (parameter.kind == SemanticType::Reference && parameter.arguments.size() == 1 &&
+          parameter.referenceAccess == AccessMode::ReadOnly &&
+          parameter.referenceLifetime == Lifetime{})
+        carrier = &parameter.arguments.front();
+    }
+    if (!carrier || carrier->kind != SemanticType::Class || carrier->arguments.size() != 1)
+      return nullptr;
+    const auto owner = mirClassLifetimeView(program, *carrier);
+    if (!owner || owner->instance->compilerCapability != CompilerCapabilityTypeKind::FunctionPointer)
+      return nullptr;
+    signature = &carrier->arguments.front();
   }
-  if (!carrier || carrier->kind != SemanticType::Class || carrier->arguments.size() != 1)
-    return nullptr;
-  const auto owner = mirClassLifetimeView(program, *carrier);
   const auto &callable = *instruction.lifetimeApplication.callableSignature;
-  if (!owner || owner->instance->compilerCapability != CompilerCapabilityTypeKind::FunctionPointer ||
-      !callableLifetimeCarrierMatches(callable, carrier->arguments.front(),
-          [&](const SemanticType &type) {
-            return mirNominalFormationRequirements(program, type);
-          }))
+  if (!callableLifetimeCarrierMatches(callable, *signature,
+          [&](const SemanticType &type) { return mirNominalFormationRequirements(program, type); }))
     return nullptr;
   if (!forming) {
     const auto &bindings = instruction.lifetimeApplication.bindings;
@@ -569,6 +578,7 @@ bool scopedDeclarationType(const SemanticType &type,
   if (depth >= 256 ||
       (!type.quantifiedLifetimes.empty() &&
        type.kind != SemanticType::FunctionSignature &&
+       type.kind != SemanticType::NativeFunction &&
        type.kind != SemanticType::FunctionItem &&
        type.kind != SemanticType::Lambda) ||
       (type.referenceLifetime != Lifetime{} &&
@@ -970,6 +980,7 @@ bool mirTypeOutlives(const MirProgram &program, const SemanticType &type,
     return true;
   }
   if ((type.kind == SemanticType::FunctionSignature ||
+       type.kind == SemanticType::NativeFunction ||
        type.kind == SemanticType::FunctionItem) &&
       !type.quantifiedLifetimes.empty()) {
     for (const auto lifetime : freeTypeLifetimes(type))
@@ -1212,12 +1223,18 @@ verifyMirLifetimeBodyFactsForCase(const MirProgram &program, const MirBody &body
       if (!application.complete ||
           (instruction.kind != MirInstructionKind::Call &&
            instruction.kind != MirInstructionKind::Construct &&
-           instruction.kind != MirInstructionKind::InitializeBase)) {
+           instruction.kind != MirInstructionKind::InitializeBase &&
+           !(instruction.kind == MirInstructionKind::Compute &&
+             instruction.operation == MirOperation::NativeCallback))) {
         reject("MIR instruction carries an incomplete or misplaced lifetime "
                "application",
                block.id, instruction.id);
         continue;
       }
+      if (application.callableSignature)
+        for (const auto fixed : application.callableSignature->signatureBindings)
+          if (!known(fixed.second))
+            reject("MIR callable carrier fixes an unallocated or out-of-scope lifetime", block.id, instruction.id);
       for (const auto binding : application.bindings)
         if (!known(binding.second))
           reject(
@@ -1363,7 +1380,7 @@ appliedTargetSignature(const MirProgram &program,
         target->lifetimeContract, target->returnType, target->parameterTypes,
         instruction.lifetimeApplication);
   }
-  if (instruction.intrinsic == IntrinsicKind::FunctionPointerInvoke) {
+  if (instruction.intrinsic == IntrinsicKind::FunctionPointerInvoke || instruction.nativeCalleeType) {
     const auto *callable = checkedMirCallableLifetimeSignature(program, instruction);
     if (!callable)
       return std::nullopt;
@@ -1371,7 +1388,7 @@ appliedTargetSignature(const MirProgram &program,
         callable->contract, callable->signature.arguments.front(),
         std::span(callable->signature.arguments).subspan(1),
         instruction.lifetimeApplication);
-    if (result)
+    if (result && instruction.intrinsic == IntrinsicKind::FunctionPointerInvoke)
       result->parameterTypes.insert(result->parameterTypes.begin(),
                                     instruction.parameterTypes.front());
     return result;
@@ -1957,6 +1974,23 @@ static MirVerificationResult verifyMirLifetimeApplicationsForCase(
         continue;
       }
       if (instruction.kind == MirInstructionKind::Compute &&
+          instruction.operation == MirOperation::NativeCallback) {
+        const auto *adapter = instruction.nativeCallbackAdapter
+            ? program.findNativeCallbackAdapter(*instruction.nativeCallbackAdapter) : nullptr;
+        const auto *target = adapter ? program.findFunctionInstance(adapter->target) : nullptr;
+        const auto *callable = checkedMirCallableLifetimeSignature(program, instruction);
+        const auto &application = instruction.lifetimeApplication;
+        if (!adapter || !target || !callable || adapter->type != instruction.info.type ||
+            !application.complete || !application.bindings.empty() || !application.variables.empty() ||
+            !application.obligations.empty() || !application.typeObligations.empty() ||
+            !application.origins.empty() ||
+            !mirCallableLifetimeTargetMatches(program, *callable, target->returnType,
+                                               target->parameterTypes, target->lifetimeContract))
+          reject("MIR native callback formation does not prove its exact target lifetime contract",
+                 block.id, instruction.id);
+        continue;
+      }
+      if (instruction.kind == MirInstructionKind::Compute &&
           instruction.operation == MirOperation::PayloadConstruct) {
         const auto view = mirEnumLifetimeView(program, instruction.info.type);
         const auto variant = view && instruction.enumVariant
@@ -2001,7 +2035,7 @@ static MirVerificationResult verifyMirLifetimeApplicationsForCase(
           instruction.kind == MirInstructionKind::InitializeBase) {
         const bool hasTarget = instruction.functionTarget ||
                                instruction.constructorTarget ||
-                               instruction.lambdaTarget ||
+                               instruction.lambdaTarget || instruction.nativeCalleeType ||
                                instruction.intrinsic == IntrinsicKind::FunctionPointerInvoke;
         if (!hasTarget) {
           const auto &application = instruction.lifetimeApplication;
@@ -2016,7 +2050,7 @@ static MirVerificationResult verifyMirLifetimeApplicationsForCase(
         }
         const auto signature = appliedTargetSignature(program, instruction);
         if (!signature || (instruction.intrinsic != IntrinsicKind::FunctionPointerInvoke &&
-                           instruction.lifetimeApplication.callableSignature)) {
+                           !instruction.nativeCalleeType && instruction.lifetimeApplication.callableSignature)) {
           reject("MIR call lifetime substitution does not cover its exact "
                  "target contract",
                  block.id, instruction.id);
@@ -2269,26 +2303,69 @@ bool mirCallableLifetimeTargetMatches(
     const LifetimeSignatureContract &contract) {
   const auto bindings = callableLifetimeTargetBindings(
       returnType, parameters, contract, callable.signature);
-  const auto assumptions = expandedLifetimeAssumptions(program, callable.contract);
-  if (!bindings || !assumptions)
+  if (!bindings)
     return false;
-  LifetimeBounds bounds;
-  for (const auto edge : assumptions->bounds)
-    if (!bounds.assume(edge.longer, edge.shorter))
+  return visitLifetimeAssumptionCases(callable.contract, [&](const auto &branch) {
+    const auto assumptions = expandedLifetimeAssumptions(program, branch);
+    if (!assumptions)
       return false;
-  LifetimeInferenceConstraints graph(bounds);
-  for (const auto edge : contract.bounds)
-    if (!graph.proves(applyLifetime(edge.longer, *bindings),
-                      applyLifetime(edge.shorter, *bindings)))
+    LifetimeBounds bounds;
+    for (const auto edge : assumptions->bounds)
+      if (!bounds.assume(edge.longer, edge.shorter))
+        return false;
+    LifetimeInferenceConstraints graph(bounds);
+    for (const auto edge : contract.bounds)
+      if (!graph.proves(applyLifetime(edge.longer, *bindings), applyLifetime(edge.shorter, *bindings)))
+        return false;
+    for (const auto &bound : contract.typeBounds) {
+      const auto type = substituteTypeLifetimes(bound.type, *bindings);
+      std::vector<SemanticType> pending;
+      if (!type || !mirTypeOutlives(program, *type, applyLifetime(bound.region, *bindings),
+                                   *assumptions, graph, pending))
+        return false;
+    }
+    return satisfiesLifetimeRequirements(program, contract, *bindings, *assumptions, graph);
+  }).proof == LifetimeFormulaProof::Proven;
+}
+
+bool mirNativeCallbackLifetimeMatches(const MirProgram &program,
+                                      const MirNativeCallbackAdapter &adapter) {
+  const auto *target = program.findFunctionInstance(adapter.target);
+  if (!target || !adapter.type.hasNativeFunctionShape())
+    return false;
+  std::vector<GenericParameterId> occupied;
+  for (const auto parameter : target->lifetimeContract.parameters)
+    occupied.push_back(parameter.id);
+  std::size_t work = 0;
+  const auto inventory = [&](auto &&self, const SemanticType &type, std::size_t depth) -> bool {
+    if (++work > 4096 || depth >= 256)
       return false;
-  for (const auto &bound : contract.typeBounds) {
-    const auto type = substituteTypeLifetimes(bound.type, *bindings);
-    std::vector<SemanticType> pending;
-    if (!type || !mirTypeOutlives(program, *type, applyLifetime(bound.region, *bindings),
-                                 *assumptions, graph, pending))
-      return false;
-  }
-  return satisfiesLifetimeRequirements(program, contract, *bindings, *assumptions, graph);
+    occupied.insert(occupied.end(), type.quantifiedLifetimes.begin(), type.quantifiedLifetimes.end());
+    if (type.referenceLifetime.kind == Lifetime::Kind::Parameter)
+      occupied.push_back(type.referenceLifetime.id);
+    for (const auto region : type.lifetimeArguments)
+      if (region.kind == Lifetime::Kind::Parameter)
+        occupied.push_back(region.id);
+    bool valid = true;
+    lifetime_detail::children(type, [&](const auto &child) { valid = valid && self(self, child, depth + 1); });
+    return valid;
+  };
+  if (!inventory(inventory, adapter.type, 0))
+    return false;
+  GenericParameterId next = 1;
+  const auto callable = makeCallableLifetimeSignature(adapter.type,
+      [&](const SemanticType &type) { return mirNominalFormationRequirements(program, type); },
+      [&]() {
+        while (next && std::find(occupied.begin(), occupied.end(), next) != occupied.end())
+          ++next;
+        if (!next)
+          return Lifetime{};
+        const auto id = next++;
+        occupied.push_back(id);
+        return Lifetime::parameter(id);
+      });
+  return callable && mirCallableLifetimeTargetMatches(program, *callable,
+      target->returnType, target->parameterTypes, target->lifetimeContract);
 }
 
 std::optional<MirInstantiatedLifetimeSignature>

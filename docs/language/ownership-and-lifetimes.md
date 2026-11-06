@@ -483,6 +483,12 @@ fields can shorten a shared source lifetime independently without confusing
 their variant evidence. Returned enum contracts are instantiated for the call;
 a prior call's regions do not become part of a cached function-body summary.
 
+When an owning payload retains borrowed state, its dependency remains live
+through that payload's cleanup. MIR checks the exact selected payload recipe,
+complete source dependencies, and transfer from prepared input cleanup into
+the enum's cleanup obligation. Shortening a region changes the checked type
+of the prepared value while preserving its source object and cleanup identity.
+
 A stored reference with omitted region receives an anonymous declaration slot.
 Distinct fields have distinct slots; constructor binding determines their actual
 origins. Recursive declarations whose omitted slots would expand indefinitely

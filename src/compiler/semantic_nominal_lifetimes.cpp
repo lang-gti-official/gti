@@ -266,7 +266,7 @@ auto SemanticVisitor::Impl::nominalFormationRequirements(
   const auto visit = [&](auto &&self, const SemanticType &current) -> bool {
     if (++work > 4096)
       return false;
-    if (current.kind == SemanticType::FunctionSignature) {
+    if (isLifetimeInvocationSignature(current)) {
       if (!catalog.nominalLifetimeContractsReady)
         return true; // Registration revisits signatures after nominal contracts settle.
       // Body types may already fix a carrier slot to a local/inferred region.

@@ -12,6 +12,13 @@ namespace lang {
 using CallableNominalFormation = std::function<
     std::optional<LifetimeRequirementFormula>(const SemanticType &)>;
 
+// Both callable kinds own invocation binders. NativeFunction additionally
+// denotes a nullable ABI pointer; its boundary/unsafe rules remain separate.
+inline bool isLifetimeInvocationSignature(const SemanticType &type) {
+  return type.kind == SemanticType::FunctionSignature ||
+         type.kind == SemanticType::NativeFunction;
+}
+
 // Derive the interface of one invocation from an already normalized callable
 // type. Outer quantified names become invocation universals; nested callable
 // binders keep their own scope. No body facts or client spelling participates.
@@ -19,7 +26,7 @@ namespace callable_lifetime_detail {
 inline std::optional<LifetimeSignatureContract>
 deriveContract(const SemanticType &signature,
                const CallableNominalFormation &nominalFormation, std::size_t &work) {
-  if (signature.kind != SemanticType::FunctionSignature ||
+  if (!isLifetimeInvocationSignature(signature) ||
       signature.arguments.empty() ||
       signature.signatureReceiver != ReceiverMutability::ReadOnly)
     return std::nullopt;
@@ -43,8 +50,7 @@ deriveContract(const SemanticType &signature,
                           std::vector<Lifetime> bound) -> bool {
     if (++work > 4096)
       return false;
-    if (!type.quantifiedLifetimes.empty() &&
-        type.kind != SemanticType::FunctionSignature)
+    if (!type.quantifiedLifetimes.empty() && !isLifetimeInvocationSignature(type))
       return false;
     for (const auto id : type.quantifiedLifetimes) {
       const auto region = Lifetime::parameter(id);
@@ -77,7 +83,7 @@ deriveContract(const SemanticType &signature,
   const auto implied = [&](auto &&self, const SemanticType &type, bool input) -> bool {
     if (++work > 4096)
       return false;
-    if (type.kind == SemanticType::FunctionSignature) {
+    if (isLifetimeInvocationSignature(type)) {
       // Validate this callable's own formation contract. Its universally
       // quantified premises do not become assumptions of the enclosing one.
       return deriveContract(type, nominalFormation, work).has_value();
@@ -212,7 +218,7 @@ inline std::optional<std::vector<LifetimeBinding>> callableLifetimeTargetBinding
     const LifetimeSignatureContract &targetContract,
     const SemanticType &requestedSignature) {
   if (!targetContract.valid() ||
-      requestedSignature.kind != SemanticType::FunctionSignature ||
+      !isLifetimeInvocationSignature(requestedSignature) ||
       requestedSignature.arguments.size() != targetParameters.size() + 1)
     return std::nullopt;
   std::vector<LifetimeBinding> bindings;

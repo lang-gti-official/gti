@@ -8,6 +8,7 @@
 #include "gti/optimization/safety.h"
 #include "gti/optimization/sccp.h"
 #include "mir_source_debug.h"
+#include "mir_lifetimes.h"
 #include "mir_storage_effects.h"
 #include "mir_verification_queries.h"
 #include "mir_verification_support.h"
@@ -141,7 +142,10 @@ bool isMirNativeIndirectCall(const MirProgram &program, const MirBody &body,
       return false;
     }
   };
-  const auto parameters = signature.nativeFunctionParameterTypes();
+  const auto applied = instantiateMirLifetimeTarget(program, instruction);
+  if (!applied)
+    return false;
+  const auto &parameters = applied->parameterTypes;
   if (!abiType(abiType, signature, false, 0) ||
       instruction.kind != MirInstructionKind::Call ||
       instruction.unsafeOperation != UnsafeOperationKind::ForeignPointerCall ||
@@ -163,7 +167,7 @@ bool isMirNativeIndirectCall(const MirProgram &program, const MirBody &body,
       !std::equal(parameters.begin(), parameters.end(),
                   instruction.parameterTypes.begin()) ||
       instruction.operands.size() != parameters.size() ||
-      instruction.info.type != *signature.nativeFunctionReturnType() ||
+      instruction.info.type != applied->returnType ||
       (instruction.info.type == SemanticType::Void
            ? instruction.result.has_value()
            : !instruction.result))
@@ -4011,6 +4015,22 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
       if (!selected || !selected->referenceSelection)
         return checkCanonicalPlace(placeId, place, write, context, instruction,
                                    exemptLoan);
+      if (selected->referenceSelection->kind ==
+          ReferenceSelectionKind::PhysicalPayload) {
+        // BorrowValue selects one physical payload object. Its ordinary
+        // subobjects use normal place/loan checks; it is not a disjunction of
+        // external referents. Program verification independently binds the
+        // selected source and type to the exact enum extraction and variant.
+        if (selected->entry || selected->escapes ||
+            selected->kind != MirLoanKind::Local ||
+            !selected->additionalDependencies.empty() ||
+            !selected->designatedFields.empty() || !selected->conditions.empty())
+          return failure(body, owner,
+                         "physical payload access has nonphysical authority",
+                         block.id, instruction);
+        return checkCanonicalPlace(placeId, place, write, context, instruction,
+                                   exemptLoan);
+      }
       const auto primary =
           canonicalPlace(body, selected->source, bindingLoans, active);
       // A scalar selected reference has one evaluated address and several
@@ -11519,10 +11539,10 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           instruction.intrinsic != IntrinsicKind::None ||
           instruction.callableInvocation !=
               CallableInvocationCapability::Read ||
-          instruction.info.type != *signature.nativeFunctionReturnType() ||
+          !sameLifetimeConversionShape(instruction.info.type, *signature.nativeFunctionReturnType()) ||
           instruction.parameterTypes.size() != parameters.size() ||
           !std::equal(parameters.begin(), parameters.end(),
-                      instruction.parameterTypes.begin()))
+                      instruction.parameterTypes.begin(), sameLifetimeConversionShape))
         return false;
     }
     const bool callable = instruction.kind == MirInstructionKind::Call ||
@@ -16292,7 +16312,8 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                      argument->callInputKind == HirCallInputKind::MoveValue ||
                      (parameter.kind == SemanticType::Class &&
                       parameter == argument->info.type &&
-                      parameter == argument->operands.front().type &&
+                      sameLifetimeConversionShape(
+                          argument->operands.front().type, parameter) &&
                       argument->info.traits.containsBorrowedState &&
                       argument->callInputKind ==
                           HirCallInputKind::MoveBorrowedTemporary))

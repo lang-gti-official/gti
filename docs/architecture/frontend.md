@@ -428,9 +428,21 @@ regions are separate from invocation quantifiers, and `static` remains a
 constant. Missing nominal metadata, foreign region identities and malformed
 formula nodes make derivation fail rather than weaken the contract.
 
+Native function-pointer signatures use this same invocation scope. Elided
+regions in their inputs become invocation quantifiers, rather than stored
+borrows of the pointer value. GTI target adaptation records the requested
+callable contract and proves that it implies the target's requirements;
+indirect calls instantiate and check that contract through the ordinary
+lifetime application. The native type, ABI, unsafe-call rule and thread
+requirements remain authoritative throughout adaptation and invocation.
+
 Private body-derived lifetime contracts use a declaration dependency worklist.
 Every eligible body is initially probed with the ordinary semantic analyzer;
 changed bounds requeue the declaration and the callers that read its contract.
+After the initial probes, dirty strongly connected components run in dependency
+order, with callees before callers and deterministic order inside a cycle.
+Ranks refresh when the read graph grows; transitive query reads remain in the
+graph rather than being discarded to reduce probe counts.
 The read set includes unsuccessful overload and concept trials, function-item
 formation, and inherited model lookups. Nested probes share only that read
 trace, and reads are conservatively retained across iterations. This reaches

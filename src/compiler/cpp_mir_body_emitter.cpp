@@ -25779,8 +25779,17 @@ uniqueOwnerBorrowDetailSpelling(const MirProgram &program,
                                         const MirInstruction &instruction) {
   const bool panic = instruction.intrinsic == IntrinsicKind::Panic;
   const auto terminal = intrinsicTerminalFailureOutcome(instruction.intrinsic);
+  // Keep the existing panic vocabulary aligned with MIR's checked message
+  // shape. Its storage region is source metadata, not a different C++ value.
+  SemanticType messageType = SemanticType::StringView;
+  if (panic && instruction.operands.size() == 1) {
+    const auto &message = instruction.operands.front().type;
+    if (message.lifetimeArguments.size() == 1 &&
+        message.lifetimeArguments.front().specified())
+      messageType.lifetimeArguments = message.lifetimeArguments;
+  }
   const std::vector<SemanticType> parameters =
-      panic      ? std::vector<SemanticType>{SemanticType::StringView}
+      panic      ? std::vector<SemanticType>{messageType}
       : terminal ? std::vector<SemanticType>{}
                  : std::vector<SemanticType>{SemanticType::Bool};
   if (!explicitFailureCall(instruction) || instruction.result ||

@@ -559,11 +559,7 @@ bool nativeCCallbackContract(const MirProgram &program,
           MirNativeCallbackFailurePolicy::TerminateInvocation ||
       !adapter.catchesNativeExceptions)
     return false;
-  const auto parameters = adapter.type.nativeFunctionParameterTypes();
-  if (function->returnType != *adapter.type.nativeFunctionReturnType() ||
-      !std::equal(function->parameterTypes.begin(),
-                  function->parameterTypes.end(), parameters.begin(),
-                  parameters.end()))
+  if (!mirNativeCallbackLifetimeMatches(program, adapter))
     return false;
   const auto attachment =
       program.executionProfile() == ExecutionProfile::Concurrent

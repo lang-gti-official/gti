@@ -14875,8 +14875,14 @@ auto SemanticVisitor::Impl::baseTypeOf(
         return SemanticType::Unknown;
       return result;
     }
-    return SemanticType::nativeFunctionType(
+    auto result = SemanticType::nativeFunctionType(
         typeOf(type.arguments.back(), fromScope), parameters);
+    if (type.lifetimeBinder)
+      for (const auto &parameter : lifetimeParametersFor(*type.lifetimeBinder))
+        result.quantifiedLifetimes.push_back(parameter.id);
+    if (!normalizeCallableLifetimeType(result, type.name.last()))
+      return SemanticType::Unknown;
+    return result;
   }
   if (type.qualifiedOwner) {
     if (const std::optional<ConceptId> protocol =

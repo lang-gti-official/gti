@@ -6,6 +6,41 @@
 
 namespace lang {
 
+auto SemanticVisitor::Impl::callableLifetimeTargetCompatible(
+    const SemanticType &result, std::span<const SemanticType> parameters,
+    const LifetimeSignatureContract &target,
+    const CallableLifetimeSignature &requested) const -> bool {
+  const auto bindings = callableLifetimeTargetBindings(result, parameters, target,
+                                                       requested.signature);
+  if (!bindings || !target.valid() || !target.requirements.resolved())
+    return false;
+  const auto region = [&](Lifetime value) {
+    for (const auto binding : *bindings)
+      if (binding.first == value)
+        return binding.second;
+    return value;
+  };
+  return visitLifetimeAssumptionCases(requested.contract, [&](const auto &assumptions) {
+    LifetimeInferenceConstraints constraints(lifetimeBoundsForContract(assumptions));
+    for (const auto bound : target.bounds)
+      if (!constraints.proves(region(bound.longer), region(bound.shorter)))
+        return false;
+    const auto provesType = [&](const SemanticType &type, Lifetime lifetime) {
+      const auto actual = substituteTypeLifetimes(type, *bindings);
+      return actual && proveLifetimeTypeOutlives(*actual, region(lifetime),
+                                                 assumptions, constraints);
+    };
+    for (const auto &bound : target.typeBounds)
+      if (!provesType(bound.type, bound.region))
+        return false;
+    return evaluateLifetimeRequirements(target.requirements, [&](const auto &node) {
+      return node.kind == LifetimeRequirementNode::Kind::Region
+          ? constraints.proves(region(node.bound.longer), region(node.bound.shorter))
+          : provesType(node.type, node.bound.shorter);
+    }).value_or(false);
+  }).proof == LifetimeFormulaProof::Proven;
+}
+
 auto SemanticVisitor::Impl::restoredReferenceFields(
     const SemanticType &referent)
     -> std::optional<std::vector<RestoredBorrowField>> {
@@ -345,40 +380,9 @@ auto SemanticVisitor::Impl::analyzeFunctionPointerCall(const Call &expr,
       for (const auto &type : target.lambdaParameterTypes())
         SemanticType::appendExpandedArgument(targetParameters, type);
     }
-    bool compatible = targetResult && targetContract;
-    const auto targetBindings = compatible
-        ? callableLifetimeTargetBindings(*targetResult, targetParameters,
-                                         *targetContract, callable.signature)
-        : std::nullopt;
-    compatible = targetBindings.has_value();
-    if (compatible) {
-      const auto region = [&](Lifetime value) {
-        for (const auto binding : *targetBindings)
-          if (binding.first == value)
-            return binding.second;
-        return value;
-      };
-      compatible = targetContract->valid() && targetContract->requirements.resolved() &&
-          visitLifetimeAssumptionCases(callable.contract, [&](const auto &assumptions) {
-            LifetimeInferenceConstraints constraints(lifetimeBoundsForContract(assumptions));
-            for (const auto bound : targetContract->bounds)
-              if (!constraints.proves(region(bound.longer), region(bound.shorter)))
-                return false;
-            const auto provesType = [&](const SemanticType &type, Lifetime lifetime) {
-              const auto actual = substituteTypeLifetimes(type, *targetBindings);
-              return actual && proveLifetimeTypeOutlives(*actual, region(lifetime),
-                                                         assumptions, constraints);
-            };
-            for (const auto &bound : targetContract->typeBounds)
-              if (!provesType(bound.type, bound.region))
-                return false;
-            return evaluateLifetimeRequirements(targetContract->requirements, [&](const auto &node) {
-              return node.kind == LifetimeRequirementNode::Kind::Region
-                  ? constraints.proves(region(node.bound.longer), region(node.bound.shorter))
-                  : provesType(node.type, node.bound.shorter);
-            }).value_or(false);
-          }).proof == LifetimeFormulaProof::Proven;
-    }
+    const bool compatible = targetResult && targetContract &&
+        callableLifetimeTargetCompatible(*targetResult, targetParameters,
+                                         *targetContract, callable);
     if (!containsOpenTypeParameter(target) && !compatible) {
       report(expressionToken(expr.arguments().front()),
              "GTI invocation pointer construction requires an exact-signature "

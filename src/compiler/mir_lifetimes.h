@@ -147,6 +147,10 @@ mirLambdaCaptureTypes(const MirProgram &, const SemanticType &);
 // The carrier capability and its exact type select the source-free authority.
 [[nodiscard]] const CallableLifetimeSignature *
 checkedMirCallableLifetimeSignature(const MirProgram &, const MirInstruction &);
+// Rebuild the native carrier's normalized interface with query-local names,
+// then prove the exact target accepts every permitted invocation.
+[[nodiscard]] bool mirNativeCallbackLifetimeMatches(
+    const MirProgram &, const MirNativeCallbackAdapter &);
 // Conservative direct-reference suppliers derived from the trusted carrier
 // signature, with invocation operand zero reserved for the pointer itself.
 [[nodiscard]] std::optional<FunctionBorrowDependencySummary>

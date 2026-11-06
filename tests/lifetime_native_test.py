@@ -44,6 +44,21 @@ int main() {
   return choose(left, right, false) - 8;
 }
 """,
+    "copied_carrier_result": """
+struct View<lifetime a> {
+  int&<a> first; int&<a> second;
+  View(int&<a> left, int&<a> right) : first(left), second(right) {}
+};
+int&<a> choose<lifetime a>(View<a> view, bool first) {
+  if (first) { return view.first; }
+  return view.second;
+}
+int main() {
+  int left = 3; int right = 7;
+  View view{left, right};
+  return choose(view, false) - 7;
+}
+""",
     "selected_sources_in_multiple_fields": """
 int&<a> choose<lifetime a>(int&<a> left, int&<a> right, bool first) {
   if (first) { return left; }
@@ -159,18 +174,15 @@ struct Outer {
 struct View<lifetime a> {
   int&<a> value;
   View(int&<a> input) : value(input) {}
-  ~View() {
-    if (this.value != 7) { gti_internal::panic("wrong cleanup owner"); }
-    std::println("borrowed");
-  }
+  ~View() { std::println(this.value); }
 };
 View<a> make_view<lifetime a>(int&<a> input) { return View<a>(input); }
-int later() { gti_internal::panic("later argument failed"); }
+int later(int divisor) { return 1 / divisor; }
 int consume<lifetime a>(View<a> view, int unused) { return view.value; }
 int main() {
   Outer outer{};
   int number = 7;
-  return consume(make_view(number), later());
+  return consume(make_view(number), later(0));
 }
 """,
     "lambda_suppliers": """
@@ -218,6 +230,14 @@ int main() {
   auto box = Box<View<_>>::item(view);
   return read(box) - 7;
 }
+""",
+    "native_borrowed_text": """
+using Count = (std::string_view) -> int32_t;
+int32_t count<lifetime a>(std::string_view<a> value) { return 7; }
+int32_t invoke<lifetime a>(Count callback, std::string_view<a> value) {
+  unsafe { return callback(value); }
+}
+int main() { Count callback = count; return invoke(callback, "text") - 7; }
 """,
     "higher_ranked_pointer": """
 import std.functional;
@@ -393,11 +413,11 @@ def main():
                 failure_case = label == "borrowed_prepared_argument_failure"
                 executed = run([binary], label + "-" + mode + "-run", expect_success=not failure_case)
                 if failure_case:
-                    site = source.index('gti_internal::panic("later argument failed")')
+                    site = source.index('1 / divisor')
                     line = source[:site].count("\n") + 1
-                    expected = (f'{path.name}:{line}: runtime error[GTI-R0017]: '
-                                'panic: "later argument failed"\n')
-                    if executed.returncode != 70 or executed.stdout != "borrowed\nouter\n" or executed.stderr != expected:
+                    expected = (f'{path.name}:{line}: runtime error[GTI-R0002]: '
+                                'division_by_zero in integer_division\n')
+                    if executed.returncode != 70 or executed.stdout != "7\nouter\n" or executed.stderr != expected:
                         raise RuntimeError(f"{label}/{mode}: prepared owner must clean up exactly once before outer cleanup")
                 elif executed.stdout or executed.stderr:
                     raise RuntimeError(f"{label}/{mode}: unexpected runtime output")

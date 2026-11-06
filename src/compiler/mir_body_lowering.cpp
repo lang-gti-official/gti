@@ -3355,7 +3355,9 @@ private:
     if (inheritSourceMetadata && instruction.hirValue != 0) {
       if (const HirValue *source = findValue(instruction.hirValue)) {
         if (instruction.kind == MirInstructionKind::Call ||
-            instruction.kind == MirInstructionKind::Construct) {
+            instruction.kind == MirInstructionKind::Construct ||
+            (instruction.kind == MirInstructionKind::Compute &&
+             instruction.operation == MirOperation::NativeCallback)) {
           instruction.lifetimeArguments = source->lifetimeArguments;
           instruction.lifetimeApplication =
               lowerMirLifetimeApplication(source->lifetimeApplication);

@@ -1755,6 +1755,7 @@ struct NativeFunctionConversionInfo {
   FunctionId function = 0;
   const FunctionDecl *declaration = nullptr;
   SemanticType type = SemanticType::Unknown;
+  SemanticLifetimeApplication lifetimeApplication;
   CThreadCallbackKind cThreadCallback = CThreadCallbackKind::None;
 };
 

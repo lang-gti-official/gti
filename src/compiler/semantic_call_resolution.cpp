@@ -1,5 +1,6 @@
 #include "semantic_analyzer_impl.h"
 #include "gti/lifetime_types.h"
+#include "gti/callable_lifetimes.h"
 
 namespace lang {
 
@@ -970,7 +971,33 @@ auto SemanticVisitor::Impl::analyzeNativeIndirectCall(
     currentType = valid ? *result : SemanticType::Unknown;
     return;
   }
-  const auto parameters = calleeType.nativeFunctionParameterTypes();
+  std::size_t slot = 0;
+  const auto callable = makeCallableLifetimeSignature(calleeType,
+      [&](const SemanticType &nominal) { return nominalFormationRequirements(nominal, false); },
+      [&] {
+        ++slot;
+        return implicitSyntaxLifetime(call.paren(), 4096 + slot,
+                                       "_native_carrier" + std::to_string(slot));
+      });
+  if (!callable) {
+    report(call.paren(), "Native function pointer has no complete invocation lifetime contract.",
+           "GTI-S2076");
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  CallableCandidate invocation;
+  invocation.returnType = callable->signature.arguments.front();
+  invocation.parameterTypes.assign(callable->signature.arguments.begin() + 1,
+                                    callable->signature.arguments.end());
+  invocation.lifetimeContract = callable->contract;
+  invocation.lifetimeApplication.bindings = callable->signatureBindings;
+  if (!applyCallLifetimeContract(invocation, *arguments, call.paren())) {
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  invocation.lifetimeApplication.callableSignature = *callable;
+  result = &invocation.returnType;
+  const auto &parameters = invocation.parameterTypes;
   if (arguments->size() != parameters.size()) {
     report(call.paren(),
            "Native function pointer expects " +
@@ -1015,7 +1042,9 @@ auto SemanticVisitor::Impl::analyzeNativeIndirectCall(
                 : std::optional{callableParameterContract(call.callee())
                                     ->boundary},
         .returnType = *result,
-        .parameterTypes = {parameters.begin(), parameters.end()}};
+        .parameterTypes = {parameters.begin(), parameters.end()},
+        .lifetimeApplication = invocation.lifetimeApplication};
+    commitLifetimeApplication(resolved.lifetimeApplication);
     semanticModel.record(call, resolved);
     semanticModel.recordDefinedFailure(call, {});
     recordSelectedCallOccurrence(call, std::move(resolved));

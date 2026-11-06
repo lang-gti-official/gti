@@ -1,5 +1,6 @@
 #include "semantic_analyzer_impl.h"
 #include "gti/lifetime_types.h"
+#include "gti/callable_lifetimes.h"
 
 namespace lang {
 
@@ -12,8 +13,15 @@ auto SemanticVisitor::Impl::isContextualArrayArgument(
 auto SemanticVisitor::Impl::nativeFunctionCandidateIsEligible(
     const CallableCandidate &candidate) -> bool {
   if (candidate.ownerClass != 0 || candidate.declaration == nullptr ||
-      candidate.id == 0 || !candidate.record().genericParameters.empty() ||
-      candidate.record().parameterPack || !candidate.requirements.empty() ||
+      candidate.id == 0 ||
+      std::any_of(candidate.record().genericParameters.begin(),
+                  candidate.record().genericParameters.end(),
+                  [](const auto &parameter) { return !parameter.lifetime; }) ||
+      candidate.record().parameterPack ||
+      (!candidate.requirements.empty() &&
+       (!candidate.lifetimeContract.valid() ||
+        !candidate.lifetimeContract.requirements.resolved() ||
+        candidate.lifetimeContract.requirements.nodes.empty())) ||
       candidate.virtualMethod || candidate.pureVirtual ||
       candidate.overrideMethod ||
       candidate.record().intrinsic != IntrinsicKind::None ||
@@ -56,6 +64,7 @@ auto SemanticVisitor::Impl::functionItemCandidateIsEligible(
 auto SemanticVisitor::Impl::nativeFunctionCandidateMatches(
     const CallableCandidate &candidate, const SemanticType &expectedType) const
     -> bool {
+  notePrivateLifetimeDependency(candidate.id);
   if (!nativeFunctionCandidateIsEligible(candidate) ||
       !expectedType.hasNativeFunctionShape()) {
     return false;
@@ -68,13 +77,15 @@ auto SemanticVisitor::Impl::nativeFunctionCandidateMatches(
       function->linkage != LanguageLinkage::Gti) {
     return false;
   }
-  const SemanticType *returnType = expectedType.nativeFunctionReturnType();
-  const std::span<const SemanticType> parameterTypes =
-      expectedType.nativeFunctionParameterTypes();
-  return returnType != nullptr && candidate.returnType == *returnType &&
-         candidate.parameterTypes.size() == parameterTypes.size() &&
-         std::equal(candidate.parameterTypes.begin(),
-                    candidate.parameterTypes.end(), parameterTypes.begin());
+  auto temporary = nextGenericParameterId;
+  constexpr auto instanceIds = std::numeric_limits<GenericParameterId>::max() / 2 + 1;
+  const auto requested = makeCallableLifetimeSignature(expectedType,
+      [&](const SemanticType &nominal) { return nominalFormationRequirements(nominal, false); },
+      [&] {
+        return temporary < instanceIds ? Lifetime::parameter(temporary++) : Lifetime{};
+      });
+  return requested && callableLifetimeTargetCompatible(
+      function->returnType, function->parameterTypes, function->lifetimeContract, *requested);
 }
 
 auto SemanticVisitor::Impl::matchingNativeFunctionCandidates(
@@ -148,9 +159,9 @@ auto SemanticVisitor::Impl::analyzeNativeFunctionItem(
                   " overloads exactly match native function type '" +
                   typeSpelling(expectedType) + "'.");
     diagnostic.hints.emplace_back(
-        "Callback targets must be non-generic namespace-scope GTI "
-        "functions with bodies and an exact parameter and return type "
-        "match. An unsafe function cannot become a safe callback.");
+        "Callback targets must be namespace-scope GTI functions with bodies, "
+        "no unspecialized type or value arguments, and a compatible invocation "
+        "lifetime contract. An unsafe function cannot become a safe callback.");
     for (const CallableCandidate &candidate : symbol.overloads) {
       if (candidate.declaration != nullptr) {
         diagnostic.related.push_back(
@@ -177,12 +188,27 @@ auto SemanticVisitor::Impl::analyzeNativeFunctionItem(
     diagnostics.emplace_back(std::move(diagnostic));
     return SemanticType::Unknown;
   }
+  std::size_t slot = 0;
+  const auto callable = makeCallableLifetimeSignature(expectedType,
+      [&](const SemanticType &nominal) { return nominalFormationRequirements(nominal, false); },
+      [&] {
+        ++slot;
+        return implicitSyntaxLifetime(location, 4096 + slot,
+                                       "_native_carrier" + std::to_string(slot));
+      });
+  if (!callable || !callableLifetimeTargetCompatible(
+          selected.returnType, selected.parameterTypes, selected.lifetimeContract, *callable)) {
+    report(location, "The native callback target does not satisfy its invocation lifetime contract.",
+           "GTI-S2076");
+    return SemanticType::Unknown;
+  }
   semanticModel.recordNativeFunctionConversion(
       expression,
       NativeFunctionConversionInfo{
           .function = selected.id,
           .declaration = selected.declaration,
           .type = expectedType,
+          .lifetimeApplication = {.callableSignature = *callable, .complete = true},
           .cThreadCallback =
               concurrent ? (confined ? CThreadCallbackKind::ThreadConfined
                                      : expectedType.cThreadCallbackKind())
@@ -4451,9 +4477,9 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
              "GTI-S2076");
     }
     for (std::size_t index = 0; index < parameterCount; ++index) {
-      validateType(type.arguments[index]);
+      validateType(type.arguments[index], false, true);
     }
-    validateType(type.arguments.back());
+    validateType(type.arguments.back(), false, true);
     const SemanticType resolved = baseTypeOf(type, currentNamespace);
     const SemanticType *returnType = resolved.nativeFunctionReturnType();
     if (returnType == nullptr ||
@@ -7951,7 +7977,8 @@ auto SemanticVisitor::Impl::substituteType(
     return pack;
   }
   if (result.kind == SemanticType::Class || result.kind == SemanticType::Enum ||
-      result.kind == SemanticType::FunctionSignature) {
+      result.kind == SemanticType::FunctionSignature ||
+      result.kind == SemanticType::NativeFunction) {
     std::vector<SemanticType> expanded;
     for (SemanticType &argument : result.arguments) {
       SemanticType::appendExpandedArgument(expanded, std::move(argument));

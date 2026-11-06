@@ -12,10 +12,26 @@ int main(int argc, char **argv) {
   const bool mir = argc > 1 && std::string_view(argv[1]) == "--mir";
   int failures = 0;
   const auto check = [&](std::string_view name, std::string_view source,
-                         bool accepted, std::string_view code = {}) {
-    const auto result = lang::Frontend(
-        {.stopAfter = mir ? lang::FrontendPhase::Mir : lang::FrontendPhase::Semantics})
-                            .analyze(std::string(name) + ".gti", std::string(source));
+                         bool accepted, std::string_view code = {},
+                         bool withTextPrelude = false) {
+    const auto frontend = lang::Frontend(
+        {.stopAfter = mir ? lang::FrontendPhase::Mir : lang::FrontendPhase::Semantics});
+    const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+    const auto prelude = std::filesystem::weakly_canonical(root / "prelude.gti");
+    const std::string textPrelude = R"gti(
+namespace gti_internal {
+  class text_view<lifetime storage> {};
+  class c_string<lifetime storage> {};
+}
+namespace std {
+  using string_view<lifetime storage> = gti_internal::text_view<storage>;
+  using c_string<lifetime storage> = gti_internal::c_string<storage>;
+}
+)gti";
+    const auto result = withTextPrelude
+        ? frontend.analyze(std::string(name) + ".gti", std::string(source),
+                           {prelude}, {{prelude.string(), textPrelude}}, {root})
+        : frontend.analyze(std::string(name) + ".gti", std::string(source));
     const bool passed = mir ? result.canGenerateCode() : result.semanticValid;
     const bool codePresent = code.empty() ||
         std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
@@ -97,13 +113,18 @@ int main(int argc, char **argv) {
     }
   };
   check("text-equality-with-independent-storage-regions", R"gti(
-bool same(std::string_view left, std::string_view right) { return left == right; }
+bool same<lifetime a, lifetime b>(std::string_view<a> left, std::string_view<b> right) {
+  return left == right;
+}
 bool different(std::string_view left, std::string_view right) { return left != right; }
+bool same_c<lifetime a, lifetime b>(std::c_string<a> left, std::c_string<b> right) {
+  return left == right;
+}
 int main() { std::string_view text = "hello"; return same(text, "hello") ? 0 : 1; }
-)gti", true);
+)gti", true, {}, true);
   check("text-equality-does-not-admit-other-scalar-shapes", R"gti(
 bool wrong(std::string_view text, int number) { return text == number; }
-)gti", false, "GTI-S2000");
+)gti", false, "GTI-S2000", true);
   check("explicit-identity", R"gti(
 int&<a> identity<lifetime a>(int&<a> value) { return value; }
 int main() { int value = 7; int& result = identity(value); return result - 7; }

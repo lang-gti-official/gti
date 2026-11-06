@@ -4382,6 +4382,11 @@ private:
   nativeFunctionCandidateMatches(const CallableCandidate &candidate,
                                  const SemanticType &expectedType) const;
 
+  [[nodiscard]] bool callableLifetimeTargetCompatible(
+      const SemanticType &result, std::span<const SemanticType> parameters,
+      const LifetimeSignatureContract &target,
+      const CallableLifetimeSignature &requested) const;
+
   [[nodiscard]] std::vector<const CallableCandidate *>
   matchingNativeFunctionCandidates(const Symbol &symbol,
                                    const SemanticType &expectedType) const;

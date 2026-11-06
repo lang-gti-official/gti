@@ -312,6 +312,47 @@ int main() {
       }
   expect(checkedCopiedValueRegion,
          "copied carrier fixture must exercise an applied nominal value conversion");
+  const auto localCopiedCarrier = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "local-copied-carrier-parent.gti", R"gti(
+struct View<lifetime a> {
+  int&<a> first; int&<a> second;
+  View(int&<a> left, int&<a> right) : first(left), second(right) {}
+};
+int&<a> choose<lifetime a>(View<a> view, bool first) {
+  if (first) { return view.first; }
+  return view.second;
+}
+int main() {
+  int left = 3; int right = 7;
+  View view{left, right};
+  return choose(view, false) - 7;
+}
+)gti");
+  expect(localCopiedCarrier.canGenerateCode(),
+         "a reference extracted from a local carrier copy retains its stored group");
+  auto missingCopiedParent = localCopiedCarrier.mir;
+  bool removedCopiedParent = false;
+  for (const auto &immutable : missingCopiedParent.functionInstances()) {
+    auto &function = const_cast<MirFunctionInstance &>(immutable);
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.kind == MirInstructionKind::Call && instruction.result &&
+            instruction.info.type.kind == SemanticType::Reference) {
+          auto *value = const_cast<MirValue *>(function.body.findValue(*instruction.result));
+          if (!value || !value->borrowDependencies ||
+              value->borrowDependencies->dependencies.size() != 2)
+            continue;
+          auto &dependencies = value->borrowDependencies->dependencies;
+          const auto *parent = function.body.findLoan(dependencies.front().parent);
+          expect(parent && parent->kind == MirLoanKind::Stored && !parent->entry &&
+                     dependencies.back().parent == parent->id,
+                 "every possible result source must name the same retained local carrier");
+          dependencies.back().parent = 0;
+          removedCopiedParent = true;
+        }
+  }
+  expect(removedCopiedParent && !verifyMirProgram(missingCopiedParent).valid(),
+         "a copied carrier result cannot drop one retained permission parent");
   const auto retainedSelection = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
       "retained-selection-carrier.gti", R"gti(
 int&<a> choose<lifetime a>(int&<a> left, int&<a> right, bool first) {
@@ -460,7 +501,13 @@ int main() {
     if (other == function.body.places.end()) continue;
     for (auto &block : function.body.blocks)
       for (auto &instruction : block.instructions) {
-        if (instruction.kind != MirInstructionKind::Load || instruction.operands.size() != 1 ||
+        const bool sourceCopy = instruction.kind == MirInstructionKind::Load ||
+            (instruction.kind == MirInstructionKind::CallInput &&
+             instruction.callInputRole == MirCallInputRole::Argument &&
+             instruction.callInputIndex == 0 &&
+             (instruction.callInputKind == HirCallInputKind::Value ||
+              instruction.callInputKind == HirCallInputKind::CopyValue));
+        if (!sourceCopy || instruction.operands.size() != 1 ||
             instruction.operands.front().kind != MirOperandKind::Copy)
           continue;
         auto &operand = instruction.operands.front();
@@ -473,7 +520,9 @@ int main() {
         changedCopySource = true;
       }
   }
-  expect(changedCopySource && !verifyMirProgram(wrongCopiedCarrier).valid(),
+  expect(changedCopySource,
+         "copied carrier mutation must replace the evaluated source in a load or input stage");
+  expect(!verifyMirProgram(wrongCopiedCarrier).valid(),
          "a same-type copy of another carrier cannot use the original carrier's parent loan");
   auto missingStoredAddress = copiedCarrier.mir;
   bool removedStoredAddress = false;
@@ -638,13 +687,112 @@ int main() { State<int> state = State<int>::value(7); return get(state) - 7; }
     expect(!verifyMirProgram(invalid).valid(),
            "physical payload cannot forge external authority, selector, transfer or storage");
   }
+  const auto projectedPayload = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "physical-payload-stored-field.gti", R"gti(
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+};
+enum Box<T> { item(T value) };
+int read<lifetime a>(Box<View<a>>& box) {
+  switch (box) { case Box<View<a>>::item(auto& payload): return payload.value; }
+}
+int main() {
+  int number = 7;
+  View view{number};
+  auto box = Box<View<_>>::item(view);
+  return read(box) - 7;
+}
+)gti");
+  expect(projectedPayload.canGenerateCode(),
+         "a physical payload's stored reference field uses its exact ordinary subobject path");
+  bool mutatedProjectedPayload = false;
+  auto fakePhysicalOrigins = projectedPayload.mir;
+  for (const auto address : enumerateMirBodyAddresses(fakePhysicalOrigins))
+    if (auto *body = findMirBody(fakePhysicalOrigins, address))
+      for (auto &loan : body->loans)
+        if (loan.referenceSelection && loan.referenceSelection->kind ==
+                                           ReferenceSelectionKind::PhysicalPayload) {
+          loan.additionalDependencies.push_back(
+              {.source = loan.source, .access = loan.access});
+          mutatedProjectedPayload = true;
+        }
+  expect(mutatedProjectedPayload && !verifyMirProgram(fakePhysicalOrigins).valid(),
+         "a physical payload cannot hide multiple external origins behind its selection role");
   const auto standardLibrary =
       std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
-  const auto panic = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
-      standardLibrary.parent_path() / "tests/lifetime-panic-contract.gti", R"gti(
+  // These tests exercise compiler-private capability protocols themselves.
+  // Give only these fixtures explicit trusted source identity; application
+  // acceptance is covered separately by the public native programs.
+  const auto trustedCapability = [&](const char *name, const std::string &source,
+                                    const std::vector<PackageSourceRoot> &modules = {}) {
+    const auto path = std::filesystem::weakly_canonical(standardLibrary / name);
+    return Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+        path, source, {standardLibrary / "prelude.gti", path},
+        {{path.string(), source}}, {standardLibrary}, modules);
+  };
+  const auto native = trustedCapability("lifetime-native-callable.gti", R"gti(
+using Count = (std::string_view) -> int32_t;
+int32_t count<lifetime a>(std::string_view<a> value) { return 7; }
+int32_t invoke<lifetime a>(Count callback, std::string_view<a> value) {
+  unsafe { return callback(value); }
+}
+int main() { Count callback = count; return invoke(callback, "text") - 7; }
+)gti");
+  if (!native.canGenerateCode())
+    for (const auto &diagnostic : native.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(native.canGenerateCode(), "native borrowed inputs retain invocation scopes through verified MIR");
+  struct NativeSite { MirBodyAddress body; MirInstructionId instruction; bool forming; };
+  std::vector<NativeSite> nativeSites;
+  bool nativeForming = false;
+  bool nativeInvoke = false;
+  for (const auto address : enumerateMirBodyAddresses(native.mir))
+    if (const auto *body = findMirBody(native.mir, address))
+      for (const auto &block : body->blocks)
+        for (const auto &instruction : block.instructions)
+          if (instruction.operation == MirOperation::NativeCallback || instruction.nativeCalleeType) {
+            const bool forming = instruction.operation == MirOperation::NativeCallback;
+            const auto *signature = checkedMirCallableLifetimeSignature(native.mir, instruction);
+            expect(signature && signature->signature.hasNativeFunctionShape() &&
+                       !signature->signature.quantifiedLifetimes.empty(),
+                   "native forming and invoking preserve the actual quantified carrier");
+            nativeForming |= forming;
+            nativeInvoke |= !forming;
+            nativeSites.push_back({address, instruction.id, forming});
+          }
+  expect(nativeForming && nativeInvoke, "native fixture reaches both source-free boundaries");
+  for (const auto site : nativeSites)
+    for (int mutation = 0; mutation != 4; ++mutation) {
+      auto broken = native.mir;
+      auto *body = findMirBody(broken, site.body);
+      MirInstruction *selectedNative = nullptr;
+      for (auto &block : body->blocks)
+        for (auto &instruction : block.instructions)
+          if (instruction.id == site.instruction)
+            selectedNative = &instruction;
+      auto &application = selectedNative->lifetimeApplication;
+      switch (mutation) {
+      case 0: application.callableSignature.reset(); break;
+      case 1: application.callableSignature->signature.quantifiedLifetimes.clear(); break;
+      case 2:
+        if (site.forming) {
+          auto &target = const_cast<MirFunctionInstance &>(*broken.findFunctionInstance(
+              broken.findNativeCallbackAdapter(*selectedNative->nativeCallbackAdapter)->target));
+          target.parameterTypes.front().lifetimeArguments = {Lifetime::staticLifetime()};
+        } else {
+          application.bindings.clear();
+        }
+        break;
+      case 3: application.complete = false; break;
+      }
+      expect(!verifyMirLifetimeApplications(broken, *body, site.body.owner).valid(),
+             "native MIR rejects missing scope, universal binding, proof or a stronger callback target");
+    }
+  const auto panic = trustedCapability("lifetime-panic-contract.gti", R"gti(
 void report_failure(std::string_view message) { gti_internal::panic(message); }
 int main() { return 0; }
-)gti", {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
+)gti");
   if (!panic.canGenerateCode()) {
     for (const auto &diagnostic : panic.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
@@ -688,8 +836,7 @@ int main() { return 0; }
                   {"detail_function_pointer_impl", standardLibrary / "std/detail/function_pointer.gti"}},
       .kind = SourceOwnerKind::Toolchain, .implicitAlias = "std",
       .defaultModule = "meta"};
-  const auto pointer = Frontend({.stopAfter = FrontendPhase::Mir})
-                           .analyze(standardLibrary.parent_path() / "tests/lifetime-pointer-contracts.gti", R"gti(
+  const auto pointer = trustedCapability("lifetime-pointer-contracts.gti", R"gti(
 import std.detail_function_pointer_impl;
 using Selection = for<lifetime region> int&<region>(int&<region>, int&<region>, bool);
 int&<shorter> select<lifetime longer, lifetime shorter>(
@@ -705,7 +852,7 @@ int main() {
   int& selected = gti_internal::function_pointer_invoke(pointer, left, right, false);
   return selected - 11;
 }
-)gti", {standardLibrary / "prelude.gti"}, {}, {standardLibrary}, {pointerModules});
+)gti", {pointerModules});
   if (!pointer.semanticValid || !pointer.mir.valid()) {
     for (const auto &diagnostic : pointer.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
@@ -735,8 +882,7 @@ int main() {
         instruction.lifetimeApplication.callableSignature->contract.typeBounds.clear();
   expect(!verifyMirProgram(corruptPointer).valid(),
          "MIR must derive callable obligations independently from the trusted carrier");
-  const auto nominalPointer = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
-      standardLibrary.parent_path() / "tests/lifetime-pointer-nominal.gti", R"gti(
+  const auto nominalPointer = trustedCapability("lifetime-pointer-nominal.gti", R"gti(
 import std.detail_function_pointer_impl;
 struct Holder<T, lifetime a> {
   T&<a> value;
@@ -750,7 +896,7 @@ int main() {
   Holder<int, _> holder{number};
   return gti_internal::function_pointer_invoke(pointer, holder) - 7;
 }
-)gti", {standardLibrary / "prelude.gti"}, {}, {standardLibrary}, {pointerModules});
+)gti", {pointerModules});
   if (!nominalPointer.canGenerateCode())
     for (const auto &diagnostic : nominalPointer.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
@@ -784,7 +930,8 @@ int main() {
     }
   expect(changedNominalRegion && !verifyMirProgram(foreignNominalRegion).valid(),
          "a nominal formation contract cannot supply a foreign scoped region");
-  const auto rejectedPath = standardLibrary.parent_path() / "tests/lifetime-pointer-requires.gti";
+  const auto rejectedPath = std::filesystem::weakly_canonical(
+      standardLibrary / "lifetime-pointer-requires.gti");
   const std::string rejectedSource = R"gti(
 import std.detail_function_pointer_impl;
 using Independent = for<lifetime x, lifetime y> int&<y>(int&<x>, int&<y>, bool);
@@ -799,9 +946,8 @@ int main() {
   return 0;
 }
 )gti";
-  const auto rejected = Frontend({.stopAfter = FrontendPhase::Mir})
-      .analyze(rejectedPath, rejectedSource, {standardLibrary / "prelude.gti"}, {},
-               {standardLibrary}, {pointerModules});
+  const auto rejected = trustedCapability("lifetime-pointer-requires.gti", rejectedSource,
+                                          {pointerModules});
   const auto failure = std::find_if(rejected.diagnostics.begin(), rejected.diagnostics.end(),
       [](const auto &diagnostic) { return diagnostic.code == "GTI-S2093"; });
   const auto targetOffset = rejectedSource.find(">(constrained)") + 2;
