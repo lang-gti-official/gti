@@ -19,8 +19,10 @@ import llvm_scalar_execution_test as scalar
 
 
 # Positive source/profile facts frozen before extraction, reconciled to v2's
-# explicit execution profile. This is a regression oracle, not a registry.
-FROZEN_MANIFEST = "e0293367a0ff0e05c89743ef2a69518eaf577822da7334a39e40c4b12942326a"
+# explicit execution profile and to explicit `!` macro calls (the
+# `assertion` case's `require!(false)`). This is a regression oracle, not a
+# registry.
+FROZEN_MANIFEST = "0ceffd3549245cc8ae4835ff80585803ebd9464512b40305a7db86a711f326df"
 FROZEN_SUCCESSES = (
     'scalars', 'widths', 'coverage-constructions', 'shipped-example', 'globals',
     'switch-default', 'integral-enum-underlying', 'dormant-owner',
