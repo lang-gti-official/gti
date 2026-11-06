@@ -74,6 +74,15 @@ std::string hashFile(const std::filesystem::path &path) {
     throw std::invalid_argument("cannot hash compatibility input");
   return h.finishHex();
 }
+std::vector<std::string> runtimeImports(const std::filesystem::path &path,
+                                        const TargetInfo &target,
+                                        const std::string &expectedDigest) {
+  const auto bytes = readCompiledLibraryFile(path);
+  if (hash(bytes) != expectedDigest)
+    throw std::invalid_argument(
+        "compiled library runtime changed during admission");
+  return compiledLibrarySupportSymbols(bytes, target);
+}
 void field(std::string &out, std::string_view bytes) {
   out += std::to_string(bytes.size());
   out += ':';
@@ -122,7 +131,7 @@ std::string interface(const std::vector<CompiledScalarSignature> &signatures) {
   auto sorted = signatures;
   std::sort(sorted.begin(), sorted.end(),
             [](const auto &a, const auto &b) { return a.key < b.key; });
-  std::string out = "gti.callable-interface.3\n", previous;
+  std::string out = "gti.callable-interface.4\n", previous;
   for (const auto &signature : sorted) {
     if (signature.key == previous)
       throw std::invalid_argument("duplicate callable interface declaration");
@@ -136,6 +145,12 @@ std::string interface(const std::vector<CompiledScalarSignature> &signatures) {
     field(out, std::to_string(signature.borrow.parameter));
     field(out,
           signature.borrow.access == AccessMode::ReadOnly ? "read" : "mut");
+    field(out, signature.codegenAttributes.inlining == FunctionInlining::Default
+                   ? "default"
+               : signature.codegenAttributes.inlining == FunctionInlining::Hint
+                   ? "hint"
+                   : "never");
+    field(out, signature.codegenAttributes.cold ? "1" : "0");
     out += '\n';
     if (out.size() > 1024U * 1024U)
       throw std::invalid_argument("callable interface exceeds metadata limit");
@@ -158,7 +173,7 @@ std::string_view takeField(std::string_view &bytes) {
   return result;
 }
 std::vector<CompiledScalarSignature> readInterface(std::string_view bytes) {
-  constexpr std::string_view header = "gti.callable-interface.3\n";
+  constexpr std::string_view header = "gti.callable-interface.4\n";
   if (bytes.size() > 1024U * 1024U || !bytes.starts_with(header))
     throw std::invalid_argument("unsupported compiled interface profile");
   auto rest = bytes.substr(header.size());
@@ -190,6 +205,17 @@ std::vector<CompiledScalarSignature> readInterface(std::string_view bytes) {
       throw std::invalid_argument("invalid compiled borrow access");
     signature.borrow.access =
         access == "read" ? AccessMode::ReadOnly : AccessMode::Mutable;
+    const auto inlining = takeField(rest);
+    if (inlining != "default" && inlining != "hint" && inlining != "never")
+      throw std::invalid_argument("invalid compiled inlining policy");
+    signature.codegenAttributes.inlining =
+        inlining == "default" ? FunctionInlining::Default
+        : inlining == "hint"  ? FunctionInlining::Hint
+                              : FunctionInlining::Never;
+    const auto cold = takeField(rest);
+    if (cold != "0" && cold != "1")
+      throw std::invalid_argument("invalid compiled cold policy");
+    signature.codegenAttributes.cold = cold == "1";
     if (rest.empty() || rest.front() != '\n')
       throw std::invalid_argument("malformed callable interface");
     rest.remove_prefix(1);
@@ -380,6 +406,7 @@ CompiledScalarLibraryResult buildScalarLibrary(
     (void)libraryIdentity(signatures);
   }
   auto id = environment(request, runtime);
+  auto allowedImports = runtimeImports(runtime, request.target(), id.runtime);
   auto prepared = imports.empty()
                       ? ScalarConsumerInputs{loadCompilationInputs(request)}
                       : prepareScalarConsumer(request, imports, runtime);
@@ -399,8 +426,13 @@ CompiledScalarLibraryResult buildScalarLibrary(
     std::vector<std::string> symbols;
     for (const auto &key : backend.selectedSignatures())
       symbols.push_back(compiledScalarSymbol(key));
+    allowedImports.insert(allowedImports.end(), prepared.symbols.begin(),
+                          prepared.symbols.end());
     verifyCompiledScalarObject(result.compilation.artifact->contents,
-                               request.target(), symbols, prepared.symbols);
+                               request.target(), symbols, allowedImports);
+    if (hashFile(runtime) != id.runtime)
+      throw std::invalid_argument(
+          "compiled library runtime changed during compilation");
     // Publication must still describe the input snapshot that produced code.
     auto current = imports.empty()
                        ? ScalarConsumerInputs{loadCompilationInputs(request)}
@@ -489,6 +521,8 @@ prepareScalarConsumer(const CompilationRequest &request,
   if (bundles.empty() || bundles.size() > 64)
     throw std::invalid_argument("compiled consumer requires 1 to 64 libraries");
   const auto environmentIdentity = environment(request, runtime);
+  const auto runtimeSymbols =
+      runtimeImports(runtime, request.target(), environmentIdentity.runtime);
   std::unordered_map<std::string, std::string> overlays;
   struct Admission {
     std::vector<CompiledScalarSignature> signatures;
@@ -576,7 +610,7 @@ prepareScalarConsumer(const CompilationRequest &request,
     auto &bundle = input.bundle;
     auto &metadata = admitted[index];
     std::vector<LibraryBundleDependency> expectedDependencies;
-    std::vector<std::string> allowedSymbols;
+    auto allowedSymbols = runtimeSymbols;
     for (const auto &dependency : bundle.dependencies) {
       const auto selected = libraries.at(dependency.library);
       expectedDependencies.push_back(
@@ -759,6 +793,10 @@ bool reusableCompiledScalarLibraryTarget(
     if (!prepared.compilation.succeeded())
       return false;
     auto expected = environment(request, runtime);
+    auto allowedImports =
+        runtimeImports(runtime, request.target(), expected.runtime);
+    allowedImports.insert(allowedImports.end(), prepared.symbols.begin(),
+                          prepared.symbols.end());
     expected.library = libraryIdentity(signatures);
     expected.sources = producerSources(prepared.compilation, &target);
     requireLibraryBundleCompatibility(bundle, expected, prepared.dependencies);
@@ -768,7 +806,7 @@ bool reusableCompiledScalarLibraryTarget(
     for (const auto &signature : signatures)
       symbols.push_back(compiledScalarSymbol(signature));
     verifyCompiledScalarObject(bundle.objects.front().bytes, request.target(),
-                               symbols, prepared.symbols);
+                               symbols, allowedImports);
     return true;
   } catch (const std::exception &) {
     return false;

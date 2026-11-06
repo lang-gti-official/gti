@@ -126,7 +126,7 @@ local ok, problem = xpcall(function()
   vim.api.nvim_buf_set_lines(buffer, 0, -1, false, {
     'void use(int value) {}',
     '#macro inspect(int value) { mut int local_value = value; use(local_value); }',
-    'int main() { inspect(7); return 0; }',
+    'int main() { inspect!(7); return 0; }',
   })
   vim.api.nvim_win_set_cursor(0, { 3, 15 })
   local unchanged = vim.api.nvim_buf_get_changedtick(buffer)

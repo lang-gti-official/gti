@@ -1,4 +1,8 @@
+#include "../src/compiler/llvm/abi.h"
+#include "../src/compiler/llvm/body.h"
+#include "../src/compiler/llvm/session.h"
 #include "../src/driver/compiled_scalar_support.h"
+#include "gti/compiled_interface_types.h"
 #include "gti/compiled_scalar_unit.h"
 #include "gti/driver/compiled_scalar_library.h"
 #include "gti/driver/process.h"
@@ -242,6 +246,208 @@ int main() {
   }
   std::cout << "passive namespace/static/constant storage and source-absent "
                "execution passed at O0/O3\n";
+}
+void runtimeClosureTests(const std::filesystem::path &root,
+                         const std::filesystem::path &runtime) {
+  const auto target = TargetInfo::host();
+  const auto services = compiledLibrarySupportSymbols(read(runtime), target);
+  expect(!services.empty() && std::is_sorted(services.begin(), services.end()),
+         "runtime service inventory must be nonempty and canonical");
+  rejects(
+      [&] { (void)compiledLibrarySupportSymbols("not an archive", target); },
+      "malformed runtime archive");
+  rejects([&] { (void)compiledLibrarySupportSymbols("!<thin>\n", target); },
+          "external thin runtime members");
+  rejects([&] { (void)compiledLibrarySupportSymbols("!<arch>\n", target); },
+          "runtime without services");
+  // These are symbol-verifier fixtures, not calls with an invented runtime ABI:
+  // nothing links or executes them. Prefix alone must never authorize an
+  // import.
+  const auto runtimeService =
+      std::find_if(services.begin(), services.end(), [](const auto &name) {
+        return name.starts_with("gti_rt_");
+      });
+  expect(runtimeService != services.end(), "missing actual runtime C export");
+  for (const auto &dependency : {*runtimeService, std::string("memcpy"),
+                                 std::string("gti_rt_missing_service_v999"),
+                                 std::string("arbitrary_native_service")}) {
+    const auto source = root / "runtime-probe.cpp";
+    const auto object = root / "runtime-probe.o";
+    write(source, "extern \"C\" void " + dependency +
+                      "(); extern \"C\" void probe() { " + dependency +
+                      "(); }\n");
+    auto built = process({"c++", "-c", source.string(), "-o", object.string()});
+    expect(built.succeeded(), "runtime symbol fixture failed: " + built.output);
+    const auto bytes = read(object);
+    rejects([&] { verifyCompiledScalarObject(bytes, target, {"probe"}); },
+            "unselected runtime dependency");
+    if (dependency == *runtimeService || dependency == "memcpy")
+      verifyCompiledScalarObject(bytes, target, {"probe"}, services);
+    else
+      rejects(
+          [&] {
+            verifyCompiledScalarObject(bytes, target, {"probe"}, services);
+          },
+          "unprovided native dependency");
+  }
+}
+void checkAnnotationIr(const LoweredProgram &program) {
+  std::vector<LoweredProgramIssue> issues;
+  const auto verified = verifiedLoweredProgram(program, issues);
+  expect(verified.has_value(), "compiled annotation plan is not verified");
+  native_llvm::Session session(*verified, {});
+  const auto admission = planLlvmAdmission(*verified, session.options());
+  expect(admission.admitted(), "annotated compiled unit is not admitted");
+  native_llvm::lowerScalarProgram(session, admission);
+  const auto check = [](const llvm::Function &function,
+                        FunctionCodegenAttributes policy) {
+    expect(function.hasFnAttribute(llvm::Attribute::Cold) == policy.cold &&
+               function.hasFnAttribute(llvm::Attribute::InlineHint) ==
+                   (policy.inlining == FunctionInlining::Hint) &&
+               function.hasFnAttribute(llvm::Attribute::NoInline) ==
+                   (policy.inlining == FunctionInlining::Never) &&
+               !function.hasFnAttribute(llvm::Attribute::AlwaysInline),
+           "LLVM compiled boundary lost or strengthened annotation policy");
+  };
+  for (const auto &binding : program.compiledScalarBindings()) {
+    const auto *external = session.module().getFunction(binding.symbol);
+    expect(external != nullptr, "compiled boundary missing from LLVM IR");
+    check(*external, binding.codegenAttributes);
+    if (!binding.imported)
+      check(*session.abi().declareFunction(binding.function),
+            binding.codegenAttributes);
+  }
+  session.verify();
+}
+void annotationTests(const std::filesystem::path &root,
+                     const std::filesystem::path &runtime) {
+  write(root / "stdlib/prelude.gti", "");
+  const auto library = root / "producer/library.gti";
+  const auto consumer = root / "consumer/main.gti";
+  const auto facade = root / "consumer/api.gti";
+  const std::vector<std::string> attributes{
+      "",          "[[inline]] ",       "[[noinline]] ",
+      "[[cold]] ", "[[cold, inline]] ", "[[cold, noinline]] "};
+  std::string source = "export module annotations; export namespace api {\n";
+  std::string client = "import \"api.gti\"; int main() {\n";
+  std::vector<std::string> names;
+  for (std::size_t i = 0; i < attributes.size(); ++i) {
+    const auto name = "f" + std::to_string(i);
+    names.push_back("api::" + name);
+    source += attributes[i] + "int " + name + "(int x) { return x; }\n";
+    client += "if (api::" + name + "(7) != 7) { return 1; }\n";
+  }
+  write(library, source + "}\n");
+  write(consumer, client + "return 0; }\n");
+  const auto producerRequest = request(root, library, OptimizationLevel::O3);
+  Capture producer;
+  compiled(
+      compileWithBackend(producerRequest.withApplicationBodies(), producer));
+  expect(!producer.program->mir().functionInstances().empty(),
+         "producer has no functions");
+  const auto unit =
+      producer.program
+          ->findFunctionDeclaration(
+              producer.program->mir().functionInstances().front().declaration)
+          ->sourceUnit;
+  const auto signatures = CompiledScalarUnitBuilder().selectExports(
+      *producer.program, unit,
+      {"annotations", "annotations", "annotations", ""}, names);
+  expect(signatures.size() == attributes.size(),
+         "missing annotation overloads");
+  const auto bytes = encodeCompiledLibraryInterface(signatures);
+  expect(decodeCompiledLibraryInterface(bytes) == signatures,
+         "annotation interface did not round-trip exactly");
+  for (std::size_t i = 0; i < signatures.size(); ++i) {
+    expect(signatures[i].codegenAttributes ==
+               FunctionCodegenAttributes{static_cast<FunctionInlining>(i % 3),
+                                         i >= 3},
+           "export selection erased the source annotation");
+  }
+  auto bound = CompiledScalarUnitBuilder().bindExports(*producer.program, unit,
+                                                       signatures);
+  checkAnnotationIr(bound);
+  auto altered = signatures;
+  altered.front().codegenAttributes.cold = true;
+  expect(compiledScalarSymbol(altered.front()) !=
+             compiledScalarSymbol(signatures.front()),
+         "annotation change did not invalidate the exported contract");
+  rejects(
+      [&] {
+        (void)CompiledScalarUnitBuilder().bindExports(*producer.program, unit,
+                                                      altered);
+      },
+      "producer binding with a policy different from its source");
+  altered.front().codegenAttributes.inlining =
+      static_cast<FunctionInlining>(99);
+  rejects([&] { (void)encodeCompiledLibraryInterface(altered); },
+          "unknown inlining policy");
+  for (const auto &[from, to] :
+       std::vector<std::pair<std::string, std::string>>{
+           {"7:default", "6:always"},
+           {"1:0\n", "1:2\n"},
+           {"1:0\n", "2:00\n"},
+           {"gti.callable-interface.4", "gti.callable-interface.3"}}) {
+    auto malformed = bytes;
+    const auto offset = malformed.find(from);
+    expect(offset != std::string::npos, "missing wire mutation target");
+    malformed.replace(offset, from.size(), to);
+    rejects([&] { (void)decodeCompiledLibraryInterface(malformed); },
+            "malformed annotation metadata");
+  }
+  auto tampered = bound;
+  auto &binding = LoweredProgramTestAccess::bindings(tampered).front();
+  binding.codegenAttributes.cold = true;
+  auto changedSignature = signatures.front();
+  changedSignature.codegenAttributes = binding.codegenAttributes;
+  binding.symbol = compiledScalarSymbol(changedSignature);
+  expect(!verifyCompiledScalarUnit(tampered).empty(),
+         "changed source policy accepted");
+  const auto built = buildCompiledScalarLibraryTarget(
+      producerRequest, {"annotations", "annotations", names}, runtime);
+  compiled(built.compilation);
+  std::filesystem::remove_all(library.parent_path());
+  const auto consumerRequest = request(root, consumer, OptimizationLevel::O3);
+  auto inputs = loadCompilationInputs(
+      consumerRequest, nullptr,
+      {{facade.string(),
+        "export module annotations;\n" + compiledInterfaceSource(signatures)}});
+  const auto importedUnit =
+      inputs.sourceGraph.sourceUnitForPath(facade.string());
+  inputs.sourceGraph.markCompiledScalarInterface(importedUnit);
+  Capture imported;
+  compiled(compileWithBackend(consumerRequest, std::move(inputs), imported));
+  std::vector<CompiledScalarImport> imports;
+  for (const auto &signature : signatures)
+    imports.push_back({signature, importedUnit});
+  auto importedProgram =
+      CompiledScalarUnitBuilder().bindImports(*imported.program, imports);
+  checkAnnotationIr(importedProgram);
+  const auto serialized = LoweredProgramPrinter().print(importedProgram);
+  expect(serialized.find("codegen-inline=2 codegen-cold=1") !=
+             std::string::npos,
+         "compiled annotation policy missing from sealed serialization");
+  LoweredProgramTestAccess::bindings(importedProgram)
+      .front()
+      .codegenAttributes.cold = true;
+  expect(!verifyCompiledScalarUnit(importedProgram).empty(),
+         "import binding policy lost symbol verification");
+  linkAndRun(root, runtime,
+             compileCompiledScalarConsumer(consumerRequest, built.bundle,
+                                           facade, runtime));
+  auto forged = decodeLibraryBundle(built.bundle);
+  auto forgedSignatures =
+      decodeCompiledLibraryInterface(forged.interfaceMetadata);
+  forgedSignatures.front().codegenAttributes.cold = true;
+  forged.interfaceMetadata = encodeCompiledLibraryInterface(forgedSignatures);
+  rejects(
+      [&] {
+        (void)compileCompiledScalarConsumer(
+            consumerRequest, encodeLibraryBundle(forged), facade, runtime);
+      },
+      "rechecksummed interface policy inconsistent with its native object");
+  std::cout << "compiled annotation wire, LLVM boundary, source-absent "
+               "execution and rejection checks passed\n";
 }
 void projectCheckTests(const std::filesystem::path &root,
                        const std::filesystem::path &runtime) {
@@ -574,8 +780,10 @@ int main(int argc, char **argv) {
     expect(argc == 3, "expected runtime archive and example directory");
     TemporaryDirectory tmp;
     const std::filesystem::path examples = argv[2];
+    runtimeClosureTests(tmp.path / "runtime", argv[1]);
     projectCheckTests(tmp.path / "check-project", argv[1]);
     passiveStorageTests(tmp.path / "passive-storage", argv[1]);
+    annotationTests(tmp.path / "annotations", argv[1]);
     write(tmp.path / "stdlib/prelude.gti", "");
     for (auto level : {OptimizationLevel::O0, OptimizationLevel::O1,
                        OptimizationLevel::O3}) {

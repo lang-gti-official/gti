@@ -7,7 +7,7 @@ public:
     static constexpr int increment = 1;
 };
 
-export int base_value() {
+export [[inline]] int base_value() {
     return 7;
 }
 

@@ -1,0 +1,1 @@
+The `beta` ruleset no longer requires linear history, which rejected every new beta line branch because a line starts at a release cut on main's merge-queue history. Rebase-only pull-request merges keep the line free of new merge commits.

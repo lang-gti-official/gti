@@ -696,6 +696,7 @@ add_executable(gti_library_bundle_tests library_bundle_tests.cpp)
 target_link_libraries(gti_library_bundle_tests PRIVATE gti_driver)
 add_test(NAME library_bundle COMMAND gti_library_bundle_tests)
 add_executable(gti_compiled_scalar_library_tests compiled_scalar_library_tests.cpp)
+target_include_directories(gti_compiled_scalar_library_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
 target_link_libraries(gti_compiled_scalar_library_tests PRIVATE gti_driver)
 add_test(NAME compiled_scalar_library COMMAND gti_compiled_scalar_library_tests "$<TARGET_FILE:gti_runtime>" "${PROJECT_SOURCE_DIR}/examples/compiled-scalar-library")
 add_test(NAME compiled_scalar_library_cost COMMAND "${Python3_EXECUTABLE}"

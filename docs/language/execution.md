@@ -960,6 +960,14 @@ normally, and all checks and cleanup remain required. Inlining is independent
 of `constexpr` evaluation. The deprecated C++ backend does not implement these
 optimization requests.
 
+Compiled libraries preserve these requests for exported functions admitted by
+the compiled-library profile. The producer's implementation and exported wrapper
+retain the policy, and consumers apply it to the imported LLVM declaration even
+when producer sources are absent. `[[inline]]` does not serialize a body, enable
+link-time optimization, or promise cross-library inlining. An annotation change
+invalidates the compiled callable's linkage contract; rebuild dependent artifacts.
+See the runnable [compiled primitive library](../../examples/compiled-primitive-library/README.md).
+
 Native declarations, runtime bindings, bodyless functions, pure interface
 requirements, macros, constructors, destructors, lambdas and call-site
 annotations are outside this first slice. `inline` remains reserved outside
@@ -968,8 +976,8 @@ attribute syntax. See the runnable
 
 Future extensions require their own semantic and lowering evidence: forced
 inlining with recursive/unavailable-body diagnostics; profile-guided hot/cold
-regions and outlining; constructor/lambda and call-site policy; cross-module
-propagation through compiled interfaces. None is implied by these three
+regions and outlining; constructor/lambda and call-site policy; cross-library
+body availability and inlining. None is implied by these three
 function attributes.
 
 ### Function contracts

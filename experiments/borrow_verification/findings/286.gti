@@ -1,0 +1,12 @@
+// https://github.com/lang-gti-official/gti/issues/286
+// Semantic analysis accepts; MIR construction fails on main 6eb44d2e.
+// Discovery fixture, not an expected-success regression or CI registration.
+void keep(int& value) {}
+int main() {
+  mut int owner = 1;
+  mut int& parent = owner;
+  int& child = parent;
+  keep(parent);
+  keep(child);
+  return 0;
+}

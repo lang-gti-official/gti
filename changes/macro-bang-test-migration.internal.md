@@ -1,0 +1,1 @@
+Migrate the three tests that #279's explicit `!` macro calls left behind: the scalar-context oracle's frozen manifest digest, the consteval LSP macro-chain generator and the Neovim macro-inspection source.
