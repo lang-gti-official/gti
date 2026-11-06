@@ -582,6 +582,14 @@ is also available for independent tooling and tests. The historical PR #176 audi
 therefore retains streamed hashing and shared evidence, but rejects its
 seal-only admission shortcut.
 
+LLVM lifetime representation queries require this verified snapshot. They keep
+semantic MIR and its contracts unchanged: nominal layout selection matches the
+actual type against its checked universal instance, while private representation
+keys erase only lifetime regions and quantified binder identities. An erased key
+cannot become a semantic type or establish an outlives relation. Reference and
+borrowed primitive layouts retain their ordinary pointer or pointer-and-length
+representation; no lifetime argument becomes a native operand or runtime state.
+
 Evidence owns a const snapshot, shared between consumer stages. Acquiring it
 copies an lvalue program or moves an rvalue program. `Backend::generate`
 accepts a value, and the driver moves its finished program into this boundary;

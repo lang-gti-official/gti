@@ -137,6 +137,7 @@ struct SemanticBorrowDependencySet {
 // set of external places that may own its referent. In particular a branch
 // join must not select the first dependency as though it were that address.
 struct SemanticReferenceSelection {
+  ReferenceSelectionKind kind = ReferenceSelectionKind::StoredExternalReference;
   const Expr *source = nullptr;
   const Expr *carrier = nullptr;
   // Exact consumed dependency group whose authority is handed off by the
@@ -1141,12 +1142,12 @@ struct LambdaInfo {
   std::vector<LambdaCaptureInfo> captures;
   SemanticTypeTraits traits{};
   CallableInvocationCapability capability = CallableInvocationCapability::Read;
-  // A reference result borrows from exactly one read-only reference
-  // parameter, inferred like a free function's summary; captures are never
-  // result origins.
+  // Compact one-source projection of the complete result supplier contract.
+  // Multiple suppliers remain in completeReturnBorrow.
   BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
   std::size_t returnBorrowParameter = 0;
   AccessMode returnBorrowAccess = AccessMode::ReadOnly;
+  std::optional<FunctionBorrowDependencySummary> completeReturnBorrow;
   // Exact concrete instance proven by ordinary body analysis to perform no
   // raw memory/address-arithmetic access. Unknown remains conservative.
   SemanticType rawAccessFreeType = SemanticType::Unknown;
@@ -1785,12 +1786,16 @@ struct ResolvedLambdaCallInfo {
   std::vector<SemanticType> parameterTypes;
   std::vector<Lifetime> lifetimeArguments;
   SemanticLifetimeApplication lifetimeApplication;
+  bool neverReturns = false;
+  bool noNormalBorrowResult = false;
   CallableInvocationCapability capability = CallableInvocationCapability::Read;
   std::optional<CallableBoundary> boundary;
   // The lambda's result-origin contract, so the call result borrows the
   // argument it names exactly like a function call result.
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
+  std::vector<std::size_t> borrowArguments;
+  std::vector<BorrowedFieldOrigin> borrowFields;
   AccessMode borrowAccess = AccessMode::ReadOnly;
 };
 

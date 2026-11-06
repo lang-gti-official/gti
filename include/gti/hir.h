@@ -169,6 +169,7 @@ struct HirBinding {
 };
 
 struct HirReferenceSelection {
+  ReferenceSelectionKind kind = ReferenceSelectionKind::StoredExternalReference;
   HirValueId value = 0;
   HirValueId carrier = 0;
   SemanticLoanId transferredFrom = 0;
@@ -640,6 +641,7 @@ struct HirLambda {
   BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
   std::size_t returnBorrowParameter = 0;
   AccessMode returnBorrowAccess = AccessMode::ReadOnly;
+  std::optional<FunctionBorrowDependencySummary> completeReturnBorrow;
   HirBody body;
 };
 

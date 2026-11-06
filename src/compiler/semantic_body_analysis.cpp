@@ -6140,9 +6140,26 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
             if (const auto *ancestor = semanticModel.findLoan(parent);
                 ancestor && ancestor->storedDependency != 0)
               inheritedDependency = ancestor->storedDependency;
-            if (inheritedDependency != 0) {
+            if (payload.binding.retainedLoan != 0) {
               auto loan = *semanticModel.findLoan(payload.binding.retainedLoan);
               loan.storedDependency = inheritedDependency;
+              const auto enumeration = enumTypeFor(pattern.type);
+              const auto variant = std::find_if(
+                  enumeration->enumerators.begin(), enumeration->enumerators.end(),
+                  [&](const auto &candidate) {
+                    return candidate.variantIndex == pattern.variantIndex;
+                  });
+              // The address selects this exact payload even though the loan's
+              // alias root protects the enclosing enum against replacement.
+              // This selection grants no authority over an external referent.
+              loan.referenceSelection = SemanticReferenceSelection{
+                  .kind = ReferenceSelectionKind::PhysicalPayload,
+                  .source = payload.source,
+                  .carrier = stmt.expression().get(),
+                  .fields = {variant->payloadSymbols[payload.payloadIndex]},
+                  .conditions = {{.enumeration = pattern.type,
+                                  .variant = pattern.variantIndex}},
+                  .reference = payload.binding.type};
               semanticModel.recordLoan(std::move(loan));
             }
             // The binding is born at this arm's entry, not at the switch
@@ -10773,8 +10790,37 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
     return implicitSyntaxLifetime(expr.bracket(), lifetimeSlot,
                                   "_input" + std::to_string(lifetimeSlot));
   };
+  const bool inferredLambda = !hasExplicitLifetimeContract(expr.returnType()) &&
+      std::none_of(expr.parameters().begin(), expr.parameters().end(), [&](const auto &parameter) {
+        return hasExplicitLifetimeContract(parameter.type);
+      });
+  const bool collectingLambda = inferredLambda &&
+      requestSession.collectingLambdaLifetimeContract == &expr;
+  LifetimeSignatureContract lambdaContract;
+  if (inferredLambda) {
+    SemanticType noResult = SemanticType::Void;
+    auto inputs = normalizeLifetimeSignature(noResult, parameterTypes, {}, {}, freshLifetime);
+    lambdaContract = std::move(inputs.contract);
+    prepareInferredLifetimeResult(returnType, freshLifetime);
+    lambdaContract.origin = LifetimeContractOrigin::BodyInferred;
+  }
   auto normalizedLifetime = normalizeLifetimeSignature(
-      returnType, parameterTypes, {}, {}, freshLifetime);
+      returnType, parameterTypes, std::move(lambdaContract), {}, freshLifetime);
+  std::optional<FunctionBorrowDependencySummary> inferredLambdaSuppliers;
+  if (inferredLambda && !collectingLambda && normalizedLifetime.contract.valid() &&
+      !normalizedLifetime.contract.parameters.empty()) {
+    // The probe observes the same lexical captures and stable signature
+    // binders. Only its declaration contract survives; ordinary analysis
+    // below independently checks the body with collection disabled.
+    auto probe = unevaluatedExpressionWorker();
+    probe->requestSession.collectingLambdaLifetimeContract = &expr;
+    probe->visitLambdaExpr(expr);
+    if (const auto *summary = probe->semanticModel.findLambda(expr);
+        summary && summary->lifetimeContract.valid()) {
+      normalizedLifetime.contract = summary->lifetimeContract;
+      inferredLambdaSuppliers = summary->completeReturnBorrow;
+    }
+  }
   if (normalizedLifetime.ambiguousResult)
     report(expr.returnType().name.last(),
            "The lambda's returned borrow needs a relationship to its input lifetimes.",
@@ -11073,6 +11119,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   loanFlow = {};
   loanFlow.lifetimeExpression = &expr;
   loanFlow.lifetimeContract = normalizedLifetime.contract;
+  loanFlow.collectingLifetimeContract = collectingLambda;
   valueControlFlow.clear();
   analyzingCallCallee = false;
   contextualInitializerType.reset();
@@ -11150,7 +11197,9 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   // captures never supply the result's lifetime.
   const std::optional<LambdaReturnContext> enclosingLambdaReturn =
       currentLambdaReturn;
-  LambdaReturnContext lambdaReturn{.declaration = &expr};
+  LambdaReturnContext lambdaReturn{.declaration = &expr,
+                                    .lifetimeContract = normalizedLifetime.contract,
+                                    .completeReturnBorrow = inferredLambdaSuppliers};
   for (const auto &parameterType : parameterTypes)
     SemanticType::appendExpandedArgument(lambdaReturn.parameterTypes,
                                          parameterType);
@@ -11171,7 +11220,16 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
       lambdaReturn.origin = summary.origin;
       lambdaReturn.parameter = summary.parameter;
       lambdaReturn.access = summary.access;
-    } else if (!lambdaReturn.deferred) {
+      if (!lambdaReturn.completeReturnBorrow) {
+        auto fields = summary.fields;
+        if (fields.empty())
+          fields.push_back({.origin = summary.origin, .parameter = summary.parameter,
+                            .access = summary.access});
+        lambdaReturn.completeReturnBorrow =
+            FunctionBorrowDependencySummary{.dependencies = std::move(fields)};
+      }
+    } else if (!lambdaReturn.deferred && !collectingLambda &&
+               !lambdaReturn.completeReturnBorrow) {
       reportMissingLambdaReturnBorrowSummary(expr, summary);
     }
   }
@@ -11180,6 +11238,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   const BorrowOriginKind lambdaReturnOrigin = currentLambdaReturn->origin;
   const std::size_t lambdaReturnParameter = currentLambdaReturn->parameter;
   const AccessMode lambdaReturnAccess = currentLambdaReturn->access;
+  auto lambdaReturnSuppliers = currentLambdaReturn->completeReturnBorrow;
   // A return of text a capture provided, directly or through a local view
   // that is ever given it, leaves the result for local use (L-OWN-02).
   const bool lambdaCapturedText =
@@ -11195,6 +11254,10 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
            "GTI-S2031");
   }
   finalizeLoanFlow();
+  if (collectingLambda)
+    if (const auto *body = semanticModel.findLifetimeBody(expr))
+      if (auto inferred = projectInferredLifetimeContract(normalizedLifetime.contract, *body))
+        normalizedLifetime.contract = std::move(*inferred);
 
   lambdaUncapturedLocals.pop_back();
   const bool rawAccessFree =
@@ -11283,6 +11346,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
                  .returnBorrowOrigin = lambdaReturnOrigin,
                  .returnBorrowParameter = lambdaReturnParameter,
                  .returnBorrowAccess = lambdaReturnAccess,
+                 .completeReturnBorrow = std::move(lambdaReturnSuppliers),
                  .rawAccessFreeType =
                      rawAccessFree && !containsOpenTypeParameter(currentType)
                          ? currentType
@@ -16018,7 +16082,9 @@ auto SemanticVisitor::Impl::expressionNeverReturns(const Expr *expression) const
   }
   if (const auto *call = exprAs<Call>(expression)) {
     const auto *resolved = semanticModel.findCall(*call);
+    const auto *lambda = semanticModel.findLambdaCall(*call);
     return (resolved != nullptr && resolved->neverReturns) ||
+           (lambda != nullptr && lambda->neverReturns) ||
            expressionNeverReturns(call->callee().get()) ||
            anyTerminal(call->arguments());
   }

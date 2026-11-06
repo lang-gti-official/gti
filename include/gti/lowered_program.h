@@ -689,6 +689,7 @@ struct LoweredLambdaInstance {
   SemanticType type = SemanticType::Unknown;
   SemanticType returnType = SemanticType::Unknown;
   LifetimeSignatureContract lifetimeContract;
+  std::optional<FunctionBorrowDependencySummary> completeReturnBorrow;
   std::vector<LoweredParameter> parameters;
   std::vector<LoweredLambdaCapture> captures;
   SemanticTypeTraits traits;

@@ -5205,7 +5205,8 @@ auto SemanticVisitor::Impl::normalizedCompleteReturnBorrow(
 auto SemanticVisitor::Impl::normalizedCompleteBorrow(
     const FunctionInfo &function, std::span<const Parameter> parameters,
     ReceiverMutability receiverMutability,
-    const SemanticBorrowDependencySet &complete)
+    const SemanticBorrowDependencySet &complete,
+    std::vector<LifetimeBound> *requiredLifetimes)
     -> std::optional<FunctionBorrowDependencySummary> {
   if (parameters.size() != function.parameterTypes.size())
     return std::nullopt;
@@ -5276,6 +5277,7 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
 
   FunctionBorrowDependencySummary summary{.possibleAlternatives =
                                               complete.possibleAlternatives};
+  std::vector<LifetimeBound> pendingLifetimes;
   for (const auto &dependency : complete.dependencies) {
     const auto resultPath = std::find_if(
         resultPaths.begin(), resultPaths.end(), [&](const auto &path) {
@@ -5346,8 +5348,36 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
         return std::nullopt;
     }
 
+    auto selectedPlace = dependency.place;
+    std::unordered_set<SemanticLoanId> selectedAncestors;
+    std::unordered_set<const Expr *> physicalSelections;
+    for (auto parent = dependency.parent; parent != 0;) {
+      if (!selectedAncestors.insert(parent).second)
+        return std::nullopt;
+      const auto *loan = semanticModel.findLoan(parent);
+      if (!loan)
+        return std::nullopt;
+      if (loan->referenceSelection &&
+          loan->referenceSelection->kind == ReferenceSelectionKind::PhysicalPayload) {
+        const auto &selection = *loan->referenceSelection;
+        if (!selection.source || !selection.carrier || selection.transferredFrom ||
+            selection.fields.size() != 1 || selection.conditions.size() != 1 ||
+            !loan->additionalDependencies.empty() ||
+            loan->place.root != selectedPlace.root ||
+            loan->place.receiver != selectedPlace.receiver ||
+            loan->place.projections.size() > selectedPlace.projections.size() ||
+            !std::equal(loan->place.projections.begin(), loan->place.projections.end(),
+                        selectedPlace.projections.begin()))
+          return std::nullopt;
+        if (physicalSelections.insert(selection.source).second)
+          selectedPlace.projections.insert(
+              selectedPlace.projections.begin() + loan->place.projections.size(),
+              {.kind = PlaceProjectionKind::Field, .field = selection.fields.front()});
+      }
+      parent = loan->parent;
+    }
     bool externalReferent = false;
-    for (const auto &projection : dependency.place.projections) {
+    for (const auto &projection : selectedPlace.projections) {
       // A class's checked pointee accessor (an owning handle's operator*)
       // reaches storage that class owns: the path ends at the handle, whose
       // storage then contains the referent.
@@ -5455,8 +5485,16 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
       // contract. The physical storage, access and cleanup proofs above are
       // independent of this validity-region relation.
       if (!declaredLifetimeRelationship(function.lifetimeContract, sourceRegion,
-                                        resultPath->reference.referenceLifetime))
-        return std::nullopt;
+                                        resultPath->reference.referenceLifetime)) {
+        const LifetimeBound edge{sourceRegion, resultPath->reference.referenceLifetime};
+        if (!requiredLifetimes || !loanFlow.collectingLifetimeContract ||
+            function.lifetimeContract.origin != LifetimeContractOrigin::BodyInferred ||
+            !representableInferredLifetimeBound(function.lifetimeContract, edge))
+          return std::nullopt;
+        if (std::find(pendingLifetimes.begin(), pendingLifetimes.end(), edge) ==
+            pendingLifetimes.end())
+          pendingLifetimes.push_back(edge);
+      }
     } else if (function.explicitReturnBorrowOrigin) {
       if (normalized.origin != function.returnBorrowOrigin)
         return std::nullopt;
@@ -5477,6 +5515,11 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
                   normalized) == summary.dependencies.end())
       summary.dependencies.push_back(std::move(normalized));
   }
+  if (requiredLifetimes)
+    for (const auto edge : pendingLifetimes)
+      if (std::find(requiredLifetimes->begin(), requiredLifetimes->end(), edge) ==
+          requiredLifetimes->end())
+        requiredLifetimes->push_back(edge);
   return summary;
 }
 
@@ -5492,6 +5535,56 @@ auto SemanticVisitor::Impl::instantiateCompleteCallBorrow(
   return instantiateCompleteBorrowArguments(
       resolved, summary, arguments, member ? &member->object() : nullptr,
       noNormalResult);
+}
+
+auto SemanticVisitor::Impl::instantiateCompleteLambdaCallBorrow(
+    const Call &call, const ResolvedLambdaCallInfo &resolved,
+    bool *noNormalResult) -> std::optional<SemanticBorrowDependencySet> {
+  if (noNormalResult)
+    *noNormalResult = false;
+  const auto *lambda = semanticModel.findLambda(resolved.lambda);
+  if (!lambda || !lambda->completeReturnBorrow || !resolved.lifetimeApplication.complete)
+    return std::nullopt;
+  auto summary = *lambda->completeReturnBorrow;
+  summary.dependencies = resolved.borrowFields;
+  const auto substituteConditions = [&](auto &conditions) {
+    for (auto &condition : conditions) {
+      const auto type = substituteTypeLifetimes(
+          condition.enumeration, resolved.lifetimeApplication.bindings);
+      if (!type)
+        return false;
+      condition.enumeration = *type;
+    }
+    return true;
+  };
+  for (auto &mapping : summary.dependencies)
+    if (!substituteConditions(mapping.sourceConditions) ||
+        !substituteConditions(mapping.resultConditions))
+      return std::nullopt;
+  for (auto &alternative : summary.possibleAlternatives)
+    if (!substituteConditions(alternative.conditions))
+      return std::nullopt;
+  ResolvedCallInfo boundary;
+  boundary.returnType = resolved.returnType;
+  boundary.parameterTypes = resolved.parameterTypes;
+  boundary.lifetimeApplication = resolved.lifetimeApplication;
+  boundary.borrowOrigin = resolved.borrowOrigin;
+  boundary.borrowArgument = resolved.borrowArgument;
+  boundary.borrowAccess = resolved.borrowAccess;
+  boundary.borrowArguments = resolved.borrowArguments;
+  boundary.borrowFields = summary.dependencies;
+  if (const auto *callee = semanticModel.findExpression(*call.callee()))
+    boundary.dispatchOwner = callee->type;
+  boundary.receiverMode = resolved.capability == CallableInvocationCapability::Once
+                              ? CallReceiverMode::Consuming
+                          : resolved.capability == CallableInvocationCapability::Mutable
+                              ? CallReceiverMode::MutablePlace
+                              : CallReceiverMode::ReadOnlyPlace;
+  std::vector<const ExprPtr *> arguments;
+  for (const auto &argument : call.arguments())
+    arguments.push_back(&argument);
+  return instantiateCompleteBorrowArguments(boundary, summary, arguments,
+                                            &call.callee(), noNormalResult);
 }
 
 auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
@@ -8965,7 +9058,9 @@ auto SemanticVisitor::Impl::selectedReferenceDependencies(
     return std::nullopt;
   const auto *loan = semanticModel.findLoan(place.root->retainedLoan);
   if (loan == nullptr || loan->kind != SemanticLoanKind::Reference ||
-      (!loan->referenceSelection && loan->additionalDependencies.empty()))
+      ((!loan->referenceSelection || loan->referenceSelection->kind !=
+                                         ReferenceSelectionKind::StoredExternalReference) &&
+       loan->additionalDependencies.empty()))
     return std::nullopt;
   std::vector<SemanticLoanDependency> result;
   const auto append = [&](SemanticLoanDependency dependency) {
@@ -9399,7 +9494,9 @@ auto SemanticVisitor::Impl::conflictingLoans(const SemanticLoanPlace &place,
           parent->kind == SemanticLoanKind::StoredValue &&
           !parent->protectsStorage;
       const bool protectsPermission =
-          (loan->referenceSelection && suspendedParentUse) ||
+          (loan->referenceSelection && loan->referenceSelection->kind ==
+                                           ReferenceSelectionKind::StoredExternalReference &&
+           suspendedParentUse) ||
           abstractStoredChild || publishedExternalExclusion;
       return (protectsStorage || protectsPermission) && overlaps &&
              ((suspendedParentUse && !sharedReferenceAccess) ||
@@ -11669,7 +11766,8 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
     if (sourceLoan == nullptr) {
       return;
     }
-    if ((sourceLoan->referenceSelection ||
+    if (((sourceLoan->referenceSelection && sourceLoan->referenceSelection->kind ==
+                                               ReferenceSelectionKind::StoredExternalReference) ||
          !sourceLoan->additionalDependencies.empty()) &&
         carrier->type.kind == SemanticType::Reference) {
       const auto selectedPlace = semanticPlace(expression);

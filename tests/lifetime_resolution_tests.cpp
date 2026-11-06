@@ -636,6 +636,42 @@ int main() { return 0; }
              [](const auto &diagnostic) { return diagnostic.code == "GTI-S2126"; }),
          "C-string lifetime slots reject ordinary runtime type arguments");
 }
+
+void testLambdaLifetimeInference() {
+  const auto result = analyze(R"(
+int&<a> relay<lifetime a, lifetime b>(int&<a> selected, int&<b> ignored) {
+  auto first = [](int& left, int& right) -> int& { return left; };
+  return first(selected, ignored);
+}
+int main() {
+  auto both = [](bool chooseFirst, int& left, int& right) -> int& {
+    if (chooseFirst) { return left; }
+    return right;
+  };
+  int left = 1;
+  int right = 2;
+  return both(true, left, right);
+}
+)");
+  expectValid(result, "local lambdas infer complete parameter lifetime suppliers");
+  const auto *main = function(result, "main");
+  const auto *binding = main && main->declaration && main->declaration->body()
+      ? lang::stmtAs<lang::VariableDecl>(main->declaration->body()->statements().front().get()) : nullptr;
+  const auto *syntax = binding ? lang::exprAs<lang::Lambda>(binding->initializer().get()) : nullptr;
+  const auto *lambda = syntax ? result.semantics.findLambda(*syntax) : nullptr;
+  expect(lambda && lambda->lifetimeContract.valid() &&
+             lambda->lifetimeContract.origin == lang::LifetimeContractOrigin::BodyInferred &&
+             lambda->completeReturnBorrow && lambda->completeReturnBorrow->dependencies.size() == 2,
+         "lambda metadata records both productive suppliers in the shared dependency summary");
+
+  for (const std::string source : {
+           "int&<a> invalid<lifetime a, lifetime b>(int&<a> first, int&<b> second) { auto both = [](bool choice, int& left, int& right) -> int& { if (choice) { return left; } return right; }; return both(false, first, second); } int main() { return 0; }",
+           "int main() { auto dangling = []() -> int& { int local = 0; return local; }; return 0; }"}) {
+    const auto invalid = analyze(source);
+    expect(!invalid.semanticValid,
+           "lambda inference preserves every supplier and cannot return body-local storage");
+  }
+}
 } // namespace
 
 int main() {
@@ -653,5 +689,6 @@ int main() {
   testInferredCarrierRegions();
   testCStringRegions();
   testPrivateLifetimeInference();
+  testLambdaLifetimeInference();
   return failures == 0 ? 0 : 1;
 }

@@ -1139,16 +1139,7 @@ using MirLoanState = std::vector<MirLoanFlowState>;
          state == MirLoanFlowState::ParkedSuspended;
 }
 
-struct MirCanonicalPayloadSelection {
-  // Inserted at this position among the ordinary field/dereference path.
-  std::size_t projectionOffset = 0;
-  SemanticType type = SemanticType::Unknown;
-  std::size_t variant = 0;
-  std::size_t field = 0;
-
-  friend bool operator==(const MirCanonicalPayloadSelection &,
-                         const MirCanonicalPayloadSelection &) = default;
-};
+using MirCanonicalPayloadSelection = mir_detail::CanonicalPayloadSelection;
 
 struct MirCanonicalPlace {
   MirPlaceRootKind root = MirPlaceRootKind::Value;
@@ -1387,7 +1378,7 @@ canonicalPlace(const MirBody &body, MirPlaceId placeId,
     const MirBody &body, MirPlaceId placeId,
     const std::unordered_map<HirBindingId, std::vector<MirLoanId>>
         &bindingLoans,
-    bool physicalCarrier = false) {
+    bool physicalCarrier = false, bool exactPayload = false) {
   const auto carrierLoan = [&](HirBindingId binding) {
     const auto found = bindingLoans.find(binding);
     if (found == bindingLoans.end() || found->second.size() != 1) {
@@ -1421,10 +1412,30 @@ canonicalPlace(const MirBody &body, MirPlaceId placeId,
       }
     }
     if (place->root == MirPlaceRootKind::Value) {
-      const std::optional<MirPlaceId> source =
-          borrowSourceForValue(body, place->value, depth + 1);
+      const auto *definition = exactPayload
+                                   ? mir_detail::definitionFor(body, place->value)
+                                   : nullptr;
+      const bool payload = definition && !definition->tombstone &&
+          definition->kind == MirInstructionKind::Compute &&
+          definition->operation == MirOperation::PayloadExtract &&
+          definition->payloadExtractionKind == PayloadExtractionKind::BorrowValue;
+      if (payload && (definition->operands.size() != 1 ||
+                      !definition->enumOwner || !definition->enumVariant ||
+                      !definition->payloadIndex ||
+                      definition->operands.front().type.kind != SemanticType::Enum ||
+                      definition->operands.front().type.enumId != *definition->enumOwner))
+        return {.ambiguous = true};
+      const std::optional<MirPlaceId> source = payload
+          ? std::optional(definition->operands.front().place)
+          : borrowSourceForValue(body, place->value, depth + 1);
       if (source && *source != id) {
         MirCanonicalPlace result = self(self, *source, depth + 1);
+        if (payload)
+          result.payloadSelections.push_back(
+              {.projectionOffset = result.projections.size(),
+               .type = definition->operands.front().type,
+               .variant = *definition->enumVariant,
+               .field = *definition->payloadIndex});
         result.projections.insert(result.projections.end(),
                                   place->projections.begin(),
                                   place->projections.end());
@@ -10300,9 +10311,9 @@ CanonicalPlace canonicalBorrowOrigin(
     const MirBody &body, MirPlaceId place,
     const std::unordered_map<HirBindingId, std::vector<MirLoanId>>
         &bindingLoans,
-    bool physicalCarrier) {
+    bool physicalCarrier, bool exactPayload) {
   MirCanonicalPlace canonical =
-      canonicalBorrowOriginPlace(body, place, bindingLoans, physicalCarrier);
+      canonicalBorrowOriginPlace(body, place, bindingLoans, physicalCarrier, exactPayload);
   return {.root = canonical.root,
           .binding = canonical.binding,
           .symbol = canonical.symbol,
@@ -10310,6 +10321,7 @@ CanonicalPlace canonicalBorrowOrigin(
           .temporary = canonical.temporary,
           .value = canonical.value,
           .projections = std::move(canonical.projections),
+          .payloadSelections = std::move(canonical.payloadSelections),
           .throughLoan = canonical.throughLoan,
           .ambiguous = canonical.ambiguous};
 }
@@ -10323,6 +10335,7 @@ bool sameCanonicalPlace(const CanonicalPlace &left,
                               .temporary = left.temporary,
                               .value = left.value,
                               .projections = left.projections,
+                              .payloadSelections = left.payloadSelections,
                               .throughLoan = left.throughLoan,
                               .ambiguous = left.ambiguous};
   const MirCanonicalPlace rhs{.root = right.root,
@@ -10332,6 +10345,7 @@ bool sameCanonicalPlace(const CanonicalPlace &left,
                               .temporary = right.temporary,
                               .value = right.value,
                               .projections = right.projections,
+                              .payloadSelections = right.payloadSelections,
                               .throughLoan = right.throughLoan,
                               .ambiguous = right.ambiguous};
   return ::lang::sameCanonicalPlace(lhs, rhs);
@@ -10339,6 +10353,8 @@ bool sameCanonicalPlace(const CanonicalPlace &left,
 
 bool sameGlobalBorrowPlace(const BorrowOriginPlace &expected,
                            const CanonicalPlace &actual) {
+  if (!actual.payloadSelections.empty())
+    return false; // The legacy global path cannot encode a variant selector.
   const MirCanonicalPlace canonical{.root = actual.root,
                                     .binding = actual.binding,
                                     .symbol = actual.symbol,
@@ -12930,7 +12946,10 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           producer->info != selected->info || producer->operands.size() != 1 ||
           producer->operands.front().place != selection.carrier ||
           !producer->payloadExtractionKind ||
-          !isStoredReferenceExtraction(*producer->payloadExtractionKind) ||
+          (selection.kind == ReferenceSelectionKind::StoredExternalReference
+               ? !isStoredReferenceExtraction(*producer->payloadExtractionKind)
+               : selection.kind != ReferenceSelectionKind::PhysicalPayload ||
+                     *producer->payloadExtractionKind != PayloadExtractionKind::BorrowValue) ||
           ((*producer->payloadExtractionKind ==
             PayloadExtractionKind::TransferReference) !=
            (selection.transferredFrom != 0)) ||
@@ -12944,7 +12963,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
             selected->info.access != AccessMode::Mutable))) {
         return failure(body, owner,
                        "loan " + std::to_string(loan.id) +
-                           " has no exact stored-reference selection producer");
+                           " has no exact reference selection producer");
       }
     }
     if (loan.id != index + 1 || !validPlace(loan.source) ||

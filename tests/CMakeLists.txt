@@ -1609,6 +1609,11 @@ add_test(NAME lifetime_hir_signatures COMMAND gti_lifetime_hir_signatures_tests)
 add_executable(gti_lifetime_mir_contracts_tests lifetime_mir_contracts_tests.cpp)
 target_link_libraries(gti_lifetime_mir_contracts_tests PRIVATE gti_compiler)
 add_test(NAME lifetime_mir_contracts COMMAND gti_lifetime_mir_contracts_tests)
+add_test(NAME lifetime_native
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lifetime_native_test.py"
+    "$<TARGET_FILE:gti>" "$<TARGET_FILE:gti_llvm_native_c_abi_tests>"
+    --output-dir "${CMAKE_BINARY_DIR}/Testing/lifetime-native-evidence")
+set_tests_properties(lifetime_native PROPERTIES TIMEOUT 1200)
 
 add_executable(gti_lifetime_syntax_tests lifetime_syntax_tests.cpp)
 target_link_libraries(gti_lifetime_syntax_tests PRIVATE gti_compiler)

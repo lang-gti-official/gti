@@ -392,6 +392,7 @@ struct MirBorrowDependencySet {
 // This descriptor does not grant a loan: independent dependency/liveness
 // verification must establish every possible owner of the selected referent.
 struct MirReferenceSelection {
+  ReferenceSelectionKind kind = ReferenceSelectionKind::StoredExternalReference;
   MirValueId value = 0;
   MirPlaceId carrier = 0;
   // Independently matched to the consumed carrier's complete dependency
@@ -1730,6 +1731,7 @@ struct MirLambdaInstance {
   BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
   std::size_t returnBorrowParameter = 0;
   AccessMode returnBorrowAccess = AccessMode::ReadOnly;
+  std::optional<FunctionBorrowDependencySummary> completeReturnBorrow;
   MirEffectSummary effectSummary;
   MirBody body;
 

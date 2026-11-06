@@ -213,6 +213,23 @@ public:
 };
 int main() { Holder<int> holder{7}; return holder.get() - 7; }
 )gti", true);
+  check("generic-payload-reference-alias", R"gti(
+enum State<T> { left(T item), right(T item) };
+T&<a> get<T, lifetime a>(State<T>&<a> state) {
+  switch (state) {
+  case State<T>::left(auto& payload): { T& alias = payload; return alias; }
+  case State<T>::right(auto& payload): return payload;
+  }
+}
+int main() { State<int> state = State<int>::right(7); return get(state) - 7; }
+)gti", true);
+  check("local-payload-is-not-caller-storage", R"gti(
+enum State { value(int item) };
+int&<a> bad<lifetime a>(int&<a> caller) {
+  State local = State::value(7);
+  switch (local) { case State::value(auto& payload): return payload; }
+}
+)gti", false);
   check("no-local-escape", R"gti(
 int&<a> escape<lifetime a>(int&<a> input) { int local = 9; return local; }
 )gti", false);

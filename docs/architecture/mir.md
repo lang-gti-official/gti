@@ -473,6 +473,17 @@ leaves are checked for nested region scope before they grant any assumptions.
 Reference initialization uses this same graph to prove permitted shortening
 while retaining exact referent identity and access permission.
 
+Reference selections distinguish a stored external reference from a borrow of
+an owned enum payload. Both retain the evaluated extraction address. A physical
+payload selection keeps the enum shell as its conservative alias key, so
+replacement of the enum still conflicts with a live payload borrow. Its exact
+field and variant come from the typed `PayloadExtract(BorrowValue)` operation,
+independently of the selection annotation. Return-summary normalization retains
+that executable selector while tracing caller-owned storage, including generic
+payload types whose complete stored-reference inventory is not yet concrete.
+The physical selection cannot claim external-owner transfer authority. Variant
+dominance, access, parent liveness and cleanup remain separate required proofs.
+
 A program-level nominal recipe graph preserves symbolic generic identities,
 fields, bases, payload paths, specialization families and trusted capabilities.
 The shared variance fixed point operates on these recipes, retaining slot

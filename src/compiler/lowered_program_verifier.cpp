@@ -1598,6 +1598,8 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
     if (instance.id != index + 1 || instance.id != mir.id ||
         instance.declaration != mir.declaration || instance.type != mir.type ||
         instance.returnType != mir.returnType ||
+        instance.lifetimeContract != mir.lifetimeContract ||
+        instance.completeReturnBorrow != mir.completeReturnBorrow ||
         parameterTypes != mir.parameterTypes ||
         !validParameters(instance.parameters) || !parametersMatch ||
         !capturesMatch) {

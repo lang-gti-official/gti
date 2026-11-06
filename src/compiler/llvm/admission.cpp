@@ -166,10 +166,12 @@ bool arrayProjection(const MirBody &body, const MirPlace &place) {
 // its pointee is decided by `pointee`, so hierarchy pointees use metadata.
 class NativeValues final {
 public:
-  NativeValues(const MirProgram &program, const TargetInfo &nativeTarget,
+  NativeValues(VerifiedLoweredProgram input, const TargetInfo &nativeTarget,
                std::function<bool(const SemanticType &)> pointee)
-      : program(program), nativeTarget(nativeTarget),
+      : representations_(input), program(input.program().mir()), nativeTarget(nativeTarget),
         pointee(std::move(pointee)) {}
+
+  const native_llvm::Representations &representations() const { return representations_; }
 
   bool operator()(const SemanticType &type) const {
     // `visiting` and `payloads` hold the current inline containment path. An
@@ -185,8 +187,8 @@ public:
                                const SemanticType &selected) -> bool {
       if (passiveReferenceType(selected) || passiveAddress(selected) ||
           selected == SemanticType::Void ||
-          selected == SemanticType::StringView ||
-          selected == SemanticType::CString ||
+          selected.kind == SemanticType::StringView ||
+          selected.kind == SemanticType::CString ||
           selected == SemanticType::NullPtr)
         return true;
       if (selected.kind == SemanticType::FunctionItem)
@@ -215,7 +217,7 @@ public:
                selected.arguments[0].kind != SemanticType::Unknown &&
                selected.arguments[0].kind != SemanticType::TypeParameter;
       if (selected.kind == SemanticType::Enum) {
-        if (const auto *payload = program.findPayloadEnum(selected)) {
+        if (const auto *payload = representations_.payloadEnum(selected)) {
           if (crossedPayloads.contains(payload))
             return true;
           if (!payloads.insert(payload).second)
@@ -227,9 +229,7 @@ public:
           payloads.erase(payload);
           return valid;
         }
-        return std::any_of(
-            program.integralEnums().begin(), program.integralEnums().end(),
-            [&](const auto &entry) { return entry.type == selected; });
+        return representations_.integralEnum(selected) != nullptr;
       }
       if (selected.kind == SemanticType::Array)
         return selected.arguments.size() == 1 &&
@@ -270,13 +270,7 @@ public:
       }
       if (selected.kind != SemanticType::Class)
         return false;
-      const MirClassInstance *owner = nullptr;
-      for (const auto &candidate : program.classInstances())
-        if (candidate.type == selected) {
-          if (owner)
-            return false;
-          owner = &candidate;
-        }
+      const auto *owner = representations_.classInstance(selected);
       if (native_llvm::nativeAtomicElement(program, selected))
         return true;
       if (!owner)
@@ -323,6 +317,7 @@ public:
   }
 
 private:
+  native_llvm::Representations representations_;
   const MirProgram &program;
   const TargetInfo &nativeTarget;
   std::function<bool(const SemanticType &)> pointee;
@@ -350,7 +345,7 @@ public:
   StaticDispatchProofs(const LlvmAdmissionPlan &plan,
                        VerifiedLoweredProgram input)
       : plan(plan), input(std::move(input)), program(plan.program().mir()),
-        natives(plan.program().mir(), plan.program().target(),
+        natives(this->input, plan.program().target(),
                 [this](const SemanticType &pointee) {
                   return pointeeMetadata(pointee) || mutexPointee(pointee);
                 }) {
@@ -801,8 +796,9 @@ public:
         if (selection.target != function.id)
           continue;
         const auto *root = program.findFunctionInstance(selection.root);
-        if (!root || !root->owner || root->returnType != function.returnType ||
-            root->parameterTypes != function.parameterTypes ||
+        if (!root || !root->owner ||
+            !natives.representations().sameType(root->returnType, function.returnType) ||
+            !natives.representations().sameTypes(root->parameterTypes, function.parameterTypes) ||
             root->receiverMutability != function.receiverMutability ||
             std::find(function.virtualRoots.begin(),
                       function.virtualRoots.end(),
@@ -1116,13 +1112,7 @@ private:
                : type;
   }
   const MirClassInstance &instance(const SemanticType &type) const {
-    const MirClassInstance *result = nullptr;
-    for (const auto &candidate : program.classInstances())
-      if (candidate.type == type) {
-        if (result)
-          throw std::logic_error("LLVM dispatch type has repeated identity");
-        result = &candidate;
-      }
+    const auto *result = natives.representations().classInstance(type);
     if (!result)
       throw BackendUnsupportedError("LLVM dispatch type has no exact class");
     return *result;
@@ -2156,8 +2146,8 @@ private:
                mir_detail::rawBorrowResultLoan(body, stage) == loan));
     }
     const auto *target = gtiCallee(stage);
-    return target && target->returnType == SemanticType::referenceTo(
-                                               stage.info.type, loan->access);
+    return target && natives.representations().sameType(
+        target->returnType, SemanticType::referenceTo(stage.info.type, loan->access));
   }
   // The GTI function a call runs. A virtual call names its sealed root
   // member, which may be a pure declaration; the selected source
@@ -2931,12 +2921,12 @@ private:
 // scalar operations do not allocate a duplicate diagnostic record per use.
 class Inventory final {
 public:
-  Inventory(std::vector<LlvmCoverageUse> &uses, const MirProgram &program,
+  Inventory(std::vector<LlvmCoverageUse> &uses, VerifiedLoweredProgram input,
             StaticDispatchProofs &dispatchProofs,
             const TargetInfo &nativeTarget)
-      : uses(uses), program(program), dispatchProofs(dispatchProofs),
+      : uses(uses), program(input.program().mir()), dispatchProofs(dispatchProofs),
         nativeTarget(nativeTarget),
-        natives(program, nativeTarget, [this](const SemanticType &pointee) {
+        natives(input, nativeTarget, [this](const SemanticType &pointee) {
           // A mutex-bearing pointee has its own admitted representation,
           // whose native identity the allocation holds in place.
           return this->dispatchProofs.metadata(pointee).has_value() ||
@@ -3298,7 +3288,7 @@ public:
       return leaf->arguments.size() == 1 && mutexShape(leaf->arguments[0])
                  ? Shape::NativeOwnedMutexStorage
                  : Shape::NativeUniqueOwnership;
-    if (leaf->kind == SemanticType::Enum && program.findPayloadEnum(*leaf) &&
+    if (leaf->kind == SemanticType::Enum && natives.representations().payloadEnum(*leaf) &&
         nativeValue(type))
       return Shape::NativePayloadStorage;
     if ((leaf->kind == SemanticType::FunctionItem ||
@@ -3309,17 +3299,13 @@ public:
                  ? Shape::CallableMetadata
                  : Shape::NativeCallableStorage;
     if (leaf->kind == SemanticType::Class && nativeValue(type)) {
-      const auto owner = std::find_if(
-          program.classInstances().begin(), program.classInstances().end(),
-          [&](const auto &candidate) { return candidate.type == *leaf; });
-      if (owner != program.classInstances().end() &&
-          native_llvm::sharedOwnerRepresentation(program, *owner))
+      const auto *owner = natives.representations().classInstance(*leaf);
+      if (owner && native_llvm::sharedOwnerRepresentation(program, *owner))
         return Shape::NativeSharedOwnership;
-      if (owner != program.classInstances().end() &&
-          owner->compilerCapability ==
+      if (owner && owner->compilerCapability ==
               CompilerCapabilityTypeKind::FunctionPointer)
         return Shape::NativeCallableStorage;
-      return owner != program.classInstances().end() && owner->unionLayout
+      return owner && owner->unionLayout
                  ? Shape::NativeUnionStorage
                  : Shape::NativeClassStorage;
     }
@@ -3535,11 +3521,9 @@ public:
   const MirClassInstance *nativeClass(const SemanticType &type) const {
     if (type.kind != SemanticType::Class || !representedValue(type))
       return nullptr;
-    for (const auto &owner : program.classInstances())
-      if (owner.type == type &&
-          owner.compilerCapability == CompilerCapabilityTypeKind::None)
-        return &owner;
-    return nullptr;
+    const auto *owner = natives.representations().classInstance(type);
+    return owner && owner->compilerCapability == CompilerCapabilityTypeKind::None
+               ? owner : nullptr;
   }
   bool nativeClassPointee(const SemanticType &type) const {
     const auto *leaf = &type;
@@ -4109,13 +4093,7 @@ public:
   bool ordinaryRawReferenceObject(const SemanticType &type) const {
     if (type.kind != SemanticType::Class)
       return false;
-    const MirClassInstance *owner = nullptr;
-    for (const auto &candidate : program.classInstances())
-      if (candidate.type == type) {
-        if (owner)
-          return false;
-        owner = &candidate;
-      }
+    const auto *owner = natives.representations().classInstance(type);
     if (owner &&
         (owner->kind == ClassKind::Class || owner->kind == ClassKind::Struct) &&
         owner->compilerCapability == CompilerCapabilityTypeKind::None &&
@@ -4141,13 +4119,7 @@ public:
   bool nativeRecordObject(const SemanticType &type) const {
     if (type.kind != SemanticType::Class)
       return false;
-    const MirClassInstance *owner = nullptr;
-    for (const auto &candidate : program.classInstances())
-      if (candidate.type == type) {
-        if (owner)
-          return false;
-        owner = &candidate;
-      }
+    const auto *owner = natives.representations().classInstance(type);
     return owner && (owner->cAbiRecord || owner->cAbiLayout) &&
            !owner->cOpaqueHandle && !owner->unionLayout &&
            owner->compilerCapability == CompilerCapabilityTypeKind::None &&
@@ -4255,8 +4227,8 @@ public:
     }
     if (!producer && returned &&
         ((category == ValueCategory::Value &&
-          (referent == SemanticType::StringView ||
-           referent == SemanticType::CString)) ||
+          (referent.kind == SemanticType::StringView ||
+           referent.kind == SemanticType::CString)) ||
          (allowReferenceInvoke && category == ValueCategory::Place))) {
       const auto *value = body.findValue(returned);
       const auto *previous =
@@ -4311,12 +4283,12 @@ public:
         target && ((category == ValueCategory::Place &&
                     target->returnType.kind == SemanticType::Reference &&
                     target->returnType.arguments.size() == 1 &&
-                    target->returnType.arguments.front() == referent &&
+                    natives.representations().sameType(target->returnType.arguments.front(), referent) &&
                     target->returnType.referenceAccess == loan.access) ||
                    (category == ValueCategory::Value &&
-                    (referent == SemanticType::StringView ||
-                     referent == SemanticType::CString) &&
-                    target->returnType == referent));
+                    (referent.kind == SemanticType::StringView ||
+                     referent.kind == SemanticType::CString) &&
+                    natives.representations().sameType(target->returnType, referent)));
     return producer && target && exactReturn &&
            producer->unsafeOperation ==
                UnsafeOperationKind::DeclaredUnsafeCall &&
@@ -4525,14 +4497,14 @@ public:
            producer->dispatch == CallDispatch::Static && target &&
            target->definitionKind == MirDefinitionKind::Source &&
            target->linkage == LanguageLinkage::Gti && target->requiresUnsafe &&
-           target->returnType == place->type;
+           natives.representations().sameType(target->returnType, place->type);
   }
 
   const MirLoan *directReturnSourceLoan(const MirBody &body,
                                         const MirBlock &block,
                                         const MirInstruction &stage) const {
-    const bool text = body.returnType == SemanticType::StringView ||
-                      body.returnType == SemanticType::CString;
+    const bool text = body.returnType.kind == SemanticType::StringView ||
+                      body.returnType.kind == SemanticType::CString;
     const bool reference = body.returnType.kind == SemanticType::Reference &&
                            body.returnType.arguments.size() == 1;
     if (!text && !reference)
@@ -4621,8 +4593,8 @@ public:
   bool rawTextResultReturn(const MirBody &body, const MirBlock &block,
                            const MirInstruction &stage) const {
     if (stage.unsafeOperation != UnsafeOperationKind::RawDereference ||
-        (stage.info.type != SemanticType::StringView &&
-         stage.info.type != SemanticType::CString))
+        (stage.info.type.kind != SemanticType::StringView &&
+         stage.info.type.kind != SemanticType::CString))
       return false;
     const auto *from = directReturnSourceLoan(body, block, stage);
     const auto *producer =
@@ -4682,7 +4654,7 @@ public:
       // A counted byte view is a passive aggregate body value with an
       // implemented layout, load and store. Publishing one into a field
       // carries no ownership and borrows no owning text storage.
-      if (plan.targetType == SemanticType::StringView)
+      if (plan.targetType.kind == SemanticType::StringView)
         return Shape::CountedText;
       // An exact native function value is one pointer with the already
       // verified canonical signature contract; publishing it is that store.
@@ -5139,7 +5111,7 @@ public:
         return std::all_of(
             conditions.begin(), conditions.end(), [&](const auto &condition) {
               const auto *payload =
-                  program.findPayloadEnum(condition.enumeration);
+                  natives.representations().payloadEnum(condition.enumeration);
               return payload && condition.variant < payload->variants.size() &&
                      nativeValue(condition.enumeration);
             });
@@ -5157,6 +5129,11 @@ public:
         const auto *value = mir.findValue(loan.referenceSelection->value);
         nativeBorrow &= value && nativeValue(value->info.type) &&
                         nativeConditions(loan.referenceSelection->conditions);
+        if (loan.referenceSelection->kind == ReferenceSelectionKind::PhysicalPayload) {
+          const auto *physical = mir_detail::physicalPayloadSelectionSource(
+              program, mir, *loan.referenceSelection);
+          nativeBorrow &= physical && nativeValue(physical->type);
+        }
       }
       const auto borrowShape = nativeBorrow
                                    ? std::optional(Shape::NativeBorrowMetadata)
@@ -5361,9 +5338,9 @@ public:
                        : classShape(stage.info.type))
                 : storageShape);
         if (stage.callInputRole) {
-          if (stage.info.type == SemanticType::CString &&
+          if (stage.info.type.kind == SemanticType::CString &&
               stage.operands.size() == 1 &&
-              stage.operands[0].type == SemanticType::StringView)
+              stage.operands[0].type.kind == SemanticType::StringView)
             add(Shape::CStringLiteralInput,
                 native_llvm::wholeCStringLiteral(mir, stage.operands[0])
                     ? std::optional(Shape::PassiveAddressValue)
@@ -5963,7 +5940,7 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
       plan.bodies.push_back(body.identity.address);
   }
   StaticDispatchProofs dispatchProofs(plan, plan.input);
-  Inventory inventory(plan.uses, mir, dispatchProofs, input.target());
+  Inventory inventory(plan.uses, plan.input, dispatchProofs, input.target());
   inventory.add(Shape::ObjectArtifact);
   inventory.add(input.programKind(),
                 input.embeddingPlan() &&

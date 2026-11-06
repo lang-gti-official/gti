@@ -939,7 +939,7 @@ const MirBody &ownedTransferBody(const MirProgram &program,
 // built from them by value without cleanup. Any other field keeps its own
 // class-level generated-member contract.
 bool bitwiseGeneratedCopy(const MirProgram &program, const SemanticType &type) {
-  if (isPassiveScalarValueType(type) || type == SemanticType::CString)
+  if (isPassiveScalarValueType(type) || type.kind == SemanticType::CString)
     return true;
   if (type.kind == SemanticType::FunctionItem)
     return type.hasFunctionItemShape();

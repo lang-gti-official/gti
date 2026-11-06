@@ -837,14 +837,34 @@ auto SemanticVisitor::Impl::analyzeLambdaCall(
            "GTI-S2005");
     valid = false;
   }
+  CallableDeclaration declaration{.returnType = lambda->returnType,
+                                    .parameterTypes = lambda->parameterTypes,
+                                    .lifetimeContract = lambda->lifetimeContract};
+  CallableCandidate selected{.declarationRecord = &declaration,
+                              .returnType = lambda->returnType,
+                              .parameterTypes = lambda->parameterTypes,
+                              .lifetimeContract = lambda->lifetimeContract,
+                              .returnBorrowOrigin = lambda->returnBorrowOrigin,
+                              .returnBorrowParameter = lambda->returnBorrowParameter,
+                              .returnBorrowAccess = lambda->returnBorrowAccess};
+  if (lambda->completeReturnBorrow) {
+    selected.returnBorrowFields = lambda->completeReturnBorrow->dependencies;
+    for (const auto &supplier : selected.returnBorrowFields)
+      if (supplier.origin == BorrowOriginKind::Argument &&
+          std::find(selected.returnBorrowParameters.begin(), selected.returnBorrowParameters.end(),
+                    supplier.parameter) == selected.returnBorrowParameters.end())
+        selected.returnBorrowParameters.push_back(supplier.parameter);
+  }
+  if (valid)
+    valid = applyCallLifetimeContract(selected, *arguments, call.paren());
   const std::size_t count =
-      std::min(arguments->size(), lambda->parameterTypes.size());
+      std::min(arguments->size(), selected.parameterTypes.size());
   std::vector<SemanticType> ordinaryParameterTypes;
   std::vector<const ExprPtr *> ordinaryArguments;
   for (std::size_t index = 0; index < count; ++index) {
     const auto &argument = (*arguments)[index];
     const auto &expression = *argument.expression;
-    const auto &parameter = lambda->parameterTypes[index];
+    const auto &parameter = selected.parameterTypes[index];
     if (!argument.forwardedPackElement) {
       ordinaryParameterTypes.push_back(parameter);
       ordinaryArguments.push_back(argument.expression);
@@ -859,10 +879,12 @@ auto SemanticVisitor::Impl::analyzeLambdaCall(
       valid = false;
       continue;
     }
+    const auto adjusted = callLifetimeArgumentType(selected, argument.type, parameter);
+    const auto &matchedType = adjusted ? *adjusted : argument.type;
     const bool matches =
         argument.forwardedPackElement
-            ? forwardedPackArgumentMatches(parameter, argument.type)
-            : callArgumentMatches(parameter, argument.type, expression);
+            ? forwardedPackArgumentMatches(parameter, matchedType)
+            : callArgumentMatches(parameter, matchedType, expression);
     if (argument.type != SemanticType::Unknown &&
         parameter != SemanticType::Unknown && !matches) {
       reportCallArgumentMismatch(index, parameter, argument.type, expression,
@@ -872,22 +894,37 @@ auto SemanticVisitor::Impl::analyzeLambdaCall(
   }
   validateCallPlaceExclusivityImpl(ordinaryParameterTypes, ordinaryArguments,
                                    call.paren(), receiver, access);
-  valid = validateCallableReturn(call, lambda->returnType) && valid;
+  valid = validateCallableReturn(call, selected.returnType) && valid;
   valid = validateCallableCapability(call, lambda->capability) && valid;
   if (valid) {
-    semanticModel.recordLambdaCall(
-        call,
-        ResolvedLambdaCallInfo{.lambda = lambda->id,
-                               .returnType = lambda->returnType,
-                               .parameterTypes = lambda->parameterTypes,
+    commitLifetimeApplication(selected.lifetimeApplication);
+    ResolvedLambdaCallInfo resolved{.lambda = lambda->id,
+                               .returnType = selected.returnType,
+                               .parameterTypes = selected.parameterTypes,
+                               .lifetimeArguments = selected.lifetimeArguments,
+                               .lifetimeApplication = selected.lifetimeApplication,
                                .capability = lambda->capability,
                                .boundary = boundary,
                                .borrowOrigin = lambda->returnBorrowOrigin,
                                .borrowArgument = lambda->returnBorrowParameter,
-                               .borrowAccess = lambda->returnBorrowAccess});
+                               .borrowArguments = selected.returnBorrowParameters,
+                               .borrowFields = selected.returnBorrowFields,
+                               .borrowAccess = lambda->returnBorrowAccess};
+    semanticModel.recordLambdaCall(call, resolved);
+    bool noNormalResult = false;
+    if (auto complete = instantiateCompleteLambdaCallBorrow(call, resolved, &noNormalResult)) {
+      semanticModel.recordBorrowDependencySet(call, std::move(*complete));
+    } else {
+      semanticModel.clearBorrowDependencySet(call);
+      if (noNormalResult) {
+        resolved.noNormalBorrowResult = true;
+        resolved.neverReturns = true;
+        semanticModel.recordLambdaCall(call, std::move(resolved));
+      }
+    }
   }
   currentType =
-      valid ? callExpressionType(lambda->returnType) : SemanticType::Unknown;
+      valid ? callExpressionType(selected.returnType) : SemanticType::Unknown;
 }
 
 auto SemanticVisitor::Impl::analyzeNativeIndirectCall(

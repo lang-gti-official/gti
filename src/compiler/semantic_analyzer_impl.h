@@ -2434,7 +2434,8 @@ private:
   normalizedCompleteBorrow(const FunctionInfo &function,
                            std::span<const Parameter> parameters,
                            ReceiverMutability receiverMutability,
-                           const SemanticBorrowDependencySet &complete);
+                           const SemanticBorrowDependencySet &complete,
+                           std::vector<LifetimeBound> *requiredLifetimes = nullptr);
   void recordCompleteConstructorBorrow(const ConstructorDecl &constructor);
   std::optional<FunctionBorrowDependencySummary>
   completeConstructorBorrow(const ResolvedConstructionInfo &construction,
@@ -2453,6 +2454,10 @@ private:
                                 const ResolvedCallInfo &resolved,
                                 const FunctionBorrowDependencySummary &summary,
                                 bool *noNormalResult = nullptr);
+  [[nodiscard]] std::optional<SemanticBorrowDependencySet>
+  instantiateCompleteLambdaCallBorrow(const Call &call,
+                                      const ResolvedLambdaCallInfo &resolved,
+                                      bool *noNormalResult = nullptr);
   [[nodiscard]] std::optional<SemanticBorrowDependencySet>
   instantiateCompleteBorrowArguments(
       const ResolvedCallInfo &resolved,
@@ -3088,6 +3093,7 @@ private:
   [[nodiscard]] bool hasExplicitLifetimeContract(const TypeRef &type) const;
   void prepareInferredLifetimeResult(SemanticType &type,
                                     const std::function<Lifetime()> &fresh) const;
+  void validateLambdaLifetimeReturn(const ExprPtr &value);
   void inferPrivateLifetimeContracts();
   [[nodiscard]] std::optional<LifetimeSignatureContract> projectInferredLifetimeContract(
       const LifetimeSignatureContract &declaration,
@@ -3695,6 +3701,8 @@ private:
     std::size_t parameter = 0;
     AccessMode access = AccessMode::ReadOnly;
     std::vector<SemanticType> parameterTypes;
+    LifetimeSignatureContract lifetimeContract;
+    std::optional<FunctionBorrowDependencySummary> completeReturnBorrow;
     bool deferred = false;
     // Some return yields text a capture provided (`capturedTextResult`).
     bool capturedText = false;
@@ -7466,6 +7474,7 @@ private:
   // than copying every earlier expression in the caller's program.
   struct RequestSessionContext {
     bool collectingPrivateLifetimeContracts = false;
+    const Lambda *collectingLambdaLifetimeContract = nullptr;
     struct ExecutableLifetimeKey {
       InstanceAnalysisKey runtime;
       // Alpha-normalized bound uses preserve HRTB equality and scope. All

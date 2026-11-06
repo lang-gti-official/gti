@@ -734,7 +734,8 @@ MirLowerer::lowerProgram(const HirProgram &source,
         .lifecycleBoundBorrowCarrier = instance.lifecycleBoundBorrowCarrier,
         .returnBorrowOrigin = instance.returnBorrowOrigin,
         .returnBorrowParameter = instance.returnBorrowParameter,
-        .returnBorrowAccess = instance.returnBorrowAccess};
+        .returnBorrowAccess = instance.returnBorrowAccess,
+        .completeReturnBorrow = instance.completeReturnBorrow};
     lowered.captureTypes.reserve(instance.captures.size());
     lowered.captureModes.reserve(instance.captures.size());
     lowered.captureSymbols.reserve(instance.captures.size());

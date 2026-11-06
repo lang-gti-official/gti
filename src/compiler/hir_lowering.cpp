@@ -3613,7 +3613,8 @@ private:
       }
       if (loan.referenceSelection) {
         const auto &selection = *loan.referenceSelection;
-        HirReferenceSelection resolved{.transferredFrom =
+        HirReferenceSelection resolved{.kind = selection.kind,
+                                       .transferredFrom =
                                            selection.transferredFrom,
                                        .fields = selection.fields,
                                        .conditions = selection.conditions,
@@ -4849,6 +4850,7 @@ private:
         .returnBorrowOrigin = info->returnBorrowOrigin,
         .returnBorrowParameter = info->returnBorrowParameter,
         .returnBorrowAccess = info->returnBorrowAccess,
+        .completeReturnBorrow = info->completeReturnBorrow,
         .body = std::move(body),
     };
     return id;
@@ -7417,12 +7419,16 @@ private:
       }
       if (const ResolvedLambdaCallInfo *resolved =
               model.findLambdaCall(*call)) {
+        value.neverReturns = resolved->neverReturns;
+        value.noNormalBorrowResultProof = model.noNormalBorrowResultProof(*call);
         value.parameterTypes = resolved->parameterTypes;
         value.lifetimeArguments = resolved->lifetimeArguments;
         value.lifetimeApplication =
             lowerLifetimeApplication(resolved->lifetimeApplication, body);
         value.borrowOrigin = resolved->borrowOrigin;
         value.borrowArgument = resolved->borrowArgument;
+        value.borrowArguments = resolved->borrowArguments;
+        value.borrowFields = resolved->borrowFields;
         value.borrowAccess = resolved->borrowAccess;
         // The callee is an explicit receiver even when a final pack prevents
         // formation of the fixed-arity call plan. MIR stages it before the

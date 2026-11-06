@@ -1553,6 +1553,7 @@ private:
         source.returnType != lowered.returnType ||
         source.parameterTypes != lowered.parameterTypes ||
         source.lifetimeContract != lowered.lifetimeContract ||
+        source.completeReturnBorrow != lowered.completeReturnBorrow ||
         source.parameterBindings != lowered.parameterBindings ||
         source.body.placeDomain != lowered.body.placeDomain) {
       return reject("lambda instance " + std::to_string(index + 1) +
@@ -2313,6 +2314,7 @@ LoweredProgramBuild LoweredProgramBuilder::build(
         .type = instance.type,
         .returnType = instance.returnType,
         .lifetimeContract = instance.lifetimeContract,
+        .completeReturnBorrow = instance.completeReturnBorrow,
         .parameters = lowerLambdaParameters(instance),
         .traits = instance.traits,
         .source = instance.source == nullptr

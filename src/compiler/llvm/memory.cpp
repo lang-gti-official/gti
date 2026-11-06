@@ -601,7 +601,7 @@ bool nativeUniqueConstructionShape(const MirProgram &program,
   if (type.kind != SemanticType::Class)
     return type != SemanticType::Void &&
            (isPassiveScalarValueType(type) ||
-            type == SemanticType::StringView ||
+            type.kind == SemanticType::StringView ||
             type.kind == SemanticType::RawPointer ||
             type == SemanticType::NullPtr ||
             type.kind == SemanticType::NativeFunction ||

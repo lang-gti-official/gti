@@ -88,6 +88,74 @@ int main() {
               .valid(),
          "MIR cannot trust an inferred region number without its allocation "
          "inventory");
+  const auto lambda = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "lambda-lifetime-contract.gti", R"gti(
+int main() {
+  auto choose = [](int& left, int& right, bool first) -> int& {
+    if (first) { return left; }
+    return right;
+  };
+  int left = 5; int right = 11;
+  return choose(left, right, false) - 11;
+}
+)gti");
+  if (!lambda.canGenerateCode()) {
+    for (const auto &diagnostic : lambda.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    for (const auto &error : verifyMirProgram(lambda.mir).errors)
+      std::cerr << error.message << '\n';
+    expect(false, "a local lambda must preserve both inferred result suppliers in MIR");
+  }
+  expect(lambda.mir.lambdaInstances().size() == 1 &&
+             lambda.mir.lambdaInstances().front().completeReturnBorrow &&
+             lambda.mir.lambdaInstances().front().completeReturnBorrow->dependencies.size() == 2,
+         "lambda result contract must contain both input suppliers");
+  auto missingLambdaSupplier = lambda.mir;
+  auto &brokenLambda = const_cast<MirLambdaInstance &>(
+      missingLambdaSupplier.lambdaInstances().front());
+  brokenLambda.completeReturnBorrow->dependencies.pop_back();
+  expect(!verifyMirProgram(missingLambdaSupplier).valid(),
+         "independent lambda proof must reject an omitted reachable supplier");
+  const auto physical = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "physical-payload-contract.gti", R"gti(
+enum State<T> { value(T item) };
+T&<a> get<T, lifetime a>(State<T>&<a> state) {
+  switch (state) { case State<T>::value(auto& payload): return payload; }
+}
+int main() { State<int> state = State<int>::value(7); return get(state) - 7; }
+)gti");
+  if (!physical.canGenerateCode()) {
+    for (const auto &diagnostic : physical.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(false, "physical payload reference must reach independently verified MIR");
+  }
+  std::optional<MirBodyAddress> physicalBody;
+  MirLoanId physicalLoan = 0;
+  for (const auto address : enumerateMirBodyAddresses(physical.mir))
+    if (const auto *body = findMirBody(physical.mir, address))
+      for (const auto &loan : body->loans)
+        if (loan.referenceSelection && loan.referenceSelection->kind ==
+                                           ReferenceSelectionKind::PhysicalPayload) {
+          physicalBody = address;
+          physicalLoan = loan.id;
+        }
+  expect(physicalBody && physicalLoan, "physical payload must preserve its selection role");
+  for (int mutation = 0; mutation != 4; ++mutation) {
+    auto invalid = physical.mir;
+    auto *body = findMirBody(invalid, *physicalBody);
+    auto &loan = body->loans[physicalLoan - 1];
+    auto &selection = *loan.referenceSelection;
+    if (mutation == 0)
+      selection.kind = ReferenceSelectionKind::StoredExternalReference;
+    else if (mutation == 1)
+      selection.fields.front() = 0;
+    else if (mutation == 2)
+      selection.transferredFrom = loan.id;
+    else
+      loan.source = selection.carrier;
+    expect(!verifyMirProgram(invalid).valid(),
+           "physical payload cannot forge external authority, selector, transfer or storage");
+  }
   const auto standardLibrary =
       std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   const PackageSourceRoot pointerModules{

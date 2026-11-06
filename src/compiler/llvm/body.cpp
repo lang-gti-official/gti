@@ -2074,8 +2074,8 @@ private:
         result = copy;
       }
       if (instruction.kind == MirInstructionKind::CallInput &&
-          instruction.info.type == SemanticType::CString &&
-          instruction.operands[0].type == SemanticType::StringView) {
+          instruction.info.type.kind == SemanticType::CString &&
+          instruction.operands[0].type.kind == SemanticType::StringView) {
         if (!wholeCStringLiteral(input, instruction.operands[0]))
           throw BackendUnsupportedError(
               "LLVM C-string call input requires exact complete source-literal "
@@ -2297,6 +2297,10 @@ private:
           publication.kind == StoredFieldPublicationKind::ProvenanceOnly)
         break;
       if (const auto &selection = loan.referenceSelection) {
+        if (selection->kind == ReferenceSelectionKind::PhysicalPayload &&
+            !mir_detail::physicalPayloadSelectionSource(
+                session.program().mir(), input, *selection))
+          throw std::logic_error("LLVM physical payload selection lost its verified storage");
         result = values.at(selection->value);
         if (!result)
           throw std::logic_error(

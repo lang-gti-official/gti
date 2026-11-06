@@ -94,6 +94,14 @@ using SemanticLoanId = std::size_t;
 using SymbolId = std::size_t;
 using TypeAliasId = std::size_t;
 
+// Both selections carry an evaluated address. Only a stored reference carries
+// authority over an external owner; a physical payload keeps borrowing its
+// enclosing enum storage and cannot survive replacement of that storage.
+enum class ReferenceSelectionKind {
+  StoredExternalReference,
+  PhysicalPayload,
+};
+
 struct PlaceDomain {
   std::size_t snapshot = 0;
   std::size_t body = 0;

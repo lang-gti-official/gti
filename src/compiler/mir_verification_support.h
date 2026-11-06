@@ -38,6 +38,16 @@ canRewriteVerifiedMirDeadInstruction(const MirProgram &program,
     const std::vector<MirTransformRecord> &records, bool sourceVerified,
     bool optimizedVerified);
 
+struct CanonicalPayloadSelection {
+  std::size_t projectionOffset = 0;
+  SemanticType type = SemanticType::Unknown;
+  std::size_t variant = 0;
+  std::size_t field = 0;
+
+  friend bool operator==(const CanonicalPayloadSelection &,
+                         const CanonicalPayloadSelection &) = default;
+};
+
 struct CanonicalPlace {
   MirPlaceRootKind root = MirPlaceRootKind::Value;
   HirBindingId binding = 0;
@@ -46,6 +56,7 @@ struct CanonicalPlace {
   MirTemporaryId temporary = 0;
   MirValueId value = 0;
   std::vector<MirPlaceProjection> projections;
+  std::vector<CanonicalPayloadSelection> payloadSelections;
   MirLoanId throughLoan = 0;
   bool ambiguous = false;
 };
@@ -88,7 +99,7 @@ terminatorSuccessors(const MirTerminator &terminator);
     const MirBody &body, MirPlaceId place,
     const std::unordered_map<HirBindingId, std::vector<MirLoanId>>
         &bindingLoans,
-    bool physicalCarrier = false);
+    bool physicalCarrier = false, bool exactPayload = false);
 [[nodiscard]] bool sameCanonicalPlace(const CanonicalPlace &left,
                                       const CanonicalPlace &right);
 [[nodiscard]] bool sameGlobalBorrowPlace(const BorrowOriginPlace &expected,

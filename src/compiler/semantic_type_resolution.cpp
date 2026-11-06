@@ -5657,6 +5657,10 @@ auto SemanticVisitor::Impl::validateReferenceReturn(
       !validateNativePointerSlotBorrow(value, reference)) {
     return;
   }
+  if (currentLambdaReturn && currentLambdaReturn->lifetimeContract.valid()) {
+    validateLambdaLifetimeReturn(value);
+    return;
+  }
   if (isBorrowedCarrierReference(reference)) {
     const std::optional<ReturnBorrowContract> contract =
         currentReturnBorrowContract();

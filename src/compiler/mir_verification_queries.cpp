@@ -192,9 +192,66 @@ bool nullGuardedDestructor(const MirProgram &program,
   return false;
 }
 
+const MirPlace *physicalPayloadSelectionSource(
+    const MirProgram &program, const MirBody &body,
+    const MirReferenceSelection &selection) {
+  if (selection.kind != ReferenceSelectionKind::PhysicalPayload ||
+      selection.transferredFrom || selection.reference.kind != SemanticType::Reference ||
+      selection.reference.arguments.size() != 1)
+    return nullptr;
+  const auto *value = body.findValue(selection.value);
+  const auto *extract = definitionFor(body, selection.value);
+  if (!value || !extract || extract->tombstone ||
+      extract->kind != MirInstructionKind::Compute ||
+      extract->operation != MirOperation::PayloadExtract ||
+      extract->payloadExtractionKind != PayloadExtractionKind::BorrowValue ||
+      extract->result != selection.value || extract->info != value->info ||
+      extract->operands.size() != 1 || !extract->enumOwner ||
+      !extract->enumVariant || !extract->payloadIndex)
+    return nullptr;
+  const auto &operand = extract->operands.front();
+  const auto *carrier = body.findPlace(operand.place);
+  const auto view = mirEnumLifetimeView(program, operand.type);
+  if (!carrier || operand.place != selection.carrier || carrier->foreignStorage ||
+      carrier->type != operand.type || !view || !view->payload ||
+      extract->enumOwner != view->payload->declaration ||
+      *extract->enumVariant >= view->payload->variants.size() ||
+      (operand.kind != MirOperandKind::BorrowRead &&
+       operand.kind != MirOperandKind::BorrowWrite))
+    return nullptr;
+  const auto &variant = view->payload->variants[*extract->enumVariant];
+  if (*extract->payloadIndex >= variant.payloadTypes.size() ||
+      *extract->payloadIndex >= variant.payloadSymbols.size())
+    return nullptr;
+  const auto field = view->instantiate(variant.payloadTypes[*extract->payloadIndex]);
+  if (!field || field->kind == SemanticType::Reference ||
+      *field != value->info.type || *field != selection.reference.arguments.front() ||
+      value->info.category != ValueCategory::Place ||
+      (selection.reference.referenceAccess == AccessMode::Mutable &&
+       (value->info.access != AccessMode::Mutable ||
+        operand.kind != MirOperandKind::BorrowWrite)) ||
+      selection.fields != std::vector<SymbolId>{variant.payloadSymbols[*extract->payloadIndex]} ||
+      selection.conditions != std::vector<BorrowDependencyCondition>{
+          {.enumeration = operand.type, .variant = *extract->enumVariant}})
+    return nullptr;
+  const MirPlace *result = nullptr;
+  for (const auto &place : body.places)
+    if (place.root == MirPlaceRootKind::Value && place.value == selection.value &&
+        place.projections.empty() && place.type == *field && !place.foreignStorage &&
+        (selection.reference.referenceAccess == AccessMode::ReadOnly ||
+         place.access == AccessMode::Mutable)) {
+      if (result)
+        return nullptr;
+      result = &place;
+    }
+  return result;
+}
+
 std::optional<MirSelectedReferenceHandoff>
 selectedReferenceHandoff(const MirBody &body, const MirLoan &selected) {
-  if (!selected.referenceSelection || selected.entry || selected.escapes ||
+  if (!selected.referenceSelection || selected.referenceSelection->kind !=
+                                         ReferenceSelectionKind::StoredExternalReference ||
+      selected.entry || selected.escapes ||
       selected.kind != MirLoanKind::Local)
     return std::nullopt;
   const auto &selection = *selected.referenceSelection;
@@ -244,7 +301,8 @@ selectedReferenceHandoff(const MirBody &body, const MirLoan &selected) {
     if (*instruction->payloadExtractionKind ==
         PayloadExtractionKind::TransferReference) {
       for (const auto &candidate : body.loans) {
-        if (!candidate.referenceSelection ||
+        if (!candidate.referenceSelection || candidate.referenceSelection->kind !=
+                                                 ReferenceSelectionKind::StoredExternalReference ||
             candidate.referenceSelection->value != *instruction->result ||
             candidate.producedBy != instruction->hirValue)
           continue;
@@ -1943,11 +2001,9 @@ const SemanticType *functionPointerSignature(const MirProgram &program,
   if (type.kind != SemanticType::Class || type.arguments.size() != 1 ||
       !type.valueArguments.empty())
     return nullptr;
-  const auto owner = std::find_if(
-      program.classInstances().begin(), program.classInstances().end(),
-      [&](const auto &row) { return row.type == type; });
-  if (owner == program.classInstances().end() ||
-      owner->compilerCapability != CompilerCapabilityTypeKind::FunctionPointer)
+  const auto owner = mirClassLifetimeView(program, type);
+  if (!owner ||
+      owner->instance->compilerCapability != CompilerCapabilityTypeKind::FunctionPointer)
     return nullptr;
   const auto &signature = type.arguments.front();
   return signature.kind == SemanticType::FunctionSignature &&

@@ -1017,6 +1017,18 @@ public:
       }
       output << "] lifecycle-bound-borrow-carrier="
              << instance.lifecycleBoundBorrowCarrier;
+      output << " complete-return-borrow=";
+      if (!instance.completeReturnBorrow) {
+        output << "absent";
+      } else {
+        output << "complete";
+        borrowFields(instance.completeReturnBorrow->dependencies);
+        output << " alternatives=[";
+        for (const auto &alternative :
+             instance.completeReturnBorrow->possibleAlternatives)
+          borrowConditions(alternative.conditions);
+        output << ']';
+      }
       effectSummary(instance.effectSummary);
       output << '\n';
       body(instance.body, instance.id);
@@ -1825,7 +1837,9 @@ private:
     output << " reference-selection=";
     if (value.referenceSelection) {
       const auto &selection = *value.referenceSelection;
-      output << "{value=%" << selection.value << " carrier=p"
+      output << "{kind=" << (selection.kind == ReferenceSelectionKind::PhysicalPayload
+                                  ? "physical-payload" : "stored-reference")
+             << " value=%" << selection.value << " carrier=p"
              << selection.carrier << " transferred-from=l"
              << selection.transferredFrom << " fields=[";
       for (std::size_t index = 0; index < selection.fields.size(); ++index) {

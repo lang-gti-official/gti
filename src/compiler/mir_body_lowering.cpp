@@ -4091,7 +4091,8 @@ private:
       return found->second;
     }
 
-    if (loan.referenceSelection) {
+    if (loan.referenceSelection && loan.referenceSelection->kind ==
+                                       ReferenceSelectionKind::StoredExternalReference) {
       const auto authority = loan.parent != 0
                                  ? loan.parent
                                  : loan.referenceSelection->transferredFrom;
@@ -4495,11 +4496,15 @@ private:
           producer->result != resolved->id || producer->operands.size() != 1 ||
           output.findPlace(producer->operands.front().place) == nullptr ||
           !producer->payloadExtractionKind ||
-          !isStoredReferenceExtraction(*producer->payloadExtractionKind)) {
+          (selection.kind == ReferenceSelectionKind::StoredExternalReference
+               ? !isStoredReferenceExtraction(*producer->payloadExtractionKind)
+               : selection.kind != ReferenceSelectionKind::PhysicalPayload ||
+                     *producer->payloadExtractionKind != PayloadExtractionKind::BorrowValue)) {
         valid = false;
         return;
       }
-      MirReferenceSelection selected{.value = resolved->id,
+      MirReferenceSelection selected{.kind = selection.kind,
+                                     .value = resolved->id,
                                      .carrier =
                                          producer->operands.front().place,
                                      .fields = selection.fields,
@@ -12350,13 +12355,14 @@ private:
       // Ordinary payload borrowing protects the enum's field storage. A
       // stored-reference extraction instead protects external owners and
       // retains its evaluated address separately in referenceSelection.
-      const MirPlaceId origin =
-          desired->referenceSelection ? placeForLoan(*desired, value) : field;
+      const bool externalReference = desired->referenceSelection &&
+          desired->referenceSelection->kind == ReferenceSelectionKind::StoredExternalReference;
+      const MirPlaceId origin = externalReference ? placeForLoan(*desired, value) : field;
       if (origin == 0) {
         valid = false;
         return {};
       }
-      if (!desired->referenceSelection)
+      if (!externalReference)
         output.places[field - 1].key = desired->place;
       MirLoanId parent = 0;
       if (desired->parent != 0) {

@@ -379,6 +379,7 @@ owners = [
   "lifetime_ir_metadata",
   "lifetime_hir_signatures",
   "lifetime_mir_contracts",
+  "lifetime_native",
   "complete_borrow_summaries",
   "cleanup_bound_borrow",
   "temporary_owner_borrow",

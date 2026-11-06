@@ -116,6 +116,64 @@ auto SemanticVisitor::Impl::projectInferredLifetimeContract(
   return result.valid() ? std::optional(std::move(result)) : std::nullopt;
 }
 
+auto SemanticVisitor::Impl::validateLambdaLifetimeReturn(const ExprPtr &value) -> void {
+  if (!currentLambdaReturn || !currentLambdaReturn->declaration || !value ||
+      expressionNeverReturns(value.get()))
+    return;
+  auto &context = *currentLambdaReturn;
+  auto complete = completeBorrowDependencySet(value);
+  if (!complete) {
+    auto dependencies = storedBorrowDependencies(value);
+    if (dependencies.empty()) {
+      const auto place = retainedLoanPlace(value);
+      if (place.valid()) {
+        SemanticLoanDependency dependency{.place = place, .access = borrowAccess(currentReturnType)};
+        if (const auto source = retainedLoanSource(value))
+          dependency.parent = source->loan;
+        dependencies.push_back(std::move(dependency));
+      }
+    }
+    complete = SemanticBorrowDependencySet{.dependencies = std::move(dependencies)};
+  }
+  FunctionInfo signature{.returnType = currentReturnType,
+                          .parameterTypes = context.parameterTypes,
+                          .lifetimeContract = context.lifetimeContract,
+                          .staticMember = true};
+  std::vector<LifetimeBound> required;
+  const auto normalized = normalizedCompleteBorrow(
+      signature, context.declaration->parameters(), ReceiverMutability::ReadOnly, *complete,
+      loanFlow.collectingLifetimeContract ? &required : nullptr);
+  if (!normalized) {
+    report(expressionToken(value),
+           "Every possible owner returned by the lambda must satisfy its lifetime contract and preserve access and cleanup obligations.",
+           "GTI-S2127");
+    return;
+  }
+  for (const auto bound : required)
+    if (!requireLifetimeRelationship(bound.longer, bound.shorter, expressionToken(value)))
+      return;
+  // A declared signature's full supplier set remains authoritative. The
+  // inferred private summary joins every productive return path.
+  if (!context.completeReturnBorrow)
+    context.completeReturnBorrow = FunctionBorrowDependencySummary{};
+  for (const auto &dependency : normalized->dependencies)
+    if (std::find(context.completeReturnBorrow->dependencies.begin(),
+                  context.completeReturnBorrow->dependencies.end(), dependency) ==
+        context.completeReturnBorrow->dependencies.end())
+      context.completeReturnBorrow->dependencies.push_back(dependency);
+  for (const auto &alternative : normalized->possibleAlternatives)
+    if (std::find(context.completeReturnBorrow->possibleAlternatives.begin(),
+                  context.completeReturnBorrow->possibleAlternatives.end(), alternative) ==
+        context.completeReturnBorrow->possibleAlternatives.end())
+      context.completeReturnBorrow->possibleAlternatives.push_back(alternative);
+  if (!context.completeReturnBorrow->dependencies.empty()) {
+    const auto &first = context.completeReturnBorrow->dependencies.front();
+    context.origin = first.origin;
+    context.parameter = first.parameter;
+    context.access = first.access;
+  }
+}
+
 auto SemanticVisitor::Impl::inferPrivateLifetimeContracts() -> void {
   std::vector<const FunctionDecl *> pending;
   for (const auto &entry : catalog.callableDeclarations)
