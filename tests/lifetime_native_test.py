@@ -53,6 +53,20 @@ struct Pair {
 };
 int main() { int left = 3; int right = 8; Pair pair{left, right}; return pair.second - 8; }
 """,
+    "borrowed_record_cleanup": """
+mut int cleanup_trace = 0;
+struct View<lifetime region> {
+  int&<region> value;
+  View(int&<region> input) : value(input) {}
+  ~View() { cleanup_trace += this.value; }
+};
+void observe<lifetime region>(int&<region> input) { View<region> view{input}; }
+int main() {
+  int number = 7;
+  observe(number);
+  return cleanup_trace - 7;
+}
+""",
     "lambda_suppliers": """
 int main() {
   auto choose = [](int& left, int& right, bool first) -> int& {
@@ -71,20 +85,32 @@ T&<region> get<T, lifetime region>(State<T>&<region> state) {
 }
 int main() { State<int> state = State<int>::value(7); return get(state) - 7; }
 """,
-    "higher_ranked_pointer_core": """
-import std.detail.function_pointer;
-using Selection = for<lifetime region> int&<region>(int&<region>, int&<region>, bool);
-int&<shorter> select<lifetime longer, lifetime shorter>(
-    int&<longer> left, int&<shorter> right, bool first)
-    requires outlives<longer, shorter> {
-  if (first) { return left; }
-  return right;
+    "borrowed_enum": """
+enum Borrowed<lifetime a> { value(int&<a> item) };
+int read<lifetime a>(Borrowed<a>& value) {
+  switch (value) { case Borrowed<a>::value(auto& item): return item; }
 }
 int main() {
-  auto pointer = gti_internal::function_pointer_from_item<Selection>(select);
-  int left = 3; int right = 8;
-  if (gti_internal::function_pointer_invoke(pointer, left, right, true) != 3) { return 1; }
-  return gti_internal::function_pointer_invoke(pointer, left, right, false) - 8;
+  int number = 7;
+  auto value = Borrowed<_>::value(number);
+  auto copied = value;
+  return read(copied) - 7;
+}
+""",
+    "generic_borrowed_enum": """
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+};
+enum Box<T> { item(T value) };
+int read<T>(Box<T>& box) {
+  switch (box) { case Box<T>::item(auto& payload): return payload.value; }
+}
+int main() {
+  int number = 7;
+  View view{number};
+  auto box = Box<View<_>>::item(view);
+  return read(box) - 7;
 }
 """,
     "higher_ranked_pointer": """
@@ -106,6 +132,20 @@ int main() {
 }
 
 REJECTIONS = {
+    "mutation_before_destructor": """
+mut int cleanup_trace = 0;
+struct View<lifetime region> {
+  int&<region> value;
+  View(int&<region> input) : value(input) {}
+  ~View() { cleanup_trace += this.value; }
+};
+int main() {
+  mut int number = 7;
+  View view{number};
+  number = 9;
+  return 0;
+}
+""",
     "unrelated_return": """
 int&<left_region> wrong<lifetime left_region, lifetime right_region>(
     int&<left_region> left, int&<right_region> right) { return right; }
@@ -138,6 +178,7 @@ def main():
     parser.add_argument("compiler", type=Path)
     parser.add_argument("emitter", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--census", type=Path)
     args = parser.parse_args()
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -187,7 +228,12 @@ def main():
             raise RuntimeError(f"{label}: exit {result.returncode}; {log}")
         return result
 
-    for label, source in CASES.items():
+    root = Path(__file__).resolve().parent.parent
+    example = root / "examples/192-lifetime-parameters.gti"
+    if args.census:
+        run([args.census.resolve(), root, example.name], "public-example-census")
+    cases = {"public_example": example.read_text(), **CASES}
+    for label, source in cases.items():
         path = output / (label + ".gti")
         path.write_text(source)
         observations = report["cases"].setdefault(label, {})
@@ -212,7 +258,7 @@ def main():
 
     # Compare the same identity operation with an explicit and an elided
     # contract. Object symbols prove generated allocation dependencies only.
-    for label in ("explicit_identity", "elided_identity", "borrowed_record", "higher_ranked_pointer_core", "higher_ranked_pointer"):
+    for label in ("explicit_identity", "elided_identity", "borrowed_record", "borrowed_enum", "generic_borrowed_enum", "higher_ranked_pointer"):
         obj, ir = output / (label + ".o"), output / (label + ".ll")
         run([emitter, output / (label + ".gti"), obj, ir, 3, "--source-preflight"], label + "-object")
         symbols = run(["nm", "-u", obj], label + "-undefined-symbols").stdout

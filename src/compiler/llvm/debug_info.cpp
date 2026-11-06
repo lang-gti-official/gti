@@ -1,3 +1,4 @@
+#include "representation.h"
 #include "debug_info.h"
 #include "abi.h"
 #include "layout.h"
@@ -359,13 +360,12 @@ public:
       builder.replaceTemporary(llvm::TempDICompositeType(temporary), complete);
       return types[index].second.get();
     } else if (value.kind == SemanticType::Enum) {
-      if (const auto *payload = session.program().mir().findPayloadEnum(value))
+      if (const auto *payload = native_llvm::exactPayloadEnum(session.program().mir(), value))
         return payloadType(value, *payload);
-      for (const auto &enumeration : session.program().mir().integralEnums()) {
-        if (enumeration.type != value)
-          continue;
-        const auto *row = session.program().findEnumDeclarationRow(value);
-        const auto *declaration = session.program().findEnumDeclaration(value);
+      if (const auto *selected = exactIntegralEnum(session.program().mir(), value)) {
+        const auto &enumeration = *selected;
+        const auto *row = session.program().findEnumDeclarationRow(enumeration.type);
+        const auto *declaration = session.program().findEnumDeclaration(enumeration.type);
         const auto domain = constantIntegerDomain(enumeration.underlyingType);
         if (!declaration || !row || !domain)
           throw std::logic_error("LLVM debug enum lost its declaration");
@@ -383,7 +383,6 @@ public:
             row->source.line, layout.size * 8, layout.alignment * 8,
             builder.getOrCreateArray(enumerators),
             type(enumeration.underlyingType));
-        break;
       }
     } else if (value == SemanticType::Float || value == SemanticType::Double) {
       result = builder.createBasicType(
@@ -434,8 +433,8 @@ public:
   // reached again through an owner refers back to it.
   llvm::DIType *payloadType(const SemanticType &value,
                             const MirPayloadEnum &payload) {
-    const auto *declaration = session.program().findEnumDeclaration(value);
-    const auto *row = session.program().findEnumDeclarationRow(value);
+    const auto *declaration = session.program().findEnumDeclaration(payload.type);
+    const auto *row = session.program().findEnumDeclarationRow(payload.type);
     if (!declaration || !row)
       throw std::logic_error("LLVM debug payload lost its declaration");
     const auto &layout = session.layouts().payload(value);
@@ -465,13 +464,13 @@ public:
             field < variant.payloadSymbols.size()
                 ? session.program().findSymbol(variant.payloadSymbols[field])
                 : nullptr;
-        const auto fieldLayout =
-            session.layouts().get(variant.payloadTypes[field]);
+        const auto actualType = instantiateStorageType(session.program().mir(), value, variant.payloadTypes[field]);
+        const auto fieldLayout = session.layouts().get(actualType);
         members.push_back(builder.createMemberType(
             unit, symbol ? symbol->name : "_" + std::to_string(field), source,
             row->source.line, fieldLayout.size * 8, fieldLayout.alignment * 8,
             fields->getElementOffsetInBits(field), llvm::DINode::FlagZero,
-            type(variant.payloadTypes[field])));
+            type(actualType)));
       }
       auto *alternative = builder.createStructType(
           unit, name, source, row->source.line, fields->getSizeInBits(),

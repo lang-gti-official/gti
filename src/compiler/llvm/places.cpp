@@ -1,3 +1,4 @@
+#include "representation.h"
 #include "places.h"
 #include "placement.h"
 
@@ -70,7 +71,7 @@ llvm::GlobalVariable *Places::enumeratorStorage(const MirPlace &place) {
           ? session.program().findEnumDeclaration(place.type)
           : nullptr;
   if (!declaration || declaration->payload ||
-      !session.program().mir().findIntegralEnum(place.type))
+      !native_llvm::exactIntegralEnum(session.program().mir(), place.type))
     return nullptr;
   const auto enumerator = std::find_if(
       declaration->enumerators.begin(), declaration->enumerators.end(),

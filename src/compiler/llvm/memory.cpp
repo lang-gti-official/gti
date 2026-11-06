@@ -1,3 +1,4 @@
+#include "representation.h"
 #include "memory.h"
 
 #include "../mir_verification_queries.h"
@@ -481,13 +482,7 @@ bool uninitializedStorageRepresentation(const MirProgram &program,
 static bool sharedPointee(const MirProgram &program, const SemanticType &type) {
   if (mir_detail::completeObjectType(program, type))
     return true;
-  const MirClassInstance *owner = nullptr;
-  for (const auto &candidate : program.classInstances())
-    if (candidate.type == type) {
-      if (owner)
-        return false;
-      owner = &candidate;
-    }
+  const auto *owner = exactClassInstance(program, type);
   return type.kind == SemanticType::Class && owner && owner->polymorphic &&
          !owner->cOpaqueHandle &&
          owner->compilerCapability == CompilerCapabilityTypeKind::None;
@@ -551,18 +546,16 @@ bool nativeObjectConstructionShape(const MirProgram &program,
         program.findConstructorInstance(*instruction.constructorTarget);
     const auto *owner =
         target ? program.findClassInstance(target->owner) : nullptr;
-    return owner && owner->type == type &&
-           instruction.parameterTypes.size() ==
-               target->parameterTypes.size() + 1 &&
+    const auto signature = target ? instantiateMirLifetimeTarget(program, instruction) : std::nullopt;
+    return owner && exactClassInstance(program, type) == owner && signature &&
+           signature->returnType == type && instruction.parameterTypes.size() ==
+               signature->parameterTypes.size() + 1 &&
            std::equal(instruction.parameterTypes.begin() + 1,
-                      instruction.parameterTypes.end(),
-                      target->parameterTypes.begin());
+                      instruction.parameterTypes.end(), signature->parameterTypes.begin());
   }
   if (type.kind == SemanticType::Class) {
-    const auto found = std::find_if(
-        program.classInstances().begin(), program.classInstances().end(),
-        [&](const auto &owner) { return owner.type == type; });
-    if (found == program.classInstances().end())
+    const auto *found = exactClassInstance(program, type);
+    if (!found)
       return false;
     if (instruction.constructorKind == ConstructorKind::Ordinary)
       return instruction.operands.size() == 1 &&
@@ -606,16 +599,14 @@ bool nativeUniqueConstructionShape(const MirProgram &program,
             type == SemanticType::NullPtr ||
             type.kind == SemanticType::NativeFunction ||
             (type.kind == SemanticType::Enum &&
-             program.findIntegralEnum(type) &&
-             !program.findPayloadEnum(type))) &&
+             native_llvm::exactIntegralEnum(program, type) &&
+             !native_llvm::exactPayloadEnum(program, type))) &&
            !instruction.constructorTarget && instruction.operands.size() <= 1 &&
            instruction.operands.size() == instruction.parameterTypes.size() &&
            (instruction.operands.empty() ||
             instruction.parameterTypes[0] == type);
-  const auto found = std::find_if(
-      program.classInstances().begin(), program.classInstances().end(),
-      [&](const auto &owner) { return owner.type == type; });
-  if (found == program.classInstances().end() || found->abstract ||
+  const auto *found = exactClassInstance(program, type);
+  if (!found || found->abstract ||
       found->kind == ClassKind::Interface)
     return false;
   // A concrete polymorphic object is constructed through its selected source
@@ -647,8 +638,9 @@ bool nativeUniqueConstructionShape(const MirProgram &program,
   if (instruction.constructorTarget) {
     const auto *target =
         program.findConstructorInstance(*instruction.constructorTarget);
-    return target && target->owner == found->id &&
-           instruction.parameterTypes == target->parameterTypes;
+    const auto signature = target ? instantiateMirLifetimeTarget(program, instruction) : std::nullopt;
+    return target && target->owner == found->id && signature && signature->returnType == type &&
+           instruction.parameterTypes == signature->parameterTypes;
   }
   if (!mir_detail::generatedUniqueConstruction(instruction))
     return false;

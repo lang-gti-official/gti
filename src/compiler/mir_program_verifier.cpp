@@ -5643,11 +5643,9 @@ completeBorrowParameterEntryFact(const MirProgram &program, const MirBody &body,
       .dependencies = {.possibleAlternatives = std::move(*alternatives)}};
   if (inventory->empty())
     return reference ? std::nullopt : std::optional{std::move(result)};
-  // Existing unconditional carriers retain their original proof. This entry
-  // extension is required when that inventory has real alternative guards.
-  if (std::none_of(inventory->begin(), inventory->end(),
-                   [](const auto &path) { return !path.conditions.empty(); }))
-    return std::nullopt;
+  // Every stored-field supplier is reconstructed from the typed entry,
+  // whether unconditional or guarded. A copied unconditional carrier needs
+  // the same complete contents proof as a conditional one at a later call.
   const MirLoan *entry = nullptr;
   for (const auto &loan : body.loans) {
     const auto *source = body.findPlace(loan.source);
@@ -14915,25 +14913,41 @@ completeBorrowSourcePath(const MirProgram &program,
       // permission that binding still retains: semantics records its exact
       // Stored group as the result's parent.
       const MirLoan *retainedGroup = nullptr;
+      Fact retainedContents;
       if (!referenceInput &&
           target.returnType.kind == SemanticType::Reference &&
           argument->kind == MirOperandKind::Value && argument->value &&
-          argument->value <= definitions.size())
-        if (const auto *stage = definitions[argument->value - 1];
-            stage && stage->kind == MirInstructionKind::CallInput &&
+          argument->value <= definitions.size()) {
+        const auto *stage = definitions[argument->value - 1];
+        if (stage && stage->kind == MirInstructionKind::CallInput &&
+            stage->callInputKind == HirCallInputKind::CopyValue &&
             stage->result == argument->value &&
             stage->callSite == instruction.callSite &&
-            stage->operands.size() == 1 &&
-            stage->operands.front().kind == MirOperandKind::Copy)
-          if (const auto *copied =
-                  body.findPlace(stage->operands.front().place);
-              copied && copied->root == MirPlaceRootKind::Binding &&
-              copied->projections.empty())
+            stage->operands.size() == 1) {
+          const MirOperand *copy = &stage->operands.front();
+          if (copy->kind == MirOperandKind::Value && copy->value &&
+              copy->value <= definitions.size()) {
+            const auto *load = definitions[copy->value - 1];
+            if (load && load->kind == MirInstructionKind::Load &&
+                load->result == copy->value && load->operands.size() == 1 &&
+                load->info.type == stage->info.type &&
+                load->operands.front().type == stage->info.type)
+              copy = &load->operands.front();
+          }
+          const auto *copied = copy->kind == MirOperandKind::Copy
+              ? body.findPlace(copy->place) : nullptr;
+          if (copied && copied->root == MirPlaceRootKind::Binding &&
+              copied->projections.empty() && copied->type == stage->info.type)
             if (const auto loans = bindingLoans.find(copied->binding);
                 loans != bindingLoans.end() && loans->second.size() == 1)
               if (const auto *group = body.findLoan(loans->second.front());
-                  group && group->kind == MirLoanKind::Stored)
-                retainedGroup = group;
+                  group && group->kind == MirLoanKind::Stored) {
+                retainedContents = retainedCarrierInput(state, copied->id);
+                if (retainedContents)
+                  retainedGroup = group;
+              }
+        }
+      }
       Fact input;
       if (!referenceInput) {
         input = fromOperand(state, *argument);
@@ -15067,21 +15081,11 @@ completeBorrowSourcePath(const MirProgram &program,
           if (const auto *group = body.findLoan(dependency.parent);
               group && group->entry && group->kind == MirLoanKind::Stored)
             dependency.parent = 0;
-        if (retainedGroup) {
-          const auto retains = [&](const MirLoanDependency &candidate) {
-            return candidate.source == original.source &&
-                   candidate.designatedFields == original.designatedFields &&
-                   candidate.access == original.access &&
-                   candidate.conditions == original.conditions;
-          };
-          if (retains({.source = retainedGroup->source,
-                       .designatedFields = retainedGroup->designatedFields,
-                       .access = retainedGroup->access,
-                       .conditions = retainedGroup->conditions}) ||
-              std::any_of(retainedGroup->additionalDependencies.begin(),
-                          retainedGroup->additionalDependencies.end(), retains))
-            dependency.parent = retainedGroup->id;
-        }
+        if (retainedGroup && retainedContents &&
+            std::find(retainedContents->dependencies.begin(),
+                      retainedContents->dependencies.end(), original) !=
+                retainedContents->dependencies.end())
+          dependency.parent = retainedGroup->id;
         if (std::find(supplying[index].begin(), supplying[index].end(),
                       dependency) == supplying[index].end())
           supplying[index].push_back(std::move(dependency));

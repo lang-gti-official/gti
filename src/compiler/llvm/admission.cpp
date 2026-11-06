@@ -1,3 +1,4 @@
+#include "representation.h"
 #include "atomic_types.h"
 #include "gti/llvm_admission.h"
 #include "gti/mir_effects.h"
@@ -225,7 +226,7 @@ public:
           bool valid = true;
           for (const auto &variant : payload->variants)
             for (const auto &field : variant.payloadTypes)
-              valid = valid && self(self, field);
+              valid = valid && self(self, native_llvm::instantiateStorageType(program, selected, field));
           payloads.erase(payload);
           return valid;
         }
@@ -587,7 +588,7 @@ public:
     return type.kind == SemanticType::Reference && type.arguments.size() == 1 &&
            (type.arguments.front().kind == SemanticType::Class ||
             (type.arguments.front().kind == SemanticType::Enum &&
-             program.findPayloadEnum(type.arguments.front()))) &&
+             native_llvm::exactPayloadEnum(program, type.arguments.front()))) &&
            contains(type.arguments.front());
   }
   bool related(const SemanticType &type) const {
@@ -685,11 +686,12 @@ public:
     // A payload enum holds one complete object per payload field of its
     // active alternative; every alternative's storage must be represented.
     if (type.kind == SemanticType::Enum) {
-      const auto *payload = program.findPayloadEnum(type);
+      const auto *payload = native_llvm::exactPayloadEnum(program, type);
       if (!payload || !contains(type))
         return {};
       for (const auto &variant : payload->variants)
-        for (const auto &field : variant.payloadTypes) {
+        for (const auto &recipe : variant.payloadTypes) {
+          const auto field = native_llvm::instantiateStorageType(program, type, recipe);
           if (!contains(field)) {
             if (!natives(field))
               return {};
@@ -899,7 +901,7 @@ public:
         unreference(operand.type).kind == SemanticType::Enum) {
       const auto &target = unreference(operand.type);
       const auto *place = body.findPlace(operand.place);
-      if (!program.findPayloadEnum(target) || !place || place->type != target ||
+      if (!native_llvm::exactPayloadEnum(program, target) || !place || place->type != target ||
           place->foreignStorage || place->capture ||
           !payloadPlace(body, *place))
         return {};
@@ -1220,8 +1222,8 @@ private:
       valid &= owner.declaredFields.empty() && !owner.destructor &&
                !owner.requiresActiveCleanup && !owner.requiresActiveDropState;
     const auto base = [&](const HirBaseInstance &row) {
-      const auto *selected = program.findClassInstance(row.instance);
-      return selected && selected->type == row.type &&
+      const auto *selected = native_llvm::exactClassInstance(program, row.type);
+      return selected && selected->id == row.instance &&
              (!row.interface || selected->kind == ClassKind::Interface) &&
              metadataClass(*selected, path);
     };
@@ -1240,13 +1242,15 @@ private:
       return type.arguments.size() == 1 && !type.arrayLengthParameterId &&
              metadataStorage(type.arguments.front(), path);
     if (type.kind == SemanticType::Enum) {
-      const auto *payload = program.findPayloadEnum(type);
+      const auto *payload = native_llvm::exactPayloadEnum(program, type);
       if (!payload)
         return false;
       for (const auto &variant : payload->variants)
-        for (const auto &field : variant.payloadTypes)
+        for (const auto &recipe : variant.payloadTypes) {
+          const auto field = native_llvm::instantiateStorageType(program, type, recipe);
           if (contains(field) ? !metadataStorage(field, path) : !natives(field))
             return false;
+        }
       return true;
     }
     return type.kind == SemanticType::Class &&
@@ -1550,7 +1554,7 @@ private:
       return false;
     const auto *place = body.findPlace(*stage.destination);
     const auto *payload = place && place->type.kind == SemanticType::Enum
-                              ? program.findPayloadEnum(place->type)
+                              ? native_llvm::exactPayloadEnum(program, place->type)
                               : nullptr;
     if (!place || (place->type.kind != SemanticType::Class && !payload) ||
         place->type != stage.info.type || !contains(place->type))
@@ -2011,7 +2015,7 @@ private:
   // payload enum: containers of complete hierarchy objects.
   bool hierarchyContainer(const SemanticType &type) const {
     if (type.kind == SemanticType::Enum)
-      return program.findPayloadEnum(type) != nullptr;
+      return native_llvm::exactPayloadEnum(program, type) != nullptr;
     // A closure environment holds its by-value captures as complete objects.
     if (type.kind == SemanticType::Lambda)
       return true;
@@ -2022,7 +2026,7 @@ private:
     return type.kind == SemanticType::Array &&
            (leaf->kind == SemanticType::Class ||
             (leaf->kind == SemanticType::Enum &&
-             program.findPayloadEnum(*leaf)));
+             native_llvm::exactPayloadEnum(program, *leaf)));
   }
   bool freshConstruction(MirBodyAddress address, const MirBody &body,
                          const native_llvm::Placement &placement,
@@ -3030,9 +3034,9 @@ public:
   // outside this rule.
   bool integralEnumPointee(const SemanticType &type) const {
     const auto *sealed = type.kind == SemanticType::Enum
-                             ? program.findIntegralEnum(type)
+                             ? native_llvm::exactIntegralEnum(program, type)
                              : nullptr;
-    return sealed && !program.findPayloadEnum(type) &&
+    return sealed && !native_llvm::exactPayloadEnum(program, type) &&
            constantIntegerDomain(sealed->underlyingType).has_value();
   }
   bool integralEnumAddress(const SemanticType &type) const {
@@ -3188,7 +3192,7 @@ public:
         stage.parameterTypes.size() != 1 ||
         stage.parameterTypes[0] != stage.operands[0].type)
       return false;
-    const auto *sealed = program.findIntegralEnum(stage.operands[0].type);
+    const auto *sealed = native_llvm::exactIntegralEnum(program, stage.operands[0].type);
     return sealed && sealed->underlyingType == stage.info.type &&
            isPassiveScalarValueType(stage.info.type);
   }
@@ -3220,9 +3224,9 @@ public:
         type.arrayLengthParameterId)
       return false;
     const auto &element = type.arguments.front();
-    const auto *sealed = program.findIntegralEnum(element);
+    const auto *sealed = native_llvm::exactIntegralEnum(program, element);
     return element.kind == SemanticType::Enum && sealed &&
-           !program.findPayloadEnum(element) &&
+           !native_llvm::exactPayloadEnum(program, element) &&
            constantIntegerDomain(sealed->underlyingType).has_value() &&
            nativeValue(element);
   }
@@ -3657,7 +3661,7 @@ public:
   // the selected address unchanged. Hierarchy-related and capability
   // payloads fail the storage witness and stay closed.
   bool nativePayloadPointee(const SemanticType &type) const {
-    return type.kind == SemanticType::Enum && program.findPayloadEnum(type) &&
+    return type.kind == SemanticType::Enum && native_llvm::exactPayloadEnum(program, type) &&
            nativeValue(type) && classShape(type) == Shape::NativePayloadStorage;
   }
   bool payloadPointerArithmetic(const MirInstruction &stage) const {
@@ -3994,13 +3998,8 @@ public:
   bool opaqueReferent(const SemanticType &type) const {
     if (type.kind != SemanticType::Class)
       return false;
-    return std::any_of(program.classInstances().begin(),
-                       program.classInstances().end(),
-                       [&](const auto &instance) {
-                         return instance.type == type &&
-                                instance.compilerCapability ==
-                                    CompilerCapabilityTypeKind::ErasedObject;
-                       });
+    const auto *instance = native_llvm::exactClassInstance(program, type);
+    return instance && instance->compilerCapability == CompilerCapabilityTypeKind::ErasedObject;
   }
   bool passiveNonEnumReference(const SemanticType &type) const {
     return passiveReferenceType(type) || opaqueReferent(type) ||
@@ -4034,8 +4033,8 @@ public:
     if (textViewArray(scalar) || integralEnumArray(scalar))
       return true;
     return scalar.kind == SemanticType::Enum &&
-           program.findIntegralEnum(scalar) &&
-           !program.findPayloadEnum(scalar) && nativeValue(scalar);
+           native_llvm::exactIntegralEnum(program, scalar) &&
+           !native_llvm::exactPayloadEnum(program, scalar) && nativeValue(scalar);
   }
   bool erasedReference(const MirInstruction &stage) const {
     if (stage.kind != MirInstructionKind::Call || !stage.loan ||
@@ -4769,12 +4768,11 @@ public:
     while (!pending.empty()) {
       const SemanticType &type = *pending.back();
       pending.pop_back();
-      if (program.findPayloadEnum(type))
+      if (native_llvm::exactPayloadEnum(program, type))
         add(Shape::PayloadEnum, representationShape(type));
-      if (type.kind == SemanticType::Class)
-        for (const auto &owner : program.classInstances())
-          if (owner.type == type && owner.unionLayout)
-            add(Shape::NativeUnion, classShape(type));
+      if (const auto *owner = native_llvm::exactClassInstance(program, type);
+          owner && owner->unionLayout)
+        add(Shape::NativeUnion, classShape(type));
       const bool passiveArray =
           type.kind == SemanticType::Array && passiveArrayElement(type);
       const bool enumArray = !passiveArray && integralEnumArray(type);

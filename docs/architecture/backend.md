@@ -589,6 +589,11 @@ keys erase only lifetime regions and quantified binder identities. An erased key
 cannot become a semantic type or establish an outlives relation. Reference and
 borrowed primitive layouts retain their ordinary pointer or pointer-and-length
 representation; no lifetime argument becomes a native operand or runtime state.
+Descriptor classification and stored-field projection use that same exact view
+for borrowed enums and generic records. Generated copy, relocation, cleanup and
+debug records instantiate stored child types in the actual region scope while
+layout caches retain the canonical descriptor. A missing or ambiguous enum view
+does not classify the type as an integral enum or a trivial object.
 
 Evidence owns a const snapshot, shared between consumer stages. Acquiring it
 copies an lvalue program or moves an rvalue program. `Backend::generate`

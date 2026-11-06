@@ -413,6 +413,93 @@ generally bind to temporaries or outlive the storage they borrow. The bounded
 call-only read borrow below is not a local or stored reference binding and does
 not extend the temporary's lifetime.
 
+### Lifetime parameters and elision
+
+A lifetime parameter names a relationship that the caller must satisfy. It does
+not choose a duration, allocate storage, or keep an owner alive. Named regions
+use ordinary generic parameter lists; the region of a reference follows its
+`&`:
+
+```gti
+int&<a> identity<lifetime a>(int&<a> value) { return value; }
+
+int&<a> choose<lifetime a>(int&<a> left, int&<a> right, bool first) {
+  if (first) { return left; }
+  return right;
+}
+
+struct Reading<lifetime data> {
+  int&<data> value;
+  Reading(int&<data> input) : value(input) {}
+  int&<data> get() { return this.value; }
+};
+```
+
+`choose` permits either input to supply the result. Its callers therefore keep
+both possible owners valid while that result is live, even when a particular
+implementation always returns the first input. The reference still contains
+only its ordinary runtime representation. The compiler checks the relationship
+and preserves the complete supplier set through calls, aliases and MIR; regions
+are erased at the verified representation boundary.
+
+Ordinary callers infer lifetime arguments:
+
+```gti
+int left = 3;
+int right = 9;
+int& selected = choose(left, right, false);
+Reading reading{selected};
+```
+
+Local `T&` and `mut T&` infer their regions from checked places and uses. `_`
+requests an inferred lifetime explicitly, as in `Reading<_>`. In declaration
+signatures, omitted input regions receive separate parameters; an omitted result
+region uses the sole eligible input or the method receiver. Ambiguous published
+results require a declared relationship. Eligible private helpers may infer
+relationships from their bodies, including mutually recursive helpers; exported
+contracts do not depend on inspecting the implementation. Inference does not
+upgrade read-only access or manufacture an owner for a raw pointer.
+
+A stored reference with omitted region receives an anonymous declaration slot.
+Distinct fields have distinct slots; constructor binding determines their actual
+origins. Recursive declarations whose omitted slots would expand indefinitely
+need explicit parameters. Named and anonymous records still obey the same
+storage, movement, access and cleanup rules.
+
+`T&<this>` names a method receiver's borrow region. A method returning an
+external stored reference can instead name that field's region, as `Reading.get`
+does above; the external referent and the temporary or local carrier's storage
+have distinct lifetimes. `mut T&<a>` describes exclusive access for a region.
+It does not make the referent covariant: nested mutable referent types remain
+invariant. An explicit region suffix is not accepted on the restricted move
+form `T&&`.
+
+`requires outlives<a, b>` states that `a` covers `b`. Type-outlives requirements
+use the same `outlives<T, a>` form. `static` denotes independently proved static
+storage, not a request to extend a local or thread-local value's lifetime. Bounds
+are proof obligations; writing one cannot make an invalid escape safe.
+
+Callable signatures can quantify a fresh region for each invocation:
+
+```gti
+using BorrowIdentity = for<lifetime a> int&<a>(int&<a>);
+```
+
+The invocation's `a` is separate from any fixed region held by a callable's
+captured environment. Nested callable requirements remain in their own scope;
+they cannot justify a surrounding return or stored reference.
+
+[Example 192](../../examples/192-lifetime-parameters.gti) demonstrates named
+relationships, elided identity and a borrowed record with inferred callers.
+The complete target is [RFC 0004](https://github.com/lang-gti-official/rfcs/blob/codex/proposal-lifetime-parameters/rfcs/0004-lifetime-parameters-and-elision.md).
+Implementation of all compositions is still in progress: inherited borrowed
+storage, recursive forwarded packs and public generic callable wrappers need
+further integration. Named regions alone do not admit dynamically managed
+reference storage; its typed-storage obligations remain the dependent RFC 0003
+work.
+
+### Reference places and endpoints
+
 Assignment targets are checked by their resolved place category and access,
 not by whether they are spelled as a variable, subscript, or call. A stable
 mutable-reference result supports `owner.slot() = value` and compound updates
@@ -583,7 +670,8 @@ or receiver storage and independently verifies the result's declared owner,
 projection and access. Local/by-value storage, temporaries and cleanup-bound
 carrier dependencies still cannot escape. Returning a child keeps the borrow
 attached to the caller's owner; it does not reactivate that owner's conflicting
-access while the returned borrow remains live. No lifetime syntax is added.
+access while the returned borrow remains live. Ordinary local reborrows need no
+written lifetime arguments.
 
 Nested patterns may relay the same caller-owned referent: a reference binding
 to an outer payload is an alias of that payload, so an inner payload reference
@@ -833,8 +921,8 @@ error, as do mutation under an already-live lexical loan, overlapping mutable
 parameters, and a later read under an earlier exclusive loan. This does not
 introduce last-use ending for full-expression temporaries or borrowed results.
 
-Reborrowing adds no syntax or explicit lifetime parameter. It uses the existing
-`T&` and `mut T&` reference declarations:
+Local reborrowing normally infers its relationships. It uses plain `T&` and
+`mut T&` reference declarations:
 
 ```gti
 mut Widget& parent = widget;
@@ -1039,11 +1127,12 @@ source-defined client: it holds two spans, uses the shorter input length, and
 offers indexed `first`, `second`, and `subspan` operations. It has no special
 compiler recognition: its checked iterators and reference proxies use the same
 general stored-dependency and range protocols as application-defined carriers.
-Whole-carrier by-value forwarding is supported. The separately escaping
-reference-return rule for a by-value carrier parameter still requires its one
-exact reference path; selecting an individual path from a multi-path by-value
-parameter is not part of this slice. Receiver-based accessors remain available
-and conservatively retain the receiver's complete owner set.
+Whole-carrier by-value forwarding is supported. A by-value borrowed carrier
+may return one of its externally stored references under its declared lifetime
+contract, including selection between multiple stored fields. It cannot return
+a reference to its own local shell. The result retains every supplier permitted
+by the declaration; receiver-based accessors also preserve their complete
+published owner set.
 
 An ordinary local, parameter, or returned reference may refer to one of these
 borrowed-state objects. It protects two distinct things: the object's physical
@@ -1084,8 +1173,8 @@ returned by value under the existing return-origin rules. Returning a reference
 to a local copy or by-value parameter remains invalid; `GTI-S2017` or the
 existing by-value-carrier `GTI-S2085` diagnoses the escaping storage.
 
-No source lifetime parameters are introduced. Constructor parameter bindings
-and unambiguous direct return expressions establish field-wise origin maps.
+Named lifetime contracts coexist with constructor parameter bindings and
+unambiguous direct return expressions that establish field-wise origin maps.
 A factory may reorder its parameters or bind several shared fields to one
 parameter; unused parameters do not become result dependencies. Ordinary
 local carriers may compose shared and exclusive references from independent
@@ -1129,8 +1218,9 @@ global/static or captured borrowed storage, dependency-changing returns, and
 assignment that would replace a carrier's dependency remain rejected. Mutable
 dependencies are limited to an exact
 stable local, parameter, receiver, or existing-loan origin. They do not admit
-raw or opaque origins, dynamic-index identity, arbitrary lifetime parameters,
-or an independently escaping child reference.
+raw or opaque origins or unproved dynamic-index identity. Named lifetime
+parameters describe these checked relationships; they do not supply missing
+storage or access evidence for an escaping child reference.
 
 An ordinary borrowed class may declare a destructor. A borrowed class whose
 source destructor or nested borrowed field/base can use or release a dependency

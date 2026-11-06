@@ -1613,6 +1613,7 @@ add_test(NAME lifetime_mir_contracts COMMAND gti_lifetime_mir_contracts_tests)
 add_test(NAME lifetime_native
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lifetime_native_test.py"
     "$<TARGET_FILE:gti>" "$<TARGET_FILE:gti_llvm_native_c_abi_tests>"
+    --census "$<TARGET_FILE:gti_lowered_program_census>"
     --output-dir "${CMAKE_BINARY_DIR}/Testing/lifetime-native-evidence")
 set_tests_properties(lifetime_native PROPERTIES TIMEOUT 1200)
 

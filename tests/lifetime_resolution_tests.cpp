@@ -332,16 +332,29 @@ int main() { return 0; }
   expect(!escaping.semanticValid && std::any_of(escaping.diagnostics.begin(), escaping.diagnostics.end(),
          [](const auto &diagnostic) { return diagnostic.code == "GTI-S2127"; }),
          "a nested callable's lifetime premises cannot justify an outer reference escape");
-  const auto fixedPattern = analyze(R"(
+  const auto exactSelector = analyze(R"(
 struct Fixed<T> {};
 struct Fixed<int&<static>> {};
+using Preserved = for<lifetime a> void(Fixed<int&<a>>);
+int main() { return 0; }
+)");
+  expectValid(exactSelector, "exact specialization selection preserves a callable's actual region");
+  const auto *preserved = alias(exactSelector, "Preserved");
+  expect(preserved && preserved->type.quantifiedLifetimes.size() == 1 &&
+             preserved->type.arguments.size() == 2 &&
+             preserved->type.arguments[1].arguments.size() == 1 &&
+             preserved->type.arguments[1].arguments.front().referenceLifetime ==
+                 lang::Lifetime::parameter(preserved->type.quantifiedLifetimes.front()),
+         "an exact selector's static spelling never replaces the actual quantified region");
+  const auto fixedPattern = analyze(R"(
+class Fixed<T&<static>> {};
 using Invalid = for<lifetime a> void(Fixed<int&<a>>);
 int main() { return 0; }
 )");
   expect(!fixedPattern.semanticValid &&
              std::any_of(fixedPattern.diagnostics.begin(), fixedPattern.diagnostics.end(),
                          [](const auto &diagnostic) { return diagnostic.code == "GTI-S2127"; }),
-         "an inner invocation must satisfy fixed nominal specialization regions exactly");
+         "an inner invocation must satisfy fixed nominal argument-pattern regions exactly");
 }
 
 void testAssociatedLifetimeFamily() {

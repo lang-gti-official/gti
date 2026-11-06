@@ -1,0 +1,34 @@
+// Lifetime relationships belong to reusable declarations. Ordinary callers
+// infer their arguments and keep using plain references and local types.
+
+int& identity(int& value) { return value; }
+
+void add_one<lifetime a>(mut int&<a> value) { value += 1; }
+
+int&<shared> choose<lifetime shared>(
+    int&<shared> left, int&<shared> right, bool first) {
+  if (first) { return left; }
+  return right;
+}
+
+struct Reading<lifetime data> {
+  int&<data> value;
+  Reading(int&<data> input) : value(input) {}
+  int&<data> get() { return this.value; }
+};
+
+int read_through_view<lifetime data>(int&<data> input) {
+  Reading<data> reading{input};
+  return reading.get();
+}
+
+int main() {
+  mut int left = 3;
+  int right = 9;
+  add_one(left);
+  int& selected = choose(left, right, false);
+  Reading reading{selected};
+  if (reading.get() != 9) { return 1; }
+  if (read_through_view(right) != 9) { return 2; }
+  return identity(left) - 4;
+}

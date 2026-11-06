@@ -1,3 +1,4 @@
+#include "representation.h"
 #include "threads.h"
 #include "failure.h"
 #include "gti/mir_effects.h"
@@ -35,14 +36,7 @@ bool supportedTarget(const MirProgram &program) {
 
 const MirClassInstance *exactClass(const MirProgram &program,
                                    const SemanticType &type) {
-  const MirClassInstance *owner = nullptr;
-  for (const auto &candidate : program.classInstances())
-    if (candidate.type == type) {
-      if (owner)
-        return nullptr;
-      owner = &candidate;
-    }
-  return owner;
+  return exactClassInstance(program, type);
 }
 
 // The inline storage of a task or result has an exact proof. Hierarchy
