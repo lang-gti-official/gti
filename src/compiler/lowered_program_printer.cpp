@@ -281,12 +281,67 @@ private:
     output << '}';
   }
 
+  void lifetime(Lifetime value) {
+    output << '{' << number(value.kind) << ':' << value.id << '}';
+  }
+
+  void lifetimeContract(const LifetimeSignatureContract &value) {
+    output << "{complete=" << value.complete
+           << ",origin=" << number(value.origin) << ",parameters=[";
+    for (std::size_t index = 0; index < value.parameters.size(); ++index) {
+      separator(index);
+      lifetime(value.parameters[index]);
+    }
+    output << "],bounds=[";
+    for (std::size_t index = 0; index < value.bounds.size(); ++index) {
+      separator(index);
+      lifetime(value.bounds[index].longer);
+      output << ':';
+      lifetime(value.bounds[index].shorter);
+    }
+    output << "],type-bounds=[";
+    for (std::size_t index = 0; index < value.typeBounds.size(); ++index) {
+      separator(index);
+      type(value.typeBounds[index].type);
+      output << ':';
+      lifetime(value.typeBounds[index].region);
+    }
+    output << "],receiver=";
+    lifetime(value.receiver);
+    output << '}';
+  }
+
   void type(const SemanticType &value) {
     output << "type(" << number(value.kind) << ";class=" << value.classId
            << ";enum=" << value.enumId
-           << ";parameter=" << value.genericParameterId;
+           << ";parameter=" << value.genericParameterId
+           << ";native-c=" << static_cast<unsigned>(value.nativeCScalar)
+           << ";projection-concept=" << value.projectionConcept
+           << ";projection-member=" << value.projectionMember;
     if (value.functionId != 0) {
       output << ";function=" << value.functionId;
+    }
+    if (value.referenceLifetime != Lifetime{}) {
+      output << ";reference-region=";
+      lifetime(value.referenceLifetime);
+    }
+    if (!value.lifetimeArguments.empty()) {
+      output << ";lifetime-arguments=[";
+      for (std::size_t index = 0; index < value.lifetimeArguments.size();
+           ++index) {
+        separator(index);
+        lifetime(value.lifetimeArguments[index]);
+      }
+      output << ']';
+    }
+    if (!value.quantifiedLifetimes.empty()) {
+      output << ";quantified-lifetimes=[";
+      for (std::size_t index = 0; index < value.quantifiedLifetimes.size();
+           ++index) {
+        separator(index);
+        output << value.quantifiedLifetimes[index];
+      }
+      output << ']';
     }
     output << ";lambda=" << value.lambdaId
            << ";lambda-parameters=" << value.lambdaParameterCount
@@ -440,6 +495,7 @@ private:
   void genericParameter(const LoweredGenericParameter &value) {
     output << "generic(id=" << value.id << ";name=" << std::quoted(value.name)
            << ";pack=" << value.pack << ";value=" << value.value
+           << ";lifetime=" << value.lifetime
            << ";constraints=" << value.constraints << ";constraint=";
     strings(value.constraintName);
     output << ";constraint-concept=" << value.constraintConcept;
@@ -533,6 +589,8 @@ private:
     output << "type-alias(unit=" << value.sourceUnit
            << ";qualified=" << std::quoted(value.qualifiedName) << ";type=";
     type(value.type);
+    output << ";generics=";
+    genericParameters(value.genericParameters);
     output << ";private=" << value.compilerPrivate << ')';
   }
 
@@ -680,6 +738,8 @@ private:
     parameters(value.parameters);
     output << ";generics=";
     genericParameters(value.genericParameters);
+    output << ";lifetime-contract=";
+    lifetimeContract(value.lifetimeContract);
     output << ";requirements=";
     requirements(value.requirements);
     output << ";requirement-expression=[";
@@ -808,6 +868,8 @@ private:
     genericParameters(value.genericParameters);
     output << ";parameters=";
     parameters(value.parameters);
+    output << ";lifetime-contract=";
+    lifetimeContract(value.lifetimeContract);
     output << ";requirements=";
     requirements(value.requirements);
     output << ";requirement-expression=[";
@@ -898,7 +960,7 @@ std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
 
 void LoweredProgramPrinter::print(const LoweredProgram &program,
                                   std::ostream &output) const {
-  output << "lowered-program-v34\n";
+  output << "lowered-program-v35\n";
   for (const auto &unit : program.compiledInterfaceUnits())
     output << "compiled-interface-unit " << unit.sourceUnit
            << " package=" << std::quoted(unit.owner.package)
@@ -1106,7 +1168,8 @@ void LoweredProgramPrinter::print(const LoweredProgram &program,
     values.semanticType(symbol.type);
     output << ' ';
     values.semanticTraits(symbol.traits);
-    output << " access=" << static_cast<std::size_t>(symbol.access)
+    output << " generic-parameter=" << symbol.genericParameter
+           << " access=" << static_cast<std::size_t>(symbol.access)
            << " flags=" << symbol.mutableBinding << ':' << symbol.defaultLibrary
            << ':' << symbol.staticMember << ':' << symbol.internalLinkage << ':'
            << symbol.generated << ':' << symbol.compilerPrivate << ':'

@@ -5762,6 +5762,8 @@ auto SemanticVisitor::Impl::toolingSymbolFor(const Symbol &symbol) -> SymbolId {
 
 auto SemanticVisitor::Impl::genericParameterInfo(GenericParameterId id) const
     -> const GenericParameterInfo * {
+  if (const auto *parameter = semanticModel.findGenericParameter(id))
+    return parameter;
   for (const EnumInfo &owner : enums) {
     const auto found = std::find_if(
         owner.genericParameters.begin(), owner.genericParameters.end(),
@@ -6283,7 +6285,9 @@ auto SemanticVisitor::Impl::sameFunctionSignature(
     if (left.record().genericParameters[index].pack !=
             right.record().genericParameters[index].pack ||
         left.record().genericParameters[index].value !=
-            right.record().genericParameters[index].value) {
+            right.record().genericParameters[index].value ||
+        left.record().genericParameters[index].lifetime !=
+            right.record().genericParameters[index].lifetime) {
       return false;
     }
   }
@@ -6307,7 +6311,9 @@ auto SemanticVisitor::Impl::sameConstructorSignature(
     if (left.genericParameters[index].pack !=
             right.genericParameters[index].pack ||
         left.genericParameters[index].value !=
-            right.genericParameters[index].value) {
+            right.genericParameters[index].value ||
+        left.genericParameters[index].lifetime !=
+            right.genericParameters[index].lifetime) {
       return false;
     }
   }
@@ -8244,10 +8250,10 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
     const auto &field = enumerator.payloadTypes[index];
     // A constructor's text input formal is published by each call instead.
     const auto &inputs = requestSession.constructorTextPayloadArguments;
-    if (field == SemanticType::StringView || field == SemanticType::CString)
+    if (field.kind == SemanticType::StringView || field == SemanticType::CString)
       noteLocalTextEscape(call.arguments()[index], LocalTextEscapeKind::Storage,
                           "stored in a payload-enum field");
-    if ((field == SemanticType::StringView || field == SemanticType::CString) &&
+    if ((field.kind == SemanticType::StringView || field == SemanticType::CString) &&
         isOwnerDependentTextExpression(call.arguments()[index]) &&
         std::find(inputs.begin(), inputs.end(),
                   call.arguments()[index].get()) == inputs.end()) {
@@ -14681,6 +14687,10 @@ auto SemanticVisitor::Impl::isComparable(SemanticType left, SemanticType right,
 auto SemanticVisitor::Impl::baseTypeOf(
     const TypeRef &type, const std::vector<std::string> &fromScope) const
     -> SemanticType {
+  std::optional<LifetimeBinderScope> lifetimeScope;
+  if (type.lifetimeBinder)
+    lifetimeScope.emplace(lifetimeParameterScopes,
+                          lifetimeParametersFor(*type.lifetimeBinder));
   if (type.isNativeFunction() || type.isFunctionSignature()) {
     const std::size_t parameterCount =
         type.isFunctionSignature() ? *type.functionSignatureParameterCount
@@ -14700,9 +14710,13 @@ auto SemanticVisitor::Impl::baseTypeOf(
           : type.functionSignatureQualifier->kind == TokenKind::MUT
               ? ReceiverMutability::Mutable
               : ReceiverMutability::Consuming;
-      return SemanticType::functionSignature(
+      SemanticType result = SemanticType::functionSignature(
           typeOf(type.arguments.back(), fromScope), std::move(parameters),
           receiver);
+      if (type.lifetimeBinder)
+        for (const auto &parameter : lifetimeParametersFor(*type.lifetimeBinder))
+          result.quantifiedLifetimes.push_back(parameter.id);
+      return result;
     }
     return SemanticType::nativeFunctionType(
         typeOf(type.arguments.back(), fromScope), parameters);
@@ -14714,49 +14728,53 @@ auto SemanticVisitor::Impl::baseTypeOf(
       const auto member =
           std::find(conceptInfo.associatedTypes.begin(),
                     conceptInfo.associatedTypes.end(), type.name.last().lexeme);
-      if (member == conceptInfo.associatedTypes.end() ||
-          type.qualifiedOwner->arguments.size() !=
-              conceptInfo.parameterIds.size()) {
+      if (member == conceptInfo.associatedTypes.end())
         return SemanticType::Unknown;
-      }
       const auto index = static_cast<std::uint32_t>(
           member - conceptInfo.associatedTypes.begin());
-      if (type.arguments.size() !=
-          conceptInfo.associatedTypeParameters[index].size())
+      const auto arguments = nominalArguments(
+          conceptInfo.genericParameters, type.qualifiedOwner->arguments,
+          fromScope, type.qualifiedOwner->name.last());
+      const auto family = nominalArguments(
+          conceptInfo.associatedTypeParameters[index], type.arguments,
+          fromScope, type.name.last());
+      if (!arguments || !family)
         return SemanticType::Unknown;
-      std::vector<SemanticType> arguments;
-      for (const TypeRef &argument : type.qualifiedOwner->arguments) {
-        arguments.push_back(typeOf(argument, fromScope));
-      }
-      std::vector<SemanticType> familyArguments;
-      for (const TypeRef &argument : type.arguments)
-        familyArguments.push_back(typeOf(argument, fromScope));
-      if (const std::optional<SemanticType> own = ownBlockProjection(
-              *protocol, index, arguments, fromScope, familyArguments)) {
+      if (const auto own = ownBlockProjection(
+              *protocol, index, arguments->types, fromScope, family->types,
+              arguments->lifetimes, family->lifetimes))
         return *own;
-      }
       return substituteType(
-          associatedTypeProjection(*protocol, index, std::move(arguments),
-                                   std::move(familyArguments)),
+          associatedTypeProjection(*protocol, index, arguments->types,
+                                   family->types, arguments->lifetimes,
+                                   family->lifetimes),
           GenericSubstitution{.types = instanceTypeSubstitution,
-                              .values = instanceValueSubstitution});
+                              .values = instanceValueSubstitution,
+                              .lifetimes = instanceLifetimeSubstitution});
     }
     const auto alias = resolveTypeAliasPath(type, fromScope);
-    if (!alias || !type.arguments.empty() || alias->id == 0 ||
+    if (!alias || alias->id == 0 ||
         alias->id > typeAliases.size() ||
         typeAliases[alias->id - 1].resolution !=
             TypeAliasResolution::Resolved) {
       return SemanticType::Unknown;
     }
-    return substituteType(
-        alias->type, GenericSubstitution{.types = instanceTypeSubstitution,
-                                         .values = instanceValueSubstitution});
+    return instantiatedAliasType(*alias, type, fromScope);
   }
   const CompilerCapabilityTypeKind compilerCapability =
       compilerCapabilityType(type, fromScope);
   if (compilerCapability == CompilerCapabilityTypeKind::TextView) {
-    return type.arguments.empty() ? SemanticType::StringView
-                                  : SemanticType::Unknown;
+    const auto id = resolveClassPath(type.name, fromScope);
+    if (!id)
+      return SemanticType::Unknown;
+    const auto arguments = nominalArguments(classInfo(*id).genericParameters,
+                                            type.arguments, fromScope,
+                                            type.name.last());
+    if (!arguments)
+      return SemanticType::Unknown;
+    SemanticType result = SemanticType::StringView;
+    result.lifetimeArguments = arguments->lifetimes;
+    return result;
   }
   if (compilerCapability == CompilerCapabilityTypeKind::CString) {
     return type.arguments.empty() ? SemanticType::CString
@@ -14816,18 +14834,33 @@ auto SemanticVisitor::Impl::baseTypeOf(
         const auto &parameters =
             concepts[parameter->projectionConcept - 1]
                 .associatedTypeParameters[parameter->projectionMember];
-        if (parameters.size() != type.arguments.size())
+        const auto family = nominalArguments(parameters, type.arguments,
+                                              fromScope, type.name.last());
+        if (!family)
           return SemanticType::Unknown;
-        std::vector<SemanticType> arguments;
-        for (const auto &argument : type.arguments)
-          arguments.push_back(typeOf(argument, fromScope));
         return associatedTypeProjection(
             parameter->projectionConcept, parameter->projectionMember,
-            parameter->arguments, std::move(arguments));
+            parameter->arguments, family->types, parameter->lifetimeArguments,
+            family->lifetimes);
       }
       return type.arguments.empty() ? *parameter : SemanticType::Unknown;
     }
     if (type.name.segments.size() == 1) {
+      if (const auto *conformance = enclosingConformance(fromScope)) {
+        const auto &names = concepts[conformance->conceptId - 1].associatedTypes;
+        const auto member = std::find(names.begin(), names.end(), type.name.last().lexeme);
+        if (member != names.end()) {
+          const auto index = static_cast<std::size_t>(member - names.begin());
+          const auto family = nominalArguments(
+              conformance->associatedTypeParameters[index], type.arguments,
+              fromScope, type.name.last());
+          if (!family)
+            return SemanticType::Unknown;
+          if (auto associated = blockAssociatedType(type.name.last().lexeme,
+                  fromScope, family->types, family->lifetimes))
+            return *associated;
+        }
+      }
       std::vector<SemanticType> arguments;
       for (const auto &argument : type.arguments)
         arguments.push_back(typeOf(argument, fromScope));
@@ -14838,7 +14871,7 @@ auto SemanticVisitor::Impl::baseTypeOf(
     }
     if (const std::optional<ResolvedTypeAlias> alias =
             resolveTypeAliasPath(type.name, fromScope)) {
-      if (!type.arguments.empty() || alias->id == 0 ||
+      if (alias->id == 0 ||
           alias->id > typeAliases.size()) {
         return SemanticType::Unknown;
       }
@@ -14846,19 +14879,18 @@ auto SemanticVisitor::Impl::baseTypeOf(
       if (declaration.resolution != TypeAliasResolution::Resolved) {
         return SemanticType::Unknown;
       }
-      return substituteType(
-          alias->type,
-          GenericSubstitution{.types = instanceTypeSubstitution,
-                              .values = instanceValueSubstitution});
+      return instantiatedAliasType(*alias, type, fromScope);
     }
     if (const std::optional<EnumId> id =
             resolveEnumPath(type.name, fromScope)) {
       if (*id == 0 || *id > enums.size())
         return SemanticType::Unknown;
       const auto arguments = nominalArguments(enums[*id - 1].genericParameters,
-                                              type.arguments, fromScope);
+                                              type.arguments, fromScope,
+                                              type.name.last());
       return arguments ? SemanticType::enumType(*id, arguments->types,
-                                                arguments->values)
+                                                arguments->values,
+                                                arguments->lifetimes)
                        : SemanticType::Unknown;
     }
     if (const std::optional<ClassId> id =
@@ -14874,78 +14906,13 @@ auto SemanticVisitor::Impl::baseTypeOf(
         return selectExactClassSpecialization(
             SemanticType::classType(*id, std::move(arguments)));
       }
-      if (!owner.genericParameters.empty() &&
-          owner.genericParameters.back().pack) {
-        if (type.arguments.size() + 1 < owner.genericParameters.size()) {
-          return SemanticType::Unknown;
-        }
-        std::vector<SemanticType> arguments;
-        for (const TypeRef &argument : type.arguments) {
-          SemanticType::appendExpandedArgument(arguments,
-                                               typeOf(argument, fromScope));
-        }
-        return selectExactClassSpecialization(
-            SemanticType::classType(*id, std::move(arguments)));
-      }
-      GenericSubstitution substitution;
-      const std::size_t count =
-          std::min(type.arguments.size(), owner.genericParameters.size());
-      for (std::size_t index = 0; index < count; ++index) {
-        const GenericParameterInfo &parameter = owner.genericParameters[index];
-        const TypeRef &argument = type.arguments[index];
-        if (parameter.value) {
-          if (const std::optional<CompileTimeValue> value =
-                  genericValueArgument(argument)) {
-            substitution.values.emplace(parameter.id, *value);
-          }
-        } else {
-          substitution.types.emplace(parameter.id, typeOf(argument, fromScope));
-        }
-      }
-      for (const GenericParameterInfo &parameter : owner.genericParameters) {
-        if (parameter.value) {
-          if (substitution.values.contains(parameter.id) ||
-              !parameter.defaultValue) {
-            continue;
-          }
-          const GenericValueEvaluation evaluation =
-              evaluateGenericValueExpression(*parameter.defaultValue,
-                                             substitution);
-          if (evaluation.value) {
-            substitution.values.emplace(parameter.id, *evaluation.value);
-          }
-          continue;
-        }
-        if (substitution.types.contains(parameter.id) ||
-            !parameter.defaultType) {
-          continue;
-        }
-        substitution.types.emplace(
-            parameter.id, substituteType(*parameter.defaultType, substitution));
-      }
-      std::vector<SemanticType> arguments;
-      std::vector<CompileTimeValue> valueArguments;
-      arguments.reserve(genericTypeParameterCount(owner.genericParameters));
-      valueArguments.reserve(
-          genericValueParameterCount(owner.genericParameters));
-      for (const GenericParameterInfo &parameter : owner.genericParameters) {
-        if (parameter.value) {
-          const auto found = substitution.values.find(parameter.id);
-          if (found == substitution.values.end()) {
-            return SemanticType::Unknown;
-          }
-          valueArguments.emplace_back(found->second);
-        } else {
-          const auto found = substitution.types.find(parameter.id);
-          if (found == substitution.types.end() ||
-              found->second == SemanticType::Unknown) {
-            return SemanticType::Unknown;
-          }
-          arguments.emplace_back(found->second);
-        }
-      }
-      return selectExactClassSpecialization(SemanticType::classType(
-          *id, std::move(arguments), std::move(valueArguments)));
+      const auto arguments = nominalArguments(owner.genericParameters,
+                                              type.arguments, fromScope,
+                                              type.name.last());
+      return arguments ? selectExactClassSpecialization(SemanticType::classType(
+                             *id, arguments->types, arguments->values,
+                             arguments->lifetimes))
+                       : SemanticType::Unknown;
     }
     return SemanticType::Unknown;
   }
@@ -14969,7 +14936,10 @@ auto SemanticVisitor::Impl::typeOf(
     result = SemanticType::arrayOf(std::move(result), *length);
   }
   if (type.reference) {
-    result = SemanticType::referenceTo(std::move(result));
+    result = SemanticType::referenceTo(
+        std::move(result), AccessMode::ReadOnly,
+        type.referenceLifetime ? lifetimeOf(type.referenceLifetime->name)
+                               : inferredLifetime(*type.reference));
     if (type.referenceMutability) {
       result.referenceAccess = AccessMode::Mutable;
     }
@@ -15017,7 +14987,8 @@ auto SemanticVisitor::Impl::typeOf(
     SemanticType pack = type.arguments.front();
     for (auto &element : pack.arguments)
       element =
-          SemanticType::referenceTo(std::move(element), type.referenceAccess);
+          SemanticType::referenceTo(std::move(element), type.referenceAccess,
+                                    type.referenceLifetime);
     return pack;
   }
   return type;
@@ -15031,6 +15002,21 @@ auto SemanticVisitor::Impl::typeOf(const Parameter &parameter) const
 auto SemanticVisitor::Impl::parameterBindingType(
     const Parameter &parameter) const -> SemanticType {
   SemanticType type = typeOf(parameter);
+  if (const FunctionInfo *function = currentFunctionInfo();
+      function && currentFunctionDeclaration) {
+    const auto &parameters = currentFunctionDeclaration->parameters();
+    for (std::size_t index = 0; index < parameters.size(); ++index) {
+      if (&parameters[index] == &parameter &&
+          index < function->parameterTypes.size()) {
+        type = substituteType(
+            function->parameterTypes[index],
+            GenericSubstitution{.types = instanceTypeSubstitution,
+                                .values = instanceValueSubstitution,
+                                .lifetimes = instanceLifetimeSubstitution});
+        break;
+      }
+    }
+  }
   // A symbolic binding names a group, never a reference to the group itself.
   // Concrete reanalysis materializes its separately checked reference elements.
   if (parameter.pack && type.kind == SemanticType::Reference &&
@@ -15063,7 +15049,9 @@ auto SemanticVisitor::Impl::literalType(const Literal &literal)
     return SemanticType::Char;
   }
   if (std::holds_alternative<std::string>(literal)) {
-    return SemanticType::StringView;
+    SemanticType result = SemanticType::StringView;
+    result.lifetimeArguments.push_back(Lifetime::staticLifetime());
+    return result;
   }
   if (std::holds_alternative<bool>(literal)) {
     return SemanticType::Bool;

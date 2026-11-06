@@ -6645,13 +6645,53 @@ auto SemanticVisitor::Impl::functionReturnBorrowSummary(
     const std::vector<SemanticType> &parameterTypes, ClassId ownerClass,
     bool staticMember, IntrinsicKind intrinsic,
     std::optional<std::size_t> exactReturnParameter,
-    bool allowReadOnlyReferenceReborrow) const -> FunctionReturnBorrowSummary {
+    bool allowReadOnlyReferenceReborrow,
+    const LifetimeSignatureContract *lifetimeContract) const
+    -> FunctionReturnBorrowSummary {
   FunctionReturnBorrowSummary summary;
   if (!isBorrowReturningType(returnType) || intrinsic != IntrinsicKind::None) {
     return summary;
   }
 
   summary.access = borrowAccess(returnType);
+  if (lifetimeContract && lifetimeContract->complete &&
+      returnType.kind == SemanticType::Reference &&
+      returnType.referenceLifetime.declarationRegion()) {
+    LifetimeBounds bounds;
+    for (const auto bound : lifetimeContract->bounds)
+      if (!bounds.assume(bound.longer, bound.shorter))
+        return summary;
+    const Lifetime result = returnType.referenceLifetime;
+    if (ownerClass != 0 && !staticMember &&
+        bounds.proves(lifetimeContract->receiver, result)) {
+      summary.origin = BorrowOriginKind::Receiver;
+      summary.fields.push_back({.origin = BorrowOriginKind::Receiver,
+                                .access = summary.access});
+    }
+    for (std::size_t index = 0; index < parameterTypes.size(); ++index) {
+      const auto &parameter = parameterTypes[index];
+      if (parameter.kind != SemanticType::Reference ||
+          !bounds.proves(parameter.referenceLifetime, result) ||
+          (summary.access == AccessMode::Mutable &&
+           parameter.referenceAccess != AccessMode::Mutable))
+        continue;
+      if (summary.eligibleParameters++ == 0)
+        summary.parameter = index;
+      summary.parameters.push_back(index);
+      summary.fields.push_back({.origin = BorrowOriginKind::Argument,
+                                .parameter = index,
+                                .access = summary.access});
+      if (summary.origin == BorrowOriginKind::None)
+        summary.origin = BorrowOriginKind::Argument;
+    }
+    if (summary.fields.size() == 1) {
+      // Keep the proven one-owner fast path; several suppliers use the full
+      // declaration contract even when the current body returns only one.
+      summary.fields.clear();
+      summary.parameters.clear();
+    }
+    return summary;
+  }
   if (ownerClass != 0 && !staticMember) {
     summary.origin = BorrowOriginKind::Receiver;
     return summary;
@@ -6762,7 +6802,8 @@ auto SemanticVisitor::Impl::applyFunctionReturnBorrowSummary(
     CallableCandidate &function) const -> void {
   FunctionReturnBorrowSummary summary = functionReturnBorrowSummary(
       function.returnType, function.parameterTypes, function.ownerClass,
-      function.staticMember, function.record().intrinsic);
+      function.staticMember, function.record().intrinsic, std::nullopt, false,
+      &function.lifetimeContract);
   if (function.declaration != nullptr) {
     if (const auto *attribute =
             function.declaration->findFunctionAttribute("borrowed_from")) {
@@ -6782,6 +6823,7 @@ auto SemanticVisitor::Impl::applyFunctionReturnBorrowSummary(
   function.returnBorrowParameter = summary.parameter;
   function.returnBorrowAccess = summary.access;
   function.returnBorrowParameters = summary.parameters;
+  function.returnBorrowFields = summary.fields;
   function.returnBorrowPlace = summary.place;
 }
 

@@ -1721,19 +1721,19 @@ concept identity_family<P> { typename value<T>; };
 struct Policy {};
 for concept identity_family<Policy> { using value<U> = U; };
 )gti";
-  rejected(identityFamily + R"gti(
+  accepted(identityFamily + R"gti(
 using Ref = identity_family<Policy>::value<int&>;
 int main() { return 0; }
 )gti",
-           "GTI-S2030", "Reference aliases are not supported");
-  rejected(identityFamily + R"gti(
+           "a reference projection alias retains its anonymous lifetime slot");
+  accepted(identityFamily + R"gti(
 struct Holder<T> {
   using Ref = identity_family<Policy>::value<T>;
   Holder() = default;
 };
 int main() { Holder<int&> value{}; return 0; }
 )gti",
-           "GTI-S2030", "Reference aliases are not supported");
+           "a dependent reference alias remains transparent after specialization");
   accepted(
       identityFamily + R"gti(
 [[borrowed_from(value)]] identity_family<Policy>::value<int&> view(int& value) {

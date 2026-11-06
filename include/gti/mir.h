@@ -743,6 +743,10 @@ struct MirInstruction {
   std::optional<MirOperand> receiver;
   std::vector<MirOperand> operands;
   std::vector<SemanticType> parameterTypes;
+  // Semantics-selected generic regions remain proof metadata, never operands.
+  std::vector<Lifetime> lifetimeArguments;
+  // Complete declaration-contract substitution, including elided/owner regions.
+  std::vector<LifetimeBinding> lifetimeBindings;
   std::vector<SemanticType> closureCaptureTypes;
   std::vector<LambdaCaptureMode> closureCaptureModes;
   std::optional<MirLoanId> loan;
@@ -1420,6 +1424,8 @@ struct MirClassInstance {
 struct MirCallableSignature {
   SemanticType returnType = SemanticType::Void;
   std::vector<SemanticType> parameterTypes;
+  std::vector<Lifetime> lifetimeArguments;
+  std::vector<LifetimeBinding> lifetimeBindings;
   CallableInvocationCapability requiredCapability =
       CallableInvocationCapability::Read;
   std::optional<CallableInvocationCapability> selectedCapability;
@@ -1574,6 +1580,8 @@ struct MirConstructorInitializer {
   std::optional<HirClassInstanceId> base;
   std::optional<HirConstructorInstanceId> constructorTarget;
   std::vector<HirValueId> arguments;
+  std::vector<Lifetime> lifetimeArguments;
+  std::vector<LifetimeBinding> lifetimeBindings;
   std::size_t explicitArgumentCount = 0;
   bool storesReference = false;
   AccessMode borrowAccess = AccessMode::ReadOnly;
@@ -1607,6 +1615,7 @@ struct MirConstructorInstance {
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;
   std::vector<SemanticType> parameterTypes;
+  LifetimeSignatureContract lifetimeContract;
   std::vector<HirBindingId> parameterBindings;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowParameter = 0;

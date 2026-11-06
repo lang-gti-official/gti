@@ -284,7 +284,7 @@ public:
     const bool classAliases = std::any_of(
         program.classInstances().begin(), program.classInstances().end(),
         [](const auto &instance) { return !instance.typeAliases.empty(); });
-    output << "mir-v120 valid=" << program.valid() << '\n';
+    output << "mir-v121 valid=" << program.valid() << '\n';
     if (program.requiresNativeObjectLayout())
       output << "native-object-layout\n";
     for (const auto &storage : program.foreignStorageDeclarations()) {
@@ -796,7 +796,9 @@ public:
         output << '{' << number(argument.kind) << ':' << argument.value << ':'
                << argument.parameterId << '}';
       }
-      output << "] parameters=[";
+      output << "] lifetime-contract=";
+      lifetimeContract(instance.lifetimeContract);
+      output << " parameters=[";
       for (std::size_t index = 0; index < instance.parameterTypes.size();
            ++index) {
         separator(index);
@@ -942,7 +944,7 @@ public:
   }
 
   void print(const MirBody &value) {
-    output << "mir-body-v93\n";
+    output << "mir-body-v94\n";
     body(value, 0);
   }
 
@@ -1178,9 +1180,26 @@ private:
     output << '{' << number(value.kind) << ':' << value.id << '}';
   }
 
+  void lifetimeApplication(std::span<const Lifetime> arguments,
+                           std::span<const LifetimeBinding> bindings) {
+    output << "{arguments=[";
+    for (std::size_t index = 0; index < arguments.size(); ++index) {
+      separator(index);
+      lifetime(arguments[index]);
+    }
+    output << "],bindings=[";
+    for (std::size_t index = 0; index < bindings.size(); ++index) {
+      separator(index);
+      lifetime(bindings[index].first);
+      output << "=>";
+      lifetime(bindings[index].second);
+    }
+    output << "]}";
+  }
+
   void lifetimeContract(const LifetimeSignatureContract &value) {
-    output << "{complete=" << value.complete << ",origin=" << number(value.origin)
-           << ",parameters=[";
+    output << "{complete=" << value.complete
+           << ",origin=" << number(value.origin) << ",parameters=[";
     for (std::size_t index = 0; index < value.parameters.size(); ++index) {
       separator(index);
       lifetime(value.parameters[index]);
@@ -1192,6 +1211,13 @@ private:
       output << ':';
       lifetime(value.bounds[index].shorter);
     }
+    output << "],type-bounds=[";
+    for (std::size_t index = 0; index < value.typeBounds.size(); ++index) {
+      separator(index);
+      type(value.typeBounds[index].type);
+      output << ':';
+      lifetime(value.typeBounds[index].region);
+    }
     output << "],receiver=";
     lifetime(value.receiver);
     output << '}';
@@ -1201,7 +1227,9 @@ private:
     output << "type(" << number(value.kind) << ";class=" << value.classId
            << ";enum=" << value.enumId
            << ";parameter=" << value.genericParameterId
-           << ";native-c=" << static_cast<unsigned>(value.nativeCScalar);
+           << ";native-c=" << static_cast<unsigned>(value.nativeCScalar)
+           << ";projection-concept=" << value.projectionConcept
+           << ";projection-member=" << value.projectionMember;
     if (value.functionId != 0) {
       output << ";function=" << value.functionId;
     }
@@ -1211,7 +1239,8 @@ private:
     }
     if (!value.lifetimeArguments.empty()) {
       output << ";regions=[";
-      for (std::size_t index = 0; index < value.lifetimeArguments.size(); ++index) {
+      for (std::size_t index = 0; index < value.lifetimeArguments.size();
+           ++index) {
         separator(index);
         lifetime(value.lifetimeArguments[index]);
       }
@@ -1219,7 +1248,8 @@ private:
     }
     if (!value.quantifiedLifetimes.empty()) {
       output << ";quantified-regions=[";
-      for (std::size_t index = 0; index < value.quantifiedLifetimes.size(); ++index) {
+      for (std::size_t index = 0; index < value.quantifiedLifetimes.size();
+           ++index) {
         separator(index);
         output << value.quantifiedLifetimes[index];
       }
@@ -1298,6 +1328,10 @@ private:
   }
 
   void callableSignature(const MirCallableSignature &value) {
+    if (!value.lifetimeArguments.empty() || !value.lifetimeBindings.empty()) {
+      output << "lifetime-application=";
+      lifetimeApplication(value.lifetimeArguments, value.lifetimeBindings);
+    }
     output << "signature(return=";
     type(value.returnType);
     output << ";parameters=[";
@@ -1733,7 +1767,12 @@ private:
       separator(index);
       operand(value.operands[index]);
     }
-    output << "] parameters=[";
+    output << ']';
+    if (!value.lifetimeArguments.empty() || !value.lifetimeBindings.empty()) {
+      output << " lifetime-application=";
+      lifetimeApplication(value.lifetimeArguments, value.lifetimeBindings);
+    }
+    output << " parameters=[";
     for (std::size_t index = 0; index < value.parameterTypes.size(); ++index) {
       separator(index);
       type(value.parameterTypes[index]);
@@ -2257,6 +2296,10 @@ private:
   }
 
   void constructorInitializer(const MirConstructorInitializer &value) {
+    if (!value.lifetimeArguments.empty() || !value.lifetimeBindings.empty()) {
+      output << "lifetime-application=";
+      lifetimeApplication(value.lifetimeArguments, value.lifetimeBindings);
+    }
     output << "initializer(kind=" << number(value.kind) << ";type=";
     type(value.targetType);
     output << ";field=" << value.field << ";base=";

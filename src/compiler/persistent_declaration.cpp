@@ -1,8 +1,8 @@
 #include "gti/persistent_declaration.h"
 #include <algorithm>
 #include <array>
-#include <set>
 #include <charconv>
+#include <set>
 #include <stdexcept>
 
 namespace lang {
@@ -274,6 +274,9 @@ void validateArguments(const SemanticType &type, std::string_view shape) {
   for (const auto &value : type.valueArguments)
     if (value != CompileTimeValue::uint64(value.value))
       reject("generic value must be a resolved uint64");
+  for (const Lifetime region : type.lifetimeArguments)
+    if (!region.declarationRegion())
+      reject("generic lifetime must be a resolved declaration region");
 }
 SemanticType plainNominal(SemanticType::Kind kind, std::size_t id) {
   SemanticType type(kind);
@@ -295,6 +298,86 @@ std::size_t nominalId(const SemanticType &type) {
     reject("unsupported nominal instance profile");
   return id;
 }
+constexpr std::string_view conceptMagic = "gti.concept-key.1:";
+constexpr std::string_view associatedMagic = "gti.associated-type-key.1:";
+std::string conceptKey(std::string_view name,
+                       const PersistentDeclarationOwner &owner,
+                       std::string_view shape) {
+  text(owner.package);
+  text(owner.target);
+  text(owner.module);
+  text(name);
+  validateShape(shape);
+  if (!owner.unit.empty() || shape.find('p') != shape.npos)
+    reject("unsupported persistent concept ownership or pack shape");
+  std::string result(conceptMagic);
+  for (auto field :
+       {std::string_view(owner.package), std::string_view(owner.target),
+        std::string_view(owner.module), name, shape})
+    append(result, field);
+  return result;
+}
+struct ConceptIdentity {
+  std::string name;
+  std::string shape;
+};
+ConceptIdentity conceptIdentity(std::string_view key) {
+  if (key.size() > byteLimit || !key.starts_with(conceptMagic))
+    reject("unsupported persistent concept identity");
+  Reader reader{key.substr(conceptMagic.size())};
+  PersistentDeclarationOwner owner;
+  owner.package = reader.field();
+  owner.target = reader.field();
+  owner.module = reader.field();
+  const auto name = reader.field();
+  const auto shape = reader.field();
+  if (!reader.bytes.empty() || conceptKey(name, owner, shape) != key)
+    reject("noncanonical persistent concept identity");
+  return {std::string(name), std::string(shape)};
+}
+std::string associatedKey(std::string_view conceptIdentityValue,
+                          std::string_view name, std::string_view shape) {
+  (void)conceptIdentity(conceptIdentityValue);
+  text(name);
+  validateShape(shape);
+  std::string result(associatedMagic);
+  append(result, conceptIdentityValue, byteLimit);
+  append(result, name);
+  append(result, shape);
+  return result;
+}
+struct AssociatedIdentity {
+  std::string shape;
+};
+AssociatedIdentity associatedIdentity(std::string_view key) {
+  if (key.size() > byteLimit || !key.starts_with(associatedMagic))
+    reject("unsupported persistent associated-family identity");
+  Reader reader{key.substr(associatedMagic.size())};
+  const auto conceptIdentityValue = reader.field(byteLimit);
+  const auto name = reader.field();
+  const auto shape = reader.field();
+  const auto owner = conceptIdentity(conceptIdentityValue);
+  if (!reader.bytes.empty() ||
+      associatedKey(conceptIdentityValue, name, shape) != key)
+    reject("noncanonical persistent associated-family identity");
+  return {owner.shape + std::string(shape)};
+}
+SemanticType plainProjection(ConceptId conceptIdentityValue,
+                             std::uint32_t member) {
+  auto result = SemanticType::typeParameter(0);
+  result.projectionConcept = conceptIdentityValue;
+  result.projectionMember = member;
+  return result;
+}
+void validateProjection(const SemanticType &type) {
+  auto expected =
+      plainProjection(type.projectionConcept, type.projectionMember);
+  expected.arguments = type.arguments;
+  expected.valueArguments = type.valueArguments;
+  expected.lifetimeArguments = type.lifetimeArguments;
+  if (!type.isAssociatedTypeProjection() || type != expected)
+    reject("noncanonical associated projection payload");
+}
 struct TypeBudget {
   std::size_t nodes = 0;
   void visit(std::size_t depth) {
@@ -306,7 +389,8 @@ struct TypeBudget {
 std::size_t count(Reader &reader, std::size_t maximum = 256) {
   const auto field = reader.field();
   std::size_t result = 0;
-  const auto parsed = std::from_chars(field.data(), field.data() + field.size(), result);
+  const auto parsed =
+      std::from_chars(field.data(), field.data() + field.size(), result);
   if (parsed.ec != std::errc{} || parsed.ptr != field.data() + field.size() ||
       result > maximum || std::to_string(result) != field)
     reject("invalid persistent count or binder position");
@@ -317,11 +401,15 @@ class LifetimeCodec {
 public:
   explicit LifetimeCodec(const PersistentLifetimeBindings &bindings,
                          bool allowQuantified = true)
-      : bindings(bindings), scope(bindings.parameters), allowQuantified(allowQuantified) {
-    if (bindings.parameters.size() > 256 || bindings.quantifiedParameters.size() > 256)
+      : bindings(bindings), scope(bindings.parameters),
+        allowQuantified(allowQuantified) {
+    if (bindings.parameters.size() > 256 ||
+        bindings.quantifiedParameters.size() > 256 ||
+        bindings.typeParameters.size() > 256)
       reject("too many persistent lifetime bindings");
     std::set<GenericParameterId> seen;
-    for (const auto &ids : {bindings.parameters, bindings.quantifiedParameters})
+    for (const auto &ids : {bindings.parameters, bindings.quantifiedParameters,
+                            bindings.typeParameters})
       for (GenericParameterId id : ids)
         if (id == 0 || !seen.insert(id).second)
           reject("invalid or duplicate persistent lifetime binding");
@@ -365,6 +453,22 @@ public:
     return Lifetime::parameter(scope[count(reader, scope.size() - 1)]);
   }
 
+  void writeTypeParameter(std::string &out, GenericParameterId id) const {
+    const auto found = std::find(bindings.typeParameters.begin(),
+                                 bindings.typeParameters.end(), id);
+    if (id == 0 || found == bindings.typeParameters.end())
+      reject("unbound persistent type parameter");
+    append(out, std::to_string(
+                    std::distance(bindings.typeParameters.begin(), found)));
+  }
+
+  GenericParameterId readTypeParameter(Reader &reader) const {
+    if (bindings.typeParameters.empty())
+      reject("unbound persistent type parameter");
+    return bindings
+        .typeParameters[count(reader, bindings.typeParameters.size() - 1)];
+  }
+
   void enterWritten(std::span<const GenericParameterId> parameters) {
     if (!allowQuantified && !parameters.empty())
       reject("quantified lifetime types require explicit binding context");
@@ -375,7 +479,8 @@ public:
           (quantified >= bindings.quantifiedParameters.size() ||
            bindings.quantifiedParameters[quantified] != id))
         reject("quantified lifetime bindings disagree with type");
-      ++quantified;
+      if (++quantified > 256)
+        reject("too many quantified lifetime bindings");
       scope.push_back(id);
     }
   }
@@ -414,7 +519,8 @@ void preflightType(const SemanticType &type, TypeBudget &budget,
                    std::size_t depth) {
   budget.visit(depth);
   if (type.arguments.size() > 256 || type.valueArguments.size() > 256 ||
-      type.lifetimeArguments.size() > 256 || type.quantifiedLifetimes.size() > 256)
+      type.lifetimeArguments.size() > 256 ||
+      type.quantifiedLifetimes.size() > 256)
     reject("too many type recipe arguments");
   for (const auto &value : type.valueArguments) {
     budget.visit(depth + 1);
@@ -433,9 +539,12 @@ void writeType(std::string &out, const SemanticType &type,
       append(out, name);
       return;
     }
-  if (type.kind == SemanticType::Class || type.kind == SemanticType::Enum) {
-    append(out, "nominal");
-    append(out, registry.key(type), byteLimit);
+  if (type.kind == SemanticType::Class || type.kind == SemanticType::Enum ||
+      type.isAssociatedTypeProjection()) {
+    const bool projection = type.isAssociatedTypeProjection();
+    append(out, projection ? "projection" : "nominal");
+    append(out, projection ? registry.projectionKey(type) : registry.key(type),
+           byteLimit);
     append(out, std::to_string(type.arguments.size()));
     for (const auto &argument : type.arguments)
       writeType(out, argument, registry, budget, lifetimes, depth + 1);
@@ -451,6 +560,13 @@ void writeType(std::string &out, const SemanticType &type,
     }
     return;
   }
+  if (type.kind == SemanticType::TypeParameter) {
+    if (type != SemanticType::typeParameter(type.genericParameterId))
+      reject("unsupported persistent type parameter or associated projection");
+    append(out, "type-parameter");
+    lifetimes.writeTypeParameter(out, type.genericParameterId);
+    return;
+  }
   if (type.kind == SemanticType::StringView) {
     SemanticType expected(SemanticType::StringView);
     expected.lifetimeArguments = type.lifetimeArguments;
@@ -460,6 +576,8 @@ void writeType(std::string &out, const SemanticType &type,
     append(out, std::to_string(type.lifetimeArguments.size()));
     for (Lifetime region : type.lifetimeArguments) {
       budget.visit(depth + 1);
+      if (!region.declarationRegion())
+        reject("text-view lifetime must be a resolved declaration region");
       lifetimes.write(out, region);
     }
     return;
@@ -469,18 +587,21 @@ void writeType(std::string &out, const SemanticType &type,
       reject("function signature has no result type");
     auto expected = SemanticType::functionSignature(
         type.arguments.front(),
-        std::vector<SemanticType>(type.arguments.begin() + 1, type.arguments.end()),
+        std::vector<SemanticType>(type.arguments.begin() + 1,
+                                  type.arguments.end()),
         type.signatureReceiver);
     expected.quantifiedLifetimes = type.quantifiedLifetimes;
     if (type != expected)
       reject("noncanonical function signature payload");
     const auto receiver = type.signatureReceiver;
-    if (receiver != ReceiverMutability::ReadOnly && receiver != ReceiverMutability::Mutable &&
+    if (receiver != ReceiverMutability::ReadOnly &&
+        receiver != ReceiverMutability::Mutable &&
         receiver != ReceiverMutability::Consuming)
       reject("invalid function signature receiver");
     append(out, "signature");
-    append(out, receiver == ReceiverMutability::ReadOnly ? "read" :
-                receiver == ReceiverMutability::Mutable ? "mut" : "consume");
+    append(out, receiver == ReceiverMutability::ReadOnly  ? "read"
+                : receiver == ReceiverMutability::Mutable ? "mut"
+                                                          : "consume");
     append(out, std::to_string(type.quantifiedLifetimes.size()));
     lifetimes.enterWritten(type.quantifiedLifetimes);
     append(out, std::to_string(type.arguments.size()));
@@ -496,14 +617,16 @@ void writeType(std::string &out, const SemanticType &type,
   std::string_view wire;
   switch (type.kind) {
   case SemanticType::Reference:
-    if (type.referenceAccess != AccessMode::ReadOnly && type.referenceAccess != AccessMode::Mutable)
+    if (type.referenceAccess != AccessMode::ReadOnly &&
+        type.referenceAccess != AccessMode::Mutable)
       reject("invalid reference access");
     expected = SemanticType::referenceTo(element, type.referenceAccess);
     expected.referenceLifetime = type.referenceLifetime;
     wire = type.referenceAccess == AccessMode::ReadOnly ? "ref" : "mut-ref";
     break;
   case SemanticType::RawPointer:
-    if (type.pointerAccess != AccessMode::ReadOnly && type.pointerAccess != AccessMode::Mutable)
+    if (type.pointerAccess != AccessMode::ReadOnly &&
+        type.pointerAccess != AccessMode::Mutable)
       reject("invalid pointer access");
     expected = SemanticType::rawPointerTo(element, type.pointerAccess);
     wire = type.pointerAccess == AccessMode::ReadOnly ? "ptr" : "mut-ptr";
@@ -532,7 +655,9 @@ SemanticType readType(Reader &r, const PersistentTypeRegistry &registry,
   for (auto [name, kind] : types)
     if (wire == name)
       return SemanticType(kind);
-  if (wire == "nominal") {
+  if (wire == "type-parameter")
+    return SemanticType::typeParameter(lifetimes.readTypeParameter(r));
+  if (wire == "nominal" || wire == "projection") {
     const auto key = r.field(byteLimit);
     std::vector<SemanticType> arguments;
     const auto typeCount = count(r);
@@ -544,7 +669,8 @@ SemanticType readType(Reader &r, const PersistentTypeRegistry &registry,
       budget.visit(depth + 1);
       const auto field = r.field();
       std::uint64_t value = 0;
-      const auto parsed = std::from_chars(field.data(), field.data() + field.size(), value);
+      const auto parsed =
+          std::from_chars(field.data(), field.data() + field.size(), value);
       if (parsed.ec != std::errc{} || parsed.ptr != field.data() + field.size())
         reject("invalid generic value");
       values.push_back(CompileTimeValue::uint64(value));
@@ -555,7 +681,12 @@ SemanticType readType(Reader &r, const PersistentTypeRegistry &registry,
       budget.visit(depth + 1);
       regions.push_back(lifetimes.read(r));
     }
-    return registry.resolve(key, std::move(arguments), std::move(values), std::move(regions));
+    return wire == "projection"
+               ? registry.resolveProjection(key, std::move(arguments),
+                                            std::move(values),
+                                            std::move(regions))
+               : registry.resolve(key, std::move(arguments), std::move(values),
+                                  std::move(regions));
   }
   if (wire == "text-view") {
     SemanticType result(SemanticType::StringView);
@@ -578,9 +709,11 @@ SemanticType readType(Reader &r, const PersistentTypeRegistry &registry,
     for (std::size_t index = 0; index < size; ++index)
       arguments.push_back(readType(r, registry, budget, lifetimes, depth + 1));
     auto result = SemanticType::functionSignature(
-        arguments.front(), std::vector<SemanticType>(arguments.begin() + 1, arguments.end()),
-        receiver == "read" ? ReceiverMutability::ReadOnly :
-        receiver == "mut" ? ReceiverMutability::Mutable : ReceiverMutability::Consuming);
+        arguments.front(),
+        std::vector<SemanticType>(arguments.begin() + 1, arguments.end()),
+        receiver == "read"  ? ReceiverMutability::ReadOnly
+        : receiver == "mut" ? ReceiverMutability::Mutable
+                            : ReceiverMutability::Consuming);
     result.quantifiedLifetimes = std::move(parameters);
     lifetimes.leave(result.quantifiedLifetimes.size());
     return result;
@@ -588,10 +721,12 @@ SemanticType readType(Reader &r, const PersistentTypeRegistry &registry,
   std::uint64_t length = 0;
   if (wire == "array") {
     const auto number = r.field();
-    const auto parsed = std::from_chars(number.data(), number.data() + number.size(), length);
+    const auto parsed =
+        std::from_chars(number.data(), number.data() + number.size(), length);
     if (parsed.ec != std::errc{} || parsed.ptr != number.data() + number.size())
       reject("invalid fixed-array extent");
-  } else if (wire != "ref" && wire != "mut-ref" && wire != "ptr" && wire != "mut-ptr") {
+  } else if (wire != "ref" && wire != "mut-ref" && wire != "ptr" &&
+             wire != "mut-ptr") {
     reject("unknown persistent type tag");
   }
   Lifetime region;
@@ -601,13 +736,15 @@ SemanticType readType(Reader &r, const PersistentTypeRegistry &registry,
   if (wire == "array")
     return SemanticType::arrayOf(std::move(element), length);
   if (wire == "ref" || wire == "mut-ref") {
-    auto result = SemanticType::referenceTo(std::move(element),
+    auto result = SemanticType::referenceTo(
+        std::move(element),
         wire == "ref" ? AccessMode::ReadOnly : AccessMode::Mutable);
     result.referenceLifetime = region;
     return result;
   }
   return SemanticType::rawPointerTo(std::move(element),
-      wire == "ptr" ? AccessMode::ReadOnly : AccessMode::Mutable);
+                                    wire == "ptr" ? AccessMode::ReadOnly
+                                                  : AccessMode::Mutable);
 }
 } // namespace
 std::string persistentClassKey(const ClassTypeInfo &info,
@@ -629,6 +766,117 @@ std::string persistentEnumKey(const EnumTypeInfo &info,
   return nominalKey("enum", info.qualifiedName, owner,
                     genericShape(info.genericParameters));
 }
+std::string persistentConceptKey(const ProtocolConceptSpelling &info,
+                                 const PersistentDeclarationOwner &owner) {
+  const auto shape = genericShape(info.genericParameters);
+  const auto typeCount = std::count(shape.begin(), shape.end(), 't');
+  if (static_cast<std::size_t>(typeCount) != info.parameterCount)
+    reject("incomplete persistent concept generic-kind descriptor");
+  return conceptKey(info.qualifiedName, owner, shape);
+}
+std::string
+persistentAssociatedTypeKey(const ProtocolConceptSpelling &info,
+                            std::size_t member,
+                            const PersistentDeclarationOwner &owner) {
+  if (info.associatedTypes.size() > 256 ||
+      info.associatedTypes.size() != info.associatedTypeParameters.size() ||
+      member >= info.associatedTypes.size())
+    reject("incomplete persistent associated-family descriptor");
+  return associatedKey(persistentConceptKey(info, owner),
+                       info.associatedTypes[member],
+                       genericShape(info.associatedTypeParameters[member]));
+}
+void PersistentTypeRegistry::bind(ConceptId id,
+                                  const ProtocolConceptSpelling &info,
+                                  const PersistentDeclarationOwner &owner) {
+  if (id == 0 || info.associatedTypes.size() > 256 ||
+      info.associatedTypes.size() != info.associatedTypeParameters.size())
+    reject("invalid persistent concept declaration descriptor");
+  const auto conceptIdentityValue = persistentConceptKey(info, owner);
+  if (auto found = conceptsByKey.find(conceptIdentityValue);
+      found != conceptsByKey.end() && found->second != id)
+    reject("concept key already bound to another local declaration");
+  if (auto found = conceptKeys.find(id);
+      found != conceptKeys.end() && found->second != conceptIdentityValue)
+    reject("local concept already has another persistent identity");
+  std::vector<std::string> keys;
+  std::set<std::string> names;
+  std::size_t newKeys = 0;
+  for (std::size_t member = 0; member < info.associatedTypes.size(); ++member) {
+    if (!names.insert(info.associatedTypes[member]).second)
+      reject("duplicate persistent associated-family name");
+    auto key = persistentAssociatedTypeKey(info, member, owner);
+    const auto expected =
+        plainProjection(id, static_cast<std::uint32_t>(member));
+    if (auto found = projectionsByKey.find(key);
+        found != projectionsByKey.end()) {
+      if (found->second != expected)
+        reject(
+            "associated-family key already bound to another local declaration");
+    } else {
+      ++newKeys;
+    }
+    if (auto found =
+            projectionKeys.find({id, static_cast<std::uint32_t>(member)});
+        found != projectionKeys.end() && found->second != key)
+      reject("local associated family already has another persistent identity");
+    keys.push_back(std::move(key));
+  }
+  if (byKey.size() + projectionsByKey.size() + newKeys > 4096 ||
+      (conceptKeys.size() >= 4096 && !conceptKeys.contains(id)))
+    reject("too many persistent declaration bindings");
+  const bool newConcept = !conceptKeys.contains(id);
+  std::vector<std::size_t> inserted;
+  try {
+    conceptsByKey.emplace(conceptIdentityValue, id);
+    conceptKeys.emplace(id, conceptIdentityValue);
+    for (std::size_t member = 0; member < keys.size(); ++member) {
+      if (projectionsByKey.contains(keys[member]))
+        continue;
+      inserted.push_back(member);
+      projectionsByKey.emplace(
+          keys[member],
+          plainProjection(id, static_cast<std::uint32_t>(member)));
+      projectionKeys.emplace(std::pair{id, static_cast<std::uint32_t>(member)},
+                             keys[member]);
+    }
+  } catch (...) {
+    for (auto member : inserted) {
+      projectionsByKey.erase(keys[member]);
+      projectionKeys.erase({id, static_cast<std::uint32_t>(member)});
+    }
+    if (newConcept) {
+      conceptsByKey.erase(conceptIdentityValue);
+      conceptKeys.erase(id);
+    }
+    throw;
+  }
+}
+std::string
+PersistentTypeRegistry::projectionKey(const SemanticType &type) const {
+  validateProjection(type);
+  auto found =
+      projectionKeys.find({type.projectionConcept, type.projectionMember});
+  if (found == projectionKeys.end())
+    reject("unregistered associated-type projection");
+  validateArguments(type, associatedIdentity(found->second).shape);
+  return found->second;
+}
+SemanticType PersistentTypeRegistry::resolveProjection(
+    std::string_view key, std::vector<SemanticType> arguments,
+    std::vector<CompileTimeValue> values,
+    std::vector<Lifetime> lifetimes) const {
+  const auto identity = associatedIdentity(key);
+  auto found = projectionsByKey.find(key);
+  if (found == projectionsByKey.end())
+    reject("unresolved persistent associated-type projection");
+  auto result = found->second;
+  result.arguments = std::move(arguments);
+  result.valueArguments = std::move(values);
+  result.lifetimeArguments = std::move(lifetimes);
+  validateArguments(result, identity.shape);
+  return result;
+}
 void PersistentTypeRegistry::bindKey(std::string key, SemanticType type) {
   auto id = nominalId(type);
   if (nominalIdentity(key).kind != type.kind)
@@ -641,7 +889,7 @@ void PersistentTypeRegistry::bindKey(std::string key, SemanticType type) {
   auto local = std::pair{type.kind, id};
   if (byId.contains(local))
     reject("local declaration already has a different persistent identity");
-  if (byKey.size() >= 4096)
+  if (byKey.size() + projectionsByKey.size() >= 4096)
     reject("too many persistent nominal bindings");
   auto [position, inserted] = byKey.emplace(key, type);
   try {
@@ -727,30 +975,43 @@ SemanticType readPersistentType(std::string_view bytes,
   LifetimeCodec lifetimes(bindings);
   auto result = readType(r, registry, budget, lifetimes, 0);
   lifetimes.finish(true);
-  if (!r.bytes.empty() || writePersistentType(result, registry, bindings) != bytes)
+  if (!r.bytes.empty() ||
+      writePersistentType(result, registry, bindings) != bytes)
     reject("noncanonical persistent type recipe");
   return result;
 }
 
-std::string writePersistentLifetimeContract(
-    const LifetimeSignatureContract &contract,
-    const PersistentLifetimeBindings &bindings) {
+std::string
+writePersistentLifetimeContract(const LifetimeSignatureContract &contract,
+                                const PersistentLifetimeBindings &bindings) {
+  return writePersistentLifetimeContract(contract, PersistentTypeRegistry{},
+                                         bindings);
+}
+std::string
+writePersistentLifetimeContract(const LifetimeSignatureContract &contract,
+                                const PersistentTypeRegistry &registry,
+                                const PersistentLifetimeBindings &bindings) {
   LifetimeCodec lifetimes(bindings);
-  if (!contract.valid() || !bindings.quantifiedParameters.empty() ||
-      contract.parameters.size() != bindings.parameters.size() || contract.bounds.size() > 256)
+  if (!contract.valid() ||
+      contract.parameters.size() != bindings.parameters.size() ||
+      contract.bounds.size() > 256 || contract.typeBounds.size() > 256)
     reject("invalid or incomplete persistent lifetime contract");
   for (std::size_t index = 0; index < contract.parameters.size(); ++index)
-    if (contract.parameters[index] != Lifetime::parameter(bindings.parameters[index]))
+    if (contract.parameters[index] !=
+        Lifetime::parameter(bindings.parameters[index]))
       reject("lifetime contract bindings disagree with declaration");
   std::string out = "gti.lifetime-contract.1:";
   const auto origin = contract.origin;
-  if (origin != LifetimeContractOrigin::Declared && origin != LifetimeContractOrigin::Elided &&
+  if (origin != LifetimeContractOrigin::Declared &&
+      origin != LifetimeContractOrigin::Elided &&
       origin != LifetimeContractOrigin::BodyInferred)
     reject("invalid lifetime contract origin");
-  append(out, origin == LifetimeContractOrigin::Declared ? "declared" :
-              origin == LifetimeContractOrigin::Elided ? "elided" : "body-inferred");
+  append(out, origin == LifetimeContractOrigin::Declared ? "declared"
+              : origin == LifetimeContractOrigin::Elided ? "elided"
+                                                         : "body-inferred");
   append(out, "complete");
   append(out, std::to_string(contract.parameters.size()));
+  append(out, std::to_string(bindings.typeParameters.size()));
   lifetimes.write(out, contract.receiver);
   std::set<std::string> bounds;
   for (LifetimeBound bound : contract.bounds) {
@@ -762,10 +1023,32 @@ std::string writePersistentLifetimeContract(
   append(out, std::to_string(bounds.size()));
   for (const auto &bound : bounds)
     append(out, bound);
+  std::set<std::string> typeBounds;
+  TypeBudget preflight;
+  TypeBudget budget;
+  for (const LifetimeTypeBound &bound : contract.typeBounds) {
+    preflightType(bound.type, preflight, 0);
+    std::string encoded;
+    writeType(encoded, bound.type, registry, budget, lifetimes, 0);
+    lifetimes.write(encoded, bound.region);
+    typeBounds.insert(std::move(encoded));
+  }
+  lifetimes.finish(false);
+  append(out, std::to_string(typeBounds.size()));
+  for (const auto &bound : typeBounds)
+    append(out, bound, byteLimit);
   return out;
 }
-LifetimeSignatureContract readPersistentLifetimeContract(
-    std::string_view bytes, const PersistentLifetimeBindings &bindings) {
+LifetimeSignatureContract
+readPersistentLifetimeContract(std::string_view bytes,
+                               const PersistentLifetimeBindings &bindings) {
+  return readPersistentLifetimeContract(bytes, PersistentTypeRegistry{},
+                                        bindings);
+}
+LifetimeSignatureContract
+readPersistentLifetimeContract(std::string_view bytes,
+                               const PersistentTypeRegistry &registry,
+                               const PersistentLifetimeBindings &bindings) {
   constexpr std::string_view prefix = "gti.lifetime-contract.1:";
   if (bytes.size() > byteLimit || !bytes.starts_with(prefix))
     reject("unsupported persistent lifetime contract format");
@@ -775,9 +1058,12 @@ LifetimeSignatureContract readPersistentLifetimeContract(
   const auto origin = reader.field();
   if (origin != "declared" && origin != "elided" && origin != "body-inferred")
     reject("invalid lifetime contract origin");
-  result.origin = origin == "declared" ? LifetimeContractOrigin::Declared :
-                  origin == "elided" ? LifetimeContractOrigin::Elided : LifetimeContractOrigin::BodyInferred;
-  if (reader.field() != "complete" || count(reader) != bindings.parameters.size())
+  result.origin = origin == "declared" ? LifetimeContractOrigin::Declared
+                  : origin == "elided" ? LifetimeContractOrigin::Elided
+                                       : LifetimeContractOrigin::BodyInferred;
+  if (reader.field() != "complete" ||
+      count(reader) != bindings.parameters.size() ||
+      count(reader) != bindings.typeParameters.size())
     reject("incomplete lifetime contract or binding count mismatch");
   result.complete = true;
   for (GenericParameterId parameter : bindings.parameters)
@@ -792,8 +1078,19 @@ LifetimeSignatureContract readPersistentLifetimeContract(
       reject("trailing lifetime bound data");
     result.bounds.push_back({longer, shorter});
   }
+  const auto typeBoundCount = count(reader);
+  TypeBudget budget;
+  for (std::size_t index = 0; index < typeBoundCount; ++index) {
+    Reader bound{reader.field(byteLimit)};
+    auto type = readType(bound, registry, budget, lifetimes, 0);
+    const Lifetime region = lifetimes.read(bound);
+    if (!bound.bytes.empty())
+      reject("trailing type-outlives bound data");
+    result.typeBounds.push_back({std::move(type), region});
+  }
   lifetimes.finish(true);
-  if (!reader.bytes.empty() || writePersistentLifetimeContract(result, bindings) != bytes)
+  if (!reader.bytes.empty() ||
+      writePersistentLifetimeContract(result, registry, bindings) != bytes)
     reject("noncanonical persistent lifetime contract");
   return result;
 }

@@ -393,6 +393,7 @@ lowerGenericParameters(const std::vector<GenericParameterInfo> &parameters) {
          .name = parameter.name.lexeme,
          .pack = parameter.pack,
          .value = parameter.value,
+         .lifetime = parameter.lifetime,
          .constraints = parameter.constraints,
          .constraintName = parameter.constraintName
                                ? lowerNamePath(*parameter.constraintName)
@@ -858,10 +859,13 @@ private:
       row.source = tokenSpan(declaration->name());
       if (const TypeAliasInfo *info = semantics_.findTypeAlias(*declaration)) {
         row.semanticIdentity = info->id;
+        row.generic = !info->genericParameters.empty();
         row.payload = LoweredTypeAliasDeclaration{
             .sourceUnit = info->sourceUnit,
             .qualifiedName = info->qualifiedName,
             .type = info->type,
+            .genericParameters =
+                lowerGenericParameters(info->genericParameters),
             .compilerPrivate = info->compilerPrivate};
       }
     } else if (const auto *declaration = stmtAs<ClassDecl>(&statement)) {
@@ -952,6 +956,7 @@ private:
                                           info->parameterTypes, semantics_),
             .genericParameters =
                 lowerGenericParameters(info->genericParameters),
+            .lifetimeContract = info->lifetimeContract,
             .requirements = lowerRequirements(info->requirements),
             .requirementExpression =
                 lowerRequirementExpression(info->requirements),
@@ -1018,6 +1023,7 @@ private:
             .access = info->access,
             .genericParameters =
                 lowerGenericParameters(info->genericParameters),
+            .lifetimeContract = info->lifetimeContract,
             .requirements = lowerRequirements(info->requirements),
             .requirementExpression =
                 lowerRequirementExpression(info->requirements),
@@ -1286,6 +1292,45 @@ private:
               "field declaration-only initialization differs from HIR");
       }
   }
+  const auto sameCallableParameters = [](const auto &source,
+                                         const auto &lowered) {
+    if (source.size() != lowered.size())
+      return false;
+    for (std::size_t index = 0; index < source.size(); ++index) {
+      const auto &input = source[index];
+      const auto &output = lowered[index];
+      if (input.parameterIndex != output.parameterIndex ||
+          input.callableType != output.callableType ||
+          input.access != output.access || input.boundary != output.boundary ||
+          input.ownedTransport != output.ownedTransport ||
+          input.signatures.size() != output.signatures.size() ||
+          input.forwardings.size() != output.forwardings.size())
+        return false;
+      for (std::size_t signature = 0; signature < input.signatures.size();
+           ++signature) {
+        const auto &a = input.signatures[signature];
+        const auto &b = output.signatures[signature];
+        if (a.returnType != b.returnType ||
+            a.parameterTypes != b.parameterTypes ||
+            a.lifetimeArguments != b.lifetimeArguments ||
+            a.lifetimeBindings != b.lifetimeBindings ||
+            a.requiredCapability != b.requiredCapability ||
+            a.selectedCapability != b.selectedCapability ||
+            a.functionTarget != b.functionTarget ||
+            a.lambdaTarget != b.lambdaTarget ||
+            a.nativeCalleeType != b.nativeCalleeType)
+          return false;
+      }
+      for (std::size_t forwarding = 0; forwarding < input.forwardings.size();
+           ++forwarding)
+        if (input.forwardings[forwarding].parameterIndex !=
+                output.forwardings[forwarding].parameterIndex ||
+            input.forwardings[forwarding].functionTarget !=
+                output.forwardings[forwarding].functionTarget)
+          return false;
+    }
+    return true;
+  };
   for (std::size_t index = 0; index < hir.functionInstances().size(); ++index) {
     const HirFunctionInstance &source = hir.functionInstances()[index];
     const MirFunctionInstance &lowered = mir.functionInstances()[index];
@@ -1303,6 +1348,9 @@ private:
         source.owner != lowered.owner ||
         source.returnType != lowered.returnType ||
         source.parameterTypes != lowered.parameterTypes ||
+        !sameCallableParameters(source.callableParameters,
+                                lowered.callableParameters) ||
+        source.lifetimeContract != lowered.lifetimeContract ||
         source.parameterBindings != lowered.parameterBindings ||
         source.entryKind != lowered.entryKind ||
         source.entryArgumentAppendTarget != lowered.entryArgumentAppendTarget ||
@@ -1366,6 +1414,7 @@ private:
         source.typeArguments != lowered.typeArguments ||
         source.valueArguments != lowered.valueArguments ||
         source.parameterTypes != lowered.parameterTypes ||
+        source.lifetimeContract != lowered.lifetimeContract ||
         source.parameterBindings != lowered.parameterBindings ||
         source.body.placeDomain != lowered.body.placeDomain) {
       return reject("constructor instance " + std::to_string(index + 1) +
@@ -1380,6 +1429,8 @@ private:
           input.field != output.field || input.base != output.base ||
           input.constructorTarget != output.constructorTarget ||
           input.arguments != output.arguments ||
+          input.lifetimeArguments != output.lifetimeArguments ||
+          input.lifetimeBindings != output.lifetimeBindings ||
           input.explicitArgumentCount != output.explicitArgumentCount ||
           input.storesReference != output.storesReference ||
           input.borrowAccess != output.borrowAccess ||
@@ -2126,6 +2177,7 @@ LoweredProgramBuild LoweredProgramBuilder::build(
          .definitionSource = symbol.definitionSpan,
          .type = symbol.type,
          .traits = symbol.traits,
+         .genericParameter = symbol.genericParameter,
          .access = symbol.access,
          .mutableBinding = symbol.mutableBinding,
          .defaultLibrary = symbol.defaultLibrary,

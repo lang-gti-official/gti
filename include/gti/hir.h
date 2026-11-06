@@ -243,6 +243,10 @@ struct HirValue {
   // Retained even when a concrete pack prevents a fixed-arity call plan.
   std::vector<HirValueId> defaultArguments;
   std::vector<SemanticType> parameterTypes;
+  // Semantics-selected generic regions remain proof metadata, never operands.
+  std::vector<Lifetime> lifetimeArguments;
+  // Complete declaration-contract substitution, including elided/owner regions.
+  std::vector<LifetimeBinding> lifetimeBindings;
   std::optional<TokenKind> operation;
   std::optional<Literal> literal;
   std::optional<ConstantValue> constant;
@@ -719,6 +723,8 @@ struct HirCallableSignature {
   const Call *source = nullptr;
   SemanticType returnType = SemanticType::Void;
   std::vector<SemanticType> parameterTypes;
+  std::vector<Lifetime> lifetimeArguments;
+  std::vector<LifetimeBinding> lifetimeBindings;
   CallableInvocationCapability requiredCapability =
       CallableInvocationCapability::Read;
   std::optional<CallableInvocationCapability> selectedCapability;
@@ -834,6 +840,8 @@ struct HirConstructorInitializer {
   std::optional<HirClassInstanceId> base;
   std::optional<HirConstructorInstanceId> constructorTarget;
   std::vector<HirValueId> arguments;
+  std::vector<Lifetime> lifetimeArguments;
+  std::vector<LifetimeBinding> lifetimeBindings;
   std::size_t explicitArgumentCount = 0;
   bool storesReference = false;
   AccessMode borrowAccess = AccessMode::ReadOnly;
@@ -856,6 +864,7 @@ struct HirConstructorInstance {
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;
   std::vector<SemanticType> parameterTypes;
+  LifetimeSignatureContract lifetimeContract;
   std::vector<HirBindingId> parameterBindings;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowParameter = 0;

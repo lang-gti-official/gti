@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <optional>
 #include <span>
+#include <utility>
 #include <vector>
 
 namespace lang {
@@ -62,53 +64,12 @@ struct LifetimeBound {
   friend constexpr bool operator==(LifetimeBound, LifetimeBound) = default;
 };
 
+using LifetimeBinding = std::pair<Lifetime, Lifetime>;
+
 enum class LifetimeContractOrigin : std::uint8_t {
   Declared,
   Elided,
   BodyInferred,
-};
-
-// The normalized, caller-visible region interface. Declaration parameters are
-// universal; no local/inferred region may be published here. Actual places,
-// access permissions and drop obligations remain in the borrow contract.
-struct LifetimeSignatureContract {
-  std::vector<Lifetime> parameters;
-  std::vector<LifetimeBound> bounds;
-  Lifetime receiver;
-  LifetimeContractOrigin origin = LifetimeContractOrigin::Elided;
-  bool complete = false;
-
-  [[nodiscard]] bool valid() const {
-    if (!complete)
-      return false;
-    if (origin != LifetimeContractOrigin::Declared &&
-        origin != LifetimeContractOrigin::Elided &&
-        origin != LifetimeContractOrigin::BodyInferred)
-      return false;
-    const auto declared = [&](Lifetime region) {
-      return region == Lifetime::staticLifetime() ||
-             std::find(parameters.begin(), parameters.end(), region) !=
-                 parameters.end();
-    };
-    for (std::size_t index = 0; index < parameters.size(); ++index) {
-      const Lifetime region = parameters[index];
-      if (region.kind != Lifetime::Kind::Parameter || !region.specified() ||
-          std::find(parameters.begin(), parameters.begin() + index, region) !=
-              parameters.begin() + index)
-        return false;
-    }
-    if (receiver != Lifetime{} &&
-        (receiver.kind != Lifetime::Kind::Parameter || !declared(receiver)))
-      return false;
-    return std::all_of(bounds.begin(), bounds.end(), [&](LifetimeBound bound) {
-      return bound.longer.declarationRegion() &&
-             bound.shorter.declarationRegion() && declared(bound.longer) &&
-             declared(bound.shorter);
-    });
-  }
-
-  friend bool operator==(const LifetimeSignatureContract &,
-                         const LifetimeSignatureContract &) = default;
 };
 
 // Only checked declaration assumptions belong here. A requested call/store
@@ -154,6 +115,92 @@ public:
 
 private:
   std::vector<LifetimeBound> bounds_;
+};
+
+// Existential region constraints are kept separate from declaration facts.
+// Projecting every path between fixed regions detects an impossible meet:
+// `a >= ?r >= b` requires an independently established `a >= b`. Merely
+// choosing the same inference variable never establishes that relationship.
+class LifetimeInferenceConstraints {
+public:
+  explicit LifetimeInferenceConstraints(LifetimeBounds assumptions = {})
+      : assumptions_(std::move(assumptions)) {}
+
+  [[nodiscard]] bool require(Lifetime longer, Lifetime shorter) {
+    if (!longer.specified() || !shorter.specified())
+      return false;
+    const LifetimeBound bound{longer, shorter};
+    if (std::find(obligations_.begin(), obligations_.end(), bound) ==
+        obligations_.end())
+      obligations_.push_back(bound);
+    return true;
+  }
+
+  // A caller may additionally supply checked local/CFG containment facts.
+  // Numeric IDs and lexical declaration order are never containment proofs.
+  template <typename Proven>
+  [[nodiscard]] std::optional<LifetimeBound> failure(Proven proven) const {
+    std::vector<Lifetime> anchors;
+    for (const auto bound : obligations_)
+      for (const auto region : {bound.longer, bound.shorter})
+        if (region.kind != Lifetime::Kind::Inference &&
+            std::find(anchors.begin(), anchors.end(), region) == anchors.end())
+          anchors.push_back(region);
+    for (const auto start : anchors) {
+      const auto reached = reachable(start, proven);
+      for (const auto end : reached)
+        if (end.kind != Lifetime::Kind::Inference &&
+            !assumptions_.proves(start, end) && !proven(start, end))
+          return LifetimeBound{start, end};
+    }
+    return std::nullopt;
+  }
+
+  [[nodiscard]] std::optional<LifetimeBound> failure() const {
+    return failure([](Lifetime, Lifetime) { return false; });
+  }
+
+  [[nodiscard]] bool proves(Lifetime longer, Lifetime shorter) const {
+    if (!longer.specified() || !shorter.specified() || failure())
+      return false;
+    const auto reached = reachable(longer, [](Lifetime, Lifetime) { return false; });
+    return std::find(reached.begin(), reached.end(), shorter) != reached.end() ||
+           assumptions_.proves(longer, shorter);
+  }
+
+  [[nodiscard]] std::span<const LifetimeBound> obligations() const {
+    return obligations_;
+  }
+
+private:
+  template <typename Proven>
+  std::vector<Lifetime> reachable(Lifetime start, Proven proven) const {
+    std::vector<Lifetime> reached{start};
+    const auto add = [&](Lifetime region) {
+      if (std::find(reached.begin(), reached.end(), region) == reached.end())
+        reached.push_back(region);
+    };
+    for (std::size_t index = 0; index < reached.size(); ++index) {
+      const Lifetime current = reached[index];
+      for (const auto bound : obligations_) {
+        if (bound.longer == current)
+          add(bound.shorter);
+        // Checked fixed-region facts may bridge two inferred constraints.
+        if (current.kind != Lifetime::Kind::Inference &&
+            bound.longer.kind != Lifetime::Kind::Inference &&
+            (assumptions_.proves(current, bound.longer) ||
+             proven(current, bound.longer)))
+          add(bound.longer);
+      }
+      for (const auto bound : assumptions_.bounds())
+        if (bound.longer == current)
+          add(bound.shorter);
+    }
+    return reached;
+  }
+
+  LifetimeBounds assumptions_;
+  std::vector<LifetimeBound> obligations_;
 };
 
 } // namespace lang

@@ -889,6 +889,9 @@ private:
          .typeArguments = construction.typeArguments,
          .valueArguments = construction.valueArguments,
          .parameterTypes = construction.parameterTypes,
+         .lifetimeContract = declaration != nullptr
+                                 ? declaration->lifetimeContract
+                                 : LifetimeSignatureContract{},
          .borrowOrigin =
              summary ? construction.borrowOrigin : BorrowOriginKind::None,
          .borrowParameter = summary ? construction.borrowArgument : 0,
@@ -2550,11 +2553,15 @@ private:
                   model->findLambdaCall(*signature.source)) {
             concrete.returnType = resolved->returnType;
             concrete.parameterTypes = resolved->parameterTypes;
+            concrete.lifetimeArguments = resolved->lifetimeArguments;
+            concrete.lifetimeBindings = resolved->lifetimeBindings;
             concrete.selectedCapability = resolved->capability;
           } else if (const ResolvedOperatorInfo *resolved =
                          model->findOperator(*signature.source)) {
             concrete.returnType = resolved->returnType;
             concrete.parameterTypes = resolved->parameterTypes;
+            concrete.lifetimeArguments = resolved->lifetimeArguments;
+            concrete.lifetimeBindings = resolved->lifetimeBindings;
             concrete.selectedCapability = resolved->capability;
           } else if (const ResolvedCallInfo *resolved =
                          model->findCall(*signature.source);
@@ -2564,6 +2571,8 @@ private:
                           .hasFunctionItemShape())) {
             concrete.returnType = resolved->returnType;
             concrete.parameterTypes = resolved->parameterTypes;
+            concrete.lifetimeArguments = resolved->lifetimeArguments;
+            concrete.lifetimeBindings = resolved->lifetimeBindings;
             concrete.selectedCapability = CallableInvocationCapability::Read;
           }
           const auto value =
@@ -2696,6 +2705,8 @@ private:
         if (resolved != nullptr) {
           lowered.kind = resolved->kind;
           lowered.targetType = resolved->targetType;
+          lowered.lifetimeArguments = resolved->lifetimeArguments;
+          lowered.lifetimeBindings = resolved->lifetimeBindings;
           lowered.field = resolved->field;
           lowered.storesReference = resolved->storesReference;
           lowered.borrowAccess = resolved->borrowAccess;
@@ -2710,6 +2721,8 @@ private:
                     .declaration = resolved->declaration,
                     .constructedType = resolved->targetType,
                     .parameterTypes = resolved->parameterTypes,
+                    .lifetimeArguments = resolved->lifetimeArguments,
+                    .lifetimeBindings = resolved->lifetimeBindings,
                     .defaultArguments = resolved->defaultArguments,
                     .generatedDefault = resolved->generatedDefault});
             if (target != 0) {
@@ -4911,6 +4924,8 @@ private:
                              HirBody &body) {
     value.info = operatorResultInfo(resolved);
     value.parameterTypes = resolved.parameterTypes;
+    value.lifetimeArguments = resolved.lifetimeArguments;
+    value.lifetimeBindings = resolved.lifetimeBindings;
     value.dispatch = resolved.dispatch;
     value.dispatchOwner = resolved.dispatchOwner;
     value.borrowOrigin = resolved.borrowOrigin;
@@ -5206,6 +5221,8 @@ private:
                  .traits =
                      instanceProvider->traitsFor(construction.constructedType)},
         .parameterTypes = construction.parameterTypes,
+        .lifetimeArguments = construction.lifetimeArguments,
+        .lifetimeBindings = construction.lifetimeBindings,
         .definedFailure = {.propagation =
                                construction.constructor != 0 &&
                                        !construction.generatedDefault
@@ -5537,6 +5554,9 @@ private:
                        borrowed ? call.borrowAccess : AccessMode::ReadOnly,
                    .traits = instanceProvider->traitsFor(resultType)},
           .operands = {argument},
+          .parameterTypes = call.parameterTypes,
+          .lifetimeArguments = call.lifetimeArguments,
+          .lifetimeBindings = call.lifetimeBindings,
           .definedFailure = {.propagation = FailurePropagationKind::DirectCall},
           .borrowOrigin = call.borrowOrigin,
           .borrowArgument = call.borrowArgument,
@@ -5588,6 +5608,8 @@ private:
                        construction.constructedType)},
           .operands = {*residual},
           .parameterTypes = construction.parameterTypes,
+          .lifetimeArguments = construction.lifetimeArguments,
+          .lifetimeBindings = construction.lifetimeBindings,
           .definedFailure = {.propagation =
                                  FailurePropagationKind::Constructor},
           .constructorKind = construction.kind,
@@ -5755,6 +5777,8 @@ private:
                  .traits =
                      instanceProvider->traitsFor(construction.constructedType)},
         .parameterTypes = construction.parameterTypes,
+        .lifetimeArguments = construction.lifetimeArguments,
+        .lifetimeBindings = construction.lifetimeBindings,
         .definedFailure = {.propagation = FailurePropagationKind::Constructor},
         .borrowOrigin = construction.borrowOrigin,
         .borrowArgument = construction.borrowArgument,
@@ -6069,7 +6093,7 @@ private:
         const auto constant = model.findConstant(*raw);
         const auto *text =
             constant ? std::get_if<std::string>(&*constant) : nullptr;
-        if (!info || info->type != SemanticType::StringView || !text) {
+        if (!info || info->type.kind != SemanticType::StringView || !text) {
           lifecycleValid = false;
           return std::nullopt;
         }
@@ -6875,6 +6899,8 @@ private:
         value.dispatch = resolved->dispatch;
         value.dispatchOwner = resolved->dispatchOwner;
         value.parameterTypes = resolved->parameterTypes;
+        value.lifetimeArguments = resolved->lifetimeArguments;
+        value.lifetimeBindings = resolved->lifetimeBindings;
         value.borrowOrigin = resolved->borrowOrigin;
         value.borrowArgument = resolved->borrowArgument;
         value.borrowArguments = resolved->borrowArguments;
@@ -7113,6 +7139,8 @@ private:
       if (const ResolvedLambdaCallInfo *resolved =
               model.findLambdaCall(*call)) {
         value.parameterTypes = resolved->parameterTypes;
+        value.lifetimeArguments = resolved->lifetimeArguments;
+        value.lifetimeBindings = resolved->lifetimeBindings;
         value.borrowOrigin = resolved->borrowOrigin;
         value.borrowArgument = resolved->borrowArgument;
         value.borrowAccess = resolved->borrowAccess;
@@ -7237,6 +7265,8 @@ private:
                .unsafeOperation = model.unsafeOperation(*resolved->pattern),
                .operands = std::move(arguments),
                .parameterTypes = element.call.parameterTypes,
+               .lifetimeArguments = element.call.lifetimeArguments,
+               .lifetimeBindings = element.call.lifetimeBindings,
                .neverReturns = element.call.neverReturns,
                .tracksCaller = element.call.tracksCaller,
                .definedFailure = {.propagation =
@@ -7261,6 +7291,8 @@ private:
     if (const ResolvedConstructionInfo *construction =
             model.findConstruction(*raw)) {
       value.designatedConstruction = !construction->designatedArguments.empty();
+      value.lifetimeArguments = construction->lifetimeArguments;
+      value.lifetimeBindings = construction->lifetimeBindings;
       const bool inPlaceStorageConstruction =
           value.intrinsic == IntrinsicKind::ObjectConstruct ||
           value.intrinsic == IntrinsicKind::OptionalStorageConstruct;
@@ -7342,6 +7374,8 @@ private:
     if (const ResolvedOperatorInfo *resolved = resolvedValueOperator;
         resolved != nullptr && resolved->function != 0) {
       value.parameterTypes = resolved->parameterTypes;
+      value.lifetimeArguments = resolved->lifetimeArguments;
+      value.lifetimeBindings = resolved->lifetimeBindings;
       value.dispatch = resolved->dispatch;
       value.dispatchOwner = resolved->dispatchOwner;
       value.callableBoundary = resolved->boundary;

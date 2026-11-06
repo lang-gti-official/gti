@@ -437,8 +437,16 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The combined deterministic serialization is currently `mir-v120`/`mir-body-v93`,
-with `lowered-program-v34` declaration metadata. Function instances and sealed
+Lifetime annotations remain semantic proof metadata in MIR. Reference regions,
+nominal lifetime arguments, callable quantifiers, complete function lifetime
+contracts and exact call substitutions participate in structural serialization.
+Changing a region relation therefore changes the identity used by verification
+and caching even though it introduces no runtime operand or object field.
+Exact type-outlives bounds retain opaque types rather than reducing them to
+bounds on their spelling's type arguments.
+
+The combined deterministic serialization is currently `mir-v121`/`mir-body-v94`,
+with `lowered-program-v35` declaration metadata. Function instances and sealed
 declarations retain the resolved cold hint and default/hint/never inlining policy;
 verification rejects a mismatching or non-source policy. These distinct combined
 identities retain both macro result-region/local-initializer authority and

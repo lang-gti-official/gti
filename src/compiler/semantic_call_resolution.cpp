@@ -1291,7 +1291,7 @@ auto SemanticVisitor::Impl::firstConstraintFailure(
   }
   std::size_t argumentIndex = 0;
   for (const GenericParameterInfo &parameter : parameters) {
-    if (parameter.value) {
+    if (parameter.value || parameter.lifetime) {
       continue;
     }
     const std::size_t end =
@@ -2053,9 +2053,12 @@ auto SemanticVisitor::Impl::preambleClosedType(
 auto SemanticVisitor::Impl::firstConceptApplicationFailure(
     const AppliedConceptRequirement &requirement) const
     -> std::optional<ConstraintFailure> {
+  if (requirement.lifetimeBound)
+    return lifetimeRequirementFailure(requirement);
   // A concept proved of the adopted preamble's own types holds for every
   // analysis adopting it, so an editor reuses it across snapshots.
-  const bool shared = preambleConceptProofApplies(requirement);
+  const bool shared = requirement.lifetimeArguments.empty() &&
+                      preambleConceptProofApplies(requirement);
   const auto proofKey = [&] {
     return SemanticPreamble::ConceptProofKey{
         .conceptId = requirement.conceptId,
@@ -2808,6 +2811,8 @@ auto SemanticVisitor::Impl::applyFunctionTypeArguments(
     std::size_t valueIndex = 0;
     for (const GenericParameterInfo &parameter :
          function.record().genericParameters) {
+      if (parameter.lifetime)
+        continue;
       if (parameter.value) {
         if (valueIndex < explicitValueArguments.size()) {
           substitution.values.emplace(parameter.id,
@@ -2826,7 +2831,8 @@ auto SemanticVisitor::Impl::applyFunctionTypeArguments(
       if (parameter.pack) {
         continue;
       }
-      if (!parameter.value && !substitution.types.contains(parameter.id) &&
+      if (!parameter.value && !parameter.lifetime &&
+          !substitution.types.contains(parameter.id) &&
           !parameter.defaultType) {
         report(paren,
                "Generic function called with the wrong number of type "
@@ -2868,7 +2874,9 @@ auto SemanticVisitor::Impl::applyFunctionTypeArguments(
 
   for (const GenericParameterInfo &parameter :
        function.record().genericParameters) {
-    const bool resolved = parameter.value
+    const bool resolved = parameter.lifetime
+                              ? substitution.lifetimes.contains(parameter.id)
+                          : parameter.value
                               ? substitution.values.contains(parameter.id)
                               : substitution.types.contains(parameter.id);
     if (!resolved) {
@@ -2891,7 +2899,7 @@ auto SemanticVisitor::Impl::applyFunctionTypeArguments(
       genericTypeParameterCount(function.record().genericParameters));
   for (const GenericParameterInfo &parameter :
        function.record().genericParameters) {
-    if (parameter.value) {
+    if (parameter.value || parameter.lifetime) {
       continue;
     }
     if (const auto found = substitution.types.find(parameter.id);
@@ -3232,6 +3240,8 @@ auto SemanticVisitor::Impl::tryInstantiateFunction(
     std::size_t valueIndex = 0;
     for (const GenericParameterInfo &parameter :
          candidate.record().genericParameters) {
+      if (parameter.lifetime)
+        continue;
       if (parameter.value) {
         if (valueIndex < explicitValueArguments.size()) {
           substitution.values.emplace(parameter.id,
@@ -3262,7 +3272,8 @@ auto SemanticVisitor::Impl::tryInstantiateFunction(
       if (parameter.pack) {
         continue;
       }
-      if (!parameter.value && !substitution.types.contains(parameter.id) &&
+      if (!parameter.value && !parameter.lifetime &&
+          !substitution.types.contains(parameter.id) &&
           !parameter.defaultType) {
         return false;
       }
@@ -3297,7 +3308,7 @@ auto SemanticVisitor::Impl::tryInstantiateFunction(
 
   for (const GenericParameterInfo &parameter :
        candidate.record().genericParameters) {
-    if (parameter.pack) {
+    if (parameter.pack || parameter.lifetime) {
       continue;
     }
     if (parameter.value) {
@@ -3939,7 +3950,8 @@ auto SemanticVisitor::Impl::ownedTransportMatchesConcrete(
   }
   std::size_t typeIndex = 0;
   for (const GenericParameterInfo &parameter : function.genericParameters) {
-    if (!parameter.value && typeIndex < call.typeArguments.size()) {
+    if (!parameter.value && !parameter.lifetime &&
+        typeIndex < call.typeArguments.size()) {
       substitution.types.emplace(parameter.id, call.typeArguments[typeIndex++]);
     }
   }
@@ -7255,8 +7267,13 @@ auto SemanticVisitor::Impl::warnCheckedOverloadOverlap(
        ++index) {
     const auto &a = left.record().genericParameters[index];
     const auto &b = right.record().genericParameters[index];
-    if (a.value != b.value || a.pack != b.pack || a.value)
+    if (a.value != b.value || a.lifetime != b.lifetime ||
+        a.pack != b.pack || a.value)
       return;
+    if (a.lifetime) {
+      normalize.lifetimes.emplace(b.id, Lifetime::parameter(a.id));
+      continue;
+    }
     normalize.types.emplace(b.id, a.pack ? SemanticType::typePack(a.id)
                                          : SemanticType::typeParameter(a.id));
   }

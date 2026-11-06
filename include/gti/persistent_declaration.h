@@ -52,6 +52,13 @@ class PersistentTypeRegistry final {
 public:
   void bind(const ClassTypeInfo &, const PersistentDeclarationOwner &);
   void bind(const EnumTypeInfo &, const PersistentDeclarationOwner &);
+  void bind(ConceptId, const ProtocolConceptSpelling &,
+            const PersistentDeclarationOwner &);
+  [[nodiscard]] std::string projectionKey(const SemanticType &) const;
+  [[nodiscard]] SemanticType
+  resolveProjection(std::string_view key, std::vector<SemanticType> arguments,
+                    std::vector<CompileTimeValue> values,
+                    std::vector<Lifetime> lifetimes) const;
   [[nodiscard]] std::string key(const SemanticType &) const;
   [[nodiscard]] std::string qualifiedName(const SemanticType &) const;
   [[nodiscard]] SemanticType
@@ -63,11 +70,21 @@ private:
   void bindKey(std::string key, SemanticType type);
   std::map<std::string, SemanticType, std::less<>> byKey;
   std::map<std::pair<SemanticType::Kind, std::size_t>, std::string> byId;
+  std::map<std::string, SemanticType, std::less<>> projectionsByKey;
+  std::map<std::pair<ConceptId, std::uint32_t>, std::string> projectionKeys;
+  std::map<std::string, ConceptId, std::less<>> conceptsByKey;
+  std::map<ConceptId, std::string> conceptKeys;
 };
 [[nodiscard]] std::string
 persistentClassKey(const ClassTypeInfo &, const PersistentDeclarationOwner &);
 [[nodiscard]] std::string persistentEnumKey(const EnumTypeInfo &,
                                             const PersistentDeclarationOwner &);
+[[nodiscard]] std::string
+persistentConceptKey(const ProtocolConceptSpelling &,
+                     const PersistentDeclarationOwner &);
+[[nodiscard]] std::string
+persistentAssociatedTypeKey(const ProtocolConceptSpelling &, std::size_t member,
+                            const PersistentDeclarationOwner &);
 // Snapshot-local IDs supplied by the owner of the imported declaration.
 // Wire recipes encode binder positions, never these IDs. Quantified IDs are
 // supplied in structural preorder when reading; writing can discover them
@@ -75,6 +92,8 @@ persistentClassKey(const ClassTypeInfo &, const PersistentDeclarationOwner &);
 struct PersistentLifetimeBindings {
   std::vector<GenericParameterId> parameters;
   std::vector<GenericParameterId> quantifiedParameters;
+  // Generic type declarations referenced by exact type-outlives bounds.
+  std::vector<GenericParameterId> typeParameters;
 };
 
 // Canonical scalar, concrete primary nominal, reference, raw-pointer and
@@ -101,5 +120,12 @@ writePersistentLifetimeContract(const LifetimeSignatureContract &,
                                 const PersistentLifetimeBindings &);
 [[nodiscard]] LifetimeSignatureContract
 readPersistentLifetimeContract(std::string_view,
+                               const PersistentLifetimeBindings &);
+[[nodiscard]] std::string
+writePersistentLifetimeContract(const LifetimeSignatureContract &,
+                                const PersistentTypeRegistry &,
+                                const PersistentLifetimeBindings &);
+[[nodiscard]] LifetimeSignatureContract
+readPersistentLifetimeContract(std::string_view, const PersistentTypeRegistry &,
                                const PersistentLifetimeBindings &);
 } // namespace lang

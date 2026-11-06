@@ -116,6 +116,7 @@ validGeneratedIdentity(const LoweredGeneratedItemIdentity &identity) {
   case SymbolKind::Method:
   case SymbolKind::Operator:
   case SymbolKind::TypeParameter:
+  case SymbolKind::LifetimeParameter:
   case SymbolKind::ValueParameter:
   case SymbolKind::RequirementParameter:
     return false;
@@ -130,7 +131,12 @@ validGenericParameters(const std::vector<LoweredGenericParameter> &parameters,
     const LoweredGenericParameter &parameter = parameters[index];
     if (parameter.id == 0 || parameter.name.empty() ||
         (!allowProjected && !parameter.typeArgumentPath.empty()) ||
-        (parameter.value && !parameter.typeArgumentPath.empty()) ||
+        ((parameter.value || parameter.lifetime) &&
+         !parameter.typeArgumentPath.empty()) ||
+        (parameter.lifetime &&
+         (parameter.value || parameter.pack || parameter.constraints != 0 ||
+          parameter.constraintConcept != 0 ||
+          !parameter.constraintName.empty())) ||
         std::find_if(parameters.begin(),
                      parameters.begin() + static_cast<std::ptrdiff_t>(index),
                      [&](const LoweredGenericParameter &prior) {
@@ -160,7 +166,7 @@ validClassPatternBindings(const LoweredClassDeclaration &declaration) {
     const auto projected = projectGenericTypeArgument(
         declaration.genericArgumentPatterns, parameter.typeArgumentPath,
         parameter.id, parameter.pack);
-    if (!projected || parameter.value ||
+    if (!projected || parameter.value || parameter.lifetime ||
         projected->genericParameterId != parameter.id ||
         projected->kind != (parameter.pack ? SemanticType::TypePack
                                            : SemanticType::TypeParameter)) {
@@ -421,6 +427,8 @@ declarationPayloadError(const LoweredDeclaration &declaration) {
         std::get_if<LoweredTypeAliasDeclaration>(&declaration.payload);
     if (payload == nullptr || declaration.semanticIdentity == 0 ||
         declaration.name.empty() || payload->qualifiedName.empty() ||
+        declaration.generic != !payload->genericParameters.empty() ||
+        !validGenericParameters(payload->genericParameters) ||
         !resolvedType(payload->type)) {
       return invalid("type alias lacks a resolved type identity");
     }
@@ -479,21 +487,25 @@ declarationPayloadError(const LoweredDeclaration &declaration) {
     const auto genericShape = [&] {
       if (!payload)
         return false;
-      std::size_t types = 0, values = 0;
+      std::size_t types = 0, values = 0, lifetimes = 0;
       bool pack = false;
       for (std::size_t index = 0; index < payload->genericParameters.size();
            ++index) {
         const auto &parameter = payload->genericParameters[index];
         if (parameter.pack) {
-          if (parameter.value || index + 1 != payload->genericParameters.size())
+          if (parameter.value || parameter.lifetime ||
+              index + 1 != payload->genericParameters.size())
             return false;
           pack = true;
         } else if (parameter.value)
           ++values;
+        else if (parameter.lifetime)
+          ++lifetimes;
         else
           ++types;
       }
       return payload->type.valueArguments.size() == values &&
+             payload->type.lifetimeArguments.size() == lifetimes &&
              (pack ? payload->type.arguments.size() >= types
                    : payload->type.arguments.size() == types);
     };
@@ -958,6 +970,7 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
       case ComputedTypeProjectionKind::CallableReturn:
         if (payload->genericParameters.size() != 1 ||
             payload->genericParameters.front().value ||
+            payload->genericParameters.front().lifetime ||
             payload->genericParameters.front().pack ||
             payload->exactSpecializationPrimary != 0 ||
             !payload->bases.empty() || payload->cAbiRecord ||
@@ -1105,12 +1118,12 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
         primary == nullptr ? 0
         : !primary->genericArgumentPatterns.empty()
             ? primary->genericArgumentPatterns.size()
-            : static_cast<std::size_t>(
-                  std::count_if(primary->genericParameters.begin(),
-                                primary->genericParameters.end(),
-                                [](const LoweredGenericParameter &parameter) {
-                                  return !parameter.value;
-                                }));
+            : static_cast<std::size_t>(std::count_if(
+                  primary->genericParameters.begin(),
+                  primary->genericParameters.end(),
+                  [](const LoweredGenericParameter &parameter) {
+                    return !parameter.value && !parameter.lifetime;
+                  }));
     const std::size_t primaryValueParameters =
         primary == nullptr ? 0
                            : static_cast<std::size_t>(std::count_if(
@@ -1145,13 +1158,17 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
     const auto *owner =
         std::get_if<LoweredClassDeclaration>(&ownerRow->payload);
     GenericSubstitution substitution;
-    std::size_t typeIndex = 0, valueIndex = 0;
+    std::size_t typeIndex = 0, valueIndex = 0, lifetimeIndex = 0;
     for (const auto &parameter : owner->genericParameters) {
       if (!parameter.typeArgumentPath.empty()) {
         if (auto type = projectGenericTypeArgument(
                 instance.type.arguments, parameter.typeArgumentPath,
                 parameter.id, parameter.pack))
           substitution.types.emplace(parameter.id, std::move(*type));
+      } else if (parameter.lifetime) {
+        if (lifetimeIndex < instance.type.lifetimeArguments.size())
+          substitution.lifetimes.emplace(
+              parameter.id, instance.type.lifetimeArguments[lifetimeIndex++]);
       } else if (parameter.value) {
         if (valueIndex < instance.type.valueArguments.size())
           substitution.values.emplace(

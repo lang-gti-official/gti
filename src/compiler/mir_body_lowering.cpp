@@ -946,6 +946,8 @@ private:
                          .destination = destination,
                          .operands = std::move(arguments),
                          .parameterTypes = std::move(parameterTypes),
+                         .lifetimeArguments = initializer.lifetimeArguments,
+                         .lifetimeBindings = initializer.lifetimeBindings,
                          .definedFailure = {.propagation = propagation},
                          .constructorTarget = initializer.constructorTarget,
                          .info = {.type = base->type,
@@ -3354,6 +3356,11 @@ private:
     }
     if (inheritSourceMetadata && instruction.hirValue != 0) {
       if (const HirValue *source = findValue(instruction.hirValue)) {
+        if (instruction.kind == MirInstructionKind::Call ||
+            instruction.kind == MirInstructionKind::Construct) {
+          instruction.lifetimeArguments = source->lifetimeArguments;
+          instruction.lifetimeBindings = source->lifetimeBindings;
+        }
         const bool neutralValueStage =
             instruction.kind == MirInstructionKind::CallInput &&
             instruction.callInputKind == HirCallInputKind::Value &&

@@ -6,7 +6,7 @@ namespace gti_internal {
   // Compiler capability type declarations are deliberately empty. Semantics
   // binds their trusted declaration identities to private representations;
   // application declarations with the same spelling remain ordinary types.
-  class text_view {};
+  class text_view<lifetime storage> {};
   class c_string {};
   class c_bool {};
   class c_char {};
@@ -106,7 +106,7 @@ using c_uintptr_t = gti_internal::c_uintptr_t;
 
 namespace std {
   /// A counted, read-only view over character storage.
-  using string_view = gti_internal::text_view;
+  using string_view<lifetime storage> = gti_internal::text_view<storage>;
   using size_t = uint64_t;
   using ptrdiff_t = int64_t;
 

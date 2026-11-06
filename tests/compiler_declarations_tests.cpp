@@ -11325,13 +11325,14 @@ int main() { return 0; }
 
   lang::SemanticVisitor invalidSemantic;
   expect(!invalidSemantic.check(invalidProgram),
-         "cycles, reference aliases, missing targets, and duplicates should "
+         "cycles, missing targets, and duplicates should "
          "be rejected");
   expect(hasDiagnostic(invalidSemantic, "Type alias cycle") &&
-             hasDiagnostic(invalidSemantic, "Reference aliases") &&
              hasDiagnostic(invalidSemantic, "Unknown type 'MissingType'") &&
              hasDiagnostic(invalidSemantic, "Duplicate declaration"),
          "invalid aliases should produce focused diagnostics");
+  expect(!hasDiagnostic(invalidSemantic, "Reference aliases"),
+         "an elided reference alias is valid independently of neighboring alias errors");
 
   const lang::FrontendResult invalidClassAliases =
       lang::Frontend().analyze("invalid-class-type-aliases.gti", R"(

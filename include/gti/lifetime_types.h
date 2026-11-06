@@ -10,8 +10,6 @@
 
 namespace lang {
 
-using LifetimeBinding = std::pair<Lifetime, Lifetime>;
-
 namespace lifetime_detail {
 template <typename Type, typename Visitor>
 void children(Type &type, Visitor &&visit) {

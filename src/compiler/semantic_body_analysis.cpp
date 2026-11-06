@@ -3414,6 +3414,13 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
       genericParametersFor(stmt);
   beginTypeParameterScope(genericParameters);
   const FunctionInfo *functionInfo = semanticModel.findFunction(stmt);
+  struct RestoreReceiverLifetime {
+    Lifetime &current;
+    Lifetime saved;
+    ~RestoreReceiverLifetime() { current = saved; }
+  } receiverLifetimeScope{currentReceiverLifetime, currentReceiverLifetime};
+  currentReceiverLifetime = functionInfo ? functionInfo->lifetimeContract.receiver
+                                        : Lifetime{};
   const FunctionInfo *primaryFunctionInfo =
       instanceBaseModel == nullptr ? functionInfo
                                    : instanceBaseModel->findFunction(stmt);
@@ -3725,7 +3732,8 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
       functionInfo != nullptr &&
       functionInfo->returnBorrowOrigin != BorrowOriginKind::None;
   const SemanticType declaredReturnType =
-      typeOf(stmt.returnType(), stmt.returnMutability());
+      functionInfo ? functionInfo->returnType
+                   : typeOf(stmt.returnType(), stmt.returnMutability());
   // A source body can establish a complete conditional return contract without
   // a single unconditional origin (for example, a dependency-free variant).
   // Each return and each call still requires its independently checked complete
@@ -4042,7 +4050,8 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
   }
   loanFlow = {};
   valueControlFlow.clear();
-  currentReturnType = typeOf(stmt.returnType(), stmt.returnMutability());
+  currentReturnType = functionInfo ? functionInfo->returnType
+                                 : typeOf(stmt.returnType(), stmt.returnMutability());
   currentFunctionDeclaration = &stmt;
   if (functionInfo != nullptr && functionInfo->id != 0) {
     currentProgramEffectOwner = {.kind = ProgramEffectOwnerKind::Function,
@@ -12977,6 +12986,14 @@ auto SemanticVisitor::Impl::visitVariableExpr(const Variable &expr) -> void {
   }
   const Symbol *symbol = resolve(expr.name());
   if (symbol == nullptr) {
+    if (const auto region = lifetimeOf(expr.name()); region.specified()) {
+      recordLifetimeUse(expr.name(), region);
+      report(expr.name(), "Lifetime '" + expr.name().lexeme +
+                              "' describes a borrow relationship and is not a runtime value.",
+             "GTI-S2126");
+      currentType = SemanticType::Unknown;
+      return;
+    }
     if (analyzingDefaultArgument &&
         currentDefaultParameterNames.contains(expr.name().lexeme)) {
       Diagnostic diagnostic = makeDiagnostic(

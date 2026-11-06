@@ -46,7 +46,8 @@ public:
     case SemanticType::Char:
       return "char";
     case SemanticType::StringView:
-      return nominalType("std::string_view", {}, {}, type.lifetimeArguments, {});
+      return nominalType("std::string_view", {}, {}, type.lifetimeArguments,
+                         {});
     case SemanticType::CString:
       return "c_string";
     case SemanticType::NullPtr:
@@ -186,7 +187,13 @@ public:
       if (parameter == nullptr && lookup) {
         parameter = lookup(lifetime.id);
       }
-      return parameter == nullptr ? "_" : parameter->name.lexeme;
+      if (parameter != nullptr)
+        return parameter->name.lexeme;
+      for (const auto &symbol : semantics.database().symbols())
+        if (symbol.kind == SymbolKind::LifetimeParameter &&
+            symbol.genericParameter == lifetime.id)
+          return symbol.name;
+      return "_";
     }
     }
     return "_";
@@ -216,8 +223,7 @@ private:
   }
 
   [[nodiscard]] std::string
-  nominalType(std::string result,
-              std::span<const SemanticType> typeArguments,
+  nominalType(std::string result, std::span<const SemanticType> typeArguments,
               std::span<const CompileTimeValue> valueArguments,
               std::span<const Lifetime> lifetimeArguments,
               std::span<const GenericParameterInfo> parameters) const {
@@ -265,7 +271,8 @@ private:
       append(value(valueArguments[valueIndex++]));
     }
     while (lifetimeIndex < lifetimeArguments.size()) {
-      const std::string name = printLifetime(lifetimeArguments[lifetimeIndex++]);
+      const std::string name =
+          printLifetime(lifetimeArguments[lifetimeIndex++]);
       append(name.empty() ? "_" : name);
     }
     result += '>';
@@ -317,20 +324,37 @@ private:
         type.projectionMember >= spelling->associatedTypes.size()) {
       return "associated type";
     }
-    std::string result = spelling->qualifiedName + "<";
-    const std::size_t count =
-        std::min(spelling->parameterCount, type.arguments.size());
-    for (std::size_t index = 0; index < count; ++index) {
-      result += (index == 0 ? "" : ", ") + print(type.arguments[index]);
-    }
-    result += ">::" + spelling->associatedTypes[type.projectionMember];
-    if (type.arguments.size() > count) {
-      result += "<";
-      for (std::size_t index = count; index < type.arguments.size(); ++index)
-        result += (index == count ? "" : ", ") + print(type.arguments[index]);
-      result += ">";
-    }
-    return result;
+    const auto types = std::span<const SemanticType>(type.arguments);
+    const auto values = std::span<const CompileTimeValue>(type.valueArguments);
+    const auto regions = std::span<const Lifetime>(type.lifetimeArguments);
+    const auto &parameters = spelling->genericParameters;
+    const auto kindCount = [&](auto predicate) {
+      return static_cast<std::size_t>(
+          std::count_if(parameters.begin(), parameters.end(), predicate));
+    };
+    const auto typeCount = std::min(
+        types.size(), parameters.empty() ? spelling->parameterCount
+                                         : kindCount([](const auto &parameter) {
+                                             return !parameter.value &&
+                                                    !parameter.lifetime;
+                                           }));
+    const auto valueCount = std::min(
+        values.size(),
+        kindCount([](const auto &parameter) { return parameter.value; }));
+    const auto regionCount = std::min(
+        regions.size(),
+        kindCount([](const auto &parameter) { return parameter.lifetime; }));
+    std::span<const GenericParameterInfo> associatedParameters;
+    if (type.projectionMember < spelling->associatedTypeParameters.size())
+      associatedParameters =
+          spelling->associatedTypeParameters[type.projectionMember];
+    return nominalType(spelling->qualifiedName, types.first(typeCount),
+                       values.first(valueCount), regions.first(regionCount),
+                       parameters) +
+           "::" +
+           nominalType(spelling->associatedTypes[type.projectionMember],
+                       types.subspan(typeCount), values.subspan(valueCount),
+                       regions.subspan(regionCount), associatedParameters);
   }
 
   [[nodiscard]] std::string genericParameter(GenericParameterId id,
@@ -370,8 +394,9 @@ std::string SemanticTypePrinter::printLifetime(Lifetime lifetime) const {
   return printLifetime(lifetime, {});
 }
 
-std::string SemanticTypePrinter::printLifetime(
-    Lifetime lifetime, const GenericParameterLookup &lookup) const {
+std::string
+SemanticTypePrinter::printLifetime(Lifetime lifetime,
+                                   const GenericParameterLookup &lookup) const {
   return SemanticTypePrinterImpl(semantics, lookup).printLifetime(lifetime);
 }
 

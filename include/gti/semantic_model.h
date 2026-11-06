@@ -1313,6 +1313,7 @@ struct TypeAliasInfo {
   const TypeAliasDecl *declaration = nullptr;
   std::string qualifiedName;
   SemanticType type = SemanticType::Unknown;
+  std::vector<GenericParameterInfo> genericParameters;
   bool compilerPrivate = false;
 };
 
@@ -1336,6 +1337,7 @@ struct ConstructorInfo {
   AccessModifier access = AccessModifier::Public;
   std::vector<GenericParameterInfo> genericParameters;
   std::vector<AppliedConceptRequirement> requirements;
+  LifetimeSignatureContract lifetimeContract;
   std::vector<SemanticType> parameterTypes;
   std::size_t requiredParameterCount = 0;
   std::vector<std::size_t> defaultArgumentEffectOwners;
@@ -1394,6 +1396,7 @@ struct ResolvedConstructionInfo {
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;
   std::vector<Lifetime> lifetimeArguments;
+  std::vector<LifetimeBinding> lifetimeBindings;
   std::vector<AppliedConceptRequirement> requirements;
   std::vector<SemanticType> parameterTypes;
   std::vector<std::size_t> ephemeralBorrowArguments;
@@ -1434,6 +1437,8 @@ struct ResolvedConstructorInitializerInfo {
   ConstructorId constructor = 0;
   const ConstructorDecl *declaration = nullptr;
   std::vector<SemanticType> parameterTypes;
+  std::vector<Lifetime> lifetimeArguments;
+  std::vector<LifetimeBinding> lifetimeBindings;
   std::vector<const Expr *> defaultArguments;
   bool storesReference = false;
   AccessMode borrowAccess = AccessMode::ReadOnly;
@@ -1476,6 +1481,7 @@ struct ResolvedCallInfo {
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;
   std::vector<Lifetime> lifetimeArguments;
+  std::vector<LifetimeBinding> lifetimeBindings;
   std::vector<AppliedConceptRequirement> requirements;
   IntrinsicKind intrinsic = IntrinsicKind::None;
   bool neverReturns = false;
@@ -1619,6 +1625,9 @@ struct ResolvedTryablePropagationInfo {
 struct ProtocolConceptSpelling {
   std::string qualifiedName;
   std::vector<std::string> associatedTypes;
+  // Kind/order and associated-family identities are semantic declaration data.
+  std::vector<GenericParameterInfo> genericParameters;
+  std::vector<std::vector<GenericParameterInfo>> associatedTypeParameters;
   std::size_t parameterCount = 0;
 };
 
@@ -1672,6 +1681,8 @@ struct ResolvedLambdaCallInfo {
   LambdaId lambda = 0;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
+  std::vector<Lifetime> lifetimeArguments;
+  std::vector<LifetimeBinding> lifetimeBindings;
   CallableInvocationCapability capability = CallableInvocationCapability::Read;
   std::optional<CallableBoundary> boundary;
   // The lambda's result-origin contract, so the call result borrows the
@@ -1706,6 +1717,8 @@ struct ResolvedOperatorInfo {
   CallReceiverMode receiverMode = CallReceiverMode::None;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
+  std::vector<Lifetime> lifetimeArguments;
+  std::vector<LifetimeBinding> lifetimeBindings;
   std::vector<std::size_t> ephemeralBorrowArguments;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
@@ -2016,10 +2029,6 @@ private:
   void reserveIdentities(SymbolId ceiling);
 
   SymbolId recordSymbol(SymbolRecord symbol);
-
-  // Includes implicit signature regions and higher-ranked binders, which are
-  // not positional source generic arguments but still need stable tooling IDs.
-  void recordGenericParameter(GenericParameterInfo parameter);
 
   void setSymbolDocumentation(SymbolId symbol,
                               std::string documentationMarkdown);
@@ -3320,6 +3329,10 @@ private:
                                     CompilerCapabilityTypeKind kind);
 
   SymbolId recordSymbol(SymbolRecord symbol);
+
+  // Includes implicit signature regions and higher-ranked binders, which are
+  // not positional source generic arguments but still need stable tooling IDs.
+  void recordGenericParameter(GenericParameterInfo parameter);
 
   void setSymbolDocumentation(SymbolId symbol,
                               std::string documentationMarkdown);

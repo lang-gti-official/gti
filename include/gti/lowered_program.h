@@ -185,6 +185,7 @@ struct LoweredGenericParameter {
   std::string name;
   bool pack = false;
   bool value = false;
+  bool lifetime = false;
   GenericConstraintSet constraints = 0;
   std::vector<std::string> constraintName;
   ConceptId constraintConcept = 0;
@@ -396,6 +397,7 @@ struct LoweredFunctionDeclaration {
   SemanticType returnType = SemanticType::Unknown;
   std::vector<LoweredParameter> parameters;
   std::vector<LoweredGenericParameter> genericParameters;
+  LifetimeSignatureContract lifetimeContract;
   std::vector<LoweredConceptRequirement> requirements;
   std::vector<LoweredConstraintExpressionNode> requirementExpression;
   std::size_t requirementRoot = ConstraintExpressionNode::invalidIndex;
@@ -446,6 +448,7 @@ struct LoweredConstructorDeclaration {
   ConstructorKind kind = ConstructorKind::Ordinary;
   AccessModifier access = AccessModifier::Public;
   std::vector<LoweredGenericParameter> genericParameters;
+  LifetimeSignatureContract lifetimeContract;
   std::vector<LoweredConceptRequirement> requirements;
   std::vector<LoweredConstraintExpressionNode> requirementExpression;
   std::size_t requirementRoot = ConstraintExpressionNode::invalidIndex;
@@ -505,6 +508,7 @@ struct LoweredTypeAliasDeclaration {
   SourceUnitId sourceUnit = 0;
   std::string qualifiedName;
   SemanticType type = SemanticType::Unknown;
+  std::vector<LoweredGenericParameter> genericParameters;
   bool compilerPrivate = false;
 
   friend bool operator==(const LoweredTypeAliasDeclaration &,
@@ -564,6 +568,7 @@ struct LoweredSymbol {
   std::optional<SourceSpan> definitionSource;
   SemanticType type = SemanticType::Unknown;
   SemanticTypeTraits traits;
+  GenericParameterId genericParameter = 0;
   AccessModifier access = AccessModifier::Public;
   bool mutableBinding = false;
   bool defaultLibrary = false;

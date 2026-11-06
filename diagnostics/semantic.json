@@ -171,6 +171,15 @@
     "arguments": 1
   },
   {
+    "id": "LifetimeRelationship",
+    "code": "GTI-S2127",
+    "phase": "Semantics",
+    "severity": "Error",
+    "group": "lifetime",
+    "format": "{0}",
+    "arguments": 1
+  },
+  {
     "id": "CheckedLiteralOverloadShadow",
     "code": "GTI-S2125",
     "phase": "Semantics",

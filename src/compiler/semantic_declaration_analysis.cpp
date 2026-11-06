@@ -1,4 +1,5 @@
 #include "semantic_analyzer_impl.h"
+#include "gti/lifetime_types.h"
 
 namespace lang {
 
@@ -1163,17 +1164,18 @@ auto SemanticVisitor::Impl::registerConcepts(const StmtList &statements,
         continue;
       }
       std::unordered_set<std::string> parameterNames;
-      for (const Token &parameter : declaration->typeParameters()) {
+      for (const GenericParameter &syntax : declaration->genericParameters()) {
+        const Token &parameter = syntax.name;
         if (parameter.lexeme == declaration->name().lexeme) {
           report(parameter,
-                 "Concept type parameter cannot have the same name as the "
+                 "Concept parameter cannot have the same name as the "
                  "concept.",
                  "GTI-S2049");
         }
         if (!parameterNames.insert(parameter.lexeme).second) {
           report(parameter,
-                 "Duplicate concept type parameter '" + parameter.lexeme + "'.",
-                 "GTI-S2049");
+                 "Duplicate concept parameter '" + parameter.lexeme + "'.",
+                 syntax.lifetimeKeyword ? "GTI-S2126" : "GTI-S2049");
         }
       }
 
@@ -1183,9 +1185,21 @@ auto SemanticVisitor::Impl::registerConcepts(const StmtList &statements,
                               qualified, SemanticType::Unknown);
       std::vector<SymbolId> parameterSymbols;
       std::vector<GenericParameterId> parameterIds;
+      std::vector<GenericParameterInfo> genericParameters;
+      std::vector<GenericParameterId> lifetimeParameterIds;
       parameterSymbols.reserve(declaration->typeParameters().size());
-      for (const Token &parameter : declaration->typeParameters()) {
+      for (const GenericParameter &syntax : declaration->genericParameters()) {
+        const Token &parameter = syntax.name;
         const GenericParameterId parameterId = nextGenericParameterId++;
+        GenericParameterInfo info{.id = parameterId,
+                                  .name = parameter,
+                                  .lifetime = syntax.lifetimeKeyword.has_value()};
+        genericParameters.push_back(info);
+        if (info.lifetime) {
+          recordLifetimeParameter(info, qualified);
+          lifetimeParameterIds.push_back(parameterId);
+          continue;
+        }
         parameterIds.push_back(parameterId);
         parameterSymbols.emplace_back(recordToolingSymbol(
             parameter, SymbolKind::TypeParameter,
@@ -1203,6 +1217,8 @@ auto SemanticVisitor::Impl::registerConcepts(const StmtList &statements,
                           .symbol = symbol,
                           .parameterSymbols = std::move(parameterSymbols),
                           .parameterIds = std::move(parameterIds),
+                          .genericParameters = std::move(genericParameters),
+                          .lifetimeParameterIds = std::move(lifetimeParameterIds),
                           .compilerPrivate = compilerPrivateDeclaration(
                               currentSourceUnit, scope)});
     } else if (const auto *namespaceDeclaration =
@@ -1262,6 +1278,8 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
   const ConceptDecl &declaration = *conceptInfo.declaration;
   typeParameterScopes.emplace_back();
   typePackScopes.emplace_back();
+  LifetimeBinderScope lifetimeScope(lifetimeParameterScopes,
+                                     conceptInfo.genericParameters);
   for (std::size_t index = 0; index < declaration.typeParameters().size();
        ++index)
     typeParameterScopes.back().emplace(
@@ -1336,10 +1354,49 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
          ++requirementIndex) {
       const ConceptApplication &requirement =
           declaration.requirements()[requirementIndex];
+      if (requirement.name.segments.size() == 1 &&
+          requirement.name.last().lexeme == "outlives") {
+        if (auto bound = resolveOutlivesRequirement(
+                requirement, conceptInfo.namespaceScope)) {
+          conceptInfo.definitionRequirements.push_back(
+              {.syntax = &requirement,
+               .lifetimeBound = bound->lifetimeBound,
+               .outlivesType = std::move(bound->outlivesType),
+               .expressionApplication = requirementIndex});
+          leafHasStructural[requirementIndex] = true;
+        } else {
+          valid = false;
+        }
+        continue;
+      }
       std::vector<RegisteredConcept::StructuralPattern::Argument> argumentMap;
+      std::vector<Lifetime> lifetimeArguments;
+      const auto dependency =
+          !requirement.predicate && !requirement.memberRequirement
+              ? resolveConceptPath(requirement.name, conceptInfo.namespaceScope)
+              : std::nullopt;
       argumentMap.reserve(requirement.arguments.size());
-      for (const TypeRef &argument : requirement.arguments) {
+      for (std::size_t argumentIndex = 0;
+           argumentIndex < requirement.arguments.size(); ++argumentIndex) {
+        const TypeRef &argument = requirement.arguments[argumentIndex];
         const Token &argumentToken = argument.name.last();
+        if (dependency && *dependency != 0 && *dependency <= concepts.size() &&
+            argumentIndex < concepts[*dependency - 1].genericParameters.size() &&
+            concepts[*dependency - 1].genericParameters[argumentIndex].lifetime) {
+          const bool bare = argument.name.segments.size() == 1 &&
+                            argument.arguments.empty() &&
+                            argument.pointers.empty() && !argument.reference &&
+                            argument.arrayExtents.empty() &&
+                            !argument.genericValueExpression;
+          const Lifetime lifetime = bare ? resolveLifetimeArgument(argumentToken)
+                                         : Lifetime{};
+          if (!bare)
+            report(argumentToken, "Concept lifetime parameter requires a "
+                                  "lifetime argument.", "GTI-S2126");
+          lifetimeArguments.push_back(lifetime);
+          valid = valid && lifetime.specified();
+          continue;
+        }
         const auto parameter = std::find_if(
             declaration.typeParameters().begin(),
             declaration.typeParameters().end(), [&](const Token &candidate) {
@@ -1472,8 +1529,6 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
       }
       recordQualifiedPathUses(requirement.name);
 
-      const std::optional<ConceptId> dependency =
-          resolveConceptPath(requirement.name, conceptInfo.namespaceScope);
       if (!dependency) {
         const std::optional<ConceptId> global = resolveConceptPathGlobally(
             requirement.name, conceptInfo.namespaceScope);
@@ -1517,13 +1572,14 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
         valid = false;
         continue;
       }
-      if (argumentMap.size() != required.declaration->typeParameters().size()) {
+      if (argumentMap.size() != required.parameterIds.size() ||
+          lifetimeArguments.size() != required.lifetimeParameterIds.size()) {
         report(
             requirement.name.last(),
             "Concept '" + required.qualifiedName + "' requires " +
-                std::to_string(required.declaration->typeParameters().size()) +
-                " type argument" +
-                (required.declaration->typeParameters().size() == 1 ? "."
+                std::to_string(required.genericParameters.size()) +
+                " generic argument" +
+                (required.genericParameters.size() == 1 ? "."
                                                                     : "s."),
             "GTI-S2049");
         valid = false;
@@ -1533,6 +1589,7 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
           {.conceptId = *dependency,
            .syntax = &requirement,
            .arguments = argumentMap,
+           .lifetimeArguments = lifetimeArguments,
            .expressionApplication = requirementIndex});
       leafHasStructural[requirementIndex] =
           required.hasStructuralRequirements ||
@@ -1683,6 +1740,14 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
 
 auto SemanticVisitor::Impl::resolveTypeAliasDependencies(
     const TypeRef &type, const std::vector<std::string> &scope) -> void {
+  std::optional<LifetimeBinderScope> lifetimeScope;
+  if (type.lifetimeBinder)
+    lifetimeScope.emplace(lifetimeParameterScopes,
+                          lifetimeParametersFor(*type.lifetimeBinder));
+  if (type.genericArgumentSyntax == GenericArgumentSyntax::Lifetime ||
+      (type.name.segments.size() == 1 &&
+       lifetimeOf(type.name.last()).specified()))
+    return;
   if (type.qualifiedOwner) {
     // An alias may project a protocol registered before its body is resolved.
     // Resolve its declaration contract on demand; conformance validation is
@@ -1723,14 +1788,11 @@ auto SemanticVisitor::Impl::validateTypeAliasTarget(
 }
 
 auto SemanticVisitor::Impl::validateTypeAliasReference(
-    const TypeRef &target, const SemanticType &resolved) -> bool {
-  if (!target.reference && resolved.kind != SemanticType::Reference)
-    return true;
-  report(target.reference ? *target.reference : target.name.last(),
-         "Reference aliases are not supported; keep '&' explicit at each "
-         "borrow site.",
-         "GTI-S2030");
-  return false;
+    const TypeRef &, const SemanticType &) -> bool {
+  // Aliases retain their target's access and regions. An omitted region is
+  // normalized to an anonymous declaration parameter below, then freshly
+  // instantiated at every use, exactly as an explicit reference would be.
+  return true;
 }
 
 auto SemanticVisitor::Impl::resolveTypeAlias(TypeAliasId id, const Token *use)
@@ -1770,6 +1832,12 @@ auto SemanticVisitor::Impl::resolveTypeAlias(TypeAliasId id, const Token *use)
   }
 
   const std::size_t diagnosticsBefore = diagnostics.size();
+  alias.genericParameters = makeGenericParameters(
+      alias.declaration->genericParameters(), alias.declaration->name(),
+      alias.lookupScope);
+  for (const auto &parameter : alias.genericParameters)
+    semanticModel.recordGenericParameter(parameter);
+  beginTypeParameterScope(alias.genericParameters);
   const TypeRef &target = alias.declaration->target();
   resolveTypeAliasDependencies(target, alias.lookupScope);
   bool targetFormValid = true;
@@ -1791,7 +1859,25 @@ auto SemanticVisitor::Impl::resolveTypeAlias(TypeAliasId id, const Token *use)
   if (targetFormValid) {
     validateTypeAliasTarget(target, target.isNativeFunction());
   }
-  const SemanticType resolved = typeOf(target, alias.lookupScope);
+  SemanticType resolved = typeOf(target, alias.lookupScope);
+  std::vector<LifetimeBinding> anonymousLifetimes;
+  for (const Lifetime lifetime : freeTypeLifetimes(resolved)) {
+    if (lifetime.kind != Lifetime::Kind::Inference)
+      continue;
+    Token name = alias.declaration->name();
+    name.lexeme = "$lifetime" + std::to_string(anonymousLifetimes.size() + 1);
+    name.generated = true;
+    GenericParameterInfo parameter{.id = nextGenericParameterId++,
+                                    .name = std::move(name),
+                                    .lifetime = true};
+    semanticModel.recordGenericParameter(parameter);
+    anonymousLifetimes.emplace_back(lifetime,
+                                    Lifetime::parameter(parameter.id));
+    alias.genericParameters.push_back(std::move(parameter));
+  }
+  if (!anonymousLifetimes.empty())
+    resolved = substituteTypeLifetimes(resolved, anonymousLifetimes)
+                   .value_or(SemanticType::Unknown);
   if (!target.reference && !validateTypeAliasReference(target, resolved))
     targetFormValid = false;
   if (targetFormValid && !isCompilerTrustedUnit(alias.sourceUnit) &&
@@ -1820,11 +1906,13 @@ auto SemanticVisitor::Impl::resolveTypeAlias(TypeAliasId id, const Token *use)
                       .declaration = alias.declaration,
                       .qualifiedName = alias.qualifiedName,
                       .type = alias.type,
+                      .genericParameters = alias.genericParameters,
                       .compilerPrivate = alias.compilerPrivate});
   } else {
     alias.resolution = TypeAliasResolution::Invalid;
   }
 
+  endTypeParameterScope();
   if (alias.ownerClass != 0) {
     endTypeParameterScope();
   }
@@ -2532,8 +2620,9 @@ auto SemanticVisitor::Impl::registerClassAttributes(
                 ConcurrencyCapabilityPolicy::UnsafeConditional);
       typeParameterScopes.emplace_back();
       typePackScopes.emplace_back();
+      LifetimeBinderScope lifetimeScope(lifetimeParameterScopes, parameters);
       for (const auto &parameter : parameters)
-        if (!parameter.value && !parameter.pack)
+        if (!parameter.value && !parameter.pack && !parameter.lifetime)
           typeParameterScopes.back().emplace(
               parameter.name.lexeme, SemanticType::typeParameter(parameter.id));
       const RequiresClause clause{attribute, *syntax.capabilityPredicate};
@@ -3141,7 +3230,7 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
                  classDecl->name().lexeme == "polymorphic_storage") {
         compilerCapability = CompilerCapabilityTypeKind::PolymorphicStorage;
       } else if (trustedPreludeCapabilityScope &&
-                 classDecl->genericParameters().empty() &&
+                 generics.size() == 1 && generics.front().lifetimeKeyword &&
                  classDecl->name().lexeme == "text_view") {
         compilerCapability = CompilerCapabilityTypeKind::TextView;
       } else if (trustedPreludeCapabilityScope &&
@@ -10022,6 +10111,41 @@ auto SemanticVisitor::Impl::resolveFunctionBorrowSummaries() -> void {
       ++workMetrics->semanticBorrowSummaryFunctions;
     }
     FunctionInfo updated = *existing;
+    if (updated.lifetimeContract.complete &&
+        updated.returnType.kind == SemanticType::Reference &&
+        updated.intrinsic == IntrinsicKind::None) {
+      auto summary = functionReturnBorrowSummary(
+          updated.returnType, updated.parameterTypes, updated.ownerClass,
+          updated.staticMember, updated.intrinsic, std::nullopt, false,
+          &updated.lifetimeContract);
+      if (summary.origin == BorrowOriginKind::None) {
+        if (auto place = globalReturnBorrowPlace(updated)) {
+          summary.origin = BorrowOriginKind::Global;
+          summary.place = std::move(place);
+        }
+      }
+      updated.returnBorrowOrigin = summary.origin;
+      updated.returnBorrowParameter = summary.parameter;
+      updated.returnBorrowAccess = summary.access;
+      updated.returnBorrowParameters = summary.parameters;
+      updated.returnBorrowFields = summary.fields;
+      updated.returnBorrowPlace = summary.place;
+      updated.explicitReturnBorrowOrigin = true;
+      if (summary.origin == BorrowOriginKind::Receiver ||
+          summary.origin == BorrowOriginKind::Argument) {
+        auto dependencies = summary.fields;
+        if (dependencies.empty())
+          dependencies.push_back({.origin = summary.origin,
+                                  .parameter = summary.parameter,
+                                  .access = summary.access});
+        updated.completeReturnBorrow =
+            FunctionBorrowDependencySummary{.dependencies = std::move(dependencies)};
+      }
+      updated.ownedPointeeProjection = ownedPointeeReturnProjection(updated);
+      semanticModel.record(*declaration, updated);
+      publishFunctionBorrowSummary(updated, candidateIndex);
+      continue;
+    }
     if (updated.explicitReturnBorrowOrigin) {
       // A declaration contract is authoritative even when invalid (None).
       // Body-based inference must neither overwrite it nor rescue a typo.
@@ -10519,6 +10643,8 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
       }
       endTypeParameterScope();
       for (const GenericParameterInfo &parameter : info.genericParameters) {
+        if (parameter.lifetime)
+          continue; // Omitted region arguments are inferred without runtime instantiation.
         const bool inferable =
             std::any_of(info.parameterTypes.begin(), info.parameterTypes.end(),
                         [&](const SemanticType &type) {
@@ -10770,7 +10896,7 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
       name = &function->name();
       std::vector<std::string> memberScope = owner.namespaceScope;
       memberScope.emplace_back(owner.name.lexeme);
-      symbol = functionSymbol(*function, memberScope);
+      symbol = functionSymbol(*function, memberScope, owner.id);
       symbol.staticMember = function->isStatic();
       const bool interfaceContract =
           owner.kind == ClassKind::Interface && !function->isStatic();
@@ -10941,7 +11067,7 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
 
 auto SemanticVisitor::Impl::projectCallableDeclaration(
     const CallableDeclaration &declaration) -> FunctionInfo {
-  return FunctionInfo{
+  FunctionInfo result{
       .id = declaration.id,
       .sourceUnit = declaration.sourceUnit,
       .declaration = declaration.syntax,
@@ -10997,6 +11123,21 @@ auto SemanticVisitor::Impl::projectCallableDeclaration(
       .returnBorrowPlace = declaration.returnBorrowPlace,
       .virtualRoots = declaration.virtualRoots,
       .compilerPrivate = declaration.compilerPrivate};
+  if (result.lifetimeContract.complete &&
+      result.returnType.kind == SemanticType::Reference &&
+      result.intrinsic == IntrinsicKind::None &&
+      (result.returnBorrowOrigin == BorrowOriginKind::Argument ||
+       result.returnBorrowOrigin == BorrowOriginKind::Receiver)) {
+    result.explicitReturnBorrowOrigin = true;
+    auto dependencies = result.returnBorrowFields;
+    if (dependencies.empty())
+      dependencies.push_back({.origin = result.returnBorrowOrigin,
+                              .parameter = result.returnBorrowParameter,
+                              .access = result.returnBorrowAccess});
+    result.completeReturnBorrow =
+        FunctionBorrowDependencySummary{.dependencies = std::move(dependencies)};
+  }
+  return result;
 }
 
 auto SemanticVisitor::Impl::publishCallableDeclaration(

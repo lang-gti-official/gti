@@ -733,6 +733,66 @@ struct SemanticType {
   }
 };
 
+// A type-outlives obligation retains the exact type, including opaque
+// associated projections. Bounds on its spelling's type arguments alone do
+// not prove the validity of an independently selected associated type.
+struct LifetimeTypeBound {
+  SemanticType type = SemanticType::Unknown;
+  Lifetime region;
+  friend bool operator==(const LifetimeTypeBound &,
+                         const LifetimeTypeBound &) = default;
+};
+
+// The normalized, caller-visible region interface. Declaration parameters are
+// universal; no local/inferred region may be published here. Actual places,
+// access permissions and drop obligations remain in the borrow contract.
+struct LifetimeSignatureContract {
+  std::vector<Lifetime> parameters;
+  std::vector<LifetimeBound> bounds;
+  std::vector<LifetimeTypeBound> typeBounds;
+  Lifetime receiver;
+  LifetimeContractOrigin origin = LifetimeContractOrigin::Elided;
+  bool complete = false;
+
+  [[nodiscard]] bool valid() const {
+    if (!complete)
+      return false;
+    if (origin != LifetimeContractOrigin::Declared &&
+        origin != LifetimeContractOrigin::Elided &&
+        origin != LifetimeContractOrigin::BodyInferred)
+      return false;
+    const auto declared = [&](Lifetime region) {
+      return region == Lifetime::staticLifetime() ||
+             std::find(parameters.begin(), parameters.end(), region) !=
+                 parameters.end();
+    };
+    for (std::size_t index = 0; index < parameters.size(); ++index) {
+      const Lifetime region = parameters[index];
+      if (region.kind != Lifetime::Kind::Parameter || !region.specified() ||
+          std::find(parameters.begin(), parameters.begin() + index, region) !=
+              parameters.begin() + index)
+        return false;
+    }
+    if (receiver != Lifetime{} &&
+        (receiver.kind != Lifetime::Kind::Parameter || !declared(receiver)))
+      return false;
+    if (!std::all_of(typeBounds.begin(), typeBounds.end(), [&](auto bound) {
+          return bound.type != SemanticType::Unknown &&
+                 bound.region.declarationRegion() &&
+                 declared(bound.region);
+        }))
+      return false;
+    return std::all_of(bounds.begin(), bounds.end(), [&](LifetimeBound bound) {
+      return bound.longer.declarationRegion() &&
+             bound.shorter.declarationRegion() && declared(bound.longer) &&
+             declared(bound.shorter);
+    });
+  }
+
+  friend bool operator==(const LifetimeSignatureContract &,
+                         const LifetimeSignatureContract &) = default;
+};
+
 // A declaration-bound monotone predicate over concurrency facts. Source concept
 // expressions are resolved once in semantics; concrete HIR/MIR retain the typed
 // leaves and replay this same graph rather than consulting source spellings.
@@ -787,6 +847,7 @@ struct AppliedConceptRequirement {
   ConceptId conceptId = 0;
   const ConceptApplication *syntax = nullptr;
   std::vector<SemanticType> arguments;
+  std::vector<Lifetime> lifetimeArguments;
   const ConstraintExpression *expression = nullptr;
   std::size_t expressionApplication = ConstraintExpressionNode::invalidIndex;
   // A direct member requirement written in compiler-trusted source may select
@@ -794,6 +855,10 @@ struct AppliedConceptRequirement {
   // concept leaves never set it: concept satisfaction is a public predicate.
   bool trustedMemberAccess = false;
   std::optional<std::vector<std::string>> lookupScope;
+  // Compiler-owned validity relation. A type-outlives predicate stores its
+  // first operand separately; an absent region is never treated as static.
+  std::optional<LifetimeBound> lifetimeBound;
+  std::optional<SemanticType> outlivesType;
 };
 
 [[nodiscard]] std::optional<CheckedIntegerDomain>

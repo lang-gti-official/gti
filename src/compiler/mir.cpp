@@ -970,7 +970,7 @@ void append(MirVerificationResult &destination, MirVerificationResult source) {
     return type == SemanticType::Char;
   }
   if (std::holds_alternative<std::string>(literal)) {
-    return type == SemanticType::StringView;
+    return type.kind == SemanticType::StringView;
   }
   if (std::holds_alternative<bool>(literal)) {
     return type == SemanticType::Bool;
@@ -1029,7 +1029,7 @@ programConstantMatchesType(const ConstantValue &constant,
     return type == SemanticType::Char;
   }
   if (std::holds_alternative<std::string>(constant)) {
-    return type == SemanticType::StringView;
+    return type.kind == SemanticType::StringView;
   }
   if (std::holds_alternative<bool>(constant)) {
     return type == SemanticType::Bool;
@@ -10249,7 +10249,7 @@ bool validCallInputType(const SemanticType &source,
     return false;
   }
   if (parameter == SemanticType::CString) {
-    return source == SemanticType::StringView ||
+    return source.kind == SemanticType::StringView ||
            source == SemanticType::NullPtr;
   }
   if (parameter.kind == SemanticType::NativeFunction) {

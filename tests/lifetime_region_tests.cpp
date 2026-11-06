@@ -66,5 +66,33 @@ int main() {
   expect(!bounds.proves(malformed, malformed) &&
              !bounds.assume(malformed, input),
          "malformed serialized region kinds cannot become proofs");
+  lang::LifetimeInferenceConstraints intersection;
+  expect(intersection.require(input, inferred) &&
+             intersection.require(unrelated, inferred) && !intersection.failure(),
+         "a local result may infer the intersection of independent input regions");
+  expect(intersection.require(inferred, input) && intersection.failure().has_value(),
+         "the intersection cannot escape as either unrestricted original input");
+  expect(!intersection.proves(inferred, input),
+         "an inconsistent inference graph never becomes a declaration proof");
+  lang::LifetimeInferenceConstraints shortening(bounds);
+  const auto child = Lifetime::inference(2);
+  expect(shortening.require(input, inferred) && shortening.require(inferred, child) &&
+             shortening.require(child, shorter) && !shortening.failure(),
+         "checked declaration bounds discharge transitive inference obligations");
+  expect(shortening.proves(inferred, shorter),
+         "a solved inferred region preserves its checked lower requirement");
+  lang::LifetimeInferenceConstraints cycle;
+  expect(cycle.require(inferred, child) && cycle.require(child, inferred) &&
+             !cycle.failure(),
+         "inference cycles terminate without equating unrelated universal inputs");
+  lang::LifetimeInferenceConstraints localUse;
+  expect(localUse.require(input, inferred) && localUse.require(inferred, local) &&
+             localUse.failure().has_value(),
+         "local scope ordering is not inferred from numeric region identities");
+  expect(!localUse.failure([&](Lifetime a, Lifetime b) {
+           return a == input && b == local;
+         }),
+         "body-local containment must come from independently checked flow facts");
+  expect(!localUse.require({}, input), "unsolved syntax is not an inference region");
   return 0;
 }
