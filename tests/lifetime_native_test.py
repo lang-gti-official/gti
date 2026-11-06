@@ -288,7 +288,7 @@ def main():
         "mutation_before_destructor": {"GTI-S2017"},
         "unrelated_return": {"GTI-S2127"},
         "retained_other_supplier": {"GTI-S2017"},
-        "local_record_escape": {"GTI-S2085", "GTI-S2127"},
+        "local_record_escape": {"GTI-S2045", "GTI-S2085", "GTI-S2127"},
     }
     if rejection_codes.keys() != REJECTIONS.keys():
         raise RuntimeError("every lifetime rejection needs an explicit owning diagnostic")

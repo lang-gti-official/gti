@@ -1622,6 +1622,9 @@ target_link_libraries(gti_lifetime_syntax_tests PRIVATE gti_compiler)
 add_test(NAME lifetime_syntax COMMAND gti_lifetime_syntax_tests)
 add_executable(gti_lifetime_resolution_tests lifetime_resolution_tests.cpp)
 target_link_libraries(gti_lifetime_resolution_tests PRIVATE gti_compiler)
+target_include_directories(gti_lifetime_resolution_tests PRIVATE
+  "${PROJECT_BINARY_DIR}/generated")
+add_dependencies(gti_lifetime_resolution_tests gti_diagnostic_registry)
 add_test(NAME lifetime_resolution COMMAND gti_lifetime_resolution_tests)
 
 add_executable(gti_lambda_reference_tests lambda_reference_tests.cpp)
