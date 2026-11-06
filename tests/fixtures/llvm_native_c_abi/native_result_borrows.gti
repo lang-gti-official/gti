@@ -1,0 +1,29 @@
+using Unary = (int32_t) -> int32_t;
+extern "C" {
+  Unary native_unary();
+  int32_t native_zero();
+}
+
+mut int destroyed = 0;
+int32_t observe(int32_t& value) { return value; }
+int32_t consume(int32_t value) { return value; }
+struct Observed {
+  int32_t value;
+  Observed(int32_t& input) : value(input) {}
+  ~Observed() { destroyed += 1; }
+};
+
+int main() {
+  unsafe {
+    Unary operation = native_unary();
+    if (observe(operation(31)) != 42) return 1;
+    if (observe(native_unary()(31)) != 42) return 2;
+    if (observe(native_zero()) != 0 || consume(native_zero()) != 0) return 3;
+    {
+      Observed constructed{operation(31)};
+      if (constructed.value != 42 || destroyed != 0) return 4;
+    }
+    if (destroyed != 1) return 5;
+  }
+  return 0;
+}

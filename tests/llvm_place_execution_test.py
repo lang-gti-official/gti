@@ -722,8 +722,7 @@ int main() {
 
 
 def native_only_cases() -> dict[str, str]:
-    # The C++ representation vocabulary cannot currently transport nested text.
-    # Native expectations come from GTI's byte/count contract.
+    # LLVM-only regressions use explicit source-contract expectations.
     return {'nested-text-return': NESTED_TEXT_RETURN,
             'raw-field-arguments': RAW_FIELD_ARGUMENTS}
 
@@ -846,7 +845,7 @@ def main() -> None:
                 result = execute(gti, root, work / f'{name}-{endpoint.optimization}', source, endpoint, env)
                 if result.error or result.observable != (0, '', ''):
                     raise AssertionError(f'{name} {endpoint}: {result}')
-            print(f'{name}: LLVM O0-O3 source-contract oracle passed (known C++ representation limitation)', flush=True)
+            print(f'{name}: LLVM O0-O3 source-contract oracle passed', flush=True)
         for name, text in rejections.items():
             if selection and selection != name:
                 continue

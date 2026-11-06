@@ -43,19 +43,8 @@ int32_t gti_view_length(std::string_view value) {
   return 0;
 }
 
-int32_t observe_result(int32_t& value) { return value; }
-struct Observed {
-  int32_t value;
-  Observed(int32_t& input) : value(input) {}
-};
-
 int main() {
   unsafe {
-    Unary borrowed_result = obtain_factory()();
-    if (observe_result(borrowed_result(41)) != 42) return 19;
-    if (observe_result(next_argument(7)) != 7) return 20;
-    Observed constructed{borrowed_result(41)};
-    if (constructed.value != 42) return 21;
     clear_trace();
     if (obtain_binary()(next_argument(2), next_argument(3)) != 23) { return 1; }
     if (trace_value() != 1234) { return 2; }
