@@ -20,9 +20,9 @@ def recursive_descent(frames):
 def macro_chain(levels):
     """`levels` distinct macros, each expanding the next."""
     lines = ["#macro int32_t m0(int32_t v) { return v + 1; }"]
-    lines += [f"#macro int32_t m{level}(int32_t v) {{ return m{level - 1}(v) + 1; }}"
+    lines += [f"#macro int32_t m{level}(int32_t v) {{ return m{level - 1}!(v) + 1; }}"
               for level in range(1, levels)]
-    lines.append(f"int main() {{ return m{levels - 1}(0) - {levels}; }}")
+    lines.append(f"int main() {{ return m{levels - 1}!(0) - {levels}; }}")
     return "\n".join(lines) + "\n"
 
 

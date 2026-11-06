@@ -102,9 +102,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     permissions:
-      # GITHUB_TOKEN only reads: the checkout and the merge-queue CI run list.
+      # GITHUB_TOKEN only reads: the checkout, the cut PR's CI gate and the
+      # merge-queue CI run list.
       contents: read
       actions: read
+      checks: read
     steps:
       - name: Require the release App secrets
         env:
@@ -128,16 +130,15 @@ jobs:
           repositories: gti
           permission-contents: write
           permission-pull-requests: write
-          permission-merge-queues: write
           permission-issues: write
-          permission-checks: read
           permission-metadata: read
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
           fetch-depth: 0
           persist-credentials: false
-      - name: Cut the published nightly and queue the release cut PR
+      - name: Cut the published nightly and open the release cut PR
+        id: cut
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           GTI_GITHUB_TOKEN: ${{ github.token }}
@@ -150,7 +151,44 @@ jobs:
           python3 scripts/release_train.py cut --repository "${GTI_REPOSITORY}"
           --event "${GTI_EVENT_NAME}" --ref "${GTI_REF}"
           --min-age-hours "${GTI_MIN_AGE_HOURS}" --title "${GTI_TITLE}"
-          --worktree "${RUNNER_TEMP}/gti-release-cut"
+          --worktree "${RUNNER_TEMP}/gti-release-cut" --output "${GITHUB_OUTPUT}"
+      # An App installation token lives one hour and cannot be extended, and
+      # the cut PR's checks take about as long. Wait with the read-only
+      # workflow token, then mint a fresh App token only to queue the PR.
+      - name: Wait for the release cut PR's CI gate
+        id: gate
+        if: steps.cut.outputs.pr != ''
+        env:
+          GTI_GITHUB_TOKEN: ${{ github.token }}
+          GTI_PR: ${{ steps.cut.outputs.pr }}
+          GTI_HEAD: ${{ steps.cut.outputs.head }}
+        run: >-
+          python3 scripts/release_train.py await-gate --pr "${GTI_PR}" --sha "${GTI_HEAD}"
+          --output "${GITHUB_OUTPUT}"
+      - name: Mint a fresh installation token to queue the release cut PR
+        id: queue-token
+        if: steps.gate.outputs.gate == 'success'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ secrets.GTI_ROLLUP_APP_ID }}
+          private-key: ${{ secrets.GTI_ROLLUP_APP_PRIVATE_KEY }}
+          owner: lang-gti-official
+          repositories: gti
+          # enqueuePullRequest needs pull-request write as well as merge-queue write.
+          permission-pull-requests: write
+          permission-merge-queues: write
+          permission-metadata: read
+      - name: Queue the release cut PR
+        if: steps.gate.outputs.gate == 'success'
+        env:
+          GH_TOKEN: ${{ steps.queue-token.outputs.token }}
+          GTI_GITHUB_TOKEN: ${{ github.token }}
+          GTI_REPOSITORY: ${{ github.repository }}
+          GTI_PR: ${{ steps.cut.outputs.pr }}
+          GTI_HEAD: ${{ steps.cut.outputs.head }}
+        run: >-
+          python3 scripts/release_train.py queue --repository "${GTI_REPOSITORY}"
+          --pr "${GTI_PR}" --sha "${GTI_HEAD}"
 
   promote:
     name: Promote a beta to stable

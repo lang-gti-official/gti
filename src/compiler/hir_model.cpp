@@ -1452,10 +1452,19 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     result.errors.emplace_back(
         "generated constructor has no selected semantic initializer schedule");
   }
-  const auto verifyDirectInitializations = [&](const HirBody &body) {
+  const auto verifyDirectInitializations = [&](const HirBody &body,
+                                               const auto &findValue) {
+    if (body.directInitializations.empty())
+      return;
+    std::unordered_map<const Expr *, const HirDirectInitialization *> aliases;
+    for (const auto &alias : body.directInitializations)
+      aliases.emplace(alias.source, &alias);
+    std::unordered_set<const Expr *> executableSources;
+    for (const auto &value : body.values)
+      executableSources.insert(value.source);
     std::unordered_set<const Expr *> seen;
     for (const auto &alias : body.directInitializations) {
-      const auto *value = body.findValue(alias.value);
+      const auto *value = findValue(alias.value);
       const Expr *input = nullptr;
       const Binary *comma = alias.source == nullptr
                                 ? nullptr
@@ -1473,13 +1482,10 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       const Expr *producer = alias.producer;
       for (std::size_t depth = 0; depth < body.directInitializations.size();
            ++depth) {
-        const auto nested = std::find_if(
-            body.directInitializations.begin(),
-            body.directInitializations.end(),
-            [&](const auto &entry) { return entry.source == producer; });
-        if (nested == body.directInitializations.end())
+        const auto nested = aliases.find(producer);
+        if (nested == aliases.end())
           break;
-        producer = nested->producer;
+        producer = nested->second->producer;
       }
       const auto *ids = alias.source == nullptr
                             ? nullptr
@@ -1519,10 +1525,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
            semantics.findLambdaCall(*sourceCall) != nullptr ||
            semantics.findDeferredCallableCall(*sourceCall) != nullptr ||
            semantics.findOperator(*sourceCall) != nullptr);
-      const bool executableSource = std::any_of(
-          body.values.begin(), body.values.end(), [&](const auto &candidate) {
-            return candidate.source == alias.source;
-          });
+      const bool executableSource = executableSources.contains(alias.source);
       // A primary generic record may precede concrete reanalysis. When its
       // exact construction is retained, its direct-initialization decision
       // must agree; the concrete value/type and source identity are mandatory.
@@ -1722,7 +1725,18 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         ambiguousConstructionContexts.contains(&body))
       return;
     const auto &substitution = context->second;
-    verifyDirectInitializations(body);
+    // This verifier only reads the body. Retain findValue's first-match
+    // behavior even for malformed duplicate IDs, without rescanning every
+    // value for every operand. Discard the index before any later body edit.
+    std::unordered_map<HirValueId, const HirValue *> values;
+    values.reserve(body.values.size());
+    for (const auto &value : body.values)
+      values.emplace(value.id, &value);
+    const auto findValue = [&](HirValueId id) -> const HirValue * {
+      const auto found = values.find(id);
+      return found == values.end() ? nullptr : found->second;
+    };
+    verifyDirectInitializations(body, findValue);
     for (const auto &value : body.values) {
       if (value.intrinsic == IntrinsicKind::SourceExpressionText)
         result.errors.emplace_back(
@@ -1757,7 +1771,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           for (std::size_t index = 0; exact && index < count; ++index) {
             const auto &parameter =
                 (*parameters)[parameters->size() - count + index];
-            const auto *input = body.findValue(value.defaultArguments[index]);
+            const auto *input = findValue(value.defaultArguments[index]);
             const auto *expression =
                 parameter.defaultArgument
                     ? parameter.defaultArgument->expression.get()
@@ -1781,7 +1795,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
               "caller-expanded defaults lost their exact declaration suffix");
       }
       for (std::size_t index = 0; index < value.operands.size(); ++index)
-        if (const auto *input = body.findValue(value.operands[index]);
+        if (const auto *input = findValue(value.operands[index]);
             input && input->kind == HirValueKind::PackExpansion &&
             index + 1 < value.operands.size() &&
             (value.defaultArguments.size() !=

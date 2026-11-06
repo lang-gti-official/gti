@@ -67,13 +67,13 @@ def main():
             # A producer that observes failure cleanup must retain its runtime
             # context checks and remains outside the self-contained profile.
             library_source.write_text(original_source.replace(
-                "export int divide(int value, int divisor) { return value / divisor; }",
+                "export [[cold, noinline]] int divide(int value, int divisor) { return value / divisor; }",
                 '''class ProducerMarker {
 public:
     ProducerMarker() {}
     ~ProducerMarker() { std::println("producer cleanup"); }
 };
-export int divide(int value, int divisor) {
+export [[cold, noinline]] int divide(int value, int divisor) {
     ProducerMarker marker{};
     return value / divisor;
 }'''))

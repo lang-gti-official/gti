@@ -372,5 +372,11 @@ struct ImmediatePortHighlight {
   consteval operator int() { return this.value; }
 };
 
+void explicit_macro_highlight() {
+  macro_highlight!(true, 1);
+  policy::macro_highlight<int>!(true, 1);
+  html!({ <h1>Hello</h1> });
+}
+
 [[inline, cold]] int hinted_highlight() { return 1; }
 [[noinline]] int boundary_highlight() { return hinted_highlight(); }

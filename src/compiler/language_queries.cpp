@@ -1056,6 +1056,8 @@ private:
         }
         append(">");
       }
+      if (node->macroBang())
+        append("!");
       append("(");
       arguments(node->arguments(), depth);
       append(")");
@@ -1932,6 +1934,36 @@ public:
           .replacementRange = context->replacementRange,
           .documentationMarkdown =
               symbol == nullptr ? std::nullopt : symbol->documentationMarkdown};
+      const FunctionInfo *function =
+          record.function == 0 ? nullptr
+                               : semantics.findFunction(record.function);
+      if (function && function->declaration &&
+          function->declaration->isMacro()) {
+        // Classification comes from semantics. Inspect following punctuation
+        // only to avoid inserting a second call marker or argument list.
+        std::size_t next = context->replacementRange.end;
+        while (next < input.source.size()) {
+          if (std::isspace(static_cast<unsigned char>(input.source[next]))) {
+            ++next;
+          } else if (input.source.substr(next, 2) == "/*") {
+            const auto end = input.source.find("*/", next + 2);
+            next =
+                end == std::string_view::npos ? input.source.size() : end + 2;
+          } else if (input.source.substr(next, 2) == "//") {
+            const auto end = input.source.find('\n', next + 2);
+            next =
+                end == std::string_view::npos ? input.source.size() : end + 1;
+          } else {
+            break;
+          }
+        }
+        const char following =
+            next < input.source.size() ? input.source[next] : '\0';
+        if (following != '!' && following != '<')
+          candidate.insertion += '!';
+        if (following == '!' || following == '<' || following == '(')
+          candidate.snippet.reset();
+      }
       const std::string duplicateKey =
           std::to_string(static_cast<int>(candidate.kind)) + '\n' +
           candidate.label + '\n' + candidate.detail;
@@ -2812,7 +2844,10 @@ private:
                  ? std::nullopt
                  : std::optional<std::string>(record.name + "()");
     }
-    std::string result = record.name + '(';
+    if (function->declaration->isProceduralMacro())
+      return record.name + "!({${1:input}})";
+    std::string result =
+        record.name + (function->declaration->isMacro() ? "!(" : "(");
     const std::vector<Parameter> &parameters =
         function->declaration->parameters();
     for (std::size_t index = 0; index < parameters.size(); ++index) {

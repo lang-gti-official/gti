@@ -341,11 +341,11 @@ consteval std::size_t validate(std::string_view pattern) { return pattern.size()
 int main() {
   std::string text{"dyn {}"};
   int value = 3;
-  if (value == 4) { checked(text.view(), value); }
+  if (value == 4) { checked!(text.view(), value); }
   return 0;
 }
 )GTI",
-           "GTI-S2057", "Consteval invocation", "checked(text.view",
+           "GTI-S2057", "Consteval invocation", "checked!(text.view",
            "Argument 1 to immediate function");
   rejected(R"GTI(class Parcel {
 public:

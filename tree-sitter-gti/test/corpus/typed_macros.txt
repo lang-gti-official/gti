@@ -1,12 +1,12 @@
 ==================
-Typed macros and ordinary calls
+Typed macros with explicit calls
 ==================
 
 #macro ignore(bool condition) {}
 [[track_caller]] #macro checked(bool condition) {
   if (!condition) { fail(); }
 }
-void run() { checked(true); }
+void run() { checked!(true); }
 
 ---
 
@@ -44,10 +44,9 @@ void run() { checked(true); }
     (parameter_clause)
     (block
       (expression_statement
-        (call_expression
-          (primary_expression
-            (identifier))
-          (argument_list
+        (macro_invocation
+          (identifier)
+          (macro_argument_list
             (primary_expression
               (literal
                 (boolean_literal)))))))))

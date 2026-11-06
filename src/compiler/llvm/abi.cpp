@@ -11,19 +11,21 @@
 
 namespace lang::native_llvm {
 
-void applyCodegenAttributes(llvm::Function &function,
-                            const FunctionCodegenAttributes &attributes) {
-  if (attributes.cold)
-    function.addFnAttr(llvm::Attribute::Cold);
-  switch (attributes.inlining) {
+void applyCodegenAttributes(llvm::Function &output,
+                            FunctionCodegenAttributes policy) {
+  if (policy.cold)
+    output.addFnAttr(llvm::Attribute::Cold);
+  switch (policy.inlining) {
   case FunctionInlining::Default:
     break;
   case FunctionInlining::Hint:
-    function.addFnAttr(llvm::Attribute::InlineHint);
+    output.addFnAttr(llvm::Attribute::InlineHint);
     break;
   case FunctionInlining::Never:
-    function.addFnAttr(llvm::Attribute::NoInline);
+    output.addFnAttr(llvm::Attribute::NoInline);
     break;
+  default:
+    throw std::logic_error("invalid verified function inlining policy");
   }
 }
 
@@ -318,7 +320,9 @@ llvm::Function *Abi::declareFunction(HirFunctionInstanceId id) {
   plan.applyTo(*output);
   // Only verified declaration metadata controls source optimization requests.
   // These are code-generation attributes, not failure or ABI promises.
-  applyCodegenAttributes(*output, function->codegenAttributes);
+  applyCodegenAttributes(*output, compiled && compiled->imported
+                                      ? compiled->codegenAttributes
+                                      : function->codegenAttributes);
   if (!native && plan.statusResult && plan.resultDestination) {
     const auto result = layouts.get(function->returnType);
     if (!result.addressOnly &&

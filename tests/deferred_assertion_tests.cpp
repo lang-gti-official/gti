@@ -31,28 +31,80 @@ analyze(std::string_view source, lang::ConfigurationFlags flags = {},
       {library});
 }
 
+void explicitInvocation() {
+  for (const std::string call :
+       {"identity(7)", "identity<int> /* gap */ (7)"}) {
+    const std::string source =
+        "#macro T identity<T>(T value) { return value; }\n"
+        "int main() { return " +
+        call + "; }\n";
+    const auto rejected = analyze(source);
+    const auto diagnostic = std::find_if(
+        rejected.diagnostics.begin(), rejected.diagnostics.end(),
+        [](const auto &d) {
+          return d.code == "GTI-S2124" &&
+                 d.message.find("require '!'") != std::string::npos;
+        });
+    check(diagnostic != rejected.diagnostics.end(),
+          "legacy macro calls get a migration diagnostic");
+    if (diagnostic == rejected.diagnostics.end())
+      continue;
+    check(diagnostic->fixes.size() == 1 && !diagnostic->related.empty(),
+          "migration identifies declaration and provides one insertion");
+    if (diagnostic->fixes.size() != 1)
+      continue;
+    const auto &fix = diagnostic->fixes.front();
+    check(fix.replacement == "!" && fix.span.start == fix.span.end &&
+              fix.span.start == source.rfind('(') &&
+              fix.applicability == lang::RepairApplicability::MachineApplicable,
+          "migration inserts only ! directly before the argument list");
+    auto repaired = source;
+    repaired.insert(fix.span.start, fix.replacement);
+    check(analyze(repaired).canGenerateCode(),
+          "applying the migration fix compiles");
+  }
+  const auto function = analyze(
+      "int ordinary(int x) { return x; } int main() { return ordinary!(7); }");
+  check(
+      std::any_of(function.diagnostics.begin(), function.diagnostics.end(),
+                  [](const auto &d) {
+                    return d.code == "GTI-S2124" &&
+                           d.message.find(
+                               "must resolve to a typed or procedural macro") !=
+                               std::string::npos;
+                  }),
+      "ordinary functions cannot be called with a macro marker");
+  const auto malformed =
+      analyze("#macro take(int x) {} int main() { take!(1 +); return 0; }");
+  check(!malformed.canGenerateCode() &&
+            std::any_of(
+                malformed.diagnostics.begin(), malformed.diagnostics.end(),
+                [](const auto &d) { return d.code.starts_with("GTI-P"); }),
+        "typed macros report malformed expression arguments");
+}
+
 void positive() {
   auto result = analyze(R"(
 import std.assert;
 import std.string;
 struct Value { int number = 7;  public: Value() = default; };
 namespace policy { constexpr bool enabled = false; }
-int impossible() { std::assert(false); }
+int impossible() { std::assert!(false); }
 namespace app {
-  void sink(Value& value) { std::assert(value.number == 7); }
+  void sink(Value& value) { std::assert!(value.number == 7); }
   #macro conditional(bool enabled, Value value) {
     if (enabled) { sink(value); }
   }
 }
 int main() {
   Value value{};
-  app::conditional(true, value);
-  std::assert(true, "{}", std::string("unused"));
+  app::conditional!(true, value);
+  std::assert!(true, "{}", std::string("unused"));
   std::string owner{"owned"};
   if (policy::enabled) { std::string consumed = std::move(owner); }
-  std::assert(!owner.empty());
+  std::assert!(!owner.empty());
   std::string_view held = owner.view();
-  std::assert(held == "owned");
+  std::assert!(held == "owned");
   return 0;
 }
 )");
@@ -103,7 +155,7 @@ void disabledTypeChecks() {
     auto result = analyze(R"(
 import std.assert;
 struct Unknown { int number = 7; };
-int main() { std::debug_assert(true, "{}", Unknown{}); return 0; }
+int main() { std::debug_assert!(true, "{}", Unknown{}); return 0; }
 )",
                           disabled ? lang::ConfigurationFlags{"NDEBUG"}
                                    : lang::ConfigurationFlags{});
@@ -126,11 +178,11 @@ struct Cleanup { ~Cleanup() {}  public: Cleanup() = default; };
 bool inspect(Cleanup& value) { return true; }
 void observe(bool value) {}
 #macro force(bool value) { observe(value); }
-#macro relay(bool value) { force(value); }
-int ordinary() { relay(inspect(Cleanup())); return 0; }
+#macro relay(bool value) { force!(value); }
+int ordinary() { relay!(inspect(Cleanup())); return 0; }
 int selected<uint64_t Mode>() {
   if constexpr (Mode == 0) { return 0; }
-  else { relay(inspect(Cleanup())); return 1; }
+  else { relay!(inspect(Cleanup())); return 1; }
 }
 int main() { return ordinary() + selected<0>() + selected<1>() - 1; }
 )",
@@ -189,26 +241,26 @@ void typedMacroSyntax() {
   auto result = analyze(R"(
 import std.assert;
 namespace application {
-  void accept(int number) { std::assert(number == 7); }
-  void accept(bool condition) { std::assert(condition); }
+  void accept(int number) { std::assert!(number == 7); }
+  void accept(bool condition) { std::assert!(condition); }
   #macro emit(int number = 7) { accept(number); }
   #macro emit(bool condition) { accept(condition); }
   #macro when<T>(bool enabled, T value) {
-    if (enabled) { emit(value); }
+    if (enabled) { emit!(value); }
   }
   #macro numeric<T>(T value) requires std::numeric<T> {
-    std::assert(value == T(7));
+    std::assert!(value == T(7));
   }
-  [[track_caller]] #macro ensure(bool condition) { std::assert(condition); }
+  [[track_caller]] #macro ensure(bool condition) { std::assert!(condition); }
 }
 int main() {
   int accept = 99;
-  application::emit();
-  application::emit(true);
-  application::when<int>(true, 7);
-  application::when(false, false);
-  application::numeric(7);
-  application::ensure(accept == 99);
+  application::emit!();
+  application::emit!(true);
+  application::when<int>!(true, 7);
+  application::when!(false, false);
+  application::numeric!(7);
+  application::ensure!(accept == 99);
   return 0;
 }
 )");
@@ -309,19 +361,19 @@ namespace library {
     if (enabled) {
       int saved = expression;
       auto& read = saved;
-      std::assert(read == saved);
+      std::assert!(read == saved);
     }
   }
   #macro shadow(int value) {
-    { int value = 4; std::assert(value == 4); }
-    std::assert(value == 9);
+    { int value = 4; std::assert!(value == 4); }
+    std::assert!(value == 9);
   }
-  #macro typed() { Item item{}; std::assert(item.code == 1); }
+  #macro typed() { Item item{}; std::assert!(item.code == 1); }
   #macro own(bool enabled, std::string expression) {
     if (enabled) {
       std::string local = expression;
       auto& borrowed = local;
-      std::assert(!borrowed.empty());
+      std::assert!(!borrowed.empty());
     }
   }
   #macro loops(int count) {
@@ -334,47 +386,47 @@ namespace library {
     while (total > 1) { total--; }
     do { total++; } while (total < 2);
     int values[3] = {1, 2, 3};
-    for (auto& value : values) { std::assert(value > 0); }
+    for (auto& value : values) { std::assert!(value > 0); }
   }
   #macro assign(int destination, int value) { destination = value; }
   #macro defaults(int expression = 9) {
     int expression = expression;
-    std::assert(expression == 9);
+    std::assert!(expression == 9);
   }
   #macro decompose() {
     int values[2] = {1, 2};
     auto [first, second] = values;
-    std::assert(first == 1 && second == 2);
+    std::assert!(first == 1 && second == 2);
   }
-  #macro check_lambda(bool condition) { std::assert(condition); }
+  #macro check_lambda(bool condition) { std::assert!(condition); }
 }
 namespace application {
   struct Item { int code = 2;  public: Item() = default; };
   int run() {
     int saved = 9;
     mut int evaluations = 0;
-    library::once(false, evaluations++);
-    library::once(true, saved);
-    library::once(true, saved);
-    library::shadow(saved);
-    library::typed();
-    library::loops(5);
-    library::defaults();
-    library::decompose();
-    library::decompose();
-    library::check_lambda([](int count) -> bool {
+    library::once!(false, evaluations++);
+    library::once!(true, saved);
+    library::once!(true, saved);
+    library::shadow!(saved);
+    library::typed!();
+    library::loops!(5);
+    library::defaults!();
+    library::decompose!();
+    library::decompose!();
+    library::check_lambda!([](int count) -> bool {
       { { { int count = 2; return count == 2; } } }
     }(1));
-    library::check_lambda([]() -> bool {
-      std::assert(true);
+    library::check_lambda!([]() -> bool {
+      std::assert!(true);
       { { { int own_local = 1; return own_local == 1; } } }
     }());
     mut int output = 0;
-    library::assign(output, saved);
+    library::assign!(output, saved);
     std::string owner{"kept"};
-    library::own(false, std::move(owner));
-    std::assert(!owner.empty());
-    library::own(true, std::move(owner));
+    library::own!(false, std::move(owner));
+    std::assert!(!owner.empty());
+    library::own!(true, std::move(owner));
     return 0;
   }
 }
@@ -404,8 +456,8 @@ struct Owned {
 int main() {
   Owned owner{};
   bool dynamic = owner.empty();
-  own(false, std::move(owner));
-  own(true, std::move(owner));
+  own!(false, std::move(owner));
+  own!(true, std::move(owner));
   return dynamic ? 1 : 0;
 }
 )");
@@ -562,6 +614,7 @@ void negative(std::string_view source, std::string_view code,
 } // namespace
 
 int main() {
+  explicitInvocation();
   positive();
   disabledTypeChecks();
   expansionSourceOwnership();
@@ -571,7 +624,7 @@ int main() {
   migrationAndOverloadDiagnostics();
   parserMacroRecovery();
   negative("[[deferred]] void old(bool condition) {}", "GTI-S2099", "#macro");
-  check(analyze("#macro stop() { return; } int main() { stop(); return 0; }")
+  check(analyze("#macro stop() { return; } int main() { stop!(); return 0; }")
             .canGenerateCode(),
         "void macro-local return resumes its caller");
   negative("#macro wrong() { break; }", "GTI-S2099", "within that macro");
@@ -594,16 +647,16 @@ namespace app {
 }
 )",
            "GTI-S2099", "ordinary");
-  negative("#macro exact(int value) {}\nint main() { exact(true); return 0; }",
+  negative("#macro exact(int value) {}\nint main() { exact!(true); return 0; }",
            "GTI-S2003", "parameter requires 'int32_t'");
   negative(R"(
 #macro helper(bool value) {}
-int main() { return (helper(true), 0); }
+int main() { return (helper!(true), 0); }
 )",
            "GTI-S2124", "complete expression statement");
   negative(R"(
 import std.assert;
-int main() { std::debug_assert(1); return 0; }
+int main() { std::debug_assert!(1); return 0; }
 )",
            "GTI-S2012", "exactly matches");
   negative(R"(
@@ -613,20 +666,20 @@ int main() { auto callback = helper; return 0; }
            "GTI-S2124", "not callable values");
   check(analyze(R"(
 #macro execute<F>(F callback) { callback(); }
-int main() { execute([]() -> void {}); return 0; }
+int main() { execute!([]() -> void {}); return 0; }
 )")
             .canGenerateCode(),
         "fresh callable expressions are valid macro arguments");
   negative(R"(
-#macro helper() { helper(); }
-int main() { helper(); return 0; }
+#macro helper() { helper!(); }
+int main() { helper!(); return 0; }
 )",
            "GTI-S2124", "resource limit");
   negative(R"(
 import std.string;
 void consume(std::string value) {}
 #macro twice(std::string value) { consume(value); consume(value); }
-int main() { std::string owner{"owned"}; twice(std::move(owner)); return 0; }
+int main() { std::string owner{"owned"}; twice!(std::move(owner)); return 0; }
 )",
            "GTI-S2018", "moved");
   negative(R"(
@@ -637,7 +690,7 @@ void consume(std::string value) {}
   consume(std::move(owned));
   consume(std::move(owned));
 }
-int main() { twice(std::string("owned")); return 0; }
+int main() { twice!(std::string("owned")); return 0; }
 )",
            "GTI-S2018", "moved");
   negative(R"(
@@ -649,7 +702,7 @@ void consume(std::string value) {}
   consume(std::move(owned));
   [[discard]] held.size();
 }
-int main() { invalid(); return 0; }
+int main() { invalid!(); return 0; }
 )",
            "GTI-S2017", "borrow");
   negative(R"(
@@ -660,7 +713,7 @@ import std.string;
 }
 int main() {
   mut std::string_view output = "safe";
-  escape(output);
+  escape!(output);
   return int(output.size());
 }
 )",
@@ -673,20 +726,20 @@ void consume(std::string value) {}
 }
 int main() {
   std::string owner{"owned"};
-  loop(std::move(owner));
+  loop!(std::move(owner));
   return 0;
 }
 )",
            "GTI-S2018", "loop backedge");
   negative("#macro assign(int destination) { destination = 7; }\n"
-           "int main() { assign(4); return 0; }",
+           "int main() { assign!(4); return 0; }",
            "GTI-S2002", "mutable place");
   negative("#macro invalid() { break; }\n"
-           "int main() { while (true) { invalid(); } return 0; }",
+           "int main() { while (true) { invalid!(); } return 0; }",
            "GTI-S2099", "within that macro");
   negative("#macro invalid() { continue; }\n"
-           "#macro outer() { while (true) { invalid(); } }\n"
-           "int main() { outer(); return 0; }",
+           "#macro outer() { while (true) { invalid!(); } }\n"
+           "int main() { outer!(); return 0; }",
            "GTI-S2099", "within that macro");
   negative(R"(
 import std.string;
@@ -697,7 +750,7 @@ void consume(std::string value) {}
 int main() {
   std::string owner{"owned"};
   std::string_view borrowed = owner.view();
-  choose(true, std::move(owner));
+  choose!(true, std::move(owner));
   return int(borrowed.size());
 }
 )",
@@ -705,7 +758,7 @@ int main() {
   negative(R"(
 unsafe bool inspect() { return true; }
 #macro ignored(bool value) {}
-int main() { ignored(inspect()); return 0; }
+int main() { ignored!(inspect()); return 0; }
 )",
            "GTI-S2055", "unsafe");
   return failures ? 1 : 0;

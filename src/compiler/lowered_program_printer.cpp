@@ -902,7 +902,7 @@ std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
 
 void LoweredProgramPrinter::print(const LoweredProgram &program,
                                   std::ostream &output) const {
-  output << "lowered-program-v33\n";
+  output << "lowered-program-v35\n";
   for (const auto &unit : program.compiledInterfaceUnits())
     output << "compiled-interface-unit " << unit.sourceUnit
            << " package=" << std::quoted(unit.owner.package)
@@ -924,6 +924,9 @@ void LoweredProgramPrinter::print(const LoweredProgram &program,
              << " borrow-parameter=" << binding.borrow.parameter
              << " borrow-access="
              << static_cast<unsigned>(binding.borrow.access)
+             << " codegen-inline="
+             << static_cast<unsigned>(binding.codegenAttributes.inlining)
+             << " codegen-cold=" << binding.codegenAttributes.cold
              << " symbol=" << std::quoted(binding.symbol) << '\n';
     }
   }

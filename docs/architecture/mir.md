@@ -438,7 +438,7 @@ profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
 The combined deterministic serialization is currently `mir-v121`/`mir-body-v93`,
-with `lowered-program-v33` declaration metadata. Function, constructor and
+with `lowered-program-v35` declaration metadata. Function, constructor and
 destructor instances and their sealed
 declarations retain the resolved cold hint and default/hint/never inlining policy;
 verification rejects a mismatching or non-source policy. These distinct combined
@@ -446,6 +446,9 @@ identities retain both macro result-region/local-initializer authority and
 thread-local initialization, cleanup and reference-pack proof facts.
 Compiled scalar linkage records also seal each callable's result type and
 compilation-local source unit alongside its persistent declaration key. Imports
+also retain validated interface optimization policy in their compiled bindings;
+source-body HIR/MIR policy remains distinct from an imported declaration's policy.
+Export bindings must agree with their source function's policy. Imports
 bind against their exact virtual facade unit; exported overloads bind against
 the selected root module. Scalar wrappers retain the GTI failure channel and
 forward a fallible implementation's original result, status and failure record.
@@ -3133,6 +3136,44 @@ A `MirBody` owns:
 IDs are body-local and start at one.
 
 ## Lowering And Verification
+
+Scalar-initialization dataflow checks a local checked `Borrow` at reference
+formation, as well as staged and direct call inputs. Its referent must be
+definitely initialized on every reachable predecessor. Later reads through a
+reference's projected place cannot substitute for checking the scalar source:
+removing its `Initialize` must fail even when operand-use indexes remain valid.
+Initially available parameters retain their existing entry-state contract;
+full-expression temporaries retain the lifecycle verifier's producer protocol.
+
+Read-only body verification uses a scoped index of HIR source values and MIR
+instruction definitions. Call-input validation also groups value drop obligations
+by HIR source identity once per body, retaining every duplicate for its existing
+uniqueness checks. It retains every value for a source, so duplicate
+materializations remain ambiguous, and checks the exact defining block and
+producer predicate. Duplicate instruction IDs fall back to the original scan.
+The index supplies lookup speed, never proof authority. Nested verification of
+another body restores the previous index; thread-local scope isolates concurrent
+verification. No index survives a body edit, and mutable lowering queries retain
+the scan path.
+
+Text-contract verification likewise retains each body's Stored dependencies in
+inventory order for its read-only invocation. Operand designation checks still
+apply their complete field/path predicates and first-match rules, but do not
+rescan unrelated call-argument loans. The filtered inventory cannot survive
+mutation or a subsequent verifier invocation.
+
+Loan-flow verification uses one complete working state vector and adaptive CFG
+snapshots. Sparse snapshots contain every non-inactive loan; when storing IDs
+would cost more than the original state vector, a snapshot uses that dense
+representation instead. Joins compare states in ID order, treating absent
+sparse IDs as Inactive and retaining all conditional-state, reservation and
+parking rejection rules through one shared predicate. The working vector resets its live
+IDs between blocks; expired loans do not occupy every successor snapshot. Its
+access checks enumerate a derived, ID-ordered set of non-inactive loans instead
+of rescanning every expired loan in a large body. Every state mutation marks its
+ID for refresh before the next query, including reservations, suspension,
+conditional states, parking and loan ends. Membership does not grant access or
+replace the existing conflict, escape, cleanup or parent-state checks.
 
 Thread-local objects have a separate `MirThreadLocalStorage` inventory and
 `ThreadLocalInitializer` bodies. `EnsureThreadLocal` names the exact declaration

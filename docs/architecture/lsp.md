@@ -69,7 +69,7 @@ can already use different toolchains within one instance.
 
 The LSP is an adapter over compiler-owned semantics:
 
-Typed macro declarations and ordinary-looking calls retain compiler-selected
+Typed macro declarations and explicit `name!(...)` calls retain compiler-selected
 declaration identities. Hover/signature text prints `#macro`, preserving an
 explicit result type (including written `void`) and omitting only the generated
 implicit `void` type. Definition
@@ -1381,3 +1381,9 @@ and semantic tokens retain the ordinary global symbol identity. The protocol
 does not infer ownership from an external declaration or add a fix accepting an
 unsafe access. Incremental diagnostic and hover tests cover edited link names,
 UTF-16 positions and clearing stale unsafe-access errors.
+
+Macro completion uses the resolved declaration identity to insert `!` and typed
+argument placeholders (or a braced input placeholder for procedural macros).
+An existing marker, generic clause or argument list suppresses duplicate call
+syntax. The missing-marker diagnostic publishes a machine-applicable insertion
+fix through the normal versioned repair contract.

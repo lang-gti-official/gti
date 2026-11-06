@@ -1,1 +1,0 @@
-Compiled libraries can expose dependency-owned records and enums through chains and diamonds of dependencies while preserving nominal type identity, private layouts, and whole-reference borrowing contracts. Consumers can build from distributed compiled artifacts without dependency implementation sources.

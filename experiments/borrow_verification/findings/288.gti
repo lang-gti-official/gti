@@ -1,0 +1,11 @@
+// https://github.com/lang-gti-official/gti/issues/288
+// This source is valid. The defect requires removing the first Initialize from
+// its MIR copy and rebuilding value-use indexes; use the lab probe's
+// --mutate --dump-mutants options. The missing_initialization mutant survives
+// production verification but the independent adapter rejects its next borrow.
+int main() {
+  mut int x = 1;
+  int& a = x;
+  int& b = x;
+  return a + b - 2;
+}

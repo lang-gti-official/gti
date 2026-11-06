@@ -3,6 +3,17 @@
 Status: Accepted for the assertion foundation; public syntax and local binding
 profile revised 2026-10-23.
 
+## Invocation syntax revision — 2026-11-06
+
+The owner accepted `!` for every macro call. Current syntax is `name!(...)`,
+`namespace::name!(...)`, and `name<T>!(...)` for explicit generic arguments.
+Declarations retain `#macro Result name(...)`. The marker makes expansion and
+its potentially lazy or repeated evaluation visible at the call site, and gives
+tooling one structural macro-call boundary. Typed parameters, overloads, hygiene,
+cleanup and forcing remain unchanged; the declaration selects typed expressions
+or procedural token input. Old calls get a targeted insertion fix. This revises
+the original ordinary-call spelling below, which remains a historical decision.
+
 ## Problem
 
 Revision 2026-11-05: the owner authorized phase 1 of

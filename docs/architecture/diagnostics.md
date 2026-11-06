@@ -1,6 +1,6 @@
 # Diagnostics
 
-`GTI-I0015` rejects compiler directives/imports inside explicit procedural
+`GTI-I0015` rejects compiler directives/imports inside explicit
 macro input before the loader commits effects. `GTI-S2124` reports procedural
 selection, input-category, syntax-capability and execution failures;
 declaration profile errors use the existing function-contract diagnostic.
@@ -15,7 +15,7 @@ and borrow errors in emitted interpolations keep their ordinary diagnostic codes
 and written spans. Safely quoting a string never interprets its contents as
 source or grants a new lookup context.
 
-`GTI-I0016` stops source loading at an unbalanced procedural group before any
+`GTI-I0016` stops source loading at an unbalanced macro group before any
 following directive can be interpreted outside a broken capture boundary.
 
 `GTI-S2009` retains the non-discardable-by-default call rule and its explicit
@@ -102,7 +102,11 @@ does not require movement; ordinary type mismatches retain their existing
 message. The LSP publishes the same diagnostic and clears it on a valid edit.
 No automatic edit changes an element copy into a move.
 
-`GTI-S2124` reports invalid typed macro invocation/result shapes, missing
+`GTI-S2124` diagnoses calls to any macro without `!`, pointing at the callee
+and linking its declaration. Its machine-applicable repair inserts only `!`
+before `(`, preserving explicit generic arguments and intervening trivia.
+A marked call to an ordinary callable is rejected without an automatic edit.
+The same code reports invalid typed macro invocation/result shapes, missing
 normal-path result returns and deterministic expansion-budget exhaustion.
 Reference/tracked-borrowed and direct immovable outputs stop in semantics;
 they must not fall through to native C++ errors. Ordinary result initialization

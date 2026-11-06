@@ -368,23 +368,23 @@ namespace query_hygiene {
   }
   #macro nested(bool query) {
     bool subject = false;
-    inspect(query);
+    inspect!(query);
   }
   int check() {
     int subject = 7;
     // The macro's later bool local must not capture this caller's int local.
-    inspect(requires { { subject + subject } -> int; });
-    inspect(requires { { subject } -> bool; }); // false, no increment
-    inspect(requires(int& subject) { { subject + subject } -> int; });
-    nested(requires { { subject + subject } -> int; });
-    nested(requires(int& subject) { { subject + subject } -> int; });
-    inspect(requires(int& value) {
+    inspect!(requires { { subject + subject } -> int; });
+    inspect!(requires { { subject } -> bool; }); // false, no increment
+    inspect!(requires(int& subject) { { subject + subject } -> int; });
+    nested!(requires { { subject + subject } -> int; });
+    nested!(requires(int& subject) { { subject + subject } -> int; });
+    inspect!(requires(int& value) {
       { (requires { { value + value } -> int; }) } -> bool;
     });
-    inspect(requires {
+    inspect!(requires {
       { ([]() -> int { int subject = 2; return subject; })() } -> int;
     });
-    inspect(requires(int& value) {
+    inspect!(requires(int& value) {
       { ([&value]() -> int { return value; })() } -> int;
     });
     return observed == 7 ? 0 : 1;

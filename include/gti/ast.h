@@ -1111,8 +1111,21 @@ public:
   [[nodiscard]] const Token &paren() const { return paren_; }
   [[nodiscard]] const ExprList &arguments() const { return arguments_; }
 
-  // Present only on an explicit name!({...}) invocation. Includes the outer
-  // parentheses; ordinary calls keep their existing expression arguments.
+  // Explicit macro syntax retains raw input and the parser's typed-argument
+  // alternative. Resolution selects typed expressions or opaque procedural
+  // tokens; speculative argument errors apply only to the typed alternative.
+  [[nodiscard]] const std::optional<Token> &macroBang() const {
+    return macroBang_;
+  }
+  void setMacroBang(Token bang) { macroBang_ = std::move(bang); }
+  [[nodiscard]] const std::vector<Diagnostic> &macroArgumentErrors() const {
+    return macroArgumentErrors_;
+  }
+  void setMacroArgumentErrors(std::vector<Diagnostic> errors) {
+    macroArgumentErrors_ = std::move(errors);
+  }
+
+  // Includes the outer parentheses. Ordinary function calls have no capture.
   [[nodiscard]] const std::shared_ptr<const SyntaxCapture> &
   capturedArguments() const {
     return capturedArguments_;
@@ -1143,6 +1156,8 @@ private:
   std::optional<Token> leftParen_;
   std::vector<Token> argumentCommas_;
   std::shared_ptr<const SyntaxCapture> capturedArguments_;
+  std::optional<Token> macroBang_;
+  std::vector<Diagnostic> macroArgumentErrors_;
 };
 
 class Conversion final : public ExprOfKind<ExprKind::Conversion> {

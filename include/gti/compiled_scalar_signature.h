@@ -23,6 +23,7 @@ struct CompiledScalarSignature {
   std::string typeMetadata;
   std::string resultRecipe;
   CompiledBorrowContract borrow;
+  FunctionCodegenAttributes codegenAttributes;
   friend bool operator==(const CompiledScalarSignature &,
                          const CompiledScalarSignature &) = default;
 };

@@ -714,7 +714,7 @@ function-declaration   = [ unsafe-function-modifier ] [ "static" ]
 macro-declaration      = "#macro" [ type ] IDENTIFIER [ generic-parameter-clause ]
                          parameter-clause [ requires-clause ] block ;
 (* A namespace-scope typed macro has an implicit void or explicit typed result and
-   ordinary name(args) invocation syntax. Its value expression parameters are
+   explicit name!(args) invocation syntax. Its value expression parameters are
    checked by exact type and expanded at each use, not eagerly initialized.
    Generic final packs, defaults and constraints retain the ordinary signature
    rules. track_caller may precede #macro; macro/function overload mixtures
@@ -1487,11 +1487,20 @@ unary-expression       = ( "!" | "+" | "-" | "*" | "&" | "~" | "++" | "--" | "?"
 
 postfix-expression     = primary-expression { postfix-suffix } ;
 
-postfix-suffix         = call-suffix | member-suffix | index-suffix
+postfix-suffix         = call-suffix | macro-call-suffix | member-suffix | index-suffix
                        | increment-suffix ;
 
 call-suffix            = [ generic-argument-clause ]
                          "(" [ argument-list ] ")" ;
+
+(* The callee of a macro invocation must be a qualified or unqualified name.
+   Typed macros use the normal argument grammar; procedural macros capture a
+   balanced raw token group and resolve their input grammar in the macro body. *)
+macro-call-suffix      = [ generic-argument-clause ] "!"
+                         "(" [ argument-list | syntax-group ] ")" ;
+syntax-group           = "{" { syntax-token | syntax-group | "(" { syntax-token | syntax-group } ")"
+                                    | "[" { syntax-token | syntax-group } "]" } "}" ;
+(* syntax-token is a GTI lexical token excluding unbalanced delimiters. *)
 
 argument-list          = call-argument { "," call-argument }
                        | { call-argument "," } pack-expansion ;

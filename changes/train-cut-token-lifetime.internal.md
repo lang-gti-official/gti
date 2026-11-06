@@ -1,0 +1,1 @@
+The release train no longer holds one GitHub App token across the cut PR's CI gate wait. App installation tokens expire after an hour, so the cut waits with the read-only workflow token and mints a fresh App token to queue the PR.

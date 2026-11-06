@@ -3144,6 +3144,7 @@ void Bodies::lower(const LlvmAdmissionPlan &admission) {
         llvm::Function::Create(outer.type, llvm::GlobalValue::ExternalLinkage,
                                binding.symbol, session.module());
     outer.applyTo(*wrapper);
+    applyCodegenAttributes(*wrapper, binding.codegenAttributes);
     session.requireDefinition(*wrapper);
     llvm::IRBuilder<> ir(
         llvm::BasicBlock::Create(session.context(), "entry", wrapper));

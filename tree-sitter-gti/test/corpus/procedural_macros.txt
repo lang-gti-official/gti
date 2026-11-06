@@ -33,19 +33,20 @@ void show() { web::html!({ <div class="x"> {name[0]} </div> }); }
     (parameter_clause)
     (block
       (expression_statement
-        (procedural_macro_invocation
+        (macro_invocation
           (scoped_identifier
             (identifier)
             (identifier))
-          (syntax_group
-            (syntax_token)
-            (syntax_token)
-            (string_literal)
-            (syntax_token)
+          (macro_argument_list
             (syntax_group
               (syntax_token)
-              (syntax_token))
-            (syntax_token)))))))
+              (syntax_token)
+              (string_literal)
+              (syntax_token)
+              (syntax_group
+                (syntax_token)
+                (syntax_token))
+              (syntax_token))))))))
 
 ==================
 Nested lexical groups in procedural input
@@ -61,10 +62,11 @@ void show() { inspect!({ name([value]) { nested } }); }
     (parameter_clause)
     (block
       (expression_statement
-        (procedural_macro_invocation
+        (macro_invocation
           (identifier)
-          (syntax_group
-            (syntax_token)
-            (syntax_token)
+          (macro_argument_list
             (syntax_group
-              (syntax_token))))))))
+              (syntax_token)
+              (syntax_token)
+              (syntax_group
+                (syntax_token)))))))))

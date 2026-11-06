@@ -87,7 +87,11 @@ no HTML spelling selects a compiler path. See
 
 `semantic_macro.cpp` owns typed `#macro` expansion independently of public
 library names. The declaration's macro identity, not an attribute or public
-spelling, selects that path. Macro/function overload mixtures at one qualified
+spelling, selects that path. Every macro call requires `!`; missing markers
+produce `GTI-S2124` with a machine-applicable insertion before the argument list
+and a related declaration location. Marked calls resolve to typed AST arguments
+or procedural raw input before argument analysis. Deferred typed parse errors
+are published only for the typed alternative, preserving opaque input syntax. Macro/function overload mixtures at one qualified
 name are rejected; macro-only overload sets use ordinary exact-first selection
 with the shared representable-integer-literal fallback. The selected integer
 type is a semantic fact on each cloned literal argument root. Nested argument

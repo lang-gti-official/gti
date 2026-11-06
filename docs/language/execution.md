@@ -87,8 +87,8 @@ export #macro(proc) std::syntax::expr identity(std::syntax::tokens input) {
 // An importing consumer writes: identity!({value + 1})
 ```
 
-The `!` marks opaque input; it is required for procedural calls and does not
-change existing typed macro calls. Input includes the outer braces; the example
+The `!` marks every macro invocation. The declaration determines whether its
+arguments are typed expressions or opaque procedural input. Input includes the outer braces; the example
 slices those off before parsing an expression. Parsing does not evaluate the
 input. The initial profile accepts one imported namespace-scope declaration,
 exactly one `tokens` parameter and an `expr` result. Overloads, defaults, packs,
@@ -100,7 +100,7 @@ parse/splice, source locations and diagnostics. Generated identifiers resolve in
 the definition context; spliced caller tokens preserve caller lookup. `fresh`
 and `reference` create a binding independent of similarly spelled caller names.
 Syntax capabilities cannot be constructed or stored at runtime. Directives and
-imports inside procedural input are rejected before source loading can act on
+imports inside any explicit macro input are rejected before source loading can act on
 them. Ordinary braced arguments retain their existing behavior.
 
 The sealed result must be one expression. It undergoes ordinary caller type,
@@ -145,20 +145,22 @@ quotes text (including embedded zeroes) into one literal without source injectio
 `#macro` declares a source-defined namespace-scope macro with typed
 **expression parameters**, instead of ordinary eager parameter initialization.
 Omitting the result type declares a `void` statement macro. An explicit result
-type uses ordinary C++-familiar prefix spelling. Calls use ordinary qualified
-or unqualified syntax; value macros can participate in expressions:
+type uses ordinary C++-familiar prefix spelling. Calls require `!` between the
+qualified or unqualified name (and any generic arguments) and the argument list:
+`name!(...)`, `namespace::name!(...)`, or `name<T>!(...)`. Value macros can
+participate in expressions:
 
 ```gti
 #macro report_when(bool enabled, std::string_view message) {
   if (enabled) { std::println(message); }
 }
-report_when(verbose, make_message());
+report_when!(verbose, make_message());
 
 #macro int choose(bool enabled, int first, int second) {
   if (enabled) { return first; }
   return second;
 }
-int selected = choose(use_cache, cached_value(), expensive_value());
+int selected = choose!(use_cache, cached_value(), expensive_value());
 ```
 
 Generic parameters follow the macro name (`#macro when<T>(bool enabled, T value)`),
@@ -172,7 +174,11 @@ unused, and literal adaptation does not participate in generic inference. A qual
 cannot mix macro and ordinary-function overloads: a caller must not have its
 evaluation policy silently selected by an argument type. `[[track_caller]]`
 may precede the declaration. Macros participate in ordinary namespace, source
-visibility and module export rules; no invocation marker such as `!` is used.
+visibility and module export rules. Omitting `!` is an error (`GTI-S2124`) with
+an insertion fix; ordinary functions cannot be invoked with `!`. The marker
+does not change argument forcing, type checking, hygiene, overload selection,
+cleanup or local-return behavior. Compiler directives and imports belong outside
+macro argument lists, so loading cannot execute an input token as a directive.
 
 The signature selects and type-checks the written arguments, including ones
 that will not execute. Each parameter use evaluates its supplied expression
@@ -203,10 +209,10 @@ Ordinary automatic locals provide explicit evaluate-once bindings:
 ```gti
 #macro inspect_once(int expression) {
   int saved = expression;
-  std::assert(saved >= 0);
+  std::assert!(saved >= 0);
   std::println("{}", saved);
 }
-inspect_once(next_number()); // next_number runs once, when initialization is reached
+inspect_once!(next_number()); // next_number runs once, when initialization is reached
 ```
 
 Each invocation has a separate lexical scope and distinct local identities.
@@ -273,7 +279,7 @@ require destination-passing construction support; an owning indirection can
 transport an immovable payload in this profile. Ordinary references and
 borrowed values remain usable *inside* macros under their existing rules.
 
-`std::expression_text(expression)` from `std.source_location` is a library
+`std::expression_text!(expression)` from `std.source_location` is a library
 macro over a trusted source-metadata capability. It type-checks but never
 evaluates the expression, returning static literal-backed written text with
 interior comments/whitespace preserved. Whole-argument forwarding retains its
@@ -970,6 +976,14 @@ struct Guard {
 };
 ```
 
+Compiled libraries preserve these requests for exported functions admitted by
+the compiled-library profile. The producer's implementation and exported wrapper
+retain the policy, and consumers apply it to the imported LLVM declaration even
+when producer sources are absent. `[[inline]]` does not serialize a body, enable
+link-time optimization, or promise cross-library inlining. An annotation change
+invalidates the compiled callable's linkage contract; rebuild dependent artifacts.
+See the runnable [compiled primitive library](../../examples/compiled-primitive-library/README.md).
+
 Native declarations, runtime bindings, bodyless functions, pure interface
 requirements, macros, lambdas and call-site annotations are outside the current
 profile. `inline` remains reserved outside
@@ -978,8 +992,8 @@ attribute syntax. See the runnable
 
 Future extensions require their own semantic and lowering evidence: forced
 inlining with recursive/unavailable-body diagnostics; profile-guided hot/cold
-regions and outlining; lambda and call-site policy; cross-module
-propagation through compiled interfaces. None is implied by these three
+regions and outlining; lambda and call-site policy; cross-library
+body availability and inlining. None is implied by these three
 function attributes.
 
 ### Function contracts

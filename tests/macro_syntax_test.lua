@@ -17,4 +17,14 @@ for row, name in ipairs({ "statement", "choose", "generic", "maybe", "html" }) d
     assert(actual == expected, token .. " classified as " .. actual .. ", expected " .. expected)
   end
 end
+vim.api.nvim_buf_set_lines(0, 0, -1, false, {
+  "void test() { choose!(true, 1, 2); }",
+  "void test() { scope::generic<int>!(1); }",
+  "void test() { html!({ <h1>hello</h1> }); }",
+})
+for row, name in ipairs({ "choose", "generic", "html" }) do
+  local line = vim.api.nvim_buf_get_lines(0, row - 1, row, false)[1]
+  local column = assert(line:find(name, 1, true))
+  assert(vim.fn.synIDattr(vim.fn.synID(row, column, true), "name") == "gtiMacroName")
+end
 vim.cmd("qa!")

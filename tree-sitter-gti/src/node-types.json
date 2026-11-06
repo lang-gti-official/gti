@@ -110,15 +110,15 @@
         "named": true
       },
       {
+        "type": "macro_invocation",
+        "named": true
+      },
+      {
         "type": "member_expression",
         "named": true
       },
       {
         "type": "primary_expression",
-        "named": true
-      },
-      {
-        "type": "procedural_macro_invocation",
         "named": true
       },
       {
@@ -231,6 +231,10 @@
           "named": true
         },
         {
+          "type": "macro_invocation",
+          "named": true
+        },
+        {
           "type": "member_expression",
           "named": true
         },
@@ -244,10 +248,6 @@
         },
         {
           "type": "primary_expression",
-          "named": true
-        },
-        {
-          "type": "procedural_macro_invocation",
           "named": true
         },
         {
@@ -433,15 +433,15 @@
           "named": true
         },
         {
+          "type": "macro_invocation",
+          "named": true
+        },
+        {
           "type": "member_expression",
           "named": true
         },
         {
           "type": "primary_expression",
-          "named": true
-        },
-        {
-          "type": "procedural_macro_invocation",
           "named": true
         },
         {
@@ -480,15 +480,15 @@
             "named": true
           },
           {
+            "type": "macro_invocation",
+            "named": true
+          },
+          {
             "type": "member_expression",
             "named": true
           },
           {
             "type": "primary_expression",
-            "named": true
-          },
-          {
-            "type": "procedural_macro_invocation",
             "named": true
           },
           {
@@ -908,15 +908,15 @@
             "named": true
           },
           {
+            "type": "macro_invocation",
+            "named": true
+          },
+          {
             "type": "member_expression",
             "named": true
           },
           {
             "type": "primary_expression",
-            "named": true
-          },
-          {
-            "type": "procedural_macro_invocation",
             "named": true
           }
         ]
@@ -956,15 +956,15 @@
             "named": true
           },
           {
+            "type": "macro_invocation",
+            "named": true
+          },
+          {
             "type": "member_expression",
             "named": true
           },
           {
             "type": "primary_expression",
-            "named": true
-          },
-          {
-            "type": "procedural_macro_invocation",
             "named": true
           },
           {
@@ -1717,15 +1717,15 @@
             "named": true
           },
           {
+            "type": "macro_invocation",
+            "named": true
+          },
+          {
             "type": "member_expression",
             "named": true
           },
           {
             "type": "primary_expression",
-            "named": true
-          },
-          {
-            "type": "procedural_macro_invocation",
             "named": true
           },
           {
@@ -1759,15 +1759,15 @@
             "named": true
           },
           {
+            "type": "macro_invocation",
+            "named": true
+          },
+          {
             "type": "member_expression",
             "named": true
           },
           {
             "type": "primary_expression",
-            "named": true
-          },
-          {
-            "type": "procedural_macro_invocation",
             "named": true
           },
           {
@@ -2084,15 +2084,15 @@
           "named": true
         },
         {
+          "type": "macro_invocation",
+          "named": true
+        },
+        {
           "type": "member_expression",
           "named": true
         },
         {
           "type": "primary_expression",
-          "named": true
-        },
-        {
-          "type": "procedural_macro_invocation",
           "named": true
         },
         {
@@ -2295,15 +2295,15 @@
           "named": true
         },
         {
+          "type": "macro_invocation",
+          "named": true
+        },
+        {
           "type": "member_expression",
           "named": true
         },
         {
           "type": "primary_expression",
-          "named": true
-        },
-        {
-          "type": "procedural_macro_invocation",
           "named": true
         },
         {
@@ -2450,15 +2450,15 @@
             "named": true
           },
           {
+            "type": "macro_invocation",
+            "named": true
+          },
+          {
             "type": "member_expression",
             "named": true
           },
           {
             "type": "primary_expression",
-            "named": true
-          },
-          {
-            "type": "procedural_macro_invocation",
             "named": true
           },
           {
@@ -2556,15 +2556,15 @@
           "named": true
         },
         {
+          "type": "macro_invocation",
+          "named": true
+        },
+        {
           "type": "member_expression",
           "named": true
         },
         {
           "type": "primary_expression",
-          "named": true
-        },
-        {
-          "type": "procedural_macro_invocation",
           "named": true
         },
         {
@@ -2740,15 +2740,15 @@
             "named": true
           },
           {
+            "type": "macro_invocation",
+            "named": true
+          },
+          {
             "type": "member_expression",
             "named": true
           },
           {
             "type": "primary_expression",
-            "named": true
-          },
-          {
-            "type": "procedural_macro_invocation",
             "named": true
           },
           {
@@ -3706,15 +3706,15 @@
             "named": true
           },
           {
+            "type": "macro_invocation",
+            "named": true
+          },
+          {
             "type": "member_expression",
             "named": true
           },
           {
             "type": "primary_expression",
-            "named": true
-          },
-          {
-            "type": "procedural_macro_invocation",
             "named": true
           }
         ]
@@ -3809,15 +3809,15 @@
             "named": true
           },
           {
+            "type": "macro_invocation",
+            "named": true
+          },
+          {
             "type": "member_expression",
             "named": true
           },
           {
             "type": "primary_expression",
-            "named": true
-          },
-          {
-            "type": "procedural_macro_invocation",
             "named": true
           },
           {
@@ -3975,6 +3975,73 @@
     }
   },
   {
+    "type": "macro_argument_list",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "assignment_expression",
+          "named": true
+        },
+        {
+          "type": "binary_expression",
+          "named": true
+        },
+        {
+          "type": "call_expression",
+          "named": true
+        },
+        {
+          "type": "concept_application",
+          "named": true
+        },
+        {
+          "type": "conditional_expression",
+          "named": true
+        },
+        {
+          "type": "index_expression",
+          "named": true
+        },
+        {
+          "type": "macro_invocation",
+          "named": true
+        },
+        {
+          "type": "member_expression",
+          "named": true
+        },
+        {
+          "type": "pack_expansion",
+          "named": true
+        },
+        {
+          "type": "payload_reference_pattern",
+          "named": true
+        },
+        {
+          "type": "primary_expression",
+          "named": true
+        },
+        {
+          "type": "syntax_group",
+          "named": true
+        },
+        {
+          "type": "unary_expression",
+          "named": true
+        },
+        {
+          "type": "update_expression",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "macro_declaration",
     "named": true,
     "fields": {
@@ -4061,6 +4128,40 @@
     }
   },
   {
+    "type": "macro_invocation",
+    "named": true,
+    "fields": {
+      "arguments": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "macro_argument_list",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "generic_function",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "scoped_identifier",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "member_expression",
     "named": true,
     "fields": {
@@ -4091,15 +4192,15 @@
             "named": true
           },
           {
+            "type": "macro_invocation",
+            "named": true
+          },
+          {
             "type": "member_expression",
             "named": true
           },
           {
             "type": "primary_expression",
-            "named": true
-          },
-          {
-            "type": "procedural_macro_invocation",
             "named": true
           }
         ]
@@ -4173,15 +4274,15 @@
             "named": true
           },
           {
+            "type": "macro_invocation",
+            "named": true
+          },
+          {
             "type": "member_expression",
             "named": true
           },
           {
             "type": "primary_expression",
-            "named": true
-          },
-          {
-            "type": "procedural_macro_invocation",
             "named": true
           },
           {
@@ -4680,15 +4781,15 @@
             "named": true
           },
           {
+            "type": "macro_invocation",
+            "named": true
+          },
+          {
             "type": "member_expression",
             "named": true
           },
           {
             "type": "primary_expression",
-            "named": true
-          },
-          {
-            "type": "procedural_macro_invocation",
             "named": true
           },
           {
@@ -5160,15 +5261,15 @@
             "named": true
           },
           {
+            "type": "macro_invocation",
+            "named": true
+          },
+          {
             "type": "member_expression",
             "named": true
           },
           {
             "type": "primary_expression",
-            "named": true
-          },
-          {
-            "type": "procedural_macro_invocation",
             "named": true
           },
           {
@@ -5361,36 +5462,6 @@
     "type": "primitive_type",
     "named": true,
     "fields": {}
-  },
-  {
-    "type": "procedural_macro_invocation",
-    "named": true,
-    "fields": {
-      "input": {
-        "multiple": false,
-        "required": true,
-        "types": [
-          {
-            "type": "syntax_group",
-            "named": true
-          }
-        ]
-      },
-      "name": {
-        "multiple": false,
-        "required": true,
-        "types": [
-          {
-            "type": "identifier",
-            "named": true
-          },
-          {
-            "type": "scoped_identifier",
-            "named": true
-          }
-        ]
-      }
-    }
   },
   {
     "type": "pure_specifier",
@@ -5614,15 +5685,15 @@
             "named": true
           },
           {
+            "type": "macro_invocation",
+            "named": true
+          },
+          {
             "type": "member_expression",
             "named": true
           },
           {
             "type": "primary_expression",
-            "named": true
-          },
-          {
-            "type": "procedural_macro_invocation",
             "named": true
           },
           {
@@ -6066,15 +6137,15 @@
             "named": true
           },
           {
+            "type": "macro_invocation",
+            "named": true
+          },
+          {
             "type": "member_expression",
             "named": true
           },
           {
             "type": "primary_expression",
-            "named": true
-          },
-          {
-            "type": "procedural_macro_invocation",
             "named": true
           },
           {
@@ -6180,15 +6251,15 @@
             "named": true
           },
           {
+            "type": "macro_invocation",
+            "named": true
+          },
+          {
             "type": "member_expression",
             "named": true
           },
           {
             "type": "primary_expression",
-            "named": true
-          },
-          {
-            "type": "procedural_macro_invocation",
             "named": true
           }
         ]

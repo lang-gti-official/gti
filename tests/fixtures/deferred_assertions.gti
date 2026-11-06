@@ -65,7 +65,7 @@ namespace application {
 
   #macro hygienic(int value) {
     int saved = 99;
-    std::assert(saved == 99);
+    std::assert!(saved == 99);
     record(value);
   }
 
@@ -79,15 +79,15 @@ namespace application {
   #macro owned_once(bool enabled, std::string value) {
     if (enabled) {
       LocalOwner owned{value, 7};
-      std::assert(owned.text.view() == "local payload");
-      std::assert(!owned.text.empty());
+      std::assert!(owned.text.view() == "local payload");
+      std::assert!(!owned.text.empty());
     }
   }
 
   #macro borrowed_twice(Record value) {
     Record& held = value;
-    std::assert(has_text(held));
-    std::assert(has_text(held));
+    std::assert!(has_text(held));
+    std::assert!(has_text(held));
   }
 
   #macro loop_owners(int count) {
@@ -111,10 +111,10 @@ namespace application {
     } while (true);
   }
 
-  void consume_record(Record value) { std::assert(!value.text.empty()); }
+  void consume_record(Record value) { std::assert!(!value.text.empty()); }
 
   #macro inspect(bool enabled, Record value) {
-    if (enabled) { std::assert(has_text(value)); }
+    if (enabled) { std::assert!(has_text(value)); }
   }
 
   #macro choose(bool first, Record left, Record right) {
@@ -138,56 +138,56 @@ namespace application {
 int main() {
   int record = 99; // Must not shadow application::record in its helper body.
   mut int local = 0;
-  std::assert(local++ == 0, "unexpected count {}", expensive_message());
-  std::assert(check_state(), "unexpected state {}", expensive_message());
-  std::debug_assert(check_state(), "debug state {}", expensive_message());
+  std::assert!(local++ == 0, "unexpected count {}", expensive_message());
+  std::assert!(check_state(), "unexpected state {}", expensive_message());
+  std::debug_assert!(check_state(), "debug state {}", expensive_message());
   mut int repeated = 0;
-  application::repeat(repeated++);
+  application::repeat!(repeated++);
   if (repeated != 2 || Observations::recorded != 1) { return 9; }
   int saved = 17;
-  application::once(true, saved);
+  application::once!(true, saved);
   if (saved != 17 || Observations::recorded != 34) { return 10; }
-  std::assert([]() -> bool {
+  std::assert!([]() -> bool {
     int saved = 23;
-    application::hygienic(saved);
+    application::hygienic!(saved);
     return Observations::recorded == 23;
   }());
   if (Observations::recorded != 23) { return 16; }
-  application::once(false, Observations::local_evaluations++);
+  application::once!(false, Observations::local_evaluations++);
   if (Observations::local_evaluations != 0) { return 11; }
-  application::once(true, Observations::local_evaluations++);
+  application::once!(true, Observations::local_evaluations++);
   if (Observations::local_evaluations != 1 || Observations::recorded != 0) { return 12; }
-  application::owned_once(false, local_payload());
+  application::owned_once!(false, local_payload());
   if (Observations::text_evaluations != 0 || Observations::local_drops != 0) { return 13; }
   mut int bounds = 6;
-  application::loop_owners(bounds++);
+  application::loop_owners!(bounds++);
   if (Observations::loop_visits != 4 || Observations::loop_bodies != 2 ||
       Observations::local_drops != 6 || Observations::local_drop_order != 123456 ||
       bounds != 7) { return 14; }
-  application::owned_once(true, local_payload());
+  application::owned_once!(true, local_payload());
   if (Observations::text_evaluations != 1 || Observations::local_drops != 7 ||
       Observations::local_drop_order != 1234567) { return 15; }
-  application::when(false, expensive_message());
-  application::when(true, 7);
+  application::when!(false, expensive_message());
+  application::when!(true, 7);
   auto callback = []() -> void { Observations::recorded = 8; };
-  application::invoke_if(false, callback);
+  application::invoke_if!(false, callback);
   if (Observations::recorded != 7) { return 7; }
-  application::invoke_if(true, callback);
-  application::remember(false);
-  application::remember(true);
+  application::invoke_if!(true, callback);
+  application::remember!(false);
+  application::remember!(true);
   uint32_t next_line = std::source_location::current().line();
   if (Observations::source_line + uint32_t(1) != next_line) { return 8; }
   Record inspected{std::string("read, not copied or moved")};
-  application::inspect(true, inspected);
-  application::borrowed_twice(inspected);
+  application::inspect!(true, inspected);
+  application::borrowed_twice!(inspected);
   if (inspected.text.view() != "read, not copied or moved") { return 6; }
   Record selected{std::string("consumed once")};
-  application::choose(std::debug_assertions_enabled,
+  application::choose!(std::debug_assertions_enabled,
                       std::move(selected), std::move(selected));
   std::string owner{"retained"};
-  std::assert(true, "{}", std::move(owner));
+  std::assert!(true, "{}", std::move(owner));
   std::string condition_owner{"owned condition"};
-  std::debug_assert(consume_condition(std::move(condition_owner)));
+  std::debug_assert!(consume_condition(std::move(condition_owner)));
 #ifdef NDEBUG
   if (condition_owner.view() != "owned condition") { return 5; }
 #endif

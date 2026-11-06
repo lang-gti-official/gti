@@ -2333,12 +2333,12 @@ struct Cleanup {
   ~Cleanup() { guarded = 9; }
 };
 #macro Cleanup owned() { return Cleanup(); }
-#macro Cleanup nested_owned() { return owned(); }
+#macro Cleanup nested_owned() { return owned!(); }
 )";
     accepted(prefix + owner + R"(
 int main() {
   int& held = guarded;
-  Cleanup saved = nested_owned();
+  Cleanup saved = nested_owned!();
   int snapshot = held;
   return snapshot;
 }
@@ -2348,7 +2348,7 @@ int main() {
     rejected(prefix + owner + R"(
 int main() {
   int& held = guarded;
-  [[discard]] nested_owned();
+  [[discard]] nested_owned!();
   return held;
 }
 )",
@@ -2357,7 +2357,7 @@ int main() {
     accepted(prefix + owner + R"(
 int main() {
   int& held = other;
-  [[discard]] nested_owned();
+  [[discard]] nested_owned!();
   return held;
 }
 )",
@@ -2367,8 +2367,8 @@ int main() {
 #macro ignore<F>(F action) {}
 int main() {
   int& held = guarded;
-  std::string_view written = std::expression_text(++guarded);
-  ignore([]() -> void { guarded = 9; });
+  std::string_view written = std::expression_text!(++guarded);
+  ignore!([]() -> void { guarded = 9; });
   return held + int(written.size());
 }
 )",
@@ -2377,10 +2377,10 @@ int main() {
 
     const std::string callable = R"(
 #macro int invoke<F>(F action) { return action(); }
-#macro int relay<F>(F action) { return invoke(action); }
+#macro int relay<F>(F action) { return invoke!(action); }
 int selected<uint64_t Mode>() {
   int& held = guarded;
-  int result = relay([]() -> int {
+  int result = relay!([]() -> int {
     if constexpr (Mode == 0) { other = 9; }
     else if constexpr (Mode == 1) { guarded = 9; }
     else { third = 9; }
@@ -2411,8 +2411,8 @@ int selected<uint64_t Mode>() {
 [[discardable]] #macro T status<T>(T expression) { return expression; }
 #macro legacy(int expression) { int saved = expression; }
 #macro stop() { return; }
-void caller<T>(T value) { status(value); }
-int main() { caller(3); status(4); legacy(5); stop(); return 0; }
+void caller<T>(T value) { status!(value); }
+int main() { caller(3); status!(4); legacy!(5); stop!(); return 0; }
 )",
                                    true, true);
   if (!discardable.canGenerateCode())
@@ -2422,15 +2422,15 @@ int main() { caller(3); status(4); legacy(5); stop(); return 0; }
          "ordinary macro statement analysis preserves discardable source "
          "contracts for symbolic and concrete calls and legacy void forms");
   const std::string requiredSource = "#macro int required() { return 1; } "
-                                     "int main() { required(); return 0; }";
+                                     "int main() { required!(); return 0; }";
   const auto required = analyze(requiredSource, true, true);
-  const auto call = requiredSource.rfind("required();");
+  const auto call = requiredSource.rfind("required!();");
   const auto ignored = std::find_if(
       required.diagnostics.begin(), required.diagnostics.end(),
       [](const auto &diagnostic) { return diagnostic.code == "GTI-S2009"; });
   expect(!required.semanticValid && ignored != required.diagnostics.end() &&
              ignored->primary.start ==
-                 call + std::string_view("required(").size() &&
+                 call + std::string_view("required!(").size() &&
              ignored->primary.end == ignored->primary.start + 1 &&
              ignored->fixes.size() == 1 &&
              ignored->fixes.front().span.start == call &&
@@ -2449,7 +2449,7 @@ void initializerLocalDependencies() {
 }
 #macro int nested_value(int expression) {
   int saved = expression;
-  return local_value(saved);
+  return local_value!(saved);
 }
 #macro int local_callback<F>(F action) {
   int saved = action();
@@ -2465,17 +2465,17 @@ void initializerLocalDependencies() {
     expect(result.canGenerateCode(), message);
   };
   accepted(helpers + R"(
-thread_local int first = local_value(3);
-thread_local int second = nested_value(4);
-thread_local int third = local_callback([]() -> int { return 7; });
+thread_local int first = local_value!(3);
+thread_local int second = nested_value!(4);
+thread_local int third = local_callback!([]() -> int { return 7; });
 int main() { return first + second + third; }
 )",
            "namespace TLS initialization permits its own lexical values and "
            "fresh-callable results through copied nested-probe contexts");
   accepted(helpers + R"(
 int main() {
-  thread_local int first = nested_value(3);
-  thread_local auto second = local_callback([]() -> int { return 7; });
+  thread_local int first = nested_value!(3);
+  thread_local auto second = local_callback!([]() -> int { return 7; });
   return first + second;
 }
 )",
@@ -2484,10 +2484,10 @@ int main() {
   accepted(helpers + R"(
 #macro int nested_storage() {
   int local = 3;
-  thread_local int nested = local_value(4);
+  thread_local int nested = local_value!(4);
   return local + nested;
 }
-thread_local int outer = nested_storage();
+thread_local int outer = nested_storage!();
 int main() { return outer; }
 )",
            "nested independent TLS initialization restores the outer "
@@ -2496,7 +2496,7 @@ int main() { return outer; }
   for (const std::string type : {"int", "auto"}) {
     const std::string source =
         helpers + "int main() { int caller = 4; thread_local " + type +
-        " state = nested_value(caller); return state; }";
+        " state = nested_value!(caller); return state; }";
     const auto result = analyze(source, true, true);
     const auto use = source.rfind("caller)");
     const auto declaration = source.find("caller =");
@@ -2521,10 +2521,10 @@ int main() { return outer; }
     const auto nested = analyze(helpers + R"(
 #macro int nested_storage() {
   int local = 3;
-  thread_local )" + type + R"( nested = nested_value(local);
+  thread_local )" + type + R"( nested = nested_value!(local);
   return nested;
 }
-thread_local int outer = nested_storage();
+thread_local int outer = nested_storage!();
 int main() { return outer; }
 )",
                                 true, true);
@@ -2537,7 +2537,7 @@ int main() { return outer; }
 int main() {
   int caller = 4;
   auto action = [caller]() -> int { return caller; };
-  thread_local int state = local_value(action());
+  thread_local int state = local_value!(action());
   return state;
 }
 )",
@@ -2548,7 +2548,7 @@ int main() {
          "storage when substituted into an independent TLS initializer");
   const auto parameter = analyze(helpers + R"(
 int read(int caller) {
-  thread_local int state = nested_value(caller);
+  thread_local int state = nested_value!(caller);
   return state;
 }
 int main() { return read(4); }
@@ -2575,7 +2575,7 @@ void observe(bool value) {}
   // its destructor executes. Probe effects must not enter the caller's graph.
   const auto ignored =
       analyze(prefix + "int main() { int& borrowed = value; "
-                       "ignore(inspect(Cleanup())); return borrowed; }",
+                       "ignore!(inspect(Cleanup())); return borrowed; }",
               true, true);
   if (!ignored.canGenerateCode())
     for (const auto &diagnostic : ignored.diagnostics)
@@ -2594,12 +2594,12 @@ int selected<uint64_t Mode>() {
     int first = 0;
     int second = 1;
     int third = 2;
-    ignore(inspect(Cleanup()));
+    ignore!(inspect(Cleanup()));
     return first + second + third;
   } else {
 )" +
-        (forced ? "force(inspect(Cleanup())); return 1; "
-                : "ignore(inspect(Cleanup())); bool seen = "
+        (forced ? "force!(inspect(Cleanup())); return 1; "
+                : "ignore!(inspect(Cleanup())); bool seen = "
                   "inspect(Cleanup()); return seen ? 1 : 0; ") +
         "} }";
     for (const bool reverse : {false, true}) {

@@ -7,8 +7,8 @@
 
 namespace lang::native_llvm {
 
-void applyCodegenAttributes(llvm::Function &function,
-                            const FunctionCodegenAttributes &attributes);
+// Source and compiled-interface policy use the same LLVM attribute mapping.
+void applyCodegenAttributes(llvm::Function &, FunctionCodegenAttributes);
 
 enum class AbiChannel {
   ResultDestination,
