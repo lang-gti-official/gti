@@ -5125,7 +5125,10 @@ auto SemanticVisitor::Impl::visitIfStmt(const IfStmt &stmt) -> void {
       valueControlFlow;
 
   scopes = beforeBranches;
-  mergeValueStates(beforeBranches, thenScopes, elseScopes);
+  mergeValueStates(
+      beforeBranches, thenScopes, elseScopes,
+      summarizeFlow(stmt.thenBranch().get(), nullptr, true).canFallThrough,
+      summarizeFlow(stmt.elseBranch().get(), nullptr, true).canFallThrough);
   const ScopeStack loanScopes = scopes;
   ScopeStack moveScopes = beforeBranches;
   if (const std::optional<bool> condition = constantBoolean(stmt.condition())) {
