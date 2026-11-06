@@ -1,4 +1,5 @@
 #include "gti/semantic_model.h"
+#include "gti/lifetime_types.h"
 
 #include <algorithm>
 #include <atomic>
@@ -751,10 +752,18 @@ SemanticModel::ownerlessTextContractProof(
 
 std::optional<SemanticNoNormalBorrowResultProof>
 SemanticModel::noNormalBorrowResultProof(const Call &call) const {
-  const auto *selected = findCall(call);
-  if (!selected || !selected->noNormalBorrowResult ||
-      selected->intrinsic != IntrinsicKind::None || !selected->function ||
-      selected->dispatch != CallDispatch::Static || !selected->neverReturns)
+  if (const auto *selected = findCall(call)) {
+    if (!selected->noNormalBorrowResult ||
+        selected->intrinsic != IntrinsicKind::None || !selected->function ||
+        selected->dispatch != CallDispatch::Static || !selected->neverReturns ||
+        findLambdaCall(call))
+      return std::nullopt;
+    return SemanticNoNormalBorrowResultProof(call, *selected,
+                                             analysisSeal().programSnapshot);
+  }
+  const auto *selected = findLambdaCall(call);
+  if (!selected || !selected->lambda || !selected->noNormalBorrowResult ||
+      !selected->neverReturns)
     return std::nullopt;
   return SemanticNoNormalBorrowResultProof(call, *selected,
                                            analysisSeal().programSnapshot);
@@ -1503,6 +1512,14 @@ SemanticModel::findClassType(ClassId id) const {
   return base == nullptr ? nullptr : base->findClassType(id);
 }
 
+[[nodiscard]] const ClassTypeInfo *
+SemanticModel::findPublicClassType(ClassId id) const {
+  const auto *record = findClassType(id);
+  while (record != nullptr && record->exactSpecializationPrimary != 0)
+    record = findClassType(record->exactSpecializationPrimary);
+  return record;
+}
+
 [[nodiscard]] SemanticType
 SemanticModel::resolveExactClassSpecialization(SemanticType type) const {
   for (SemanticType &argument : type.arguments) {
@@ -1559,8 +1576,10 @@ SemanticModel::resolveExactClassSpecialization(SemanticType type) const {
       return value;
     }
     SemanticType primary = SemanticType::classType(
-        info->exactSpecializationPrimary, info->exactTypeArguments,
-        info->exactValueArguments);
+        info->exactSpecializationPrimary,
+        value.arguments.empty() ? info->exactTypeArguments : value.arguments,
+        value.valueArguments.empty() ? info->exactValueArguments : value.valueArguments,
+        value.lifetimeArguments);
     return self(self, std::move(primary));
   };
   const SemanticType key = canonicalize(canonicalize, type);
@@ -1575,7 +1594,11 @@ SemanticModel::resolveExactClassSpecialization(SemanticType type) const {
                      model->exactClassSpecializations.end(),
                      [&](const ExactClassSpecializationRecord &candidate) {
                        return candidate.primary == key.classId &&
-                              candidate.typeArguments == key.arguments &&
+                              candidate.typeArguments.size() == key.arguments.size() &&
+                              std::equal(candidate.typeArguments.begin(), candidate.typeArguments.end(),
+                                         key.arguments.begin(), [](const auto &left, const auto &right) {
+                                           return eraseTypeLifetimes(left) == eraseTypeLifetimes(right);
+                                         }) &&
                               candidate.valueArguments == key.valueArguments;
                      });
     return found == model->exactClassSpecializations.end()
@@ -1583,7 +1606,16 @@ SemanticModel::resolveExactClassSpecialization(SemanticType type) const {
                : found->specialization;
   };
   const ClassId specialization = find(find, this);
-  return specialization == 0 ? type : SemanticType::classType(specialization);
+  if (specialization != 0) {
+    type.classId = specialization;
+    // Already selected legacy declaration types may not yet have their
+    // public arguments. New selections always retain the actual arguments.
+    if (type.arguments.empty())
+      type.arguments = key.arguments;
+    if (type.valueArguments.empty())
+      type.valueArguments = key.valueArguments;
+  }
+  return type;
 }
 
 [[nodiscard]] const TypeAliasInfo *
@@ -2065,6 +2097,9 @@ SemanticModel::completionContext() const {
 
 [[nodiscard]] const GenericParameterInfo *
 SemanticModel::findGenericParameter(GenericParameterId id) const {
+  if (const auto parameter = genericParameterMetadata.find(id);
+      parameter != genericParameterMetadata.end())
+    return &parameter->second;
   const auto find = [id](const auto &records) -> const GenericParameterInfo * {
     for (const auto &[_, record] : records) {
       const auto parameter = std::find_if(
@@ -2101,6 +2136,11 @@ SemanticModel::findGenericParameter(GenericParameterId id) const {
     }
   }
   return base == nullptr ? nullptr : base->findGenericParameter(id);
+}
+
+void SemanticModel::recordGenericParameter(GenericParameterInfo parameter) {
+  assert(parameter.id != 0);
+  genericParameterMetadata.insert_or_assign(parameter.id, std::move(parameter));
 }
 
 [[nodiscard]] const ConstructorInfo *
@@ -2191,6 +2231,7 @@ void SemanticModel::clear() {
   structuredBindings.clear();
   rangeIterations.clear();
   functions.clear();
+  genericParameterMetadata.clear();
   functionsById.clear();
   functionDeclarations.clear();
   lambdas.clear();
@@ -2210,6 +2251,8 @@ void SemanticModel::clear() {
   payloadConstructions.clear();
   payloadPatterns.clear();
   calls.clear();
+  blockLifetimeBodies.clear();
+  expressionLifetimeBodies.clear();
   suppressedInheritedCalls.clear();
   packFolds.clear();
   lambdaCalls.clear();
@@ -2663,10 +2706,52 @@ std::size_t SemanticModel::estimatedInstanceBytes() const {
     for (const auto &dependency : captures)
       borrowedDependencies += dependency.conditions.size();
   }
+  std::size_t lifetimeFacts = 0;
+  const auto countLifetimeBody = [&](const auto &bodies) {
+    for (const auto &[_, body] : bodies)
+      lifetimeFacts += body.variables.size() + body.obligations.size() +
+                       body.typeObligations.size() + body.origins.size();
+  };
+  countLifetimeBody(blockLifetimeBodies);
+  countLifetimeBody(expressionLifetimeBodies);
+  const auto countContract = [&](const LifetimeSignatureContract &contract) {
+    lifetimeFacts += contract.parameters.size() + contract.bounds.size() +
+                     contract.typeBounds.size() + contract.requirements.nodes.size();
+  };
+  const auto countApplications = [&](const auto &records) {
+    for (const auto &[_, record] : records) {
+      const auto &application = record.lifetimeApplication;
+      lifetimeFacts += application.bindings.size() + application.variables.size() +
+                       application.obligations.size() + application.typeObligations.size() +
+                       application.origins.size();
+      if (application.callableSignature) {
+        const auto &callable = *application.callableSignature;
+        lifetimeFacts += callable.signatureBindings.size() + callable.signature.arguments.size();
+        countContract(callable.contract);
+      }
+    }
+  };
+  countApplications(calls);
+  countApplications(lambdaCalls);
+  countApplications(operators);
+  countApplications(projectionOperators);
+  countApplications(contextualConversions);
+  countApplications(constructions);
+  countApplications(contextualConstructions);
+  for (const auto &[_, function] : functions)
+    countContract(function.lifetimeContract);
+  for (const auto &[_, lambda] : lambdas)
+    countContract(lambda.lifetimeContract);
+  for (const auto &[_, owner] : classTypes)
+    countContract(owner.lifetimeContract);
+  for (const auto &[_, enumeration] : enumTypes)
+    countContract(enumeration.lifetimeContract);
   // Records hold nested types and vectors whose allocator footprint is not
   // exposed; charge a deliberately generous per-record estimate so the LRU
   // bound is conservative rather than byte-exact.
   return sizeof(SemanticModel) + expressions.size() * 256 +
+         (blockLifetimeBodies.size() + expressionLifetimeBodies.size()) * 256 +
+         lifetimeFacts * 512 +
          (calls.size() + constructions.size() + contextualConstructions.size() +
           operators.size() + projectionOperators.size() +
           contextualConversions.size()) *
@@ -2676,6 +2761,7 @@ std::size_t SemanticModel::estimatedInstanceBytes() const {
           immediateInvocations.size() + immediateVoidCompletions.size()) *
              160 +
          (functions.size() + lambdas.size() + classLifecycles.size()) * 1024 +
+         genericParameterMetadata.size() * 512 +
          (statementFullExpressions.size() + constructorFullExpressions.size() +
           fullExpressionOrder.size()) *
              96 +
@@ -2741,6 +2827,30 @@ void SemanticModel::recordLoanEndpoint(SemanticLoanId id,
     endpoints.push_back(
         {.kind = kind, .statement = &statement, .switchArm = switchArm});
   }
+}
+
+const SemanticLifetimeBody *
+SemanticModel::findLifetimeBody(const BlockStmt &body) const {
+  const auto found = blockLifetimeBodies.find(&body);
+  // Like retained loans, inference variables and local anchors are owned by
+  // one body analysis. A generic-instance delta cannot inherit the base body.
+  return found == blockLifetimeBodies.end() ? nullptr : &found->second;
+}
+
+const SemanticLifetimeBody *
+SemanticModel::findLifetimeBody(const Expr &body) const {
+  const auto found = expressionLifetimeBodies.find(&body);
+  return found == expressionLifetimeBodies.end() ? nullptr : &found->second;
+}
+
+void SemanticModel::recordLifetimeBody(const BlockStmt &body,
+                                       SemanticLifetimeBody facts) {
+  blockLifetimeBodies.insert_or_assign(&body, std::move(facts));
+}
+
+void SemanticModel::recordLifetimeBody(const Expr &body,
+                                       SemanticLifetimeBody facts) {
+  expressionLifetimeBodies.insert_or_assign(&body, std::move(facts));
 }
 
 void SemanticModel::record(const Expr &expression, ExpressionInfo info) {

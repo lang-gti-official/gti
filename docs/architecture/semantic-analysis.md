@@ -219,6 +219,26 @@ provenance queries resolve an exact dereferenced capture slot to its entry loan;
 selected fields/elements retain their separate identity. A same-typed captured
 array cannot substitute another capture's loan at a call boundary.
 
+Lifetime signature normalization records declaration parameters, implied
+well-formedness bounds and a Boolean requirement formula before checking a
+body. Input elision creates independent parameters; a receiver or sole input
+can supply an elided output. A call records its actual region bindings,
+inference variables, required relations and exact origin places separately.
+The body of a reusable instance assumes its declared formula; it does not
+attempt to prove universal lifetime requirements without the caller's bindings.
+Conjunction preserves all premises, while disjunction supplies only premises
+guaranteed by every feasible alternative.
+
+Anonymous stored regions remain determined by field structure. A constructor's
+checked initializer-list summary may relate its inputs to those anonymous
+output slots. Those relations become its published declaration contract before
+body checking; arbitrary constructor statements do not infer or narrow them.
+Explicitly named owner regions still require a written input relationship or
+bound. Initializer analysis uses normalized member types, rather than resolving
+omitted source lifetimes a second time. Provenance matching can compare ordinary
+type shape, but conversion and initialization still require the full lifetime
+proof and the existing access, movement and cleanup checks.
+
 ## Generic payload enum signatures
 
 Nominal registration inventories class and enum identities and their ordinary
@@ -1953,6 +1973,34 @@ instances. Concrete substitutions revalidate ownership, value parameters,
 packs, selected construction, capabilities, callables, and borrowed-return
 origins. HIR is not a second type checker; it asks semantics for the concrete
 facts it needs.
+
+Region-bearing generic type arguments pass through the provider's
+`canonicalizeExecutableInstance` query before executable discovery or body
+reanalysis. Each free region occurrence receives an instance-owned universal
+parameter; coincident caller regions do not make independent occurrences equal
+inside the body. Higher-ranked binders preserve their scope and repeated uses
+under alpha-renaming. The canonical type arguments, normalized signature,
+formation requirements and lifetime contract identify the reusable instance.
+Actual caller choices remain in `SemanticLifetimeApplication` bindings.
+Explicit and default type arguments fix those choices; deduced arguments may
+infer a common valid region only through the ordinary checked call application.
+
+Lifted parameter identities occupy a checked, non-rewinding request-owned
+range. Nested analysis workers share that registry, while a preamble adoption
+copies it for the new request. Every consuming model records the descriptors;
+HIR and MIR retain their reduced kind and identity metadata alongside the
+universal contract. Region-bearing instance-cache keys are not reused across
+editor snapshots until that cache can independently remap these identities.
+Native representation erasure remains downstream of lifetime verification.
+
+An exact class specialization retains the primary's public type and value
+arguments in its selected semantic type. Its declaration identity selects
+storage and member definitions; public parameter projection supplies argument
+arity, substitution, and inherited formation obligations. This preserves
+regions nested inside generic type arguments without introducing a second
+hidden type tree. Selection compares runtime type/value structure independently
+of regions, while each application still proves the primary's complete lifetime
+contract. Primary type names do not enter the specialization's lexical scope.
 
 `HirLowerer` receives the immutable base `SemanticModel` and a narrow
 `SemanticInstanceProvider`; it cannot start a fresh semantic request or mutate
@@ -4114,9 +4162,9 @@ failed bindings preserve prior entries. Each snapshot builds its own registry,
 so decoding a reference selects that snapshot's declaration ID. An absent key is
 an error, never an invented declaration. The registry is capped at 4096 bindings.
 
-Nominal keys use `gti.nominal-key.2:` and the existing canonical length-framed
+Nominal keys use `gti.nominal-key.3:` and the existing canonical length-framed
 fields: kind (`class` or `enum`), package, target, module, qualified name, and ordered generic parameter shape. Shape characters
-are `t` (type), `v` (uint64 value), and `p` (final type pack); empty denotes a
+are `t` (type), `v` (uint64 value), `l` (lifetime), and `p` (final type pack); empty denotes a
 nongeneric declaration. They contain no layout or member records. Primary class
 and enum generics are admitted. Transformed class families, exact specializations,
 nested-class owners, projected binders and compiler capability types reject
@@ -4127,21 +4175,52 @@ qualified spellings. Logical ownership remains caller supplied; keys confer no
 visibility, capability trust or artifact compatibility.
 
 `writePersistentType`/`readPersistentType` map a bounded recipe directly between
-existing `SemanticType` values. `gti.type.2:` is followed by length-framed explicit
-scalar tags, or `nominal` plus a nominal key, a decimal type-argument count and those recursive
-recipes, then a decimal value-argument count and canonical decimal uint64 values;
-or a structural tag followed by its child recipe. Structural tags are `ref`, `mut-ref`, `ptr`, `mut-ptr`, and `array`;
-arrays also carry a canonical decimal uint64 extent before their element recipe.
-Access mode, extent, nominal identity and substitutions therefore survive
-remapping. Complete argument vectors are required: defaults are resolved before
-serialization. The registry checks fixed type/value arity and permits expanded
-arguments only for a final type pack, including an empty pack. Symbolic values,
-unexpanded packs, unknown/dependent type arguments and noncanonical value payloads
-reject. Binder names, numeric generic IDs, defaults and constraints do not enter
-identity; defaults and constraints remain mandatory future interface facts. Unknown
-or extraneous semantic payloads, unresolved nominal references, noncanonical bytes,
-truncation and trailing data reject. The existing scalar-only function-key version
-is unchanged; this type recipe is a prerequisite for richer function interfaces.
+existing `SemanticType` values. `gti.type.3:` uses length-framed explicit scalar,
+nominal, reference, raw-pointer, fixed-array, text-view and callable signature
+tags. Nominal recipes carry compact type, value and lifetime argument vectors;
+references carry access and their own region separately from the referent.
+Callable recipes retain receiver mutability and scoped higher-ranked binders.
+Registry-based function keys use `gti.function-key.3:`; scalar-only version 1
+keys remain unchanged. Earlier recipe versions reject rather than acquiring
+new meaning.
+
+`PersistentLifetimeBindings` supplies declaration lifetime IDs, type IDs and
+preorder quantified IDs allocated by the importer. Recipes store binder
+positions, never these snapshot-local IDs. Writing can discover a callable's
+quantified IDs from its type; reading requires an exact supplied vector and
+rejects missing, duplicate or unused identities. The no-context type API rejects
+parameter-bearing and quantified types. `static` requires no binder. Local and
+unresolved inference regions cannot cross this interface. Absent annotations on
+existing reference types remain distinct from an explicit region.
+
+A separate `gti.lifetime-contract.2:` record preserves complete signature
+parameters, outlives bounds, exact type-outlives bounds, receiver region and
+contract origin. Boolean requirements retain their postfix `All`/`Any` topology,
+exact region/type leaves and declaration-local semantic predicate identity.
+A predicate may remain unresolved in a generic declaration artifact; executable
+MIR requires the exact instance's semantic truth. Bound ordering and duplicates normalize; alpha-renaming does
+not change bytes, while changing a relation does. Generic type references use
+positions in the supplied type declaration context. Nominal types in bounds
+require the same explicit registry as ordinary recipes. Associated projections use explicitly registered `gti.concept-key.1:` and
+`gti.associated-type-key.1:` identities: logical concept owner/name/kind shape,
+then associated member name/kind shape. Concept IDs and member positions remap
+to the importing snapshot; member reordering does not change the key. Missing
+or inconsistent concept/family descriptors reject. Exact projections are never
+reduced to bounds on their arguments. This codec does
+not make a contract callable or extend the compiled-library importer profile.
+
+Complete nominal argument vectors are required: defaults are resolved before
+serialization. The registry checks type/value/lifetime arity and permits
+expanded type arguments only for a final type pack. Anonymous normalized
+lifetime slots have a separate generic-shape tag from source-addressable
+lifetime parameters; both retain their compact region slots. The independent
+`gti.nominal-variance.1` interface record preserves complete type/lifetime slot
+variance in declaration order and checks exact imported arity; it is interface
+content, not declaration identity or an importer authorization.
+Symbolic values,
+unexpanded packs, unresolved nominal identities, extraneous type payloads,
+noncanonical bytes, truncation and trailing data reject. Defaults, visibility,
+capability trust and declaration constraints require separate interface proof.
 
 The codec bounds encoded bytes to 16 KiB, depth to 32 and visited type/value nodes
 to 256; each declaration/argument vector is also limited to 256; ordinary fields retain the 1024-byte bound, with a complete nominal-key field

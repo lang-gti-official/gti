@@ -28,7 +28,8 @@ auto SemanticVisitor::Impl::tryableConcept() const -> std::optional<ConceptId> {
 // function with the block's binding as its explicit type arguments.
 auto SemanticVisitor::Impl::protocolOperationCall(
     const RegisteredConformance &conformance,
-    const std::vector<SemanticType> &binding, std::size_t operation) const
+    const std::vector<SemanticType> &binding, std::size_t operation,
+    const LifetimeSubstitution &lifetimes) const
     -> std::optional<ResolvedCallInfo> {
   if (operation >= conformance.operations.size() ||
       conformance.operations[operation].overloads.size() != 1) {
@@ -38,18 +39,27 @@ auto SemanticVisitor::Impl::protocolOperationCall(
       conformance.operations[operation].overloads.front();
   const std::vector<GenericParameterInfo> &parameters =
       candidate.record().genericParameters;
-  if (parameters.size() != binding.size()) {
+  if (genericTypeParameterCount(parameters) != binding.size() ||
+      parameters.size() != conformance.genericParameters.size()) {
     return std::nullopt;
   }
-  GenericSubstitution substitution;
+  GenericSubstitution substitution = nominalSubstitution(parameters, {.types = binding});
+  std::vector<Lifetime> lifetimeArguments;
   for (std::size_t index = 0; index < parameters.size(); ++index) {
-    substitution.types.emplace(parameters[index].id, binding[index]);
+    if (!parameters[index].lifetime)
+      continue;
+    const auto found = lifetimes.find(conformance.genericParameters[index].id);
+    if (found == lifetimes.end())
+      return std::nullopt;
+    substitution.lifetimes.emplace(parameters[index].id, found->second);
+    lifetimeArguments.push_back(found->second);
   }
   ResolvedCallInfo call{.function = candidate.id,
                         .declaration = candidate.declaration,
                         .returnType =
                             substituteType(candidate.returnType, substitution),
-                        .typeArguments = binding};
+                        .typeArguments = binding,
+                        .lifetimeArguments = std::move(lifetimeArguments)};
   for (const SemanticType &parameter : candidate.parameterTypes) {
     call.parameterTypes.push_back(substituteType(parameter, substitution));
   }
@@ -292,11 +302,14 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
   const RegisteredConformance &conformance =
       conformances[match->conformance - 1];
   std::optional<ResolvedCallInfo> test =
-      protocolOperationCall(conformance, match->binding, *hasValue);
+      protocolOperationCall(conformance, match->binding, *hasValue,
+                            match->lifetimeBinding);
   std::optional<ResolvedCallInfo> output =
-      protocolOperationCall(conformance, match->binding, *takeValue);
+      protocolOperationCall(conformance, match->binding, *takeValue,
+                            match->lifetimeBinding);
   std::optional<ResolvedCallInfo> residual =
-      protocolOperationCall(conformance, match->binding, *takeResidual);
+      protocolOperationCall(conformance, match->binding, *takeResidual,
+                            match->lifetimeBinding);
   if (!test || !output || !residual) {
     // The incomplete block has already been reported.
     return SemanticType::Unknown;

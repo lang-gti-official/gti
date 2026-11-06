@@ -1,3 +1,4 @@
+#include "representation.h"
 #include "lifetimes.h"
 #include "closure_environment.h"
 #include "gti/mir_effects.h"
@@ -142,15 +143,16 @@ void Lifetimes::preflightCleanup(Session &session, Dispatch &dispatch,
             selected.payloadField.has_value())
       throw BackendUnsupportedError(
           "LLVM cleanup requires its later ownership/dispatch milestone");
-    const auto *payload =
-        selected.type.kind == SemanticType::Enum
-            ? session.program().mir().findPayloadEnum(selected.type)
-            : nullptr;
+    const auto enumView = selected.type.kind == SemanticType::Enum
+                              ? mirEnumLifetimeView(session.program().mir(), selected.type)
+                              : std::nullopt;
+    const auto *payload = enumView ? enumView->payload : nullptr;
     const auto *lambda =
         closure ? closureCleanupInstance(session.program().mir(), selected)
                 : nullptr;
+    const auto lambdaView = lambda ? mirLambdaLifetimeView(*lambda, selected.type) : std::nullopt;
     if (closure &&
-        (!lambda || lambda->captureTypes.size() != lambda->captureModes.size()))
+        (!lambdaView || lambda->captureTypes.size() != lambda->captureModes.size()))
       throw std::logic_error(
           "LLVM closure cleanup lost its sealed lambda identity");
     if (selected.type.kind == SemanticType::Class) {
@@ -210,9 +212,12 @@ void Lifetimes::preflightCleanup(Session &session, Dispatch &dispatch,
     for (const auto &child : selected.aggregate) {
       if (closure) {
         // Each closure child is one owned, non-borrowing capture in its slot.
-        if (!child.captureIndex ||
-            *child.captureIndex >= lambda->captureTypes.size() ||
-            lambda->captureTypes[*child.captureIndex] != child.type ||
+        const auto captureType = child.captureIndex &&
+                                         *child.captureIndex < lambda->captureTypes.size()
+                                     ? lambdaView->instantiate(lambda->captureTypes[*child.captureIndex])
+                                     : std::nullopt;
+        if (!child.captureIndex || !captureType ||
+            *captureType != child.type ||
             isBorrowingCapture(lambda->captureModes[*child.captureIndex]) ||
             child.uniqueOwnerField || child.uniqueOwnerBase ||
             child.payloadVariant || child.payloadField)
@@ -228,18 +233,35 @@ void Lifetimes::preflightCleanup(Session &session, Dispatch &dispatch,
             *child.payloadVariant >= payload->variants.size() ||
             *child.payloadField >=
                 payload->variants[*child.payloadVariant].payloadTypes.size() ||
-            payload->variants[*child.payloadVariant]
-                    .payloadTypes[*child.payloadField] != child.type)
+            enumView->instantiate(payload->variants[*child.payloadVariant]
+                                      .payloadTypes[*child.payloadField]) != child.type)
           throw std::logic_error(
               "LLVM payload cleanup lost its exact alternative field");
         static_cast<void>(session.layouts().payload(selected.type));
       } else if (!selected.fixedArray) {
-        if (child.uniqueOwnerField)
-          static_cast<void>(session.layouts().fieldIndex(
-              selected.type, child.uniqueOwnerField));
-        else if (child.uniqueOwnerBase)
-          static_cast<void>(session.layouts().baseIndex(
-              selected.type, *child.uniqueOwnerBase));
+        if (child.uniqueOwnerField || child.uniqueOwnerBase) {
+          const auto view = mirClassLifetimeView(session.program().mir(), selected.type);
+          std::optional<SemanticType> actual;
+          if (view && child.uniqueOwnerField) {
+            for (const auto &field : view->instance->declaredFields)
+              if (field.symbol == child.uniqueOwnerField) {
+                if (actual) throw std::logic_error("LLVM cleanup has ambiguous field storage");
+                actual = view->instantiate(field.type);
+              }
+          } else if (view) {
+            for (const auto &base : view->instance->bases)
+              if (base.instance == *child.uniqueOwnerBase) {
+                if (actual) throw std::logic_error("LLVM cleanup has ambiguous base storage");
+                actual = view->instantiate(base.type);
+              }
+          }
+          if (!actual || *actual != child.type)
+            throw std::logic_error("LLVM cleanup lost its exact substituted subobject type");
+          if (child.uniqueOwnerField)
+            static_cast<void>(session.layouts().fieldIndex(selected.type, child.uniqueOwnerField));
+          else
+            static_cast<void>(session.layouts().baseIndex(selected.type, *child.uniqueOwnerBase));
+        }
         else if (mutexPayload && selected.aggregate.size() == 1 &&
                  child.type == *mutexPayload)
           static_cast<void>(session.layouts().mutexStorage(selected.type));
@@ -456,12 +478,14 @@ bool Lifetimes::containsMutex(const SemanticType &type) const {
   if (type.kind == SemanticType::Array)
     return containsMutex(type.arguments.at(0));
   if (type.kind == SemanticType::Enum) {
-    const auto *enumeration = session.program().mir().findPayloadEnum(type);
+    const auto *enumeration = native_llvm::exactPayloadEnum(session.program().mir(), type);
     if (enumeration)
       for (const auto &variant : enumeration->variants)
         for (const auto &payload : variant.payloadTypes)
-          if (containsMutex(payload))
+          if (containsMutex(instantiateStorageType(session.program().mir(), type, payload)))
             return true;
+    if (!enumeration && !exactIntegralEnum(session.program().mir(), type))
+      throw std::logic_error("LLVM mutex scan lost its exact enum view");
     return false;
   }
   if (type.kind == SemanticType::Lambda) {
@@ -485,10 +509,10 @@ bool Lifetimes::containsMutex(const SemanticType &type) const {
   if (owner.compilerCapability != CompilerCapabilityTypeKind::None)
     return false;
   for (const auto &field : owner.declaredFields)
-    if (containsMutex(field.type))
+    if (containsMutex(instantiateStorageType(session.program().mir(), type, field.type)))
       return true;
   for (const auto &base : owner.bases)
-    if (!base.interface && containsMutex(base.type))
+    if (!base.interface && containsMutex(instantiateStorageType(session.program().mir(), type, base.type)))
       return true;
   return false;
 }
@@ -603,13 +627,13 @@ llvm::Function *Lifetimes::mutexTransfer(const SemanticType &type) {
       if (base.interface)
         continue;
       const auto index = session.layouts().baseIndex(type, base.instance);
-      transfer(base.type,
+      transfer(instantiateStorageType(session.program().mir(), type, base.type),
                ir.CreateStructGEP(layout.storage, destination, index),
                ir.CreateStructGEP(layout.storage, source, index));
     }
     for (const auto &field : owner.declaredFields) {
       const auto index = session.layouts().fieldIndex(type, field.symbol);
-      transfer(field.type,
+      transfer(instantiateStorageType(session.program().mir(), type, field.type),
                ir.CreateStructGEP(layout.storage, destination, index),
                ir.CreateStructGEP(layout.storage, source, index));
     }
@@ -632,7 +656,7 @@ llvm::Function *Lifetimes::mutexTransfer(const SemanticType &type) {
     }
   } else if (type.kind == SemanticType::Enum) {
     const auto &payload = session.layouts().payload(type);
-    const auto *enumeration = session.program().mir().findPayloadEnum(type);
+    const auto *enumeration = native_llvm::exactPayloadEnum(session.program().mir(), type);
     auto *tag =
         ir.CreateLoad(ir.getInt32Ty(), payloadTagAddress(ir, payload, source));
     ir.CreateStore(tag, payloadTagAddress(ir, payload, destination));
@@ -643,7 +667,7 @@ llvm::Function *Lifetimes::mutexTransfer(const SemanticType &type) {
       dispatch->addCase(ir.getInt32(variant.variantIndex), block);
       ir.SetInsertPoint(block);
       for (std::size_t index = 0; index < variant.payloadTypes.size(); ++index)
-        transfer(variant.payloadTypes[index],
+        transfer(instantiateStorageType(session.program().mir(), type, variant.payloadTypes[index]),
                  payloadFieldAddress(ir, payload, destination,
                                      variant.variantIndex, index),
                  payloadFieldAddress(ir, payload, source, variant.variantIndex,
@@ -913,36 +937,35 @@ Lifetimes::preflightFreshTransfer(Session &session, Dispatch &dispatch,
   if (owner.polymorphic)
     dispatch.preflightState(owner.id);
   if (transfer.kind == ConstructorKind::Move)
-    preflightGeneratedRelocation(session, dispatch, owner.type);
+    preflightGeneratedRelocation(session, dispatch, transfer.type);
   const auto preflight = [&](const auto &self,
-                             const MirClassInstance &object) -> void {
-    static_cast<void>(session.layouts().get(object.type));
+                             const MirClassInstance &object, const SemanticType &actual) -> void {
+    static_cast<void>(session.layouts().get(actual));
     if (object.requiresActiveDropState !=
-        session.layouts().hasActiveState(object.type))
+        session.layouts().hasActiveState(actual))
       throw std::logic_error(
           "LLVM transfer active state disagrees with its sealed class");
     for (const auto &base : object.bases) {
-      const auto *child =
-          session.program().mir().findClassInstance(base.instance);
-      if (!child || child->type != base.type)
+      const auto childType = instantiateStorageType(session.program().mir(), actual, base.type);
+      const auto *child = exactClassInstance(session.program().mir(), childType);
+      if (!child || child->id != base.instance)
         throw std::logic_error("LLVM transfer lost its exact base identity");
-      static_cast<void>(
-          session.layouts().baseIndex(object.type, base.instance));
-      self(self, *child);
+      static_cast<void>(session.layouts().baseIndex(actual, base.instance));
+      self(self, *child, childType);
     }
     for (const auto &field : object.declaredFields) {
-      static_cast<void>(
-          session.layouts().fieldIndex(object.type, field.symbol));
-      static_cast<void>(session.layouts().get(field.type));
-      if (field.type.kind == SemanticType::Class) {
-        const auto &child = session.layouts().instance(field.type);
+      const auto childType = instantiateStorageType(session.program().mir(), actual, field.type);
+      static_cast<void>(session.layouts().fieldIndex(actual, field.symbol));
+      static_cast<void>(session.layouts().get(childType));
+      if (childType.kind == SemanticType::Class) {
+        const auto &child = session.layouts().instance(childType);
         if (child.polymorphic)
           dispatch.preflightState(child.id);
-        self(self, child);
+        self(self, child, childType);
       }
     }
   };
-  preflight(preflight, owner);
+  preflight(preflight, owner, transfer.type);
   for (const auto identity : {transfer.sourceDrop, transfer.valueDrop})
     if (identity) {
       const auto *drop = body.findDropObligation(identity);
@@ -966,16 +989,14 @@ void Lifetimes::freshTransfer(llvm::IRBuilder<> &ir, llvm::Value *destination,
     ir.CreateCall(generatedRelocation(transfer.type), {destination, source});
     return;
   }
-  const auto &owner =
-      *session.program().mir().findClassInstance(transfer.owner);
   if (transfer.kind == ConstructorKind::Move) {
     // The exact fresh-local MIR publication grants this relocation. Reuse the
     // typed emitter that rebuilds nested headers and transfers active flags;
     // never materialize the move as a raw aggregate load/store.
-    ir.CreateCall(generatedRelocation(owner.type), {destination, source});
+    ir.CreateCall(generatedRelocation(transfer.type), {destination, source});
     return;
   }
-  generatedCopy(ir, destination, source, owner.type);
+  generatedCopy(ir, destination, source, transfer.type);
 }
 
 void Lifetimes::generatedCopy(llvm::IRBuilder<> &ir, llvm::Value *destination,
@@ -991,34 +1012,36 @@ void Lifetimes::generatedCopy(llvm::IRBuilder<> &ir, llvm::Value *destination,
   // Generated inert copy has no source callback or runtime failure point.
   // Copy logical fields only. Even a byte-identical static layout does not
   // authorize transporting source vptrs, padding, or active-state bytes.
-  const auto copy = [&](const auto &self, const MirClassInstance &object,
+  const auto copy = [&](const auto &self, const MirClassInstance &object, const SemanticType &actual,
                         llvm::Value *from, llvm::Value *to, bool base) -> void {
-    const auto storage = session.layouts().get(object.type).storage;
+    const auto storage = session.layouts().get(actual).storage;
     for (const auto &base : object.bases) {
       const auto index =
-          session.layouts().baseIndex(object.type, base.instance);
+          session.layouts().baseIndex(actual, base.instance);
       self(self, *session.program().mir().findClassInstance(base.instance),
+           instantiateStorageType(session.program().mir(), actual, base.type),
            ir.CreateStructGEP(storage, from, index),
            ir.CreateStructGEP(storage, to, index), true);
     }
     for (const auto &field : object.declaredFields) {
       const auto index =
-          session.layouts().fieldIndex(object.type, field.symbol);
+          session.layouts().fieldIndex(actual, field.symbol);
       auto *sourceField = ir.CreateStructGEP(storage, from, index);
       auto *destinationField = ir.CreateStructGEP(storage, to, index);
-      if (field.type.kind == SemanticType::Class &&
-          !generatedCopyIsBitwise(session.program().mir(), field.type))
-        self(self, session.layouts().instance(field.type), sourceField,
+      const auto childType = instantiateStorageType(session.program().mir(), actual, field.type);
+      if (childType.kind == SemanticType::Class &&
+          !generatedCopyIsBitwise(session.program().mir(), childType))
+        self(self, session.layouts().instance(childType), childType, sourceField,
              destinationField, false);
       else
-        ir.CreateStore(ir.CreateLoad(session.layouts().get(field.type).storage,
+        ir.CreateStore(ir.CreateLoad(session.layouts().get(childType).storage,
                                      sourceField),
                        destinationField);
     }
     if (!base && object.polymorphic)
       dispatch.install(ir, to, object.id);
   };
-  copy(copy, owner, source, destination, false);
+  copy(copy, owner, type, source, destination, false);
 }
 
 namespace {
@@ -1069,7 +1092,7 @@ void preflightRelocation(Session &session, Dispatch &dispatch,
           owner.moveConstructor == SpecialMemberStatus::Generated &&
           std::all_of(owner.declaredFields.begin(), owner.declaredFields.end(),
                       [&](const auto &field) {
-                        return mirTypeRelocationKind(program, field.type) ==
+                        return mirTypeRelocationKind(program, instantiateStorageType(program, selected, field.type)) ==
                                RelocationKind::Bitwise;
                       })) {
         // A union has no active-member tag. Only its verified passive storage
@@ -1099,22 +1122,23 @@ void preflightRelocation(Session &session, Dispatch &dispatch,
       if (!base && owner.polymorphic)
         dispatch.preflightState(owner.id);
       for (const auto &entry : owner.bases) {
-        const auto *child = program.findClassInstance(entry.instance);
-        if (!child || child->type != entry.type)
+        const auto actual = instantiateStorageType(program, selected, entry.type);
+        const auto *child = exactClassInstance(program, actual);
+        if (!child || child->id != entry.instance)
           throw std::logic_error("LLVM inert relocation lost its exact base");
         static_cast<void>(
             session.layouts().baseIndex(selected, entry.instance));
-        self(self, entry.type, true);
+        self(self, actual, true);
       }
       for (const auto &field : owner.declaredFields) {
         static_cast<void>(session.layouts().fieldIndex(selected, field.symbol));
-        self(self, field.type, false);
+        self(self, instantiateStorageType(program, selected, field.type), false);
       }
-    } else if (const auto *payload = program.findPayloadEnum(selected)) {
+    } else if (const auto *payload = native_llvm::exactPayloadEnum(program, selected)) {
       static_cast<void>(session.layouts().payload(selected));
       for (const auto &variant : payload->variants)
         for (const auto &field : variant.payloadTypes)
-          self(self, field, false);
+          self(self, instantiateStorageType(program, selected, field), false);
     } else if (selected.kind == SemanticType::Array) {
       if (selected.arguments.size() != 1 || selected.arrayLengthParameterId)
         throw BackendUnsupportedError(
@@ -1276,13 +1300,13 @@ llvm::Function *Lifetimes::generatedRelocation(const SemanticType &type) {
       for (const auto &entry : owner.bases) {
         const auto index =
             session.layouts().baseIndex(selected, entry.instance);
-        self(self, entry.type,
+        self(self, instantiateStorageType(session.program().mir(), selected, entry.type),
              ir.CreateStructGEP(layout.storage, destination, index),
              ir.CreateStructGEP(layout.storage, source, index), true);
       }
       for (const auto &field : owner.declaredFields) {
         const auto index = session.layouts().fieldIndex(selected, field.symbol);
-        ir.CreateCall(generatedRelocation(field.type),
+        ir.CreateCall(generatedRelocation(instantiateStorageType(session.program().mir(), selected, field.type)),
                       {ir.CreateStructGEP(layout.storage, destination, index),
                        ir.CreateStructGEP(layout.storage, source, index)});
       }
@@ -1300,7 +1324,7 @@ llvm::Function *Lifetimes::generatedRelocation(const SemanticType &type) {
             llvm::ConstantPointerNull::get(session.layouts().pointer()),
             ir.CreateStructGEP(layout.storage, source, *inactive));
     } else if (const auto *payload =
-                   session.program().mir().findPayloadEnum(selected)) {
+                   native_llvm::exactPayloadEnum(session.program().mir(), selected)) {
       const auto physical = session.layouts().payload(selected);
       auto *tag = ir.CreateLoad(ir.getInt32Ty(),
                                 payloadTagAddress(ir, physical, source));
@@ -1324,7 +1348,7 @@ llvm::Function *Lifetimes::generatedRelocation(const SemanticType &type) {
         const auto &fields = payload->variants[variant].payloadTypes;
         for (std::size_t field = 0; field < fields.size(); ++field)
           ir.CreateCall(
-              generatedRelocation(fields[field]),
+              generatedRelocation(instantiateStorageType(session.program().mir(), selected, fields[field])),
               {payloadFieldAddress(ir, physical, destination, variant, field),
                payloadFieldAddress(ir, physical, source, variant, field)});
         ir.CreateStore(tag, payloadTagAddress(ir, physical, destination));
@@ -1449,13 +1473,13 @@ llvm::Function *Lifetimes::moveHelper(const SemanticType &type) {
           ir,
           ir.CreateStructGEP(storage, address,
                              session.layouts().baseIndex(type, base.instance)),
-          base.type);
+          instantiateStorageType(session.program().mir(), type, base.type));
     for (const auto &field : owner.declaredFields)
       moved(
           ir,
           ir.CreateStructGEP(storage, address,
                              session.layouts().fieldIndex(type, field.symbol)),
-          field.type);
+          instantiateStorageType(session.program().mir(), type, field.type));
   } else if (type.kind == SemanticType::Lambda) {
     const auto environment =
         closureEnvironmentLayout(session.program().mir(), type);
@@ -1489,7 +1513,7 @@ bool Lifetimes::needsMoveState(const SemanticType &type) const {
   if (type.kind == SemanticType::Array)
     return needsMoveState(type.arguments.at(0));
   if (type.kind == SemanticType::Enum)
-    return session.program().mir().findPayloadEnum(type) != nullptr;
+    return native_llvm::exactPayloadEnum(session.program().mir(), type) != nullptr;
   if (type.kind == SemanticType::Lambda) {
     const auto environment =
         closureEnvironmentLayout(session.program().mir(), type);
@@ -1528,10 +1552,10 @@ bool Lifetimes::needsMoveState(const SemanticType &type) const {
   if (owner.requiresActiveDropState)
     return true;
   for (const auto &field : owner.declaredFields)
-    if (needsMoveState(field.type))
+    if (needsMoveState(instantiateStorageType(session.program().mir(), type, field.type)))
       return true;
   for (const auto &base : owner.bases)
-    if (needsMoveState(base.type))
+    if (needsMoveState(instantiateStorageType(session.program().mir(), type, base.type)))
       return true;
   return false;
 }
@@ -1539,7 +1563,7 @@ bool Lifetimes::needsMoveState(const SemanticType &type) const {
 void Lifetimes::moved(llvm::IRBuilder<> &ir, llvm::Value *address,
                       const SemanticType &type) {
   if (type.kind == SemanticType::Enum &&
-      session.program().mir().findPayloadEnum(type)) {
+      native_llvm::exactPayloadEnum(session.program().mir(), type)) {
     ir.CreateStore(
         ir.getInt32(PayloadLayout::inactive),
         payloadTagAddress(ir, session.layouts().payload(type), address));
@@ -1572,26 +1596,22 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
       return type.arguments.size() == 1 ? self(self, type.arguments.front())
                                         : std::nullopt;
     case SemanticType::Class: {
-      const MirClassInstance *selected = nullptr;
-      for (const auto &candidate : program.classInstances())
-        if (candidate.type == type) {
-          if (selected)
-            return std::nullopt;
-          selected = &candidate;
-        }
+      const auto view = mirClassLifetimeView(program, type);
+      const MirClassInstance *selected = view ? view->instance : nullptr;
       return selected ? std::optional<bool>{selected->requiresActiveCleanup}
                       : std::nullopt;
     }
     case SemanticType::Enum: {
-      const auto *enumeration = program.findPayloadEnum(type);
-      return enumeration
-                 ? std::optional<bool>{enumeration->requiresActiveCleanup}
+      const auto view = mirEnumLifetimeView(program, type);
+      if (!view) return std::nullopt;
+      return view->payload
+                 ? std::optional<bool>{view->payload->requiresActiveCleanup}
                  : std::optional<bool>{false};
     }
     case SemanticType::Lambda: {
       std::optional<bool> result;
       for (const auto &instance : program.lambdaInstances()) {
-        if (instance.type != type)
+        if (!mirLambdaLifetimeView(instance, type))
           continue;
         if (instance.captureTypes.size() !=
             instance.captureRequiresActiveCleanup.size())
@@ -1623,11 +1643,15 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
     if (selected.type.kind == SemanticType::Lambda) {
       const auto *instance = closureCleanupInstance(program, selected);
       const auto environment = closureEnvironmentLayout(program, selected.type);
+      auto exactEnvironment = instance ? closureEnvironmentLayout(*instance) : ClosureEnvironmentLayout{};
+      if (instance)
+        exactEnvironment.captureTypes.assign(selected.type.lambdaCaptureTypes().begin(),
+                                              selected.type.lambdaCaptureTypes().end());
       if (!instance || !environment ||
           instance->captureTypes.size() != instance->captureModes.size() ||
           instance->captureTypes.size() !=
               instance->captureRequiresActiveCleanup.size() ||
-          *environment != closureEnvironmentLayout(*instance))
+          *environment != exactEnvironment)
         throw std::logic_error(
             "LLVM closure cleanup lost its exact compatible identity");
       // Physical agreement never selects a cleanup body. Keep the exact
@@ -1732,15 +1756,12 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
           schedule && schedule->leafClassInstance
               ? program.findClassInstance(*schedule->leafClassInstance)
               : nullptr;
-      const bool specialized = leaf.kind == SemanticType::Class && leafClass &&
-                               leafClass->type.kind == SemanticType::Class &&
-                               leafClass->type.classId == leaf.classId &&
-                               leafClass->type.arguments.empty() &&
-                               leafClass->type.valueArguments.empty();
+      const auto leafView = leaf.kind == SemanticType::Class
+                                ? mirClassLifetimeView(program, leaf) : std::nullopt;
       const bool exactLeaf =
           leaf.kind != SemanticType::Class
               ? schedule && !schedule->leafClassInstance && !recipe.destructor
-              : leafClass && (leafClass->type == leaf || specialized) &&
+              : leafClass && leafView && leafView->instance == leafClass &&
                     leafClass->destructor == recipe.destructor;
       if (recipe.classInstance || recipe.lambdaInstance || !schedule ||
           schedule->extents != extents || schedule->leafType != leaf ||
@@ -1751,8 +1772,9 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
       const auto *owner = recipe.classInstance
                               ? program.findClassInstance(*recipe.classInstance)
                               : nullptr;
-      if (!owner || recipe.lambdaInstance || recipe.fixedArray ||
-          owner->type != recipe.type || owner->destructor != recipe.destructor)
+      const auto view = mirClassLifetimeView(program, recipe.type);
+      if (!owner || !view || view->instance != owner || recipe.lambdaInstance || recipe.fixedArray ||
+          owner->destructor != recipe.destructor)
         throw std::logic_error(
             "LLVM cleanup fallback lost its exact class identity");
       if (recipe.destructor) {
@@ -2118,7 +2140,7 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
       ir.CreateBr(done);
       ir.SetInsertPoint(done);
     } else if (recipe.type.kind == SemanticType::Enum &&
-               session.program().mir().findPayloadEnum(recipe.type)) {
+               native_llvm::exactPayloadEnum(session.program().mir(), recipe.type)) {
       const auto &layout = session.layouts().payload(recipe.type);
       auto *tagAddress = payloadTagAddress(ir, layout, address);
       auto *tag = ir.CreateLoad(ir.getInt32Ty(), tagAddress);

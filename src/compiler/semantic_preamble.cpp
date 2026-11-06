@@ -104,6 +104,9 @@ auto SemanticVisitor::Impl::blankLikeThis() const -> std::unique_ptr<Impl> {
 auto SemanticVisitor::Impl::adoptPreambleState() -> void {
   const Impl &source = *adoptedPreamble->state;
   requestSession = source.requestSession;
+  requestSession.executableLifetimes =
+      std::make_shared<RequestSessionContext::ExecutableLifetimeRegistry>(
+          *source.requestSession.executableLifetimes);
   valueFlow.rebindCallables(catalog);
   // Request-local budgets and query states are never shared with the
   // preamble or with another resumed analysis.

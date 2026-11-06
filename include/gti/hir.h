@@ -35,6 +35,36 @@ using HirDropObligationId = std::size_t;
 using HirNativeCallbackAdapterId = std::size_t;
 using HirThreadTaskAdapterId = std::size_t;
 
+struct HirLifetimeOrigin {
+  Lifetime region;
+  PlaceKey place;
+  HirValueId source = 0;
+  friend bool operator==(const HirLifetimeOrigin &,
+                         const HirLifetimeOrigin &) = default;
+};
+
+struct HirLifetimeApplication {
+  std::vector<LifetimeBinding> bindings;
+  std::vector<Lifetime> variables;
+  std::vector<LifetimeBound> obligations;
+  std::vector<LifetimeTypeBound> typeObligations;
+  std::vector<HirLifetimeOrigin> origins;
+  std::optional<CallableLifetimeSignature> callableSignature;
+  bool complete = false;
+  friend bool operator==(const HirLifetimeApplication &,
+                         const HirLifetimeApplication &) = default;
+};
+
+struct HirLifetimeBody {
+  std::vector<Lifetime> variables;
+  std::vector<LifetimeBound> obligations;
+  std::vector<LifetimeTypeBound> typeObligations;
+  std::vector<HirLifetimeOrigin> origins;
+  bool complete = false;
+  friend bool operator==(const HirLifetimeBody &,
+                         const HirLifetimeBody &) = default;
+};
+
 enum class HirDropObligationKind {
   Binding,
   Value,
@@ -139,6 +169,7 @@ struct HirBinding {
 };
 
 struct HirReferenceSelection {
+  ReferenceSelectionKind kind = ReferenceSelectionKind::StoredExternalReference;
   HirValueId value = 0;
   HirValueId carrier = 0;
   SemanticLoanId transferredFrom = 0;
@@ -243,6 +274,10 @@ struct HirValue {
   // Retained even when a concrete pack prevents a fixed-arity call plan.
   std::vector<HirValueId> defaultArguments;
   std::vector<SemanticType> parameterTypes;
+  // Semantics-selected generic regions remain proof metadata, never operands.
+  std::vector<Lifetime> lifetimeArguments;
+  // Complete declaration-contract substitution, including elided/owner regions.
+  HirLifetimeApplication lifetimeApplication;
   std::optional<TokenKind> operation;
   std::optional<Literal> literal;
   std::optional<ConstantValue> constant;
@@ -509,6 +544,7 @@ private:
 
 struct HirBody {
   PlaceDomain placeDomain;
+  HirLifetimeBody lifetimeBody;
   SourceDebugRecord<HirSourceDebugTables> sourceDebug;
   std::vector<HirBinding> bindings;
   std::vector<HirLoan> loans;
@@ -589,10 +625,12 @@ hirInitializerReachabilityBatch(
 struct HirLambda {
   HirLambdaId id = 0;
   LambdaId declaration = 0;
+  std::vector<Lifetime> environmentLifetimes;
   const Lambda *source = nullptr;
   SemanticType type = SemanticType::Unknown;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
+  LifetimeSignatureContract lifetimeContract;
   std::vector<HirBindingId> parameterBindings;
   std::vector<LambdaCaptureInfo> captures;
   CallableInvocationCapability capability = CallableInvocationCapability::Read;
@@ -604,6 +642,7 @@ struct HirLambda {
   BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
   std::size_t returnBorrowParameter = 0;
   AccessMode returnBorrowAccess = AccessMode::ReadOnly;
+  std::optional<FunctionBorrowDependencySummary> completeReturnBorrow;
   HirBody body;
 };
 
@@ -617,6 +656,9 @@ struct HirEnumerator {
 };
 
 struct HirEnum {
+  std::vector<GenericParameterIdentity> liftedLifetimes;
+  NominalVariance variance;
+  LifetimeSignatureContract lifetimeContract;
   EnumId declaration = 0;
   SemanticType type = SemanticType::Unknown;
   SourceUnitId sourceUnit = 0;
@@ -668,6 +710,9 @@ struct HirVirtualDispatch {
 };
 
 struct HirClassInstance {
+  std::vector<GenericParameterIdentity> liftedLifetimes;
+  NominalVariance variance;
+  LifetimeSignatureContract lifetimeContract;
   HirClassInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
   ClassId declaration = 0;
@@ -719,6 +764,8 @@ struct HirCallableSignature {
   const Call *source = nullptr;
   SemanticType returnType = SemanticType::Void;
   std::vector<SemanticType> parameterTypes;
+  std::vector<Lifetime> lifetimeArguments;
+  HirLifetimeApplication lifetimeApplication;
   CallableInvocationCapability requiredCapability =
       CallableInvocationCapability::Read;
   std::optional<CallableInvocationCapability> selectedCapability;
@@ -744,15 +791,19 @@ struct HirCallableParameter {
 };
 
 struct HirFunctionInstance {
+  std::vector<GenericParameterIdentity> liftedLifetimes;
   HirFunctionInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
   FunctionId declaration = 0;
   const FunctionDecl *source = nullptr;
   std::optional<HirClassInstanceId> owner;
+  // Universal owner type in this callable's region scope.
+  SemanticType ownerType = SemanticType::Unknown;
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
+  LifetimeSignatureContract lifetimeContract;
   std::vector<std::size_t> ownerlessTextParameters;
   std::vector<OwnerlessTextField> ownerlessTextFields;
   std::vector<PublishedTextField> publishedTextFields;
@@ -833,6 +884,8 @@ struct HirConstructorInitializer {
   std::optional<HirClassInstanceId> base;
   std::optional<HirConstructorInstanceId> constructorTarget;
   std::vector<HirValueId> arguments;
+  std::vector<Lifetime> lifetimeArguments;
+  HirLifetimeApplication lifetimeApplication;
   std::size_t explicitArgumentCount = 0;
   bool storesReference = false;
   AccessMode borrowAccess = AccessMode::ReadOnly;
@@ -841,6 +894,7 @@ struct HirConstructorInitializer {
 };
 
 struct HirConstructorInstance {
+  std::vector<GenericParameterIdentity> liftedLifetimes;
   HirConstructorInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
   ConstructorId declaration = 0;
@@ -852,9 +906,12 @@ struct HirConstructorInstance {
   bool constexprConstructor = false;
   bool requiresUnsafe = false;
   HirClassInstanceId owner = 0;
+  // Universal owner type in this callable's region scope.
+  SemanticType ownerType = SemanticType::Unknown;
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;
   std::vector<SemanticType> parameterTypes;
+  LifetimeSignatureContract lifetimeContract;
   std::vector<HirBindingId> parameterBindings;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowParameter = 0;
@@ -868,10 +925,14 @@ struct HirConstructorInstance {
 };
 
 struct HirDestructorInstance {
+  std::vector<GenericParameterIdentity> liftedLifetimes;
   HirDestructorInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
   const DestructorDecl *source = nullptr;
   HirClassInstanceId owner = 0;
+  // Universal owner type in this callable's region scope.
+  SemanticType ownerType = SemanticType::Unknown;
+  LifetimeSignatureContract lifetimeContract;
   HirBody body;
 };
 
@@ -948,6 +1009,10 @@ struct HirEmbeddingPlan {
 
 class HirProgram {
 public:
+  [[nodiscard]] const std::vector<NominalVarianceRecipe> &nominalVarianceRecipes() const {
+    return nominalVarianceRecipes_;
+  }
+
   [[nodiscard]] bool requiresNativeObjectLayout() const {
     return nativeObjectLayout_;
   }
@@ -1089,6 +1154,8 @@ public:
   }
 
 private:
+  std::vector<NominalVarianceRecipe> nominalVarianceRecipes_;
+
   std::vector<ForeignStorageInfo> foreignStorage_;
   std::vector<std::shared_ptr<const Stmt>> sourceStatementOwners_;
   friend class HirLowerer;

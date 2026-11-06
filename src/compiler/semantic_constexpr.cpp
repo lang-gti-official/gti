@@ -488,6 +488,8 @@ auto SemanticVisitor::Impl::SemanticCatalog::operator=(
   copy.exactClassSpecializations = other.exactClassSpecializations;
   copy.conformances = other.conformances;
   copy.enums = other.enums;
+  copy.normalizedNominalTypes = other.normalizedNominalTypes;
+  copy.nominalLifetimeContractsReady = other.nominalLifetimeContractsReady;
   copy.predeclaredVariables = other.predeclaredVariables;
   copy.mutableFieldGroupOrigins = other.mutableFieldGroupOrigins;
   copy.recursiveLayoutFields = other.recursiveLayoutFields;
@@ -842,6 +844,7 @@ auto SemanticVisitor::Impl::stagedWorkerFor(
   }
   worker.impl->requestSession.constexprWork = work;
   worker.impl->requestSession.stagedConstants = requestSession.stagedConstants;
+  worker.impl->requestSession.executableLifetimes = requestSession.executableLifetimes;
   // Concrete constant bodies also demand source access summaries. Share
   // their request-local cycle/depth accounting, not mutable body state.
   worker.impl->requestSession.rawResultQueries =

@@ -841,6 +841,7 @@ auto SemanticVisitor::Impl::makeMacroProbe(const Call &call)
             *requestSession.programConcreteEffects);
   if (const auto &queries = requestSession.completeReturnQueries) {
     auto fork = std::make_shared<CompleteReturnQueryState>();
+    fork->lifetimeContractRevision = queries->lifetimeContractRevision;
     fork->depth = queries->depth;
     fork->discovered = queries->discovered;
     fork->completed = queries->completed;

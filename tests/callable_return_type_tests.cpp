@@ -186,12 +186,12 @@ int main() {
 }
 )",
            "signature results preserve scalar, void and reference metadata");
-  rejected(R"(
+  accepted(R"(
 import std.meta;
 using Shared = std::meta::callable_return_type<int&(int&)>;
 int main() { return 0; }
 )",
-           "GTI-S2030", "Reference aliases are not supported");
+           "a reflected reference alias retains its inferred lifetime slot");
   accepted(R"(
 import std.meta;
 std::meta::callable_return_type<F> apply<F, T>(F& fn, T value) {

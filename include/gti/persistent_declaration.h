@@ -52,21 +52,50 @@ class PersistentTypeRegistry final {
 public:
   void bind(const ClassTypeInfo &, const PersistentDeclarationOwner &);
   void bind(const EnumTypeInfo &, const PersistentDeclarationOwner &);
+  void bind(ConceptId, const ProtocolConceptSpelling &,
+            const PersistentDeclarationOwner &);
+  [[nodiscard]] std::string projectionKey(const SemanticType &) const;
+  [[nodiscard]] SemanticType
+  resolveProjection(std::string_view key, std::vector<SemanticType> arguments,
+                    std::vector<CompileTimeValue> values,
+                    std::vector<Lifetime> lifetimes) const;
   [[nodiscard]] std::string key(const SemanticType &) const;
   [[nodiscard]] std::string qualifiedName(const SemanticType &) const;
   [[nodiscard]] SemanticType
   resolve(std::string_view key, std::vector<SemanticType> arguments = {},
-          std::vector<CompileTimeValue> values = {}) const;
+          std::vector<CompileTimeValue> values = {},
+          std::vector<Lifetime> lifetimes = {}) const;
 
 private:
   void bindKey(std::string key, SemanticType type);
   std::map<std::string, SemanticType, std::less<>> byKey;
   std::map<std::pair<SemanticType::Kind, std::size_t>, std::string> byId;
+  std::map<std::string, SemanticType, std::less<>> projectionsByKey;
+  std::map<std::pair<ConceptId, std::uint32_t>, std::string> projectionKeys;
+  std::map<std::string, ConceptId, std::less<>> conceptsByKey;
+  std::map<ConceptId, std::string> conceptKeys;
 };
 [[nodiscard]] std::string
 persistentClassKey(const ClassTypeInfo &, const PersistentDeclarationOwner &);
 [[nodiscard]] std::string persistentEnumKey(const EnumTypeInfo &,
                                             const PersistentDeclarationOwner &);
+[[nodiscard]] std::string
+persistentConceptKey(const ProtocolConceptSpelling &,
+                     const PersistentDeclarationOwner &);
+[[nodiscard]] std::string
+persistentAssociatedTypeKey(const ProtocolConceptSpelling &, std::size_t member,
+                            const PersistentDeclarationOwner &);
+// Snapshot-local IDs supplied by the owner of the imported declaration.
+// Wire recipes encode binder positions, never these IDs. Quantified IDs are
+// supplied in structural preorder when reading; writing can discover them
+// from the type itself. Every supplied ID must be nonzero and distinct.
+struct PersistentLifetimeBindings {
+  std::vector<GenericParameterId> parameters;
+  std::vector<GenericParameterId> quantifiedParameters;
+  // Generic type declarations referenced by exact type-outlives bounds.
+  std::vector<GenericParameterId> typeParameters;
+};
+
 // Canonical scalar, concrete primary nominal, reference, raw-pointer and
 // fixed-array recipes. Nominal references require an explicit registered
 // declaration at both ends. All other profiles and noncanonical semantic
@@ -75,4 +104,35 @@ persistentClassKey(const ClassTypeInfo &, const PersistentDeclarationOwner &);
                                               const PersistentTypeRegistry &);
 [[nodiscard]] SemanticType readPersistentType(std::string_view,
                                               const PersistentTypeRegistry &);
+// Parameter-bearing recipes require explicit declaration bindings. Reading
+// a quantified callable also requires all of its local binder IDs; decoding
+// never invents semantic identities or imports a declaration.
+[[nodiscard]] std::string
+writePersistentType(const SemanticType &, const PersistentTypeRegistry &,
+                    const PersistentLifetimeBindings &);
+[[nodiscard]] SemanticType
+readPersistentType(std::string_view, const PersistentTypeRegistry &,
+                   const PersistentLifetimeBindings &);
+// Public contracts must be complete, valid, and declaration-local. Bounds are
+// normalized by binder position; alpha-renaming preserves the bytes.
+[[nodiscard]] std::string
+writePersistentLifetimeContract(const LifetimeSignatureContract &,
+                                const PersistentLifetimeBindings &);
+[[nodiscard]] LifetimeSignatureContract
+readPersistentLifetimeContract(std::string_view,
+                               const PersistentLifetimeBindings &);
+[[nodiscard]] std::string
+writePersistentLifetimeContract(const LifetimeSignatureContract &,
+                                const PersistentTypeRegistry &,
+                                const PersistentLifetimeBindings &);
+[[nodiscard]] LifetimeSignatureContract
+readPersistentLifetimeContract(std::string_view, const PersistentTypeRegistry &,
+                               const PersistentLifetimeBindings &);
+// Interface content, separate from declaration identity. Imported descriptors
+// supply the exact compact declaration-slot counts (a final pack is one slot).
+[[nodiscard]] std::string
+writePersistentNominalVariance(const NominalVariance &);
+[[nodiscard]] NominalVariance
+readPersistentNominalVariance(std::string_view, std::size_t typeSlots,
+                              std::size_t lifetimeSlots);
 } // namespace lang

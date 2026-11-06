@@ -11,6 +11,7 @@ namespace lang {
 class InstanceAnalysisCache;
 class SemanticPreamble;
 class SourceManager;
+struct InstanceAnalysisKey;
 
 // Narrow mutable capability used only by HIR's concrete-instance discovery.
 // Consumers receive the immutable base SemanticModel separately and cannot
@@ -21,6 +22,16 @@ public:
 
   [[nodiscard]] virtual SemanticTypeTraits
   traitsFor(const SemanticType &type) const = 0;
+  [[nodiscard]] virtual NominalVariance
+  nominalVariance(const SemanticType &) const { return {}; }
+  [[nodiscard]] virtual std::vector<NominalVarianceRecipe>
+  nominalVarianceRecipes() const { return {}; }
+  [[nodiscard]] virtual LifetimeSignatureContract
+  nominalLifetimeContract(const SemanticType &) const { return {}; }
+  [[nodiscard]] virtual std::optional<SemanticExecutableInstantiation>
+  canonicalizeExecutableInstance(const InstanceAnalysisKey &) {
+    return std::nullopt;
+  }
   [[nodiscard]] virtual bool
   requiresActiveCleanupFor(const SemanticType &type) const = 0;
   // Concrete enum descriptions are produced by semantic generic substitution;
@@ -137,6 +148,14 @@ public:
   [[nodiscard]] SemanticModel takeModel();
   [[nodiscard]] SemanticTypeTraits
   traitsFor(const SemanticType &type) const override;
+  [[nodiscard]] NominalVariance
+  nominalVariance(const SemanticType &type) const override;
+  [[nodiscard]] LifetimeSignatureContract
+  nominalLifetimeContract(const SemanticType &type) const override;
+  [[nodiscard]] std::vector<NominalVarianceRecipe>
+  nominalVarianceRecipes() const override;
+  [[nodiscard]] std::optional<SemanticExecutableInstantiation>
+  canonicalizeExecutableInstance(const InstanceAnalysisKey &key) override;
   [[nodiscard]] bool
   requiresActiveCleanupFor(const SemanticType &type) const override;
   [[nodiscard]] bool

@@ -30,6 +30,12 @@ struct CompiledScalarSignature {
 
 [[nodiscard]] bool isCompiledScalarValueType(const SemanticType &);
 [[nodiscard]] bool isCompiledScalarResultType(const SemanticType &);
+// Check whether signature elision plus the bounded whole-argument result
+// contract reconstructs all normalized source regions. This admits no new
+// generic/nested lifetime interface profile and does not rewrite source MIR.
+[[nodiscard]] bool isCompiledScalarLifetimeProfile(
+    const SemanticType &result, std::span<const SemanticType> parameters,
+    const LifetimeSignatureContract &, const CompiledBorrowContract &);
 // Canonical GTI source spelling for the validated scalar interface profile.
 [[nodiscard]] std::string_view compiledScalarTypeSpelling(const SemanticType &);
 // Validate the structural borrow contract independently of source emission.

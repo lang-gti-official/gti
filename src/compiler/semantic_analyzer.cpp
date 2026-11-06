@@ -100,6 +100,24 @@ SemanticTypeTraits SemanticVisitor::traitsFor(const SemanticType &type) const {
   return impl->traitsFor(type);
 }
 
+NominalVariance SemanticVisitor::nominalVariance(const SemanticType &type) const {
+  return impl->nominalVariance(type);
+}
+
+LifetimeSignatureContract SemanticVisitor::nominalLifetimeContract(
+    const SemanticType &type) const {
+  return impl->nominalLifetimeContract(type);
+}
+
+std::optional<SemanticExecutableInstantiation>
+SemanticVisitor::canonicalizeExecutableInstance(const InstanceAnalysisKey &key) {
+  return impl->canonicalizeExecutableInstance(key);
+}
+
+std::vector<NominalVarianceRecipe> SemanticVisitor::nominalVarianceRecipes() const {
+  return impl->nominalVarianceRecipes();
+}
+
 bool SemanticVisitor::requiresActiveCleanupFor(const SemanticType &type) const {
   return impl->requiresActiveCleanupFor(type);
 }

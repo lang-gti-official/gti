@@ -853,7 +853,7 @@ private:
     } else if (instruction && instruction->kind == MirInstructionKind::Call &&
                (instruction->intrinsic == IntrinsicKind::SyntaxText ||
                 instruction->intrinsic == IntrinsicKind::SyntaxKind) &&
-               instruction->info.type == SemanticType::StringView &&
+               instruction->info.type.kind == SemanticType::StringView &&
                instruction->operands.size() ==
                    (instruction->intrinsic == IntrinsicKind::SyntaxText ? 1
                                                                         : 2)) {

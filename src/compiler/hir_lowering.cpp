@@ -2,6 +2,8 @@
 
 #include "diagnostic_registry.h"
 #include "gti/generic_instantiation_limits.h"
+#include "gti/instance_analysis_cache.h"
+#include "gti/lifetime_types.h"
 #include "gti/semantic_analyzer.h"
 #include "gti/support.h"
 
@@ -44,12 +46,14 @@ public:
     std::vector<SemanticType> ownerTypes;
     std::vector<CompileTimeValue> ownerValues;
     if (function->ownerClass != 0) {
-      const auto *owner = semantics.findClassType(function->ownerClass);
+      const auto *owner = semantics.findPublicClassType(function->ownerClass);
       if (owner == nullptr) {
         output.program.valid_ = false;
         return std::move(output);
       }
       for (const auto &parameter : owner->genericParameters) {
+        if (parameter.lifetime)
+          continue;
         if (parameter.value ? !substitution.values.contains(parameter.id)
                             : !substitution.types.contains(parameter.id)) {
           output.program.valid_ = false;
@@ -72,6 +76,8 @@ public:
       }
     }
     for (const auto &parameter : function->genericParameters) {
+      if (parameter.lifetime)
+        continue;
       if (parameter.value ? !substitution.values.contains(parameter.id)
                           : !substitution.types.contains(parameter.id)) {
         output.program.valid_ = false;
@@ -171,6 +177,7 @@ public:
       }
       processPendingInstances();
     }
+    output.program.nominalVarianceRecipes_ = provider.nominalVarianceRecipes();
     finishSourceDebugInventory();
     output.program.valid_ = output.requiredSemanticBodies.empty() &&
                             !hasErrorDiagnostics(output.diagnostics) &&
@@ -211,6 +218,7 @@ private:
   HirLoweringResult finishConstant() {
     ensurePlaceDomain(output.program.moduleBody);
     processPendingInstances();
+    output.program.nominalVarianceRecipes_ = instanceProvider->nominalVarianceRecipes();
     finishSourceDebugInventory();
     output.program.valid_ = output.requiredSemanticBodies.empty() &&
                             !hasErrorDiagnostics(output.diagnostics) &&
@@ -361,15 +369,66 @@ private:
     return result;
   }
 
-  [[nodiscard]] GenericSubstitution
-  classSubstitution(const ClassTypeInfo &declaration,
-                    const std::vector<SemanticType> &typeArguments,
-                    const std::vector<CompileTimeValue> &valueArguments) const {
+  [[nodiscard]] HirLifetimeApplication
+  lowerLifetimeApplication(const SemanticLifetimeApplication &application,
+                           const HirBody &body) {
+    HirLifetimeApplication result{.bindings = application.bindings,
+                                  .variables = application.variables,
+                                  .obligations = application.obligations,
+                                  .typeObligations =
+                                      application.typeObligations,
+                                  .callableSignature = application.callableSignature,
+                                  .complete = application.complete};
+    for (const auto &origin : application.origins) {
+      HirValueId source = 0;
+      if (origin.source != nullptr) {
+        const auto *value = body.valueForSource(*origin.source);
+        if (value == nullptr)
+          lifecycleValid = false;
+        else
+          source = value->id;
+      }
+      if (!origin.place.valid() && source == 0)
+        lifecycleValid = false;
+      result.origins.push_back(
+          {.region = origin.region,
+           .place = qualifyPlace(origin.place, body.placeDomain),
+           .source = source});
+    }
+    return result;
+  }
+
+  void lowerLifetimeBody(const SemanticLifetimeBody *facts, HirBody &body) {
+    if (!facts)
+      return;
+    ensurePlaceDomain(body);
+    auto lowered =
+        lowerLifetimeApplication({.variables = facts->variables,
+                                  .obligations = facts->obligations,
+                                  .typeObligations = facts->typeObligations,
+                                  .origins = facts->origins,
+                                  .complete = facts->complete},
+                                 body);
+    body.lifetimeBody = {.variables = std::move(lowered.variables),
+                         .obligations = std::move(lowered.obligations),
+                         .typeObligations = std::move(lowered.typeObligations),
+                         .origins = std::move(lowered.origins),
+                         .complete = lowered.complete};
+  }
+
+  [[nodiscard]] GenericSubstitution instanceSubstitution(
+      std::span<const GenericParameterInfo> parameters,
+      const std::vector<SemanticType> &typeArguments,
+      const std::vector<CompileTimeValue> &valueArguments) const {
     GenericSubstitution result;
     std::size_t typeIndex = 0;
     std::size_t valueIndex = 0;
-    for (const GenericParameterInfo &parameter :
-         declaration.genericParameters) {
+    for (const GenericParameterInfo &parameter : parameters) {
+      if (parameter.lifetime) {
+        // Universals belong to the executable declaration. Actual regions
+        // remain in the selected call's application proof, never this cache.
+        continue;
+      }
       if (!parameter.typeArgumentPath.empty()) {
         if (auto type = projectGenericTypeArgument(
                 typeArguments, parameter.typeArgumentPath, parameter.id,
@@ -395,12 +454,63 @@ private:
     return result;
   }
 
+  [[nodiscard]] GenericSubstitution
+  classSubstitution(const ClassTypeInfo &declaration,
+                    const std::vector<SemanticType> &typeArguments,
+                    const std::vector<CompileTimeValue> &valueArguments) const {
+    const auto *publicDeclaration = baseModel
+        ? baseModel->findPublicClassType(declaration.id) : nullptr;
+    return instanceSubstitution(publicDeclaration ? publicDeclaration->genericParameters
+                                                 : declaration.genericParameters, typeArguments,
+                                valueArguments);
+  }
+
+  [[nodiscard]] static bool hasTypeLifetimes(const SemanticType &type) {
+    bool found = type.referenceLifetime.specified() ||
+        !type.lifetimeArguments.empty() || !type.quantifiedLifetimes.empty();
+    lifetime_detail::children(type, [&](const auto &child) {
+      found = hasTypeLifetimes(child) || found;
+    });
+    return found;
+  }
+
+  [[nodiscard]] LifetimeSignatureContract
+  instantiateLifetimeContract(const LifetimeSignatureContract &declaration,
+                              const GenericSubstitution &substitution) const {
+    auto result = declaration;
+    for (auto &bound : result.typeBounds)
+      bound.type = substitute(bound.type, substitution);
+    for (auto &node : result.requirements.nodes)
+      if (node.kind == LifetimeRequirementNode::Kind::Type)
+        node.type = substitute(node.type, substitution);
+    return result;
+  }
+
   [[nodiscard]] std::optional<HirClassInstanceId>
   enqueueClass(const SemanticType &type,
                std::optional<SourceSpan> site = std::nullopt) {
-    const SemanticType resolvedType =
+    SemanticType resolvedType =
         baseModel == nullptr ? type
                              : baseModel->resolveExactClassSpecialization(type);
+    std::optional<SemanticExecutableInstantiation> canonical;
+    if (resolvedType.kind == SemanticType::Class && resolvedType.classId) {
+      canonical = instanceProvider->canonicalizeExecutableInstance(
+          {.kind = InstanceAnalysisKind::ClassFieldInitializers,
+           .declaration = resolvedType.classId, .classTypes = resolvedType.arguments,
+           .classValues = resolvedType.valueArguments});
+      if (!canonical && hasTypeLifetimes(resolvedType)) {
+        lifecycleValid = false;
+        return std::nullopt;
+      }
+      if (canonical)
+        resolvedType.arguments = canonical->classTypes;
+      if (const auto *declaration = baseModel->findClassType(resolvedType.classId)) {
+        resolvedType.lifetimeArguments.clear();
+        for (const auto &parameter : declaration->genericParameters)
+          if (parameter.lifetime)
+            resolvedType.lifetimeArguments.push_back(Lifetime::parameter(parameter.id));
+      }
+    }
     // An existing instance discovered its arguments when it was created, and
     // admission is monotone, so revisiting them can only propagate a first
     // instantiation site. Re-walking them on every hit made each lookup of a
@@ -455,7 +565,8 @@ private:
         CompilerCapabilityTypeKind::NativeCScalar) {
       return std::nullopt;
     }
-    const bool generic = !declaration->genericParameters.empty();
+    const bool generic = !declaration->genericParameters.empty() ||
+                         declaration->exactSpecializationPrimary != 0;
     if (!admitInstance(declaration->declaration->name(), site, generic)) {
       return std::nullopt;
     }
@@ -503,7 +614,14 @@ private:
                  : status;
     };
     output.program.classes.push_back(
-        {.id = id,
+        {.liftedLifetimes = canonical
+             ? genericParameterIdentities(canonical->liftedLifetimes)
+             : std::vector<GenericParameterIdentity>{},
+         .variance = instanceProvider->nominalVariance(resolvedType),
+         .lifetimeContract =
+             canonical ? canonical->lifetimeContract
+                       : instanceProvider->nominalLifetimeContract(resolvedType),
+         .id = id,
          .sourceUnit = declaration->sourceUnit,
          .declaration = resolvedType.classId,
          .source = declaration->declaration,
@@ -576,7 +694,7 @@ private:
 
   [[nodiscard]] HirFunctionInstanceId
   enqueueFunction(const FunctionInfo &declaration,
-                  const std::vector<SemanticType> &classTypeArguments,
+                  std::vector<SemanticType> classTypeArguments,
                   const std::vector<CompileTimeValue> &classValueArguments,
                   std::vector<SemanticType> functionTypeArguments,
                   std::vector<CompileTimeValue> functionValueArguments,
@@ -610,6 +728,50 @@ private:
           !declaration.declaration->isProceduralMacro()) ||
          std::find(constantFunctions.begin(), constantFunctions.end(),
                    declaration.id) == constantFunctions.end());
+    const ClassTypeInfo *genericOwner =
+        declaration.ownerClass == 0
+            ? nullptr
+            : baseModel->findClassType(declaration.ownerClass);
+    const auto canonical = instanceProvider->canonicalizeExecutableInstance(
+        {.kind = InstanceAnalysisKind::Function, .declaration = declaration.id,
+         .classTypes = classTypeArguments, .classValues = classValueArguments,
+         .types = functionTypeArguments, .values = functionValueArguments});
+    if (!canonical &&
+        (std::any_of(classTypeArguments.begin(), classTypeArguments.end(),
+                     hasTypeLifetimes) ||
+         std::any_of(functionTypeArguments.begin(), functionTypeArguments.end(),
+                     hasTypeLifetimes))) {
+      lifecycleValid = false;
+      return 0;
+    }
+    if (canonical) {
+      classTypeArguments = canonical->classTypes;
+      functionTypeArguments = canonical->types;
+    }
+    GenericSubstitution instance =
+        genericOwner == nullptr
+            ? GenericSubstitution{}
+            : classSubstitution(*genericOwner, classTypeArguments,
+                                classValueArguments);
+    auto functionSubstitution =
+        instanceSubstitution(declaration.genericParameters,
+                             functionTypeArguments, functionValueArguments);
+    instance.types.insert(functionSubstitution.types.begin(),
+                          functionSubstitution.types.end());
+    instance.values.insert(functionSubstitution.values.begin(),
+                           functionSubstitution.values.end());
+    returnType = substitute(declaration.returnType, instance);
+    parameterTypes.clear();
+    parameterTypes.reserve(declaration.parameterTypes.size());
+    for (const auto &parameter : declaration.parameterTypes)
+      parameterTypes.push_back(substitute(parameter, instance));
+    auto lifetimeContract =
+        instantiateLifetimeContract(declaration.lifetimeContract, instance);
+    if (canonical) {
+      returnType = canonical->returnType;
+      parameterTypes = canonical->parameterTypes;
+      lifetimeContract = canonical->lifetimeContract;
+    }
     // Calls can discover an instance through individual arguments or through
     // one forwarded pack. Virtual members are also seeded from declarations.
     // These paths must publish the same concrete signature; source pack
@@ -643,13 +805,10 @@ private:
              : (declarationToken.lexeme.empty()
                     ? std::optional<SourceSpan>{}
                     : std::optional<SourceSpan>{tokenSpan(declarationToken)});
-    const ClassTypeInfo *genericOwner =
-        declaration.ownerClass == 0
-            ? nullptr
-            : baseModel->findClassType(declaration.ownerClass);
     const bool generic =
         !declaration.genericParameters.empty() ||
-        (genericOwner != nullptr && !genericOwner->genericParameters.empty());
+        (genericOwner != nullptr &&
+         (!genericOwner->genericParameters.empty() || genericOwner->exactSpecializationPrimary));
     if (!admitInstance(declarationToken, site, generic)) {
       return 0;
     }
@@ -683,16 +842,24 @@ private:
     if (constantUnavailable)
       constantUnavailableFunctions.push_back(id);
     output.program.functions.push_back(
-        {.id = id,
+        {.liftedLifetimes = canonical
+             ? genericParameterIdentities(canonical->liftedLifetimes)
+             : std::vector<GenericParameterIdentity>{},
+         .id = id,
          .sourceUnit = declaration.sourceUnit,
          .declaration = declaration.id,
          .source =
              constantUnavailable ? nullptr : declaration.bodyDeclaration(),
          .owner = owner,
+         .ownerType = canonical ? canonical->ownerType
+             : declaration.ownerClass ? SemanticType::classType(
+                   declaration.ownerClass, classTypeArguments, classValueArguments)
+                                      : SemanticType::Unknown,
          .typeArguments = std::move(functionTypeArguments),
          .valueArguments = std::move(functionValueArguments),
          .returnType = std::move(returnType),
          .parameterTypes = std::move(parameterTypes),
+         .lifetimeContract = lifetimeContract,
          .ownerlessTextParameters = declaration.ownerlessTextParameters,
          .ownerlessTextFields = declaration.ownerlessTextFields,
          .publishedTextFields = declaration.publishedTextFields,
@@ -799,14 +966,35 @@ private:
   }
 
   [[nodiscard]] HirConstructorInstanceId
-  enqueueConstructor(const ResolvedConstructionInfo &construction,
+  enqueueConstructor(const ResolvedConstructionInfo &requestedConstruction,
                      std::optional<SourceSpan> site = std::nullopt) {
+    auto construction = requestedConstruction;
     const auto *declaration =
         construction.declaration == nullptr
             ? nullptr
             : baseModel->findConstructor(*construction.declaration);
     const bool constant =
         declaration != nullptr && declaration->constexprConstructor;
+    const auto canonical = instanceProvider->canonicalizeExecutableInstance(
+        {.kind = construction.generatedDefault
+                     ? InstanceAnalysisKind::ClassFieldInitializers
+                     : InstanceAnalysisKind::Constructor,
+         .declaration = construction.generatedDefault
+                            ? construction.constructedType.classId
+                            : construction.constructor,
+         .classTypes = construction.constructedType.arguments,
+         .classValues = construction.constructedType.valueArguments,
+         .types = construction.typeArguments, .values = construction.valueArguments});
+    if (!canonical && (hasTypeLifetimes(construction.constructedType) ||
+        std::any_of(construction.typeArguments.begin(), construction.typeArguments.end(),
+                    hasTypeLifetimes))) {
+      lifecycleValid = false;
+      return 0;
+    }
+    if (canonical) {
+      construction.constructedType.arguments = canonical->classTypes;
+      construction.typeArguments = canonical->types;
+    }
     if (constantClosure && !construction.generatedDefault &&
         (!constant ||
          std::find(constantConstructors.begin(), constantConstructors.end(),
@@ -832,6 +1020,38 @@ private:
                             construction.constructor == 0))) {
       return 0;
     }
+    GenericSubstitution instance =
+        ownerType == nullptr
+            ? GenericSubstitution{}
+            : classSubstitution(*ownerType,
+                                construction.constructedType.arguments,
+                                construction.constructedType.valueArguments);
+    if (declaration != nullptr) {
+      auto constructorSubstitution = instanceSubstitution(
+          declaration->genericParameters, construction.typeArguments,
+          construction.valueArguments);
+      instance.types.insert(constructorSubstitution.types.begin(),
+                            constructorSubstitution.types.end());
+      instance.values.insert(constructorSubstitution.values.begin(),
+                             constructorSubstitution.values.end());
+    }
+    std::vector<SemanticType> universalParameters;
+    if (declaration != nullptr)
+      for (const auto &parameter : declaration->parameterTypes)
+        SemanticType::appendExpandedArgument(universalParameters,
+                                             substitute(parameter, instance));
+    else
+      universalParameters = construction.parameterTypes;
+    auto lifetimeContract =
+        declaration != nullptr ? instantiateLifetimeContract(
+                                     declaration->lifetimeContract, instance)
+                               : LifetimeSignatureContract{};
+    if (canonical) {
+      lifetimeContract = canonical->lifetimeContract;
+      universalParameters.clear();
+      for (const auto &parameter : canonical->parameterTypes)
+        SemanticType::appendExpandedArgument(universalParameters, parameter);
+    }
     const ConstructorId identity = generatedBody ? 0 : construction.constructor;
     // A dependent text publication is a call-site fact; it never forms the
     // constructor's own borrow summary.
@@ -855,7 +1075,7 @@ private:
                                         ? ownerType->declaration->name()
                                         : construction.declaration->name();
     const bool generic =
-        !ownerType->genericParameters.empty() ||
+        !ownerType->genericParameters.empty() || ownerType->exactSpecializationPrimary ||
         (declaration != nullptr && !declaration->genericParameters.empty());
     // A generated default is the already-admitted owner's field schedule,
     // not another source instantiation edge. Retain that owner's depth while
@@ -876,7 +1096,10 @@ private:
     constructorDiscoveryDepths.push_back(constructorDiscovery);
     discoveredGenericInstances += generic;
     output.program.constructors.push_back(
-        {.id = id,
+        {.liftedLifetimes = canonical
+             ? genericParameterIdentities(canonical->liftedLifetimes)
+             : std::vector<GenericParameterIdentity>{},
+         .id = id,
          .sourceUnit = output.program.classes[*owner - 1].sourceUnit,
          .declaration = identity,
          .source = generatedBody ? nullptr : construction.declaration,
@@ -885,9 +1108,12 @@ private:
          .requiresUnsafe =
              declaration != nullptr && declaration->requiresUnsafe,
          .owner = *owner,
+         .ownerType = canonical ? canonical->ownerType
+                                : construction.constructedType,
          .typeArguments = construction.typeArguments,
          .valueArguments = construction.valueArguments,
-         .parameterTypes = construction.parameterTypes,
+         .parameterTypes = std::move(universalParameters),
+         .lifetimeContract = lifetimeContract,
          .borrowOrigin =
              summary ? construction.borrowOrigin : BorrowOriginKind::None,
          .borrowParameter = summary ? construction.borrowArgument : 0,
@@ -927,7 +1153,8 @@ private:
       return *existing;
     }
     const HirDestructorInstanceId id = output.program.destructors.size() + 1;
-    const bool generic = !classType->genericParameters.empty();
+    const bool generic = !classType->genericParameters.empty() ||
+                         classType->exactSpecializationPrimary != 0;
     if (!admitInstance(lifecycle->declaredDestructor->declaration->name(),
                        classInstance.instantiationSite, generic)) {
       return std::nullopt;
@@ -935,11 +1162,22 @@ private:
     destructorDiscoveryDepths.push_back(
         nextDiscovery(classInstance.instantiationSite));
     discoveredGenericInstances += generic;
+    const auto canonical = instanceProvider->canonicalizeExecutableInstance(
+        {.kind = InstanceAnalysisKind::Destructor, .declaration = classInstance.declaration,
+         .classTypes = classInstance.typeArguments, .classValues = classInstance.valueArguments});
     output.program.destructors.push_back(
-        {.id = id,
+        {.liftedLifetimes = canonical
+             ? genericParameterIdentities(canonical->liftedLifetimes)
+             : std::vector<GenericParameterIdentity>{},
+         .id = id,
          .sourceUnit = classInstance.sourceUnit,
          .source = lifecycle->declaredDestructor->declaration,
-         .owner = owner});
+         .owner = owner,
+         .ownerType = canonical ? canonical->ownerType : classInstance.type,
+         .lifetimeContract = canonical ? canonical->lifetimeContract : instantiateLifetimeContract(
+             lifecycle->declaredDestructor->lifetimeContract,
+             classSubstitution(*classType, classInstance.typeArguments,
+                               classInstance.valueArguments))});
     instanceIndex.recordDestructor(owner, id);
     return id;
   }
@@ -990,7 +1228,23 @@ private:
     return concrete;
   }
 
-  void enqueueEnum(const SemanticType &type) {
+  void enqueueEnum(SemanticType type) {
+    const auto canonical = instanceProvider->canonicalizeExecutableInstance(
+        {.kind = InstanceAnalysisKind::EnumLayout, .declaration = type.enumId,
+         .classTypes = type.arguments, .classValues = type.valueArguments});
+    if (!canonical && hasTypeLifetimes(type)) {
+      lifecycleValid = false;
+      return;
+    }
+    if (canonical) {
+      type.arguments = canonical->classTypes;
+      if (const auto *declaration = baseModel->findEnumType(type.enumId)) {
+        type.lifetimeArguments.clear();
+        for (const auto &parameter : declaration->genericParameters)
+          if (parameter.lifetime)
+            type.lifetimeArguments.push_back(Lifetime::parameter(parameter.id));
+      }
+    }
     if (std::any_of(output.program.enums.begin(), output.program.enums.end(),
                     [&](const HirEnum &item) { return item.type == type; })) {
       return;
@@ -1007,7 +1261,13 @@ private:
     if (!info) {
       return;
     }
-    HirEnum lowered{.declaration = info->id,
+    HirEnum lowered{.liftedLifetimes = canonical
+                        ? genericParameterIdentities(canonical->liftedLifetimes)
+                        : std::vector<GenericParameterIdentity>{},
+                    .variance = instanceProvider->nominalVariance(type),
+                    .lifetimeContract = canonical ? canonical->lifetimeContract
+                        : instanceProvider->nominalLifetimeContract(type),
+                    .declaration = info->id,
                     .type = type,
                     .sourceUnit = info->sourceUnit,
                     .source = info->declaration,
@@ -1256,7 +1516,8 @@ private:
           seedConcreteDeclarationType(field.type);
         }
       }
-      if (classInfo != nullptr && classInfo->genericParameters.empty()) {
+      if (classInfo != nullptr && classInfo->genericParameters.empty() &&
+          !classInfo->exactSpecializationPrimary) {
         (void)enqueueClass(SemanticType::classType(classInfo->id));
       }
       seedDeclarations(classDeclaration->members(),
@@ -1287,7 +1548,8 @@ private:
       std::vector<SemanticType> classArguments;
       if (info->ownerClass != 0) {
         const ClassTypeInfo *owner = baseModel->findClassType(info->ownerClass);
-        if (owner == nullptr || !owner->genericParameters.empty()) {
+        if (owner == nullptr || !owner->genericParameters.empty() ||
+            owner->exactSpecializationPrimary) {
           return;
         }
       }
@@ -1817,7 +2079,8 @@ private:
 
   [[nodiscard]] static bool lambdaMatchesType(const HirLambda &lambda,
                                               const SemanticType &type) {
-    return type.kind == SemanticType::Lambda && lambda.type == type;
+    return type.kind == SemanticType::Lambda &&
+           matchUniversalTypeLifetimes(lambda.type, type, lambda.environmentLifetimes).has_value();
   }
 
   void seedLambdaTarget(const SemanticType &type) {
@@ -2501,6 +2764,9 @@ private:
     }
     finalizeLifetimes(body, *model);
     lowerLoans(*model, body, bodyDeclaration);
+    if (bodyDeclaration->body())
+      lowerLifetimeBody(model->findLifetimeBody(*bodyDeclaration->body()),
+                        body);
     std::vector<HirCallableParameter> callableParameters;
     callableParameters.reserve(declaration->callableParameters.size());
     for (const CallableParameterContract &parameter :
@@ -2549,11 +2815,17 @@ private:
                   model->findLambdaCall(*signature.source)) {
             concrete.returnType = resolved->returnType;
             concrete.parameterTypes = resolved->parameterTypes;
+            concrete.lifetimeArguments = resolved->lifetimeArguments;
+            concrete.lifetimeApplication =
+                lowerLifetimeApplication(resolved->lifetimeApplication, body);
             concrete.selectedCapability = resolved->capability;
           } else if (const ResolvedOperatorInfo *resolved =
                          model->findOperator(*signature.source)) {
             concrete.returnType = resolved->returnType;
             concrete.parameterTypes = resolved->parameterTypes;
+            concrete.lifetimeArguments = resolved->lifetimeArguments;
+            concrete.lifetimeApplication =
+                lowerLifetimeApplication(resolved->lifetimeApplication, body);
             concrete.selectedCapability = resolved->capability;
           } else if (const ResolvedCallInfo *resolved =
                          model->findCall(*signature.source);
@@ -2563,6 +2835,9 @@ private:
                           .hasFunctionItemShape())) {
             concrete.returnType = resolved->returnType;
             concrete.parameterTypes = resolved->parameterTypes;
+            concrete.lifetimeArguments = resolved->lifetimeArguments;
+            concrete.lifetimeApplication =
+                lowerLifetimeApplication(resolved->lifetimeApplication, body);
             concrete.selectedCapability = CallableInvocationCapability::Read;
           }
           const auto value =
@@ -2695,6 +2970,8 @@ private:
         if (resolved != nullptr) {
           lowered.kind = resolved->kind;
           lowered.targetType = resolved->targetType;
+          lowered.lifetimeArguments = resolved->lifetimeArguments;
+
           lowered.field = resolved->field;
           lowered.storesReference = resolved->storesReference;
           lowered.borrowAccess = resolved->borrowAccess;
@@ -2708,6 +2985,8 @@ private:
                     .constructor = resolved->constructor,
                     .declaration = resolved->declaration,
                     .constructedType = resolved->targetType,
+                    .lifetimeArguments = resolved->lifetimeArguments,
+                    .lifetimeApplication = resolved->lifetimeApplication,
                     .parameterTypes = resolved->parameterTypes,
                     .defaultArguments = resolved->defaultArguments,
                     .generatedDefault = resolved->generatedDefault});
@@ -2753,6 +3032,9 @@ private:
             }
           }
         }
+        if (resolved != nullptr)
+          lowered.lifetimeApplication =
+              lowerLifetimeApplication(resolved->lifetimeApplication, body);
         initializers.push_back(std::move(lowered));
       }
     }
@@ -2904,6 +3186,9 @@ private:
                           classArguments, classValueArguments, body);
     finalizeLifetimes(body, bodyModel, {}, initializers);
     lowerLoans(bodyModel, body);
+    if (!snapshot.generatedDefault && snapshot.source->body())
+      lowerLifetimeBody(bodyModel.findLifetimeBody(*snapshot.source->body()),
+                        body);
     output.program.constructors[index].initializerValues =
         std::move(initializerValues);
     output.program.constructors[index].parameterBindings =
@@ -2964,6 +3249,7 @@ private:
                         owner.typeArguments, owner.valueArguments, body);
     finalizeLifetimes(body, *model);
     lowerLoans(*model, body, snapshot.source);
+    lowerLifetimeBody(model->findLifetimeBody(*snapshot.source->body()), body);
     captureSourceDebug(SourceDebugBodyKind::Destructor, snapshot.source, *model,
                        body);
     output.program.destructors[index].body = std::move(body);
@@ -3328,7 +3614,8 @@ private:
       }
       if (loan.referenceSelection) {
         const auto &selection = *loan.referenceSelection;
-        HirReferenceSelection resolved{.transferredFrom =
+        HirReferenceSelection resolved{.kind = selection.kind,
+                                       .transferredFrom =
                                            selection.transferredFrom,
                                        .fields = selection.fields,
                                        .conditions = selection.conditions,
@@ -4537,6 +4824,7 @@ private:
     currentSourceFunctionName = enclosingSourceFunctionName;
     finalizeLifetimes(body, model);
     lowerLoans(model, body, nullptr, info->captures);
+    lowerLifetimeBody(model.findLifetimeBody(lambda), body);
     captureSourceDebug(SourceDebugBodyKind::Lambda, &lambda, model, body);
     std::vector<bool> captureRequiresActiveCleanup;
     captureRequiresActiveCleanup.reserve(info->captures.size());
@@ -4547,10 +4835,12 @@ private:
     output.program.lambdas[id - 1] = {
         .id = id,
         .declaration = info->id,
+        .environmentLifetimes = info->environmentLifetimes,
         .source = &lambda,
-        .type = model.typeOf(lambda),
+        .type = info->type.kind == SemanticType::Unknown ? model.typeOf(lambda) : info->type,
         .returnType = info->returnType,
         .parameterTypes = info->parameterTypes,
+        .lifetimeContract = info->lifetimeContract,
         .parameterBindings = std::move(parameterBindings),
         .captures = info->captures,
         .capability = info->capability,
@@ -4562,6 +4852,7 @@ private:
         .returnBorrowOrigin = info->returnBorrowOrigin,
         .returnBorrowParameter = info->returnBorrowParameter,
         .returnBorrowAccess = info->returnBorrowAccess,
+        .completeReturnBorrow = info->completeReturnBorrow,
         .body = std::move(body),
     };
     return id;
@@ -4910,6 +5201,9 @@ private:
                              HirBody &body) {
     value.info = operatorResultInfo(resolved);
     value.parameterTypes = resolved.parameterTypes;
+    value.lifetimeArguments = resolved.lifetimeArguments;
+    value.lifetimeApplication =
+        lowerLifetimeApplication(resolved.lifetimeApplication, body);
     value.dispatch = resolved.dispatch;
     value.dispatchOwner = resolved.dispatchOwner;
     value.borrowOrigin = resolved.borrowOrigin;
@@ -5205,6 +5499,9 @@ private:
                  .traits =
                      instanceProvider->traitsFor(construction.constructedType)},
         .parameterTypes = construction.parameterTypes,
+        .lifetimeArguments = construction.lifetimeArguments,
+        .lifetimeApplication =
+            lowerLifetimeApplication(construction.lifetimeApplication, body),
         .definedFailure = {.propagation =
                                construction.constructor != 0 &&
                                        !construction.generatedDefault
@@ -5536,6 +5833,10 @@ private:
                        borrowed ? call.borrowAccess : AccessMode::ReadOnly,
                    .traits = instanceProvider->traitsFor(resultType)},
           .operands = {argument},
+          .parameterTypes = call.parameterTypes,
+          .lifetimeArguments = call.lifetimeArguments,
+          .lifetimeApplication =
+              lowerLifetimeApplication(call.lifetimeApplication, body),
           .definedFailure = {.propagation = FailurePropagationKind::DirectCall},
           .borrowOrigin = call.borrowOrigin,
           .borrowArgument = call.borrowArgument,
@@ -5587,6 +5888,9 @@ private:
                        construction.constructedType)},
           .operands = {*residual},
           .parameterTypes = construction.parameterTypes,
+          .lifetimeArguments = construction.lifetimeArguments,
+          .lifetimeApplication =
+              lowerLifetimeApplication(construction.lifetimeApplication, body),
           .definedFailure = {.propagation =
                                  FailurePropagationKind::Constructor},
           .constructorKind = construction.kind,
@@ -5754,6 +6058,9 @@ private:
                  .traits =
                      instanceProvider->traitsFor(construction.constructedType)},
         .parameterTypes = construction.parameterTypes,
+        .lifetimeArguments = construction.lifetimeArguments,
+        .lifetimeApplication =
+            lowerLifetimeApplication(construction.lifetimeApplication, body),
         .definedFailure = {.propagation = FailurePropagationKind::Constructor},
         .borrowOrigin = construction.borrowOrigin,
         .borrowArgument = construction.borrowArgument,
@@ -6068,7 +6375,7 @@ private:
         const auto constant = model.findConstant(*raw);
         const auto *text =
             constant ? std::get_if<std::string>(&*constant) : nullptr;
-        if (!info || info->type != SemanticType::StringView || !text) {
+        if (!info || info->type.kind != SemanticType::StringView || !text) {
           lifecycleValid = false;
           return std::nullopt;
         }
@@ -6872,6 +7179,9 @@ private:
         value.dispatch = resolved->dispatch;
         value.dispatchOwner = resolved->dispatchOwner;
         value.parameterTypes = resolved->parameterTypes;
+        value.lifetimeArguments = resolved->lifetimeArguments;
+        value.lifetimeApplication =
+            lowerLifetimeApplication(resolved->lifetimeApplication, body);
         value.borrowOrigin = resolved->borrowOrigin;
         value.borrowArgument = resolved->borrowArgument;
         value.borrowArguments = resolved->borrowArguments;
@@ -7109,9 +7419,16 @@ private:
       }
       if (const ResolvedLambdaCallInfo *resolved =
               model.findLambdaCall(*call)) {
+        value.neverReturns = resolved->neverReturns;
+        value.noNormalBorrowResultProof = model.noNormalBorrowResultProof(*call);
         value.parameterTypes = resolved->parameterTypes;
+        value.lifetimeArguments = resolved->lifetimeArguments;
+        value.lifetimeApplication =
+            lowerLifetimeApplication(resolved->lifetimeApplication, body);
         value.borrowOrigin = resolved->borrowOrigin;
         value.borrowArgument = resolved->borrowArgument;
+        value.borrowArguments = resolved->borrowArguments;
+        value.borrowFields = resolved->borrowFields;
         value.borrowAccess = resolved->borrowAccess;
         // The callee is an explicit receiver even when a final pack prevents
         // formation of the fixed-arity call plan. MIR stages it before the
@@ -7138,9 +7455,22 @@ private:
               output.program.lambdas.begin(), output.program.lambdas.end(),
               [&](const HirLambda &candidate) {
                 const SemanticType calleeType = model.typeOf(*call->callee());
-                return candidate.returnType == resolved->returnType &&
-                       candidate.parameterTypes == resolved->parameterTypes &&
-                       lambdaMatchesType(candidate, calleeType);
+                const auto matches = [&](const SemanticType &universal,
+                                         const SemanticType &actual) {
+                  const auto applied = substituteTypeLifetimes(
+                      universal, resolved->lifetimeApplication.bindings);
+                  return applied && equivalentLifetimeTypes(*applied, actual);
+                };
+                if (!lambdaMatchesType(candidate, calleeType) ||
+                    candidate.parameterTypes.size() != resolved->parameterTypes.size() ||
+                    !matches(candidate.returnType, resolved->returnType))
+                  return false;
+                for (std::size_t index = 0;
+                     index < candidate.parameterTypes.size(); ++index)
+                  if (!matches(candidate.parameterTypes[index],
+                               resolved->parameterTypes[index]))
+                    return false;
+                return true;
               });
           if (existing != output.program.lambdas.end()) {
             value.lambdaTarget = existing->id;
@@ -7234,6 +7564,9 @@ private:
                .unsafeOperation = model.unsafeOperation(*resolved->pattern),
                .operands = std::move(arguments),
                .parameterTypes = element.call.parameterTypes,
+               .lifetimeArguments = element.call.lifetimeArguments,
+               .lifetimeApplication = lowerLifetimeApplication(
+                   element.call.lifetimeApplication, body),
                .neverReturns = element.call.neverReturns,
                .tracksCaller = element.call.tracksCaller,
                .definedFailure = {.propagation =
@@ -7258,6 +7591,9 @@ private:
     if (const ResolvedConstructionInfo *construction =
             model.findConstruction(*raw)) {
       value.designatedConstruction = !construction->designatedArguments.empty();
+      value.lifetimeArguments = construction->lifetimeArguments;
+      value.lifetimeApplication =
+          lowerLifetimeApplication(construction->lifetimeApplication, body);
       const bool inPlaceStorageConstruction =
           value.intrinsic == IntrinsicKind::ObjectConstruct ||
           value.intrinsic == IntrinsicKind::OptionalStorageConstruct;
@@ -7339,6 +7675,9 @@ private:
     if (const ResolvedOperatorInfo *resolved = resolvedValueOperator;
         resolved != nullptr && resolved->function != 0) {
       value.parameterTypes = resolved->parameterTypes;
+      value.lifetimeArguments = resolved->lifetimeArguments;
+      value.lifetimeApplication =
+          lowerLifetimeApplication(resolved->lifetimeApplication, body);
       value.dispatch = resolved->dispatch;
       value.dispatchOwner = resolved->dispatchOwner;
       value.callableBoundary = resolved->boundary;

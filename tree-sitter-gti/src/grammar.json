@@ -1509,8 +1509,17 @@
                   "type": "FIELD",
                   "name": "parameter",
                   "content": {
-                    "type": "SYMBOL",
-                    "name": "identifier"
+                    "type": "CHOICE",
+                    "members": [
+                      {
+                        "type": "SYMBOL",
+                        "name": "identifier"
+                      },
+                      {
+                        "type": "SYMBOL",
+                        "name": "lifetime_parameter"
+                      }
+                    ]
                   }
                 },
                 {
@@ -1526,8 +1535,17 @@
                         "type": "FIELD",
                         "name": "parameter",
                         "content": {
-                          "type": "SYMBOL",
-                          "name": "identifier"
+                          "type": "CHOICE",
+                          "members": [
+                            {
+                              "type": "SYMBOL",
+                              "name": "identifier"
+                            },
+                            {
+                              "type": "SYMBOL",
+                              "name": "lifetime_parameter"
+                            }
+                          ]
                         }
                       }
                     ]
@@ -1587,8 +1605,17 @@
                   "type": "FIELD",
                   "name": "parameter",
                   "content": {
-                    "type": "SYMBOL",
-                    "name": "identifier"
+                    "type": "CHOICE",
+                    "members": [
+                      {
+                        "type": "SYMBOL",
+                        "name": "identifier"
+                      },
+                      {
+                        "type": "SYMBOL",
+                        "name": "lifetime_parameter"
+                      }
+                    ]
                   }
                 },
                 {
@@ -1604,8 +1631,17 @@
                         "type": "FIELD",
                         "name": "parameter",
                         "content": {
-                          "type": "SYMBOL",
-                          "name": "identifier"
+                          "type": "CHOICE",
+                          "members": [
+                            {
+                              "type": "SYMBOL",
+                              "name": "identifier"
+                            },
+                            {
+                              "type": "SYMBOL",
+                              "name": "lifetime_parameter"
+                            }
+                          ]
                         }
                       }
                     ]
@@ -1677,8 +1713,17 @@
                   "type": "FIELD",
                   "name": "parameter",
                   "content": {
-                    "type": "SYMBOL",
-                    "name": "identifier"
+                    "type": "CHOICE",
+                    "members": [
+                      {
+                        "type": "SYMBOL",
+                        "name": "identifier"
+                      },
+                      {
+                        "type": "SYMBOL",
+                        "name": "lifetime_parameter"
+                      }
+                    ]
                   }
                 },
                 {
@@ -1694,8 +1739,17 @@
                         "type": "FIELD",
                         "name": "parameter",
                         "content": {
-                          "type": "SYMBOL",
-                          "name": "identifier"
+                          "type": "CHOICE",
+                          "members": [
+                            {
+                              "type": "SYMBOL",
+                              "name": "identifier"
+                            },
+                            {
+                              "type": "SYMBOL",
+                              "name": "lifetime_parameter"
+                            }
+                          ]
                         }
                       }
                     ]
@@ -1947,8 +2001,17 @@
               "type": "FIELD",
               "name": "argument",
               "content": {
-                "type": "SYMBOL",
-                "name": "type"
+                "type": "CHOICE",
+                "members": [
+                  {
+                    "type": "SYMBOL",
+                    "name": "type"
+                  },
+                  {
+                    "type": "SYMBOL",
+                    "name": "lifetime_constant"
+                  }
+                ]
               }
             },
             {
@@ -1964,8 +2027,17 @@
                     "type": "FIELD",
                     "name": "argument",
                     "content": {
-                      "type": "SYMBOL",
-                      "name": "type"
+                      "type": "CHOICE",
+                      "members": [
+                        {
+                          "type": "SYMBOL",
+                          "name": "type"
+                        },
+                        {
+                          "type": "SYMBOL",
+                          "name": "lifetime_constant"
+                        }
+                      ]
                     }
                   }
                 ]
@@ -2122,8 +2194,17 @@
                 "type": "FIELD",
                 "name": "argument",
                 "content": {
-                  "type": "SYMBOL",
-                  "name": "type"
+                  "type": "CHOICE",
+                  "members": [
+                    {
+                      "type": "SYMBOL",
+                      "name": "type"
+                    },
+                    {
+                      "type": "SYMBOL",
+                      "name": "lifetime_constant"
+                    }
+                  ]
                 }
               },
               {
@@ -2139,8 +2220,17 @@
                       "type": "FIELD",
                       "name": "argument",
                       "content": {
-                        "type": "SYMBOL",
-                        "name": "type"
+                        "type": "CHOICE",
+                        "members": [
+                          {
+                            "type": "SYMBOL",
+                            "name": "type"
+                          },
+                          {
+                            "type": "SYMBOL",
+                            "name": "lifetime_constant"
+                          }
+                        ]
                       }
                     }
                   ]
@@ -5181,9 +5271,98 @@
         }
       ]
     },
+    "lifetime_parameter": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "lifetime"
+        },
+        {
+          "type": "FIELD",
+          "name": "name",
+          "content": {
+            "type": "SYMBOL",
+            "name": "identifier"
+          }
+        }
+      ]
+    },
+    "lifetime_constant": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "_"
+        },
+        {
+          "type": "STRING",
+          "value": "static"
+        },
+        {
+          "type": "STRING",
+          "value": "this"
+        }
+      ]
+    },
+    "lifetime_parameter_clause": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "<"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "lifetime_parameter"
+            },
+            {
+              "type": "REPEAT",
+              "content": {
+                "type": "SEQ",
+                "members": [
+                  {
+                    "type": "STRING",
+                    "value": ","
+                  },
+                  {
+                    "type": "SYMBOL",
+                    "name": "lifetime_parameter"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "type": "STRING",
+          "value": ">"
+        }
+      ]
+    },
+    "lifetime_argument": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "identifier"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "lifetime_constant"
+        }
+      ]
+    },
     "generic_parameter": {
       "type": "CHOICE",
       "members": [
+        {
+          "type": "SYMBOL",
+          "name": "lifetime_parameter"
+        },
         {
           "type": "SEQ",
           "members": [
@@ -5800,9 +5979,38 @@
           {
             "type": "SYMBOL",
             "name": "function_signature"
+          },
+          {
+            "type": "SYMBOL",
+            "name": "quantified_function_type"
           }
         ]
       }
+    },
+    "quantified_function_type": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "for"
+        },
+        {
+          "type": "FIELD",
+          "name": "lifetimes",
+          "content": {
+            "type": "SYMBOL",
+            "name": "lifetime_parameter_clause"
+          }
+        },
+        {
+          "type": "FIELD",
+          "name": "signature",
+          "content": {
+            "type": "SYMBOL",
+            "name": "function_signature"
+          }
+        }
+      ]
     },
     "function_signature": {
       "type": "PREC_RIGHT",
@@ -6096,15 +6304,49 @@
       }
     },
     "reference_declarator": {
-      "type": "CHOICE",
+      "type": "SEQ",
       "members": [
         {
-          "type": "STRING",
-          "value": "&"
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "STRING",
+              "value": "&"
+            },
+            {
+              "type": "STRING",
+              "value": "&&"
+            }
+          ]
         },
         {
-          "type": "STRING",
-          "value": "&&"
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SEQ",
+              "members": [
+                {
+                  "type": "STRING",
+                  "value": "<"
+                },
+                {
+                  "type": "FIELD",
+                  "name": "lifetime",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "lifetime_argument"
+                  }
+                },
+                {
+                  "type": "STRING",
+                  "value": ">"
+                }
+              ]
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
         }
       ]
     },
@@ -6409,6 +6651,10 @@
                     },
                     {
                       "type": "SYMBOL",
+                      "name": "lifetime_constant"
+                    },
+                    {
+                      "type": "SYMBOL",
                       "name": "integer_literal"
                     },
                     {
@@ -6453,6 +6699,10 @@
                                 ]
                               }
                             ]
+                          },
+                          {
+                            "type": "SYMBOL",
+                            "name": "lifetime_constant"
                           },
                           {
                             "type": "SYMBOL",
@@ -10116,6 +10366,10 @@
     ],
     [
       "generic_argument_profile_clause",
+      "generic_parameter"
+    ],
+    [
+      "lifetime_parameter_clause",
       "generic_parameter"
     ],
     [

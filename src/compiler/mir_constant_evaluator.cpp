@@ -12,7 +12,7 @@ namespace {
 bool scalarType(const SemanticType &type) {
   return constantIntegerDomain(type).has_value() ||
          semanticFloatFormat(type).has_value() || type == SemanticType::Bool ||
-         type == SemanticType::Char || type == SemanticType::StringView ||
+         type == SemanticType::Char || type.kind == SemanticType::StringView ||
          type == SemanticType::NullPtr;
 }
 
@@ -1127,7 +1127,7 @@ private:
       return {.value = false};
     if (type == SemanticType::Char)
       return {.value = CharacterLiteral{0}};
-    if (type == SemanticType::StringView)
+    if (type.kind == SemanticType::StringView)
       return {.value = std::string{}};
     if (type == SemanticType::NullPtr)
       return {.value = NullConstant{}};
@@ -1256,7 +1256,7 @@ private:
       return convertConstantToType(values.front(), type);
     }
     if (instruction.operation == MirOperation::Index && values.size() == 2 &&
-        instruction.operands[0].type == SemanticType::StringView) {
+        instruction.operands[0].type.kind == SemanticType::StringView) {
       return evaluateConstantTextIndex(values[0], values[1]);
     }
     if (const auto operation = operatorToken(instruction.operation)) {
@@ -2085,7 +2085,7 @@ private:
         function->definitionKind != MirDefinitionKind::Source ||
         (function->returnBorrowOrigin != BorrowOriginKind::None &&
          function->returnType.kind != SemanticType::Reference &&
-         function->returnType != SemanticType::StringView) ||
+         function->returnType.kind != SemanticType::StringView) ||
         function->entryKind != ProgramEntryKind::None ||
         function->linkage != LanguageLinkage::Gti ||
         (!observedStorageType(function->returnType) &&

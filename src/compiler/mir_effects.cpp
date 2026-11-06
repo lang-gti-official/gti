@@ -2,6 +2,7 @@
 #include "gti/checked_integer.h"
 #include "gti/mir_verifier.h"
 #include "mir_verification_queries.h"
+#include "mir_lifetimes.h"
 
 #include <algorithm>
 #include <array>
@@ -2015,10 +2016,19 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
   std::unordered_set<HirClassInstanceId> visiting;
   const auto classFor =
       [&](const SemanticType &selected) -> const MirClassInstance * {
-    for (const auto &candidate : program.classInstances())
-      if (candidate.type == selected)
-        return &candidate;
-    return nullptr;
+    const auto view = mirClassLifetimeView(program, selected);
+    return view ? view->instance : nullptr;
+  };
+  const auto lambdaFor = [&](const SemanticType &selected)
+      -> std::optional<MirLambdaLifetimeView> {
+    std::optional<MirLambdaLifetimeView> result;
+    for (const auto &candidate : program.lambdaInstances())
+      if (auto view = mirLambdaLifetimeView(candidate, selected)) {
+        if (result)
+          return std::nullopt;
+        result = std::move(view);
+      }
+    return result;
   };
   const auto derive =
       [&](const auto &self,
@@ -2091,19 +2101,17 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
             return instance && !instance->requiresActiveCleanup;
           }
           if (value.kind == SemanticType::Enum) {
-            const auto *enumeration = program.findPayloadEnum(value);
-            return !enumeration || !enumeration->requiresActiveCleanup;
+            const auto view = mirEnumLifetimeView(program, value);
+            return view && (view->integral ||
+                            (view->payload && !view->payload->requiresActiveCleanup));
           }
-          if (value.kind == SemanticType::Lambda)
-            return std::any_of(
-                program.lambdaInstances().begin(),
-                program.lambdaInstances().end(), [&](const auto &lambda) {
-                  return lambda.type == value &&
-                         std::none_of(
-                             lambda.captureRequiresActiveCleanup.begin(),
-                             lambda.captureRequiresActiveCleanup.end(),
-                             [](bool active) { return active; });
-                });
+          if (value.kind == SemanticType::Lambda) {
+            const auto view = lambdaFor(value);
+            return view && std::none_of(
+                view->instance->captureRequiresActiveCleanup.begin(),
+                view->instance->captureRequiresActiveCleanup.end(),
+                [](bool active) { return active; });
+          }
           return value.kind != SemanticType::UniqueOwner &&
                  value.kind != SemanticType::SharedPointer &&
                  value != SemanticType::Unknown;
@@ -2124,7 +2132,8 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
                          .requiresActiveCleanup = true};
     }
     if (selected.kind == SemanticType::Enum) {
-      const auto *enumeration = program.findPayloadEnum(selected);
+      const auto view = mirEnumLifetimeView(program, selected);
+      const auto *enumeration = view ? view->payload : nullptr;
       if (enumeration == nullptr)
         return std::nullopt;
       MirDropType result{.type = selected,
@@ -2138,7 +2147,8 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
              --index) {
           if (!variant.payloadRequiresActiveCleanup[index - 1])
             continue;
-          auto child = self(self, variant.payloadTypes[index - 1]);
+          const auto actual = view->instantiate(variant.payloadTypes[index - 1]);
+          auto child = actual ? self(self, *actual) : std::nullopt;
           if (!child)
             return std::nullopt;
           child->payloadVariant = variant.variantIndex;
@@ -2149,26 +2159,26 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
       return result;
     }
     if (selected.kind == SemanticType::Lambda) {
-      const auto lambda = std::find_if(program.lambdaInstances().begin(),
-                                       program.lambdaInstances().end(),
-                                       [&](const MirLambdaInstance &candidate) {
-                                         return candidate.type == selected;
-                                       });
-      if (lambda == program.lambdaInstances().end() ||
+      const auto view = lambdaFor(selected);
+      const auto *lambda = view ? view->instance : nullptr;
+      if (!lambda ||
           lambda->captureTypes.size() !=
               lambda->captureRequiresActiveCleanup.size())
         return std::nullopt;
       const auto exactCaptures = selected.lambdaCaptureTypes();
-      if (exactCaptures.size() != lambda->captureTypes.size() ||
-          !std::equal(exactCaptures.begin(), exactCaptures.end(),
-                      lambda->captureTypes.begin()))
+      if (exactCaptures.size() != lambda->captureTypes.size())
         return std::nullopt;
+      for (std::size_t index = 0; index < exactCaptures.size(); ++index) {
+        const auto actual = view->instantiate(lambda->captureTypes[index]);
+        if (!actual || *actual != exactCaptures[index])
+          return std::nullopt;
+      }
       MirDropType result{.type = selected, .lambdaInstance = lambda->id};
       for (std::size_t index = lambda->captureTypes.size(); index != 0;
            --index) {
         if (!lambda->captureRequiresActiveCleanup[index - 1])
           continue;
-        auto child = self(self, lambda->captureTypes[index - 1]);
+        auto child = self(self, exactCaptures[index - 1]);
         if (!child)
           return std::nullopt;
         child->captureIndex = index - 1;
@@ -2180,6 +2190,8 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
     if (selected.kind == SemanticType::UniqueOwner &&
         selected.arguments.size() == 1) {
       const auto &value = selected.arguments.front();
+      const auto enumeration = value.kind == SemanticType::Enum
+          ? mirEnumLifetimeView(program, value) : std::nullopt;
       if ((value.kind >= SemanticType::Int8 &&
            value.kind <= SemanticType::Char) ||
           value.kind == SemanticType::RawPointer ||
@@ -2187,8 +2199,7 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
           value.kind == SemanticType::NullPtr ||
           value.kind == SemanticType::CString ||
           value.kind == SemanticType::StringView ||
-          (value.kind == SemanticType::Enum &&
-           program.findPayloadEnum(value) == nullptr)) {
+          (enumeration && enumeration->integral)) {
         return MirDropType{.type = selected, .requiresActiveCleanup = true};
       }
       const auto *pointee = classFor(selected.arguments.front());
@@ -2213,7 +2224,7 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
                            .uniquePointeeClass = pointee->id,
                            .requiresActiveCleanup = true};
       }
-      auto child = self(self, pointee->type);
+      auto child = self(self, value);
       if (!child)
         return std::nullopt;
       return MirDropType{.type = selected,
@@ -2221,8 +2232,9 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
                          .aggregate = {*child},
                          .requiresActiveCleanup = true};
     }
-    const auto *owner =
-        selected.kind == SemanticType::Class ? classFor(selected) : nullptr;
+    const auto ownerView = selected.kind == SemanticType::Class
+        ? mirClassLifetimeView(program, selected) : std::nullopt;
+    const auto *owner = ownerView ? ownerView->instance : nullptr;
     if (owner != nullptr && owner->destructor &&
         owner->requiresActiveDropState && owner->bases.empty() &&
         std::none_of(
@@ -2255,7 +2267,8 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
       const auto &field = *cursor;
       if (!field.requiresActiveCleanup)
         continue;
-      auto child = self(self, field.type);
+      const auto actual = ownerView->instantiate(field.type);
+      auto child = actual ? self(self, *actual) : std::nullopt;
       if (child) {
         child->uniqueOwnerField = field.symbol;
         result.aggregate.push_back(*child);
@@ -2264,14 +2277,16 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
       }
     }
     for (const auto &baseInfo : owner->bases) {
-      const auto *base = program.findClassInstance(baseInfo.instance);
-      if (base == nullptr) {
+      const auto actual = ownerView->instantiate(baseInfo.type);
+      const auto view = actual ? mirClassLifetimeView(program, *actual) : std::nullopt;
+      const auto *base = view ? view->instance : nullptr;
+      if (base == nullptr || base->id != baseInfo.instance) {
         complete = false;
         continue;
       }
       if (!base->requiresActiveCleanup)
         continue;
-      auto child = self(self, base->type);
+      auto child = self(self, *actual);
       if (child) {
         child->uniqueOwnerBase = base->id;
         result.aggregate.push_back(*child);

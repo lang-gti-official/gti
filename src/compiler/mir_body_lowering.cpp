@@ -3,6 +3,7 @@
 #include "gti/mir_lowering.h"
 #include "gti/mir_verifier.h"
 #include "gti/support.h"
+#include "mir_lifetimes.h"
 #include "mir_source_debug.h"
 #include "mir_verification_queries.h"
 #include "mir_verification_support.h"
@@ -16,6 +17,36 @@
 namespace lang {
 
 namespace {
+
+template <typename Instance> struct HirLifetimeInstanceView {
+  const Instance *instance = nullptr;
+  std::vector<LifetimeBinding> bindings;
+};
+
+// Body places retain the caller's regions while HIR instances use their own
+// universal slots. Select a unique exact structural instance and instantiate
+// its field recipes; representation erasure is never a lookup proof.
+template <typename Instance>
+[[nodiscard]] std::optional<HirLifetimeInstanceView<Instance>>
+hirLifetimeInstanceView(const std::vector<Instance> &instances,
+                        const SemanticType &type) {
+  std::optional<HirLifetimeInstanceView<Instance>> result;
+  for (const auto &instance : instances) {
+    const auto &parameters = [&]() -> const std::vector<Lifetime> & {
+      if constexpr (std::is_same_v<Instance, HirLambda>)
+        return instance.environmentLifetimes;
+      else
+        return instance.lifetimeContract.parameters;
+    }();
+    const auto bindings = matchUniversalTypeLifetimes(instance.type, type, parameters);
+    if (!bindings)
+      continue;
+    if (result)
+      return std::nullopt;
+    result = HirLifetimeInstanceView<Instance>{&instance, *bindings};
+  }
+  return result;
+}
 
 // The first-use outcomes a thread-local access raises through its
 // EnsureThreadLocal guard rather than through the accessing instruction.
@@ -116,6 +147,7 @@ public:
     }
     output.hasCallerLocation = function != nullptr && function->tracksCaller;
     output.placeDomain = source.placeDomain;
+    output.lifetimeBody = lowerMirLifetimeBody(source.lifetimeBody);
     captureSourceDebug();
     output.returnType = std::move(returnType);
     for (const HirValue &value : source.values) {
@@ -946,6 +978,9 @@ private:
                          .destination = destination,
                          .operands = std::move(arguments),
                          .parameterTypes = std::move(parameterTypes),
+                         .lifetimeArguments = initializer.lifetimeArguments,
+                         .lifetimeApplication = lowerMirLifetimeApplication(
+                             initializer.lifetimeApplication),
                          .definedFailure = {.propagation = propagation},
                          .constructorTarget = initializer.constructorTarget,
                          .info = {.type = base->type,
@@ -2807,7 +2842,22 @@ private:
     valid = rebuildMirValueUses(output) && valid;
     valid = validateSourceProvenance() && valid;
     finishSourceDebug();
+    std::vector<MirVerificationError> lifetimeErrors;
+    if (!resolveMirLifetimeOrigins(output.lifetimeBody, output))
+      lifetimeErrors.push_back(
+          {.bodyKind = output.kind,
+           .message = "MIR body lifetime origin has no exact lowered place"});
+    for (auto &block : output.blocks)
+      for (auto &instruction : block.instructions)
+        if (!resolveMirLifetimeOrigins(instruction.lifetimeApplication, output))
+          lifetimeErrors.push_back(
+              {.bodyKind = output.kind,
+               .block = block.id,
+               .instruction = instruction.id,
+               .message = "MIR lifetime origin has no exact lowered place"});
     verification = verifyMirBody(output);
+    verification.errors.insert(verification.errors.end(),
+                               lifetimeErrors.begin(), lifetimeErrors.end());
     valid = verification.valid() && valid;
   }
 
@@ -3354,6 +3404,12 @@ private:
     }
     if (inheritSourceMetadata && instruction.hirValue != 0) {
       if (const HirValue *source = findValue(instruction.hirValue)) {
+        if (instruction.kind == MirInstructionKind::Call ||
+            instruction.kind == MirInstructionKind::Construct) {
+          instruction.lifetimeArguments = source->lifetimeArguments;
+          instruction.lifetimeApplication =
+              lowerMirLifetimeApplication(source->lifetimeApplication);
+        }
         const bool neutralValueStage =
             instruction.kind == MirInstructionKind::CallInput &&
             instruction.callInputKind == HirCallInputKind::Value &&
@@ -4065,7 +4121,8 @@ private:
       return found->second;
     }
 
-    if (loan.referenceSelection) {
+    if (loan.referenceSelection && loan.referenceSelection->kind ==
+                                       ReferenceSelectionKind::StoredExternalReference) {
       const auto authority = loan.parent != 0
                                  ? loan.parent
                                  : loan.referenceSelection->transferredFrom;
@@ -4469,11 +4526,15 @@ private:
           producer->result != resolved->id || producer->operands.size() != 1 ||
           output.findPlace(producer->operands.front().place) == nullptr ||
           !producer->payloadExtractionKind ||
-          !isStoredReferenceExtraction(*producer->payloadExtractionKind)) {
+          (selection.kind == ReferenceSelectionKind::StoredExternalReference
+               ? !isStoredReferenceExtraction(*producer->payloadExtractionKind)
+               : selection.kind != ReferenceSelectionKind::PhysicalPayload ||
+                     *producer->payloadExtractionKind != PayloadExtractionKind::BorrowValue)) {
         valid = false;
         return;
       }
-      MirReferenceSelection selected{.value = resolved->id,
+      MirReferenceSelection selected{.kind = selection.kind,
+                                     .value = resolved->id,
                                      .carrier =
                                          producer->operands.front().place,
                                      .fields = selection.fields,
@@ -6782,35 +6843,36 @@ private:
     if (type.kind == SemanticType::Enum) {
       // An abstract entry path describes a possible active alternative, not
       // permission to search every alternative for a convenient field.
-      if (!variant)
+      const auto view = hirLifetimeInstanceView(program.enumDeclarations(), type);
+      if (!variant || !view || !view->instance->payload)
         return std::nullopt;
-      for (const auto &owner : program.enumDeclarations())
-        if (owner.type == type && owner.payload)
-          for (const auto &alternative : owner.enumerators)
-            if (alternative.variantIndex == *variant &&
-                alternative.payloadTypes.size() ==
-                    alternative.payloadSymbols.size())
-              for (std::size_t index = 0;
-                   index < alternative.payloadSymbols.size(); ++index)
-                if (alternative.payloadSymbols[index] == field)
-                  return alternative.payloadTypes[index];
+      for (const auto &alternative : view->instance->enumerators)
+        if (alternative.variantIndex == *variant &&
+            alternative.payloadTypes.size() == alternative.payloadSymbols.size())
+          for (std::size_t index = 0; index < alternative.payloadSymbols.size(); ++index)
+            if (alternative.payloadSymbols[index] == field)
+              return substituteTypeLifetimes(alternative.payloadTypes[index], view->bindings);
       return std::nullopt;
     }
     if (variant)
       return std::nullopt;
     if (type.kind == SemanticType::Lambda) {
-      for (const auto &owner : program.lambdaInstances())
-        if (owner.type == type)
-          for (const auto &capture : owner.captures)
-            if (capture.bindingSymbol == field)
-              return capture.type;
+      const auto view = hirLifetimeInstanceView(program.lambdaInstances(), type);
+      if (!view)
+        return std::nullopt;
+      for (const auto &capture : view->instance->captures)
+        if (capture.bindingSymbol == field)
+          return substituteTypeLifetimes(capture.type, view->bindings);
       return std::nullopt;
     }
-    for (const auto &owner : program.classInstances())
-      if (owner.type == type)
-        for (const auto &member : owner.fields)
-          if (member.info.symbol == field)
-            return member.info.type;
+    if (type.kind != SemanticType::Class)
+      return std::nullopt;
+    const auto view = hirLifetimeInstanceView(program.classInstances(), type);
+    if (!view)
+      return std::nullopt;
+    for (const auto &member : view->instance->fields)
+      if (member.info.symbol == field)
+        return substituteTypeLifetimes(member.info.type, view->bindings);
     return std::nullopt;
   }
 
@@ -6920,19 +6982,19 @@ private:
         exact = false;
         return;
       }
-      const auto instance = std::find_if(
-          program.classInstances().begin(), program.classInstances().end(),
-          [&](const HirClassInstance &candidate) {
-            return candidate.type == current;
-          });
-      if (instance == program.classInstances().end() ||
-          !instance->bases.empty()) {
+      const auto view = hirLifetimeInstanceView(program.classInstances(), current);
+      if (!view || !view->instance->bases.empty()) {
         exact = false;
         return;
       }
       visiting.push_back(current);
-      for (const auto &field : instance->fields) {
-        const SemanticType &fieldType = field.info.type;
+      for (const auto &field : view->instance->fields) {
+        const auto instantiated = substituteTypeLifetimes(field.info.type, view->bindings);
+        if (!instantiated) {
+          exact = false;
+          break;
+        }
+        const SemanticType &fieldType = *instantiated;
         prefix.push_back(field.info.symbol);
         if (fieldType.kind == SemanticType::Reference &&
             fieldType.arguments.size() == 1)
@@ -11980,10 +12042,21 @@ private:
       if (lambda == nullptr) {
         valid = false;
       } else {
+        const auto environment = matchUniversalTypeLifetimes(
+            lambda->type, value->info.type, lambda->environmentLifetimes);
         instruction.closureCaptureTypes.reserve(lambda->captures.size());
         instruction.closureCaptureModes.reserve(lambda->captures.size());
-        for (const LambdaCaptureInfo &capture : lambda->captures) {
-          instruction.closureCaptureTypes.push_back(capture.type);
+        if (!environment) {
+          valid = false;
+        } else for (std::size_t index = 0; index < lambda->captures.size(); ++index) {
+          const auto &capture = lambda->captures[index];
+          const auto instantiated = substituteTypeLifetimes(capture.type, *environment);
+          const auto actualCaptures = value->info.type.lambdaCaptureTypes();
+          if (!instantiated || index >= actualCaptures.size() ||
+              !equivalentLifetimeTypes(*instantiated, actualCaptures[index])) {
+            valid = false; break;
+          }
+          instruction.closureCaptureTypes.push_back(actualCaptures[index]);
           instruction.closureCaptureModes.push_back(capture.mode);
         }
       }
@@ -12324,13 +12397,14 @@ private:
       // Ordinary payload borrowing protects the enum's field storage. A
       // stored-reference extraction instead protects external owners and
       // retains its evaluated address separately in referenceSelection.
-      const MirPlaceId origin =
-          desired->referenceSelection ? placeForLoan(*desired, value) : field;
+      const bool externalReference = desired->referenceSelection &&
+          desired->referenceSelection->kind == ReferenceSelectionKind::StoredExternalReference;
+      const MirPlaceId origin = externalReference ? placeForLoan(*desired, value) : field;
       if (origin == 0) {
         valid = false;
         return {};
       }
-      if (!desired->referenceSelection)
+      if (!externalReference)
         output.places[field - 1].key = desired->place;
       MirLoanId parent = 0;
       if (desired->parent != 0) {
@@ -15891,6 +15965,8 @@ private:
         // before the operand-free return below.
         emitValue(*statement.value);
       } else if (output.returnType.kind == SemanticType::Reference) {
+        const bool completeCallableReturn = function ? function->completeReturnBorrow.has_value()
+                                            : lambda ? lambda->completeReturnBorrow.has_value() : false;
         MirOperand borrow = referenceOperand(*statement.value, 0,
                                              output.returnType.referenceAccess);
         if (borrow.loan != 0) {
@@ -15912,6 +15988,58 @@ private:
             } else if (candidate.kind == MirLoanKind::Parameter &&
                        candidate.entry && carriedByParameter) {
               referenceParameterEntry = borrow.loan;
+            }
+          }
+          // A complete scalar result may select any exact stored-reference
+          // field of its receiver or input carrier. Preserve the entry group
+          // and publish the evaluated field pointer separately; independent
+          // program flow proves the typed path and allowed outgoing supplier.
+          if (storedCarrierEntry == 0 && completeCallableReturn &&
+              borrow.loan <= output.loans.size()) {
+            const auto &candidate = output.loans[borrow.loan - 1];
+            const auto *runtime = candidate.kind == MirLoanKind::Stored && candidate.entry
+                                      ? output.findPlace(placeForValue(*statement.value)) : nullptr;
+            if (runtime && (runtime->root == MirPlaceRootKind::This ||
+                            runtime->root == MirPlaceRootKind::Binding) &&
+                runtime->projections.size() >= 2 &&
+                runtime->projections.back().kind == MirProjectionKind::Dereference &&
+                std::all_of(runtime->projections.begin(), std::prev(runtime->projections.end()),
+                            [](const auto &part) { return part.kind == MirProjectionKind::Field; }))
+              storedCarrierEntry = borrow.loan;
+          }
+          // Entry loans are immutable callable inputs, independently of
+          // which supplier the one-source compatibility summary names. A
+          // lifetime contract can permit several reference parameters; each
+          // returned input needs its own publication loan and runtime address.
+          if (referenceParameterEntry == 0 && borrow.loan <= output.loans.size()) {
+            const MirLoan &candidate = output.loans[borrow.loan - 1];
+            const MirPlace *source = output.findPlace(candidate.source);
+            const auto *types = function ? &function->parameterTypes
+                                : lambda ? &lambda->parameterTypes : nullptr;
+            const auto *bindings = function ? &function->parameterBindings
+                                   : lambda ? &lambda->parameterBindings : nullptr;
+            if (candidate.kind == MirLoanKind::Parameter && candidate.entry &&
+                source && source->root == MirPlaceRootKind::Binding &&
+                types && bindings) {
+              for (std::size_t index = 0; index < types->size(); ++index) {
+                const auto formal = mir_detail::returnOriginFormal(*types, *bindings, index);
+                if (!formal || (*types)[index].kind != SemanticType::Reference ||
+                    source->binding != formal->binding ||
+                    std::find(candidate.carriers.begin(), candidate.carriers.end(),
+                              formal->binding) == candidate.carriers.end())
+                  continue;
+                const bool exact = source->projections.empty()
+                    ? source->type == (*types)[index]
+                    : source->projections.size() == 1 &&
+                      source->projections.front().kind == MirProjectionKind::PackElement &&
+                      source->projections.front().constantIndex &&
+                      static_cast<std::size_t>(*source->projections.front().constantIndex) ==
+                          formal->elementWithinBinding && source->type == (*types)[index];
+                if (exact) {
+                  referenceParameterEntry = borrow.loan;
+                  break;
+                }
+              }
             }
           }
           if (storedCarrierEntry != 0) {
@@ -15937,9 +16065,13 @@ private:
               // retire the by-value carrier parameter's body-local entry loan
               // at the same instruction boundary.
               const MirLoan retainedLoan = output.loans[storedCarrierEntry - 1];
+              const bool completeProjection = completeCallableReturn &&
+                  runtime->projections.size() >= 2 &&
+                  runtime->projections.back().kind == MirProjectionKind::Dereference;
               const MirLoanId published =
-                  createLoan(MirLoanKind::Return, retainedLoan.source,
-                             retainedLoan.access, *statement.value);
+                  createLoan(MirLoanKind::Return,
+                             completeProjection ? runtimePlace : retainedLoan.source,
+                             output.returnType.referenceAccess, *statement.value);
               output.loans[published - 1].storedDependency =
                   retainedLoan.storedDependency;
               (void)appendInstruction(
@@ -16014,6 +16146,12 @@ private:
                         .type = value->info.type};
             }
           } else if (function != nullptr &&
+                     // Complete results use the producer-preserving publication
+                     // below. Its independent MIR flow replay must reconstruct
+                     // every source; the attached summary/set alone proves none.
+                     !(function->completeReturnBorrow &&
+                       findValue(*statement.value) &&
+                       findValue(*statement.value)->borrowDependencies) &&
                      bodyReturnBorrowOrigin() != BorrowOriginKind::None &&
                      borrow.loan <= output.loans.size() &&
                      output.loans[borrow.loan - 1].kind ==
@@ -16126,7 +16264,9 @@ private:
                                 function->parameterBindings
                                     [function->returnBorrowParameter]));
             if (!validTail || transientChain.empty()) {
-              valid = false;
+              reject(*statement.value,
+                     "reference return has no exact incoming authority chain "
+                     "or complete producer dependency fact");
             } else {
               const HirValue *value = findValue(*statement.value);
               if (value == nullptr || output.returnType.arguments.size() != 1 ||
@@ -16252,6 +16392,7 @@ private:
             (void)appendInstruction({.kind = MirInstructionKind::Borrow,
                                      .hirValue = source.producedBy,
                                      .operands = {{.kind = MirOperandKind::Loan,
+                                                   .place = borrow.place,
                                                    .loan = borrow.loan,
                                                    .type = borrow.type}},
                                      .loan = published,
@@ -16263,6 +16404,7 @@ private:
                                      .loan = borrow.loan});
             removeLoanFromState(borrow.loan, scopes, bindingLoans);
             borrow = {.kind = MirOperandKind::Loan,
+                      .place = borrow.place,
                       .loan = published,
                       .type = borrow.type};
             returnLoan = published;
@@ -16299,8 +16441,11 @@ private:
         const bool completeEmpty =
             result && completeEmptyBorrowValue(*statement.value, *result,
                                                output.returnType);
+        // A scalar loaded from a reference place uses its borrow while
+        // evaluating the expression; it does not export that address with
+        // the copied result. Keep expression-specific ownerless facts too.
         if (value != nullptr && value->info.traits.containsBorrowedState &&
-            !completeEmpty) {
+            resolvedTraits(output.returnType).containsBorrowedState && !completeEmpty) {
           MirLoanId retained = loanForValue(*statement.value);
           if (retained == 0 &&
               (output.returnType.kind == SemanticType::Class ||

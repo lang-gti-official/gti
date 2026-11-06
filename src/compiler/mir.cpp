@@ -970,7 +970,7 @@ void append(MirVerificationResult &destination, MirVerificationResult source) {
     return type == SemanticType::Char;
   }
   if (std::holds_alternative<std::string>(literal)) {
-    return type == SemanticType::StringView;
+    return type.kind == SemanticType::StringView;
   }
   if (std::holds_alternative<bool>(literal)) {
     return type == SemanticType::Bool;
@@ -1029,7 +1029,7 @@ programConstantMatchesType(const ConstantValue &constant,
     return type == SemanticType::Char;
   }
   if (std::holds_alternative<std::string>(constant)) {
-    return type == SemanticType::StringView;
+    return type.kind == SemanticType::StringView;
   }
   if (std::holds_alternative<bool>(constant)) {
     return type == SemanticType::Bool;
@@ -1139,16 +1139,7 @@ using MirLoanState = std::vector<MirLoanFlowState>;
          state == MirLoanFlowState::ParkedSuspended;
 }
 
-struct MirCanonicalPayloadSelection {
-  // Inserted at this position among the ordinary field/dereference path.
-  std::size_t projectionOffset = 0;
-  SemanticType type = SemanticType::Unknown;
-  std::size_t variant = 0;
-  std::size_t field = 0;
-
-  friend bool operator==(const MirCanonicalPayloadSelection &,
-                         const MirCanonicalPayloadSelection &) = default;
-};
+using MirCanonicalPayloadSelection = mir_detail::CanonicalPayloadSelection;
 
 struct MirCanonicalPlace {
   MirPlaceRootKind root = MirPlaceRootKind::Value;
@@ -1387,7 +1378,7 @@ canonicalPlace(const MirBody &body, MirPlaceId placeId,
     const MirBody &body, MirPlaceId placeId,
     const std::unordered_map<HirBindingId, std::vector<MirLoanId>>
         &bindingLoans,
-    bool physicalCarrier = false) {
+    bool physicalCarrier = false, bool exactPayload = false) {
   const auto carrierLoan = [&](HirBindingId binding) {
     const auto found = bindingLoans.find(binding);
     if (found == bindingLoans.end() || found->second.size() != 1) {
@@ -1421,10 +1412,30 @@ canonicalPlace(const MirBody &body, MirPlaceId placeId,
       }
     }
     if (place->root == MirPlaceRootKind::Value) {
-      const std::optional<MirPlaceId> source =
-          borrowSourceForValue(body, place->value, depth + 1);
+      const auto *definition = exactPayload
+                                   ? mir_detail::definitionFor(body, place->value)
+                                   : nullptr;
+      const bool payload = definition && !definition->tombstone &&
+          definition->kind == MirInstructionKind::Compute &&
+          definition->operation == MirOperation::PayloadExtract &&
+          definition->payloadExtractionKind == PayloadExtractionKind::BorrowValue;
+      if (payload && (definition->operands.size() != 1 ||
+                      !definition->enumOwner || !definition->enumVariant ||
+                      !definition->payloadIndex ||
+                      definition->operands.front().type.kind != SemanticType::Enum ||
+                      definition->operands.front().type.enumId != *definition->enumOwner))
+        return {.ambiguous = true};
+      const std::optional<MirPlaceId> source = payload
+          ? std::optional(definition->operands.front().place)
+          : borrowSourceForValue(body, place->value, depth + 1);
       if (source && *source != id) {
         MirCanonicalPlace result = self(self, *source, depth + 1);
+        if (payload)
+          result.payloadSelections.push_back(
+              {.projectionOffset = result.projections.size(),
+               .type = definition->operands.front().type,
+               .variant = *definition->enumVariant,
+               .field = *definition->payloadIndex});
         result.projections.insert(result.projections.end(),
                                   place->projections.begin(),
                                   place->projections.end());
@@ -5424,6 +5435,27 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                 movedCarrier = true;
                 resolved = callInputSource(producer->operands.front());
               }
+              // A copyable carrier shares its readonly external group.
+              // Follow the exact load's physical binding, just as a move
+              // follows its source; the later parent check still requires
+              // that binding to own this very active group. Complete program
+              // flow separately proves each selected stored-reference path.
+              if (producer != nullptr &&
+                  producer->kind == MirInstructionKind::Load &&
+                  producer->operands.size() == 1 &&
+                  producer->operands.front().kind == MirOperandKind::Copy &&
+                  producer->info.type == resolved->type &&
+                  producer->info.traits.copyable &&
+                  producer->info.traits.containsBorrowedState &&
+                  body.loans[parent - 1].kind == MirLoanKind::Stored &&
+                  body.loans[parent - 1].access == AccessMode::ReadOnly &&
+                  body.loans[loan - 1].access == AccessMode::ReadOnly &&
+                  std::all_of(body.loans[parent - 1].additionalDependencies.begin(),
+                              body.loans[parent - 1].additionalDependencies.end(),
+                              [](const auto &dependency) {
+                                return dependency.access == AccessMode::ReadOnly;
+                              }))
+                resolved = callInputSource(producer->operands.front());
               if (producer != nullptr &&
                   stagedPayloadConstruction(instruction) &&
                   stagedPayloadConstruction(*producer) && producer->loan &&
@@ -10275,8 +10307,8 @@ bool validCallInputType(const SemanticType &source,
   if (kind != HirCallInputKind::Value) {
     return false;
   }
-  if (parameter == SemanticType::CString) {
-    return source == SemanticType::StringView ||
+  if (parameter.kind == SemanticType::CString) {
+    return source.kind == SemanticType::StringView ||
            source == SemanticType::NullPtr;
   }
   if (parameter.kind == SemanticType::NativeFunction) {
@@ -10327,9 +10359,9 @@ CanonicalPlace canonicalBorrowOrigin(
     const MirBody &body, MirPlaceId place,
     const std::unordered_map<HirBindingId, std::vector<MirLoanId>>
         &bindingLoans,
-    bool physicalCarrier) {
+    bool physicalCarrier, bool exactPayload) {
   MirCanonicalPlace canonical =
-      canonicalBorrowOriginPlace(body, place, bindingLoans, physicalCarrier);
+      canonicalBorrowOriginPlace(body, place, bindingLoans, physicalCarrier, exactPayload);
   return {.root = canonical.root,
           .binding = canonical.binding,
           .symbol = canonical.symbol,
@@ -10337,6 +10369,7 @@ CanonicalPlace canonicalBorrowOrigin(
           .temporary = canonical.temporary,
           .value = canonical.value,
           .projections = std::move(canonical.projections),
+          .payloadSelections = std::move(canonical.payloadSelections),
           .throughLoan = canonical.throughLoan,
           .ambiguous = canonical.ambiguous};
 }
@@ -10350,6 +10383,7 @@ bool sameCanonicalPlace(const CanonicalPlace &left,
                               .temporary = left.temporary,
                               .value = left.value,
                               .projections = left.projections,
+                              .payloadSelections = left.payloadSelections,
                               .throughLoan = left.throughLoan,
                               .ambiguous = left.ambiguous};
   const MirCanonicalPlace rhs{.root = right.root,
@@ -10359,6 +10393,7 @@ bool sameCanonicalPlace(const CanonicalPlace &left,
                               .temporary = right.temporary,
                               .value = right.value,
                               .projections = right.projections,
+                              .payloadSelections = right.payloadSelections,
                               .throughLoan = right.throughLoan,
                               .ambiguous = right.ambiguous};
   return ::lang::sameCanonicalPlace(lhs, rhs);
@@ -10366,6 +10401,8 @@ bool sameCanonicalPlace(const CanonicalPlace &left,
 
 bool sameGlobalBorrowPlace(const BorrowOriginPlace &expected,
                            const CanonicalPlace &actual) {
+  if (!actual.payloadSelections.empty())
+    return false; // The legacy global path cannot encode a variant selector.
   const MirCanonicalPlace canonical{.root = actual.root,
                                     .binding = actual.binding,
                                     .symbol = actual.symbol,
@@ -11489,10 +11526,19 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
         return false;
     }
     const bool stagedPayload = stagedPayloadConstruction(instruction);
+    const bool selectedBorrowTarget =
+        instruction.intrinsic == IntrinsicKind::None &&
+        (instruction.functionTarget || instruction.constructorTarget ||
+         instruction.lambdaTarget);
+    const bool signatureBorrowTarget =
+        instruction.kind == MirInstructionKind::Call &&
+        instruction.intrinsic == IntrinsicKind::FunctionPointerInvoke &&
+        !instruction.functionTarget && !instruction.constructorTarget &&
+        !instruction.lambdaTarget &&
+        instruction.lifetimeApplication.callableSignature.has_value();
     if (!instruction.borrowFields.empty() &&
         (!callable || instruction.borrowOrigin == BorrowOriginKind::None ||
-         instruction.intrinsic != IntrinsicKind::None ||
-         (!instruction.functionTarget && !instruction.constructorTarget)))
+         (!selectedBorrowTarget && !signatureBorrowTarget)))
       return false;
     const bool callInput = instruction.kind == MirInstructionKind::CallInput;
     const bool baseCallInput =
@@ -11520,7 +11566,8 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
             : nullptr;
     if ((instruction.noNormalBorrowResult &&
          (instruction.kind != MirInstructionKind::Call ||
-          !instruction.neverReturns || !instruction.functionTarget ||
+          !instruction.neverReturns ||
+          (!instruction.functionTarget && !instruction.lambdaTarget) ||
           instruction.intrinsic != IntrinsicKind::None ||
           instruction.dispatch != CallDispatch::Static || instruction.result ||
           instruction.loan || instruction.successResultDrop ||
@@ -12957,7 +13004,10 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           producer->info != selected->info || producer->operands.size() != 1 ||
           producer->operands.front().place != selection.carrier ||
           !producer->payloadExtractionKind ||
-          !isStoredReferenceExtraction(*producer->payloadExtractionKind) ||
+          (selection.kind == ReferenceSelectionKind::StoredExternalReference
+               ? !isStoredReferenceExtraction(*producer->payloadExtractionKind)
+               : selection.kind != ReferenceSelectionKind::PhysicalPayload ||
+                     *producer->payloadExtractionKind != PayloadExtractionKind::BorrowValue) ||
           ((*producer->payloadExtractionKind ==
             PayloadExtractionKind::TransferReference) !=
            (selection.transferredFrom != 0)) ||
@@ -12971,7 +13021,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
             selected->info.access != AccessMode::Mutable))) {
         return failure(body, owner,
                        "loan " + std::to_string(loan.id) +
-                           " has no exact stored-reference selection producer");
+                           " has no exact reference selection producer");
       }
     }
     if (loan.id != index + 1 || !validPlace(loan.source) ||
@@ -14415,7 +14465,8 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                          "shell's stored dependency",
                          block.id, instruction.id);
         }
-        const bool storedCarrierReturnTransfer = [&] {
+        const bool storedCarrierReturnTransfer =
+            mir_detail::storedReferenceReturnPublication(body, block, instruction) || [&] {
           const bool fieldPublication = body.kind == MirBodyKind::Constructor &&
                                         produced.kind == MirLoanKind::Stored &&
                                         produced.storedField != 0;

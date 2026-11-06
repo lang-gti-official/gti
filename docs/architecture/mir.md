@@ -437,8 +437,78 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The combined deterministic serialization is currently `mir-v120`/`mir-body-v93`,
-with `lowered-program-v34` declaration metadata. Function instances and sealed
+Lifetime annotations remain semantic proof metadata in MIR. Reference regions,
+nominal lifetime arguments, callable quantifiers, complete function lifetime
+contracts and exact call substitutions participate in structural serialization.
+Changing a region relation therefore changes the identity used by verification
+and caching even though it introduces no runtime operand or object field.
+Exact type-outlives bounds retain opaque types rather than reducing them to
+bounds on their spelling's type arguments.
+
+Each application preserves its full universal substitution, explicit existential
+inventory, required region and exact-type obligations, and local origin
+witnesses. Body records collect the selected applications with assignment and
+return obligations. HIR qualifies semantic places to its body and replaces
+source expressions with stable value IDs; MIR maps those witnesses to exact
+places, rejecting stale domains and ambiguous temporary materializations.
+These maps and completion states participate in the sealed fingerprint; a
+completion flag alone is not proof of any outlives relation. Lambda and
+destructor instances retain normalized contracts just as functions and
+constructors do. Authoritative nominal variance is preserved alongside the
+concrete field/base inventory; lowering never derives it from names.
+
+An exact local origin also proves that its value type is valid for that local
+borrow. This lets an owned generic value be borrowed without a public
+`T:static` promise. MIR derives that premise from the resolved place type;
+it does not accept an arbitrary supplied type bound. The premise stays local
+to the body, cannot extend the origin to a universal or static region, and
+does not replace availability, loan endpoint or cleanup verification.
+
+Callable lifetime applications retain a universal function signature and fixed
+bindings for its free carrier regions. The trusted function-pointer capability
+selects the actual carrier signature. MIR reconstructs it by capture-avoiding
+substitution, derives the implied input type bounds, and instantiates only the
+higher-ranked binders for invocation. The declaration's permitted supplier set
+is retained even when the current target body uses only a subset. Full target
+requirement formulas are evaluated against the caller graph; semantic predicate
+truth belongs to the exact target instance and cannot be supplied by a call.
+Every feasible disjunct of the caller's declaration is checked independently,
+including the body graph's unconditional edges. Different branches may prove
+the same relation through different transitive paths; a fact from one branch
+never becomes an assumption for another. Type bounds and type-requirement
+leaves are checked for nested region scope before they grant any assumptions.
+Reference initialization uses this same graph to prove permitted shortening
+while retaining exact referent identity and access permission.
+
+Reference selections distinguish a stored external reference from a borrow of
+an owned enum payload. Both retain the evaluated extraction address. A physical
+payload selection keeps the enum shell as its conservative alias key, so
+replacement of the enum still conflicts with a live payload borrow. Its exact
+field and variant come from the typed `PayloadExtract(BorrowValue)` operation,
+independently of the selection annotation. Return-summary normalization retains
+that executable selector while tracing caller-owned storage, including generic
+payload types whose complete stored-reference inventory is not yet concrete.
+Reference-region checking replays that same exact selection to the carrier's
+declared region or checked local origin.
+The physical selection cannot claim external-owner transfer authority. Variant
+dominance, access, parent liveness and cleanup remain separate required proofs.
+
+A program-level nominal recipe graph preserves symbolic generic identities,
+fields, bases, payload paths, specialization families and trusted capabilities.
+The shared variance fixed point operates on these recipes, retaining slot
+identity when concrete arguments coincide. Lifetimes projected inside generic
+argument patterns have a separate binder inventory. Matching the substituted
+pattern against the actual public arguments binds those regions without adding
+top-level lifetime arguments. Public type slots selected by specialization
+patterns are conservatively invariant; precise variance composition through
+pattern positions is not implemented. Ordinary declared lifetime slots retain
+the variance derived from their stored uses. Concrete executable instances also
+retain descriptors for lifted universal regions and their extended contracts.
+These records are proof metadata and do not authorize runtime erasure by
+themselves.
+
+The combined deterministic serialization is currently `mir-v122`/`mir-body-v94`,
+with `lowered-program-v36` declaration metadata. Function instances and sealed
 declarations retain the resolved cold hint and default/hint/never inlining policy;
 verification rejects a mismatching or non-source policy. These distinct combined
 identities retain both macro result-region/local-initializer authority and
@@ -522,7 +592,14 @@ each declared alternative's exact concrete type, tag and dependency-free
 payload layout, then reconstructs facts at every reachable normal return. The
 actual alternatives must be covered by the declaration contract; additional
 well-typed dependency-free cases are conservative, so optimizer narrowing does
-not change caller lifetime obligations. Unknown return facts and a function
+not change caller lifetime obligations. For a declared or elided scalar reference
+result, a separate query reconstructs every permitted physical input root and
+stored reference path from the universal signature, exact type inventory,
+access and lifetime bounds. The published summary must retain all of them,
+including suppliers unused by the current body. Body-inferred contracts retain
+their precise source-inferred supplier policy. HIR-to-MIR forwarding preserves
+the complete summary and its scalar mirrors, and optimization replay seals the
+unchanged publication independently of body rewrites. Unknown return facts and a function
 with no normal return cannot prove this contract. A program-local memoized
 query treats recursive/in-progress callees as unknown; declarations cannot
 justify one another cyclically. Exact direct calls use only independently

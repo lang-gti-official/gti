@@ -27,6 +27,13 @@ keeps it in failure cleanup during local destruction and then exposes its
 transport value to the enclosing full expression. Void templates with no
 local returns retain the statement-only path and need no result join.
 
+Lifetime-bearing semantic types remain intact in HIR. Function instances retain
+their normalized declaration contracts; calls and constructions retain both
+explicit generic lifetime arguments and the full checked substitution for
+owner, declared and elided regions. These are proof records, not executable
+arguments. Type hashing includes regions, callable quantifiers and receiver
+mutability so semantic instances never rely on an erased type fingerprint.
+
 Concrete function instances preserve the semantic owned-pointee accessor
 summary (exact receiver-field identity and private borrow operation), refreshed
 from concrete instance analysis. It is proof metadata, not a synthetic field

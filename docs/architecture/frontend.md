@@ -373,6 +373,72 @@ uniquely owned inside that tree. Syntax nodes preserve written forms and source
 tokens; they do not own resolved types or selected declarations, and compiler
 passes treat cached trees as immutable.
 
+Lifetime syntax follows that same division. `GenericParameter::lifetimeKeyword`
+retains contextual `lifetime` in function, record, alias and concept binders;
+the lexer continues to classify its spelling as an ordinary identifier.
+`ConceptDecl::genericParameters()` preserves parameter kinds, while its
+`typeParameters()` compatibility projection contains only ordinary type names.
+`TypeRef::referenceLifetime` holds the `<`, argument and `>` tokens of
+`T&<a>`, separately from the referent's generic arguments. Names stay unresolved
+in generic argument syntax; `_`, `static` and `this` have an explicit lifetime
+argument discriminator. Mutable reference type arguments preserve their `mut`
+token in the existing reference-access field. No syntax node decides whether a
+region is in scope or whether a borrow may escape.
+
+`for<lifetime a, lifetime b> R(Args...)` retains a `LifetimeBinder` on the
+function-signature `TypeRef`, with each declaration token and both delimiters.
+It scopes over the whole signature, including its result. The parser requires
+plain named lifetime parameters and a function-signature target; semantics
+owns quantification and compatibility. `this` is admitted as a reference or
+generic lifetime argument, including in `outlives<this, a>` requirements, and
+semantic method context gives it its receiver meaning. Ordinary `this`
+expressions, `for` statements and `for<...> concept` conformance declarations
+keep their existing syntax. AST cloning remaps all lifetime and binder tokens;
+debug printing preserves their written relationship. Malformed lifetime
+suffixes and binders recover through the ordinary declaration boundaries.
+
+Semantic registration normalizes nominal lifetime arity before resolving
+generic defaults, aliases and callable signatures. Omitted regions in stored
+fields, inherited bases and enum payloads become independent declaration
+parameters in source order. `GenericParameterInfo::implicit` distinguishes
+these slots from positional source arguments, including around type packs.
+Aliases preserve their binder identities across projection refresh. The
+catalog retains normalized stored types; body analysis substitutes those
+types rather than reinterpreting their omitted annotations. Recursive borrowed
+declarations that would expand anonymous arity require explicit lifetime
+parameters and arguments. Callable type elision has its own higher-ranked
+scope and does not add parameters to the containing record.
+
+The shared callable contract derivation obtains each nominal application's
+formation formula from the owning phase. Semantics supplies the instantiated
+declaration contract; MIR supplies its verified nominal view. Inputs and
+results retain the complete Boolean formula, including requirements not
+implied by stored fields. A nested callable validates its own invocation
+scope without adding those premises to its enclosing signature. Fixed carrier
+regions are separate from invocation quantifiers, and `static` remains a
+constant. Missing nominal metadata, foreign region identities and malformed
+formula nodes make derivation fail rather than weaken the contract.
+
+Nominal variance is derived from verified fields and bases by a finite fixed
+point over the variance lattice. Shared references and owned storage preserve
+variance; mutable reference referents and unproven raw storage are invariant.
+Compiler-owned storage relaxations use trusted declaration capability identity.
+Ordinary mutation through an exclusive receiver does not imply interior
+mutation. `NominalVariance` records compact type and lifetime descriptors, and
+the semantic instance provider expands a trailing type-pack descriptor for
+each concrete argument. HIR and MIR preserve this result rather than deriving
+variance from layout or emitted code.
+
+The same declaration normalizer collects nominal well-formedness contracts
+from finalized storage: a stored `T&<a>` contributes `outlives<T, a>`, while
+opaque projections remain type obligations. This stage cannot add lifetime
+arity. Exact specializations inherit the primary's normalized region shape;
+selection uses structural type/value identity without region identity, and the
+selected semantic type retains its actual lifetime arguments. A specialization
+cannot add anonymous region slots or strengthen formation obligations. Public
+lifetime variance is conservative across all definitions in the family, so an
+open primary cannot promise a conversion that a selected layout invalidates.
+
 Every final expression and statement node exposes one closed `ExprKind` or
 `StmtKind` tag in addition to the visitor interface. `exprAs<T>`/`stmtAs<T>`
 check that tag before a static cast. This avoids repeated RTTI name comparisons

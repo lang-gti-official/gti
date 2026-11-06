@@ -30636,6 +30636,7 @@ loanHasCppPointerCarrier(const MirProgram &program,
           const bool selectedAddress =
               instruction.kind == MirInstructionKind::Borrow &&
               loan.referenceSelection &&
+              loan.referenceSelection->kind == ReferenceSelectionKind::StoredExternalReference &&
               borrowedPayloadExtract(body, loan.referenceSelection->value);
           const bool transferredAddress =
               instruction.kind == MirInstructionKind::Borrow &&
@@ -36172,7 +36173,8 @@ private:
           return;
         }
       }
-      if (loan != nullptr && loan->referenceSelection) {
+      if (loan != nullptr && loan->referenceSelection &&
+          loan->referenceSelection->kind == ReferenceSelectionKind::StoredExternalReference) {
         // The source places describe possible owners, not which address was
         // selected at runtime. Copy the independently verified cached address;
         // a consumed carrier may already have retired its active field.
@@ -54922,7 +54924,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           // that this verified Return copies the inner loan's runtime pointer.
           const auto nestedPayloadSource = [&] {
             if (retained == nullptr || retained->kind != MirLoanKind::Local ||
-                retained->referenceSelection || retained->parent == 0)
+                (retained->referenceSelection && retained->referenceSelection->kind ==
+                                                     ReferenceSelectionKind::StoredExternalReference) ||
+                retained->parent == 0)
               return false;
             std::unordered_set<MirLoanId> seen;
             const MirLoan *ancestor = body.findLoan(retained->parent);

@@ -6,8 +6,8 @@ namespace gti_internal {
   // Compiler capability type declarations are deliberately empty. Semantics
   // binds their trusted declaration identities to private representations;
   // application declarations with the same spelling remain ordinary types.
-  class text_view {};
-  class c_string {};
+  class text_view<lifetime storage> {};
+  class c_string<lifetime storage> {};
   class c_bool {};
   class c_char {};
   class c_schar {};
@@ -83,7 +83,7 @@ namespace gti_internal {
   }
 }
 
-using c_string = gti_internal::c_string;
+using c_string<lifetime storage> = gti_internal::c_string<storage>;
 using c_void = void;
 using c_bool = gti_internal::c_bool;
 using c_char = gti_internal::c_char;
@@ -106,7 +106,7 @@ using c_uintptr_t = gti_internal::c_uintptr_t;
 
 namespace std {
   /// A counted, read-only view over character storage.
-  using string_view = gti_internal::text_view;
+  using string_view<lifetime storage> = gti_internal::text_view<storage>;
   using size_t = uint64_t;
   using ptrdiff_t = int64_t;
 
@@ -627,59 +627,59 @@ public:
   }
 };
 
-class expected<T&, E> {
+class expected<T&<borrowed>, E> {
   static_assert(gti_internal::meta_type_kind<E>() != uint64_t(17), "An 'expected' error type cannot be 'void'.");
-  mut std::detail::expected_state<T&, E> state;
+  mut std::detail::expected_state<T&<borrowed>, E> state;
 public:
-  implicit expected(T& value)
-      : state(std::detail::expected_state<T&, E>::value(value)) {}
+  implicit expected(T&<borrowed> value)
+      : state(std::detail::expected_state<T&<borrowed>, E>::value(value)) {}
   implicit expected(mut std::unexpected_value<E> failure)
-      : state(std::detail::expected_state<T&, E>::error(std::move(failure).error())) {}
+      : state(std::detail::expected_state<T&<borrowed>, E>::error(std::move(failure).error())) {}
 
   bool has_value() {
     switch (this.state) {
-    case std::detail::expected_state<T&, E>::value: return true;
-    case std::detail::expected_state<T&, E>::error: return false;
+    case std::detail::expected_state<T&<borrowed>, E>::value: return true;
+    case std::detail::expected_state<T&<borrowed>, E>::error: return false;
     }
   }
   operator bool() { return this.has_value(); }
 
-  [[track_caller]] T& value() {
+  [[track_caller]] T&<borrowed> value() {
     switch (this.state) {
-    case std::detail::expected_state<T&, E>::value(auto& value): return value;
-    case std::detail::expected_state<T&, E>::error: gti_internal::fail_inactive_value();
+    case std::detail::expected_state<T&<borrowed>, E>::value(auto& value): return value;
+    case std::detail::expected_state<T&<borrowed>, E>::error: gti_internal::fail_inactive_value();
     }
   }
-  [[track_caller]] T& value() && {
+  [[track_caller]] T&<borrowed> value() && {
     switch (this.state) {
-    case std::detail::expected_state<T&, E>::value(auto& value): return value;
-    case std::detail::expected_state<T&, E>::error: gti_internal::fail_inactive_value();
+    case std::detail::expected_state<T&<borrowed>, E>::value(auto& value): return value;
+    case std::detail::expected_state<T&<borrowed>, E>::error: gti_internal::fail_inactive_value();
     }
   }
 
   [[track_caller]] E& error() {
     switch (this.state) {
-    case std::detail::expected_state<T&, E>::value: gti_internal::fail_inactive_error();
-    case std::detail::expected_state<T&, E>::error(auto& error): return error;
+    case std::detail::expected_state<T&<borrowed>, E>::value: gti_internal::fail_inactive_error();
+    case std::detail::expected_state<T&<borrowed>, E>::error(auto& error): return error;
     }
   }
   [[track_caller]] mut E& error() mut {
     switch (this.state) {
-    case std::detail::expected_state<T&, E>::value: gti_internal::fail_inactive_error();
-    case std::detail::expected_state<T&, E>::error(mut auto& error): return error;
+    case std::detail::expected_state<T&<borrowed>, E>::value: gti_internal::fail_inactive_error();
+    case std::detail::expected_state<T&<borrowed>, E>::error(mut auto& error): return error;
     }
   }
   [[track_caller]] E error() && {
     switch (std::move(this.state)) {
-    case std::detail::expected_state<T&, E>::value: gti_internal::fail_inactive_error();
-    case std::detail::expected_state<T&, E>::error(error): return std::move(error);
+    case std::detail::expected_state<T&<borrowed>, E>::value: gti_internal::fail_inactive_error();
+    case std::detail::expected_state<T&<borrowed>, E>::error(error): return std::move(error);
     }
   }
 
-  [[track_caller]] T& expect(std::string_view message) && {
+  [[track_caller]] T&<borrowed> expect(std::string_view message) && {
     switch (this.state) {
-    case std::detail::expected_state<T&, E>::value(auto& value): return value;
-    case std::detail::expected_state<T&, E>::error: gti_internal::panic(message);
+    case std::detail::expected_state<T&<borrowed>, E>::value(auto& value): return value;
+    case std::detail::expected_state<T&<borrowed>, E>::error: gti_internal::panic(message);
     }
   }
 };

@@ -1,0 +1,314 @@
+==================
+Lifetime parameters, reference regions and constraints
+==================
+
+struct Borrowed<T, lifetime a> { T&<a> value; };
+using Ref<T, lifetime a> = T&<a>;
+int&<a> choose<lifetime a>(bool left, int&<a> first, int&<a> second)
+    requires outlives<static, a> {
+  if (left) { return first; }
+  return second;
+}
+concept Relates<T, lifetime a> = outlives<T, a>;
+
+---
+
+(source_file
+  (class_declaration
+    (identifier)
+    (generic_parameter_clause
+      (generic_parameter
+        (identifier))
+      (generic_parameter
+        (lifetime_parameter
+          (identifier))))
+    (class_body
+      (variable_declaration
+        (type
+          (user_type
+            (identifier))
+          (reference_declarator
+            (lifetime_argument
+              (identifier))))
+        (identifier))))
+  (type_alias_declaration
+    (identifier)
+    (generic_parameter_clause
+      (generic_parameter
+        (identifier))
+      (generic_parameter
+        (lifetime_parameter
+          (identifier))))
+    (type
+      (user_type
+        (identifier))
+      (reference_declarator
+        (lifetime_argument
+          (identifier)))))
+  (function_declaration
+    (type
+      (primitive_type)
+      (reference_declarator
+        (lifetime_argument
+          (identifier))))
+    (identifier)
+    (generic_parameter_clause
+      (generic_parameter
+        (lifetime_parameter
+          (identifier))))
+    (parameter_clause
+      (parameter
+        (type
+          (primitive_type))
+        (identifier))
+      (parameter
+        (type
+          (primitive_type)
+          (reference_declarator
+            (lifetime_argument
+              (identifier))))
+        (identifier))
+      (parameter
+        (type
+          (primitive_type)
+          (reference_declarator
+            (lifetime_argument
+              (identifier))))
+        (identifier)))
+    (requires_clause
+      (constraint_expression
+        (concept_application
+          (identifier)
+          (lifetime_constant)
+          (type
+            (user_type
+              (identifier))))))
+    (block
+      (if_statement
+        (primary_expression
+          (identifier))
+        (block
+          (return_statement
+            (initializer_expression
+              (primary_expression
+                (identifier))))))
+      (return_statement
+        (initializer_expression
+          (primary_expression
+            (identifier))))))
+  (concept_declaration
+    (identifier)
+    (identifier)
+    (lifetime_parameter
+      (identifier))
+    (constraint_expression
+      (concept_application
+        (identifier)
+        (type
+          (user_type
+            (identifier)))
+        (type
+          (user_type
+            (identifier)))))))
+
+==================
+Lifetime arguments, nested regions and contextual identifiers
+==================
+
+void inspect<T, uint64_t N, lifetime a>(mut Borrowed<T, a>&<_> values) {
+  Borrowed<T, _> inferred;
+  Borrowed<T, static> lasting;
+  Outer<Borrowed<T, a>, static> nested;
+  int lifetime = 1;
+  int outlives = lifetime;
+}
+
+---
+
+(source_file
+  (function_declaration
+    (type)
+    (identifier)
+    (generic_parameter_clause
+      (generic_parameter
+        (identifier))
+      (generic_parameter
+        (identifier))
+      (generic_parameter
+        (lifetime_parameter
+          (identifier))))
+    (parameter_clause
+      (parameter
+        (type
+          (user_type
+            (identifier)
+            (type_argument_clause
+              (type
+                (user_type
+                  (identifier)))
+              (type
+                (user_type
+                  (identifier)))))
+          (reference_declarator
+            (lifetime_argument
+              (lifetime_constant))))
+        (identifier)))
+    (block
+      (variable_declaration
+        (type
+          (user_type
+            (identifier)
+            (type_argument_clause
+              (type
+                (user_type
+                  (identifier)))
+              (lifetime_constant))))
+        (identifier))
+      (variable_declaration
+        (type
+          (user_type
+            (identifier)
+            (type_argument_clause
+              (type
+                (user_type
+                  (identifier)))
+              (lifetime_constant))))
+        (identifier))
+      (variable_declaration
+        (type
+          (user_type
+            (identifier)
+            (type_argument_clause
+              (type
+                (user_type
+                  (identifier)
+                  (type_argument_clause
+                    (type
+                      (user_type
+                        (identifier)))
+                    (type
+                      (user_type
+                        (identifier))))))
+              (lifetime_constant))))
+        (identifier))
+      (variable_declaration
+        (type
+          (primitive_type))
+        (identifier)
+        (initializer_expression
+          (primary_expression
+            (literal
+              (integer_literal)))))
+      (variable_declaration
+        (type
+          (primitive_type))
+        (identifier)
+        (initializer_expression
+          (primary_expression
+            (identifier)))))))
+
+==================
+Lifetime higher-ranked callable binders and receiver regions
+==================
+
+using Callback = for<lifetime a, lifetime b> int&<a>(int&<a>, int&<b>);
+struct Reader {
+  int&<this> read() { return value; }
+  View<this> view() requires outlives<this, static>;
+  void call(Callback callback);
+};
+void invoke(std::function<for<lifetime a> int&<a>(int&<a>)> callback);
+
+---
+
+(source_file
+  (type_alias_declaration
+    (identifier)
+    (type
+      (quantified_function_type
+        (lifetime_parameter_clause
+          (lifetime_parameter
+            (identifier))
+          (lifetime_parameter
+            (identifier)))
+        (function_signature
+          (primitive_type)
+          (reference_declarator
+            (lifetime_argument
+              (identifier)))
+          (type
+            (primitive_type)
+            (reference_declarator
+              (lifetime_argument
+                (identifier))))
+          (type
+            (primitive_type)
+            (reference_declarator
+              (lifetime_argument
+                (identifier))))))))
+  (class_declaration
+    (identifier)
+    (class_body
+      (method_declaration
+        (type
+          (primitive_type)
+          (reference_declarator
+            (lifetime_argument
+              (lifetime_constant))))
+        (identifier)
+        (parameter_clause)
+        (block
+          (return_statement
+            (initializer_expression
+              (primary_expression
+                (identifier))))))
+      (method_declaration
+        (type
+          (user_type
+            (identifier)
+            (type_argument_clause
+              (lifetime_constant))))
+        (identifier)
+        (parameter_clause)
+        (requires_clause
+          (constraint_expression
+            (concept_application
+              (identifier)
+              (lifetime_constant)
+              (lifetime_constant)))))
+      (method_declaration
+        (type)
+        (identifier)
+        (parameter_clause
+          (parameter
+            (type
+              (user_type
+                (identifier)))
+            (identifier))))))
+  (function_declaration
+    (type)
+    (identifier)
+    (parameter_clause
+      (parameter
+        (type
+          (user_type
+            (scoped_identifier
+              (identifier)
+              (identifier))
+            (type_argument_clause
+              (type
+                (quantified_function_type
+                  (lifetime_parameter_clause
+                    (lifetime_parameter
+                      (identifier)))
+                  (function_signature
+                    (primitive_type)
+                    (reference_declarator
+                      (lifetime_argument
+                        (identifier)))
+                    (type
+                      (primitive_type)
+                      (reference_declarator
+                        (lifetime_argument
+                          (identifier))))))))))
+        (identifier)))))

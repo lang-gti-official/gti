@@ -284,9 +284,71 @@ public:
     const bool classAliases = std::any_of(
         program.classInstances().begin(), program.classInstances().end(),
         [](const auto &instance) { return !instance.typeAliases.empty(); });
-    output << "mir-v120 valid=" << program.valid() << '\n';
+    output << "mir-v122 valid=" << program.valid() << '\n';
     if (program.requiresNativeObjectLayout())
       output << "native-object-layout\n";
+    for (const auto &recipe : program.nominalVarianceRecipes()) {
+      output << "nominal-variance-recipe kind=" << number(recipe.kind)
+             << " declaration=" << recipe.declaration
+             << " family=" << recipe.familyPrimary
+             << " exact-primary=" << recipe.exactSpecializationPrimary
+             << " capability=" << number(recipe.compilerCapability)
+             << " class-kind=" << number(recipe.classKind)
+             << " opaque=" << recipe.cOpaqueHandle
+             << " polymorphic=" << recipe.polymorphic
+             << " forward=" << recipe.forward
+             << " invalid=" << recipe.invalidLifetime
+             << " complete=" << recipe.complete << " parameters=[";
+      for (std::size_t index = 0; index < recipe.parameters.size(); ++index) {
+        separator(index);
+        const auto &parameter = recipe.parameters[index];
+        output << parameter.id << ':' << parameter.pack << ':' << parameter.value
+               << ':' << parameter.lifetime << ':' << parameter.implicit << ":[";
+        for (std::size_t part = 0; part < parameter.typeArgumentPath.size(); ++part) {
+          separator(part);
+          output << parameter.typeArgumentPath[part];
+        }
+        output << ']';
+      }
+      output << "],exact-types=[";
+      for (std::size_t index = 0; index < recipe.exactTypeArguments.size(); ++index) {
+        separator(index);
+        type(recipe.exactTypeArguments[index]);
+      }
+      output << "],exact-values=[";
+      for (std::size_t index = 0; index < recipe.exactValueArguments.size(); ++index) {
+        separator(index);
+        const auto &argument = recipe.exactValueArguments[index];
+        output << number(argument.kind) << ':' << argument.value << ':' << argument.parameterId;
+      }
+      output << "],pattern-lifetimes=[";
+      for (std::size_t index = 0; index < recipe.argumentPatternLifetimes.size(); ++index) {
+        separator(index);
+        const auto &parameter = recipe.argumentPatternLifetimes[index];
+        output << parameter.id << ':' << parameter.pack << ':' << parameter.value
+               << ':' << parameter.lifetime << ':' << parameter.implicit << ":[";
+        for (std::size_t part = 0; part < parameter.typeArgumentPath.size(); ++part) {
+          separator(part);
+          output << parameter.typeArgumentPath[part];
+        }
+        output << ']';
+      }
+      output << "],patterns=[";
+      for (std::size_t index = 0; index < recipe.argumentPatterns.size(); ++index) {
+        separator(index);
+        type(recipe.argumentPatterns[index]);
+      }
+      output << "],stored=[";
+      for (std::size_t index = 0; index < recipe.stored.size(); ++index) {
+        separator(index);
+        const auto &stored = recipe.stored[index];
+        output << number(stored.kind) << ':' << stored.index << ':' << stored.symbol
+               << ':' << stored.variant << ':' << stored.interface << ':';
+        type(stored.type);
+      }
+      output << "]\n";
+    }
+
     for (const auto &storage : program.foreignStorageDeclarations()) {
       output << "foreign-storage symbol=" << storage.symbol
              << " external=" << std::quoted(storage.externalSymbol)
@@ -411,6 +473,12 @@ public:
       output << "integral-enum @" << enumeration.declaration
              << " source-unit=" << enumeration.sourceUnit << " type=";
       type(enumeration.type);
+      output << " variance=";
+      variance(enumeration.variance);
+      output << " lifetime-contract=";
+      lifetimeContract(enumeration.lifetimeContract);
+      output << " lifted-lifetimes=";
+      genericIdentities(enumeration.liftedLifetimes);
       output << " underlying=";
       type(enumeration.underlyingType);
       output << '\n';
@@ -420,6 +488,12 @@ public:
       output << "payload-enum @" << enumeration.declaration
              << " source-unit=" << enumeration.sourceUnit << " type=";
       type(enumeration.type);
+      output << " variance=";
+      variance(enumeration.variance);
+      output << " lifetime-contract=";
+      lifetimeContract(enumeration.lifetimeContract);
+      output << " lifted-lifetimes=";
+      genericIdentities(enumeration.liftedLifetimes);
       output << " active-cleanup=" << enumeration.requiresActiveCleanup << ' ';
       traits(enumeration.traits);
       output << " variants=[";
@@ -450,6 +524,12 @@ public:
              << " source-unit=" << instance.sourceUnit
              << " declaration=" << instance.declaration << " type=";
       type(instance.type);
+      output << " variance=";
+      variance(instance.variance);
+      output << " lifetime-contract=";
+      lifetimeContract(instance.lifetimeContract);
+      output << " lifted-lifetimes=";
+      genericIdentities(instance.liftedLifetimes);
       output << ' ';
       traits(instance.traits);
       output << " transfer-policy=" << number(instance.transferPolicy)
@@ -651,7 +731,13 @@ public:
         type(instance.parameterTypes[index]);
         output << '}';
       }
-      output << "] parameter-bindings=[";
+      output << "] lifetime-contract=";
+      lifetimeContract(instance.lifetimeContract);
+      output << " lifted-lifetimes=";
+      genericIdentities(instance.liftedLifetimes);
+      output << " owner-type=";
+      type(instance.ownerType);
+      output << " parameter-bindings=[";
       for (std::size_t index = 0; index < instance.parameterBindings.size();
            ++index) {
         separator(index);
@@ -794,7 +880,13 @@ public:
         output << '{' << number(argument.kind) << ':' << argument.value << ':'
                << argument.parameterId << '}';
       }
-      output << "] parameters=[";
+      output << "] lifetime-contract=";
+      lifetimeContract(instance.lifetimeContract);
+      output << " lifted-lifetimes=";
+      genericIdentities(instance.liftedLifetimes);
+      output << " owner-type=";
+      type(instance.ownerType);
+      output << " parameters=[";
       for (std::size_t index = 0; index < instance.parameterTypes.size();
            ++index) {
         separator(index);
@@ -865,7 +957,13 @@ public:
     for (const MirDestructorInstance &instance :
          program.destructorInstances()) {
       output << "destructor @" << instance.id << " owner=" << instance.owner
-             << " definition=";
+             << " lifetime-contract=";
+      lifetimeContract(instance.lifetimeContract);
+      output << " lifted-lifetimes=";
+      genericIdentities(instance.liftedLifetimes);
+      output << " owner-type=";
+      type(instance.ownerType);
+      output << " definition=";
       switch (instance.definitionKind) {
       case MirDefinitionKind::Source:
         output << "source";
@@ -892,8 +990,16 @@ public:
     for (const MirLambdaInstance &instance : program.lambdaInstances()) {
       output << "lambda @" << instance.id << " type=";
       type(instance.type);
+      output << " environment-regions=[";
+      for (std::size_t index = 0; index < instance.environmentLifetimes.size(); ++index) {
+        separator(index);
+        lifetime(instance.environmentLifetimes[index]);
+      }
+      output << ']';
       output << " returns=";
       type(instance.returnType);
+      output << " lifetime-contract=";
+      lifetimeContract(instance.lifetimeContract);
       output << " invocation=" << number(instance.capability)
              << " parameters=[";
       for (std::size_t index = 0; index < instance.parameterTypes.size();
@@ -929,6 +1035,18 @@ public:
       }
       output << "] lifecycle-bound-borrow-carrier="
              << instance.lifecycleBoundBorrowCarrier;
+      output << " complete-return-borrow=";
+      if (!instance.completeReturnBorrow) {
+        output << "absent";
+      } else {
+        output << "complete";
+        borrowFields(instance.completeReturnBorrow->dependencies);
+        output << " alternatives=[";
+        for (const auto &alternative :
+             instance.completeReturnBorrow->possibleAlternatives)
+          borrowConditions(alternative.conditions);
+        output << ']';
+      }
       effectSummary(instance.effectSummary);
       output << '\n';
       body(instance.body, instance.id);
@@ -940,7 +1058,7 @@ public:
   }
 
   void print(const MirBody &value) {
-    output << "mir-body-v93\n";
+    output << "mir-body-v94\n";
     body(value, 0);
   }
 
@@ -1172,14 +1290,180 @@ private:
         value);
   }
 
+  void variance(const NominalVariance &value) {
+    output << "{complete=" << value.complete << ",types=[";
+    for (std::size_t index = 0; index < value.types.size(); ++index) {
+      separator(index);
+      output << number(value.types[index]);
+    }
+    output << "],lifetimes=[";
+    for (std::size_t index = 0; index < value.lifetimes.size(); ++index) {
+      separator(index);
+      output << number(value.lifetimes[index]);
+    }
+    output << "]}";
+  }
+
+  void genericIdentities(std::span<const GenericParameterIdentity> parameters) {
+    output << '[';
+    for (std::size_t index = 0; index < parameters.size(); ++index) {
+      separator(index);
+      const auto &parameter = parameters[index];
+      output << parameter.id << ':' << parameter.pack << ':' << parameter.value
+             << ':' << parameter.lifetime << ':' << parameter.implicit << ":[";
+      for (std::size_t part = 0; part < parameter.typeArgumentPath.size(); ++part) {
+        separator(part);
+        output << parameter.typeArgumentPath[part];
+      }
+      output << ']';
+    }
+    output << ']';
+  }
+
+  void lifetime(Lifetime value) {
+    output << '{' << number(value.kind) << ':' << value.id << '}';
+  }
+
+  void lifetimeApplication(std::span<const Lifetime> arguments,
+                           const MirLifetimeApplication &application) {
+    output << "{complete=" << application.complete << ",arguments=[";
+    for (std::size_t index = 0; index < arguments.size(); ++index) {
+      separator(index);
+      lifetime(arguments[index]);
+    }
+    output << "],bindings=[";
+    for (std::size_t index = 0; index < application.bindings.size(); ++index) {
+      separator(index);
+      lifetime(application.bindings[index].first);
+      output << "=>";
+      lifetime(application.bindings[index].second);
+    }
+    output << "],variables=[";
+    for (std::size_t index = 0; index < application.variables.size(); ++index) {
+      separator(index);
+      lifetime(application.variables[index]);
+    }
+    output << "],obligations=[";
+    for (std::size_t index = 0; index < application.obligations.size();
+         ++index) {
+      separator(index);
+      lifetime(application.obligations[index].longer);
+      output << ':';
+      lifetime(application.obligations[index].shorter);
+    }
+    output << "],type-obligations=[";
+    for (std::size_t index = 0; index < application.typeObligations.size();
+         ++index) {
+      separator(index);
+      type(application.typeObligations[index].type);
+      output << ':';
+      lifetime(application.typeObligations[index].region);
+    }
+    output << "],origins=[";
+    for (std::size_t index = 0; index < application.origins.size(); ++index) {
+      separator(index);
+      const auto &origin = application.origins[index];
+      lifetime(origin.region);
+      output << ":place=" << origin.place << ":key=";
+      placeKey(origin.key);
+      output << ":source=" << origin.source;
+    }
+    output << "],callable=";
+    if (application.callableSignature) {
+      const auto &callable = *application.callableSignature;
+      type(callable.signature);
+      output << ":contract=";
+      lifetimeContract(callable.contract);
+      output << ":fixed=[";
+      for (std::size_t index = 0; index < callable.signatureBindings.size(); ++index) {
+        separator(index);
+        lifetime(callable.signatureBindings[index].first);
+        output << "=>";
+        lifetime(callable.signatureBindings[index].second);
+      }
+      output << ']';
+    } else {
+      output << '-';
+    }
+    output << "}";
+  }
+
+  void lifetimeContract(const LifetimeSignatureContract &value) {
+    output << "{complete=" << value.complete
+           << ",origin=" << number(value.origin) << ",parameters=[";
+    for (std::size_t index = 0; index < value.parameters.size(); ++index) {
+      separator(index);
+      lifetime(value.parameters[index]);
+    }
+    output << "],bounds=[";
+    for (std::size_t index = 0; index < value.bounds.size(); ++index) {
+      separator(index);
+      lifetime(value.bounds[index].longer);
+      output << ':';
+      lifetime(value.bounds[index].shorter);
+    }
+    output << "],type-bounds=[";
+    for (std::size_t index = 0; index < value.typeBounds.size(); ++index) {
+      separator(index);
+      type(value.typeBounds[index].type);
+      output << ':';
+      lifetime(value.typeBounds[index].region);
+    }
+    output << "],requirements-root=" << value.requirements.root << ",requirements=[";
+    for (std::size_t index = 0; index < value.requirements.nodes.size(); ++index) {
+      separator(index);
+      const auto &node = value.requirements.nodes[index];
+      output << number(node.kind) << ':' << node.left << ':' << node.right
+             << ':' << node.predicate << ':';
+      if (node.semanticTruth)
+        output << *node.semanticTruth;
+      else
+        output << '-';
+      output << ':';
+      lifetime(node.bound.longer);
+      output << ':';
+      lifetime(node.bound.shorter);
+      output << ':';
+      type(node.type);
+    }
+    output << "],receiver=";
+    lifetime(value.receiver);
+    output << '}';
+  }
+
   void type(const SemanticType &value) {
     output << "type(" << number(value.kind) << ";class=" << value.classId
            << ";enum=" << value.enumId
            << ";parameter=" << value.genericParameterId
-           << ";native-c=" << static_cast<unsigned>(value.nativeCScalar);
+           << ";native-c=" << static_cast<unsigned>(value.nativeCScalar)
+           << ";projection-concept=" << value.projectionConcept
+           << ";projection-member=" << value.projectionMember;
     if (value.functionId != 0) {
       output << ";function=" << value.functionId;
     }
+    if (value.referenceLifetime != Lifetime{}) {
+      output << ";reference-region=";
+      lifetime(value.referenceLifetime);
+    }
+    if (!value.lifetimeArguments.empty()) {
+      output << ";regions=[";
+      for (std::size_t index = 0; index < value.lifetimeArguments.size();
+           ++index) {
+        separator(index);
+        lifetime(value.lifetimeArguments[index]);
+      }
+      output << ']';
+    }
+    if (!value.quantifiedLifetimes.empty()) {
+      output << ";quantified-regions=[";
+      for (std::size_t index = 0; index < value.quantifiedLifetimes.size();
+           ++index) {
+        separator(index);
+        output << value.quantifiedLifetimes[index];
+      }
+      output << ']';
+    }
+
     output << ";lambda=" << value.lambdaId
            << ";lambda-parameters=" << value.lambdaParameterCount
            << ";lambda-captures=" << value.lambdaCaptureCount
@@ -1252,6 +1536,11 @@ private:
   }
 
   void callableSignature(const MirCallableSignature &value) {
+    if (!value.lifetimeArguments.empty() ||
+        value.lifetimeApplication != MirLifetimeApplication{}) {
+      output << "lifetime-application=";
+      lifetimeApplication(value.lifetimeArguments, value.lifetimeApplication);
+    }
     output << "signature(return=";
     type(value.returnType);
     output << ";parameters=[";
@@ -1566,7 +1855,9 @@ private:
     output << " reference-selection=";
     if (value.referenceSelection) {
       const auto &selection = *value.referenceSelection;
-      output << "{value=%" << selection.value << " carrier=p"
+      output << "{kind=" << (selection.kind == ReferenceSelectionKind::PhysicalPayload
+                                  ? "physical-payload" : "stored-reference")
+             << " value=%" << selection.value << " carrier=p"
              << selection.carrier << " transferred-from=l"
              << selection.transferredFrom << " fields=[";
       for (std::size_t index = 0; index < selection.fields.size(); ++index) {
@@ -1687,7 +1978,13 @@ private:
       separator(index);
       operand(value.operands[index]);
     }
-    output << "] parameters=[";
+    output << ']';
+    if (!value.lifetimeArguments.empty() ||
+        value.lifetimeApplication != MirLifetimeApplication{}) {
+      output << " lifetime-application=";
+      lifetimeApplication(value.lifetimeArguments, value.lifetimeApplication);
+    }
+    output << " parameters=[";
     for (std::size_t index = 0; index < value.parameterTypes.size(); ++index) {
       separator(index);
       type(value.parameterTypes[index]);
@@ -2038,6 +2335,15 @@ private:
     placeDomain(value.placeDomain);
     output << " entry=bb" << value.entry << " return=";
     type(value.returnType);
+    if (value.lifetimeBody != MirLifetimeBody{}) {
+      output << " lifetime-body=";
+      lifetimeApplication(
+          {}, {.variables = value.lifetimeBody.variables,
+               .obligations = value.lifetimeBody.obligations,
+               .typeObligations = value.lifetimeBody.typeObligations,
+               .origins = value.lifetimeBody.origins,
+               .complete = value.lifetimeBody.complete});
+    }
     output << '\n';
     output << " places " << value.places.size() << '\n';
     for (const MirPlace &item : value.places) {
@@ -2211,6 +2517,11 @@ private:
   }
 
   void constructorInitializer(const MirConstructorInitializer &value) {
+    if (!value.lifetimeArguments.empty() ||
+        value.lifetimeApplication != MirLifetimeApplication{}) {
+      output << "lifetime-application=";
+      lifetimeApplication(value.lifetimeArguments, value.lifetimeApplication);
+    }
     output << "initializer(kind=" << number(value.kind) << ";type=";
     type(value.targetType);
     output << ";field=" << value.field << ";base=";

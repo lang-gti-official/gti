@@ -1,3 +1,4 @@
+#include "representation.h"
 #include "scalar.h"
 
 #include <algorithm>
@@ -196,7 +197,7 @@ llvm::Constant *Scalars::constant(const ConstantValue &value,
     return integerConstant(llvm::cast<llvm::IntegerType>(storage),
                            integer->negative, integer->magnitude);
   if (const auto *enumerator = std::get_if<ConstantEnum>(&value)) {
-    if (const auto *payload = session.program().mir().findPayloadEnum(type)) {
+    if (const auto *payload = native_llvm::exactPayloadEnum(session.program().mir(), type)) {
       const auto variant = enumerator->value.magnitude;
       if (enumerator->value.negative || variant >= payload->variants.size() ||
           !payload->variants[variant].payloadTypes.empty())
@@ -207,6 +208,8 @@ llvm::Constant *Scalars::constant(const ConstantValue &value,
           layout.type.fieldOffsets.at(layout.tagIndex), ir.getInt32(variant)}};
       return constantStorage(layout.type, fragments);
     }
+    if (!exactIntegralEnum(session.program().mir(), type))
+      throw std::logic_error("LLVM enum constant lost its exact integral domain");
     return integerConstant(llvm::cast<llvm::IntegerType>(storage),
                            enumerator->value.negative,
                            enumerator->value.magnitude);
@@ -291,7 +294,7 @@ llvm::Constant *Scalars::constant(const ConstantValue &value,
       aggregate->value->kind == ConstantAggregateKind::PayloadEnum &&
       type.kind == SemanticType::Enum) {
     const auto &node = *aggregate->value;
-    const auto *payload = session.program().mir().findPayloadEnum(type);
+    const auto *payload = native_llvm::exactPayloadEnum(session.program().mir(), type);
     if (!payload || !node.exactType || *node.exactType != type ||
         node.identity != payload->declaration ||
         node.variant >= payload->variants.size() ||
@@ -305,12 +308,15 @@ llvm::Constant *Scalars::constant(const ConstantValue &value,
          ir.getInt32(node.variant)}};
     const auto *variant =
         session.dataLayout().getStructLayout(layout.variants[node.variant]);
-    for (std::size_t index = 0; index < node.elements.size(); ++index)
+    for (std::size_t index = 0; index < node.elements.size(); ++index) {
+      const auto fieldType = exactPayloadElementType(session.program().mir(), type, node.variant, index);
+      if (!fieldType)
+        throw std::logic_error("LLVM static payload lost its exact actual field type");
       fragments.emplace_back(
           layout.type.fieldOffsets.at(layout.payloadIndex) +
               variant->getElementOffset(index),
-          constant(node.elements[index],
-                   payload->variants[node.variant].payloadTypes[index]));
+          constant(node.elements[index], *fieldType));
+    }
     return constantStorage(layout.type, fragments);
   }
   throw BackendUnsupportedError("LLVM static datum requires an admitted scalar "
@@ -319,9 +325,8 @@ llvm::Constant *Scalars::constant(const ConstantValue &value,
 
 SemanticType Scalars::domain(const SemanticType &type) const {
   if (type.kind == SemanticType::Enum) {
-    for (const auto &enumeration : session.program().mir().integralEnums())
-      if (enumeration.type == type)
-        return enumeration.underlyingType;
+    if (const auto *enumeration = exactIntegralEnum(session.program().mir(), type))
+      return enumeration->underlyingType;
     throw BackendUnsupportedError(
         "LLVM scalar enum requires a sealed integral domain");
   }
